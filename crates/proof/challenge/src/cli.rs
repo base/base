@@ -15,7 +15,7 @@ use url::Url;
 base_cli_utils::define_log_args!("BASE_CHALLENGER");
 base_cli_utils::define_metrics_args!("BASE_CHALLENGER", 7310);
 
-/// Challenger - ZK-proof dispute game challenger for OP Stack chains.
+/// Challenger - ZK-proof dispute game challenger for Base chains.
 #[derive(Parser)]
 #[command(name = "challenger")]
 #[command(version, about, long_about = None)]

@@ -44,7 +44,7 @@ pub struct L1Config {
     pub engine_provider: RootProvider,
 }
 
-/// The standard implementation of the [`RollupNode`] service, using the governance approved OP Stack
+/// The standard implementation of the [`RollupNode`] service, using the governance approved Base
 /// configuration of components.
 #[derive(Debug)]
 pub struct RollupNode {

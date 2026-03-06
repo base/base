@@ -16,7 +16,7 @@ pub struct OpExecutionPayloadV4 {
     /// L1 execution payload
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub payload_inner: ExecutionPayloadV3,
-    /// OP-Stack Isthmus specific field:
+    /// Base Isthmus specific field:
     /// instead of computing the root from a withdrawals list, set it directly.
     /// The "withdrawals" list attribute must be non-nil but empty.
     pub withdrawals_root: B256,

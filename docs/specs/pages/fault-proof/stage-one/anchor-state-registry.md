@@ -20,7 +20,7 @@ direction.
 > See [Fault Dispute Game](fault-dispute-game.md)
 
 A Dispute Game is a smart contract that makes a determination about the validity of some claim. In
-the context of the OP Stack, the claim is generally assumed to be a claim about the value of an
+the context of Base, the claim is generally assumed to be a claim about the value of an
 output root at a given L2 block height. We assume that all Dispute Game contracts using the same
 AnchorStateRegistry contract are arguing over the same underlying state/claim structure.
 

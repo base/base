@@ -1,4 +1,4 @@
-//! Trait bounds for OP Stack builder components.
+//! Trait bounds for Base builder components.
 
 use alloy_consensus::Header;
 use base_execution_chainspec::OpChainSpec;

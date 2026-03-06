@@ -1,6 +1,6 @@
-//! Batch types and processing for OP Stack L2 derivation.
+//! Batch types and processing for Base L2 derivation.
 //!
-//! This module contains comprehensive batch handling functionality for the OP Stack
+//! This module contains comprehensive batch handling functionality for the Base
 //! derivation pipeline. Batches are the fundamental unit of L2 transaction data
 //! that are derived from L1 data and used to construct L2 blocks.
 //!

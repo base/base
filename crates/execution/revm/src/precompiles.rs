@@ -248,7 +248,7 @@ pub mod bls12_381 {
     pub fn run_g1_msm_isthmus(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > ISTHMUS_G1_MSM_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
-                "G1MSM input length too long for OP Stack input size limitation after the Isthmus Hardfork".into(),
+                "G1MSM input length too long for Base input size limitation after the Isthmus Hardfork".into(),
             ));
         }
         precompile::bls12_381::g1_msm::g1_msm(input, gas_limit)
@@ -258,7 +258,7 @@ pub mod bls12_381 {
     pub fn run_g1_msm_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > JOVIAN_G1_MSM_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
-                "G1MSM input length too long for OP Stack input size limitation after the Jovian Hardfork".into(),
+                "G1MSM input length too long for Base input size limitation after the Jovian Hardfork".into(),
             ));
         }
         precompile::bls12_381::g1_msm::g1_msm(input, gas_limit)
@@ -268,7 +268,7 @@ pub mod bls12_381 {
     pub fn run_g2_msm_isthmus(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > ISTHMUS_G2_MSM_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
-                "G2MSM input length too long for OP Stack input size limitation".into(),
+                "G2MSM input length too long for Base input size limitation".into(),
             ));
         }
         precompile::bls12_381::g2_msm::g2_msm(input, gas_limit)
@@ -278,7 +278,7 @@ pub mod bls12_381 {
     pub fn run_g2_msm_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > JOVIAN_G2_MSM_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
-                "G2MSM input length too long for OP Stack input size limitation after the Jovian Hardfork".into(),
+                "G2MSM input length too long for Base input size limitation after the Jovian Hardfork".into(),
             ));
         }
         precompile::bls12_381::g2_msm::g2_msm(input, gas_limit)
@@ -288,7 +288,7 @@ pub mod bls12_381 {
     pub fn run_pair_isthmus(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > ISTHMUS_PAIRING_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
-                "Pairing input length too long for OP Stack input size limitation".into(),
+                "Pairing input length too long for Base input size limitation".into(),
             ));
         }
         precompile::bls12_381::pairing::pairing(input, gas_limit)
@@ -298,7 +298,7 @@ pub mod bls12_381 {
     pub fn run_pair_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > JOVIAN_PAIRING_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
-                "Pairing input length too long for OP Stack input size limitation after the Jovian Hardfork".into(),
+                "Pairing input length too long for Base input size limitation after the Jovian Hardfork".into(),
             ));
         }
         precompile::bls12_381::pairing::pairing(input, gas_limit)

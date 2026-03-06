@@ -115,7 +115,7 @@ impl ChainConfig {
         self.optimism.as_ref().map(|op| *op).unwrap_or_else(|| base_fee_config(self.chain_id))
     }
 
-    /// Loads the rollup config for the OP-Stack chain given the chain config and address list.
+    /// Loads the rollup config for the Base chain given the chain config and address list.
     pub fn as_rollup_config(&self) -> RollupConfig {
         RollupConfig {
             genesis: self.genesis,

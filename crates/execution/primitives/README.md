@@ -1,3 +1,3 @@
 # `base-execution-primitives`
 
-Primitive types for Base/OP Stack execution.
+Primitive types for Base/Base execution.

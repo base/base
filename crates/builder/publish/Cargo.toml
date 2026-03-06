@@ -1,6 +1,6 @@
 [package]
 name = "base-builder-publish"
-description = "WebSocket broadcast publisher for the OP Stack block builder"
+description = "WebSocket broadcast publisher for the Base block builder"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,7 +1,7 @@
 [package]
 name = "base-consensus-peers"
 version.workspace = true
-description = "Network peers library for the OP Stack"
+description = "Network peers library for Base"
 
 edition.workspace = true
 license.workspace = true

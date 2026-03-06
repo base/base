@@ -234,7 +234,7 @@ where
     pub fn dial(&mut self, enr: Enr) {
         let validation = EnrValidation::validate(&enr, self.handler.rollup_config.l2_chain_id.id());
         if validation.is_invalid() {
-            trace!(target: "gossip", chain_id = %self.handler.rollup_config.l2_chain_id.id(), validation = %validation, "Invalid OP Stack ENR");
+            trace!(target: "gossip", chain_id = %self.handler.rollup_config.l2_chain_id.id(), validation = %validation, "Invalid Base ENR");
             return;
         }
         let Some(multiaddr) = enr_to_multiaddr(&enr) else {

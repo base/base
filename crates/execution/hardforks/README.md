@@ -1,3 +1,3 @@
 # `base-execution-forks`
 
-Hardfork definitions for Base/OP Stack.
+Hardfork definitions for Base/Base.

@@ -5,7 +5,7 @@
 This specification defines the execution mechanism for L2 contract upgrades, covering the bundle format, gas
 allocation, and complete upgrade lifecycle. These components work together with the
 [L2 Upgrade Contracts](./l2-upgrades-2-contracts.md) specification to enable deterministic, verifiable upgrades of L2
-predeploy contracts across all OP Stack chains.
+predeploy contracts across all Base chains.
 
 The upgrade execution system ensures that upgrade transactions are properly formatted, have sufficient gas to execute,
 and follow a well-defined process from development through verification.
@@ -16,7 +16,7 @@ and follow a well-defined process from development through verification.
 
 The Upgrade Process defines the complete lifecycle of an L2 predeploy upgrade, from initial development through fork
 activation and execution. The process ensures that upgrades are developed safely, tested thoroughly, and executed
-deterministically across all OP Stack chains.
+deterministically across all Base chains.
 
 This end-to-end process integrates all components of the upgrade system: contract development, bundle generation,
 testing, verification, and execution at fork activation.
@@ -33,7 +33,7 @@ inject upgrade transactions.
 
 #### aUP-001: Fork Activation Time is Coordinated
 
-All OP Stack chains coordinate fork activation times to enable consistent upgrade rollout. The fork activation
+All Base chains coordinate fork activation times to enable consistent upgrade rollout. The fork activation
 timestamp is communicated well in advance of activation to allow node operators to prepare.
 
 ##### Mitigations
@@ -179,7 +179,7 @@ transactions that must be executed at a specific fork activation block. The bund
 Solidity scripts, tracked in git, and executed by all L2 client implementations to upgrade predeploy contracts.
 
 The bundle format enables verification that upgrade transactions correspond to specific source code commits, ensuring
-transparency and auditability across all OP Stack chains executing the upgrade.
+transparency and auditability across all Base chains executing the upgrade.
 
 ### Definitions
 

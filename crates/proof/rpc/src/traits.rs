@@ -43,7 +43,7 @@ pub trait L1Provider: Send + Sync {
     async fn get_balance(&self, address: Address) -> RpcResult<U256>;
 }
 
-/// L2 RPC provider trait for interacting with OP Stack chains.
+/// L2 RPC provider trait for interacting with Base chains.
 #[async_trait]
 pub trait L2Provider: Send + Sync {
     /// Gets the chain configuration via `debug_chainConfig`.
@@ -64,7 +64,7 @@ pub trait L2Provider: Send + Sync {
     async fn block_by_hash(&self, hash: B256) -> RpcResult<OpBlock>;
 }
 
-/// Rollup RPC provider trait for interacting with OP Stack rollup nodes.
+/// Rollup RPC provider trait for interacting with Base rollup nodes.
 #[async_trait]
 pub trait RollupProvider: Send + Sync {
     /// Gets the rollup configuration via `optimism_rollupConfig`.

@@ -1,6 +1,6 @@
 //! Addresses of OP pre-deploys.
 //!
-//! This module contains predeploy contract addresses and system addresses for the OP Stack.
+//! This module contains predeploy contract addresses and system addresses for Base.
 //! See the complete set of predeploys at <https://specs.optimism.io/protocol/predeploys.html#predeploys>
 
 use alloy_primitives::{Address, address};

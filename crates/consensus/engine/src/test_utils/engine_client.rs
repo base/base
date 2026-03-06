@@ -85,7 +85,7 @@ pub struct MockEngineStorage {
     /// L1 blocks use standard Ethereum transactions.
     pub l1_blocks_by_id: HashMap<String, Block<EthTransaction>>,
     /// Storage for L2 blocks by stringified `BlockId`.
-    /// L2 blocks use OP Stack transactions.
+    /// L2 blocks use Base transactions.
     pub l2_blocks_by_id: HashMap<String, Block<OpTransaction>>,
     /// Storage for proofs by (address, stringified `BlockId`) key.
     pub proofs_by_address: HashMap<(Address, String), EIP1186AccountProofResponse>,

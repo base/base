@@ -107,7 +107,7 @@ pub struct GossipScores {
     /// Block-specific topic scores for consensus messages.
     ///
     /// Tracks peer behavior specifically for block gossip, which is
-    /// the primary message type in OP Stack networks.
+    /// the primary message type in Base networks.
     pub blocks: TopicScores,
 
     /// Penalty for IP address colocation with other peers.

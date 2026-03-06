@@ -2,7 +2,7 @@
 
 <a href="https://crates.io/crates/base-consensus-engine"><img src="https://img.shields.io/crates/v/base-consensus-engine.svg?label=base-consensus-engine&labelColor=2a2f35" alt="base-consensus-engine"></a>
 
-An extensible implementation of the [OP Stack][op-stack] rollup node engine client.
+An extensible implementation of the [Base][op-stack] rollup node engine client.
 
 ## Overview
 

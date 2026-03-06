@@ -9,10 +9,10 @@ This document introduces Flashblock-Level Access Lists (FAL), an adaptation of [
 FAL adapts the BAL specification for chains that produce flashblocks—incremental "mini-blocks" produced at sub-block intervals (e.g., every 200ms for a 2s canonical block time). While BAL is designed for Ethereum L1 canonical blocks, FAL must handle:
 
 - Incremental block construction via flashblock deltas
-- OP Stack-specific transaction types (L1 attributes transactions, L1→L2 deposits)
+- Base-specific transaction types (L1 attributes transactions, L1→L2 deposits)
 - Different fee distribution mechanisms (fee vaults instead of COINBASE)
 - Absence of beacon chain features (withdrawals, beacon root, withdrawal/consolidation requests)
-- OP Stack system contracts (L1Block, fee vaults, etc.)
+- Base system contracts (L1Block, fee vaults, etc.)
 
 ## Key Differences from BAL
 
@@ -25,7 +25,7 @@ FAL adapts the BAL specification for chains that produce flashblocks—increment
 ### Fee Distribution
 
 - **BAL**: Records balance changes to COINBASE address receiving transaction fees
-- **FAL**: Records balance changes to OP Stack fee vaults:
+- **FAL**: Records balance changes to Base fee vaults:
   - Sequencer Fee Vault (priority fees)
   - Base Fee Vault (base fees)
   - L1 Fee Vault (L1 data fees)
@@ -94,7 +94,7 @@ BlockAccessIndex = uint16  # Block access index (0 for pre-execution, 1..n for t
 Balance = uint256  # Post-transaction balance in wei
 Nonce = uint64  # Account nonce
 
-# Constants (adapted for OP Stack)
+# Constants (adapted for Base)
 MAX_TXS = 30_000
 MAX_SLOTS = 300_000
 MAX_ACCOUNTS = 300_000
@@ -202,7 +202,7 @@ Record **post-transaction nonces** for:
 - Deployed contracts
 - EIP-7702 authorities
 
-### OP Stack-Specific Edge Cases
+### Base-Specific Edge Cases
 
 #### Fee Vaults
 
@@ -243,7 +243,7 @@ The **L1 attributes transaction** (deposited transaction at index 0):
 
 Record system contract storage diffs of the **single** updated storage slot in the ring buffer.
 
-**OP Stack Note:** Block hash storage may use the same EIP-2935 mechanism or a modified version. Record whatever storage changes actually occur.
+**Base Note:** Block hash storage may use the same EIP-2935 mechanism or a modified version. Record whatever storage changes actually occur.
 
 ### Edge Cases (General, inherited from BAL)
 
@@ -347,7 +347,7 @@ def track_state_changes(tx, accesses, block_access_index):
             accesses[addr]['code_changes'].append((block_access_index, get_code(addr)))
 
 def track_fee_vault_changes(tx, accesses, block_access_index):
-    """Track OP Stack fee vault balance changes after each transaction"""
+    """Track Base fee vault balance changes after each transaction"""
     # Sequencer Fee Vault (priority fees)
     SEQUENCER_FEE_VAULT = 0x4200000000000000000000000000000000000011
     # Base Fee Vault (base fees)
@@ -421,7 +421,7 @@ Clients MAY validate by comparing execution-gathered accesses with the FAL.
 
 ### Concrete Example
 
-Example flashblock on OP Stack:
+Example flashblock on Base:
 
 **Pre-execution (block_access_index = 0):**
 - L1 attributes transaction updates L1Block contract (0x4200000000000000000000000000000000000015)
@@ -551,13 +551,13 @@ RLP-encoded and compressed: ~500-600 bytes (slightly larger than BAL due to L1Bl
 
 1. **Flashblock Compatibility**: FAL is designed for incremental flashblock deltas while maintaining compatibility with BAL's core structure
 
-2. **OP Stack Specificity**: FAL handles OP Stack-specific features:
+2. **Base Specificity**: FAL handles Base-specific features:
    - Multiple fee vaults instead of single COINBASE
    - L1 attributes transaction for block context
    - L1→L2 deposits treated as regular transactions
    - L1Block contract updates
 
-3. **Omitted Features**: Beacon chain features (EIP-4895, 4788, 7002, 7251) are omitted as they don't exist in OP Stack
+3. **Omitted Features**: Beacon chain features (EIP-4895, 4788, 7002, 7251) are omitted as they don't exist in Base
 
 4. **Size Overhead**: Expected flashblock access list size is similar to BAL (~40-50 KiB compressed on average) with additional overhead from:
    - L1Block contract updates (~200 bytes per flashblock)
@@ -578,7 +578,7 @@ Increased flashblock size impacts propagation. Average overhead can be reasonabl
 
 - [EIP-7928: Block-Level Access Lists](https://eips.ethereum.org/EIPS/eip-7928) - The original BAL specification for Ethereum L1
 - [EIP-2930: Optional Access Lists](https://eips.ethereum.org/EIPS/eip-2930) - Transaction-level access lists
-- [OP Stack Specification](https://specs.optimism.io/) - OP Stack technical specifications
+- [Base Specification](https://specs.optimism.io/) - Base technical specifications
 
 ## Copyright
 

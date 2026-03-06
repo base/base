@@ -1,6 +1,6 @@
 # `base-comp`
 
-Compression types for the OP Stack.
+Compression types for Base.
 
 ## Batch to Frames Example
 

@@ -1,8 +1,8 @@
 # `base-consensus-gossip`
 
-Gossip protocol implementation for the OP Stack.
+Gossip protocol implementation for Base.
 
-This crate provides a comprehensive gossip networking implementation for the OP Stack,
+This crate provides a comprehensive gossip networking implementation for Base,
 including GossipSub-based consensus layer networking, RPC interfaces for network
 administration, and metrics collection.
 

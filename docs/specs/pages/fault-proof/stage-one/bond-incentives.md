@@ -50,7 +50,7 @@ This claim will be the honest one, and thus bond rewards will be directed exclus
 
 ## Fault Proof Mainnet Incentives
 
-This section describes the specific bond incentives to be used for the Fault Proof Mainnet launch of the OP Stack fault
+This section describes the specific bond incentives to be used for the Fault Proof Mainnet launch of the Base fault
 proof system.
 
 ### Authenticated Roles
@@ -58,7 +58,7 @@ proof system.
 | Name         | Description                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------- |
 | Guardian     | Role responsible for blacklisting dispute game contracts and changing the respected dispute game type |
-| System Owner | Role that owns the `ProxyAdmin` contract that in turn owns most `Proxy` contracts within the OP Stack |
+| System Owner | Role that owns the `ProxyAdmin` contract that in turn owns most `Proxy` contracts within Base |
 
 ### Base Fee Assumption
 
@@ -194,7 +194,7 @@ correct address into `withdraw`.
 
 #### Delay Period
 
-We propose a delay period of 7 days for most OP Stack chains. 7 days provides sufficient time for the `owner()` of the
+We propose a delay period of 7 days for most Base chains. 7 days provides sufficient time for the `owner()` of the
 `DelayedWETH` contract to act even if that owner is a large multisig that requires action from many different members
 over multiple timezones.
 

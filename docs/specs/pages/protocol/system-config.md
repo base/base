@@ -5,7 +5,7 @@
 The `SystemConfig` is a contract on L1 that can emit rollup configuration changes as log events.
 The rollup [block derivation process](derivation.md) picks up on these log events and applies the
 changes. `SystemConfig` generally acts as the source of truth for configuration values within an
-OP Stack chain.
+Base chain.
 
 ## Definitions
 
@@ -109,9 +109,9 @@ provable and of reasonable size to be processed by the client software.
 
 ### Customizable Feature
 
-A **Customizable Feature** is a component of the OP Stack that is maintained as a production-grade
+A **Customizable Feature** is a component of Base that is maintained as a production-grade
 element of the stack behind some sort of toggle. A Customizable Feature is distinct from other
-types of feature-flagged code because it is part of the mainline OP Stack and is intended to remain
+types of feature-flagged code because it is part of the mainline Base and is intended to remain
 as a supported configuration option indefinitely. Unlike short-lived feature flags, which exist
 only to keep develop releasable while work is in progress, customizable features are permanent,
 user-facing options. They must be fully documented, tested in all supported modes, and designed for

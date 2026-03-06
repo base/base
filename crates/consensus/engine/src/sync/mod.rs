@@ -1,4 +1,4 @@
-//! Sync start algorithm for the OP Stack rollup node.
+//! Sync start algorithm for the Base rollup node.
 
 use base_consensus_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;

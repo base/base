@@ -1,6 +1,6 @@
 [package]
 name = "base-proof-rpc"
-description = "Shared RPC client abstractions for OP Stack L1, L2, and rollup node interactions"
+description = "Shared RPC client abstractions for Base L1, L2, and rollup node interactions"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

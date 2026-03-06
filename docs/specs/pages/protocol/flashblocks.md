@@ -4,9 +4,9 @@
 
 Introduces a standard for partial blocks called “Flashblocks,” inspired but not entirely identical to [Solana
 Shreds](https://github.com/solana-foundation/specs/blob/main/p2p/shred.md), enabling rapid preconfirmations on Ethereum
-Layer 2 networks such as OP Stack. Flashblocks propagate transaction batches incrementally and expose their state via a
+Layer 2 networks such as Base. Flashblocks propagate transaction batches incrementally and expose their state via a
 modified Ethereum JSON-RPC interface, giving users immediate feedback equivalent to drastically reduced block times
-without modifying the underlying OP Stack protocol. Flashblocks can be combined with Trusted Execution Environment
+without modifying the underlying Base protocol. Flashblocks can be combined with Trusted Execution Environment
 technology to enable quick verifiability over various networks of machines in addition to protection from equivocation.
 
 # Prerequisites
@@ -14,15 +14,15 @@ technology to enable quick verifiability over various networks of machines in ad
 This document assumes knowledge of the terminology, definitions, and other material in
 
 - [🔗 Ethereum Optimism Protocol Specs](https://github.com/ethereum-optimism/)
-- [🔗 OP Stack Engine API](https://specs.optimism.io/protocol/exec-engine.html#engine-api)
-- [🔗 External Block Production in OP Stack Design Doc](https://github.com/ethereum-optimism/)
+- [🔗 Base Engine API](https://specs.optimism.io/protocol/exec-engine.html#engine-api)
+- [🔗 External Block Production in Base Design Doc](https://github.com/ethereum-optimism/)
 - [🔗 Ethereum Execution APIs](https://github.com/ethereum/execution-apis/tree/main)
 - [🔗 Introducing Rollup-Boost - Launching on Unichain](https://writings.flashbots.net/introducing-rollup-boost)
 - [🔗 Rollup-boost design doc](https://www.notion.so/RFD-1-Rollup-boost-1996b4a0d876802f95d1c98387e38162?pvs=21)
 
 # Motivation
 
-As of April 2025, Layer 2 (L2) protocols built with the OP Stack have a minimum block time of one second, imposing
+As of April 2025, Layer 2 (L2) protocols built with the Base have a minimum block time of one second, imposing
 significant constraints on user experience. The limitation on minimum block times is primarily historical and
 architectural, reflecting earlier assumptions of Ethereum network as well as deeply-integrated type definitions, from
 the L2 blockchain client all the way down to smart contracts on the L1, making modification a very large task.
@@ -45,12 +45,12 @@ streamlined path for incremental adoption by node operators and existing infrast
 
 ## Terminology
 
-All terms, actors, and components are used in this document identically to how they are defined in the [OP Stack
+All terms, actors, and components are used in this document identically to how they are defined in the [Base
 protocol definition](https://github.com/ethereum-optimism/)
 
 Additional terms introduced:
 
-- **External Block Builder** - External Block Builders are first introduced to the OP Stack in the [External Block
+- **External Block Builder** - External Block Builders are first introduced to Base in the [External Block
 Production Design Document](https://github.com/ethereum-optimism/) where
 they are described as an external party that the Sequencer can request blocks from.
 - **Rollup Boost** - A sidecar piece of software first introduced without name in the [External Block Production Design
@@ -60,7 +60,7 @@ roles:
     2. manage communication from the sequencer with External Block Builders and handle block delivery to `op-node` .
 - **Fallback EL** - The standard Execution Layer of the Sequencer, used by Rollup Boost as a fallback mechanism when it
 cannot successfully build a block through the External Block Builder. This is an unmodified EL node that maintains the
-ability to construct valid blocks according to standard OP Stack protocol rules.
+ability to construct valid blocks according to standard Base protocol rules.
 - **RPC Provider** - Ethereum RPC software operator with the purpose of serving Ethereum state.
 
 ## Parameters
@@ -127,7 +127,7 @@ class ExecutionPayloadFlashblockDeltaV1():
 - `transactions`: List of transactions included in the Flashblock.
 - `withdrawals`: Withdrawals included (as per Optimism specification). Must be non-nil but empty when
 `withdrawals_root` is used directly.
-- `withdrawals_root`: OP-Stack Isthmus specific field: instead of computing the root from a withdrawals list, set it
+- `withdrawals_root`: Base Isthmus specific field: instead of computing the root from a withdrawals list, set it
 directly. The "withdrawals" list attribute must be non-nil but empty.
 
 **Supporting Type Definitions**
@@ -287,11 +287,11 @@ protocols, data structures, and operational considerations.
 ## Out-of-Protocol Design
 
 The Flashblocks specification follows a deliberate "out-of-protocol" design philosophy. This section clarifies what we
-mean by this term and explains its implications for the OP Stack ecosystem.
+mean by this term and explains its implications for the Base ecosystem.
 
 ### In-Protocol vs. Out-of-Protocol
 
-In the context of OP Stack, "in-protocol" components form the core protocol itself. These components implement
+In the context of Base, "in-protocol" components form the core protocol itself. These components implement
 fundamental consensus rules, are required for basic rollup functionality, and need standardization across all
 participants. Modifying in-protocol components requires protocol-level changes and network-wide upgrades.
 
@@ -300,16 +300,16 @@ can be added or removed without breaking the consensus rules of the network, tho
 performance or operations if implemented poorly.
 
 The only in-protocol guarantee that Flashblocks must uphold is producing valid blocks at the established block time
-interval (typically 1-2 seconds in current OP Stack implementations).
+interval (typically 1-2 seconds in current Base implementations).
 
 ### Design Rationale and Benefits
 
 The out-of-protocol design for Flashblocks emerged from practical constraints during initial development. Without
-strong coordination with the OP Stack team at the outset, and given the complexity of the challenge, working within the
+strong coordination with the Base team at the outset, and given the complexity of the challenge, working within the
 existing protocol boundaries was the most pragmatic approach.
 
 This constraint ultimately proved beneficial, as it forced the design to be minimally invasive. Flashblocks can be
-implemented immediately on any OP Stack chain without waiting for protocol upgrades or network-wide consensus.
+implemented immediately on any Base chain without waiting for protocol upgrades or network-wide consensus.
 
 Any issues with the Flashblocks implementation remain isolated from the core protocol, protecting overall network
 stability. In case of serious problems, Flashblocks can be disabled entirely, allowing the system to revert to normal
@@ -317,13 +317,13 @@ operation without disrupting the underlying rollup. This clean fallback mechanis
 model of L2s, where the sequencer has the authority to quickly enact such operational changes without requiring
 network-wide consensus.
 
-Now that the usefulness of the system has been proven, as more collaboration venues with the OP Stack team emerge,
+Now that the usefulness of the system has been proven, as more collaboration venues with the Base team emerge,
 integrating parts of Flashblocks directly into the protocol could provide even stronger guarantees and open the design
 space for future innovations. We are considering that approach too in the future.
 
 ### Implications for This Specification
 
-Most elements defined in this document are out-of-protocol components that operate as extensions to the core OP Stack.
+Most elements defined in this document are out-of-protocol components that operate as extensions to the core Base.
 The only hard guarantee the system must provide is that valid blocks are delivered at the expected intervals.
 
 Everything else—from how Flashblocks are constructed and propagated to how RPC providers implement preconfirmation
@@ -334,9 +334,9 @@ This means the specification describes a recommended implementation path rather 
 Components can evolve independently without requiring protocol-level coordination, and implementations may vary in how
 they achieve the same functional goals.
 
-## Assumptions About Op Stack
+## Assumptions About Base
 
-The Flashblocks design makes several assumptions about OP Stack behavior:
+The Flashblocks design makes several assumptions about Base behavior:
 
 - **Quick Response for engine_getPayload**: We assume that `engine_getPayload` requests should return as quickly as
 possible for a normal and healthy chain.
@@ -351,7 +351,7 @@ Note that familiarity with Rollup-boost is expected throughout this entire docum
 extension built on top of the existing Rollup-boost architecture.
 
 The lifecycle of a Flashblock begins with the Sequencer initiating block creation and ends with a normal L2 block
-consisting of all delivered flashblocks propagating according to the OP Stack protocol. The process proceeds as follows:
+consisting of all delivered flashblocks propagating according to the Base protocol. The process proceeds as follows:
 
 1. **Fork Choice Update**:
 
@@ -403,7 +403,7 @@ requests or any last-minute processing.
 
 7. **Full Block Propagation**:
 
-    The Sequencer propagates the aggregated block following standard OP Stack protocol rules.
+    The Sequencer propagates the aggregated block following standard Base protocol rules.
 
 ```mermaid
 sequenceDiagram
@@ -455,7 +455,7 @@ sequenceDiagram
 
     rect rgb(240,240,240)
         Note over S: 7. **Full Block Propagation**
-        S->>S: Propagate Block (standard OP Stack)
+        S->>S: Propagate Block (standard Base)
     end
 ```
 
@@ -470,7 +470,7 @@ a strictly enforced rule in Rollup Boost.
 ### Handling of Sequencer Transactions
 
 An important protocol rule that the Flashblock construction process must adhere to involves handling "system
-transactions" within the OP Stack. These include deposits and system transactions that arrive with the Fork Choice
+transactions" within Base. These include deposits and system transactions that arrive with the Fork Choice
 Update (FCU) and must always be executed as the first transactions in any valid block.
 
 From an "in-protocol" perspective, a block is not considered valid if these sequencer transactions are missing.
@@ -555,7 +555,7 @@ at the cost of slower flashblock cadence.
 
 ### Post-block Execution Rules
 
-In the OP Stack protocol, certain operations such as withdrawals and system requests are applied at the end of block
+In the Base protocol, certain operations such as withdrawals and system requests are applied at the end of block
 execution. Since each flashblock must function as a valid standalone block for preconfirmation purposes, these
 post-block execution rules must be applied at the end of each flashblock's construction.
 
@@ -595,7 +595,7 @@ Rules section
    - `logs_bloom`: Aggregated logs bloom from all emitted transaction logs within this flashblock.
    - `gas_used`: Total gas consumed by executed transactions.
    - `transactions`: Serialized transaction payloads included within the flashblock.
-   - `withdrawals` (if applicable): Withdrawals executed during the current flashblock interval (as per OP Stack
+   - `withdrawals` (if applicable): Withdrawals executed during the current flashblock interval (as per Base
 withdrawal specification).
    - `block_hash`: Computed block hash uniquely identifying this flashblock execution state.
 
@@ -684,9 +684,9 @@ flashblock. This section explains the rationale behind this design choice.
 ### Non-Blocking Block Production
 
 We operate under the assumption that `engine_getPayload` requests should return quickly with a valid, complete block.
-This assumption, which we believe to be correct based on our understanding of the OP Stack, guides our design decisions.
+This assumption, which we believe to be correct based on our understanding of Base, guides our design decisions.
 
-Currently in OP Stack implementations, execution layer nodes compute payloads in the background and can return them
+Currently in Base implementations, execution layer nodes compute payloads in the background and can return them
 immediately when requested via `engine_getPayload`. This allows for near-instant responses, maintaining the flow of
 block production without delays. For Flashblocks to provide similar performance, it must have all block components -
 including state roots - readily available when `engine_getPayload` is called.
@@ -719,7 +719,7 @@ Without pre-included state roots, a builder failure at the moment of block produ
 This approach represents our current understanding of the optimal design given existing constraints. However, as
 mentioned in the Out-of-Protocol Design section, alternative approaches may be worth exploring as we gain production
 experience. Future iterations might consider different state root handling approaches, particularly in the context of
-high-availability sequencer setups and deeper integration with OP Stack components.
+high-availability sequencer setups and deeper integration with Base components.
 
 ## Builder-to-Rollup-boost Communication Flow
 
@@ -1287,16 +1287,16 @@ include via the L1 as normal.
 ## Why out-of-protocol
 
 The design is implemented as an out-of-protocol solution rather than a core protocol modification to allow for faster
-iteration and development. This approach respects the stability guarantees of the OP Stack while allowing participants
+iteration and development. This approach respects the stability guarantees of Base while allowing participants
 to adopt the features at their own pace.
 
-We do not, however, discard the possibility of enshrining these features inside the OP Stack protocol as both teams
+We do not, however, discard the possibility of enshrining these features inside the Base protocol as both teams
 become more comfortable working together and more familiar with the specification. This out-of-protocol approach serves
 as a proving ground that can inform a potential future core integration.
 
 ### Why not shorter block times
 
-While reducing block times is a potential solution, it would require non-trivial changes to the OP Stack codebase,
+While reducing block times is a potential solution, it would require non-trivial changes to the Base codebase,
 where the current minimum timestamp used is 1 second. Additionally, extremely short block times (sub-200ms) might
 introduce significant performance issues in other blockchain infrastructure like block explorers and indexers.
 

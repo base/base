@@ -376,7 +376,7 @@ where
 /// Serializes an RPC transaction to EIP-2718 encoded bytes.
 ///
 /// Extracts the `OpTxEnvelope` from the RPC transaction and encodes it.
-/// This handles both standard Ethereum transactions and OP Stack deposit transactions (type 0x7E).
+/// This handles both standard Ethereum transactions and Base deposit transactions (type 0x7E).
 fn serialize_rpc_transaction(tx: &OpTransaction) -> Result<Bytes, ProposerError> {
     // Extract the inner OpTxEnvelope from the RPC transaction
     // base_alloy_rpc_types::Transaction.inner is alloy_rpc_types::Transaction<OpTxEnvelope>

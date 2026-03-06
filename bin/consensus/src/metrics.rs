@@ -106,11 +106,11 @@ pub fn init_p2p_metrics(p2p: &P2PArgs) {
 pub fn init_rollup_config_metrics(config: &RollupConfig) {
     metrics::describe_gauge!(
         CliMetrics::ROLLUP_CONFIG,
-        "Rollup configuration settings for the OP Stack"
+        "Rollup configuration settings for Base"
     );
     metrics::describe_gauge!(
         CliMetrics::HARDFORK_ACTIVATION_TIMES,
-        "Activation times for hardforks in the OP Stack"
+        "Activation times for hardforks in Base"
     );
 
     metrics::gauge!(
