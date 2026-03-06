@@ -16,6 +16,7 @@ use base_protocol::L2BlockInfo;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
+use super::LocalEngineActor;
 use crate::{
     ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor, DerivationActor,
     DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest, EngineConfig,
@@ -26,8 +27,6 @@ use crate::{
     RpcActor, RpcContext, SequencerActor, SequencerConfig,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
-
-use super::LocalEngineActor;
 
 const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
 const HEAD_STREAM_POLL_INTERVAL: u64 = 4;

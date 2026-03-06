@@ -7,13 +7,12 @@ use base_consensus_genesis::RollupConfig;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
+use super::LocalEngineActor;
 use crate::{
     DelegateL2Client, DelegateL2DerivationActor, EngineActor, EngineActorRequest, EngineConfig,
     EngineProcessor, EngineRpcProcessor, NodeActor, QueuedDerivationEngineClient,
     QueuedEngineDerivationClient,
 };
-
-use super::LocalEngineActor;
 
 /// A lightweight node that follows another L2 node by polling its execution
 /// layer RPC and driving the local engine via `NewPayload` + FCU.
