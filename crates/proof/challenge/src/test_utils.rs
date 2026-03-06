@@ -128,10 +128,20 @@ fn factory_game(index: u64, game_type: u32) -> GameAtIndex {
 
 /// Helper to build mock game state for the verifier.
 fn mock_state(status: u8, zk_prover: Address, block_number: u64) -> MockGameState {
+    mock_state_with_tee(status, zk_prover, Address::ZERO, block_number)
+}
+
+/// Helper to build mock game state with an explicit TEE prover address.
+fn mock_state_with_tee(
+    status: u8,
+    zk_prover: Address,
+    tee_prover: Address,
+    block_number: u64,
+) -> MockGameState {
     MockGameState {
         status,
         zk_prover,
-        tee_prover: Address::ZERO,
+        tee_prover,
         game_info: GameInfo {
             root_claim: B256::repeat_byte(block_number as u8),
             l2_block_number: block_number,
@@ -467,6 +477,37 @@ mod tests {
         assert_eq!(candidates[0].index, 1);
         assert_eq!(candidates[1].index, 2);
         assert_eq!(new_last_scanned, Some(2));
+    }
+
+    /// Games with a non-zero TEE prover but zero ZK prover are still candidates.
+    ///
+    /// The scanner currently filters only on `zk_prover`; a TEE proof alone does
+    /// not mark a game as challenged. This test guards that behaviour so a future
+    /// change to the filtering logic will surface as a test failure.
+    #[tokio::test]
+    async fn test_scan_tee_prover_nonzero_still_candidate() {
+        let tee_addr = Address::repeat_byte(0xEE);
+
+        let factory = Arc::new(MockDisputeGameFactory {
+            games: vec![factory_game(0, 1), factory_game(1, 1)],
+        });
+
+        let mut verifier_games = HashMap::new();
+        // Game 0: IN_PROGRESS, no ZK prover, but has a TEE prover -> still a candidate
+        verifier_games.insert(addr(0), mock_state_with_tee(0, Address::ZERO, tee_addr, 100));
+        // Game 1: IN_PROGRESS, no ZK prover, no TEE prover -> candidate
+        verifier_games.insert(addr(1), mock_state(0, Address::ZERO, 200));
+
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+
+        let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();
+
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].index, 0);
+        assert_eq!(candidates[1].index, 1);
+        assert_eq!(new_last_scanned, Some(1));
     }
 
     /// Error at the first index (0) with `last_scanned = None` preserves fresh-start semantics.

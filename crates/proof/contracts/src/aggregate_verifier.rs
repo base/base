@@ -256,3 +256,50 @@ pub fn encode_nullify_calldata(
     };
     Bytes::from(call.abi_encode())
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_sol_types::SolCall as _;
+
+    use super::*;
+
+    #[test]
+    fn test_encode_nullify_calldata_has_selector() {
+        let calldata = encode_nullify_calldata(
+            Bytes::from(vec![0x00, 0xAA, 0xBB]),
+            42,
+            B256::repeat_byte(0xFF),
+        );
+        assert_eq!(&calldata[..4], &IAggregateVerifier::nullifyCall::SELECTOR);
+    }
+
+    #[test]
+    fn test_encode_nullify_calldata_roundtrip() {
+        let proof_bytes = Bytes::from(vec![0x01, 0xDE, 0xAD]);
+        let index = 7u64;
+        let root = B256::repeat_byte(0xAB);
+
+        let calldata = encode_nullify_calldata(proof_bytes.clone(), index, root);
+
+        let decoded = IAggregateVerifier::nullifyCall::abi_decode(&calldata)
+            .expect("round-trip decode should succeed");
+
+        assert_eq!(decoded.proofBytes, proof_bytes);
+        assert_eq!(decoded.intermediateRootIndex, U256::from(index));
+        assert_eq!(decoded.intermediateRootToProve, root);
+    }
+
+    #[test]
+    fn test_encode_nullify_calldata_empty_proof_bytes() {
+        let calldata = encode_nullify_calldata(Bytes::new(), 0, B256::ZERO);
+
+        assert_eq!(&calldata[..4], &IAggregateVerifier::nullifyCall::SELECTOR);
+
+        let decoded = IAggregateVerifier::nullifyCall::abi_decode(&calldata)
+            .expect("decode with empty proof bytes should succeed");
+
+        assert!(decoded.proofBytes.is_empty());
+        assert_eq!(decoded.intermediateRootIndex, U256::ZERO);
+        assert_eq!(decoded.intermediateRootToProve, B256::ZERO);
+    }
+}
