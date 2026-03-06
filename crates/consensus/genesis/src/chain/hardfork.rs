@@ -132,6 +132,56 @@ impl HardForkConfig {
 }
 
 #[cfg(test)]
+mod timestamp_for_tests {
+    use base_alloy_hardforks::OpHardfork;
+    use rstest::rstest;
+
+    use super::*;
+
+    /// A [`HardForkConfig`] with every timestamp-based field set to a unique value
+    /// so that each `timestamp_for` case is unambiguous.
+    fn all_timestamps() -> HardForkConfig {
+        HardForkConfig {
+            regolith_time: Some(1),
+            canyon_time: Some(2),
+            // delta_time (=9) has no OpHardfork variant; only present as a raw field.
+            delta_time: Some(9),
+            ecotone_time: Some(3),
+            fjord_time: Some(4),
+            granite_time: Some(5),
+            holocene_time: Some(6),
+            // pectra_blob_schedule_time (=10) has no OpHardfork variant.
+            pectra_blob_schedule_time: Some(10),
+            isthmus_time: Some(7),
+            jovian_time: Some(8),
+        }
+    }
+
+    #[rstest]
+    #[case::regolith(OpHardfork::Regolith, Some(1))]
+    #[case::canyon(OpHardfork::Canyon, Some(2))]
+    #[case::ecotone(OpHardfork::Ecotone, Some(3))]
+    #[case::fjord(OpHardfork::Fjord, Some(4))]
+    #[case::granite(OpHardfork::Granite, Some(5))]
+    #[case::holocene(OpHardfork::Holocene, Some(6))]
+    #[case::isthmus(OpHardfork::Isthmus, Some(7))]
+    #[case::jovian(OpHardfork::Jovian, Some(8))]
+    // Bedrock is block-based — always returns None.
+    #[case::bedrock(OpHardfork::Bedrock, None)]
+    fn test_timestamp_for_hardfork(#[case] hardfork: OpHardfork, #[case] expected: Option<u64>) {
+        assert_eq!(all_timestamps().timestamp_for(hardfork), expected);
+    }
+
+    #[test]
+    fn test_timestamp_for_returns_none_when_not_scheduled() {
+        let hf = HardForkConfig::default();
+        assert_eq!(hf.timestamp_for(OpHardfork::Jovian), None);
+        assert_eq!(hf.timestamp_for(OpHardfork::Isthmus), None);
+        assert_eq!(hf.timestamp_for(OpHardfork::Canyon), None);
+    }
+}
+
+#[cfg(test)]
 #[cfg(feature = "serde")]
 mod tests {
     use super::*;

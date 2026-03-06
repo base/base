@@ -259,6 +259,138 @@ impl serde::Serialize for FeatureMap {
 #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for FeatureMap {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        BTreeMap::deserialize(d).map(Self)
+        // Deserialize overrides then merge them onto the populated defaults.
+        // This ensures both a missing `features` key and an explicit `"features": {}`
+        // produce the same default-populated map — features intentionally omitted from
+        // the config are not silently disabled.
+        let overrides = BTreeMap::<Ident, Feature>::deserialize(d)?;
+        let mut map = Self::default();
+        map.0.extend(overrides);
+        Ok(map)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use base_alloy_hardforks::OpHardfork;
+
+    use super::*;
+    use crate::HardForkConfig;
+
+    #[test]
+    fn feature_map_default_contains_all_jovian_features() {
+        let map = FeatureMap::default();
+        for id in [
+            Feature::L1_BLOCK_INFO,
+            Feature::DA_FOOTPRINT_GAS_SCALAR,
+            Feature::MIN_BASE_FEE,
+            Feature::OPERATOR_FEE_MULTIPLIER,
+            Feature::DA_FOOTPRINT_RECEIPTS,
+            Feature::DA_FOOTPRINT_BASE_FEE,
+        ] {
+            let feature =
+                map.get(id).unwrap_or_else(|| panic!("{id} missing from FeatureMap::default"));
+            assert_eq!(
+                feature.hardfork,
+                Some(OpHardfork::Jovian),
+                "{id} should be mapped to OpHardfork::Jovian"
+            );
+        }
+    }
+
+    #[test]
+    fn feature_map_empty_has_no_entries() {
+        assert!(FeatureMap::empty().is_empty());
+    }
+
+    #[test]
+    fn feature_map_new_equals_default() {
+        assert_eq!(FeatureMap::new(), FeatureMap::default());
+    }
+
+    #[test]
+    fn feature_activation_time_scheduled() {
+        let hf = HardForkConfig { jovian_time: Some(500), ..Default::default() };
+        let feat = Feature::new("test", "test", Some(OpHardfork::Jovian));
+        assert_eq!(feat.activation_time(&hf), Some(500));
+        // Second call returns the same value from the cache.
+        assert_eq!(feat.activation_time(&hf), Some(500));
+    }
+
+    #[test]
+    fn feature_activation_time_no_hardfork() {
+        let hf = HardForkConfig { jovian_time: Some(500), ..Default::default() };
+        let feat = Feature::new("test", "test", None);
+        assert_eq!(feat.activation_time(&hf), None);
+    }
+
+    #[test]
+    fn feature_activation_time_hardfork_not_in_config() {
+        // Hardfork variant assigned but jovian_time is not set in HardForkConfig.
+        let hf = HardForkConfig::default();
+        let feat = Feature::new("test", "test", Some(OpHardfork::Jovian));
+        assert_eq!(feat.activation_time(&hf), None);
+    }
+
+    #[test]
+    fn feature_invalidate_cache_forces_re_resolution() {
+        let hf1 = HardForkConfig { jovian_time: Some(100), ..Default::default() };
+        let feat = Feature::new("test", "test", Some(OpHardfork::Jovian));
+        assert_eq!(feat.activation_time(&hf1), Some(100));
+
+        feat.invalidate_cache();
+
+        let hf2 = HardForkConfig { jovian_time: Some(200), ..Default::default() };
+        assert_eq!(feat.activation_time(&hf2), Some(200));
+    }
+
+    #[cfg(feature = "serde")]
+    mod serde_tests {
+        use super::*;
+
+        #[test]
+        fn feature_map_serde_missing_key_yields_defaults() {
+            #[derive(serde::Deserialize)]
+            struct Wrap {
+                #[serde(default)]
+                features: FeatureMap,
+            }
+            let w: Wrap = serde_json::from_str("{}").unwrap();
+            assert_eq!(w.features.len(), 6);
+        }
+
+        #[test]
+        fn feature_map_serde_empty_object_yields_defaults() {
+            // An explicit `"features": {}` must not wipe the defaults — it should merge
+            // (empty override) on top of the pre-populated map.
+            let fm: FeatureMap = serde_json::from_str("{}").unwrap();
+            assert_eq!(fm.len(), 6, "empty JSON object must not wipe FeatureMap defaults");
+        }
+
+        #[test]
+        fn feature_map_serde_partial_override_merges() {
+            // One feature overridden with hardfork: null; the remaining 5 stay from defaults.
+            let json = serde_json::json!({
+                "MinBaseFee": {"id": "MinBaseFee", "reason": "overridden"}
+            });
+            let fm: FeatureMap = serde_json::from_value(json).unwrap();
+            assert_eq!(fm.len(), 6, "partial override should not remove default features");
+            let overridden = fm.get(Feature::MIN_BASE_FEE).unwrap();
+            assert_eq!(overridden.hardfork, None, "overridden feature should have hardfork: None");
+            let other = fm.get(Feature::L1_BLOCK_INFO).unwrap();
+            assert_eq!(
+                other.hardfork,
+                Some(OpHardfork::Jovian),
+                "non-overridden features should keep their Jovian mapping"
+            );
+        }
+
+        #[test]
+        fn feature_map_serde_round_trip() {
+            let original = FeatureMap::new();
+            let json = serde_json::to_string(&original).unwrap();
+            let deserialized: FeatureMap = serde_json::from_str(&json).unwrap();
+            assert_eq!(original, deserialized);
+        }
     }
 }

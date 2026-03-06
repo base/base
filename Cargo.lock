@@ -2893,6 +2893,7 @@ dependencies = [
  "base-revm",
  "derive_more",
  "rand 0.9.2",
+ "rstest",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

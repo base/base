@@ -451,9 +451,10 @@ mod tests {
     use alloy_primitives::address;
     #[cfg(feature = "serde")]
     use alloy_primitives::{U256, b256};
+    use rstest::rstest;
 
     use super::*;
-    use crate::{Feature, Ident};
+    use crate::{Feature, FeatureMap, Ident};
 
     #[test]
     #[cfg(feature = "arbitrary")]
@@ -987,5 +988,74 @@ mod tests {
         // Feature is active, but no "first" block exists when block_time is 0.
         assert!(config.is_feature_active(Feature::MIN_BASE_FEE, 100));
         assert!(!config.is_feature_first_active_block(Feature::MIN_BASE_FEE, 100));
+    }
+
+    /// A [`RollupConfig`] whose default [`FeatureMap`] has all 6 Jovian features
+    /// activating at `jovian_ts`, with `block_time` seconds per block.
+    fn config_with_jovian(jovian_ts: u64, block_time: u64) -> RollupConfig {
+        RollupConfig {
+            hardforks: HardForkConfig { jovian_time: Some(jovian_ts), ..Default::default() },
+            block_time,
+            ..Default::default()
+        }
+    }
+
+    /// All 6 canonical Jovian features should activate at the Jovian timestamp when the
+    /// default [`FeatureMap`] is in place.
+    #[rstest]
+    #[case::l1_block_info(Feature::L1_BLOCK_INFO)]
+    #[case::da_footprint_gas_scalar(Feature::DA_FOOTPRINT_GAS_SCALAR)]
+    #[case::min_base_fee(Feature::MIN_BASE_FEE)]
+    #[case::operator_fee_multiplier(Feature::OPERATOR_FEE_MULTIPLIER)]
+    #[case::da_footprint_receipts(Feature::DA_FOOTPRINT_RECEIPTS)]
+    #[case::da_footprint_base_fee(Feature::DA_FOOTPRINT_BASE_FEE)]
+    fn test_default_feature_map_activates_at_jovian(#[case] feature_id: &str) {
+        let config = config_with_jovian(100, 2);
+        // Inactive before activation.
+        assert!(!config.is_feature_active(feature_id, 99));
+        // Active at and after the activation timestamp.
+        assert!(config.is_feature_active(feature_id, 100));
+        assert!(config.is_feature_active(feature_id, 101));
+    }
+
+    /// The first-active-block predicate fires exactly at the activation timestamp and
+    /// not before or after for all 6 canonical features.
+    #[rstest]
+    #[case::l1_block_info(Feature::L1_BLOCK_INFO)]
+    #[case::da_footprint_gas_scalar(Feature::DA_FOOTPRINT_GAS_SCALAR)]
+    #[case::min_base_fee(Feature::MIN_BASE_FEE)]
+    #[case::operator_fee_multiplier(Feature::OPERATOR_FEE_MULTIPLIER)]
+    #[case::da_footprint_receipts(Feature::DA_FOOTPRINT_RECEIPTS)]
+    #[case::da_footprint_base_fee(Feature::DA_FOOTPRINT_BASE_FEE)]
+    fn test_default_feature_map_first_active_block(#[case] feature_id: &str) {
+        let config = config_with_jovian(100, 2);
+        assert!(!config.is_feature_first_active_block(feature_id, 98));
+        assert!(config.is_feature_first_active_block(feature_id, 100));
+        assert!(!config.is_feature_first_active_block(feature_id, 102));
+    }
+
+    /// A feature overridden to `hardfork: None` in the map is always inactive,
+    /// even when the corresponding hardfork is scheduled.
+    #[rstest]
+    #[case::l1_block_info(Feature::L1_BLOCK_INFO)]
+    #[case::min_base_fee(Feature::MIN_BASE_FEE)]
+    fn test_feature_overridden_to_no_hardfork_is_inactive(#[case] feature_id: &str) {
+        let mut config = config_with_jovian(100, 2);
+        config
+            .features
+            .insert(Ident::new(feature_id), Feature::new(feature_id, "no hardfork", None));
+        assert!(!config.is_feature_active(feature_id, 100));
+        assert!(!config.is_feature_active(feature_id, u64::MAX));
+    }
+
+    /// A feature entirely absent from the map is always inactive.
+    #[rstest]
+    #[case("NonExistent")]
+    #[case("")]
+    fn test_missing_feature_is_always_inactive(#[case] feature_id: &str) {
+        let mut config = config_with_jovian(0, 2);
+        config.features = FeatureMap::empty();
+        assert!(!config.is_feature_active(feature_id, 0));
+        assert!(!config.is_feature_active(feature_id, u64::MAX));
     }
 }
