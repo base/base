@@ -64,8 +64,6 @@ impl ProofTransport for VsockTransport {
         let addr = VsockAddr::new(self.cid, self.port);
         let task = tokio::task::spawn_blocking(move || {
             let mut stream = VsockStream::connect(&addr)?;
-            stream.set_read_timeout(Some(PROVE_TIMEOUT))?;
-            stream.set_write_timeout(Some(PROVE_TIMEOUT))?;
             write_frame(&mut stream, &bundle)?;
             read_frame(&mut stream)
         });
