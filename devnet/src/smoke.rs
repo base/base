@@ -7,6 +7,7 @@ use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
 use base_alloy_network::Base;
+use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Result, WrapErr};
 use tempfile::TempDir;
 use url::Url;
@@ -128,6 +129,7 @@ pub struct DevnetBuilder {
     slot_duration: Option<u64>,
     output_dir: Option<PathBuf>,
     stable_config: Option<StableDevnetConfig>,
+    tx_forwarding_config: Option<TxForwardingConfig>,
 }
 
 impl DevnetBuilder {
@@ -163,6 +165,14 @@ impl DevnetBuilder {
     /// Enables stable container names and ports matching docker-compose.yml.
     pub fn with_stable_config(mut self) -> Self {
         self.stable_config = Some(StableDevnetConfig::devnet());
+        self
+    }
+
+    /// Enables transaction forwarding on the client node.
+    /// When enabled, the client will forward transactions to the builder via
+    /// the `base_insertValidatedTransaction` RPC endpoint.
+    pub fn with_tx_forwarding(mut self, config: TxForwardingConfig) -> Self {
+        self.tx_forwarding_config = Some(config);
         self
     }
 
@@ -264,6 +274,7 @@ impl DevnetBuilder {
             l1_rpc_url: l1_stack.reth().rpc_url().await?.to_string(),
             l1_beacon_url: l1_stack.beacon().beacon_url().await?,
             container_config: l2_container_config,
+            tx_forwarding_config: self.tx_forwarding_config,
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;

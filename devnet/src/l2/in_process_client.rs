@@ -11,6 +11,7 @@ use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
+use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use eyre::{Context, Result, eyre};
@@ -48,6 +49,9 @@ pub struct InProcessClientConfig {
     pub auth_port: Option<u16>,
     /// Optional fixed P2P port (uses random if None).
     pub p2p_port: Option<u16>,
+    /// Optional transaction forwarding configuration.
+    /// When set, the client will forward transactions to builder RPC endpoints.
+    pub tx_forwarding_config: Option<TxForwardingConfig>,
 }
 
 /// In-process Base client node that syncs from a builder.
@@ -259,6 +263,11 @@ impl InProcessClient {
             flashblocks_config: Some(flashblocks_config.clone()),
         };
         extensions.push(Box::new(TxPoolExtension::new(txpool_config)));
+
+        // TxForwarding extension (optional - forwards txs to builder RPC)
+        if let Some(ref tx_fwd_config) = config.tx_forwarding_config {
+            extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));
+        }
 
         // Flashblocks extension (must be last - uses replace_configured)
         extensions.push(Box::new(FlashblocksExtension::new(Some(flashblocks_config))));

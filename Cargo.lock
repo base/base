@@ -4360,6 +4360,7 @@ dependencies = [
  "base-node-core",
  "base-node-runner",
  "base-proofs-extension",
+ "base-tx-forwarding",
  "base-txpool-rpc",
  "base-txpool-tracing",
  "clap",
@@ -4418,6 +4419,16 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "base-tx-forwarding"
+version = "0.0.0"
+dependencies = [
+ "base-node-runner",
+ "base-txpool",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -6411,6 +6422,7 @@ dependencies = [
  "base-node-core",
  "base-node-runner",
  "base-protocol",
+ "base-tx-forwarding",
  "base-txpool",
  "base-txpool-rpc",
  "base-txpool-tracing",

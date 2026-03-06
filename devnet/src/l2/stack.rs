@@ -10,6 +10,7 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::JwtSecret;
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 use base_consensus_node::NodeMode;
+use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Result, WrapErr};
 use url::Url;
 
@@ -42,6 +43,9 @@ pub struct L2StackConfig {
     pub l1_beacon_url: String,
     /// Optional container configuration for stable naming and port binding.
     pub container_config: Option<L2ContainerConfig>,
+    /// Optional transaction forwarding configuration for the client node.
+    /// When set, the client will forward transactions to builder RPC endpoints.
+    pub tx_forwarding_config: Option<TxForwardingConfig>,
 }
 
 /// A complete L2 network stack composed of Builder + Consensus + Batcher.
@@ -154,6 +158,17 @@ impl L2Stack {
             .wrap_err("Failed to start batcher")?;
 
         // 4. Start the client (in-process EL).
+        // If tx forwarding is enabled, configure it with the builder's RPC URL
+        let tx_forwarding_config = config.tx_forwarding_config.map(|mut cfg| {
+            // Add the builder's RPC URL to the forwarding config
+            // The config may have empty builder_urls which we need to populate
+            if cfg.builder_urls.is_empty() {
+                cfg.builder_urls =
+                    vec![builder.rpc_url().expect("builder RPC URL should be available")];
+            }
+            cfg
+        });
+
         let client_config = InProcessClientConfig {
             genesis_json: config.l2_genesis.clone(),
             jwt_secret: config.jwt_secret,
@@ -164,6 +179,7 @@ impl L2Stack {
             ws_port: container_config.and_then(|c| c.client_ws_port),
             auth_port: container_config.and_then(|c| c.client_auth_port),
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
+            tx_forwarding_config,
         };
         let client = InProcessClient::start(client_config)
             .await
