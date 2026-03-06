@@ -110,14 +110,11 @@ where
             l1_header = header;
             deposit_transactions = deposits;
             0
+        } else if l2_parent.l1_origin.hash != epoch.hash {
+            return Err(PipelineErrorKind::Reset(
+                BuilderError::BlockMismatch(epoch, l2_parent.l1_origin).into(),
+            ));
         } else {
-            #[allow(clippy::collapsible_else_if)]
-            if l2_parent.l1_origin.hash != epoch.hash {
-                return Err(PipelineErrorKind::Reset(
-                    BuilderError::BlockMismatch(epoch, l2_parent.l1_origin).into(),
-                ));
-            }
-
             let header =
                 self.receipts_fetcher.header_by_hash(epoch.hash).await.map_err(Into::into)?;
             l1_header = header;

@@ -9,7 +9,6 @@ use base_protocol::{BlockInfo, L2BlockInfo};
 
 /// A signal to send to the pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(clippy::large_enum_variant)]
 pub enum Signal {
     /// Reset the pipeline.
     Reset(ResetSignal),
