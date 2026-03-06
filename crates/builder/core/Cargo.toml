@@ -212,6 +212,9 @@ base-execution-rpc = { workspace = true, features = ["client"] }
 # alloy
 alloy-provider = { workspace = true, default-features = true, features = ["txpool-api"] }
 
+# contracts
+base-contracts-bindings.workspace = true
+
 # misc
 ctor.workspace = true
 hyper.workspace = true

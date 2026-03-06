@@ -42,6 +42,10 @@ pub struct BuilderMetrics {
     pub sequencer_tx_duration: Histogram,
     /// Latest sequencer transaction execution duration
     pub sequencer_tx_gauge: Gauge,
+    /// Histogram of flashblock index transaction execution duration
+    pub flashblock_index_tx_duration: Histogram,
+    /// Latest flashblock index transaction execution duration
+    pub flashblock_index_tx_gauge: Gauge,
     /// Histogram of state merge transitions duration
     pub state_transition_merge_duration: Histogram,
     /// Latest state merge transitions duration

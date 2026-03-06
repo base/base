@@ -36,6 +36,7 @@ use revm::{DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace, warn};
 
+use super::{FlashblockIndexConfig, index_tx::build_flashblock_index_tx};
 use crate::{
     BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, ExecutionMeteringMode,
     PayloadTxsBounds, ResourceLimits, SharedMeteringProvider, TxResources, TxnExecutionError,
@@ -170,6 +171,8 @@ pub struct OpPayloadBuilderCtx {
     pub execution_metering_mode: ExecutionMeteringMode,
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
+    /// Optional flashblock index tx config (signer + contract address).
+    pub flashblock_index_config: Option<FlashblockIndexConfig>,
 }
 
 impl OpPayloadBuilderCtx {
@@ -468,6 +471,99 @@ impl OpPayloadBuilderCtx {
         }
 
         Ok(info)
+    }
+
+    /// Executes the flashblock index transaction at the start of each flashblock.
+    ///
+    /// Signs and injects an EIP-1559 transaction calling the `FlashblockIndex` contract's
+    /// `fallback()` with 1 byte of calldata encoding the flashblock index.
+    pub(super) fn execute_flashblock_index_tx(
+        &self,
+        info: &mut ExecutionInfo,
+        db: &mut State<impl Database>,
+        flashblock_index: u64,
+        config: &FlashblockIndexConfig,
+    ) -> Result<(), PayloadBuilderError> {
+        debug!(
+            target: "payload_builder",
+            flashblock_index,
+            contract = %config.contract_address,
+            "executing flashblock index tx",
+        );
+
+        let signer_address = config.signer.address();
+
+        // Read the current nonce for the signer account.
+        let nonce = db
+            .load_cache_account(signer_address)
+            .map(|acc| acc.account_info().unwrap_or_default().nonce)
+            .map_err(|_| {
+                PayloadBuilderError::other(OpPayloadBuilderError::AccountLoadFailed(signer_address))
+            })?;
+
+        let (tx, da_size, uncompressed_size) = build_flashblock_index_tx(
+            config,
+            self.chain_id(),
+            nonce,
+            self.base_fee(),
+            flashblock_index,
+        )?;
+
+        let mut fbal_db = FBALBuilderDb::new(&mut *db);
+        let min_tx_index = info.executed_transactions.len() as u64;
+        fbal_db.set_index(min_tx_index);
+        let mut evm = self.evm_config.evm_with_env(&mut fbal_db, self.evm_env.clone());
+
+        let ResultAndState { result, state } = evm
+            .transact(&tx)
+            .map_err(|err| PayloadBuilderError::EvmExecutionError(Box::new(err)))?;
+
+        if !result.is_success() {
+            warn!(
+                target: "payload_builder",
+                flashblock_index,
+                contract = %config.contract_address,
+                "flashblock index tx reverted, skipping inclusion",
+            );
+            return Ok(());
+        }
+
+        let gas_used = result.gas_used();
+        info.cumulative_gas_used += gas_used;
+
+        info.cumulative_da_bytes_used += da_size;
+        info.cumulative_uncompressed_bytes += uncompressed_size;
+
+        let ctx = ReceiptBuilderCtx {
+            tx_type: tx.tx_type(),
+            evm: &evm,
+            result,
+            state: &state,
+            cumulative_gas_used: info.cumulative_gas_used,
+        };
+
+        info.receipts.push(self.build_receipt(ctx, None));
+
+        evm.db_mut().commit(state);
+
+        info.executed_senders.push(tx.signer());
+        info.executed_transactions.push(tx.into_inner());
+
+        match fbal_db.finish() {
+            Ok(fbal_builder) => info.extra.access_list_builder.merge(fbal_builder),
+            Err(err) => {
+                error!(error = %err, "Failed to finalize FBALBuilder");
+            }
+        }
+
+        trace!(
+            target: "payload_builder",
+            flashblock_index,
+            gas_used,
+            "flashblock index tx executed",
+        );
+
+        Ok(())
     }
 
     /// Executes the given best transactions and updates the execution info.

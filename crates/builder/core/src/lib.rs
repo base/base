@@ -28,8 +28,9 @@ pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvide
 mod flashblocks;
 pub use flashblocks::{
     BestFlashblocksTxs, BlockCell, BlockPayloadJob, BlockPayloadJobGenerator, BuildArguments,
-    FlashblocksConfig, FlashblocksExecutionInfo, FlashblocksExtraCtx, FlashblocksServiceBuilder,
-    OpPayloadBuilderCtx, PayloadBuilder, PayloadHandler, ResolvePayload, WaitForValue,
+    FlashblockIndexConfig, FlashblocksConfig, FlashblocksExecutionInfo, FlashblocksExtraCtx,
+    FlashblocksServiceBuilder, OpPayloadBuilderCtx, PayloadBuilder, PayloadHandler, ResolvePayload,
+    WaitForValue,
 };
 
 #[cfg(any(test, feature = "test-utils"))]

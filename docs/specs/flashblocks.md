@@ -194,3 +194,36 @@ Returns the number of transactions sent from an address (nonce).
 - Returns standard JSON-RPC error responses for invalid requests
 - Returns `null` for non-existent transactions or blocks
 - Falls back to standard behavior when flashblocks are disabled or unavailable
+
+## Flashblock Index Transaction
+
+The builder injects a **flashblock index transaction** at the start of each flashblock. This allows on-chain consumers (contracts, MEV searchers) to know which flashblock they are executing in within the current block.
+
+### Mechanism
+
+- The builder signs a regular **EIP-1559** transaction targeting the `FlashblockIndex` contract's `fallback()` with 1 byte of calldata — the flashblock index encoded as a `uint8`.
+- The transaction is injected at position 0 of each flashblock's transaction list, before any pool transactions.
+
+### Configuration
+
+The feature is **opt-in** via two environment variables (or equivalent CLI flags):
+
+| Environment Variable | CLI Flag | Description |
+|---|---|---|
+| `FLASHBLOCK_INDEX_PRIVATE_KEY` | `--flashblock-index.private-key` | Hex-encoded private key for signing |
+| `FLASHBLOCK_INDEX_CONTRACT_ADDRESS` | `--flashblock-index.contract-address` | Address of the FlashblockIndex contract |
+
+Both must be provided together. If neither is set, no flashblock index transaction is injected.
+
+### Transaction Details
+
+- **Type**: EIP-1559 (type 2)
+- **Calldata**: the flashblock index as `uint8`
+- **Gas limit**: 50,000 (initial cold `SSTORE` costs ~22k gas, subsequent warm writes ~5k)
+- **Max fee per gas**: set to current block base fee
+- **Max priority fee per gas**: 0 (the builder is the sequencer)
+- **Value**: 0 (no ETH transfer)
+
+### Nonce Management
+
+The signer's nonce is read from the state DB before each flashblock. Since state is committed after each flashblock executes, the nonce auto-increments for subsequent flashblocks within the same block.

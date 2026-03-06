@@ -28,6 +28,10 @@ base-execution-cli = { workspace = true, features = ["otlp"] }
 base-node-core.workspace = true
 reth-cli-util.workspace = true
 
+# alloy
+alloy-primitives.workspace = true
+alloy-signer-local.workspace = true
+
 # cli
 clap.workspace = true
 

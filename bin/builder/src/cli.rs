@@ -3,7 +3,11 @@
 use core::{convert::TryFrom, net::SocketAddr, time::Duration};
 use std::sync::Arc;
 
-use base_builder_core::{BuilderConfig, ExecutionMeteringMode, FlashblocksConfig};
+use alloy_primitives::Address;
+use alloy_signer_local::PrivateKeySigner;
+use base_builder_core::{
+    BuilderConfig, ExecutionMeteringMode, FlashblockIndexConfig, FlashblocksConfig,
+};
 use base_builder_metering::MeteringStore;
 use base_node_core::args::RollupArgs;
 
@@ -74,6 +78,30 @@ impl Default for FlashblocksArgs {
     }
 }
 
+/// Parameters for the optional flashblock index transaction signer.
+///
+/// When both `private_key` and `contract_address` are provided, the builder
+/// injects a flashblock index tx at the start of each flashblock.
+#[derive(Clone, Default, PartialEq, Eq, clap::Args)]
+pub struct FlashblockIndexArgs {
+    /// Hex-encoded private key for signing flashblock index transactions.
+    #[arg(long = "flashblock-index.private-key", env = "FLASHBLOCK_INDEX_PRIVATE_KEY")]
+    pub private_key: Option<String>,
+
+    /// Address of the `FlashblockIndex` contract.
+    #[arg(long = "flashblock-index.contract-address", env = "FLASHBLOCK_INDEX_CONTRACT_ADDRESS")]
+    pub contract_address: Option<Address>,
+}
+
+impl core::fmt::Debug for FlashblockIndexArgs {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("FlashblockIndexArgs")
+            .field("private_key", &self.private_key.as_ref().map(|_| "[redacted]"))
+            .field("contract_address", &self.contract_address)
+            .finish()
+    }
+}
+
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Rollup")]
@@ -133,6 +161,10 @@ pub struct Args {
     /// Flashblocks configuration
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
+
+    /// Flashblock index tx signer configuration
+    #[command(flatten)]
+    pub flashblock_index: FlashblockIndexArgs,
 }
 
 impl Args {
@@ -162,6 +194,26 @@ impl Default for Args {
             tx_data_store_buffer_size: 10000,
             sampling_ratio: 100,
             flashblocks: FlashblocksArgs::default(),
+            flashblock_index: FlashblockIndexArgs::default(),
+        }
+    }
+}
+
+impl FlashblockIndexArgs {
+    /// Parses the CLI args into a [`FlashblockIndexConfig`], if both fields are provided.
+    fn into_config(self) -> eyre::Result<Option<FlashblockIndexConfig>> {
+        match (self.private_key, self.contract_address) {
+            (Some(key_hex), Some(contract_address)) => {
+                let signer: PrivateKeySigner = key_hex
+                    .parse()
+                    .map_err(|e| eyre::eyre!("invalid flashblock-index private key: {e}"))?;
+
+                Ok(Some(FlashblockIndexConfig { signer, contract_address }))
+            }
+            (None, None) => Ok(None),
+            _ => Err(eyre::eyre!(
+                "both --flashblock-index.private-key and --flashblock-index.contract-address must be provided together"
+            )),
         }
     }
 }
@@ -172,6 +224,7 @@ impl TryFrom<Args> for BuilderConfig {
     fn try_from(args: Args) -> Result<Self, Self::Error> {
         let flashblocks = FlashblocksConfig::try_from(&args)?;
         let metering_store = args.build_metering_store();
+        let flashblock_index = args.flashblock_index.into_config()?;
         Ok(Self {
             block_time: Duration::from_millis(args.chain_block_time),
             block_time_leeway: Duration::from_secs(args.extra_block_deadline_secs),
@@ -187,6 +240,7 @@ impl TryFrom<Args> for BuilderConfig {
             max_uncompressed_block_size: args.max_uncompressed_block_size,
             metering_provider: Arc::new(metering_store),
             flashblocks,
+            flashblock_index,
         })
     }
 }
@@ -335,5 +389,66 @@ mod tests {
         assert_eq!(config.flashblocks.interval, Duration::from_millis(200));
         assert_eq!(config.flashblocks.leeway_time, Duration::from_millis(50));
         assert!(config.flashblocks.fixed);
+    }
+
+    #[test]
+    fn flashblock_index_both_provided() {
+        let addr: Address = "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".parse().unwrap();
+        let args = FlashblockIndexArgs {
+            private_key: Some(
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
+            ),
+            contract_address: Some(addr),
+        };
+        let config = args.into_config().unwrap().unwrap();
+        assert_eq!(config.contract_address, addr);
+    }
+
+    #[test]
+    fn flashblock_index_none_provided() {
+        let args = FlashblockIndexArgs { private_key: None, contract_address: None };
+        let config = args.into_config().unwrap();
+        assert!(config.is_none());
+    }
+
+    #[test]
+    fn flashblock_index_only_key_provided() {
+        let args = FlashblockIndexArgs {
+            private_key: Some(
+                "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
+            ),
+            contract_address: None,
+        };
+        assert!(args.into_config().is_err());
+    }
+
+    #[test]
+    fn flashblock_index_only_address_provided() {
+        let addr: Address = "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".parse().unwrap();
+        let args = FlashblockIndexArgs { private_key: None, contract_address: Some(addr) };
+        assert!(args.into_config().is_err());
+    }
+
+    #[test]
+    fn flashblock_index_invalid_key_hex() {
+        let addr: Address = "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".parse().unwrap();
+        let args = FlashblockIndexArgs {
+            private_key: Some("not_hex".to_string()),
+            contract_address: Some(addr),
+        };
+        assert!(args.into_config().is_err());
+    }
+
+    #[test]
+    fn flashblock_index_key_without_0x_prefix() {
+        let addr: Address = "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF".parse().unwrap();
+        let args = FlashblockIndexArgs {
+            private_key: Some(
+                "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
+            ),
+            contract_address: Some(addr),
+        };
+        let config = args.into_config().unwrap();
+        assert!(config.is_some());
     }
 }

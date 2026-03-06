@@ -237,6 +237,9 @@ base-proofs-extension = { path = "crates/client/proofs" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
 base-macros = { path = "crates/utilities/macros", default-features = false }
 
+# base/contracts bindings
+base-contracts-bindings = { git = "https://github.com/base/contracts", branch = "bo/chain-3336" }
+
 # revm
 revm = { version = "34.0.0", default-features = false }
 revm-bytecode = { version = "8.0.0", default-features = false }
