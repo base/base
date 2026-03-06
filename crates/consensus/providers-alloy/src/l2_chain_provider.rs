@@ -230,13 +230,11 @@ mod tests {
         assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
 
         // L2BlockInfoConstruction is a decode failure — transient.
-        let kind: PipelineErrorKind =
-            AlloyL2ChainProviderError::L2BlockInfoConstruction(0).into();
+        let kind: PipelineErrorKind = AlloyL2ChainProviderError::L2BlockInfoConstruction(0).into();
         assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
 
         // SystemConfigConversion is a decode failure — transient.
-        let kind: PipelineErrorKind =
-            AlloyL2ChainProviderError::SystemConfigConversion(0).into();
+        let kind: PipelineErrorKind = AlloyL2ChainProviderError::SystemConfigConversion(0).into();
         assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
 
         // L2 BlockNotFound: the pipeline only requests blocks that should exist on the
