@@ -10,7 +10,7 @@ use url::Url;
 base_cli_utils::define_log_args!("BASE_PROPOSER");
 base_cli_utils::define_metrics_args!("BASE_PROPOSER", 7300);
 
-/// Proposer - TEE-based output proposal generation for Base chains.
+/// Proposer - TEE-based output proposal generation for Base.
 #[derive(Debug, Clone, Parser)]
 #[command(name = "proposer")]
 #[command(version, about, long_about = None)]

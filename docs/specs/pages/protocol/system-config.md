@@ -4,8 +4,7 @@
 
 The `SystemConfig` is a contract on L1 that can emit rollup configuration changes as log events.
 The rollup [block derivation process](derivation.md) picks up on these log events and applies the
-changes. `SystemConfig` generally acts as the source of truth for configuration values within an
-Base chain.
+changes. `SystemConfig` generally acts as the source of truth for configuration values within Base.
 
 ## Definitions
 

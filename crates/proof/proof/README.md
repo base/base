@@ -1,3 +1,3 @@
 # `base-proof`
 
-`base-proof` is an Base state transition proof SDK.
+`base-proof` is a Base state transition proof SDK.

@@ -12,7 +12,7 @@ use crate::{
     transaction::{OpDepositInfo, OpTransactionInfo},
 };
 
-/// The Ethereum [EIP-2718] Transaction Envelope, modified for Base chains.
+/// The Ethereum [EIP-2718] Transaction Envelope, modified for Base.
 ///
 /// # Note:
 ///

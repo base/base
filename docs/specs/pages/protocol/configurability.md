@@ -20,7 +20,7 @@ There are four categories of Base configuration options:
   operations of the chain, and therefore are often hot wallets.
 
 Each category also defines the standard configuration values for it's given parameters.
-Standard configuration is the set of requirements for an Base chain to be considered a
+Standard configuration is the set of requirements for Base to be considered a
 Standard Chain within the superchain.
 These requirements are currently a draft, pending governance approval.
 

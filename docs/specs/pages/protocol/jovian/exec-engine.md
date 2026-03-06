@@ -4,7 +4,7 @@
 
 Jovian introduces a
 [configurable minimum base fee](https://github.com/ethereum-optimism/design-docs/blob/main/protocol/minimum-base-fee.md)
-to reduce the duration of priority-fee auctions on Base chains.
+to reduce the duration of priority-fee auctions on Base.
 
 The minimum base fee is configured via `SystemConfig` (see `./system-config.md`) and enforced by the execution engine
 via the block header `extraData` encoding and the Engine API `PayloadAttributesV3` parameters.
@@ -99,7 +99,7 @@ are defined in the [Fjord specs](../fjord/exec-engine.md), `DEPOSIT_TX_TYPE` is 
 and `//` represents integer floor division.
 
 From Jovian, the `blobGasUsed` property of each block header is set to that block's `daFootprint`. Note that pre-Jovian,
-since Ecotone, it was set to 0, as Base chains don't support blobs. It is now repurposed to store the DA footprint.
+since Ecotone, it was set to 0, as Base does not support blobs. It is now repurposed to store the DA footprint.
 
 During block building and header validation, it must be guaranteed and checked, respectively, that the block's
 `daFootprint` stays below the `gasLimit`, just like the `gasUsed` property.

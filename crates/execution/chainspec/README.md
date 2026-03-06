@@ -17,7 +17,7 @@ hardfork schedule:
 - `OP_DEV` - Local dev chain with all hardforks active at genesis, prefunded test accounts.
 
 The genesis header is derived at startup from the genesis JSON using `make_op_genesis_header`,
-which computes the correct state root, storage root, and other fields for Base chains.
+which computes the correct state root, storage root, and other fields for Base.
 
 Chain names are resolved from CLI strings via `parse_op_chain_spec`, which maps `"base"`,
 `"base_sepolia"`, `"base-sepolia"`, and `"dev"` to the corresponding static spec.

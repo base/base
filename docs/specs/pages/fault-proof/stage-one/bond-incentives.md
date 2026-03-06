@@ -194,7 +194,7 @@ correct address into `withdraw`.
 
 #### Delay Period
 
-We propose a delay period of 7 days for most Base chains. 7 days provides sufficient time for the `owner()` of the
+We propose a delay period of 7 days for Base. 7 days provides sufficient time for the `owner()` of the
 `DelayedWETH` contract to act even if that owner is a large multisig that requires action from many different members
 over multiple timezones.
 

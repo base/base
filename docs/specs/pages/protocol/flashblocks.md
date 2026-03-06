@@ -309,7 +309,7 @@ strong coordination with the Base team at the outset, and given the complexity o
 existing protocol boundaries was the most pragmatic approach.
 
 This constraint ultimately proved beneficial, as it forced the design to be minimally invasive. Flashblocks can be
-implemented immediately on any Base chain without waiting for protocol upgrades or network-wide consensus.
+implemented immediately on Base without waiting for protocol upgrades or network-wide consensus.
 
 Any issues with the Flashblocks implementation remain isolated from the core protocol, protecting overall network
 stability. In case of serious problems, Flashblocks can be disabled entirely, allowing the system to revert to normal

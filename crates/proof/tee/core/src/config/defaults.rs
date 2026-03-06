@@ -152,7 +152,7 @@ pub fn sepolia_l1_config() -> L1ChainConfig {
 
 /// Return the L1 config inferred from a known L2 chain ID.
 ///
-/// Supports common Base chains:
+/// Supports common Base:
 /// - mainnet-backed L2s (`8453`) -> Ethereum mainnet L1
 /// - sepolia-backed L2s (`84532`) -> Sepolia L1
 #[must_use]

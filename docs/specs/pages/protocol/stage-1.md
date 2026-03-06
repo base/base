@@ -2,9 +2,9 @@
 
 ## Overview
 
-This document describes the requirements necessary for an Base implementation to satisfy the
+This document describes the requirements necessary for a Base implementation to satisfy the
 Stage 1 decentralization requirements [as defined by L2BEAT][stage-1]. It also defines the specific
-roles and capabilities for an Base chain in the standard configuration that will satisfy these
+roles and capabilities for Base in the standard configuration that will satisfy these
 requirements.
 
 ## Definitions
@@ -27,7 +27,7 @@ Generally speaking "liveness" means nothing gets bricked and "safety" means noth
 ### Proxy Admin Owner
 
 The **Proxy Admin Owner** is a dedicated role in Base that is permitted to upgrade the
-contracts that make up an Base chain's onchain footprint. In the Superchain, the Upgrade
+contracts that make up Base's onchain footprint. In the Superchain, the Upgrade
 Controller role is held jointly in a 2/2 of the Optimism Security Council and the Optimism
 Foundation.
 
@@ -116,20 +116,20 @@ property:
 ## Base Stage 1 Design
 
 The above definitions and requirements have a number of concrete implications for the Standard
-Configuration of Base. We therefore specify the following architecture for a Stage 1 Base chain.
+Configuration of Base. We therefore specify the following architecture for Stage 1 Base.
 
 ### Permissionless Fault Proofs
 
-A Stage 1 Base chain must operate a _permissionless_ Fault Proof system.
+Base must operate a _permissionless_ Fault Proof system.
 
 ### Security Council
 
-A Stage 1 Base chain must have a Security Council.
+Base must have a Security Council.
 
 ### Proxy Admin Owner
 
 The [Proxy Admin Owner](#proxy-admin-owner) role in Base is a privileged role that is
-allowed to upgrade the smart contracts that make up an Base chain's onchain footprint. This
+allowed to upgrade the smart contracts that make up Base's onchain footprint. This
 role must require sign-off from the Security Council. This specifically means that the role can
 either be entirely held by the Security Council or by some other configuration as long as the
 Security Council is a required signatory (e.g., a 2/2 multisig).

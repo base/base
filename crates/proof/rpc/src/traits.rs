@@ -43,7 +43,7 @@ pub trait L1Provider: Send + Sync {
     async fn get_balance(&self, address: Address) -> RpcResult<U256>;
 }
 
-/// L2 RPC provider trait for interacting with Base chains.
+/// L2 RPC provider trait for interacting with Base.
 #[async_trait]
 pub trait L2Provider: Send + Sync {
     /// Gets the chain configuration via `debug_chainConfig`.

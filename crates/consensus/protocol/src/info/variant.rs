@@ -21,7 +21,7 @@ use crate::{
 const REGOLITH_SYSTEM_TX_GAS: u64 = 1_000_000;
 
 /// The [`L1BlockInfoTx`] enum contains variants for the different versions of the L1 block info
-/// transaction on Base chains.
+/// transaction on Base.
 ///
 /// This transaction always sits at the top of the block, and alters the `L1 Block` contract's
 /// knowledge of the L1 chain.
