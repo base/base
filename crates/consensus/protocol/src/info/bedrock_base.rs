@@ -68,7 +68,6 @@ impl L1BlockInfoBedrockBaseFields for L1BlockInfoBedrockBase {
 
 impl L1BlockInfoBedrockBase {
     /// Construct from all values.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new(
         number: u64,
         time: u64,

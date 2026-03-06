@@ -171,7 +171,7 @@ where
                     );
 
                     match validity {
-                        BatchValidity::Accept => self.span = Some(b),
+                        BatchValidity::Accept => self.span = Some(*b),
                         BatchValidity::Drop(_) => {
                             // Flush the stage.
                             self.flush();
@@ -353,7 +353,7 @@ mod test {
         };
         let mock_origins = [BlockInfo { number: 1, timestamp: 12, ..Default::default() }];
 
-        let data = vec![Ok(Batch::Span(mock_batch.clone()))];
+        let data = vec![Ok(Batch::Span(Box::new(mock_batch.clone())))];
         let config = Arc::new(RollupConfig {
             block_time: 2,
             hardforks: HardForkConfig {
@@ -393,7 +393,7 @@ mod test {
         assert!(stream.span.is_none());
 
         // Add more data into the provider, see if the buffer is re-hydrated.
-        stream.prev.batches.push(Ok(Batch::Span(mock_batch.clone())));
+        stream.prev.batches.push(Ok(Batch::Span(Box::new(mock_batch.clone()))));
 
         // The next batches should be single batches derived from the span batch.
         let batch = stream.next_batch(Default::default(), &mock_origins).await.unwrap();
@@ -476,7 +476,7 @@ mod test {
             ..Default::default()
         };
 
-        let mut prev = TestBatchStreamProvider::new(vec![Ok(Batch::Span(span_batch))]);
+        let mut prev = TestBatchStreamProvider::new(vec![Ok(Batch::Span(Box::new(span_batch)))]);
         prev.origin = Some(l1_block);
 
         let mut provider = TestL2ChainProvider::default();
@@ -530,7 +530,7 @@ mod test {
             ..Default::default()
         };
         let mock_origins = [BlockInfo { number: 1, timestamp: 12, ..Default::default() }];
-        let data = vec![Ok(Batch::Span(mock_batch))];
+        let data = vec![Ok(Batch::Span(Box::new(mock_batch)))];
 
         let config = Arc::new(RollupConfig {
             hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },

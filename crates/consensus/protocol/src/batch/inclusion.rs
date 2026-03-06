@@ -66,7 +66,7 @@ mod tests {
     #[tokio::test]
     async fn test_span_batch_with_inclusion_block() {
         let batch =
-            BatchWithInclusionBlock::new(BlockInfo::default(), Batch::Span(Default::default()));
+            BatchWithInclusionBlock::new(BlockInfo::default(), Batch::Span(Box::default()));
         let l1_blocks = vec![BlockInfo::default()];
         let l2_safe_head = L2BlockInfo::default();
         let cfg = RollupConfig::default();

@@ -1,5 +1,7 @@
 //! Module containing the core [`Batch`] enum.
 
+use alloc::boxed::Box;
+
 use alloy_primitives::bytes;
 use alloy_rlp::{Buf, Decodable, Encodable};
 use base_consensus_genesis::RollupConfig;
@@ -10,12 +12,11 @@ use crate::{
 
 /// A Batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(clippy::large_enum_variant)]
 pub enum Batch {
     /// A single batch
     Single(SingleBatch),
     /// Span Batches
-    Span(SpanBatch),
+    Span(Box<SpanBatch>),
 }
 
 impl core::fmt::Display for Batch {
@@ -57,7 +58,7 @@ impl Batch {
                 let span_batch = raw_span_batch
                     .derive(cfg.block_time, cfg.genesis.l2_time, cfg.l2_chain_id.id())
                     .map_err(BatchDecodingError::SpanBatchError)?;
-                Ok(Self::Span(span_batch))
+                Ok(Self::Span(Box::new(span_batch)))
             }
         }
     }
@@ -116,28 +117,28 @@ mod tests {
         span_batch_txs.add_txs(txs, chain_id).unwrap();
 
         let mut out = Vec::new();
-        let batch = Batch::Span(SpanBatch {
+        let batch = Batch::Span(Box::new(SpanBatch {
             block_tx_counts: vec![1],
             batches: vec![SpanBatchElement::default()],
             txs: span_batch_txs,
             ..Default::default()
-        });
+        }));
         batch.encode(&mut out).unwrap();
         let decoded = Batch::decode(&mut out.as_slice(), &RollupConfig::default()).unwrap();
-        assert_eq!(Batch::Span(SpanBatch {
+        assert_eq!(Batch::Span(Box::new(SpanBatch {
             batches: vec![SpanBatchElement {
                 transactions: vec![hex!("01f85f808080809401234567890123456789012345678901234567898080c080a0840cfc572845f5786e702984c2a582528cad4b49b2a10b9db1be7fca90058565a025e7109ceb98168d95b09b18bbf6b685130e0562f233877d492b94eee0c5b6d1").into()],
                 ..Default::default()
             }],
             txs: SpanBatchTransactions::default(),
             ..Default::default()
-        }), decoded);
+        })), decoded);
     }
 
     #[test]
     fn test_empty_span_batch() {
         let mut out = Vec::new();
-        let batch = Batch::Span(SpanBatch::default());
+        let batch = Batch::Span(Box::default());
         // Fails to even encode an empty span batch - decoding will do the same
         let err = batch.encode(&mut out).unwrap_err();
         assert_eq!(BatchEncodingError::SpanBatchError(SpanBatchError::EmptySpanBatch), err);

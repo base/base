@@ -3,18 +3,11 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Address, B256, Bytes};
-use ambassador::{Delegate, delegatable_trait};
-
 use crate::{
     DecodeError,
     info::{
-        bedrock_base::{
-            L1BlockInfoBedrockBaseFields, ambassador_impl_L1BlockInfoBedrockBaseFields,
-        },
-        ecotone_base::{
-            L1BlockInfoEcotoneBase, L1BlockInfoEcotoneBaseFields,
-            ambassador_impl_L1BlockInfoEcotoneBaseFields,
-        },
+        bedrock_base::L1BlockInfoBedrockBaseFields,
+        ecotone_base::{L1BlockInfoEcotoneBase, L1BlockInfoEcotoneBaseFields},
     },
 };
 
@@ -37,10 +30,7 @@ use crate::{
 /// | 4       | `OperatorFeeScalar`        |
 /// | 8       | `OperatorFeeConstant`      |
 /// +---------+--------------------------+
-#[derive(Debug, Clone, Hash, Eq, PartialEq, Default, Copy, Delegate)]
-#[allow(clippy::duplicated_attributes)]
-#[delegate(L1BlockInfoBedrockBaseFields, target = "base")]
-#[delegate(L1BlockInfoEcotoneBaseFields, target = "base")]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Default, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct L1BlockInfoIsthmus {
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -52,7 +42,6 @@ pub struct L1BlockInfoIsthmus {
 }
 
 /// Accessors for fields in Isthmus and later.
-#[delegatable_trait]
 pub trait L1BlockInfoIsthmusBaseFields: L1BlockInfoEcotoneBaseFields {
     /// The operator fee scalar
     fn operator_fee_scalar(&self) -> u32;
@@ -68,6 +57,46 @@ impl L1BlockInfoIsthmusBaseFields for L1BlockInfoIsthmus {
     /// The operator fee constant
     fn operator_fee_constant(&self) -> u64 {
         self.operator_fee_constant
+    }
+}
+
+impl L1BlockInfoBedrockBaseFields for L1BlockInfoIsthmus {
+    fn number(&self) -> u64 {
+        self.base.number()
+    }
+
+    fn time(&self) -> u64 {
+        self.base.time()
+    }
+
+    fn base_fee(&self) -> u64 {
+        self.base.base_fee()
+    }
+
+    fn block_hash(&self) -> B256 {
+        self.base.block_hash()
+    }
+
+    fn sequence_number(&self) -> u64 {
+        self.base.sequence_number()
+    }
+
+    fn batcher_address(&self) -> Address {
+        self.base.batcher_address()
+    }
+}
+
+impl L1BlockInfoEcotoneBaseFields for L1BlockInfoIsthmus {
+    fn blob_base_fee(&self) -> u128 {
+        self.base.blob_base_fee()
+    }
+
+    fn blob_base_fee_scalar(&self) -> u32 {
+        self.base.blob_base_fee_scalar()
+    }
+
+    fn base_fee_scalar(&self) -> u32 {
+        self.base.base_fee_scalar()
     }
 }
 

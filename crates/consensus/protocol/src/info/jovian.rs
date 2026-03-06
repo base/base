@@ -3,15 +3,12 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Address, B256, Bytes};
-use ambassador::{self, Delegate};
 
 use crate::{
     DecodeError, L1BlockInfoIsthmus,
     info::{
         L1BlockInfoBedrockBaseFields, L1BlockInfoEcotoneBaseFields,
-        bedrock_base::ambassador_impl_L1BlockInfoBedrockBaseFields,
-        ecotone_base::ambassador_impl_L1BlockInfoEcotoneBaseFields,
-        isthmus::{L1BlockInfoIsthmusBaseFields, ambassador_impl_L1BlockInfoIsthmusBaseFields},
+        isthmus::L1BlockInfoIsthmusBaseFields,
     },
 };
 
@@ -35,12 +32,8 @@ use crate::{
 /// | 8       | `OperatorFeeConstant`      |
 /// | 2       | `DAFootprintGasScalar`     |
 /// +---------+--------------------------+
-#[derive(Debug, Clone, Hash, Eq, PartialEq, Default, Copy, Delegate)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Default, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[allow(clippy::duplicated_attributes)]
-#[delegate(L1BlockInfoBedrockBaseFields, target = "base")]
-#[delegate(L1BlockInfoEcotoneBaseFields, target = "base")]
-#[delegate(L1BlockInfoIsthmusBaseFields, target = "base")]
 pub struct L1BlockInfoJovian {
     /// Fields inherited from Isthmus.
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -57,6 +50,56 @@ pub trait L1BlockInfoJovianBaseFields: L1BlockInfoIsthmusBaseFields {
 impl L1BlockInfoJovianBaseFields for L1BlockInfoJovian {
     fn da_footprint_gas_scalar(&self) -> u16 {
         self.da_footprint_gas_scalar
+    }
+}
+
+impl L1BlockInfoBedrockBaseFields for L1BlockInfoJovian {
+    fn number(&self) -> u64 {
+        self.base.number()
+    }
+
+    fn time(&self) -> u64 {
+        self.base.time()
+    }
+
+    fn base_fee(&self) -> u64 {
+        self.base.base_fee()
+    }
+
+    fn block_hash(&self) -> B256 {
+        self.base.block_hash()
+    }
+
+    fn sequence_number(&self) -> u64 {
+        self.base.sequence_number()
+    }
+
+    fn batcher_address(&self) -> Address {
+        self.base.batcher_address()
+    }
+}
+
+impl L1BlockInfoEcotoneBaseFields for L1BlockInfoJovian {
+    fn blob_base_fee(&self) -> u128 {
+        self.base.blob_base_fee()
+    }
+
+    fn blob_base_fee_scalar(&self) -> u32 {
+        self.base.blob_base_fee_scalar()
+    }
+
+    fn base_fee_scalar(&self) -> u32 {
+        self.base.base_fee_scalar()
+    }
+}
+
+impl L1BlockInfoIsthmusBaseFields for L1BlockInfoJovian {
+    fn operator_fee_scalar(&self) -> u32 {
+        self.base.operator_fee_scalar()
+    }
+
+    fn operator_fee_constant(&self) -> u64 {
+        self.base.operator_fee_constant()
     }
 }
 

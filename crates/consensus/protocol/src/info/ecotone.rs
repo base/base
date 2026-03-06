@@ -3,16 +3,13 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use ambassador::Delegate;
 
 use crate::{
     DecodeError,
     info::{
         L1BlockInfoEcotoneBaseFields,
-        bedrock_base::{
-            L1BlockInfoBedrockBaseFields, ambassador_impl_L1BlockInfoBedrockBaseFields,
-        },
-        ecotone_base::{L1BlockInfoEcotoneBase, ambassador_impl_L1BlockInfoEcotoneBaseFields},
+        bedrock_base::L1BlockInfoBedrockBaseFields,
+        ecotone_base::L1BlockInfoEcotoneBase,
     },
 };
 
@@ -33,10 +30,7 @@ use crate::{
 /// | 32      | `BlockHash`                |
 /// | 32      | `BatcherHash`              |
 /// +---------+--------------------------+
-#[derive(Debug, Clone, Hash, Eq, PartialEq, Default, Copy, Delegate)]
-#[allow(clippy::duplicated_attributes)]
-#[delegate(L1BlockInfoBedrockBaseFields, target = "base")]
-#[delegate(L1BlockInfoEcotoneBaseFields, target = "base")]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Default, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct L1BlockInfoEcotone {
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -73,6 +67,46 @@ impl L1BlockInfoEcotoneOnlyFields for L1BlockInfoEcotone {
 
     fn l1_fee_overhead(&self) -> U256 {
         self.l1_fee_overhead
+    }
+}
+
+impl L1BlockInfoBedrockBaseFields for L1BlockInfoEcotone {
+    fn number(&self) -> u64 {
+        self.base.number()
+    }
+
+    fn time(&self) -> u64 {
+        self.base.time()
+    }
+
+    fn base_fee(&self) -> u64 {
+        self.base.base_fee()
+    }
+
+    fn block_hash(&self) -> B256 {
+        self.base.block_hash()
+    }
+
+    fn sequence_number(&self) -> u64 {
+        self.base.sequence_number()
+    }
+
+    fn batcher_address(&self) -> Address {
+        self.base.batcher_address()
+    }
+}
+
+impl L1BlockInfoEcotoneBaseFields for L1BlockInfoEcotone {
+    fn blob_base_fee(&self) -> u128 {
+        self.base.blob_base_fee()
+    }
+
+    fn blob_base_fee_scalar(&self) -> u32 {
+        self.base.blob_base_fee_scalar()
+    }
+
+    fn base_fee_scalar(&self) -> u32 {
+        self.base.base_fee_scalar()
     }
 }
 

@@ -327,12 +327,12 @@ where
 
 #[cfg(test)]
 mod test {
-    use alloc::{sync::Arc, vec, vec::Vec};
+    use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 
     use alloy_eips::{BlockNumHash, NumHash};
     use alloy_primitives::B256;
     use base_consensus_genesis::{HardForkConfig, RollupConfig};
-    use base_protocol::{Batch, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch};
+    use base_protocol::{Batch, BlockInfo, L2BlockInfo, SingleBatch};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 
@@ -494,7 +494,7 @@ mod test {
     #[tokio::test]
     async fn test_batch_validator_received_span_batch() {
         let cfg = Arc::new(RollupConfig::default());
-        let mut mock = TestNextBatchProvider::new(vec![Ok(Batch::Span(SpanBatch::default()))]);
+        let mut mock = TestNextBatchProvider::new(vec![Ok(Batch::Span(Box::default()))]);
         mock.origin = Some(BlockInfo { number: 1, ..Default::default() });
         let mut bv = BatchValidator::new(cfg, mock);
         bv.origin = Some(BlockInfo::default());

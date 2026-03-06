@@ -547,12 +547,12 @@ impl SpanBatch {
                     );
                     return BatchValidity::Drop(BatchDropReason::OverlappedTxCountMismatch);
                 }
-                let batch_txs_len = batch_txs.len();
-                #[allow(clippy::needless_range_loop)]
-                for j in 0..batch_txs_len {
+                for (safe_tx, batch_tx) in
+                    safe_block.transactions[deposit_count..].iter().zip(batch_txs.iter())
+                {
                     let mut buf = Vec::new();
-                    safe_block.transactions[j + deposit_count].encode_2718(&mut buf);
-                    if buf != batch_txs[j].0 {
+                    safe_tx.encode_2718(&mut buf);
+                    if buf != batch_tx.0 {
                         warn!(target: "batch_span", "overlapped block's transaction does not match");
                         return BatchValidity::Drop(BatchDropReason::OverlappedTxMismatch);
                     }
