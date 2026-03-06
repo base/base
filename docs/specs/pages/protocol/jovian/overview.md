@@ -1,4 +1,4 @@
-# Jovian Network Upgrade
+# Jovian
 
 ## Activation Timestamps
 

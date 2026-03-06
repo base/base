@@ -166,7 +166,7 @@ function withEvmSection(items: SidebarItem[]): SidebarItem[] {
 const sidebar: SidebarItem[] = [
   { text: 'Home', link: '/' },
   {
-    text: 'Hardforks',
+    text: 'Upgrades',
     items: [
       { text: 'Jovian', link: '/protocol/jovian/overview' },
       { text: 'Isthmus', link: '/protocol/isthmus/overview' },
