@@ -226,4 +226,81 @@ mod tests {
                 < fb2_first.effective_tip_per_gas(MIN_PROTOCOL_BASE_FEE)
         );
     }
+
+    /// Reproduces the nonce-chain queuing bug caused by `prune_transactions`.
+    ///
+    /// After FB1 prunes executed nonce-0 txs, the pool's on-chain nonce view is stale
+    /// (block not sealed), so nonce-1 txs from the same senders land in `queued`
+    /// instead of `pending`, making them invisible to FB2+.
+    #[tokio::test]
+    async fn test_prune_transactions_causes_nonce_chain_queuing() {
+        use alloy_primitives::{Address, U256};
+        use reth_execution_types::ChangedAccount;
+        use reth_transaction_pool::{
+            BestTransactionsAttributes, TransactionOrigin, TransactionPool, TransactionPoolExt,
+            test_utils::testing_pool,
+        };
+
+        let pool = testing_pool();
+
+        let senders: Vec<Address> = (0..3).map(|_| Address::random()).collect();
+
+        // All senders submit nonce-0 txs
+        for sender in &senders {
+            let tx = MockTransaction::eip1559()
+                .with_sender(*sender)
+                .with_nonce(0)
+                .with_gas_limit(21_000)
+                .with_priority_fee(5_000_000_000)
+                .with_max_fee(100_000_000_000);
+            pool.add_transaction(TransactionOrigin::External, tx).await.unwrap();
+        }
+        assert_eq!(pool.pool_size().pending, 3);
+
+        // Simulate FB1: consume all nonce-0 txs, then prune them
+        let best_attrs = BestTransactionsAttributes::new(0, None);
+        let mut best_iter = pool.best_transactions_with_attributes(best_attrs);
+        let mut executed_hashes = Vec::new();
+        for tx in best_iter.by_ref() {
+            executed_hashes.push(*tx.hash());
+        }
+        drop(best_iter);
+        assert_eq!(executed_hashes.len(), 3);
+        pool.prune_transactions(executed_hashes);
+        assert_eq!(pool.pool_size().pending, 0);
+
+        // Senders submit nonce-1 txs (arrive between FB1 and FB2)
+        for sender in &senders {
+            let tx = MockTransaction::eip1559()
+                .with_sender(*sender)
+                .with_nonce(1)
+                .with_gas_limit(21_000)
+                .with_priority_fee(5_000_000_000)
+                .with_max_fee(100_000_000_000);
+            pool.add_transaction(TransactionOrigin::External, tx).await.unwrap();
+        }
+
+        // Bug: nonce-1 txs are queued (nonce gap) because pool still thinks on-chain nonce is 0
+        assert_eq!(pool.pool_size().pending, 0, "nonce-1 txs should be queued without fix");
+        assert_eq!(pool.pool_size().queued, 3, "nonce-1 txs land in queued due to stale nonce");
+
+        // Fix: update_accounts corrects the pool's nonce view, promoting queued -> pending.
+        // U256::MAX balance is fine here — testing_pool has no revm state to read from.
+        // Production code uses state.basic(address) for real balances.
+        let changed_accounts: Vec<ChangedAccount> = senders
+            .iter()
+            .map(|&address| ChangedAccount { address, nonce: 1, balance: U256::MAX })
+            .collect();
+        pool.update_accounts(changed_accounts);
+        assert_eq!(pool.pool_size().pending, 3, "nonce-1 txs should be pending after fix");
+        assert_eq!(pool.pool_size().queued, 0, "no txs should be queued after fix");
+
+        // FB2's iterator must see all 3 nonce-1 txs
+        let mut fb2_iter = pool.best_transactions_with_attributes(best_attrs);
+        let mut count = 0;
+        while fb2_iter.next().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 3);
+    }
 }
