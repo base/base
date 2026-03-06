@@ -131,6 +131,38 @@ function sectionItemWithoutDirs(
   }
 }
 
+const evmLinks = new Set(['/protocol/precompiles', '/protocol/predeploys', '/protocol/preinstalls'])
+
+function withEvmSection(items: SidebarItem[]): SidebarItem[] {
+  const remainingItems: SidebarItem[] = []
+  const groupedItems: SidebarItem[] = []
+  let insertIndex = -1
+
+  for (const item of items) {
+    if ('link' in item && item.link && evmLinks.has(item.link)) {
+      if (insertIndex === -1) insertIndex = remainingItems.length
+      groupedItems.push(item)
+      continue
+    }
+    remainingItems.push(item)
+  }
+
+  if (groupedItems.length === 0) return items
+  if (insertIndex === -1) insertIndex = remainingItems.length
+
+  const evmSection: SidebarItem = {
+    text: 'EVM',
+    items: groupedItems,
+    collapsed: true,
+  }
+
+  return [
+    ...remainingItems.slice(0, insertIndex),
+    evmSection,
+    ...remainingItems.slice(insertIndex),
+  ]
+}
+
 const sidebar: SidebarItem[] = [
   { text: 'Home', link: '/' },
   {
@@ -154,7 +186,7 @@ const sidebar: SidebarItem[] = [
       ['jovian', 'isthmus', 'holocene', 'granite', 'fjord', 'ecotone', 'delta', 'canyon', 'pectra-blob-schedule'],
       ['access-lists.md'],
     )
-    const protocolItems = protocol.items ?? []
+    const protocolItems = withEvmSection(protocol.items ?? [])
     return {
       ...protocol,
       items: [
