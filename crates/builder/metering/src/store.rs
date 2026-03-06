@@ -48,6 +48,7 @@ impl MeteringStore {
             && let Ok(evicted_hash) = self.lru.pop()
         {
             self.by_tx_hash.remove(&evicted_hash);
+            self.metrics.metering_store_lru_evictions.increment(1);
             debug!(
                 target: "metering_store",
                 evicted_tx = ?evicted_hash,
