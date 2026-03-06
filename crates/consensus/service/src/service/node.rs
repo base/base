@@ -27,6 +27,11 @@ use crate::{
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
+type LocalEngineActor = EngineActor<
+    EngineProcessor<OpEngineClient<RootProvider, RootProvider<Base>>, QueuedEngineDerivationClient>,
+    EngineRpcProcessor<OpEngineClient<RootProvider, RootProvider<Base>>>,
+>;
+
 const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
 const HEAD_STREAM_POLL_INTERVAL: u64 = 4;
 const FINALIZED_STREAM_POLL_INTERVAL: u64 = 60;
@@ -171,20 +176,13 @@ impl RollupNode {
     /// are not relevant to other actors or logic.
     /// Note: ignoring complex type warning. This type only pertains to this function, so it is
     /// better to have the full type here than have to piece it together from multiple type defs.
-    #[allow(clippy::type_complexity)]
     fn create_engine_actor(
         &self,
         cancellation_token: CancellationToken,
         engine_request_rx: mpsc::Receiver<EngineActorRequest>,
         derivation_client: QueuedEngineDerivationClient,
         unsafe_head_tx: watch::Sender<L2BlockInfo>,
-    ) -> EngineActor<
-        EngineProcessor<
-            OpEngineClient<RootProvider, RootProvider<Base>>,
-            QueuedEngineDerivationClient,
-        >,
-        EngineRpcProcessor<OpEngineClient<RootProvider, RootProvider<Base>>>,
-    > {
+    ) -> LocalEngineActor {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);

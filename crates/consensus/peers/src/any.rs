@@ -57,12 +57,11 @@ impl AnyNode {
     }
 }
 
-#[allow(clippy::from_over_into)]
-impl TryInto<DialOpts> for AnyNode {
+impl TryFrom<AnyNode> for DialOpts {
     type Error = DialOptsError;
 
-    fn try_into(self) -> Result<DialOpts, Self::Error> {
-        self.as_dial_opts()
+    fn try_from(node: AnyNode) -> Result<Self, Self::Error> {
+        node.as_dial_opts()
     }
 }
 

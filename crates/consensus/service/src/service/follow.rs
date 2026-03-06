@@ -13,6 +13,11 @@ use crate::{
     QueuedEngineDerivationClient,
 };
 
+type LocalEngineActor = EngineActor<
+    EngineProcessor<OpEngineClient<RootProvider, RootProvider<Base>>, QueuedEngineDerivationClient>,
+    EngineRpcProcessor<OpEngineClient<RootProvider, RootProvider<Base>>>,
+>;
+
 /// A lightweight node that follows another L2 node by polling its execution
 /// layer RPC and driving the local engine via `NewPayload` + FCU.
 ///
@@ -37,19 +42,12 @@ impl FollowNode {
         Self { config, engine_config, local_l2_provider, l2_source }
     }
 
-    #[allow(clippy::type_complexity)]
     fn create_engine_actor(
         &self,
         cancellation_token: CancellationToken,
         engine_request_rx: mpsc::Receiver<EngineActorRequest>,
         derivation_client: QueuedEngineDerivationClient,
-    ) -> EngineActor<
-        EngineProcessor<
-            OpEngineClient<RootProvider, RootProvider<Base>>,
-            QueuedEngineDerivationClient,
-        >,
-        EngineRpcProcessor<OpEngineClient<RootProvider, RootProvider<Base>>>,
-    > {
+    ) -> LocalEngineActor {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);
