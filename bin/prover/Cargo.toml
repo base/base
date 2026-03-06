@@ -20,8 +20,8 @@ workspace = true
 base-enclave-server.workspace = true
 
 # cli
-clap = { workspace = true, features = ["derive", "env"] }
 eyre.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
 
 # async
 tokio = { workspace = true, features = ["full"] }

@@ -56,52 +56,52 @@ test-utils = [
 # workspace
 base-bundles.workspace = true
 base-node-runner.workspace = true
-base-alloy-flashblocks.workspace = true
 base-access-lists.workspace = true
 base-builder-publish.workspace = true
+base-alloy-flashblocks.workspace = true
 
 # reth
+reth-db.workspace = true
 reth-cli.workspace = true
 reth-evm.workspace = true
 reth-trie.workspace = true
 reth-revm.workspace = true
 reth-tasks.workspace = true
+base-txpool.workspace = true
+reth-provider.workspace = true
+reth-node-api.workspace = true
+reth-cli-util.workspace = true
+base-node-core.workspace = true
 reth-metrics.workspace = true
 reth-rpc-api.workspace = true
-reth-provider.workspace = true
 reth-chainspec.workspace = true
 reth-rpc-layer.workspace = true
-reth-node-api.workspace = true
 reth-primitives.workspace = true
 reth-storage-api.workspace = true
 reth-chain-state.workspace = true
-reth-cli-util.workspace = true
-reth-cli-commands.workspace = true
+reth-payload-util.workspace = true
 reth-node-builder.workspace = true
 reth-network-peers.workspace = true
 reth-testing-utils.workspace = true
-reth-node-ethereum.workspace = true
-reth-payload-util.workspace = true
-reth-rpc-eth-types.workspace = true
 reth-tracing-otlp.workspace = true
+base-execution-evm.workspace = true
+reth-node-ethereum.workspace = true
+base-execution-forks.workspace = true
+reth-cli-commands.workspace = true
+reth-rpc-eth-types.workspace = true
 reth-execution-types.workspace = true
 reth-rpc-engine-api.workspace = true
 reth-payload-builder.workspace = true
-base-execution-evm.workspace = true
-base-node-core.workspace = true
 reth-primitives-traits.workspace = true
-base-execution-forks.workspace = true
-base-txpool.workspace = true
 reth-transaction-pool.workspace = true
 reth-payload-primitives.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
 base-execution-primitives.workspace = true
 reth-basic-payload-builder.workspace = true
+reth-ipc = { workspace = true, optional = true }
 reth-payload-builder-primitives.workspace = true
 base-execution-payload-builder.workspace = true
-reth-ipc = { workspace = true, optional = true }
-reth-db.workspace = true
 reth-node-core = { workspace = true, features = ["otlp"] }
 base-execution-rpc = { workspace = true, features = ["client"] }
 
@@ -110,32 +110,32 @@ revm.workspace = true
 base-revm.workspace = true
 
 # alloy
-alloy-eips = { workspace = true, features = ["std"] }
 alloy-evm.workspace = true
-alloy-serde = { workspace = true, features = ["std"] }
 alloy-signer.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-contract.workspace = true
-alloy-consensus = { workspace = true, features = ["std"] }
 alloy-transport.workspace = true
 alloy-json-rpc.workspace = true
 alloy-rpc-client.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
-alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-transport-http.workspace = true
 alloy-rpc-types-beacon.workspace = true
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-serde = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-sol-types = { workspace = true, features = ["json", "std"] }
 
 # base-alloy
 base-alloy-flz.workspace = true
-base-alloy-evm = { workspace = true, features = ["std"] }
 base-alloy-network.workspace = true
 base-alloy-consensus.workspace = true
 base-alloy-rpc-types.workspace = true
 base-alloy-rpc-types-engine.workspace = true
+base-alloy-evm = { workspace = true, features = ["std"] }
 
 # tokio
 tokio.workspace = true
@@ -166,32 +166,32 @@ metrics.workspace = true
 url.workspace = true
 hex.workspace = true
 k256.workspace = true
-moka.workspace = true
-http.workspace = true
 rand.workspace = true
 sha3.workspace = true
 time.workspace = true
+moka.workspace = true
+http.workspace = true
 eyre.workspace = true
 tower.workspace = true
-serde = { workspace = true, features = ["std"] }
 either.workspace = true
 chrono.workspace = true
 anyhow.workspace = true
 dashmap.workspace = true
+dirs-next.workspace = true
 secp256k1.workspace = true
 serde_with.workspace = true
-dirs-next.workspace = true
-thiserror = { workspace = true, features = ["std"] }
-serde_json = { workspace = true, features = ["std"] }
 parking_lot.workspace = true
 derive_more.workspace = true
 shellexpand.workspace = true
 testcontainers.workspace = true
-ctor = { workspace = true, optional = true }
 tar = { workspace = true, optional = true }
+ctor = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
 rlimit = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
+serde = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
 hyper-util = { workspace = true, optional = true }
 opentelemetry = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
@@ -206,8 +206,8 @@ base-builder-core = { path = ".", features = ["test-utils"] }
 
 # reth
 reth-ipc.workspace = true
-reth-node-builder = { workspace = true, features = ["test-utils"] }
 base-execution-rpc = { workspace = true, features = ["client"] }
+reth-node-builder = { workspace = true, features = ["test-utils"] }
 
 # alloy
 alloy-provider = { workspace = true, default-features = true, features = ["txpool-api"] }

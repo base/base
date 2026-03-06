@@ -34,10 +34,10 @@ revm-database.workspace = true
 base-revm.workspace = true
 
 # alloy
-alloy-eips = { workspace = true, features = ["std"] }
-alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives.workspace = true
 alloy-rpc-types-engine.workspace = true
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
 
 # rpc
 jsonrpsee.workspace = true
@@ -48,10 +48,10 @@ metrics-derive.workspace = true
 
 # misc
 eyre.workspace = true
-serde = { workspace = true, features = ["std"] }
-tracing = { workspace = true, features = ["std"] }
 arc-swap.workspace = true
 derive_more.workspace = true
+serde = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 # workspace
@@ -60,8 +60,8 @@ base-alloy-flashblocks.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 
 # reth
-reth-db-common.workspace = true
 base-node-core.workspace = true
+reth-db-common.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
@@ -70,8 +70,8 @@ revm-bytecode.workspace = true
 revm-context-interface.workspace = true
 
 # alloy
-alloy-genesis = { workspace = true, features = ["std"] }
 alloy-rpc-client.workspace = true
+alloy-genesis = { workspace = true, features = ["std"] }
 
 # base-alloy
 base-alloy-network.workspace = true

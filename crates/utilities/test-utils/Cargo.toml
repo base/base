@@ -15,13 +15,13 @@ workspace = true
 # alloy
 alloy-eips.workspace = true
 alloy-signer.workspace = true
-alloy-genesis = { workspace = true, features = ["std"] }
 alloy-contract.workspace = true
-alloy-sol-types = { workspace = true, features = ["std"] }
+alloy-signer-local.workspace = true
+alloy-genesis = { workspace = true, features = ["std"] }
+alloy-sol-macro = { workspace = true, features = ["json"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
-alloy-signer-local.workspace = true
-alloy-sol-macro = { workspace = true, features = ["json"] }
+alloy-sol-types = { workspace = true, features = ["std"] }
 
 # base-alloy
 base-alloy-network.workspace = true

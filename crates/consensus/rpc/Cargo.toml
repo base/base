@@ -13,11 +13,11 @@ workspace = true
 
 [dependencies]
 # Workspace
+base-macros.workspace = true
 base-consensus-gossip.workspace = true
 base-consensus-engine.workspace = true
-base-macros.workspace = true
-base-consensus-genesis = { workspace = true, features = ["serde", "std"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
+base-consensus-genesis = { workspace = true, features = ["serde", "std"] }
 
 # Base Alloy
 base-alloy-rpc-jsonrpsee.workspace = true
@@ -31,15 +31,15 @@ alloy-primitives = { workspace = true, features = ["map", "rlp", "serde", "std"]
 ipnet.workspace = true
 backon.workspace = true
 libp2p.workspace = true
+async-trait.workspace = true
+serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
-async-trait.workspace = true
 tokio = { workspace = true, features = ["time"] }
-serde = { workspace = true, features = ["std"] }
 
 # RPC
-jsonrpsee = { workspace = true, features = ["macros", "server"] }
 getrandom = { workspace = true, features = ["wasm_js"] }
+jsonrpsee = { workspace = true, features = ["macros", "server"] }
 
 # Optional
 metrics = { workspace = true, optional = true }

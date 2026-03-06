@@ -12,44 +12,44 @@ workspace = true
 
 [dependencies]
 # reth
-reth-chainspec.workspace = true
-## ensure secp256k1 recovery with rayon support is activated
-reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
-reth-payload-builder.workspace = true
-reth-consensus.workspace = true
-reth-node-api.workspace = true
-reth-node-builder.workspace = true
-reth-tracing.workspace = true
-reth-provider.workspace = true
-reth-transaction-pool.workspace = true
-reth-network.workspace = true
-reth-evm.workspace = true
-reth-rpc-server-types.workspace = true
-reth-tasks.workspace = true
-reth-trie-common.workspace = true
-reth-node-core.workspace = true
-reth-rpc-engine-api.workspace = true
-reth-rpc-api.workspace = true
 reth-db.workspace = true
 reth-db-api.workspace = true
+reth-evm.workspace = true
+reth-network.workspace = true
+reth-tasks.workspace = true
+reth-tracing.workspace = true
+reth-provider.workspace = true
+reth-consensus.workspace = true
+reth-node-api.workspace = true
+reth-node-core.workspace = true
+reth-chainspec.workspace = true
+reth-rpc-api.workspace = true
+reth-trie-common.workspace = true
+reth-node-builder.workspace = true
+reth-payload-builder.workspace = true
+reth-rpc-engine-api.workspace = true
+reth-transaction-pool.workspace = true
+reth-rpc-server-types.workspace = true
+## ensure secp256k1 recovery with rayon support is activated
+reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
 
 # op-reth
-base-execution-payload-builder.workspace = true
-base-execution-evm = { workspace = true, features = ["std", "rpc"] }
-base-execution-rpc.workspace = true
-base-execution-storage.workspace = true
 base-txpool.workspace = true
-base-execution-chainspec.workspace = true
-base-execution-consensus = { workspace = true, features = ["std"] }
-base-execution-forks.workspace = true
 base-protocol.workspace = true
+base-execution-rpc.workspace = true
+base-execution-forks.workspace = true
+base-execution-storage.workspace = true
+base-execution-chainspec.workspace = true
+base-execution-payload-builder.workspace = true
+base-execution-exex = { workspace = true, features = ["metrics"] }
+base-execution-trie = { workspace = true, features = ["metrics"] }
 base-execution-primitives = { workspace = true, features = [
 	"serde",
 	"serde-bincode-compat",
 	"reth-codec",
 ] }
-base-execution-exex = { workspace = true, features = ["metrics"] }
-base-execution-trie = { workspace = true, features = ["metrics"] }
+base-execution-evm = { workspace = true, features = ["std", "rpc"] }
+base-execution-consensus = { workspace = true, features = ["std"] }
 
 # revm with required optimism features
 # Note: this must be kept to ensure all features are properly enabled/forwarded
@@ -62,41 +62,41 @@ revm = { workspace = true, features = [
 base-revm.workspace = true
 
 # ethereum
-alloy-primitives.workspace = true
-base-alloy-consensus.workspace = true
-base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
-alloy-rpc-types-engine.workspace = true
-alloy-rpc-types-eth.workspace = true
 alloy-consensus.workspace = true
+alloy-primitives.workspace = true
+alloy-rpc-types-eth.workspace = true
+base-alloy-consensus.workspace = true
+alloy-rpc-types-engine.workspace = true
+base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
 
 # async
 tokio.workspace = true
 
 # misc
-clap.workspace = true
 serde.workspace = true
+clap.workspace = true
 eyre.workspace = true
-humantime.workspace = true
 futures.workspace = true
 tracing.workspace = true
+humantime.workspace = true
 
 # test-utils dependencies
-reth-e2e-test-utils = { workspace = true, optional = true }
-alloy-genesis = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+alloy-genesis = { workspace = true, optional = true }
+reth-e2e-test-utils = { workspace = true, optional = true }
 
 [dev-dependencies]
-base-node-core = { workspace = true, features = ["test-utils"] }
-reth-db = { workspace = true, features = ["test-utils"] }
-reth-node-builder = { workspace = true, features = ["test-utils"] }
-reth-provider = { workspace = true, features = ["test-utils"] }
-reth-tasks.workspace = true
-reth-payload-util.workspace = true
-reth-revm = { workspace = true, features = ["std"] }
 reth-rpc.workspace = true
-reth-rpc-eth-types.workspace = true
-reth-stages-types.workspace = true
+reth-tasks.workspace = true
 reth-trie-db.workspace = true
+reth-payload-util.workspace = true
+reth-stages-types.workspace = true
+reth-rpc-eth-types.workspace = true
+reth-revm = { workspace = true, features = ["std"] }
+reth-db = { workspace = true, features = ["test-utils"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
+base-node-core = { workspace = true, features = ["test-utils"] }
+reth-node-builder = { workspace = true, features = ["test-utils"] }
 
 futures.workspace = true
 alloy-eips.workspace = true

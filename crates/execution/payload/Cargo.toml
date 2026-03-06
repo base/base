@@ -13,44 +13,44 @@ workspace = true
 
 [dependencies]
 # reth
-reth-chainspec.workspace = true
-reth-primitives-traits.workspace = true
-reth-revm = { workspace = true, features = ["witness"] }
-reth-transaction-pool.workspace = true
-reth-storage-api.workspace = true
 reth-evm.workspace = true
+reth-chainspec.workspace = true
+reth-storage-api.workspace = true
+reth-payload-util.workspace = true
 reth-execution-types.workspace = true
 reth-payload-builder.workspace = true
-reth-payload-builder-primitives.workspace = true
-reth-payload-util.workspace = true
+reth-primitives-traits.workspace = true
+reth-transaction-pool.workspace = true
 reth-payload-primitives.workspace = true
-reth-basic-payload-builder.workspace = true
 reth-payload-validator.workspace = true
+reth-basic-payload-builder.workspace = true
+reth-payload-builder-primitives.workspace = true
+reth-revm = { workspace = true, features = ["witness"] }
 
 # op-reth
+base-txpool.workspace = true
+base-revm.workspace = true
+base-protocol.workspace = true
 base-execution-evm.workspace = true
 base-execution-forks.workspace = true
 base-execution-primitives.workspace = true
-base-txpool.workspace = true
-base-protocol.workspace = true
-base-revm.workspace = true
 
 # ethereum
 revm.workspace = true
+alloy-rlp.workspace = true
+alloy-evm.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
-alloy-rlp.workspace = true
-base-alloy-consensus.workspace = true
-base-alloy-rpc-types-engine = { workspace = true, features = ["serde", "reth"] }
+alloy-consensus.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-debug.workspace = true
-alloy-consensus.workspace = true
-alloy-evm.workspace = true
+base-alloy-consensus.workspace = true
+base-alloy-rpc-types-engine = { workspace = true, features = ["serde", "reth"] }
 
 # misc
-derive_more.workspace = true
-tracing.workspace = true
-thiserror.workspace = true
-sha2.workspace = true
 serde.workspace = true
+sha2.workspace = true
+tracing.workspace = true
 either.workspace = true
+derive_more.workspace = true
+thiserror.workspace = true

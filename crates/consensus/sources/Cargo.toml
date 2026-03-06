@@ -29,17 +29,17 @@ alloy-signer-local.workspace = true
 base-alloy-rpc-types-engine = { workspace = true, features = ["std", "serde"] }
 
 # Misc
+derive_more.workspace = true
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
-derive_more.workspace = true
 
 # HTTP client and TLS for remote signer
 url.workspace = true
+notify.workspace = true
+rustls.workspace = true
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
-rustls.workspace = true
 tokio = { workspace = true, features = ["full"] }
-notify.workspace = true
 
 [features]
 default = []

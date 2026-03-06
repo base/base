@@ -13,18 +13,18 @@ workspace = true
 [dependencies]
 spin.workspace = true
 tracing.workspace = true
-thiserror.workspace = true
 alloy-evm.workspace = true
-alloy-consensus.workspace = true
-alloy-primitives.workspace = true
-base-revm.workspace = true
-base-alloy-evm.workspace = true
-base-alloy-consensus.workspace = true
-base-protocol.workspace = true
 base-proof.workspace = true
+thiserror.workspace = true
+base-revm.workspace = true
+base-protocol.workspace = true
+alloy-consensus.workspace = true
+base-alloy-evm.workspace = true
+alloy-primitives.workspace = true
 base-proof-driver.workspace = true
 base-proof-executor.workspace = true
 base-proof-preimage.workspace = true
+base-alloy-consensus.workspace = true
 base-consensus-derive.workspace = true
 base-consensus-genesis.workspace = true
 

@@ -13,26 +13,26 @@ workspace = true
 
 [dependencies]
 # reth
-reth-execution-types.workspace = true
-reth-chainspec.workspace = true
-reth-consensus-common.workspace = true
 reth-consensus.workspace = true
-reth-primitives-traits.workspace = true
+reth-chainspec.workspace = true
 reth-storage-api.workspace = true
-reth-storage-errors.workspace = true
 reth-trie-common.workspace = true
+reth-execution-types.workspace = true
+reth-storage-errors.workspace = true
+reth-consensus-common.workspace = true
+reth-primitives-traits.workspace = true
 
 # op-reth
+base-protocol.workspace = true
 base-execution-forks.workspace = true
 base-execution-primitives.workspace = true
-base-protocol.workspace = true
 
 # ethereum
+revm.workspace = true
+alloy-trie.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
-alloy-trie.workspace = true
-revm.workspace = true
 
 # misc
 tracing.workspace = true
@@ -40,11 +40,11 @@ thiserror.workspace = true
 base-execution-chainspec.workspace = true
 
 [dev-dependencies]
-reth-provider = { workspace = true, features = ["test-utils"] }
-reth-db-common.workspace = true
-reth-revm.workspace = true
 reth-trie.workspace = true
+reth-revm.workspace = true
 base-node-core.workspace = true
+reth-db-common.workspace = true
+reth-provider = { workspace = true, features = ["test-utils"] }
 
 alloy-chains.workspace = true
 

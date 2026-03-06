@@ -29,9 +29,9 @@ base-alloy-rpc-types-engine.workspace = true
 
 # misc
 tracing.workspace = true
-thiserror.workspace = true
 ambassador = "0.4.2"
 async-trait.workspace = true
+thiserror.workspace = true
 unsigned-varint.workspace = true
 derive_more = { workspace = true, features = ["display"] }
 
@@ -41,9 +41,9 @@ miniz_oxide.workspace = true
 alloc-no-stdlib.workspace = true
 
 # optional
+spin = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
-spin = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, features = ["fmt"], optional = true }
 
 [dev-dependencies]
@@ -51,17 +51,16 @@ spin.workspace = true
 rstest.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
-alloy-sol-types.workspace = true
-base-consensus-registry.workspace = true
-base-alloy-consensus.workspace = true
-base-alloy-rpc-types.workspace = true
 alloy-rpc-types-eth.workspace = true
+base-alloy-rpc-types.workspace = true
+base-alloy-consensus.workspace = true
+base-consensus-registry.workspace = true
 brotli = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["full"] }
 arbitrary = { workspace = true, features = ["derive"] }
-tracing-subscriber = { workspace = true, features = ["fmt"] }
-alloy-primitives = { workspace = true, features = ["arbitrary"] }
 rand = { workspace = true, features = ["std", "std_rng"] }
+alloy-primitives = { workspace = true, features = ["arbitrary"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 
 [features]
 default = [ "std" ]

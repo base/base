@@ -12,33 +12,33 @@ workspace = true
 
 [dependencies]
 reth-cli.workspace = true
-reth-cli-commands.workspace = true
-reth-rpc-server-types.workspace = true
-reth-db = { workspace = true, features = ["mdbx"] }
 reth-provider.workspace = true
 reth-node-core.workspace = true
 base-node-core.workspace = true
+reth-cli-commands.workspace = true
+reth-rpc-server-types.workspace = true
+reth-db = { workspace = true, features = ["mdbx"] }
 
 # so jemalloc metrics can be included
 reth-node-metrics.workspace = true
 
 ## optimism
+base-execution-trie.workspace = true
 base-execution-primitives.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
-base-execution-trie.workspace = true
 
+reth-tracing.workspace = true
 reth-chainspec.workspace = true
 reth-cli-runner.workspace = true
 reth-node-builder.workspace = true
-reth-tracing.workspace = true
 
 # misc
 futures.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 
-tracing.workspace = true
 eyre.workspace = true
+tracing.workspace = true
 
 # reth test-vectors
 proptest = { workspace = true, optional = true }

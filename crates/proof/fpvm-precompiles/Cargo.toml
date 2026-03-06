@@ -13,11 +13,11 @@ workspace = true
 [dependencies]
 revm.workspace = true
 alloy-evm.workspace = true
-alloy-primitives.workspace = true
+base-proof.workspace = true
 base-revm.workspace = true
 base-alloy-evm.workspace = true
+alloy-primitives.workspace = true
 base-proof-preimage.workspace = true
-base-proof.workspace = true
 
 [dev-dependencies]
 sha2.workspace = true

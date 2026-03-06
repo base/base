@@ -9,32 +9,32 @@ base-enclave.workspace = true
 
 # Cryptography
 rsa.workspace = true
-k256 = { workspace = true, features = ["ecdsa", "arithmetic"] }
 sha2.workspace = true
+hex.workspace = true
 rand_08.workspace = true
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
-alloy-primitives = { workspace = true, features = ["serde"] }
-alloy-consensus = { workspace = true, features = ["serde"] }
 base-consensus-genesis.workspace = true
-hex.workspace = true
+alloy-consensus = { workspace = true, features = ["serde"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
+k256 = { workspace = true, features = ["ecdsa", "arithmetic"] }
 
 # NSM and Attestation
-aws-nitro-enclaves-nsm-api.workspace = true
 aws-nitro-enclaves-cose.workspace = true
+aws-nitro-enclaves-nsm-api.workspace = true
 
 # X.509 and PKIX
 spki.workspace = true
-x509-cert.workspace = true
 openssl.workspace = true
+x509-cert.workspace = true
 
 # Encoding
-zip = { workspace = true, features = ["deflate"] }
 base64.workspace = true
 ciborium.workspace = true
-serde = { workspace = true, features = ["derive"] }
 serde_bytes.workspace = true
 serde_json.workspace = true
+serde = { workspace = true, features = ["derive"] }
+zip = { workspace = true, features = ["deflate"] }
 
 # Logging
 tracing.workspace = true
@@ -50,13 +50,13 @@ parking_lot.workspace = true
 tokio.workspace = true
 
 # HTTP
+http-body-util.workspace = true
 hyper = { workspace = true, features = ["server", "http1"] }
 hyper-util = { workspace = true, features = ["tokio", "server", "http1"] }
-http-body-util.workspace = true
 
 # RPC
-jsonrpsee = { workspace = true, features = ["server", "http-client", "macros"] }
 async-trait.workspace = true
+jsonrpsee = { workspace = true, features = ["server", "http-client", "macros"] }
 
 # Vsock (Unix only)
 [target.'cfg(unix)'.dependencies]

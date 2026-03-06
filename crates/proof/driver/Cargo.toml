@@ -12,16 +12,16 @@ workspace = true
 
 [dependencies]
 # Workspace
+base-protocol.workspace = true
+base-proof-executor.workspace = true
 base-consensus-derive.workspace = true
 base-consensus-genesis.workspace = true
-base-proof-executor.workspace = true
-base-protocol.workspace = true
 
 # Alloy
 alloy-rlp.workspace = true
+alloy-evm.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
-alloy-evm.workspace = true
 
 # Base Alloy
 base-alloy-consensus.workspace = true

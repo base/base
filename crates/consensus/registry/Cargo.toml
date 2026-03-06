@@ -18,12 +18,12 @@ workspace = true
 base-consensus-genesis = { workspace = true, features = ["serde"] }
 
 # Alloy
-alloy-primitives = { workspace = true, features = ["map"] }
-alloy-genesis.workspace = true
 alloy-eips.workspace = true
-alloy-hardforks.workspace = true
+alloy-genesis.workspace = true
 alloy-chains.workspace = true
+alloy-hardforks.workspace = true
 base-alloy-hardforks.workspace = true
+alloy-primitives = { workspace = true, features = ["map"] }
 
 # `serde`
 toml = { workspace = true, features = ["parse", "serde"] }

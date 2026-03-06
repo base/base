@@ -12,10 +12,10 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-clap = { workspace = true }
+serde.workspace = true
 dotenvy.workspace = true
+clap = { workspace = true }
+tokio = { workspace = true }
+base-cli-utils.workspace = true
 mempool-rebroadcaster = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
-base-cli-utils.workspace = true
-tokio = { workspace = true }
-serde.workspace = true

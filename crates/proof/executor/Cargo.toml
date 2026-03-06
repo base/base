@@ -35,8 +35,8 @@ revm.workspace = true
 base-revm.workspace = true
 
 # alloy-evm
-base-alloy-evm.workspace = true
 alloy-evm.workspace = true
+base-alloy-evm.workspace = true
 
 # General
 tracing.workspace = true
@@ -48,17 +48,17 @@ getrandom = { version = "0.2", features = ["custom"] }
 
 # `test-utils` feature dependencies
 rand = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+alloy-transport = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+alloy-rpc-client = { workspace = true, optional = true }
+alloy-rpc-types-engine = { workspace = true, optional = true }
+alloy-transport-http = { workspace = true, optional = true }
+base-consensus-registry = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 tokio = { workspace = true, features = ["full"], optional = true }
-tempfile = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
-base-consensus-registry = { workspace = true, optional = true }
-alloy-provider = { workspace = true, features = ["reqwest"], optional = true }
-alloy-rpc-client = { workspace = true, optional = true }
-alloy-transport = { workspace = true, optional = true }
-alloy-transport-http = { workspace = true, optional = true }
-alloy-rpc-types-engine = { workspace = true, optional = true }
 rocksdb = { workspace = true, features = ["snappy"], optional = true }
+alloy-provider = { workspace = true, features = ["reqwest"], optional = true }
 
 [features]
 std = [

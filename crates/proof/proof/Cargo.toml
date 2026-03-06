@@ -13,11 +13,11 @@ workspace = true
 [dependencies]
 # Workspace
 base-proof-mpt.workspace = true
-base-consensus-derive.workspace = true
-base-proof-driver.workspace = true
-base-proof-preimage.workspace = true
-base-proof-executor.workspace = true
 base-protocol.workspace = true
+base-proof-driver.workspace = true
+base-proof-executor.workspace = true
+base-proof-preimage.workspace = true
+base-consensus-derive.workspace = true
 base-consensus-registry.workspace = true
 base-consensus-genesis = { workspace = true, features = ["serde"] }
 
@@ -33,18 +33,18 @@ base-alloy-consensus.workspace = true
 base-alloy-rpc-types-engine.workspace = true
 
 # Execution
+alloy-evm.workspace = true
 base-revm.workspace = true
 base-alloy-evm.workspace = true
-alloy-evm.workspace = true
 
 # General
 lru.workspace = true
 spin.workspace = true
 serde.workspace = true
 tracing.workspace = true
-serde_json.workspace = true
-async-trait.workspace = true
 thiserror.workspace = true
+async-trait.workspace = true
+serde_json.workspace = true
 
 # KZG
 ark-ff.workspace = true

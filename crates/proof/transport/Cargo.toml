@@ -15,12 +15,12 @@ workspace = true
 base-proof-primitives = { workspace = true, features = ["std"] }
 
 # Async
-tokio = { workspace = true, features = ["sync"] }
 async-trait = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
 
 # Error handling
 thiserror = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["full"] }
 alloy-primitives = { workspace = true }
+tokio = { workspace = true, features = ["full"] }

@@ -14,6 +14,6 @@ workspace = true
 [dependencies]
 anyhow = { workspace = true }
 basectl-cli = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
 rustls = { workspace = true, features = ["ring"] }
+clap = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

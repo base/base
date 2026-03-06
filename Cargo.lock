@@ -4273,7 +4273,6 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
- "alloy-sol-types",
  "ambassador",
  "arbitrary",
  "async-trait",

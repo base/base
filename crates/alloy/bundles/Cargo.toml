@@ -18,16 +18,16 @@ test-utils = [ "dep:alloy-signer-local", "dep:base-alloy-rpc-types" ]
 # alloy
 alloy-serde = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
-alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["reqwest"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
 
 # base-alloy
 base-alloy-flz.workspace = true
 base-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
 
 # misc
-serde = { workspace = true, features = ["std", "derive"] }
 uuid = { workspace = true, features = ["v4", "serde"] }
+serde = { workspace = true, features = ["std", "derive"] }
 
 # test-utils (optional)
 alloy-signer-local = { workspace = true, optional = true }
