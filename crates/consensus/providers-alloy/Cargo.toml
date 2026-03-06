@@ -45,6 +45,7 @@ url.workspace = true
 http-body-util.workspace = true
 
 c-kzg.workspace = true
+tracing.workspace = true
 
 # `metrics` feature
 metrics = { workspace = true, optional = true }
