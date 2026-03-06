@@ -366,7 +366,7 @@ mod tests {
 
     fn eip_1559_tx() -> TxEip1559 {
         TxEip1559 {
-            chain_id: 10u64,
+            chain_id: 8453u64,
             nonce: 2,
             max_fee_per_gas: 3,
             max_priority_fee_per_gas: 4,
@@ -436,7 +436,7 @@ mod tests {
 
     fn eip_7702_tx() -> TxEip7702 {
         TxEip7702 {
-            chain_id: 10u64,
+            chain_id: 8453u64,
             nonce: 2,
             gas_limit: 5,
             max_fee_per_gas: 3,

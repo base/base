@@ -772,7 +772,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fork_order_optimism_mainnet() {
+    fn test_fork_order_base_hardforks() {
         let genesis = Genesis {
             config: ChainConfig {
                 chain_id: 0,

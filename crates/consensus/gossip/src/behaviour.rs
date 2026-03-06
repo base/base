@@ -99,12 +99,12 @@ mod tests {
     use super::*;
     use crate::{config, handler::BlockHandler};
 
-    fn op_mainnet_topics() -> Vec<TopicHash> {
+    fn base_mainnet_topics() -> Vec<TopicHash> {
         vec![
-            IdentTopic::new("/optimism/10/0/blocks").hash(),
-            IdentTopic::new("/optimism/10/1/blocks").hash(),
-            IdentTopic::new("/optimism/10/2/blocks").hash(),
-            IdentTopic::new("/optimism/10/3/blocks").hash(),
+            IdentTopic::new("/optimism/8453/0/blocks").hash(),
+            IdentTopic::new("/optimism/8453/1/blocks").hash(),
+            IdentTopic::new("/optimism/8453/2/blocks").hash(),
+            IdentTopic::new("/optimism/8453/3/blocks").hash(),
         ]
     }
 
@@ -122,13 +122,13 @@ mod tests {
         let cfg = config::default_config();
         let (_, recv) = tokio::sync::watch::channel(Address::default());
         let block_handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::optimism_mainnet(), ..Default::default() },
+            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
             recv,
         );
         let handlers: Vec<Box<dyn Handler>> = vec![Box::new(block_handler)];
         let behaviour = Behaviour::new(key.public(), cfg, &handlers).unwrap();
         let mut topics = behaviour.gossipsub.topics().cloned().collect::<Vec<TopicHash>>();
         topics.sort();
-        assert_eq!(topics, op_mainnet_topics());
+        assert_eq!(topics, base_mainnet_topics());
     }
 }
