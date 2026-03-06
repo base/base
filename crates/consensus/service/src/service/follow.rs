@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use alloy_provider::RootProvider;
 use base_alloy_network::Base;
-use base_consensus_engine::{Engine, EngineState, OpEngineClient};
+use base_consensus_engine::{Engine, EngineState};
 use base_consensus_genesis::RollupConfig;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -13,10 +13,7 @@ use crate::{
     QueuedEngineDerivationClient,
 };
 
-type LocalEngineActor = EngineActor<
-    EngineProcessor<OpEngineClient<RootProvider, RootProvider<Base>>, QueuedEngineDerivationClient>,
-    EngineRpcProcessor<OpEngineClient<RootProvider, RootProvider<Base>>>,
->;
+use super::LocalEngineActor;
 
 /// A lightweight node that follows another L2 node by polling its execution
 /// layer RPC and driving the local engine via `NewPayload` + FCU.

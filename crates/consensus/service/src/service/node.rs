@@ -5,7 +5,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
 use base_alloy_network::Base;
 use base_consensus_derive::StatefulAttributesBuilder;
-use base_consensus_engine::{Engine, EngineState, OpEngineClient};
+use base_consensus_engine::{Engine, EngineState};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 use base_consensus_providers::{
     AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
@@ -27,10 +27,7 @@ use crate::{
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
-type LocalEngineActor = EngineActor<
-    EngineProcessor<OpEngineClient<RootProvider, RootProvider<Base>>, QueuedEngineDerivationClient>,
-    EngineRpcProcessor<OpEngineClient<RootProvider, RootProvider<Base>>>,
->;
+use super::LocalEngineActor;
 
 const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
 const HEAD_STREAM_POLL_INTERVAL: u64 = 4;

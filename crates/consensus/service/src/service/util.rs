@@ -1,6 +1,20 @@
 //! Utilities for the rollup node service, internal to the crate.
 
+use alloy_provider::RootProvider;
+use base_alloy_network::Base;
+use base_consensus_engine::OpEngineClient;
 use tracing::info;
+
+use crate::{EngineActor, EngineProcessor, EngineRpcProcessor, QueuedEngineDerivationClient};
+
+/// Shared type alias for the engine actor used by both [`RollupNode`] and [`FollowNode`].
+///
+/// [`RollupNode`]: crate::RollupNode
+/// [`FollowNode`]: crate::FollowNode
+pub(crate) type LocalEngineActor = EngineActor<
+    EngineProcessor<OpEngineClient<RootProvider, RootProvider<Base>>, QueuedEngineDerivationClient>,
+    EngineRpcProcessor<OpEngineClient<RootProvider, RootProvider<Base>>>,
+>;
 
 /// Spawns a set of parallel actors in a [`JoinSet`], and cancels all actors if any of them fail. The
 /// type of the error in the [`NodeActor`]s is erased to avoid having to specify a common error type
