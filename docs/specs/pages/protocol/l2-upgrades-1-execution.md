@@ -33,7 +33,7 @@ inject upgrade transactions.
 
 #### aUP-001: Fork Activation Time is Coordinated
 
-All Base coordinate fork activation times to enable consistent upgrade rollout. The fork activation
+Base coordinates fork activation times to enable consistent upgrade rollout. The fork activation
 timestamp is communicated well in advance of activation to allow node operators to prepare.
 
 ##### Mitigations
