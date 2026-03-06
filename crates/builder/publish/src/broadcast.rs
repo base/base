@@ -2,6 +2,7 @@ use core::fmt::{Debug, Formatter};
 use std::{
     collections::HashSet,
     sync::{Arc, RwLock},
+    time::Duration,
 };
 
 use base_ring_buffer::RingBuffer;
@@ -20,7 +21,10 @@ use tokio_tungstenite::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::PublisherMetrics;
+use crate::{FlashblockPosition, PositionedPayload, PublisherMetrics};
+
+/// Maximum time to wait for a WebSocket send during the gap-fill drain phase.
+const SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Per-client broadcast sender.
 ///
@@ -31,9 +35,9 @@ pub struct BroadcastLoop {
     stream: WebSocketStream<TcpStream>,
     metrics: Arc<dyn PublisherMetrics>,
     cancel: CancellationToken,
-    blocks: broadcast::Receiver<Utf8Bytes>,
-    ring_buffer: Arc<RwLock<RingBuffer<(u64, u64), Utf8Bytes>>>,
-    resume_from: Option<(u64, u64)>,
+    blocks: broadcast::Receiver<PositionedPayload>,
+    ring_buffer: Arc<RwLock<RingBuffer<FlashblockPosition, Utf8Bytes>>>,
+    resume_from: Option<FlashblockPosition>,
 }
 
 impl Debug for BroadcastLoop {
@@ -48,9 +52,9 @@ impl BroadcastLoop {
         stream: WebSocketStream<TcpStream>,
         metrics: Arc<dyn PublisherMetrics>,
         cancel: CancellationToken,
-        blocks: broadcast::Receiver<Utf8Bytes>,
-        ring_buffer: Arc<RwLock<RingBuffer<(u64, u64), Utf8Bytes>>>,
-        resume_from: Option<(u64, u64)>,
+        blocks: broadcast::Receiver<PositionedPayload>,
+        ring_buffer: Arc<RwLock<RingBuffer<FlashblockPosition, Utf8Bytes>>>,
+        resume_from: Option<FlashblockPosition>,
     ) -> Self {
         Self { stream, metrics, cancel, blocks, ring_buffer, resume_from }
     }
@@ -58,9 +62,9 @@ impl BroadcastLoop {
     /// Runs the broadcast loop until cancellation or error.
     ///
     /// If `resume_from` is set, buffered entries after that position are sent first.
-    /// After replay the receiver is drained: entries whose bytes match the snapshot are
-    /// skipped (duplicates already sent), while entries that arrived during replay are
-    /// forwarded (gap-fill). This avoids both duplicate delivery and a gap in coverage.
+    /// After replay the receiver is drained: entries whose position matches one already
+    /// sent are skipped (duplicates), while entries with a new position are forwarded
+    /// (gap-fill). This avoids both duplicate delivery and a gap in coverage.
     pub async fn run(mut self) {
         let Ok(peer_addr) = self.stream.get_ref().peer_addr() else {
             return;
@@ -68,12 +72,12 @@ impl BroadcastLoop {
 
         // Replay buffered entries before entering the live loop.
         if let Some((bn, fi)) = self.resume_from {
-            let entries: Vec<Utf8Bytes> = self
+            let entries: Vec<(Option<FlashblockPosition>, Utf8Bytes)> = self
                 .ring_buffer
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
-                .entries_after(&(bn, fi))
-                .cloned()
+                .positioned_entries_after(&(bn, fi))
+                .map(|(pos, payload)| (pos.copied(), payload.clone()))
                 .collect();
             debug!(
                 peer_addr = %peer_addr,
@@ -82,7 +86,7 @@ impl BroadcastLoop {
                 count = entries.len(),
                 "Replaying ring buffer entries"
             );
-            for payload in &entries {
+            for (_, payload) in &entries {
                 if self.cancel.is_cancelled() {
                     return;
                 }
@@ -94,23 +98,39 @@ impl BroadcastLoop {
                 }
             }
 
-            // Drain messages that accumulated in the receiver during replay. The publisher
-            // pushes identical bytes to both the ring buffer and the channel, so byte
-            // equality reliably identifies duplicates. Entries not in the snapshot
-            // arrived after it was taken and are forwarded as gap-fill.
-            let replayed: HashSet<Vec<u8>> =
-                entries.into_iter().map(|e| e.as_bytes().to_vec()).collect();
+            // Drain messages that accumulated in the receiver during replay.
+            // Position-based deduplication is used instead of byte equality: it is
+            // cheaper (16 bytes per entry vs full payload clones) and semantically
+            // correct (identical content at different positions is not suppressed).
+            let replayed_positions: HashSet<FlashblockPosition> =
+                entries.into_iter().filter_map(|(pos, _)| pos).collect();
             loop {
                 match self.blocks.try_recv() {
-                    Ok(payload) => {
-                        if replayed.contains(payload.as_bytes()) {
+                    Ok((pos, payload)) => {
+                        if pos.is_some_and(|p| replayed_positions.contains(&p)) {
                             continue;
                         }
-                        self.metrics.on_message_sent();
-                        if let Err(e) = self.stream.send(Message::Text(payload)).await {
-                            self.metrics.on_send_error();
-                            debug!(peer_addr = %peer_addr, error = %e, "Error during replay drain");
+                        if self.cancel.is_cancelled() {
                             return;
+                        }
+                        self.metrics.on_message_sent();
+                        match tokio::time::timeout(
+                            SEND_TIMEOUT,
+                            self.stream.send(Message::Text(payload)),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => {
+                                self.metrics.on_send_error();
+                                debug!(peer_addr = %peer_addr, error = %e, "Error during replay drain");
+                                return;
+                            }
+                            Err(_) => {
+                                self.metrics.on_send_error();
+                                debug!(peer_addr = %peer_addr, "Send timeout during replay drain");
+                                return;
+                            }
                         }
                     }
                     Err(TryRecvError::Empty) => break,
@@ -132,8 +152,8 @@ impl BroadcastLoop {
                     return;
                 }
 
-                payload = self.blocks.recv() => match payload {
-                    Ok(payload) => {
+                result = self.blocks.recv() => match result {
+                    Ok((_, payload)) => {
                         self.metrics.on_message_sent();
 
                         debug!(payload = ?payload, "Broadcasted payload");
@@ -211,13 +231,13 @@ mod tests {
         fn on_handshake_error(&self) {}
     }
 
-    fn empty_ring_buffer() -> Arc<RwLock<RingBuffer<(u64, u64), Utf8Bytes>>> {
+    fn empty_ring_buffer() -> Arc<RwLock<RingBuffer<FlashblockPosition, Utf8Bytes>>> {
         Arc::new(RwLock::new(RingBuffer::new(16)))
     }
 
     fn ring_buffer_with_entries(
         entries: Vec<(u64, u64, &str)>,
-    ) -> Arc<RwLock<RingBuffer<(u64, u64), Utf8Bytes>>> {
+    ) -> Arc<RwLock<RingBuffer<FlashblockPosition, Utf8Bytes>>> {
         let buf = Arc::new(RwLock::new(RingBuffer::new(16)));
         let mut locked = buf.write().unwrap();
         for (bn, fi, payload) in entries {
@@ -231,7 +251,7 @@ mod tests {
     async fn broadcast_loop_forwards_messages() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let (tx, rx) = broadcast::channel::<Utf8Bytes>(16);
+        let (tx, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics: Arc<dyn PublisherMetrics> = Arc::new(MockMetrics::new());
 
@@ -247,7 +267,7 @@ mod tests {
 
         let (mut client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
 
-        tx.send(Utf8Bytes::from("hello")).unwrap();
+        tx.send((Some((1, 0)), Utf8Bytes::from("hello"))).unwrap();
 
         let msg = client.next().await.unwrap().unwrap();
         assert_eq!(msg, Message::Text(Utf8Bytes::from("hello")));
@@ -260,7 +280,7 @@ mod tests {
     async fn broadcast_loop_exits_on_cancellation() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let (_, rx) = broadcast::channel::<Utf8Bytes>(16);
+        let (_, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics: Arc<dyn PublisherMetrics> = Arc::new(MockMetrics::new());
 
@@ -283,7 +303,7 @@ mod tests {
     async fn broadcast_loop_exits_on_close_frame() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let (_tx, rx) = broadcast::channel::<Utf8Bytes>(16);
+        let (_tx, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics: Arc<dyn PublisherMetrics> = Arc::new(MockMetrics::new());
 
@@ -308,7 +328,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let (tx, rx) = broadcast::channel::<Utf8Bytes>(1);
+        let (tx, rx) = broadcast::channel::<PositionedPayload>(1);
         let cancel = CancellationToken::new();
         let metrics = Arc::new(MockMetrics::new());
         let metrics_clone: Arc<dyn PublisherMetrics> =
@@ -329,7 +349,7 @@ mod tests {
 
         if test_lagged {
             for i in 0..5 {
-                let _ = tx.send(Utf8Bytes::from(format!("msg{i}")));
+                let _ = tx.send((Some((1, i)), Utf8Bytes::from(format!("msg{i}"))));
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             assert!(metrics.lagged.load(Ordering::Relaxed) > 0);
@@ -345,7 +365,7 @@ mod tests {
     async fn broadcast_loop_replays_ring_buffer_before_live() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let (tx, rx) = broadcast::channel::<Utf8Bytes>(16);
+        let (tx, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics: Arc<dyn PublisherMetrics> = Arc::new(MockMetrics::new());
 
@@ -376,7 +396,7 @@ mod tests {
         assert_eq!(msg2, Message::Text(Utf8Bytes::from("entry-2-0")));
 
         // Live messages follow
-        tx.send(Utf8Bytes::from("live")).unwrap();
+        tx.send((Some((3, 0)), Utf8Bytes::from("live"))).unwrap();
         let msg3 = client.next().await.unwrap().unwrap();
         assert_eq!(msg3, Message::Text(Utf8Bytes::from("live")));
 

@@ -13,4 +13,4 @@ mod listener;
 pub use listener::Listener;
 
 mod publisher;
-pub use publisher::WebSocketPublisher;
+pub use publisher::{FlashblockPosition, PositionedPayload, WebSocketPublisher};

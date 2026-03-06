@@ -2,7 +2,7 @@ use core::fmt::{Debug, Formatter};
 use std::sync::{Arc, Mutex, RwLock};
 
 use base_ring_buffer::RingBuffer;
-use tokio::{net::TcpListener, sync::broadcast::Receiver};
+use tokio::{net::TcpListener, sync::broadcast};
 use tokio_tungstenite::{
     accept_hdr_async,
     tungstenite::{
@@ -13,7 +13,7 @@ use tokio_tungstenite::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::{BroadcastLoop, PublisherMetrics};
+use crate::{BroadcastLoop, FlashblockPosition, PositionedPayload, PublisherMetrics};
 
 /// Parses `block_number` and `flashblock_index` from a URL query string.
 ///
@@ -49,9 +49,9 @@ fn parse_resume(query: Option<&str>) -> Option<(u64, u64)> {
 pub struct Listener {
     listener: TcpListener,
     metrics: Arc<dyn PublisherMetrics>,
-    receiver: Receiver<Utf8Bytes>,
+    sender: broadcast::Sender<PositionedPayload>,
     cancel: CancellationToken,
-    ring_buffer: Arc<RwLock<RingBuffer<(u64, u64), Utf8Bytes>>>,
+    ring_buffer: Arc<RwLock<RingBuffer<FlashblockPosition, Utf8Bytes>>>,
 }
 
 impl Debug for Listener {
@@ -67,16 +67,16 @@ impl Listener {
     pub fn new(
         listener: TcpListener,
         metrics: Arc<dyn PublisherMetrics>,
-        receiver: Receiver<Utf8Bytes>,
+        sender: broadcast::Sender<PositionedPayload>,
         cancel: CancellationToken,
-        ring_buffer: Arc<RwLock<RingBuffer<(u64, u64), Utf8Bytes>>>,
+        ring_buffer: Arc<RwLock<RingBuffer<FlashblockPosition, Utf8Bytes>>>,
     ) -> Self {
-        Self { listener, metrics, receiver, cancel, ring_buffer }
+        Self { listener, metrics, sender, cancel, ring_buffer }
     }
 
     /// Runs the listener loop, accepting connections until cancelled.
     pub async fn run(self) {
-        let Self { listener, metrics, receiver, cancel, ring_buffer } = self;
+        let Self { listener, metrics, sender, cancel, ring_buffer } = self;
 
         let listen_addr =
             listener.local_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".into());
@@ -94,7 +94,7 @@ impl Listener {
                     };
 
                     let cancel = cancel.clone();
-                    let receiver_clone = receiver.resubscribe();
+                    let sender = sender.clone();
                     let metrics = Arc::clone(&metrics);
                     let ring_buffer = Arc::clone(&ring_buffer);
 
@@ -125,6 +125,11 @@ impl Listener {
                             Ok(stream) => {
                                 let resume_from = resume_pos.lock().unwrap().take();
 
+                                // Subscribe after the handshake so the receiver
+                                // does not accumulate messages during the upgrade.
+                                // The ring buffer replay covers any gap.
+                                let receiver = sender.subscribe();
+
                                 let metrics_clone = Arc::clone(&metrics);
                                 tokio::spawn(async move {
                                     metrics_clone.on_connection_opened();
@@ -135,7 +140,7 @@ impl Listener {
                                         stream,
                                         Arc::clone(&metrics_clone),
                                         cancel,
-                                        receiver_clone,
+                                        receiver,
                                         ring_buffer,
                                         resume_from,
                                     )
@@ -200,7 +205,7 @@ mod tests {
         fn on_handshake_error(&self) {}
     }
 
-    fn make_ring_buffer() -> Arc<RwLock<RingBuffer<(u64, u64), Utf8Bytes>>> {
+    fn make_ring_buffer() -> Arc<RwLock<RingBuffer<FlashblockPosition, Utf8Bytes>>> {
         Arc::new(RwLock::new(RingBuffer::new(16)))
     }
 
@@ -213,15 +218,16 @@ mod tests {
     #[tokio::test]
     async fn listener_accepts_and_receives_message() {
         let (listener, addr) = bind_listener().await;
-        let (tx, rx) = broadcast::channel::<Utf8Bytes>(16);
+        let (tx, _) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics = Arc::new(MockMetrics::new());
 
         let handle = tokio::spawn({
             let metrics = Arc::clone(&metrics) as Arc<dyn PublisherMetrics>;
             let cancel = cancel.clone();
+            let tx = tx.clone();
             async move {
-                Listener::new(listener, metrics, rx, cancel, make_ring_buffer()).run().await;
+                Listener::new(listener, metrics, tx, cancel, make_ring_buffer()).run().await;
             }
         });
 
@@ -229,7 +235,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        tx.send(Utf8Bytes::from("test-payload")).unwrap();
+        tx.send((Some((1, 0)), Utf8Bytes::from("test-payload"))).unwrap();
 
         let msg = client.next().await.unwrap().unwrap();
         assert_eq!(msg, Message::Text(Utf8Bytes::from("test-payload")));
@@ -243,14 +249,14 @@ mod tests {
     #[tokio::test]
     async fn listener_graceful_shutdown() {
         let (listener, _addr) = bind_listener().await;
-        let (_, rx) = broadcast::channel::<Utf8Bytes>(16);
+        let (tx, _) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics: Arc<dyn PublisherMetrics> = Arc::new(MockMetrics::new());
 
         let handle = tokio::spawn({
             let cancel = cancel.clone();
             async move {
-                Listener::new(listener, metrics, rx, cancel, make_ring_buffer()).run().await;
+                Listener::new(listener, metrics, tx, cancel, make_ring_buffer()).run().await;
             }
         });
 
@@ -261,15 +267,16 @@ mod tests {
     #[tokio::test]
     async fn listener_multiple_clients_receive_same_message() {
         let (listener, addr) = bind_listener().await;
-        let (tx, rx) = broadcast::channel::<Utf8Bytes>(16);
+        let (tx, _) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics = Arc::new(MockMetrics::new());
 
         let handle = tokio::spawn({
             let metrics = Arc::clone(&metrics) as Arc<dyn PublisherMetrics>;
             let cancel = cancel.clone();
+            let tx = tx.clone();
             async move {
-                Listener::new(listener, metrics, rx, cancel, make_ring_buffer()).run().await;
+                Listener::new(listener, metrics, tx, cancel, make_ring_buffer()).run().await;
             }
         });
 
@@ -278,7 +285,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        tx.send(Utf8Bytes::from("broadcast-msg")).unwrap();
+        tx.send((Some((1, 0)), Utf8Bytes::from("broadcast-msg"))).unwrap();
 
         let msg1 = client1.next().await.unwrap().unwrap();
         let msg2 = client2.next().await.unwrap().unwrap();
@@ -308,7 +315,7 @@ mod tests {
     #[tokio::test]
     async fn listener_with_resume_replays_buffered() {
         let (listener, addr) = bind_listener().await;
-        let (tx, rx) = broadcast::channel::<Utf8Bytes>(16);
+        let (tx, _) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics: Arc<dyn PublisherMetrics> = Arc::new(MockMetrics::new());
         let ring_buffer = make_ring_buffer();
@@ -323,8 +330,9 @@ mod tests {
         let ring_buffer_clone = Arc::clone(&ring_buffer);
         let handle = tokio::spawn({
             let cancel = cancel.clone();
+            let tx = tx.clone();
             async move {
-                Listener::new(listener, metrics, rx, cancel, ring_buffer_clone).run().await;
+                Listener::new(listener, metrics, tx, cancel, ring_buffer_clone).run().await;
             }
         });
 
@@ -342,7 +350,7 @@ mod tests {
         assert_eq!(msg, Message::Text(Utf8Bytes::from("entry-1-1")));
 
         // Then live messages still work
-        tx.send(Utf8Bytes::from("live-msg")).unwrap();
+        tx.send((Some((2, 0)), Utf8Bytes::from("live-msg"))).unwrap();
         let live_msg = tokio::time::timeout(std::time::Duration::from_millis(500), client.next())
             .await
             .unwrap()
