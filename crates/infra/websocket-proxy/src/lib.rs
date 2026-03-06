@@ -23,3 +23,6 @@ pub use server::*;
 
 mod subscriber;
 pub use subscriber::*;
+
+/// Convenience alias for the ring buffer used by the flashblocks proxy.
+pub type FlashblocksRingBuffer = base_ring_buffer::RingBuffer<(u64, u64), Vec<u8>>;
