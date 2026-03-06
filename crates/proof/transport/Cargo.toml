@@ -1,6 +1,6 @@
 [package]
 name = "base-proof-transport"
-description = "Witness transport abstraction for proof backends"
+description = "Proof transport abstraction for proof backends"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,15 +12,24 @@ workspace = true
 
 [dependencies]
 # Proof
-base-proof-primitives = { workspace = true, features = ["std"] }
+base-proof-primitives = { workspace = true, features = ["std", "serde"] }
 
 # Async
 async-trait = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
 
+# Vsock transport (optional, unix-only)
+vsock = { workspace = true, optional = true }
+bincode = { workspace = true, optional = true, features = ["serde"] }
+serde = { workspace = true, optional = true }
+
 [dev-dependencies]
 alloy-primitives = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+
+[features]
+test-utils = []
+vsock = ["dep:vsock", "dep:bincode", "dep:serde", "tokio/rt"]

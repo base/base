@@ -3,11 +3,11 @@
 
 extern crate alloc;
 
-mod witness;
-pub use witness::WitnessBundle;
-
 mod proof;
-pub use proof::{ProofClaim, ProofEvidence, ProofRequest, ProofResult};
+pub use proof::{ProofBundle, ProofClaim, ProofEvidence, ProofRequest, ProofResult};
+
+mod proposal;
+pub use proposal::Proposal;
 
 mod prover;
 pub use prover::ProverBackend;

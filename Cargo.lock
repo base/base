@@ -4121,6 +4121,7 @@ dependencies = [
  "async-trait",
  "base-proof-preimage",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4180,8 +4181,11 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "base-proof-primitives",
+ "bincode 2.0.1",
+ "serde",
  "thiserror 2.0.18",
  "tokio",
+ "vsock",
 ]
 
 [[package]]
