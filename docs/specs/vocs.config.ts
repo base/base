@@ -131,40 +131,56 @@ function sectionItemWithoutDirs(
   }
 }
 
-const evmLinks = new Set(['/protocol/precompiles', '/protocol/predeploys', '/protocol/preinstalls'])
+const upgradeDirs = [
+  'jovian',
+  'isthmus',
+  'holocene',
+  'granite',
+  'fjord',
+  'ecotone',
+  'delta',
+  'canyon',
+  'pectra-blob-schedule',
+]
 
-function withEvmSection(items: SidebarItem[]): SidebarItem[] {
-  const remainingItems: SidebarItem[] = []
-  const groupedItems: SidebarItem[] = []
-  let insertIndex = -1
+const hiddenProtocolFiles = ['access-lists.md']
 
-  for (const item of items) {
-    if ('link' in item && item.link && evmLinks.has(item.link)) {
-      if (insertIndex === -1) insertIndex = remainingItems.length
-      groupedItems.push(item)
-      continue
-    }
-    remainingItems.push(item)
-  }
+const protocolTodoExcludedFiles = [
+  ...hiddenProtocolFiles,
+  'overview.md',
+  'precompiles.md',
+  'predeploys.md',
+  'preinstalls.md',
+  'flashblocks-rpc-methods.md',
+]
 
-  if (groupedItems.length === 0) return items
-  if (insertIndex === -1) insertIndex = remainingItems.length
+const evmSection: SidebarItem = {
+  text: 'EVM',
+  items: [
+    { text: 'Precompiles', link: '/protocol/precompiles' },
+    { text: 'Predeploys', link: '/protocol/predeploys' },
+    { text: 'Preinstalls', link: '/protocol/preinstalls' },
+  ],
+  collapsed: true,
+}
 
-  const evmSection: SidebarItem = {
-    text: 'EVM',
-    items: groupedItems,
-    collapsed: true,
-  }
-
-  return [
-    ...remainingItems.slice(0, insertIndex),
-    evmSection,
-    ...remainingItems.slice(insertIndex),
-  ]
+const rpcSection: SidebarItem = {
+  text: 'RPC',
+  items: [{ text: 'Flashblocks RPC', link: '/protocol/flashblocks-rpc-methods' }],
+  collapsed: true,
 }
 
 const sidebar: SidebarItem[] = [
   { text: 'Home', link: '/' },
+  {
+    text: 'Protocol',
+    items: [
+      { text: 'Overview', link: '/protocol/overview' },
+      evmSection,
+      rpcSection,
+      { ...sectionItem('fault-proof', 'Fault Proof'), collapsed: true },
+    ],
+  },
   {
     text: 'Upgrades',
     items: [
@@ -179,22 +195,7 @@ const sidebar: SidebarItem[] = [
       { text: 'Canyon', link: '/protocol/canyon/overview' },
     ],
   },
-  (() => {
-    const protocol = sectionItemWithoutDirs(
-      'protocol',
-      'Protocol',
-      ['jovian', 'isthmus', 'holocene', 'granite', 'fjord', 'ecotone', 'delta', 'canyon', 'pectra-blob-schedule'],
-      ['access-lists.md'],
-    )
-    const protocolItems = withEvmSection(protocol.items ?? [])
-    return {
-      ...protocol,
-      items: [
-        ...protocolItems,
-        { ...sectionItem('fault-proof', 'Fault Proof'), collapsed: true },
-      ],
-    }
-  })(),
+  sectionItemWithoutDirs('protocol', 'TODO', upgradeDirs, protocolTodoExcludedFiles),
   {
     text: 'Reference',
     items: [{ text: 'Glossary', link: '/glossary' }],
