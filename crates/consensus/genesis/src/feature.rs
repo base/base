@@ -2,7 +2,7 @@ use alloc::string::String;
 use core::{
     borrow::Borrow,
     fmt,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicU32, Ordering},
 };
 
 use base_alloy_hardforks::OpHardfork;
@@ -10,36 +10,40 @@ use base_alloy_hardforks::OpHardfork;
 use crate::HardForkConfig;
 
 /// Sentinel: `ActivationCache` has not yet been resolved.
-const UNCACHED: u64 = u64::MAX;
+const UNCACHED: u32 = u32::MAX;
 /// Sentinel: `ActivationCache` is resolved and the feature has no scheduled activation.
-const NO_ACTIVATION: u64 = u64::MAX - 1;
+const NO_ACTIVATION: u32 = u32::MAX - 1;
 
 /// Lock-free cache for a lazily resolved activation timestamp.
 ///
-/// Wraps an [`AtomicU64`] with two sentinel values so that [`Feature`] can derive
+/// Wraps an [`AtomicU32`] with two sentinel values so that [`Feature`] can derive
 /// `Clone`, `PartialEq`, and `Eq` normally. The wrapper's [`Default`] initialises
 /// to [`UNCACHED`], so `#[serde(skip)]` on the field works without a custom path.
-struct ActivationCache(AtomicU64);
+///
+/// Timestamps are stored as `u32` for compatibility with 32-bit `no_std` targets
+/// (e.g. `riscv32imac-unknown-none-elf`). All realistic hardfork timestamps fit
+/// within `u32` (valid until year 2106).
+struct ActivationCache(AtomicU32);
 
 impl ActivationCache {
-    fn load(&self) -> u64 {
+    fn load(&self) -> u32 {
         self.0.load(Ordering::Relaxed)
     }
 
-    fn store(&self, value: u64) {
+    fn store(&self, value: u32) {
         self.0.store(value, Ordering::Relaxed);
     }
 }
 
 impl Default for ActivationCache {
     fn default() -> Self {
-        Self(AtomicU64::new(UNCACHED))
+        Self(AtomicU32::new(UNCACHED))
     }
 }
 
 impl Clone for ActivationCache {
     fn clone(&self) -> Self {
-        Self(AtomicU64::new(self.load()))
+        Self(AtomicU32::new(self.load()))
     }
 }
 
@@ -160,10 +164,15 @@ impl Feature {
     pub fn activation_time(&self, hardforks: &HardForkConfig) -> Option<u64> {
         let cached = self.activation_cache.load();
         if cached != UNCACHED {
-            return if cached == NO_ACTIVATION { None } else { Some(cached) };
+            return if cached == NO_ACTIVATION { None } else { Some(u64::from(cached)) };
         }
         let value = self.hardfork.and_then(|hf| hardforks.timestamp_for(hf));
-        self.activation_cache.store(value.map_or(NO_ACTIVATION, |t| t));
+        // Timestamps are stored as u32. All realistic hardfork timestamps fit within u32
+        // (valid until year 2106). Values beyond that saturate to u32::MAX - 2, which
+        // preserves the sentinel gap and still activates the feature (timestamp >= t).
+        self.activation_cache.store(value.map_or(NO_ACTIVATION, |t| {
+            u32::try_from(t).unwrap_or(u32::MAX - 2)
+        }));
         value
     }
 
