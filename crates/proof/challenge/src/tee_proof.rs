@@ -31,8 +31,7 @@
 //! flag (`CHALLENGER_TEE_ENDPOINT`). When the endpoint is not configured,
 //! the orchestrator skips TEE and falls back to ZK proof generation.
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::ReceiptEnvelope;
 use alloy_eips::{Typed2718, eip2718::Encodable2718};
@@ -132,7 +131,8 @@ impl TeeProofError {
     pub const fn is_retryable(&self) -> bool {
         match self {
             Self::Rpc { source, .. } => source.is_retryable(),
-            Self::Enclave(_) | Self::Timeout | Self::DataPrep(_) | Self::Encoding(_) => false,
+            Self::Enclave(e) => e.is_retryable(),
+            Self::Timeout | Self::DataPrep(_) | Self::Encoding(_) => false,
         }
     }
 }
@@ -312,13 +312,11 @@ where
             tee_image_hash: self.tee_image_hash,
         };
 
-        let proposal = tokio::time::timeout(
-            ENCLAVE_TIMEOUT,
-            self.enclave_client.execute_stateless(request),
-        )
-        .await
-        .map_err(|_| TeeProofError::Timeout)?
-        .map_err(TeeProofError::Enclave)?;
+        let proposal =
+            tokio::time::timeout(ENCLAVE_TIMEOUT, self.enclave_client.execute_stateless(request))
+                .await
+                .map_err(|_| TeeProofError::Timeout)?
+                .map_err(TeeProofError::Enclave)?;
 
         let proof_bytes = Self::encode_proof_bytes(&proposal, l1_origin_hash, l1_origin_number)?;
 
@@ -495,6 +493,7 @@ mod tests {
     use base_enclave::{AccountResult, default_rollup_config};
     use base_proof_contracts::{GameAtIndex, GameInfo};
     use base_protocol::L1BlockInfoBedrock;
+    use jsonrpsee::core::client::Error as JrpcError;
     use rstest::rstest;
 
     use super::*;
@@ -1096,8 +1095,48 @@ mod tests {
     }
 
     #[test]
-    fn test_is_not_retryable_enclave() {
+    fn test_is_not_retryable_enclave_creation_error() {
         let err = TeeProofError::Enclave(ClientError::ClientCreation("down".into()));
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_enclave_transport() {
+        let inner = JrpcError::Transport("connection refused".into());
+        let err = TeeProofError::Enclave(ClientError::Rpc(inner));
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_enclave_request_timeout() {
+        let err = TeeProofError::Enclave(ClientError::Rpc(JrpcError::RequestTimeout));
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_enclave_restart_needed() {
+        let err = TeeProofError::Enclave(ClientError::Rpc(JrpcError::RestartNeeded(
+            std::sync::Arc::new(JrpcError::Custom("died".into())),
+        )));
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_enclave_service_disconnect() {
+        let err = TeeProofError::Enclave(ClientError::Rpc(JrpcError::ServiceDisconnect));
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_not_retryable_enclave_call_error() {
+        let call_err = jsonrpsee_types::ErrorObject::owned(-32000, "enclave rejected", None::<()>);
+        let err = TeeProofError::Enclave(ClientError::Rpc(JrpcError::Call(call_err)));
+        assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn test_is_not_retryable_enclave_invalid_url() {
+        let err = TeeProofError::Enclave(ClientError::InvalidUrl("bad://url".into()));
         assert!(!err.is_retryable());
     }
 
