@@ -1,7 +1,7 @@
-//! Stateless OP Stack L2 block builder implementation.
+//! Stateless Base L2 block builder implementation.
 //!
 //! The [`StatelessL2Builder`] provides a complete block building and execution engine
-//! for OP Stack L2 chains that operates in a stateless manner, pulling required state
+//! for Base L2 chains that operates in a stateless manner, pulling required state
 //! data from a [`TrieDB`] during execution rather than maintaining full state.
 
 use alloc::{string::ToString, vec::Vec};
@@ -25,7 +25,7 @@ use revm::{
 
 use crate::{ExecutorError, ExecutorResult, TrieDB, TrieDBError, TrieDBProvider};
 
-/// Stateless OP Stack L2 block builder that derives state from trie proofs during execution.
+/// Stateless Base L2 block builder that derives state from trie proofs during execution.
 ///
 /// The [`StatelessL2Builder`] is a specialized block execution engine designed for fault proof
 /// systems and stateless verification. Instead of maintaining full L2 state, it dynamically
@@ -47,7 +47,7 @@ where
     pub(crate) config: &'a RollupConfig,
     /// The trie database providing stateless access to L2 state via Merkle proofs.
     pub(crate) trie_db: TrieDB<P, H>,
-    /// The block executor factory for creating OP Stack execution environments.
+    /// The block executor factory for creating Base execution environments.
     pub(crate) factory: OpBlockExecutorFactory<OpAlloyReceiptBuilder, RollupConfig, Evm>,
 }
 

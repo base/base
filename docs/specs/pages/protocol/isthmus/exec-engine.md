@@ -92,13 +92,13 @@ the `withdrawalsRoot` will always be non-nil and never be the MPT root of an emp
 
 #### Forwards Compatibility Considerations
 
-As it stands, the `withdrawalsRoot` field is unused within the OP Stack's header consensus format, and will never be
+As it stands, the `withdrawalsRoot` field is unused within the Base's header consensus format, and will never be
 used for other reasons that are currently planned. Setting this value to the account storage root of the withdrawal
-directly fits with the OP Stack, and makes use of the existing field in the L1 header consensus format.
+directly fits with Base, and makes use of the existing field in the L1 header consensus format.
 
 #### Client Implementation Considerations
 
-Various EL clients store historical state of accounts differently. If, as a contrived case, an OP Stack chain did not have
+Various EL clients store historical state of accounts differently. If, as a contrived case, Base did not have
 an outbound withdrawal for a long period of time, the node may not have access to the account storage root of the
 [`L2ToL1MessagePasser`][l2-to-l1-mp]. In this case, the client would be unable to keep consensus. However, most modern
 clients are able to at the very least reconstruct the account storage root at a given block on the fly if it does not
@@ -113,7 +113,7 @@ is applicable for scenarios where the actual withdrawals root value is not readi
 ## Deposit Requests
 
 [EIP-6110] shifts deposit to the execution layer, introducing a new [EIP-7685] deposit request of type
-`DEPOSIT_REQUEST_TYPE`. Deposit requests then appear in the [EIP-7685] requests list. The OP Stack needs to ignore these
+`DEPOSIT_REQUEST_TYPE`. Deposit requests then appear in the [EIP-7685] requests list. The Base needs to ignore these
 requests. Requests generation must be modified to exclude [EIP-6110] deposit requests. Note that since the [EIP-6110]
 request type did _not_ exist prior to Pectra on L1 and the Isthmus hardfork on L2, no activation time is needed since these
 deposit type requests may always be excluded.
@@ -146,15 +146,15 @@ programs so they call out to the L1 instead of calculating the result inside the
 
 ## Block Sealing
 
-In the OP Stack, `EIP-7685` is no-op'd, and the `requestsHash` is always set to `sha256('')` (as noted in
+In the Base, `EIP-7685` is no-op'd, and the `requestsHash` is always set to `sha256('')` (as noted in
 [header validity rules](#header-validity-rules)). As such, [EIP-6110](https://eips.ethereum.org/EIPS/eip-6110),
 [EIP-7002](https://eips.ethereum.org/EIPS/eip-7002), and [EIP-7251](https://eips.ethereum.org/EIPS/eip-7251) are not
-enabled either. The OP Stack execution layer must ensure that the post-block filtering of events in the deposit contract
+enabled either. The Base execution layer must ensure that the post-block filtering of events in the deposit contract
 (EIP-6110) as well as the `EIP-7002` + `EIP-7251` system calls are _not invoked_ during the block sealing process after
 Isthmus activation.
 
-Users of the OP Stack may still permissionlessly deploy these smart contracts, but they will not be treated as special
-by the OP Stack execution layer, and the system calls introduced in L1's Pectra hardfork are not considered.
+Users of Base may still permissionlessly deploy these smart contracts, but they will not be treated as special
+by the Base execution layer, and the system calls introduced in L1's Pectra hardfork are not considered.
 
 ## Engine API Updates
 
@@ -177,7 +177,7 @@ and the `operatorFeeConstant`.
 
 ### Operator Fee
 
-The operator fee is integrated directly into the EVM, alongside the standard gas fee and the OP Stack specific L1 data
+The operator fee is integrated directly into the EVM, alongside the standard gas fee and the Base specific L1 data
 fee. This fee follows the same semantics of existing fees charged in the EVM[^1], just with a new fee beneficiary account.
 
 #### Fee Formula

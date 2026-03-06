@@ -16,9 +16,9 @@
   - [EIP-2935](https://eips.ethereum.org/EIPS/eip-2935)
     - [EIP-2935 Contract Deployment](./derivation.md#eip-2935-contract-deployment)
   - [EIP-7002](https://eips.ethereum.org/EIPS/eip-7002)
-    - The EIP-7002 predeploy contract and syscall are not adopted as part of the OP Stack.
+    - The EIP-7002 predeploy contract and syscall are not adopted as part of Base.
   - [EIP-7251](https://eips.ethereum.org/EIPS/eip-7251)
-    - The EIP-7251 predeploy contract and syscall are not adopted as part of the OP Stack.
+    - The EIP-7251 predeploy contract and syscall are not adopted as part of Base.
   - [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623)
   - [EIP-6110](https://eips.ethereum.org/EIPS/eip-6110)
   - [EIP-7685](https://eips.ethereum.org/EIPS/eip-7685)

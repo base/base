@@ -4,7 +4,7 @@ This directory contains the Dockerfiles and Compose configuration for the Base n
 
 ## Dockerfiles
 
-`Dockerfile.client` builds the `base-reth-node` binary, the production OP Stack execution client. This is the primary image used for running Base nodes and is what gets published to the container registry on releases.
+`Dockerfile.client` builds the `base-reth-node` binary, the production Base execution client. This is the primary image used for running Base nodes and is what gets published to the container registry on releases.
 
 `Dockerfile.builder` builds the `base-builder` binary, an extended execution client with block building capabilities including flashblocks support. This is used by sequencers and block builders in the network.
 
@@ -16,7 +16,7 @@ The `docker-compose.yml` orchestrates a complete local devnet environment with b
 
 - An L1 execution client (Reth) and consensus client (Lighthouse) with a validator
 - The Base builder and client nodes on L2
-- OP Stack consensus layer nodes (`op-node`) for both builder and client
+- Base consensus layer nodes (`op-node`) for both builder and client
 - The `op-batcher` for submitting L2 data to L1
 
 All services read configuration from `devnet-env` in this directory. The devnet stores chain data in `.devnet/` which is created on first run.

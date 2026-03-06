@@ -1,6 +1,6 @@
 //! Module containing a [`TxDeposit`] builder for the Jovian network upgrade transactions.
 //!
-//! Jovian network upgrade transactions are defined in the [OP Stack Specs][specs].
+//! Jovian network upgrade transactions are defined in the [Base Specs][specs].
 //!
 //! [specs]: https://specs.optimism.io/protocol/jovian/derivation.html#network-upgrade-automation-transactions
 

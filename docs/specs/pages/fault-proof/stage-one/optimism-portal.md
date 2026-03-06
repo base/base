@@ -3,7 +3,7 @@
 ## Overview
 
 The `OptimismPortal` contract is the primary interface for deposits and withdrawals between the L1
-and L2 chains within an OP Stack system. The `OptimismPortal` contract allows users to create
+and L2 chains within Base. The `OptimismPortal` contract allows users to create
 "deposit transactions" on the L1 chain that are automatically executed on the L2 chain within a
 bounded amount of time. Additionally, the `OptimismPortal` contract allows users to execute
 withdrawal transactions by proving that such a withdrawal was initiated on the L2 chain. The

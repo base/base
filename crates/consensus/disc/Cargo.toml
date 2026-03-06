@@ -1,7 +1,7 @@
 [package]
 name = "base-consensus-disc"
 version.workspace = true
-description = "Discovery service for the OP Stack"
+description = "Discovery service for Base"
 
 edition.workspace = true
 license.workspace = true

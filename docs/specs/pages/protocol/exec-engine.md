@@ -350,7 +350,7 @@ Parameters:
 
 Returns:
 
-- `ProtocolVersion`: the latest supported OP-Stack protocol version of the execution engine.
+- `ProtocolVersion`: the latest supported Base protocol version of the execution engine.
 
 The execution engine SHOULD warn the user when the recommended version is newer than
 the current version supported by the execution engine.
@@ -434,7 +434,7 @@ the operation within the engine is the exact same as with L1 (although with an E
 plus a list of "blobs": "Binary Large Object", i.e. a dedicated data type for serving Data-Availability as base-layer.
 
 With the Ecotone upgrade, all Cancun L1 execution features are enabled, with [EIP-4844] as exception:
-as a L2, the OP-Stack does not serve blobs, and thus disables this new transaction type.
+as an L2, Base does not serve blobs, and thus disables this new transaction type.
 
 EIP-4844 is disabled as following:
 
@@ -452,7 +452,7 @@ the stack.
 [EIP-4788] introduces a "beacon block root" into the execution-layer block-header and EVM.
 This block root is an [SSZ hash-tree-root] of the consensus-layer contents of the previous consensus block.
 
-With the adoption of [EIP-4399] in the Bedrock upgrade the OP-Stack already includes the `PREVRANDAO` of L1.
+With the adoption of [EIP-4399] in the Bedrock upgrade the Base already includes the `PREVRANDAO` of L1.
 And thus with [EIP-4788] the L1 beacon block root is made available.
 
 For the Ecotone upgrade, this entails that:

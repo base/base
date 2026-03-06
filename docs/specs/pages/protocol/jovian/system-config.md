@@ -3,7 +3,7 @@
 ## Minimum Base Fee Configuration
 
 Jovian adds a configuration value to `SystemConfig` to control the minimum base fee used by the EIP-1559 fee market
-on OP Stack chains. The value is a minimum base fee in wei.
+on Base. The value is a minimum base fee in wei.
 
 | Name         | Type     | Default | Meaning                 |
 |--------------|----------|---------|-------------------------|

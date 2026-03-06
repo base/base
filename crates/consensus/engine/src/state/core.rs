@@ -22,7 +22,7 @@ use crate::Metrics;
 /// 4. **Safe** - Cross-verified with safe L1 dependencies
 /// 5. **Finalized** - Derived from finalized L1 data only
 ///
-/// See the [OP Stack specifications](https://specs.optimism.io) for detailed safety definitions.
+/// See the [Base specifications](https://specs.optimism.io) for detailed safety definitions.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub struct EngineSyncState {
     /// Most recent block found on the P2P network (lowest safety level).

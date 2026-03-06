@@ -203,7 +203,7 @@ const sidebar: SidebarItem[] = [
 
 export default defineConfig({
   title: 'Base Specification',
-  description: 'Base Chain specs inspired by Ethereum and OP Stack, with independent evolution after Jovian.',
+  description: 'Base Chain specs inspired by Ethereum and the OP Stack, with independent evolution after Jovian.',
   logoUrl: '/assets/base/logo.svg',
   iconUrl: '/assets/base/favicon.png',
   topNav: [

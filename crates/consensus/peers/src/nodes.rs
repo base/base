@@ -7,7 +7,7 @@ use derive_more::Deref;
 
 use crate::BootNode;
 
-/// Bootnodes for OP Stack chains.
+/// Bootnodes for Base.
 #[derive(Debug, Clone, Deref, PartialEq, Eq, Default, derive_more::From)]
 pub struct BootNodes(pub Vec<BootNode>);
 

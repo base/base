@@ -2,9 +2,9 @@
 
 ## Overview
 
-This document describes the requirements necessary for an OP Stack implementation to satisfy the
+This document describes the requirements necessary for a Base implementation to satisfy the
 Stage 1 decentralization requirements [as defined by L2BEAT][stage-1]. It also defines the specific
-roles and capabilities for an OP Stack chain in the standard configuration that will satisfy these
+roles and capabilities for Base in the standard configuration that will satisfy these
 requirements.
 
 ## Definitions
@@ -26,14 +26,14 @@ Generally speaking "liveness" means nothing gets bricked and "safety" means noth
 
 ### Proxy Admin Owner
 
-The **Proxy Admin Owner** is a dedicated role in the OP Stack that is permitted to upgrade the
-contracts that make up an OP Stack chain's onchain footprint. In the Superchain, the Upgrade
+The **Proxy Admin Owner** is a dedicated role in Base that is permitted to upgrade the
+contracts that make up Base's onchain footprint. In the Superchain, the Upgrade
 Controller role is held jointly in a 2/2 of the Optimism Security Council and the Optimism
 Foundation.
 
 ### Guardian
 
-The **Guardian** is a dedicated role in the OP Stack that is permitted to trigger certain actions
+The **Guardian** is a dedicated role in Base that is permitted to trigger certain actions
 to maintain the security of an OP Chain or set of OP Chains in case of a bug in the protocol. In
 the Superchain, the Guardian role is held by the Optimism Security Council.
 
@@ -65,7 +65,7 @@ The Pause Mechanism can be applied globally or to individual systems. Which leve
 to is determined by the [Pause Identifier](#pause-identifier) provided when executing or checking
 pause status.
 
-Chains using the Standard Configuration of the OP Stack use a pause expiry of **3 months**. Because
+Chains using the Standard Configuration of Base use a pause expiry of **3 months**. Because
 the Pause Mechanism can be applied to both local and global scopes, the pause could be chained to,
 for instance, pause the local system first and then the global system shortly before the local
 pause expires. The total potential pause time is therefore double the expiry period (6 months).
@@ -113,24 +113,23 @@ property:
   [Withdrawal Safety](#withdrawal-safety) failure is through a malicious majority of at least 75%
   of the Security Council.
 
-## OP Stack Stage 1 Design
+## Base Stage 1 Design
 
 The above definitions and requirements have a number of concrete implications for the Standard
-Configuration of the OP Stack. We therefore specify the following architecture for a Stage 1 OP
-Stack chain.
+Configuration of Base. We therefore specify the following architecture for Stage 1 Base.
 
 ### Permissionless Fault Proofs
 
-A Stage 1 OP Stack chain must operate a _permissionless_ Fault Proof system.
+Base must operate a _permissionless_ Fault Proof system.
 
 ### Security Council
 
-A Stage 1 OP Stack chain must have a Security Council.
+Base must have a Security Council.
 
 ### Proxy Admin Owner
 
-The [Proxy Admin Owner](#proxy-admin-owner) role in the OP Stack is a privileged role that is
-allowed to upgrade the smart contracts that make up an OP Stack chain's onchain footprint. This
+The [Proxy Admin Owner](#proxy-admin-owner) role in Base is a privileged role that is
+allowed to upgrade the smart contracts that make up Base's onchain footprint. This
 role must require sign-off from the Security Council. This specifically means that the role can
 either be entirely held by the Security Council or by some other configuration as long as the
 Security Council is a required signatory (e.g., a 2/2 multisig).
@@ -150,8 +149,8 @@ because the Security Council is a required signatory on this role.
 
 ### Guardian
 
-The [Guardian](#guardian) role in the OP Stack is a privileged role that is allowed to execute
-certain safety-net actions in the case that a bug exists in the OP Stack smart contracts. This role
+The [Guardian](#guardian) role in Base is a privileged role that is allowed to execute
+certain safety-net actions in the case that a bug exists in the Base smart contracts. This role
 must be held by the Security Council in the form of a 1/1 Safe owned by the Security Council.
 
 The Guardian is the only address that is permitted to execute the following actions:
@@ -240,7 +239,7 @@ optional. It is included here for completeness, but it does not impact
 A permanent Withdrawal Liveness or Withdrawal Safety failure requires 75% of the Security Council (w/o bugs).
 
 This is the core invariant for Stage 1 and aligns with [the definition by L2BEAT][stage-1] from
-January 2025. We can define additional properties about roles specific to the OP Stack as long as
+January 2025. We can define additional properties about roles specific to Base as long as
 they align with this invariant. Note that this invariant does NOT consider the impact of bugs in
 smart contracts on the rest of the protocol. That is, this invariant only holds strongly under the
 assumption that no such bugs exist.

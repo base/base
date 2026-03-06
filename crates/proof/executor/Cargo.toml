@@ -1,6 +1,6 @@
 [package]
 name = "base-proof-executor"
-description = "A no_std stateless block builder for the OP Stack"
+description = "A no_std stateless block builder for Base"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

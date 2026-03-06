@@ -1,7 +1,7 @@
 [package]
 name = "base-consensus-gossip"
 version.workspace = true
-description = "Gossip protocol implementation for the OP Stack"
+description = "Gossip protocol implementation for Base"
 
 edition.workspace = true
 license.workspace = true

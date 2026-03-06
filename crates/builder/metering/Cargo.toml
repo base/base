@@ -1,6 +1,6 @@
 [package]
 name = "base-builder-metering"
-description = "Resource metering backend for the OP Stack block builder"
+description = "Resource metering backend for the Base block builder"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -3,7 +3,8 @@ no_progress = false
 exclude_all_private = false
 accept = [200, 403] # 403 status code is often returned by private repos instead of 404
 exclude_path = [
-    "crates/utilities/test-utils/contracts/"
+    "crates/utilities/test-utils/contracts/",
+    "package-lock\\.json",
 ]
 exclude = [
     'foo.bar',
@@ -13,4 +14,8 @@ exclude = [
     'https://rustup.rs/',
     'https://base.mirror.xyz/',
     'https://www.man7.org/',
+    'https://tidelift.com/',
+    'https://specs.base.org',
+    'https://patreon.com',
+    'https://www.patreon.com',
 ]

@@ -1,6 +1,6 @@
-//! Frame types for OP Stack L2 data transmission.
+//! Frame types for Base L2 data transmission.
 //!
-//! Frames are the fundamental unit of data transmission in the OP Stack derivation
+//! Frames are the fundamental unit of data transmission in the Base derivation
 //! pipeline. They provide a way to split large channel data into smaller, manageable
 //! chunks that can be transmitted via L1 transactions and later reassembled.
 //!
@@ -99,7 +99,7 @@ pub enum FrameParseError {
 
 /// A channel frame representing a segment of channel data for transmission.
 ///
-/// Frames are the atomic units of data transmission in the OP Stack derivation pipeline.
+/// Frames are the atomic units of data transmission in the Base derivation pipeline.
 /// Large channel data is split into multiple frames to fit within L1 transaction size
 /// constraints while maintaining the ability to reassemble the original data.
 ///

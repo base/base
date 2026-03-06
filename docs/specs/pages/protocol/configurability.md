@@ -1,11 +1,11 @@
-# OP Stack Configurability
+# Base Configurability
 
-When deploying the OP Stack software to a production environment,
+When deploying the Base software to a production environment,
 certain parameters about the protocol can be configured. These
 configurations can include a variety of parameters which affect the
 resulting properties of the blockspace in question.
 
-There are four categories of OP Stack configuration options:
+There are four categories of Base configuration options:
 
 - **Consensus Parameters**: Parameters and properties of the chain that may
   be set at genesis and fixed for the lifetime of the chain, or may be
@@ -20,7 +20,7 @@ There are four categories of OP Stack configuration options:
   operations of the chain, and therefore are often hot wallets.
 
 Each category also defines the standard configuration values for it's given parameters.
-Standard configuration is the set of requirements for an OP Stack chain to be considered a
+Standard configuration is the set of requirements for Base to be considered a
 Standard Chain within the superchain.
 These requirements are currently a draft, pending governance approval.
 
@@ -219,7 +219,7 @@ would pose a risk to user protections.<br/>
 
 ### Superchain target
 
-**Description:** Choice of cross-L2 configuration. May be omitted in isolated OP Stack deployments. Includes
+**Description:** Choice of cross-L2 configuration. May be omitted in isolated Base deployments. Includes
 SuperchainConfig and ProtocolVersions contract addresses.<br/>
 **Administrator:** Static<br/>
 **Requirement:** Mainnet or Sepolia<br/>

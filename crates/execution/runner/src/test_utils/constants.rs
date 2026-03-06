@@ -27,7 +27,7 @@ pub const BLOCK_BUILD_DELAY_MS: u64 = 100;
 /// All-zeros secret for local testing only.
 pub const DEFAULT_JWT_SECRET: B256 = B256::ZERO;
 
-// L1 Block Info (OP Stack)
+// L1 Block Info (Base)
 
 /// Sample L1 block info deposit transaction for Base Sepolia tests.
 pub const L1_BLOCK_INFO_DEPOSIT_TX: Bytes = bytes!(

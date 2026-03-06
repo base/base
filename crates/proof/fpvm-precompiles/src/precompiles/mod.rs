@@ -1,4 +1,4 @@
-//! Contains the [`PrecompileProvider`] implementation that serves FPVM-accelerated OP Stack
+//! Contains the [`PrecompileProvider`] implementation that serves FPVM-accelerated Base
 //! precompiles.
 //!
 //! [`PrecompileProvider`]: revm::handler::PrecompileProvider

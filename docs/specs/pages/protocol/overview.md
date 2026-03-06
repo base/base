@@ -78,7 +78,7 @@ graph TD
     Verifiers -.->|fetch deposit data| EthereumL1
     Verifiers -->|submit/validate/challenge output proposals| EthereumL1
     Verifiers -.->|fetch realtime P2P updates| Sequencers
-    
+
     Users -->|submit deposits/withdrawals| EthereumL1
     Users -->|submit transactions| Sequencers
     Users -->|query data| Verifiers
@@ -334,14 +334,14 @@ graph LR
   provided on the [Configurability](./configurability.md#consensus-parameters) page.
   - Historically, it was often derived as
     `0xFF0000....<L2 chain ID>` where `<L2 chain ID>` is chain ID of the Layer 2 network for which the data is being posted.
-    Historically, some OP Stack deployments used this form; Base may use chain-specific configured values.
+    Historically, some Base deployments used this form; Base may use chain-specific configured values.
 - Smart contracts that sit behind `Proxy` contracts are **highlighted in BLUE**. Refer to the
   [Smart Contract Proxies](#smart-contract-proxies) section below to understand how these proxies are designed.
   - The `L1CrossDomainMessenger` contract sits behind the [`ResolvedDelegateProxy`](https://github.com/ethereum-optimism/optimism/tree/develop/packages/contracts-bedrock/src/legacy/ResolvedDelegateProxy.sol)
-    contract, a legacy proxy contract type inherited from earlier OP Stack implementations. This proxy type is used exclusively
+    contract, a legacy proxy contract type inherited from earlier Base implementations. This proxy type is used exclusively
     for the `L1CrossDomainMessenger` to maintain backwards compatibility.
   - The `L1StandardBridge` contract sits behind the [`L1ChugSplashProxy`](https://github.com/ethereum-optimism/optimism/tree/develop/packages/contracts-bedrock/src/legacy/L1ChugSplashProxy.sol)
-    contract, a legacy proxy contract type inherited from earlier OP Stack implementations. This proxy type is used exclusively
+    contract, a legacy proxy contract type inherited from earlier Base implementations. This proxy type is used exclusively
     for the `L1StandardBridge` contract to maintain backwards compatibility.
 
 ### Core L2 Smart Contracts

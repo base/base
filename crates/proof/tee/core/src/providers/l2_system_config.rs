@@ -149,7 +149,7 @@ impl L2SystemConfigFetcher {
             let mut encoded = [0u8; 32];
             encoded[0] = 1; // version 1
 
-            // Per OP Stack spec, base_fee_scalar and blob_base_fee_scalar are always u32 values.
+            // Per Base spec, base_fee_scalar and blob_base_fee_scalar are always u32 values.
             // The U256 return type is for API compatibility.
             let blob_scalar: u32 = l1_info.blob_base_fee_scalar().try_into().map_err(|_| {
                 ProviderError::FeeScalarOverflow {

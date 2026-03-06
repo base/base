@@ -291,7 +291,7 @@ For deployment, [EIP-4788] defines a pre-[EIP-155] legacy transaction, sent from
 transaction signature validity is bound to message-hash, which is bound to the input-data, containing the init-code.
 
 However, this type of transaction requires manual deployment and gas-payments.
-And since the processing is an integral part of the chain processing, and has to be repeated for every OP-Stack chain,
+And since the processing is an integral part of the chain processing, and has to be repeated for Base,
 the deployment is approached differently here.
 
 Some chains may already have a user-submitted instance of the [EIP-4788] transaction.

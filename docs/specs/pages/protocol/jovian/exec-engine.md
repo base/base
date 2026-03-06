@@ -4,7 +4,7 @@
 
 Jovian introduces a
 [configurable minimum base fee](https://github.com/ethereum-optimism/design-docs/blob/main/protocol/minimum-base-fee.md)
-to reduce the duration of priority-fee auctions on OP Stack chains.
+to reduce the duration of priority-fee auctions on Base.
 
 The minimum base fee is configured via `SystemConfig` (see `./system-config.md`) and enforced by the execution engine
 via the block header `extraData` encoding and the Engine API `PayloadAttributesV3` parameters.
@@ -99,7 +99,7 @@ are defined in the [Fjord specs](../fjord/exec-engine.md), `DEPOSIT_TX_TYPE` is 
 and `//` represents integer floor division.
 
 From Jovian, the `blobGasUsed` property of each block header is set to that block's `daFootprint`. Note that pre-Jovian,
-since Ecotone, it was set to 0, as OP Stack chains don't support blobs. It is now repurposed to store the DA footprint.
+since Ecotone, it was set to 0, as Base does not support blobs. It is now repurposed to store the DA footprint.
 
 During block building and header validation, it must be guaranteed and checked, respectively, that the block's
 `daFootprint` stays below the `gasLimit`, just like the `gasUsed` property.
@@ -133,7 +133,7 @@ Furthermore, the `blobGasUsed` receipt field is set to the DA footprint of the t
 While the current L1 fee mechanism charges for DA usage based on an estimate of the DA footprint of a transaction, no
 protocol mechanism currently reflects the limited available _DA throughput on L1_. E.g. on Ethereum L1 with Pectra
 enabled, the available blob throughput is `~96 kB/s` (with a target of `~64 kB/s`), but the calldata floor gas price of
-`40` for calldata-heavy L2 transactions allows for more incompressible transaction data to be included on most OP Stack
+`40` for calldata-heavy L2 transactions allows for more incompressible transaction data to be included on most Base
 chains than the Ethereum blob space could handle. This is currently mitigated at the policy level by batcher-sequencer
 throttling: a mechanism which artificially constricts block building. This can cause base fees to fall, which implies
 unnecessary losses for chain operators and a negative user experience (transaction inclusion delays, priority fee

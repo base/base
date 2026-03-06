@@ -1,13 +1,13 @@
 # `base-consensus-disc`
 
-Discovery service for the OP Stack.
+Discovery service for Base.
 
 This crate provides decentralized peer discovery capabilities using the Discv5 distributed
 hash table (DHT) protocol, as defined in the Ethereum networking specifications.
 
 ## Overview
 
-The discovery service enables OP Stack nodes to find and connect to other network
+The discovery service enables Base nodes to find and connect to other network
 participants without relying on centralized infrastructure. It maintains a local
 view of the network through ENRs (Ethereum Node Records) and facilitates peer
 connections for the gossip layer.

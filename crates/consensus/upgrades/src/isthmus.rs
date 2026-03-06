@@ -1,6 +1,6 @@
 //! Module containing a [`TxDeposit`] builder for the Isthmus network upgrade transactions.
 //!
-//! Isthmus network upgrade transactions are defined in the [OP Stack Specs][specs].
+//! Isthmus network upgrade transactions are defined in the [Base Specs][specs].
 //!
 //! [specs]: https://specs.optimism.io/protocol/isthmus/derivation.html#network-upgrade-automation-transactions
 
