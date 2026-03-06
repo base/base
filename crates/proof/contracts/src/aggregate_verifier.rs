@@ -1,11 +1,14 @@
 //! `AggregateVerifier` contract bindings.
 //!
-//! Used to query individual dispute game instances and read the
-//! `BLOCK_INTERVAL` from the implementation contract at startup.
+//! Used to query individual dispute game instances (status, ZK/TEE prover
+//! addresses, output roots), read configuration such as `BLOCK_INTERVAL`
+//! and `INTERMEDIATE_BLOCK_INTERVAL` from the implementation contract, and
+//! construct state-changing calls like `nullify` via
+//! [`encode_nullify_calldata`].
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::RootProvider;
-use alloy_sol_types::sol;
+use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
 
 use crate::ContractError;
@@ -45,6 +48,17 @@ sol! {
 
         /// Returns the starting block number.
         function startingBlockNumber() external view returns (uint256);
+
+        /// Nullifies an intermediate root checkpoint for the given game.
+        ///
+        /// The first byte of `proofBytes` is the proof type discriminator:
+        /// `0` for TEE, `1` for ZK. Use [`encode_nullify_calldata`] to
+        /// construct ABI-encoded calldata for this function.
+        function nullify(
+            bytes calldata proofBytes,
+            uint256 intermediateRootIndex,
+            bytes32 intermediateRootToProve
+        ) external;
     }
 }
 
@@ -70,6 +84,9 @@ pub trait AggregateVerifierClient: Send + Sync {
 
     /// Returns the address that provided a ZK proof for the given game.
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError>;
+
+    /// Returns the address that provided a TEE proof for the given game.
+    async fn tee_prover(&self, game_address: Address) -> Result<Address, ContractError>;
 
     /// Returns the starting block number for the given game.
     async fn starting_block_number(&self, game_address: Address) -> Result<u64, ContractError>;
@@ -149,6 +166,17 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             .map_err(|e| ContractError::Call { context: "zkProver failed".into(), source: e })
     }
 
+    async fn tee_prover(&self, game_address: Address) -> Result<Address, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract
+            .teeProver()
+            .call()
+            .await
+            .map_err(|e| ContractError::Call { context: "teeProver failed".into(), source: e })
+    }
+
     async fn starting_block_number(&self, game_address: Address) -> Result<u64, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
@@ -209,5 +237,69 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         }
 
         Ok(interval)
+    }
+}
+
+/// Encodes the calldata for `IAggregateVerifier.nullify()`.
+///
+/// The first byte of `proof_bytes` is the proof type discriminator:
+/// `0` for TEE, `1` for ZK.
+pub fn encode_nullify_calldata(
+    proof_bytes: Bytes,
+    intermediate_root_index: u64,
+    intermediate_root_to_prove: B256,
+) -> Bytes {
+    let call = IAggregateVerifier::nullifyCall {
+        proofBytes: proof_bytes,
+        intermediateRootIndex: U256::from(intermediate_root_index),
+        intermediateRootToProve: intermediate_root_to_prove,
+    };
+    Bytes::from(call.abi_encode())
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_sol_types::SolCall as _;
+
+    use super::*;
+
+    #[test]
+    fn test_encode_nullify_calldata_has_selector() {
+        let calldata = encode_nullify_calldata(
+            Bytes::from(vec![0x00, 0xAA, 0xBB]),
+            42,
+            B256::repeat_byte(0xFF),
+        );
+        assert_eq!(&calldata[..4], &IAggregateVerifier::nullifyCall::SELECTOR);
+    }
+
+    #[test]
+    fn test_encode_nullify_calldata_roundtrip() {
+        let proof_bytes = Bytes::from(vec![0x01, 0xDE, 0xAD]);
+        let index = 7u64;
+        let root = B256::repeat_byte(0xAB);
+
+        let calldata = encode_nullify_calldata(proof_bytes.clone(), index, root);
+
+        let decoded = IAggregateVerifier::nullifyCall::abi_decode(&calldata)
+            .expect("round-trip decode should succeed");
+
+        assert_eq!(decoded.proofBytes, proof_bytes);
+        assert_eq!(decoded.intermediateRootIndex, U256::from(index));
+        assert_eq!(decoded.intermediateRootToProve, root);
+    }
+
+    #[test]
+    fn test_encode_nullify_calldata_empty_proof_bytes() {
+        let calldata = encode_nullify_calldata(Bytes::new(), 0, B256::ZERO);
+
+        assert_eq!(&calldata[..4], &IAggregateVerifier::nullifyCall::SELECTOR);
+
+        let decoded = IAggregateVerifier::nullifyCall::abi_decode(&calldata)
+            .expect("decode with empty proof bytes should succeed");
+
+        assert!(decoded.proofBytes.is_empty());
+        assert_eq!(decoded.intermediateRootIndex, U256::ZERO);
+        assert_eq!(decoded.intermediateRootToProve, B256::ZERO);
     }
 }
