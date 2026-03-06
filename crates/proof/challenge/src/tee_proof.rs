@@ -138,17 +138,13 @@ where
         invalid_index: usize,
         intermediate_block_interval: u64,
     ) -> Result<Bytes, TeeProofError> {
-        let target_block_number = game
-            .starting_block_number
-            .checked_add(
-                (invalid_index as u64 + 1).checked_mul(intermediate_block_interval).ok_or_else(
-                    || {
-                        TeeProofError::DataFetch(
-                            "arithmetic overflow computing target block".into(),
-                        )
-                    },
-                )?,
-            )
+        let index_plus_one =
+            u64::try_from(invalid_index).ok().and_then(|i| i.checked_add(1)).ok_or_else(|| {
+                TeeProofError::DataFetch("arithmetic overflow computing target block".into())
+            })?;
+        let target_block_number = index_plus_one
+            .checked_mul(intermediate_block_interval)
+            .and_then(|offset| game.starting_block_number.checked_add(offset))
             .ok_or_else(|| {
                 TeeProofError::DataFetch("arithmetic overflow computing target block".into())
             })?;
@@ -562,7 +558,7 @@ mod tests {
             factory: GameAtIndex { game_type: 1, timestamp: 1_000_000, proxy },
             info: GameInfo {
                 root_claim: B256::repeat_byte(0xAA),
-                l2_block_number: starting_block + 100,
+                l2_block_number: starting_block.saturating_add(100),
                 parent_index: 0,
             },
             starting_block_number: starting_block,
@@ -758,6 +754,8 @@ mod tests {
     fn test_encode_proof_bytes_l1_origin_number() {
         let proposal = test_proposal(B256::ZERO, 12345);
         let proof = TestGenerator::encode_proof_bytes(&proposal, B256::ZERO, 12345).unwrap();
+        // Leading 24 bytes of the uint256 field (bytes 33-56) must be zero padding
+        assert_eq!(&proof[33..57], &[0u8; 24]);
         // u64 is placed in bytes 57-64 (last 8 bytes of the 32-byte field)
         let mut expected = [0u8; 8];
         expected.copy_from_slice(&proof[57..65]);
@@ -802,22 +800,117 @@ mod tests {
     }
 
     // ========================================================================
-    // Target block computation tests
+    // Target block overflow tests
     // ========================================================================
 
-    #[rstest]
-    #[case::first_interval(100, 0, 10, 110)]
-    #[case::second_interval(100, 1, 10, 120)]
-    #[case::large_interval(0, 0, 100, 100)]
-    #[case::index_five(1000, 5, 50, 1300)]
-    fn test_target_block_computation(
-        #[case] starting_block: u64,
-        #[case] invalid_index: usize,
-        #[case] interval: u64,
-        #[case] expected: u64,
-    ) {
-        let computed = starting_block + (invalid_index as u64 + 1) * interval;
-        assert_eq!(computed, expected);
+    #[tokio::test]
+    async fn test_generate_tee_proof_index_overflow() {
+        // invalid_index = usize::MAX → try_from succeeds (u64::MAX on 64-bit) but
+        // checked_add(1) overflows, returning DataFetch error before any RPC calls.
+        let enclave = Arc::new(MockEnclaveClient { result: Ok(test_proposal(B256::ZERO, 0)) });
+        let l1 = Arc::new(MockL1Provider { headers: HashMap::new(), receipts: HashMap::new() });
+        let l2 = Arc::new(MockChallengerL2Provider::new());
+        let rollup = Arc::new(MockRollupProvider { config: None });
+
+        let generator = TeeProofGenerator::new(enclave, l1, l2, rollup);
+        let game = test_candidate_game(0);
+
+        let result = generator.generate_tee_proof(&game, usize::MAX, 1).await;
+        let err = result.unwrap_err();
+        assert!(matches!(err, TeeProofError::DataFetch(_)));
+        assert!(err.to_string().contains("arithmetic overflow"));
+    }
+
+    #[tokio::test]
+    async fn test_generate_tee_proof_mul_overflow() {
+        // (1 + 1) * (u64::MAX / 2 + 1) overflows in checked_mul
+        let enclave = Arc::new(MockEnclaveClient { result: Ok(test_proposal(B256::ZERO, 0)) });
+        let l1 = Arc::new(MockL1Provider { headers: HashMap::new(), receipts: HashMap::new() });
+        let l2 = Arc::new(MockChallengerL2Provider::new());
+        let rollup = Arc::new(MockRollupProvider { config: None });
+
+        let generator = TeeProofGenerator::new(enclave, l1, l2, rollup);
+        let game = test_candidate_game(0);
+
+        let result = generator.generate_tee_proof(&game, 1, u64::MAX / 2 + 1).await;
+        let err = result.unwrap_err();
+        assert!(matches!(err, TeeProofError::DataFetch(_)));
+        assert!(err.to_string().contains("arithmetic overflow"));
+    }
+
+    #[tokio::test]
+    async fn test_generate_tee_proof_add_overflow() {
+        // starting_block = u64::MAX - 50, (0 + 1) * 100 = 100 → overflows in checked_add
+        let enclave = Arc::new(MockEnclaveClient { result: Ok(test_proposal(B256::ZERO, 0)) });
+        let l1 = Arc::new(MockL1Provider { headers: HashMap::new(), receipts: HashMap::new() });
+        let l2 = Arc::new(MockChallengerL2Provider::new());
+        let rollup = Arc::new(MockRollupProvider { config: None });
+
+        let generator = TeeProofGenerator::new(enclave, l1, l2, rollup);
+        let game = test_candidate_game(u64::MAX - 50);
+
+        let result = generator.generate_tee_proof(&game, 0, 100).await;
+        let err = result.unwrap_err();
+        assert!(matches!(err, TeeProofError::DataFetch(_)));
+        assert!(err.to_string().contains("arithmetic overflow"));
+    }
+
+    // ========================================================================
+    // Transaction serialization tests
+    // ========================================================================
+
+    /// Creates a non-deposit (EIP-1559) transaction for testing tx filtering.
+    fn make_eip1559_tx() -> OpTransaction {
+        use alloy_consensus::{Signed, TxEip1559};
+        use alloy_primitives::Signature as PrimitiveSignature;
+
+        let tx = TxEip1559 { chain_id: 1, gas_limit: 21000, ..Default::default() };
+        let sig = PrimitiveSignature::new(U256::from(1), U256::from(2), false);
+        let signed = Signed::new_unchecked(tx, sig, B256::ZERO);
+        let envelope = OpTxEnvelope::Eip1559(signed);
+
+        OpTransaction {
+            inner: alloy_rpc_types_eth::Transaction {
+                inner: alloy_consensus::transaction::Recovered::new_unchecked(
+                    envelope,
+                    Address::ZERO,
+                ),
+                block_hash: None,
+                block_number: None,
+                transaction_index: Some(1),
+                effective_gas_price: Some(0),
+            },
+            deposit_nonce: None,
+            deposit_receipt_version: None,
+        }
+    }
+
+    #[test]
+    fn test_serialize_block_transactions_deposit_filtering() {
+        let deposit_tx = make_deposit_tx(B256::ZERO, 100);
+        let eip1559_tx = make_eip1559_tx();
+        let consensus_header = ConsensusHeader { number: 1, ..Default::default() };
+        let block_hash = consensus_header.hash_slow();
+        let rpc_header =
+            RpcHeader { hash: block_hash, inner: consensus_header, ..Default::default() };
+
+        let block = Block {
+            header: rpc_header,
+            uncles: vec![],
+            transactions: BlockTransactions::Full(vec![deposit_tx, eip1559_tx]),
+            withdrawals: None,
+        };
+
+        // include_deposits=true: both transactions returned
+        let all_txs = TestGenerator::serialize_block_transactions(&block, true).unwrap();
+        assert_eq!(all_txs.len(), 2);
+
+        // include_deposits=false: only the EIP-1559 tx (deposit is filtered out)
+        let sequenced_txs = TestGenerator::serialize_block_transactions(&block, false).unwrap();
+        assert_eq!(sequenced_txs.len(), 1);
+
+        // Verify the non-deposit tx starts with EIP-1559 type byte (0x02)
+        assert_eq!(sequenced_txs[0][0], 0x02);
     }
 
     // ========================================================================
@@ -871,6 +964,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_generate_tee_proof_block_fetch_error() {
+        let enclave = Arc::new(MockEnclaveClient { result: Ok(test_proposal(B256::ZERO, 0)) });
+        let l1 = Arc::new(MockL1Provider { headers: HashMap::new(), receipts: HashMap::new() });
+        let l2 = Arc::new(MockChallengerL2Provider {
+            error: Some("node unavailable".into()),
+            ..MockChallengerL2Provider::new()
+        });
+        let rollup = Arc::new(MockRollupProvider { config: Some(default_rollup_config()) });
+
+        let generator = TeeProofGenerator::new(enclave, l1, l2, rollup);
+        let game = test_candidate_game(100);
+
+        let result = generator.generate_tee_proof(&game, 0, 10).await;
+        let err = result.unwrap_err();
+        assert!(matches!(err, TeeProofError::DataFetch(_)));
+        assert!(err.to_string().contains("target block"));
+    }
+
+    #[tokio::test]
     async fn test_generate_tee_proof_enclave_error() {
         let target_block_number = 110u64;
         let (l2, l1, rollup, _) = wired_providers(target_block_number);
@@ -917,6 +1029,9 @@ mod tests {
 
         // Bytes 1-32: L1 origin hash
         assert_eq!(&proof[1..33], l1_origin_hash.as_slice());
+
+        // Bytes 33-56: leading 24 zero-padding bytes of the uint256 field
+        assert_eq!(&proof[33..57], &[0u8; 24]);
 
         // Bytes 57-64: L1 origin number (500) in last 8 bytes of the 32-byte field
         let mut number_bytes = [0u8; 8];
