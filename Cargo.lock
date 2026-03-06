@@ -2448,8 +2448,10 @@ dependencies = [
 name = "base-builder-bin"
 version = "0.6.0"
 dependencies = [
+ "alloy-primitives",
  "base-builder-core",
  "base-builder-metering",
+ "base-bundles",
  "base-cli-utils",
  "base-execution-cli",
  "base-node-core",
@@ -4280,7 +4282,6 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
- "async-trait",
  "base-alloy-consensus",
  "base-alloy-flz",
  "base-execution-chainspec",
@@ -4301,11 +4302,9 @@ dependencies = [
  "reth-storage-api",
  "reth-tasks",
  "reth-transaction-pool",
- "serde",
  "tokio",
  "tokio-util",
  "tracing",
- "url",
 ]
 
 [[package]]
