@@ -434,7 +434,7 @@ the operation within the engine is the exact same as with L1 (although with an E
 plus a list of "blobs": "Binary Large Object", i.e. a dedicated data type for serving Data-Availability as base-layer.
 
 With the Ecotone upgrade, all Cancun L1 execution features are enabled, with [EIP-4844] as exception:
-as a L2, the Base does not serve blobs, and thus disables this new transaction type.
+as an L2, Base does not serve blobs, and thus disables this new transaction type.
 
 EIP-4844 is disabled as following:
 
