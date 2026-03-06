@@ -1,0 +1,67 @@
+[package]
+name = "op-succinct-prove"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "multi"
+path = "bin/multi.rs"
+
+[[bin]]
+name = "agg"
+path = "bin/agg.rs"
+
+[dependencies]
+
+# workspace
+tokio.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+dotenv.workspace = true
+csv.workspace = true
+tracing.workspace = true
+cfg-if.workspace = true
+serde_json.workspace = true
+
+# local
+op-succinct-host-utils.workspace = true
+op-succinct-client-utils.workspace = true
+op-succinct-proof-utils.workspace = true
+op-succinct-scripts = { path = "../utils" }
+op-succinct-elfs.workspace = true
+op-succinct-fp.workspace = true
+
+# alloy
+alloy-contract.workspace = true
+alloy-eips.workspace = true
+alloy-network.workspace = true
+alloy-node-bindings.workspace = true
+alloy-primitives.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest"] }
+alloy-signer-local.workspace = true
+alloy-sol-types.workspace = true
+alloy-transport-http = { workspace = true, features = [
+    "reqwest",
+    "reqwest-native-tls",
+] }
+
+# sp1
+sp1-sdk.workspace = true
+sp1-cluster-utils.workspace = true
+
+[dev-dependencies]
+reqwest = { version = "0.12.4", features = ["json"] }
+rustls = { version = "0.23", features = ["ring"] }
+
+[build-dependencies]
+op-succinct-build-utils.workspace = true
+
+[features]
+default = ["ethereum"]
+celestia = ["op-succinct-proof-utils/celestia"]
+eigenda = ["op-succinct-proof-utils/eigenda"]
+ethereum = ["op-succinct-proof-utils/ethereum"]

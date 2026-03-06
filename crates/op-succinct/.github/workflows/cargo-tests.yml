@@ -1,0 +1,82 @@
+name: Cargo Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/cargo-tests.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'justfile'
+      - 'fault-proof/**'
+      - 'bindings/**'
+      - 'configs/**'
+      - 'elf/**'
+      - 'programs/**'
+      - 'scripts/**'
+      - 'utils/**'
+      - 'validity/**'
+
+  push:
+    branches:
+      - main
+    tags:
+      - "v[0-9]+.*"
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.pdf"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/main' }}
+
+jobs:
+  tests:
+    runs-on:
+      - runs-on
+      - runner=64cpu-linux-x64
+      - run-id=${{ github.run_id }} 
+      - spot=false
+    timeout-minutes: 60
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - name: Install Foundry
+      uses: foundry-rs/foundry-toolchain@v1
+      with:
+        version: nightly
+    - run: rustup toolchain install stable --profile minimal
+    - name: Install protobuf compiler
+      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+    - name: Install Go
+      run: |
+        GO_ARCH=$(dpkg --print-architecture)
+        curl -LO https://go.dev/dl/go1.24.0.linux-${GO_ARCH}.tar.gz
+        sudo tar -C /usr/local -xzf go1.24.0.linux-${GO_ARCH}.tar.gz
+        echo "/usr/local/go/bin" >> $GITHUB_PATH
+    - uses: Swatinem/rust-cache@v2
+    - name: Install SP1 toolchain
+      run: |
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up -v 6.0.2
+          ~/.sp1/bin/cargo-prove prove --version
+          source ~/.bashrc
+
+    - name: Install just
+      uses: extractions/setup-just@v3
+
+    - name: Test
+      run: just tests
+      env:
+        L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
+        L1_RPC: ${{ secrets.L1_RPC }}
+        L1_BEACON_RPC: ${{ secrets.L1_BEACON_RPC }}
+        L2_RPC: ${{ secrets.L2_RPC }}
+        REPO_OWNER: ${{ github.repository_owner }}
+        REPO_NAME: ${{ github.event.repository.name }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        POST_TO_GITHUB: ${{ github.event_name == 'pull_request' }}

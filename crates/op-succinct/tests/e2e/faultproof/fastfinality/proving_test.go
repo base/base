@@ -1,0 +1,60 @@
+// These tests intentionally omit TestMain because each test creates its own
+// isolated system via NewFaultProofSystem() with per-test configuration.
+package fpfastfinality
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/ethereum-optimism/optimism/op-devstack/devtest"
+	opspresets "github.com/succinctlabs/op-succinct/presets"
+	"github.com/succinctlabs/op-succinct/utils"
+)
+
+func TestFaultProofProposer_RangeSplitOne(gt *testing.T) {
+	cfg := opspresets.FastFinalityFPProposerConfig()
+	cfg.ProposalIntervalInBlocks = 40
+	cfg.RangeSplitCount = 1
+	cfg.MaxConcurrentRangeProofs = 1
+	waitForDefenderWinsAtIndex(gt, 0, utils.ShortTimeout(), cfg)
+}
+
+func TestFaultProofProposer_RangeSplitSixteen(gt *testing.T) {
+	cfg := opspresets.FastFinalityFPProposerConfig()
+	cfg.ProposalIntervalInBlocks = 40
+	cfg.RangeSplitCount = 16
+	cfg.MaxConcurrentRangeProofs = 16
+	waitForDefenderWinsAtIndex(gt, 0, utils.ShortTimeout(), cfg)
+}
+
+func TestFaultProofProposer_RangeSplitTwo_ThreeGames(gt *testing.T) {
+	cfg := opspresets.FastFinalityFPProposerConfig()
+	cfg.RangeSplitCount = 2
+	cfg.MaxConcurrentRangeProofs = 2
+	cfg.FastFinalityProvingLimit = 4
+	waitForDefenderWinsAtIndex(gt, 2, utils.LongTimeout(), cfg)
+}
+
+func waitForDefenderWinsAtIndex(gt *testing.T, index int, timeout time.Duration, cfg opspresets.FPProposerConfig) {
+	t := devtest.ParallelT(gt)
+	sys := opspresets.NewFaultProofSystem(t, cfg, opspresets.DefaultL2ChainConfig())
+	require := t.Require()
+	logger := t.Logger()
+	ctx, cancel := context.WithTimeout(t.Ctx(), timeout)
+	defer cancel()
+
+	dgf := sys.DgfClient(t)
+	logger.Info("Waiting for game creation", "targetIndex", index)
+
+	utils.WaitForGameCount(ctx, t, dgf, uint64(index+1))
+
+	game, err := dgf.GameAtIndex(ctx, uint64(index))
+	require.NoError(err, "failed to get game from factory")
+
+	fdg, err := utils.NewFdgClient(sys.L1EL.EthClient(), game.Proxy)
+	require.NoError(err, "failed to create Fault Dispute Game client")
+
+	utils.WaitForDefenderWins(ctx, t, fdg)
+	logger.Info("Dispute game defender wins", "gameIndex", index)
+}

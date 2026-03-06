@@ -1,0 +1,33 @@
+name: Test setup
+inputs:
+  pull_token:
+    description: "Token to use for private repo access"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Install protobuf compiler
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+    - name: Install Go 1.24
+      shell: bash
+      run: |
+        ARCH="$(dpkg --print-architecture)"
+        curl -LO "https://go.dev/dl/go1.24.0.linux-${ARCH}.tar.gz"
+        sudo tar -C /usr/local -xzf "go1.24.0.linux-${ARCH}.tar.gz"
+        echo "/usr/local/go/bin" >> $GITHUB_PATH
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: 1.85
+
+    - name: Rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "stable"
+        cache-directories: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/

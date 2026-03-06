@@ -1,0 +1,88 @@
+[package]
+name = "op-succinct-fp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "fault_proof"
+path = "src/lib.rs"
+
+[[bin]]
+name = "proposer"
+path = "bin/proposer.rs"
+
+[[bin]]
+name = "challenger"
+path = "bin/challenger.rs"
+
+[dependencies]
+# local
+op-succinct-client-utils.workspace = true
+op-succinct-elfs.workspace = true
+op-succinct-ethereum-host-utils.workspace = true
+op-succinct-host-utils.workspace = true
+op-succinct-proof-utils.workspace = true
+op-succinct-signer-utils.workspace = true
+
+# sp1
+sp1-sdk.workspace = true
+sp1-cluster-utils.workspace = true
+
+# alloy
+alloy-contract.workspace = true
+alloy-eips.workspace = true
+alloy-network.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-provider = { workspace = true, features = ["reqwest"] }
+alloy-rpc-types-eth.workspace = true
+alloy-rpc-types-trace.workspace = true
+alloy-sol-macro.workspace = true
+alloy-sol-types.workspace = true
+alloy-transport-http = { workspace = true, features = [
+    "reqwest",
+    "reqwest-native-tls",
+] }
+
+# op-alloy
+op-alloy-network.workspace = true
+op-alloy-rpc-types.workspace = true
+
+# general
+anyhow.workspace = true
+async-trait.workspace = true
+clap = { workspace = true, features = ["derive"] }
+dotenv.workspace = true
+futures.workspace = true
+rand = "0.9"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tracing.workspace = true
+hex.workspace = true
+strum = { workspace = true, features = ["derive"] }
+strum_macros.workspace = true
+tikv-jemallocator = "0.6.0"
+tempfile = "3"
+
+[dev-dependencies]
+alloy-signer-local.workspace = true
+alloy-node-bindings.workspace = true
+alloy.workspace = true
+op-succinct-bindings.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+alloy-rpc-types-trace.workspace = true
+rstest = "0.26"
+which = "4.4"
+
+[features]
+default = ["ethereum"]
+celestia = ["op-succinct-proof-utils/celestia"]
+eigenda = ["op-succinct-proof-utils/eigenda"]
+ethereum = ["op-succinct-proof-utils/ethereum"]
+integration = []
