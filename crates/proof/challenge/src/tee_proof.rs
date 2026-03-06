@@ -32,6 +32,7 @@
 //! the orchestrator skips TEE and falls back to ZK proof generation.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use alloy_consensus::ReceiptEnvelope;
 use alloy_eips::{Typed2718, eip2718::Encodable2718};
@@ -60,6 +61,9 @@ const PROOF_TYPE_TEE: u8 = 0;
 
 /// Deposit transaction type identifier (EIP-2718 type byte for OP deposits).
 const DEPOSIT_TX_TYPE: u8 = 0x7E;
+
+/// Timeout for enclave RPC calls (matches the proposer's `ENCLAVE_TIMEOUT`).
+const ENCLAVE_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Extension trait for L2 providers that support execution witness retrieval.
 ///
@@ -101,6 +105,10 @@ pub enum TeeProofError {
     #[error("enclave execution failed: {0}")]
     Enclave(#[from] ClientError),
 
+    /// Enclave execution timed out.
+    #[error("enclave execution timed out")]
+    Timeout,
+
     /// RPC data fetch failed.
     #[error("failed to fetch {context}: {source}")]
     Rpc {
@@ -124,7 +132,7 @@ impl TeeProofError {
     pub const fn is_retryable(&self) -> bool {
         match self {
             Self::Rpc { source, .. } => source.is_retryable(),
-            Self::Enclave(_) | Self::DataPrep(_) | Self::Encoding(_) => false,
+            Self::Enclave(_) | Self::Timeout | Self::DataPrep(_) | Self::Encoding(_) => false,
         }
     }
 }
@@ -304,8 +312,13 @@ where
             tee_image_hash: self.tee_image_hash,
         };
 
-        let proposal =
-            self.enclave_client.execute_stateless(request).await.map_err(TeeProofError::Enclave)?;
+        let proposal = tokio::time::timeout(
+            ENCLAVE_TIMEOUT,
+            self.enclave_client.execute_stateless(request),
+        )
+        .await
+        .map_err(|_| TeeProofError::Timeout)?
+        .map_err(TeeProofError::Enclave)?;
 
         let proof_bytes = Self::encode_proof_bytes(&proposal, l1_origin_hash, l1_origin_number)?;
 
