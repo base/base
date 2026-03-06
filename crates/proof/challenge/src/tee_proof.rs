@@ -991,6 +991,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_generate_tee_proof_empty_block() {
+        let target_block_number = 110u64;
+        let enclave = Arc::new(MockEnclaveClient::new(Ok(test_proposal(B256::ZERO, 0))));
+        let l1 = Arc::new(MockL1Provider { headers: HashMap::new(), receipts: HashMap::new() });
+
+        // Build a block with zero transactions
+        let consensus_header =
+            ConsensusHeader { number: target_block_number, ..Default::default() };
+        let block_hash = consensus_header.hash_slow();
+        let rpc_header =
+            RpcHeader { hash: block_hash, inner: consensus_header, ..Default::default() };
+        let empty_block = Block {
+            header: rpc_header,
+            uncles: vec![],
+            transactions: BlockTransactions::Full(vec![]),
+            withdrawals: None,
+        };
+
+        let mut l2 = MockChallengerL2Provider::new();
+        l2.blocks.insert(target_block_number, empty_block);
+
+        let rollup = Arc::new(MockRollupProvider { config: Some(default_rollup_config()) });
+        let generator = TeeProofGenerator::new(enclave, l1, Arc::new(l2), rollup);
+        let game = test_candidate_game(100);
+
+        let result = generator.generate_tee_proof(&game, 0, 10).await;
+        let err = result.unwrap_err();
+        assert!(matches!(err, TeeProofError::DataFetch(_)));
+        assert!(err.to_string().contains("no transactions"));
+    }
+
+    #[tokio::test]
     async fn test_generate_tee_proof_enclave_error() {
         let target_block_number = 110u64;
         let (l2, l1, rollup, _) = wired_providers(target_block_number);
