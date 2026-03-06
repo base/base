@@ -28,7 +28,7 @@ pub struct RingBuffer<I, V> {
     entries: VecDeque<RingBufferEntry<I, V>>,
 }
 
-impl<I: PartialOrd, V> RingBuffer<I, V> {
+impl<I: Ord, V> RingBuffer<I, V> {
     /// Creates a new ring buffer with the given capacity.
     ///
     /// # Panics

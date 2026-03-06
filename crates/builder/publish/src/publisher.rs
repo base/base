@@ -102,8 +102,9 @@ impl WebSocketPublisher {
         let position = Some((block_number, flashblock_index));
 
         // Broadcast first so that live subscribers never miss a message that
-        // exists in the ring buffer. A "no receivers" error is expected when
-        // no clients are connected and is safe to ignore.
+        // exists in the ring buffer. `broadcast::Sender::send` only fails
+        // with `SendError` when there are zero receivers, which is expected
+        // when no clients are connected. There is no other failure mode.
         let _ = self.pipe.send((position, utf8_bytes.clone()));
 
         self.ring_buffer

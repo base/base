@@ -71,7 +71,12 @@ impl Registry {
     pub async fn subscribe(&self, client: ClientConnection) {
         info!(message = "subscribing client", client = client.id());
 
-        // Subscribe to the live channel before draining the ring buffer to avoid a gap.
+        // Subscribe to the live channel *before* snapshotting the ring buffer so that
+        // messages arriving between the snapshot and the start of the live loop are
+        // captured in the receiver. The drain phase deduplicates entries that appear in
+        // both the snapshot and the receiver. Tradeoff: if the broadcast channel capacity
+        // is exceeded during a long replay the receiver will lag, and the resubscribe
+        // fallback loses the messages between the lag point and the new subscription.
         let mut receiver = self.sender.subscribe();
         let metrics = Arc::clone(&self.metrics);
         metrics.new_connections.increment(1);
