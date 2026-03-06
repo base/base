@@ -1,8 +1,9 @@
 use std::{
     io::{Read, Write},
+    ops::Sub,
     time::Duration,
 };
-use std::ops::Sub;
+
 use async_trait::async_trait;
 use base_proof_primitives::{ProofBundle, ProofResult};
 use vsock::{VsockAddr, VsockStream};
