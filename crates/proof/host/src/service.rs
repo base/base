@@ -1,6 +1,5 @@
-use std::{fmt, sync::Arc};
+use std::fmt;
 
-use base_proof_preimage::WitnessOracle;
 use base_proof_primitives::{ProofRequest, ProofResult, ProverBackend};
 use tracing::info;
 
@@ -44,18 +43,7 @@ impl<B: ProverBackend> ProverService<B> {
 
         let host = Host::new(HostConfig { request, prover: self.config.clone(), data_dir: None });
         let oracle = self.backend.create_oracle();
-        let oracle = Arc::new(oracle);
-
-        host.build_witness(Arc::clone(&oracle)).await.map_err(ProverError::Host)?;
-
-        // Extract oracle from Arc. Safe because Host drops its clone after
-        // build_witness returns — no background tasks retain a reference.
-        let oracle = Arc::try_unwrap(oracle).map_err(|_| ProverError::WitnessNotRecovered)?;
-
-        info!(
-            preimage_count = oracle.preimage_count(),
-            "witness generation complete, starting proving"
-        );
+        let oracle = host.build_witness(oracle).await.map_err(ProverError::Host)?;
 
         self.backend.prove(oracle).await.map_err(ProverError::Backend)
     }
@@ -73,11 +61,6 @@ pub enum ProverError<B: ProverBackend> {
     /// Backend proving failed.
     #[error("proving failed: {0}")]
     Backend(B::Error),
-
-    /// Witness oracle could not be recovered after witness generation.
-    /// This indicates a bug — Host should drop all references before returning.
-    #[error("failed to recover witness oracle after witness generation")]
-    WitnessNotRecovered,
 }
 
 #[cfg(test)]
@@ -97,12 +80,21 @@ mod tests {
     }
 
     impl WitnessOracle for NoopOracle {
-        fn insert_preimage(&self, key: PreimageKey, value: &[u8]) {
+        fn insert_preimage(
+            &self,
+            key: PreimageKey,
+            value: &[u8],
+        ) -> base_proof_preimage::WitnessOracleResult<()> {
             self.preimages.write().unwrap().insert(key, value.to_vec());
+            Ok(())
         }
-        fn finalize(&self) {}
-        fn preimage_count(&self) -> usize {
-            self.preimages.read().unwrap().len()
+
+        fn finalize(&self) -> base_proof_preimage::WitnessOracleResult<()> {
+            Ok(())
+        }
+
+        fn preimage_count(&self) -> base_proof_preimage::WitnessOracleResult<usize> {
+            Ok(self.preimages.read().unwrap().len())
         }
     }
 
@@ -137,11 +129,5 @@ mod tests {
         let err: ProverError<NoopBackend> = ProverError::Backend(NoopError);
         assert!(err.to_string().contains("proving failed"));
         assert!(err.to_string().contains("noop"));
-    }
-
-    #[test]
-    fn prover_error_witness_not_recovered_display() {
-        let err: ProverError<NoopBackend> = ProverError::WitnessNotRecovered;
-        assert!(err.to_string().contains("failed to recover witness oracle"));
     }
 }

@@ -76,10 +76,15 @@ impl Host {
 
     /// Runs the fault-proof program in-process, capturing all fetched preimages into the
     /// provided [`WitnessOracle`].
-    pub async fn build_witness<W>(&self, witness: Arc<W>) -> Result<()>
+    ///
+    /// Takes ownership of the oracle and returns it after witness generation completes.
+    /// [`Arc`] sharing with internal tasks is managed entirely within this method.
+    pub async fn build_witness<W>(&self, witness: W) -> Result<W>
     where
         W: WitnessOracle + std::fmt::Debug + 'static,
     {
+        let witness = Arc::new(witness);
+
         let kv_store = self.create_key_value_store()?;
         let providers = self.create_providers().await?;
         let backend = Arc::new(
@@ -122,12 +127,18 @@ impl Host {
         }
 
         server_task.abort();
+        let _ = (&mut server_task).await;
 
         witness.finalize()?;
         let preimage_count = witness.preimage_count()?;
         info!(preimage_count, "witness capture complete");
 
-        Ok(())
+        Arc::try_unwrap(witness).map_err(|arc| {
+            HostError::Custom(format!(
+                "failed to recover witness oracle: {} references still held",
+                Arc::strong_count(&arc),
+            ))
+        })
     }
 
     /// Runs the fault-proof program client: prologue → driver → epilogue.
