@@ -13,4 +13,5 @@ exclude = [
     'https://rustup.rs/',
     'https://base.mirror.xyz/',
     'https://www.man7.org/',
+    'https://tidelift.com/',
 ]
