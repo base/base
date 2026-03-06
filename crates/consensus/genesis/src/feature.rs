@@ -149,6 +149,14 @@ impl Feature {
     ///
     /// Returns `None` if the feature has no hardfork assigned or the hardfork has no
     /// scheduled activation timestamp.
+    ///
+    /// # Cache invalidation
+    ///
+    /// The resolved timestamp is cached after the first call. If the [`HardForkConfig`]
+    /// is mutated after this method has been called (e.g. in tests or hypothetical
+    /// config-reload scenarios), the cached value will be stale. Call
+    /// [`invalidate_cache`](Feature::invalidate_cache) before re-querying to force
+    /// re-resolution from the updated config.
     pub fn activation_time(&self, hardforks: &HardForkConfig) -> Option<u64> {
         let cached = self.activation_cache.load();
         if cached != UNCACHED {
@@ -157,5 +165,15 @@ impl Feature {
         let value = self.hardfork.and_then(|hf| hardforks.timestamp_for(hf));
         self.activation_cache.store(value.map_or(NO_ACTIVATION, |t| t));
         value
+    }
+
+    /// Resets the activation timestamp cache, forcing the next call to
+    /// [`activation_time`](Feature::activation_time) to re-resolve from the
+    /// [`HardForkConfig`].
+    ///
+    /// Call this after mutating [`HardForkConfig`] fields that this feature's
+    /// [`hardfork`](Feature::hardfork) depends on.
+    pub fn invalidate_cache(&self) {
+        self.activation_cache.store(UNCACHED);
     }
 }

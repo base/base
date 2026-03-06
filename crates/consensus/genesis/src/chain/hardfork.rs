@@ -89,9 +89,15 @@ impl Display for HardForkConfig {
 impl HardForkConfig {
     /// Returns the activation timestamp for `hardfork`, or `None` if not scheduled.
     ///
-    /// Bedrock is block-based rather than timestamp-based and always returns `None`.
-    /// `pectra_blob_schedule` is a `HardForkConfig` field but not an `OpHardfork` variant
-    /// and is therefore not reachable via this method.
+    /// Two [`HardForkConfig`] fields have no corresponding [`OpHardfork`] variant and are
+    /// therefore not reachable via this method:
+    ///
+    /// - **`delta_time`** — Delta was never promoted to an [`OpHardfork`] variant; features
+    ///   cannot be gated at Delta via the feature system.
+    /// - **`pectra_blob_schedule_time`** — cross-layer L1 blob schedule; not an OP hardfork.
+    ///
+    /// [`OpHardfork::Bedrock`] is block-based rather than timestamp-based and always
+    /// returns `None`.
     pub const fn timestamp_for(&self, hardfork: OpHardfork) -> Option<u64> {
         match hardfork {
             OpHardfork::Regolith => self.regolith_time,
