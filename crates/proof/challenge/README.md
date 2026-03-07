@@ -9,7 +9,7 @@ Dispute game challenger with TEE and ZK proof generation.
 
 - **Scanner**: Reads the `DisputeGameFactory` for new dispute games, filtering by `IN_PROGRESS` status and unchallenged state (`zkProver == zero`) to produce `CandidateGame`s for downstream processing.
 - **Validator**: Verifies final and intermediate output roots for each `CandidateGame` by fetching L2 block headers and `L2ToL1MessagePasser` storage proofs, recomputing expected roots via `output_root_v0`, and comparing them against onchain claims.
-- **TEE Proof Generator**: Re-executes an invalid intermediate block inside a TEE via `execute_stateless()` to produce a 130-byte nullification proof (`proofType + l1OriginHash + l1OriginNumber + signature`). Enabled by the optional `--tee-endpoint` CLI flag; when absent, the orchestrator falls back to ZK.
+- **TEE Proof Generator**: Delegates proof orchestration to the TEE server via `EnclaveProvider::prove()` and encodes the aggregate proposal into a 130-byte nullification proof (`proofType + l1OriginHash + l1OriginNumber + signature`). Enabled by the optional `--tee-endpoint` CLI flag; when absent, the orchestrator falls back to ZK.
 - **Service**: Lifecycle orchestration for the challenger (init, health, metrics, shutdown).
 - **Config**: Validated runtime configuration with CLI argument parsing.
 - **Health**: HTTP liveness (`/healthz`) and readiness (`/readyz`) probes.
