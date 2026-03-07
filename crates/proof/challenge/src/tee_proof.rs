@@ -123,6 +123,7 @@ mod tests {
     use async_trait::async_trait;
     use base_enclave::PROOF_TYPE_TEE;
     use base_proof_primitives::{ProofClaim, ProofEvidence, ProofResult, Proposal};
+    use rstest::rstest;
 
     use super::*;
 
@@ -238,38 +239,26 @@ mod tests {
     // Error retryability
     // ========================================================================
 
-    #[test]
-    fn test_enclave_error_is_retryable_when_client_error_is() {
-        let err = TeeProofError::Enclave(ClientError::Rpc(
-            jsonrpsee::core::client::Error::RequestTimeout,
-        ));
-        assert!(err.is_retryable());
+    #[rstest]
+    #[case::enclave_retryable(
+        TeeProofError::Enclave(ClientError::Rpc(jsonrpsee::core::client::Error::RequestTimeout)),
+        true
+    )]
+    #[case::enclave_not_retryable(TeeProofError::Enclave(ClientError::ClientCreation("bad url".into())), false)]
+    #[case::data_prep(TeeProofError::DataPrep("overflow".into()), false)]
+    #[case::encoding(TeeProofError::Encoding("bad bytes".into()), false)]
+    fn test_error_retryability(#[case] err: TeeProofError, #[case] expected: bool) {
+        assert_eq!(err.is_retryable(), expected);
     }
 
-    #[test]
-    fn test_enclave_error_not_retryable_for_creation_failure() {
-        let err = TeeProofError::Enclave(ClientError::ClientCreation("bad url".into()));
-        assert!(!err.is_retryable());
-    }
+    // ========================================================================
+    // Error display
+    // ========================================================================
 
-    #[test]
-    fn test_data_prep_not_retryable() {
-        let err = TeeProofError::DataPrep("overflow".into());
-        assert!(!err.is_retryable());
-    }
-
-    #[test]
-    fn test_encoding_not_retryable() {
-        let err = TeeProofError::Encoding("bad bytes".into());
-        assert!(!err.is_retryable());
-    }
-
-    #[test]
-    fn test_error_display() {
-        let err = TeeProofError::DataPrep("arithmetic overflow".into());
-        assert_eq!(err.to_string(), "data preparation failed: arithmetic overflow");
-
-        let err = TeeProofError::Encoding("bad bytes".into());
-        assert_eq!(err.to_string(), "proof encoding failed: bad bytes");
+    #[rstest]
+    #[case::data_prep(TeeProofError::DataPrep("arithmetic overflow".into()), "data preparation failed: arithmetic overflow")]
+    #[case::encoding(TeeProofError::Encoding("bad bytes".into()), "proof encoding failed: bad bytes")]
+    fn test_error_display(#[case] err: TeeProofError, #[case] expected: &str) {
+        assert_eq!(err.to_string(), expected);
     }
 }

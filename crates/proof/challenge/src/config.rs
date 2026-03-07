@@ -324,11 +324,15 @@ mod tests {
         assert!(matches!(config.signing, SigningConfig::Remote { .. }));
     }
 
-    #[test]
-    fn test_zero_poll_interval() {
-        let cli = cli_from_args(&["--poll-interval", "0s"]);
+    #[rstest]
+    #[case::poll_interval(&["--poll-interval", "0s"], "poll-interval")]
+    #[case::lookback_games(&["--lookback-games", "0"], "lookback-games")]
+    fn test_zero_value_rejected(#[case] extra_args: &[&str], #[case] expected_field: &str) {
+        let cli = cli_from_args(extra_args);
         let result = ChallengerConfig::from_cli(cli, None);
-        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "poll-interval", .. })));
+        assert!(
+            matches!(result, Err(ConfigError::OutOfRange { field, .. }) if field == expected_field)
+        );
     }
 
     #[rstest]
@@ -447,21 +451,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_zero_lookback_games() {
-        let cli = cli_from_args(&["--lookback-games", "0"]);
+    #[rstest]
+    #[case::zk_endpoint(&["--zk-proof-service-endpoint", "file:///no/host"], "zk-proof-service-endpoint")]
+    #[case::tee_endpoint(&["--tee-endpoint", "file:///no/host"], "tee-endpoint")]
+    fn test_invalid_url_rejected(#[case] extra_args: &[&str], #[case] expected_field: &str) {
+        let cli = cli_from_args(extra_args);
         let result = ChallengerConfig::from_cli(cli, None);
-        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "lookback-games", .. })));
-    }
-
-    #[test]
-    fn test_zk_proof_endpoint_validated() {
-        let cli = cli_from_args(&["--zk-proof-service-endpoint", "file:///no/host"]);
-        let result = ChallengerConfig::from_cli(cli, None);
-        assert!(matches!(
-            result,
-            Err(ConfigError::InvalidUrl { field: "zk-proof-service-endpoint", .. })
-        ));
+        assert!(
+            matches!(result, Err(ConfigError::InvalidUrl { field, .. }) if field == expected_field)
+        );
     }
 
     #[test]
@@ -471,25 +469,13 @@ mod tests {
         assert_eq!(config.health_addr, "127.0.0.1:9090".parse::<SocketAddr>().unwrap());
     }
 
-    #[test]
-    fn test_tee_endpoint_none_when_omitted() {
-        let cli = cli_from_args(&[]);
+    #[rstest]
+    #[case::omitted(&[], false)]
+    #[case::valid(&["--tee-endpoint", "http://localhost:9999"], true)]
+    fn test_tee_endpoint(#[case] extra_args: &[&str], #[case] expect_some: bool) {
+        let cli = cli_from_args(extra_args);
         let config = ChallengerConfig::from_cli(cli, None).unwrap();
-        assert!(config.tee_endpoint.is_none());
-    }
-
-    #[test]
-    fn test_tee_endpoint_accepted_when_valid() {
-        let cli = cli_from_args(&["--tee-endpoint", "http://localhost:9999"]);
-        let config = ChallengerConfig::from_cli(cli, None).unwrap();
-        assert!(config.tee_endpoint.is_some());
-    }
-
-    #[test]
-    fn test_tee_endpoint_rejected_when_invalid() {
-        let cli = cli_from_args(&["--tee-endpoint", "file:///no/host"]);
-        let result = ChallengerConfig::from_cli(cli, None);
-        assert!(matches!(result, Err(ConfigError::InvalidUrl { field: "tee-endpoint", .. })));
+        assert_eq!(config.tee_endpoint.is_some(), expect_some);
     }
 
     #[test]
