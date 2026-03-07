@@ -249,7 +249,7 @@ impl EnclaveClient {
     /// # Errors
     ///
     /// Returns an error if the RPC call fails.
-    pub async fn prove(&self, request: &ProofRequest) -> Result<ProofResult, ClientError> {
+    pub async fn prove(&self, request: ProofRequest) -> Result<ProofResult, ClientError> {
         self.inner.request("enclave_prove", rpc_params![request]).await.map_err(Into::into)
     }
 }
