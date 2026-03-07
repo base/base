@@ -9,6 +9,7 @@ use std::{
 
 use axum::{extract::ws::Message, http::Uri};
 use base_cli_utils::LogConfig;
+use bytes::Bytes;
 use clap::Parser;
 use dotenvy::dotenv;
 use metrics_exporter_prometheus::PrometheusBuilder;
@@ -225,24 +226,26 @@ async fn main() {
         // to avoid the channel being closed. However this is not an active client connection.
         metrics_clone.active_connections.set((send.receiver_count() - 1) as f64);
 
-        // Build outgoing bytes. `pos` was already parsed by the subscriber;
-        // pass it directly to avoid a second parse.
-        let message_data = if args.enable_compression {
+        // Build outgoing bytes once as refcounted `Bytes` so that cloning
+        // for the broadcast channel and ring buffer is O(1).
+        // `pos` was already parsed by the subscriber; pass it directly to
+        // avoid a second parse.
+        let message_data: Bytes = if args.enable_compression {
             let mut compressed_data_bytes = Vec::new();
             {
                 let mut compressor =
                     brotli::CompressorWriter::new(&mut compressed_data_bytes, 4096, 5, 22);
                 compressor.write_all(data.as_bytes()).unwrap();
             }
-            compressed_data_bytes
+            compressed_data_bytes.into()
         } else {
-            data.into_bytes()
+            Bytes::from(data.into_bytes())
         };
 
         // Broadcast first so that live subscribers never miss a message that
         // exists in the ring buffer. The ring buffer is then populated for
         // reconnecting clients.
-        match send.send((pos, Message::Binary(message_data.clone().into()))) {
+        match send.send((pos, Message::Binary(message_data.clone()))) {
             Ok(_) => {
                 metrics_clone.broadcast_queue_size.set(send.len() as f64);
             }

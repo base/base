@@ -5,6 +5,7 @@ use std::{
 };
 
 use axum::extract::ws::Message;
+use bytes::Bytes;
 use futures::{SinkExt, stream::StreamExt};
 use tokio::{
     sync::broadcast::{
@@ -92,7 +93,7 @@ impl Registry {
 
         // Replay ring buffer entries before joining the live stream.
         if let Some((bn, fi)) = resume_position {
-            let entries: Vec<(Option<FlashblockPosition>, Vec<u8>)> = self
+            let entries: Vec<(Option<FlashblockPosition>, Bytes)> = self
                 .ring_buffer
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
@@ -110,7 +111,7 @@ impl Registry {
                 if !filter.matches(payload, compressed) {
                     continue;
                 }
-                let msg = Message::Binary(payload.clone().into());
+                let msg = Message::Binary(payload.clone());
                 let send_result = timeout(self.send_timeout_ms, ws_sender.send(msg)).await;
                 match send_result {
                     Ok(Ok(())) => {

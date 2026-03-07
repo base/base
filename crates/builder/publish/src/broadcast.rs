@@ -90,14 +90,15 @@ impl BroadcastLoop {
                 if self.cancel.is_cancelled() {
                     return;
                 }
-                self.metrics.on_message_sent();
                 match tokio::time::timeout(
                     SEND_TIMEOUT,
                     self.stream.send(Message::Text(payload.clone())),
                 )
                 .await
                 {
-                    Ok(Ok(())) => {}
+                    Ok(Ok(())) => {
+                        self.metrics.on_message_sent();
+                    }
                     Ok(Err(e)) => {
                         self.metrics.on_send_error();
                         debug!(peer_addr = %peer_addr, error = %e, "Error during ring buffer replay");
@@ -126,14 +127,15 @@ impl BroadcastLoop {
                         if self.cancel.is_cancelled() {
                             return;
                         }
-                        self.metrics.on_message_sent();
                         match tokio::time::timeout(
                             SEND_TIMEOUT,
                             self.stream.send(Message::Text(payload)),
                         )
                         .await
                         {
-                            Ok(Ok(())) => {}
+                            Ok(Ok(())) => {
+                                self.metrics.on_message_sent();
+                            }
                             Ok(Err(e)) => {
                                 self.metrics.on_send_error();
                                 debug!(peer_addr = %peer_addr, error = %e, "Error during replay drain");
@@ -167,13 +169,26 @@ impl BroadcastLoop {
 
                 result = self.blocks.recv() => match result {
                     Ok((_, payload)) => {
-                        self.metrics.on_message_sent();
-
                         debug!(payload = ?payload, "Broadcasted payload");
-                        if let Err(e) = self.stream.send(Message::Text(payload)).await {
-                            self.metrics.on_send_error();
-                            debug!(peer_addr = %peer_addr, error = %e, "Closing subscription");
-                            break;
+                        match tokio::time::timeout(
+                            SEND_TIMEOUT,
+                            self.stream.send(Message::Text(payload)),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => {
+                                self.metrics.on_message_sent();
+                            }
+                            Ok(Err(e)) => {
+                                self.metrics.on_send_error();
+                                debug!(peer_addr = %peer_addr, error = %e, "Closing subscription");
+                                break;
+                            }
+                            Err(_) => {
+                                self.metrics.on_send_error();
+                                debug!(peer_addr = %peer_addr, "Send timeout, closing subscription");
+                                break;
+                            }
                         }
                     }
                     Err(RecvError::Closed) => {
