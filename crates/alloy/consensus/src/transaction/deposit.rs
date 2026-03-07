@@ -133,7 +133,7 @@ impl TxDeposit {
         self.to.size() + // to
         mem::size_of::<u128>() + // mint
         mem::size_of::<U256>() + // value
-        mem::size_of::<u128>() + // gas_limit
+        mem::size_of::<u64>() + // gas_limit
         mem::size_of::<bool>() + // is_system_transaction
         self.input.len() // input
     }
@@ -422,6 +422,7 @@ pub fn serde_deposit_tx_rpc<T: serde::Serialize, S: serde::Serializer>(
 mod tests {
     use alloy_primitives::hex;
     use alloy_rlp::BytesMut;
+    use rstest::rstest;
 
     use super::*;
 
@@ -548,6 +549,69 @@ mod tests {
         };
 
         assert!(tx_deposit.size() > tx_deposit.rlp_encoded_fields_length());
+    }
+
+    #[rstest]
+    #[case::empty_create(TxDeposit {
+        source_hash: B256::default(),
+        from: Address::default(),
+        to: TxKind::Create,
+        mint: 0,
+        value: U256::ZERO,
+        gas_limit: 0,
+        is_system_transaction: false,
+        input: Bytes::new(),
+    })]
+    #[case::call_with_value(TxDeposit {
+        source_hash: B256::with_last_byte(0xff),
+        from: Address::with_last_byte(0xaa),
+        to: TxKind::Call(Address::with_last_byte(0xbb)),
+        mint: 500,
+        value: U256::from(1_000_000u64),
+        gas_limit: 21000,
+        is_system_transaction: false,
+        input: Bytes::new(),
+    })]
+    #[case::system_tx_with_calldata(TxDeposit {
+        source_hash: B256::with_last_byte(42),
+        from: Address::with_last_byte(1),
+        to: TxKind::Call(Address::ZERO),
+        mint: 0,
+        value: U256::ZERO,
+        gas_limit: 100_000,
+        is_system_transaction: true,
+        input: Bytes::from_static(&[1, 2, 3, 4, 5]),
+    })]
+    #[case::large_mint_and_value(TxDeposit {
+        source_hash: B256::repeat_byte(0xde),
+        from: Address::repeat_byte(0xad),
+        to: TxKind::Create,
+        mint: u128::MAX,
+        value: U256::MAX,
+        gas_limit: u64::MAX,
+        is_system_transaction: false,
+        input: Bytes::from_static(&[0xab; 128]),
+    })]
+    #[case::zero_gas_create_with_calldata(TxDeposit {
+        source_hash: B256::ZERO,
+        from: Address::ZERO,
+        to: TxKind::Create,
+        mint: 1,
+        value: U256::from(1u64),
+        gas_limit: 0,
+        is_system_transaction: true,
+        input: Bytes::from_static(&[0xff; 32]),
+    })]
+    fn test_size_accounts_for_all_fields(#[case] tx: TxDeposit) {
+        let expected = mem::size_of::<B256>()       // source_hash
+            + mem::size_of::<Address>()              // from
+            + tx.to.size()                           // to
+            + mem::size_of::<u128>()                 // mint
+            + mem::size_of::<U256>()                 // value
+            + mem::size_of::<u64>()                  // gas_limit
+            + mem::size_of::<bool>()                 // is_system_transaction
+            + tx.input.len(); // input
+        assert_eq!(tx.size(), expected);
     }
 
     #[test]
