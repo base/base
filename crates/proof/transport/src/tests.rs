@@ -1,7 +1,19 @@
-use alloy_primitives::B256;
-use base_proof_primitives::{ProofBundle, ProofClaim, ProofEvidence, ProofResult};
+use alloy_primitives::{B256, Bytes, U256};
+use base_proof_primitives::{ProofBundle, ProofClaim, ProofEvidence, ProofResult, Proposal};
 
 use crate::{ProofTransport, test_utils::NativeTransport};
+
+fn test_proposal() -> Proposal {
+    Proposal {
+        output_root: B256::ZERO,
+        signature: Bytes::new(),
+        l1_origin_hash: B256::ZERO,
+        l1_origin_number: U256::from(100),
+        l2_block_number: U256::from(42),
+        prev_output_root: B256::ZERO,
+        config_hash: B256::ZERO,
+    }
+}
 
 fn test_bundle() -> ProofBundle {
     ProofBundle { request: Default::default(), preimages: vec![] }
@@ -9,7 +21,10 @@ fn test_bundle() -> ProofBundle {
 
 fn test_result() -> ProofResult {
     ProofResult {
-        claim: ProofClaim { l2_block_number: 42, output_root: B256::ZERO, l1_head: B256::ZERO },
+        claim: ProofClaim {
+            aggregate_proposal: test_proposal(),
+            proposals: vec![test_proposal()],
+        },
         evidence: ProofEvidence::Tee { attestation_doc: vec![1, 2, 3], signature: vec![4, 5, 6] },
     }
 }
@@ -39,6 +54,6 @@ async fn multiple_proves() {
 
     for _ in 0..5 {
         let result = transport.prove(&test_bundle()).await.unwrap();
-        assert_eq!(result.claim.l2_block_number, 42);
+        assert_eq!(result.claim.aggregate_proposal.l2_block_number, U256::from(42));
     }
 }
