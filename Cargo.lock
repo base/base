@@ -2664,7 +2664,6 @@ dependencies = [
  "hex",
  "humantime",
  "jsonrpsee",
- "jsonrpsee-types",
  "metrics",
  "reqwest 0.13.2",
  "rstest",

@@ -72,7 +72,6 @@ alloy-trie.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 alloy-consensus.workspace = true
-jsonrpsee-types.workspace = true
 alloy-rpc-types-eth.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["test-util"] }
