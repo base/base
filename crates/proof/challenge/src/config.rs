@@ -131,6 +131,9 @@ pub struct ChallengerConfig {
     pub zk_proof_service_endpoint: Validated<Url>,
     /// Signing configuration for L1 transaction submission.
     pub signing: SigningConfig,
+    /// TEE enclave endpoint for nullification proof generation.
+    /// When `None`, TEE proof generation is disabled (falls back to ZK).
+    pub tee_endpoint: Option<Validated<Url>>,
     /// Number of past games to scan on startup.
     pub lookback_games: u64,
     /// Health server socket address.
@@ -199,6 +202,10 @@ impl ChallengerConfig {
             ));
         }
 
+        // Validate optional TEE endpoint
+        let tee_endpoint =
+            cli.challenger.tee_endpoint.map(|url| validate(url, "tee-endpoint")).transpose()?;
+
         // Validate and extract signing config
         let signing = build_signing_config(
             private_key.as_deref().map(String::as_str),
@@ -217,6 +224,7 @@ impl ChallengerConfig {
             poll_interval: cli.challenger.poll_interval,
             zk_proof_service_endpoint,
             signing,
+            tee_endpoint,
             lookback_games: cli.challenger.lookback_games,
             health_addr,
             log: LogConfig::from(cli.logging),
@@ -316,11 +324,15 @@ mod tests {
         assert!(matches!(config.signing, SigningConfig::Remote { .. }));
     }
 
-    #[test]
-    fn test_zero_poll_interval() {
-        let cli = cli_from_args(&["--poll-interval", "0s"]);
+    #[rstest]
+    #[case::poll_interval(&["--poll-interval", "0s"], "poll-interval")]
+    #[case::lookback_games(&["--lookback-games", "0"], "lookback-games")]
+    fn test_zero_value_rejected(#[case] extra_args: &[&str], #[case] expected_field: &str) {
+        let cli = cli_from_args(extra_args);
         let result = ChallengerConfig::from_cli(cli, None);
-        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "poll-interval", .. })));
+        assert!(
+            matches!(result, Err(ConfigError::OutOfRange { field, .. }) if field == expected_field)
+        );
     }
 
     #[rstest]
@@ -439,21 +451,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_zero_lookback_games() {
-        let cli = cli_from_args(&["--lookback-games", "0"]);
+    #[rstest]
+    #[case::zk_endpoint(&["--zk-proof-service-endpoint", "file:///no/host"], "zk-proof-service-endpoint")]
+    #[case::tee_endpoint(&["--tee-endpoint", "file:///no/host"], "tee-endpoint")]
+    fn test_invalid_url_rejected(#[case] extra_args: &[&str], #[case] expected_field: &str) {
+        let cli = cli_from_args(extra_args);
         let result = ChallengerConfig::from_cli(cli, None);
-        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "lookback-games", .. })));
-    }
-
-    #[test]
-    fn test_zk_proof_endpoint_validated() {
-        let cli = cli_from_args(&["--zk-proof-service-endpoint", "file:///no/host"]);
-        let result = ChallengerConfig::from_cli(cli, None);
-        assert!(matches!(
-            result,
-            Err(ConfigError::InvalidUrl { field: "zk-proof-service-endpoint", .. })
-        ));
+        assert!(
+            matches!(result, Err(ConfigError::InvalidUrl { field, .. }) if field == expected_field)
+        );
     }
 
     #[test]
@@ -461,6 +467,15 @@ mod tests {
         let cli = cli_from_args(&["--health.addr", "127.0.0.1", "--health.port", "9090"]);
         let config = ChallengerConfig::from_cli(cli, None).unwrap();
         assert_eq!(config.health_addr, "127.0.0.1:9090".parse::<SocketAddr>().unwrap());
+    }
+
+    #[rstest]
+    #[case::omitted(&[], false)]
+    #[case::valid(&["--tee-endpoint", "http://localhost:9999"], true)]
+    fn test_tee_endpoint(#[case] extra_args: &[&str], #[case] expect_some: bool) {
+        let cli = cli_from_args(extra_args);
+        let config = ChallengerConfig::from_cli(cli, None).unwrap();
+        assert_eq!(config.tee_endpoint.is_some(), expect_some);
     }
 
     #[test]

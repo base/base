@@ -13,9 +13,7 @@ workspace = true
 
 [dependencies]
 # Alloy
-alloy-consensus.workspace = true
 alloy-primitives.workspace = true
-alloy-rpc-types-eth.workspace = true
 
 # Async
 tokio.workspace = true
@@ -49,9 +47,11 @@ base-proof-rpc.workspace = true
 
 # Protocol
 base-protocol.workspace = true
+base-proof-primitives.workspace = true
 
 # Enclave
 base-enclave.workspace = true
+base-enclave-client.workspace = true
 
 # Metrics
 metrics.workspace = true
@@ -66,9 +66,13 @@ axum = { workspace = true, features = ["http1", "tokio"] }
 
 [dev-dependencies]
 rstest.workspace = true
+jsonrpsee.workspace = true
 alloy-rlp.workspace = true
 alloy-trie.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
+alloy-consensus.workspace = true
+jsonrpsee-types.workspace = true
+alloy-rpc-types-eth.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["test-util"] }
