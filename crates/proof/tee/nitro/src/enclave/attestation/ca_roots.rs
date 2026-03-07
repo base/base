@@ -1,4 +1,8 @@
-/// AWS Nitro Enclave CA root certificates.
+//! AWS Nitro Enclave CA root certificates.
+//!
+//! This module handles loading and validating the AWS CA roots used
+//! to verify Nitro Enclave attestation documents.
+
 use std::io::Read;
 
 use alloy_primitives::hex;
@@ -83,6 +87,7 @@ impl AwsCaRoot {
         let pem_str =
             std::str::from_utf8(pem_data).map_err(|e| AttestationError::PemParse(e.to_string()))?;
 
+        // Find the certificate data between BEGIN and END markers
         let begin_marker = "-----BEGIN CERTIFICATE-----";
         let end_marker = "-----END CERTIFICATE-----";
 
@@ -133,6 +138,7 @@ mod tests {
 
     #[test]
     fn test_checksum_validation() {
+        // Decode and verify checksum
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(DEFAULT_CA_ROOTS)
             .expect("failed to decode");

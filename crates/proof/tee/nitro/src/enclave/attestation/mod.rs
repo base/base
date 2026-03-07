@@ -1,4 +1,10 @@
-/// Attestation verification for AWS Nitro Enclaves.
+//! Attestation verification for AWS Nitro Enclaves.
+//!
+//! This module provides:
+//! - [`AwsCaRoot`]: AWS CA root certificate handling
+//! - [`verify_attestation`]: Attestation document verification
+//! - [`verify_attestation_with_pcr0`]: Verification with PCR0 check
+
 mod ca_roots;
 pub use ca_roots::{AwsCaRoot, DEFAULT_CA_ROOTS, DEFAULT_CA_ROOTS_SHA256, get_default_ca_root};
 
