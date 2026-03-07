@@ -45,6 +45,7 @@ serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 hex.workspace = true
+rstest.workspace = true
 
 [lints]
 workspace = true

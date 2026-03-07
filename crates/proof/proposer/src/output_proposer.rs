@@ -61,7 +61,7 @@ pub fn build_proof_data(proposal: &ProverProposal) -> Result<Bytes, ProposerErro
     ProofEncoder::encode_proof_bytes(
         &proposal.output.signature,
         proposal.to.l1origin.hash,
-        proposal.to.l1origin.number,
+        U256::from(proposal.to.l1origin.number),
     )
     .map_err(|e| ProposerError::Internal(e.to_string()))
 }
