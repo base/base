@@ -8,7 +8,7 @@ use base_txpool::OpPooledTx;
 use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_payload_util::PayloadTransactions;
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
-use reth_transaction_pool::TransactionPool;
+use reth_transaction_pool::{TransactionPool, TransactionPoolExt};
 
 pub trait NodeBounds:
     FullNodeTypes<
@@ -29,7 +29,10 @@ impl<T> NodeBounds for T where
 }
 
 pub trait PoolBounds:
-    TransactionPool<Transaction: OpPooledTx<Consensus = OpTransactionSigned>> + Unpin + 'static
+    TransactionPool<Transaction: OpPooledTx<Consensus = OpTransactionSigned>>
+    + TransactionPoolExt
+    + Unpin
+    + 'static
 where
     <Self as TransactionPool>::Transaction: OpPooledTx,
 {
@@ -37,7 +40,10 @@ where
 
 impl<T> PoolBounds for T
 where
-    T: TransactionPool<Transaction: OpPooledTx<Consensus = OpTransactionSigned>> + Unpin + 'static,
+    T: TransactionPool<Transaction: OpPooledTx<Consensus = OpTransactionSigned>>
+        + TransactionPoolExt
+        + Unpin
+        + 'static,
     <Self as TransactionPool>::Transaction: OpPooledTx,
 {
 }

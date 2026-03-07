@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_consensus::{
-    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs,
+    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, Transaction, constants::EMPTY_WITHDRAWALS, proofs,
 };
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::Database;
@@ -25,6 +25,7 @@ use either::Either;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
+use reth_execution_types::ChangedAccount;
 use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
 use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_payload_util::BestPayloadTransactions;
@@ -38,6 +39,7 @@ use reth_revm::{
 };
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
+use revm::Database as _;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -402,6 +404,9 @@ where
             }
         });
 
+        // Highest executed nonce per sender, updated incrementally per flashblock.
+        let mut executed_sender_nonces: HashMap<Address, u64> = HashMap::default();
+
         // Process flashblocks in a blocking loop
         loop {
             let fb_span = if span.is_none() {
@@ -440,6 +445,7 @@ where
                     &best_payload,
                     &publish_guard,
                     &fb_span,
+                    &mut executed_sender_nonces,
                 )
                 .await
             {
@@ -504,6 +510,7 @@ where
         best_payload: &BlockCell<OpBuiltPayload>,
         publish_guard: &parking_lot::Mutex<()>,
         span: &tracing::Span,
+        executed_sender_nonces: &mut HashMap<Address, u64>,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
         let target_gas_for_batch = ctx.extra.target_gas_for_batch;
@@ -530,6 +537,28 @@ where
         let flashblock_build_start_time = Instant::now();
 
         info.reset_flashblock_execution_time();
+
+        // Correct the pool's sender nonce tracking before reading the next iterator.
+        // `prune_transactions` clears sender_info, causing nonce-continuation txs to
+        // land in `queued` instead of `pending` since the block isn't sealed yet.
+        if !executed_sender_nonces.is_empty() {
+            let changed_accounts: Vec<ChangedAccount> = executed_sender_nonces
+                .iter()
+                .map(|(&address, &nonce)| {
+                    // Fall back to zero balance on error — conservatively parks the tx until the next block resolves it.
+                    let balance = match state.basic(address) {
+                        Ok(Some(info)) => info.balance,
+                        Ok(None) => U256::ZERO,
+                        Err(e) => {
+                            warn!(address = %address, error = %e, "failed to read sender balance from state, defaulting to zero");
+                            U256::ZERO
+                        }
+                    };
+                    ChangedAccount { address, nonce: nonce + 1, balance }
+                })
+                .collect();
+            self.pool.update_accounts(changed_accounts);
+        }
 
         let best_txs_start_time = Instant::now();
         best_txs.refresh_iterator(BestPayloadTransactions::new(
@@ -558,6 +587,22 @@ where
             .collect::<Vec<_>>();
         best_txs.mark_committed(&new_transactions);
         self.pool.prune_transactions(new_transactions);
+
+        // Track executed nonces incrementally for the next flashblock's update_accounts call.
+        debug_assert_eq!(
+            info.executed_transactions.len(),
+            info.executed_senders.len(),
+            "executed_transactions and executed_senders must be in lockstep"
+        );
+        for (tx, sender) in info.executed_transactions[info.extra.last_flashblock_index..]
+            .iter()
+            .zip(info.executed_senders[info.extra.last_flashblock_index..].iter())
+        {
+            executed_sender_nonces
+                .entry(*sender)
+                .and_modify(|n| *n = (*n).max(tx.nonce()))
+                .or_insert_with(|| tx.nonce());
+        }
 
         // We got block cancelled, we won't need anything from the block at this point
         // Caution: this assume that block cancel token only cancelled when new FCU is received
