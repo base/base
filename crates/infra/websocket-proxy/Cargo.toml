@@ -15,6 +15,7 @@ name = "websocket_proxy"
 workspace = true
 
 [dependencies]
+bytes.workspace = true
 base-ring-buffer.workspace = true
 http.workspace = true
 metrics.workspace = true

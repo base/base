@@ -15,6 +15,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+bytes.workspace = true
 serde.workspace = true
 futures.workspace = true
 dotenvy.workspace = true
