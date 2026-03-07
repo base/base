@@ -22,6 +22,10 @@ pub enum CryptoError {
     /// Signature has invalid length.
     #[error("invalid signature length: expected 65 bytes, got {0}")]
     InvalidSignatureLength(usize),
+
+    /// Invalid ECDSA v-value.
+    #[error("invalid ECDSA v-value: expected 0, 1, 27, or 28, got {0}")]
+    InvalidVValue(u8),
 }
 
 /// Errors that can occur during stateless block execution.
