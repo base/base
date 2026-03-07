@@ -181,7 +181,7 @@ pub struct ProofBundle {
 mod tests {
     extern crate alloc;
 
-    use alloc::vec;
+    use alloc::{string::ToString, vec};
 
     use alloy_primitives::{B256, Bytes, U256};
 
