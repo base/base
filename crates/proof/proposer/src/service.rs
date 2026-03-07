@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient,
@@ -145,6 +145,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
 
     // Wrap in Arc for shared ownership.
     let factory_client = Arc::new(factory_client);
+    let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
 
     // ── 5. Create prover and output proposer ─────────────────────────────
     let proposer_address = match &config.signing {
@@ -173,26 +174,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     )?;
     info!("Output proposer initialized");
 
-    // ── 6. Recover parent game state before creating driver ─────────────
-    // Recovery needs direct access to the factory client before it's moved
-    // into the driver. We store the recovered state and set it after driver creation.
-    let recovered_state: Option<(u32, B256, u64)> =
-        match crate::recover_parent_game_state_standalone(
-            factory_client.as_ref(),
-            &verifier_client,
-            config.game_type,
-        )
-        .await
-        {
-            Ok(Some(state)) => Some(state),
-            Ok(None) => None,
-            Err(e) => {
-                warn!(error = %e, "Failed to recover parent game state, will start from anchor");
-                None
-            }
-        };
-
-    // ── 7. Create driver + lifecycle handle ───────────────────────────────
+    // ── 6. Create driver ───────────────────────────────────────────────────
     let driver_config = DriverConfig {
         poll_interval: config.poll_interval,
         block_interval,
@@ -209,13 +191,14 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         rollup_client,
         anchor_registry,
         factory_client,
+        verifier_client,
         output_proposer,
         cancel.child_token(),
     );
 
-    // Apply recovered parent game state.
-    if let Some((game_index, output_root, l2_block_number)) = recovered_state {
-        driver.set_parent_game_state(game_index, output_root, l2_block_number);
+    // ── 7. Recover parent game state from on-chain ──────────────────────
+    if let Some(state) = driver.recover_latest_game().await {
+        driver.set_parent_game_state(state.game_index, state.output_root, state.l2_block_number);
     }
 
     let driver_handle: Arc<dyn ProposerDriverControl> =

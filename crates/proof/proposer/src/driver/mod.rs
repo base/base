@@ -21,7 +21,9 @@ use std::{
 
 use alloy_primitives::{B256, U256};
 use async_trait::async_trait;
-use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
+use base_proof_contracts::{
+    AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient,
+};
 use base_proof_rpc::{L1Provider, L2BlockRef, RollupProvider, RpcError};
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle, time::sleep};
@@ -29,8 +31,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
-    AGGREGATE_BATCH_SIZE, BLOCKHASH_SAFETY_MARGIN, BLOCKHASH_WINDOW, NO_PARENT_INDEX,
-    OutputProposer, PROPOSAL_TIMEOUT, ProposerError,
+    AGGREGATE_BATCH_SIZE, BLOCKHASH_SAFETY_MARGIN, BLOCKHASH_WINDOW, MAX_GAME_RECOVERY_LOOKBACK,
+    NO_PARENT_INDEX, OutputProposer, PROPOSAL_TIMEOUT, ProposerError,
     enclave::EnclaveClientTrait,
     is_game_already_exists, metrics as proposer_metrics,
     prover::{Prover, ProverProposal},
@@ -68,20 +70,20 @@ impl Default for DriverConfig {
     }
 }
 
-/// Tracks the most recent dispute game created by this proposer.
+/// Tracks the most recent dispute game for parent chaining.
 ///
-/// Used to chain games: each new game references its parent via `game_index`.
-/// On restart, this state is recovered from on-chain data.
+/// Each new game references its parent via `game_index`. This state is
+/// recovered from on-chain data at startup and after each game creation.
 #[derive(Debug, Clone, Default)]
-struct ParentGameState {
-    /// Whether we've created at least one game since the process started.
-    initialized: bool,
-    /// Factory index of the last game we created.
-    game_index: u32,
-    /// Output root claimed by the last game.
-    output_root: B256,
-    /// L2 block number of the last game's claim.
-    l2_block_number: u64,
+pub struct ParentGameState {
+    /// Whether this state has been populated from on-chain data.
+    pub initialized: bool,
+    /// Factory index of the parent game.
+    pub game_index: u32,
+    /// Output root claimed by the parent game.
+    pub output_root: B256,
+    /// L2 block number of the parent game's claim.
+    pub l2_block_number: u64,
 }
 
 /// The main driver that coordinates proposal generation.
@@ -101,6 +103,7 @@ where
     rollup_client: Arc<R>,
     anchor_registry: Arc<ASR>,
     factory_client: Arc<F>,
+    verifier_client: Arc<dyn AggregateVerifierClient>,
     output_proposer: Arc<dyn OutputProposer>,
     cancel: CancellationToken,
     /// Pending single-block proposals awaiting aggregation and submission.
@@ -150,6 +153,7 @@ where
         rollup_client: Arc<R>,
         anchor_registry: Arc<ASR>,
         factory_client: Arc<F>,
+        verifier_client: Arc<dyn AggregateVerifierClient>,
         output_proposer: Arc<dyn OutputProposer>,
         cancel: CancellationToken,
     ) -> Self {
@@ -161,6 +165,7 @@ where
             rollup_client,
             anchor_registry,
             factory_client,
+            verifier_client,
             output_proposer,
             cancel,
             pending: VecDeque::new(),
@@ -187,6 +192,81 @@ where
     ) {
         self.parent_game_state =
             ParentGameState { initialized: true, game_index, output_root, l2_block_number };
+    }
+
+    /// Scans the `DisputeGameFactory` on-chain to find the most recent game
+    /// of our `game_type` and returns it as a `ParentGameState`.
+    ///
+    /// Used at startup, after successful game creation, and when recovering
+    /// from `GameAlreadyExists` (so the proposer can chain off games created
+    /// by any proposer, not just itself).
+    pub async fn recover_latest_game(&self) -> Option<ParentGameState> {
+        let count = match self.factory_client.game_count().await {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(error = %e, "Failed to get game count for recovery");
+                return None;
+            }
+        };
+
+        if count == 0 {
+            return None;
+        }
+
+        let search_count = count.min(MAX_GAME_RECOVERY_LOOKBACK);
+
+        for i in 0..search_count {
+            let game_index = count - 1 - i;
+            let game = match self.factory_client.game_at_index(game_index).await {
+                Ok(g) => g,
+                Err(e) => {
+                    warn!(error = %e, game_index, "Failed to read game at index during recovery");
+                    return None;
+                }
+            };
+
+            if game.game_type != self.config.game_type {
+                continue;
+            }
+
+            let game_info = match self.verifier_client.game_info(game.proxy).await {
+                Ok(info) => info,
+                Err(e) => {
+                    warn!(error = %e, game_index, "Failed to read game info during recovery");
+                    return None;
+                }
+            };
+
+            let idx: u32 = match game_index.try_into() {
+                Ok(v) => v,
+                Err(_) => {
+                    warn!(game_index, "Game index exceeds u32 during recovery");
+                    return None;
+                }
+            };
+
+            info!(
+                game_index,
+                game_proxy = %game.proxy,
+                output_root = ?game_info.root_claim,
+                l2_block_number = game_info.l2_block_number,
+                "Recovered parent game state from on-chain"
+            );
+
+            return Some(ParentGameState {
+                initialized: true,
+                game_index: idx,
+                output_root: game_info.root_claim,
+                l2_block_number: game_info.l2_block_number,
+            });
+        }
+
+        info!(
+            game_type = self.config.game_type,
+            searched = search_count,
+            "No games found for our game type during recovery"
+        );
+        None
     }
 
     /// Starts the driver loop.
@@ -542,53 +622,45 @@ where
                 info!(l2_block_number = proposal.to.number, "Dispute game created successfully");
                 metrics::counter!(proposer_metrics::L2_OUTPUT_PROPOSALS_TOTAL).increment(1);
 
-                // TODO: This uses `game_count - 1` to infer the new game's index,
-                // which is racy if another proposer creates a game between our
-                // `create()` and this `game_count()` call. Consider parsing the
-                // game index from the transaction receipt's event logs instead.
-                // The current approach self-heals via `GameAlreadyExists` recovery.
-                match self.factory_client.game_count().await {
-                    Ok(count) if count > 0 => {
-                        let new_index = u32::try_from(count - 1).unwrap_or_else(|_| {
-                            warn!(count, "game_count exceeds u32::MAX, clamping to u32::MAX");
-                            u32::MAX
-                        });
-                        self.parent_game_state = ParentGameState {
-                            initialized: true,
-                            game_index: new_index,
-                            output_root: proposal.output.output_root,
-                            l2_block_number: proposal.to.number,
-                        };
-                        self.last_proposed_block = proposal.to.number;
-                        self.pending.clear();
-                        self.cached_intermediate_roots.clear();
+                self.pending.clear();
+                self.cached_intermediate_roots.clear();
+                self.last_proposed_block = proposal.to.number;
 
-                        info!(
-                            new_game_index = new_index,
-                            output_root = ?proposal.output.output_root,
-                            l2_block_number = proposal.to.number,
-                            "Updated parent game state"
-                        );
-                    }
-                    Ok(_) => {
-                        warn!("gameCount returned 0 after successful create");
-                    }
-                    Err(e) => {
-                        warn!(
-                            error = %e,
-                            "Failed to get new game index, will recover on next tick"
-                        );
-                    }
+                if let Some(state) = self.recover_latest_game().await {
+                    info!(
+                        new_game_index = state.game_index,
+                        output_root = ?state.output_root,
+                        l2_block_number = state.l2_block_number,
+                        "Updated parent game state from on-chain"
+                    );
+                    self.parent_game_state = state;
+                } else {
+                    warn!(
+                        "On-chain recovery found no games after successful create, will use anchor on next tick"
+                    );
+                    self.parent_game_state.initialized = false;
                 }
             }
             Ok(Err(e)) => {
                 if is_game_already_exists(&e) {
-                    info!(l2_block_number = proposal.to.number, "Game already exists, continuing");
-                    // The game was created (likely by a previous run). Try to
-                    // recover the parent state so we continue the chain.
+                    info!(
+                        l2_block_number = proposal.to.number,
+                        "Game already exists, recovering from on-chain"
+                    );
                     self.pending.clear();
                     self.cached_intermediate_roots.clear();
-                    self.parent_game_state.initialized = false;
+
+                    if let Some(state) = self.recover_latest_game().await {
+                        info!(
+                            game_index = state.game_index,
+                            output_root = ?state.output_root,
+                            l2_block_number = state.l2_block_number,
+                            "Recovered existing game, chaining off it"
+                        );
+                        self.parent_game_state = state;
+                    } else {
+                        self.parent_game_state.initialized = false;
+                    }
                 } else {
                     warn!(
                         error = %e,
@@ -781,8 +853,9 @@ mod tests {
         enclave::EnclaveClientTrait,
         prover::{Prover, test_helpers::test_proposal},
         test_utils::{
-            MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2, MockOutputProposer,
-            MockRollupClient, test_anchor_root, test_per_chain_config, test_sync_status,
+            MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
+            MockOutputProposer, MockRollupClient, test_anchor_root, test_per_chain_config,
+            test_sync_status,
         },
     };
 
@@ -873,6 +946,7 @@ mod tests {
             rollup,
             anchor_registry,
             factory,
+            Arc::new(MockAggregateVerifier),
             output_proposer,
             cancel,
         )
