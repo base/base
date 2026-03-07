@@ -26,7 +26,7 @@ impl ProofEncoder {
     ///
     /// Returns an error if the signature is not exactly 65 bytes or has an invalid v-value.
     pub fn encode_proof_bytes(
-        signature: &Bytes,
+        signature: &[u8],
         l1_origin_hash: B256,
         l1_origin_number: u64,
     ) -> Result<Bytes, CryptoError> {
