@@ -79,9 +79,6 @@ pub enum ConfigError {
     /// Invalid signing configuration.
     #[error("invalid signing config: {0}")]
     Signing(String),
-    /// Invalid TEE configuration.
-    #[error("invalid TEE config: {0}")]
-    Tee(String),
 }
 
 /// Signing configuration for L1 transaction submission.

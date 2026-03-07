@@ -25,7 +25,8 @@ use std::sync::Arc;
 
 use alloy_primitives::Bytes;
 use base_enclave::ProofEncoder;
-use base_enclave_client::{ClientError, EnclaveProvider, ProofRequest};
+use base_enclave_client::{ClientError, EnclaveProvider};
+use base_proof_primitives::ProofRequest;
 use thiserror::Error;
 use tracing::info;
 
@@ -121,8 +122,7 @@ mod tests {
     use alloy_primitives::{B256, U256};
     use async_trait::async_trait;
     use base_enclave::PROOF_TYPE_TEE;
-    use base_enclave_client::{ClientError, ProofClaim, ProofEvidence, ProofRequest, ProofResult};
-    use base_proof_primitives::Proposal;
+    use base_proof_primitives::{ProofClaim, ProofEvidence, ProofResult, Proposal};
 
     use super::*;
 
