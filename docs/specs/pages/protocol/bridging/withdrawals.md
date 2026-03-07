@@ -2,10 +2,10 @@
 
 
 
-[g-deposits]: ../reference/glossary.md#deposits
-[g-withdrawal]: ../reference/glossary.md#withdrawal
-[g-relayer]: ../reference/glossary.md#withdrawals
-[g-execution-engine]: ../reference/glossary.md#execution-engine
+[g-deposits]: ../../reference/glossary.md#deposits
+[g-withdrawal]: ../../reference/glossary.md#withdrawal
+[g-relayer]: ../../reference/glossary.md#withdrawals
+[g-execution-engine]: ../../reference/glossary.md#execution-engine
 
 ## Overview
 

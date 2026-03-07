@@ -92,7 +92,7 @@ The following diagram demonstrates this interaction and key Base protocol compon
 ```mermaid
 graph TD
     subgraph "Ethereum L1"
-        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
         BatchInbox(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
     end
 
@@ -127,7 +127,7 @@ graph LR
         BatchInbox(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
         DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
         FaultDisputeGame(<a href="./fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
-        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
         ExternalContracts(External Contracts)
     end
 
@@ -194,10 +194,10 @@ graph LR
 
     subgraph "L1 Smart Contracts"
         BatchDataEOA(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
-        L1StandardBridge(<a href="./bridges.html">L1StandardBridge</a>)
-        L1ERC721Bridge(<a href="./bridges.html">L1ERC721Bridge</a>)
-        L1CrossDomainMessenger(<a href="./messengers.html">L1CrossDomainMessenger</a>)
-        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        L1StandardBridge(<a href="./bridging/bridges.html">L1StandardBridge</a>)
+        L1ERC721Bridge(<a href="./bridging/bridges.html">L1ERC721Bridge</a>)
+        L1CrossDomainMessenger(<a href="./bridging/messengers.html">L1CrossDomainMessenger</a>)
+        OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
         SuperchainConfig(SuperchainConfig)
         SystemConfig(<a href="./system-config.html">SystemConfig</a>)
         DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
@@ -421,7 +421,7 @@ graph LR
 
     subgraph "L1 Smart Contracts"
         BatchDataEOA(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
-        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
         DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
         FaultDisputeGame(<a href="./fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
     end
@@ -471,7 +471,7 @@ The below diagram illustrates how the sequencer and verifiers fit together:
 
 **Spec links:**
 
-- [Deposits](deposits.md)
+- [Deposits](bridging/deposits.md)
 
 Base supports two types of deposits: user deposits, and L1 attributes deposits. To perform a user deposit, users
 call the `depositTransaction` method on the `OptimismPortal` contract. This in turn emits `TransactionDeposited` events,

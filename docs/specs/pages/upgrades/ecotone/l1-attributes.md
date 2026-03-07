@@ -109,4 +109,4 @@ The function called by the L1 attributes transaction depends on the network upgr
   - `setL1BlockValuesEcotone` MUST be called with the new Ecotone attributes.
 
 `setL1BlockValuesEcotone` uses a tightly packed encoding for its parameters, which is described in
-[L1 Attributes Deposited Transaction Calldata](../../protocol/deposits.md#l1-attributes-deposited-transaction-calldata).
+[L1 Attributes Deposited Transaction Calldata](../../protocol/bridging/deposits.md#l1-attributes-deposited-transaction-calldata).

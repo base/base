@@ -2,14 +2,14 @@
 
 
 
-[g-transaction-type]: ../reference/glossary.md#transaction-type
-[g-derivation]: ../reference/glossary.md#L2-chain-derivation
-[g-deposited]: ../reference/glossary.md#deposited
-[g-deposits]: ../reference/glossary.md#deposits
-[g-l1-attr-deposit]: ../reference/glossary.md#l1-attributes-deposited-transaction
-[g-user-deposited]: ../reference/glossary.md#user-deposited-transaction
-[g-eoa]: ../reference/glossary.md#eoa
-[g-exec-engine]: ../reference/glossary.md#execution-engine
+[g-transaction-type]: ../../reference/glossary.md#transaction-type
+[g-derivation]: ../../reference/glossary.md#L2-chain-derivation
+[g-deposited]: ../../reference/glossary.md#deposited
+[g-deposits]: ../../reference/glossary.md#deposits
+[g-l1-attr-deposit]: ../../reference/glossary.md#l1-attributes-deposited-transaction
+[g-user-deposited]: ../../reference/glossary.md#user-deposited-transaction
+[g-eoa]: ../../reference/glossary.md#eoa
+[g-exec-engine]: ../../reference/glossary.md#execution-engine
 
 ## Overview
 
@@ -90,7 +90,7 @@ Without a `sourceHash` in a deposit, two different deposited transactions could 
 The outer `keccak256` hashes the actual uniquely identifying information with a domain,
 to avoid collisions between different types of sources.
 
-The [Interop derivation spec](consensus/derivation.md) introduces two additional kinds of system deposits,
+The [Interop derivation spec](../consensus/derivation.md) introduces two additional kinds of system deposits,
 with domains `3` and `4`.
 
 We do not use the sender's nonce to ensure uniqueness because this would require an extra L2 EVM state read from the
@@ -268,7 +268,7 @@ The predeploy stores the following values:
 - `sequenceNumber` (`uint64`): This equals the L2 block number relative to the start of the epoch,
   i.e. the L2 block distance to the L2 block height that the L1 attributes last changed,
   and reset to 0 at the start of a new epoch.
-- System configurables tied to the L1 block, see [System configuration specification](system-config.md):
+- System configurables tied to the L1 block, see [System configuration specification](../system-config.md):
   - `batcherHash` (`bytes32`): A versioned commitment to the batch-submitter(s) currently operating.
   - `overhead` (`uint256`): The L1 fee overhead to apply to L1 cost computation of transactions in this L2 block.
   - `scalar` (`uint256`): The L1 fee scalar to apply to L1 cost computation of transactions in this L2 block.
@@ -318,7 +318,7 @@ transaction are determined by the corresponding `TransactionDeposited` event emi
 The deposit contract is deployed to L1. Deposited transactions are derived from the values in
 the `TransactionDeposited` event(s) emitted by the deposit contract.
 
-The deposit contract is responsible for maintaining the [guaranteed gas market](guaranteed-gas-market.md),
+The deposit contract is responsible for maintaining the [guaranteed gas market](../guaranteed-gas-market.md),
 charging deposits for gas to be used on L2, and ensuring that the total amount of guaranteed
 gas in a single L1 block does not exceed the L2 block gas limit.
 

@@ -33,7 +33,7 @@ is implemented by the engine, see the [deposits specification][deposit-spec].
 This type of transaction can mint L2 ETH, run EVM,
 and introduce L1 information to enshrined contracts in the execution state.
 
-[deposit-spec]: ../deposits.md
+[deposit-spec]: ../bridging/deposits.md
 
 ### Deposited transaction boundaries
 

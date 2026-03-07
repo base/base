@@ -978,7 +978,7 @@ The L1 attributes are read from the L1 block header, while deposits are read fro
 Refer to the [**deposit contract specification**][deposit-contract-spec] for details on how deposits are encoded as log
 entries.
 
-[deposit-contract-spec]: ../deposits.md#deposit-contract
+[deposit-contract-spec]: ../bridging/deposits.md#deposit-contract
 
 Logs are derived from transactions following the future-proof best-effort process described in
 [On Future Proof Transaction Log Derivation](#on-future-proof-transaction-log-derivation)
