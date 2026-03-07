@@ -79,6 +79,9 @@ pub enum ConfigError {
     /// Invalid signing configuration.
     #[error("invalid signing config: {0}")]
     Signing(String),
+    /// Invalid TEE configuration.
+    #[error("invalid TEE config: {0}")]
+    Tee(String),
 }
 
 /// Signing configuration for L1 transaction submission.
@@ -131,6 +134,9 @@ pub struct ChallengerConfig {
     pub zk_proof_service_endpoint: Validated<Url>,
     /// Signing configuration for L1 transaction submission.
     pub signing: SigningConfig,
+    /// TEE enclave endpoint for nullification proof generation.
+    /// When `None`, TEE proof generation is disabled (falls back to ZK).
+    pub tee_endpoint: Option<Validated<Url>>,
     /// Number of past games to scan on startup.
     pub lookback_games: u64,
     /// Health server socket address.
@@ -199,6 +205,10 @@ impl ChallengerConfig {
             ));
         }
 
+        // Validate optional TEE endpoint
+        let tee_endpoint =
+            cli.challenger.tee_endpoint.map(|url| validate(url, "tee-endpoint")).transpose()?;
+
         // Validate and extract signing config
         let signing = build_signing_config(
             private_key.as_deref().map(String::as_str),
@@ -217,6 +227,7 @@ impl ChallengerConfig {
             poll_interval: cli.challenger.poll_interval,
             zk_proof_service_endpoint,
             signing,
+            tee_endpoint,
             lookback_games: cli.challenger.lookback_games,
             health_addr,
             log: LogConfig::from(cli.logging),
@@ -461,6 +472,27 @@ mod tests {
         let cli = cli_from_args(&["--health.addr", "127.0.0.1", "--health.port", "9090"]);
         let config = ChallengerConfig::from_cli(cli, None).unwrap();
         assert_eq!(config.health_addr, "127.0.0.1:9090".parse::<SocketAddr>().unwrap());
+    }
+
+    #[test]
+    fn test_tee_endpoint_none_when_omitted() {
+        let cli = cli_from_args(&[]);
+        let config = ChallengerConfig::from_cli(cli, None).unwrap();
+        assert!(config.tee_endpoint.is_none());
+    }
+
+    #[test]
+    fn test_tee_endpoint_accepted_when_valid() {
+        let cli = cli_from_args(&["--tee-endpoint", "http://localhost:9999"]);
+        let config = ChallengerConfig::from_cli(cli, None).unwrap();
+        assert!(config.tee_endpoint.is_some());
+    }
+
+    #[test]
+    fn test_tee_endpoint_rejected_when_invalid() {
+        let cli = cli_from_args(&["--tee-endpoint", "file:///no/host"]);
+        let result = ChallengerConfig::from_cli(cli, None);
+        assert!(matches!(result, Err(ConfigError::InvalidUrl { field: "tee-endpoint", .. })));
     }
 
     #[test]
