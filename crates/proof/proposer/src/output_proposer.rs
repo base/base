@@ -16,11 +16,11 @@ use alloy_rpc_types_eth::{TransactionInput, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
 use backon::Retryable;
+use base_enclave::ProofEncoder;
 use base_proof_contracts::{
     encode_create_calldata, encode_extra_data, game_already_exists_selector,
 };
 use base_proof_rpc::RetryConfig;
-use base_tee_prover::ProofEncoder;
 use jsonrpsee::core::{client::ClientT, params::ArrayParams};
 use tokio::sync::OnceCell;
 use tracing::info;
@@ -428,7 +428,7 @@ pub fn create_output_proposer(
 
 #[cfg(test)]
 mod tests {
-    use base_tee_prover::PROOF_TYPE_TEE;
+    use base_enclave::PROOF_TYPE_TEE;
 
     use super::*;
     use crate::prover::test_helpers::test_proposal;
@@ -507,7 +507,7 @@ mod tests {
 
         let result = build_proof_data(&proposal);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("unexpected ECDSA v-value"));
+        assert!(result.unwrap_err().to_string().contains("invalid ECDSA v-value"));
     }
 
     // ========================================================================

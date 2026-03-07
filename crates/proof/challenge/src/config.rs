@@ -409,10 +409,6 @@ mod tests {
         ConfigError::Signing("missing key".to_string()),
         "invalid signing config: missing key"
     )]
-    #[case::tee(
-        ConfigError::Tee("missing image hash".to_string()),
-        "invalid TEE config: missing image hash"
-    )]
     fn test_config_error_display(#[case] error: ConfigError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);
     }
@@ -487,12 +483,7 @@ mod tests {
 
     #[test]
     fn test_tee_endpoint_accepted_when_valid() {
-        let cli = cli_from_args(&[
-            "--tee-endpoint",
-            "http://localhost:9999",
-            "--tee-image-hash",
-            "0x0000000000000000000000000000000000000000000000000000000000000001",
-        ]);
+        let cli = cli_from_args(&["--tee-endpoint", "http://localhost:9999"]);
         let config = ChallengerConfig::from_cli(cli, None).unwrap();
         assert!(config.tee_endpoint.is_some());
     }
@@ -502,14 +493,6 @@ mod tests {
         let cli = cli_from_args(&["--tee-endpoint", "file:///no/host"]);
         let result = ChallengerConfig::from_cli(cli, None);
         assert!(matches!(result, Err(ConfigError::InvalidUrl { field: "tee-endpoint", .. })));
-    }
-
-    #[test]
-    fn test_tee_endpoint_requires_image_hash() {
-        let cli = cli_from_args(&["--tee-endpoint", "http://localhost:9999"]);
-        let result = ChallengerConfig::from_cli(cli, None);
-        assert!(matches!(result, Err(ConfigError::Tee(_))));
-        assert!(result.unwrap_err().to_string().contains("--tee-image-hash is required"));
     }
 
     #[test]

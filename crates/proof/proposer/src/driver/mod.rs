@@ -23,7 +23,6 @@ use alloy_primitives::{B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
 use base_proof_rpc::{L1Provider, L2BlockRef, RollupProvider, RpcError};
-use base_tee_prover::TeeExecutor;
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle, time::sleep};
 use tokio_util::sync::CancellationToken;
@@ -31,8 +30,9 @@ use tracing::{debug, info, warn};
 
 use crate::{
     AGGREGATE_BATCH_SIZE, BLOCKHASH_SAFETY_MARGIN, BLOCKHASH_WINDOW, NO_PARENT_INDEX,
-    OutputProposer, PROPOSAL_TIMEOUT, ProposerError, is_game_already_exists,
-    metrics as proposer_metrics,
+    OutputProposer, PROPOSAL_TIMEOUT, ProposerError,
+    enclave::EnclaveClientTrait,
+    is_game_already_exists, metrics as proposer_metrics,
     prover::{Prover, ProverProposal},
     rpc::ProverL2Provider,
 };
@@ -89,7 +89,7 @@ pub struct Driver<L1, L2, E, R, ASR, F>
 where
     L1: L1Provider,
     L2: ProverL2Provider,
-    E: TeeExecutor,
+    E: EnclaveClientTrait,
     R: RollupProvider,
     ASR: AnchorStateRegistryClient,
     F: DisputeGameFactoryClient,
@@ -117,7 +117,7 @@ impl<L1, L2, E, R, ASR, F> std::fmt::Debug for Driver<L1, L2, E, R, ASR, F>
 where
     L1: L1Provider,
     L2: ProverL2Provider,
-    E: TeeExecutor,
+    E: EnclaveClientTrait,
     R: RollupProvider,
     ASR: AnchorStateRegistryClient,
     F: DisputeGameFactoryClient,
@@ -135,7 +135,7 @@ impl<L1, L2, E, R, ASR, F> Driver<L1, L2, E, R, ASR, F>
 where
     L1: L1Provider + 'static,
     L2: ProverL2Provider + 'static,
-    E: TeeExecutor + 'static,
+    E: EnclaveClientTrait + 'static,
     R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
@@ -635,7 +635,7 @@ pub struct DriverHandle<L1, L2, E, R, ASR, F>
 where
     L1: L1Provider + 'static,
     L2: ProverL2Provider + 'static,
-    E: TeeExecutor + 'static,
+    E: EnclaveClientTrait + 'static,
     R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
@@ -656,7 +656,7 @@ impl<L1, L2, E, R, ASR, F> std::fmt::Debug for DriverHandle<L1, L2, E, R, ASR, F
 where
     L1: L1Provider + 'static,
     L2: ProverL2Provider + 'static,
-    E: TeeExecutor + 'static,
+    E: EnclaveClientTrait + 'static,
     R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
@@ -672,7 +672,7 @@ impl<L1, L2, E, R, ASR, F> DriverHandle<L1, L2, E, R, ASR, F>
 where
     L1: L1Provider + 'static,
     L2: ProverL2Provider + 'static,
-    E: TeeExecutor + 'static,
+    E: EnclaveClientTrait + 'static,
     R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
@@ -699,7 +699,7 @@ impl<L1, L2, E, R, ASR, F> ProposerDriverControl for DriverHandle<L1, L2, E, R, 
 where
     L1: L1Provider + 'static,
     L2: ProverL2Provider + 'static,
-    E: TeeExecutor + 'static,
+    E: EnclaveClientTrait + 'static,
     R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
@@ -774,11 +774,11 @@ mod tests {
     use base_enclave::{Proposal, RollupConfig};
     use base_enclave_client::{ClientError, ExecuteStatelessRequest};
     use base_proof_rpc::SyncStatus;
-    use base_tee_prover::TeeExecutor;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::{
+        enclave::EnclaveClientTrait,
         prover::{Prover, test_helpers::test_proposal},
         test_utils::{
             MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2, MockOutputProposer,
@@ -792,14 +792,13 @@ mod tests {
     struct MockEnclave;
 
     #[async_trait]
-    impl TeeExecutor for MockEnclave {
+    impl EnclaveClientTrait for MockEnclave {
         async fn execute_stateless(
             &self,
             _: ExecuteStatelessRequest,
         ) -> Result<Proposal, ClientError> {
             unimplemented!()
         }
-
         async fn aggregate(
             &self,
             _: base_enclave::AggregateRequest,
@@ -813,14 +812,13 @@ mod tests {
     struct MockEnclaveForAggregation;
 
     #[async_trait]
-    impl TeeExecutor for MockEnclaveForAggregation {
+    impl EnclaveClientTrait for MockEnclaveForAggregation {
         async fn execute_stateless(
             &self,
             _: ExecuteStatelessRequest,
         ) -> Result<Proposal, ClientError> {
             unimplemented!()
         }
-
         async fn aggregate(
             &self,
             request: base_enclave::AggregateRequest,
@@ -841,7 +839,7 @@ mod tests {
     // ---- Helpers ----
 
     /// Generic driver constructor that accepts a custom enclave, config, and mocks.
-    fn test_driver_custom<E: TeeExecutor + 'static>(
+    fn test_driver_custom<E: EnclaveClientTrait + 'static>(
         enclave: E,
         driver_config: DriverConfig,
         l1_block_number: u64,

@@ -1,8 +1,6 @@
-use std::time::Duration;
-
 use alloy_primitives::{B256, Bytes};
 
-use crate::TeeProverError;
+use crate::CryptoError;
 
 /// Length of an ECDSA signature in bytes (r + s + v).
 pub const ECDSA_SIGNATURE_LENGTH: usize = 65;
@@ -12,9 +10,6 @@ pub const ECDSA_V_OFFSET: u8 = 27;
 
 /// Proof type byte for TEE proofs (matches `AggregateVerifier.ProofType.TEE`).
 pub const PROOF_TYPE_TEE: u8 = 0;
-
-/// Timeout for enclave RPC calls.
-pub const ENCLAVE_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Proof encoding utilities for TEE proofs.
 #[derive(Debug)]
@@ -34,12 +29,9 @@ impl ProofEncoder {
         signature: &Bytes,
         l1_origin_hash: B256,
         l1_origin_number: u64,
-    ) -> Result<Bytes, TeeProverError> {
+    ) -> Result<Bytes, CryptoError> {
         if signature.len() < ECDSA_SIGNATURE_LENGTH {
-            return Err(TeeProverError::Encoding(format!(
-                "signature too short: expected at least {ECDSA_SIGNATURE_LENGTH} bytes, got {}",
-                signature.len()
-            )));
+            return Err(CryptoError::InvalidSignatureLength(signature.len()));
         }
 
         let mut proof_data = vec![0u8; 1 + 32 + 32 + ECDSA_SIGNATURE_LENGTH];
@@ -59,11 +51,7 @@ impl ProofEncoder {
         proof_data[129] = match proof_data[129] {
             0 | 1 => proof_data[129] + ECDSA_V_OFFSET,
             27 | 28 => proof_data[129],
-            v => {
-                return Err(TeeProverError::Encoding(format!(
-                    "unexpected ECDSA v-value: {v}, expected 0, 1, 27, or 28"
-                )));
-            }
+            v => return Err(CryptoError::InvalidVValue(v)),
         };
 
         Ok(Bytes::from(proof_data))
@@ -72,8 +60,6 @@ impl ProofEncoder {
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
-
     use super::*;
 
     fn test_signature(v: u8) -> Bytes {
@@ -116,15 +102,32 @@ mod tests {
         assert_eq!(u64::from_be_bytes(expected), 12345);
     }
 
-    #[rstest]
-    #[case::v_zero(0, 27)]
-    #[case::v_one(1, 28)]
-    #[case::v_27(27, 27)]
-    #[case::v_28(28, 28)]
-    fn test_encode_proof_bytes_v_adjustment(#[case] input_v: u8, #[case] expected_v: u8) {
-        let sig = test_signature(input_v);
+    #[test]
+    fn test_encode_proof_bytes_v_zero_adjusted_to_27() {
+        let sig = test_signature(0);
         let proof = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, 0).unwrap();
-        assert_eq!(proof[129], expected_v);
+        assert_eq!(proof[129], 27);
+    }
+
+    #[test]
+    fn test_encode_proof_bytes_v_one_adjusted_to_28() {
+        let sig = test_signature(1);
+        let proof = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, 0).unwrap();
+        assert_eq!(proof[129], 28);
+    }
+
+    #[test]
+    fn test_encode_proof_bytes_v_27_unchanged() {
+        let sig = test_signature(27);
+        let proof = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, 0).unwrap();
+        assert_eq!(proof[129], 27);
+    }
+
+    #[test]
+    fn test_encode_proof_bytes_v_28_unchanged() {
+        let sig = test_signature(28);
+        let proof = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, 0).unwrap();
+        assert_eq!(proof[129], 28);
     }
 
     #[test]
@@ -132,7 +135,7 @@ mod tests {
         let sig = test_signature(5);
         let result = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, 0);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("unexpected ECDSA v-value"));
+        assert!(result.unwrap_err().to_string().contains("invalid ECDSA v-value"));
     }
 
     #[test]
@@ -140,6 +143,6 @@ mod tests {
         let sig = Bytes::from(vec![0u8; 32]);
         let result = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, 0);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("signature too short"));
+        assert!(result.unwrap_err().to_string().contains("invalid signature length"));
     }
 }

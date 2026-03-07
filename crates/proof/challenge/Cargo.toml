@@ -51,7 +51,6 @@ base-protocol.workspace = true
 
 # Enclave
 base-enclave.workspace = true
-base-tee-prover.workspace = true
 base-enclave-client.workspace = true
 
 # Metrics

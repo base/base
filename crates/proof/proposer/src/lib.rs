@@ -25,7 +25,7 @@ pub use driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl};
 
 mod enclave;
 pub use enclave::{
-    EnclaveClient, PerChainConfig, Proposal, create_enclave_client,
+    EnclaveClient, EnclaveClientTrait, PerChainConfig, Proposal, create_enclave_client,
     rollup_config_to_per_chain_config,
 };
 

@@ -18,6 +18,9 @@ pub use config::{
 mod error;
 pub use error::{ConfigError, CryptoError, EnclaveError, ExecutorError, ProviderError, Result};
 
+mod proof;
+pub use proof::{ECDSA_SIGNATURE_LENGTH, ECDSA_V_OFFSET, PROOF_TYPE_TEE, ProofEncoder};
+
 mod executor;
 pub use executor::{
     BlockExecutionResult, DEPOSIT_EVENT_TOPIC, EnclaveEvmFactory, EnclaveTrieDB, EnclaveTrieHinter,

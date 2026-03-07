@@ -27,7 +27,6 @@ members = [
   "crates/proof/tee/core",
   "crates/proof/tee/client",
   "crates/proof/tee/server",
-  "crates/proof/tee/prover",
   "crates/proof/transport",
   "crates/proof/contracts",
   "crates/proof/rpc",
@@ -224,7 +223,6 @@ base-proof-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-featur
 base-enclave = { path = "crates/proof/tee/core" }
 base-enclave-client = { path = "crates/proof/tee/client" }
 base-enclave-server = { path = "crates/proof/tee/server" }
-base-tee-prover = { path = "crates/proof/tee/prover" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }

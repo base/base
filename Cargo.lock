@@ -2658,7 +2658,6 @@ dependencies = [
  "base-proof-primitives",
  "base-proof-rpc",
  "base-protocol",
- "base-tee-prover",
  "clap",
  "eyre",
  "futures",
@@ -4244,7 +4243,6 @@ dependencies = [
  "base-proof-contracts",
  "base-proof-rpc",
  "base-protocol",
- "base-tee-prover",
  "bytes",
  "clap",
  "eyre",
@@ -4358,29 +4356,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
-]
-
-[[package]]
-name = "base-tee-prover"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-rpc-types-eth",
- "async-trait",
- "base-alloy-consensus",
- "base-alloy-rpc-types",
- "base-enclave",
- "base-enclave-client",
- "base-proof-rpc",
- "base-protocol",
- "rstest",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
 ]
 
 [[package]]

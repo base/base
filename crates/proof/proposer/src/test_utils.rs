@@ -15,10 +15,10 @@ use base_proof_rpc::{
     L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OpBlock, RollupProvider, RpcError,
     RpcResult, SyncStatus,
 };
-use base_tee_prover::TeeExecutor;
 
 use crate::{
     OutputProposer, ProposerError,
+    enclave::EnclaveClientTrait,
     prover::{Prover, ProverProposal},
     rpc::ProverL2Provider,
 };
@@ -168,7 +168,7 @@ pub(crate) fn test_per_chain_config() -> PerChainConfig {
 }
 
 /// Build a `Prover` with mock L1/L2 clients and the given enclave mock.
-pub(crate) fn test_prover<E: TeeExecutor>(enclave: E) -> Prover<MockL1, MockL2, E> {
+pub(crate) fn test_prover<E: EnclaveClientTrait>(enclave: E) -> Prover<MockL1, MockL2, E> {
     Prover::new(
         test_per_chain_config(),
         RollupConfig::default(),

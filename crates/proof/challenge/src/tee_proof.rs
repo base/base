@@ -24,8 +24,8 @@
 use std::sync::Arc;
 
 use alloy_primitives::Bytes;
+use base_enclave::ProofEncoder;
 use base_enclave_client::{ClientError, EnclaveProvider, ProofRequest};
-use base_tee_prover::ProofEncoder;
 use thiserror::Error;
 use tracing::info;
 
@@ -120,9 +120,9 @@ impl<P: EnclaveProvider> TeeProofGenerator<P> {
 mod tests {
     use alloy_primitives::{B256, U256};
     use async_trait::async_trait;
+    use base_enclave::PROOF_TYPE_TEE;
     use base_enclave_client::{ClientError, ProofClaim, ProofEvidence, ProofRequest, ProofResult};
     use base_proof_primitives::Proposal;
-    use base_tee_prover::PROOF_TYPE_TEE;
 
     use super::*;
 
