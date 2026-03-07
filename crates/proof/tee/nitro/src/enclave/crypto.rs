@@ -142,11 +142,7 @@ impl Signing {
     /// Verify a proposal signature.
     ///
     /// Uses only the first 64 bytes (r, s), matching Go's `crypto.VerifySignature`.
-    pub fn verify(
-        public_key: &[u8],
-        data: &[u8],
-        signature: &[u8],
-    ) -> Result<bool, NitroError> {
+    pub fn verify(public_key: &[u8], data: &[u8], signature: &[u8]) -> Result<bool, NitroError> {
         if signature.len() != SIGNATURE_LENGTH {
             return Err(ProposalError::InvalidSignatureLength(signature.len()).into());
         }

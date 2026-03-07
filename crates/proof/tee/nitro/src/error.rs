@@ -175,7 +175,7 @@ pub enum NitroError {
 }
 
 /// A specialized Result type for nitro enclave operations.
-pub type Result<T> = std::result::Result<T, NitroError>;
+pub(crate) type Result<T> = std::result::Result<T, NitroError>;
 
 #[cfg(test)]
 mod tests {
