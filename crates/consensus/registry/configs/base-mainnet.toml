@@ -42,6 +42,7 @@ max_sequencer_drift = 600
 
 [roles]
   ProxyAdminOwner = "0x7bB41C3008B3f03FE483B28b8DB90e19Cf07595c"
+  UnsafeBlockSigner = "0xAf6E19BE0F9cE7f8afd49a1824851023A8249e8a"
 
 [addresses]
   L1StandardBridgeProxy = "0x3154Cf16ccdb4C6d922629664174b904d80F2C35"

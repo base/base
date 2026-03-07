@@ -44,8 +44,12 @@ impl<L1P: Provider> BlockStream<L1P> {
     }
 
     /// Creates a [`Stream`] of [`BlockInfo`].
+    ///
+    /// Null responses (e.g. `eth_getBlockByNumber("finalized")` before the CL has communicated
+    /// a finalized checkpoint, or `"latest"` before the L1 node has synced any blocks) are
+    /// silently skipped rather than causing a deserialization error.
     pub fn into_stream(self) -> impl Stream<Item = BlockInfo> + Unpin + Send {
-        let mut poll_stream = PollerBuilder::<(BlockNumberOrTag, bool), Block>::new(
+        let mut poll_stream = PollerBuilder::<(BlockNumberOrTag, bool), Option<Block>>::new(
             self.l1_provider.weak_client(),
             "eth_getBlockByNumber",
             (self.tag, false),
@@ -56,7 +60,8 @@ impl<L1P: Provider> BlockStream<L1P> {
         Box::pin(stream! {
             let mut last_block = None;
             while let Some(next) = poll_stream.next().await {
-                let info: BlockInfo = next.into_consensus().into();
+                let Some(block) = next else { continue };
+                let info: BlockInfo = block.into_consensus().into();
 
                 if last_block.map(|b| b != info).unwrap_or(true) {
                     last_block = Some(info);
