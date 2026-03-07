@@ -11,34 +11,28 @@ use rsa::{
     traits::{Decryptor, RandomizedEncryptor},
 };
 
-use crate::error::{CryptoError, ServerError};
-
 /// RSA key size in bits.
 pub const RSA_KEY_BITS: usize = 4096;
 
 /// Generate a new RSA-4096 private key.
 pub fn generate_rsa_key<R: CryptoRng + rand_08::RngCore>(
     rng: &mut R,
-) -> Result<RsaPrivateKey, ServerError> {
-    RsaPrivateKey::new(rng, RSA_KEY_BITS)
-        .map_err(|e| CryptoError::RsaKeyGeneration(e.to_string()).into())
+) -> eyre::Result<RsaPrivateKey> {
+    Ok(RsaPrivateKey::new(rng, RSA_KEY_BITS)?)
 }
 
 /// Serialize an RSA public key to PKIX/DER format.
 ///
 /// This matches Go's `x509.MarshalPKIXPublicKey()`.
-pub fn public_key_to_pkix(key: &RsaPublicKey) -> Result<Vec<u8>, ServerError> {
-    key.to_public_key_der()
-        .map(|doc| doc.as_bytes().to_vec())
-        .map_err(|e| CryptoError::PkixSerialize(e.to_string()).into())
+pub fn public_key_to_pkix(key: &RsaPublicKey) -> eyre::Result<Vec<u8>> {
+    Ok(key.to_public_key_der().map(|doc| doc.as_bytes().to_vec())?)
 }
 
 /// Parse an RSA public key from PKIX/DER format.
 ///
 /// This matches Go's `x509.ParsePKIXPublicKey()`.
-pub fn pkix_to_public_key(bytes: &[u8]) -> Result<RsaPublicKey, ServerError> {
-    RsaPublicKey::from_public_key_der(bytes)
-        .map_err(|e| CryptoError::PkixParse(e.to_string()).into())
+pub fn pkix_to_public_key(bytes: &[u8]) -> eyre::Result<RsaPublicKey> {
+    Ok(RsaPublicKey::from_public_key_der(bytes)?)
 }
 
 /// Encrypt data using RSA PKCS#1 v1.5.
@@ -46,20 +40,15 @@ pub fn encrypt_pkcs1v15<R: CryptoRng + rand_08::RngCore>(
     rng: &mut R,
     public_key: &RsaPublicKey,
     data: &[u8],
-) -> Result<Vec<u8>, ServerError> {
+) -> eyre::Result<Vec<u8>> {
     let encrypting_key = EncryptingKey::new(public_key.clone());
-    encrypting_key
-        .encrypt_with_rng(rng, data)
-        .map_err(|e| CryptoError::RsaEncrypt(e.to_string()).into())
+    Ok(encrypting_key.encrypt_with_rng(rng, data)?)
 }
 
 /// Decrypt data using RSA PKCS#1 v1.5.
-pub fn decrypt_pkcs1v15(
-    private_key: &RsaPrivateKey,
-    ciphertext: &[u8],
-) -> Result<Vec<u8>, ServerError> {
+pub fn decrypt_pkcs1v15(private_key: &RsaPrivateKey, ciphertext: &[u8]) -> eyre::Result<Vec<u8>> {
     let decrypting_key = DecryptingKey::new(private_key.clone());
-    decrypting_key.decrypt(ciphertext).map_err(|e| CryptoError::RsaDecrypt(e.to_string()).into())
+    Ok(decrypting_key.decrypt(ciphertext)?)
 }
 
 /// Get the public key from a private key.

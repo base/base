@@ -1,16 +1,13 @@
-//! AWS Nitro Enclave CA root certificates.
-//!
-//! This module handles loading and validating the AWS CA roots used
-//! to verify Nitro Enclave attestation documents.
-
+/// AWS Nitro Enclave CA root certificates.
 use std::io::Read;
 
+use alloy_primitives::hex;
 use base64::Engine;
 use openssl::x509::X509;
 use sha2::{Digest, Sha256};
 use x509_cert::{Certificate, der::Decode};
 
-use crate::error::{AttestationError, ServerError};
+use crate::error::{AttestationError, NitroError};
 
 /// Default CA roots for AWS Nitro Enclaves (base64-encoded zip).
 ///
@@ -38,7 +35,7 @@ impl AwsCaRoot {
     ///
     /// This decodes the embedded base64 zip, validates the checksum,
     /// and extracts the PEM certificate.
-    pub fn load_default() -> Result<Self, ServerError> {
+    pub fn load_default() -> Result<Self, NitroError> {
         // Decode base64
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(DEFAULT_CA_ROOTS)
@@ -82,8 +79,7 @@ impl AwsCaRoot {
     }
 
     /// Parse a PEM-encoded certificate.
-    fn parse_pem_certificate(pem_data: &[u8]) -> Result<Certificate, ServerError> {
-        // Find the certificate data between BEGIN and END markers
+    fn parse_pem_certificate(pem_data: &[u8]) -> Result<Certificate, NitroError> {
         let pem_str =
             std::str::from_utf8(pem_data).map_err(|e| AttestationError::PemParse(e.to_string()))?;
 
@@ -116,7 +112,7 @@ static AWS_CA_ROOT: std::sync::OnceLock<Result<AwsCaRoot, String>> = std::sync::
 /// Get the default AWS CA root certificate.
 ///
 /// This is lazily initialized on first call.
-pub fn get_default_ca_root() -> Result<&'static AwsCaRoot, ServerError> {
+pub fn get_default_ca_root() -> Result<&'static AwsCaRoot, NitroError> {
     let result = AWS_CA_ROOT.get_or_init(|| AwsCaRoot::load_default().map_err(|e| e.to_string()));
 
     match result {
@@ -137,7 +133,6 @@ mod tests {
 
     #[test]
     fn test_checksum_validation() {
-        // Decode and verify checksum
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(DEFAULT_CA_ROOTS)
             .expect("failed to decode");
