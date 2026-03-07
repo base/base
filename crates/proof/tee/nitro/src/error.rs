@@ -1,3 +1,5 @@
+//! Error types for enclave server operations.
+
 use alloy_primitives::B256;
 use thiserror::Error;
 
