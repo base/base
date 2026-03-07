@@ -662,7 +662,14 @@ where
                             );
                             self.parent_game_state = state;
                         }
-                        Ok(None) | Err(_) => {
+                        Ok(None) => {
+                            warn!(
+                                "On-chain recovery found no games after GameAlreadyExists, will use anchor on next tick"
+                            );
+                            self.parent_game_state.initialized = false;
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "On-chain recovery failed after GameAlreadyExists, will use anchor on next tick");
                             self.parent_game_state.initialized = false;
                         }
                     }

@@ -27,7 +27,7 @@ L1 RPC            │                │ Signed proposal
                   │         Proposer verifies
                   │         output root locally
                   ▼
-           DisputeGameFactory.create()
+           DisputeGameFactory.createWithInitData()
                   │
                   ▼
            AggregateVerifier + TEEVerifier
@@ -38,7 +38,7 @@ L1 RPC            │                │ Signed proposal
 2. It sends this data to the TEE enclave, which performs stateless EVM execution and returns a signed output root.
 3. The proposer independently recomputes the output root and rejects mismatches.
 4. It gates proposals on the rollup RPC's `safe_l2`/`finalized_l2` and checks for reorgs.
-5. It submits the proof to L1 via `DisputeGameFactory.create()`, where `AggregateVerifier` and `TEEVerifier` verify it on-chain.
+5. It submits the proof to L1 via `DisputeGameFactory.createWithInitData()`, where `AggregateVerifier` and `TEEVerifier` verify it on-chain.
 
 ### Game Tracking and Parent Selection
 
