@@ -1,8 +1,8 @@
 //! Contains the [`RollupNode`] implementation.
 use std::{ops::Not as _, sync::Arc, time::Duration};
 
-use alloy_eips::BlockNumberOrTag;
-use alloy_provider::RootProvider;
+use alloy_eips::{BlockId, BlockNumberOrTag};
+use alloy_provider::{Provider, RootProvider};
 use base_alloy_network::Base;
 use base_consensus_derive::StatefulAttributesBuilder;
 use base_consensus_engine::{Engine, EngineState};
@@ -31,6 +31,8 @@ use crate::{
 const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
 const HEAD_STREAM_POLL_INTERVAL: u64 = 4;
 const FINALIZED_STREAM_POLL_INTERVAL: u64 = 60;
+const L1_READY_POLL_INTERVAL: u64 = 10;
+const L1_READY_TIMEOUT: u64 = 300;
 
 /// The configuration for the L1 chain.
 #[derive(Debug, Clone)]
@@ -168,6 +170,73 @@ impl RollupNode {
         )
     }
 
+    /// Waits for the L1 node to become ready by polling for the latest block.
+    ///
+    /// The L1 node is considered ready when it can return a block for the latest tag.
+    /// This prevents crashes during node startup when the L1 node is still syncing and
+    /// returns null for eth_getBlockByNumber(latest).
+    ///
+    /// If L1 is not ready after the timeout, a warning is logged but the node proceeds anyway
+    /// (to handle cases where syncing information is unavailable).
+    async fn wait_for_l1_ready(&self) -> Result<(), String> {
+        info!(target: "l1_watcher", "Checking L1 node readiness");
+
+        let start = std::time::Instant::now();
+        let timeout = Duration::from_secs(L1_READY_TIMEOUT);
+        let poll_interval = Duration::from_secs(L1_READY_POLL_INTERVAL);
+
+        loop {
+            match self.l1_config.engine_provider.get_block(BlockId::latest()).await {
+                Ok(Some(block)) => {
+                    let elapsed = start.elapsed();
+                    info!(
+                        target: "l1_watcher",
+                        block_number = block.header.number,
+                        elapsed_seconds = elapsed.as_secs(),
+                        "L1 is ready, starting consensus service"
+                    );
+                    return Ok(());
+                }
+                Ok(None) => {
+                    if start.elapsed() > timeout {
+                        warn!(
+                            target: "l1_watcher",
+                            elapsed_seconds = timeout.as_secs(),
+                            "L1 node not ready after timeout, proceeding anyway"
+                        );
+                        return Ok(());
+                    }
+
+                    info!(
+                        target: "l1_watcher",
+                        elapsed_seconds = start.elapsed().as_secs(),
+                        "Waiting for L1 to sync"
+                    );
+                    tokio::time::sleep(poll_interval).await;
+                }
+                Err(e) => {
+                    if start.elapsed() > timeout {
+                        warn!(
+                            target: "l1_watcher",
+                            elapsed_seconds = timeout.as_secs(),
+                            error = %e,
+                            "L1 node not ready after timeout, proceeding anyway"
+                        );
+                        return Ok(());
+                    }
+
+                    warn!(
+                        target: "l1_watcher",
+                        error = %e,
+                        elapsed_seconds = start.elapsed().as_secs(),
+                        "Error checking L1 readiness, retrying"
+                    );
+                    tokio::time::sleep(poll_interval).await;
+                }
+            }
+        }
+    }
+
     /// Helper function to assemble the [`EngineActor`] since there are many structs created that
     /// are not relevant to other actors or logic.
     /// Note: ignoring complex type warning. This type only pertains to this function, so it is
@@ -229,6 +298,10 @@ impl RollupNode {
     /// finalizes `safe` blocks that it has derived when L1 finalized block updates are
     /// received.
     pub async fn start(&self) -> Result<(), String> {
+        // Wait for L1 node to be ready before proceeding with startup.
+        // This prevents crashes when L1 is still syncing and returns null for block queries.
+        self.wait_for_l1_ready().await?;
+
         // Create a global cancellation token for graceful shutdown of tasks.
         let cancellation = CancellationToken::new();
 
