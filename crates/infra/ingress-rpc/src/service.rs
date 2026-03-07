@@ -278,7 +278,10 @@ impl<Q: MessageQueue> IngressService<Q> {
         })?
         .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
 
-        record_histogram(start.elapsed(), "base_meterBundle".to_string());
+        let elapsed = start.elapsed();
+        self.metrics.meter_bundle_duration.record(elapsed.as_secs_f64());
+        self.metrics.meter_bundle_state_root_time_us.record(res.state_root_time_us as f64);
+        record_histogram(elapsed, "base_meterBundle".to_string());
 
         // we can save some builder payload building computation by not including bundles
         // that we know will take longer than the block time to execute
