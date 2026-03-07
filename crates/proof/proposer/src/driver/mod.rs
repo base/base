@@ -587,6 +587,36 @@ where
         self.latest_safe_block().await.map(|b| b.number)
     }
 
+    /// Attempts on-chain recovery and updates `parent_game_state`. On failure
+    /// or when no game is found, resets to uninitialized so the next tick
+    /// falls back to the anchor registry, and clears `last_proposed_block` to
+    /// avoid the livelock where the anchor's block number is below the stale
+    /// `last_proposed_block` guard.
+    async fn recover_or_reset_parent_state(&mut self, context: &str) {
+        match self.recover_latest_game().await {
+            Ok(Some(state)) => {
+                info!(
+                    game_index = state.game_index,
+                    output_root = ?state.output_root,
+                    l2_block_number = state.l2_block_number,
+                    context,
+                    "Recovered parent game state from on-chain"
+                );
+                self.parent_game_state = state;
+            }
+            Ok(None) => {
+                warn!(context, "On-chain recovery found no games, will use anchor on next tick");
+                self.parent_game_state.initialized = false;
+                self.last_proposed_block = 0;
+            }
+            Err(e) => {
+                warn!(error = %e, context, "On-chain recovery failed, will use anchor on next tick");
+                self.parent_game_state.initialized = false;
+                self.last_proposed_block = 0;
+            }
+        }
+    }
+
     /// Submits a proposal by creating a dispute game via the factory.
     async fn propose_output(
         &mut self,
@@ -620,28 +650,7 @@ where
                 self.pending.clear();
                 self.cached_intermediate_roots.clear();
                 self.last_proposed_block = proposal.to.number;
-
-                match self.recover_latest_game().await {
-                    Ok(Some(state)) => {
-                        info!(
-                            new_game_index = state.game_index,
-                            output_root = ?state.output_root,
-                            l2_block_number = state.l2_block_number,
-                            "Updated parent game state from on-chain"
-                        );
-                        self.parent_game_state = state;
-                    }
-                    Ok(None) => {
-                        warn!(
-                            "On-chain recovery found no games after successful create, will use anchor on next tick"
-                        );
-                        self.parent_game_state.initialized = false;
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "On-chain recovery failed after successful create, will use anchor on next tick");
-                        self.parent_game_state.initialized = false;
-                    }
-                }
+                self.recover_or_reset_parent_state("after successful create").await;
             }
             Ok(Err(e)) => {
                 if is_game_already_exists(&e) {
@@ -651,28 +660,7 @@ where
                     );
                     self.pending.clear();
                     self.cached_intermediate_roots.clear();
-
-                    match self.recover_latest_game().await {
-                        Ok(Some(state)) => {
-                            info!(
-                                game_index = state.game_index,
-                                output_root = ?state.output_root,
-                                l2_block_number = state.l2_block_number,
-                                "Recovered existing game, chaining off it"
-                            );
-                            self.parent_game_state = state;
-                        }
-                        Ok(None) => {
-                            warn!(
-                                "On-chain recovery found no games after GameAlreadyExists, will use anchor on next tick"
-                            );
-                            self.parent_game_state.initialized = false;
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "On-chain recovery failed after GameAlreadyExists, will use anchor on next tick");
-                            self.parent_game_state.initialized = false;
-                        }
-                    }
+                    self.recover_or_reset_parent_state("after GameAlreadyExists").await;
                 } else {
                     warn!(
                         error = %e,
