@@ -3184,40 +3184,17 @@ dependencies = [
 name = "base-enclave-server"
 version = "0.0.0"
 dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-signer",
- "alloy-signer-local",
- "async-trait",
- "aws-nitro-enclaves-cose",
- "aws-nitro-enclaves-nsm-api",
- "base-consensus-genesis",
- "base-enclave",
- "base64 0.22.1",
- "ciborium",
  "eyre",
- "hex",
  "http-body-util",
  "hyper 1.8.1",
  "hyper-util",
- "jsonrpsee",
- "k256",
- "openssl",
  "parking_lot",
  "rand 0.8.5",
- "reqwest 0.13.2",
  "rsa 0.9.10",
- "serde",
- "serde_bytes",
  "serde_json",
- "sha2 0.10.9",
- "spki 0.7.3",
- "thiserror 2.0.18",
  "tokio",
  "tracing",
  "vsock",
- "x509-cert",
- "zip",
 ]
 
 [[package]]
@@ -4175,6 +4152,41 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "base-proof-tee-nitro"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
+ "async-trait",
+ "aws-nitro-enclaves-cose",
+ "aws-nitro-enclaves-nsm-api",
+ "base-alloy-evm",
+ "base-enclave",
+ "base-proof-client",
+ "base-proof-preimage",
+ "base-proof-primitives",
+ "base64 0.22.1",
+ "bincode 2.0.1",
+ "ciborium",
+ "eyre",
+ "k256",
+ "openssl",
+ "parking_lot",
+ "rand 0.8.5",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "vsock",
+ "x509-cert",
+ "zip",
 ]
 
 [[package]]
@@ -12304,9 +12316,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "encoding_rs",
- "futures-channel",
  "futures-core",
- "futures-util",
  "h2 0.4.13",
  "http 1.4.0",
  "http-body 1.0.1",
