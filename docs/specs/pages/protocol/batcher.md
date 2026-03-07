@@ -1,10 +1,10 @@
-# Batch Submitter
+# Batcher
 
-[derivation spec]: derivation.md
+[derivation spec]: consensus/derivation.md
 
 ## Overview
 
-The batch submitter, also referred to as the batcher, is the entity submitting the L2 sequencer data to L1,
+The batcher, also referred to as the batch submitter, is the entity submitting the L2 sequencer data to L1,
 to make it available for verifiers.
 
 The format of the data transactions is defined in the [derivation spec]:

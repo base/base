@@ -50,7 +50,7 @@ pub struct HardForkConfig {
     pub holocene_time: Option<u64>,
     /// `pectra_blob_schedule_time` sets the activation time for the activation of the Pectra blob
     /// fee schedule for the L1 block info transaction. This is an optional fork, only present
-    /// on OP Stack sepolia chains that observed the L1 Pectra network upgrade with `op-node`
+    /// on Base sepolia chains that observed the L1 Pectra network upgrade with `op-node`
     /// <=v1.11.1 sequencing the network.
     ///
     /// Active if `pectra_blob_schedule_time` != None && L2 block timestamp >=

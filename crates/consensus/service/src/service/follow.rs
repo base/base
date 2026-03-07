@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use alloy_provider::RootProvider;
 use base_alloy_network::Base;
-use base_consensus_engine::{Engine, EngineState, OpEngineClient};
+use base_consensus_engine::{Engine, EngineState};
 use base_consensus_genesis::RollupConfig;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
+use super::LocalEngineActor;
 use crate::{
     DelegateL2Client, DelegateL2DerivationActor, EngineActor, EngineActorRequest, EngineConfig,
     EngineProcessor, EngineRpcProcessor, NodeActor, QueuedDerivationEngineClient,
@@ -37,19 +38,12 @@ impl FollowNode {
         Self { config, engine_config, local_l2_provider, l2_source }
     }
 
-    #[allow(clippy::type_complexity)]
     fn create_engine_actor(
         &self,
         cancellation_token: CancellationToken,
         engine_request_rx: mpsc::Receiver<EngineActorRequest>,
         derivation_client: QueuedEngineDerivationClient,
-    ) -> EngineActor<
-        EngineProcessor<
-            OpEngineClient<RootProvider, RootProvider<Base>>,
-            QueuedEngineDerivationClient,
-        >,
-        EngineRpcProcessor<OpEngineClient<RootProvider, RootProvider<Base>>>,
-    > {
+    ) -> LocalEngineActor {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);

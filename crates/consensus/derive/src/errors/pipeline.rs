@@ -2,6 +2,7 @@
 
 use alloc::string::String;
 
+use alloy_eips::BlockId;
 use alloy_primitives::B256;
 use base_consensus_genesis::SystemConfigUpdateError;
 use base_protocol::{DepositError, SpanBatchError};
@@ -345,6 +346,10 @@ pub enum ResetError {
     /// The next l1 block provided to the managed traversal stage is not the expected one.
     #[error("Next L1 block hash mismatch: expected {0}, got {1}")]
     NextL1BlockHashMismatch(B256, B256),
+    /// Blobs referenced by an L1 block are permanently unavailable (e.g. missed beacon slot).
+    /// The pipeline must reset to move past the offending L1 block.
+    #[error("Blobs unavailable: beacon node returned 404 for slot {0}")]
+    BlobsUnavailable(u64),
     /// Blobs under-fill: expected more blobs than were provided.
     /// The first argument is the expected number of blobs, and the second argument is the actual
     /// number of blobs.
@@ -354,6 +359,10 @@ pub enum ResetError {
     /// The first argument is the expected blob index, and the second argument is the actual blob count.
     #[error("Blobs over-fill: expected {0} blobs, got {1}")]
     BlobsOverFill(usize, usize),
+    /// An L1 or L2 block referenced during derivation is no longer present on the chain,
+    /// typically because a reorg removed it. The pipeline must reset to recover.
+    #[error("Block not found: {0}")]
+    BlockNotFound(BlockId),
 }
 
 impl ResetError {
@@ -442,6 +451,8 @@ mod tests {
                 Default::default(),
             )),
             ResetError::HoloceneActivation,
+            ResetError::BlobsUnavailable(0),
+            ResetError::BlockNotFound(B256::default().into()),
         ];
         for error in reset_errors {
             let expected = PipelineErrorKind::Reset(error.clone());

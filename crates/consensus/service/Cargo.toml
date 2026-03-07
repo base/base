@@ -1,6 +1,6 @@
 [package]
 name = "base-consensus-node"
-description = "An implementation of the OP Stack consensus node service"
+description = "An implementation of the Base consensus node service"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

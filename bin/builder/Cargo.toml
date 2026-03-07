@@ -37,8 +37,10 @@ eyre.workspace = true
 [dev-dependencies]
 # workspace
 base-builder-core = { workspace = true, features = ["test-utils"] }
+base-bundles.workspace = true
 
 # misc
+alloy-primitives.workspace = true
 rstest.workspace = true
 
 [features]

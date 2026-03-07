@@ -1,6 +1,6 @@
 [package]
 name = "base-consensus-engine"
-description = "An implementation of the OP Stack engine client"
+description = "An implementation of the Base engine client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

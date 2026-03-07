@@ -58,7 +58,7 @@ impl SingleBatch {
 
     /// Checks if the batch is valid.
     ///
-    /// The batch format type is defined in the [OP Stack Specs][specs].
+    /// The batch format type is defined in the [Base Specs][specs].
     ///
     /// [specs]: https://specs.optimism.io/protocol/derivation.html#batch-format
     pub fn check_batch(

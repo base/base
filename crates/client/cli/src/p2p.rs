@@ -210,7 +210,7 @@ pub struct P2PArgs {
     /// Optionally enable topic scoring.
     ///
     /// Topic scoring is a mechanism to score peers based on their behavior in the gossip network.
-    /// Historically, topic scoring was only enabled for the v1 topic on the OP Stack p2p network
+    /// Historically, topic scoring was only enabled for the v1 topic on the Base p2p network
     /// in the `op-node`. This was a silent bug, and topic scoring is actively being
     /// [phased out of the `op-node`][out].
     ///

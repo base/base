@@ -1,4 +1,4 @@
-//! [`PrecompileProvider`] for FPVM-accelerated OP Stack precompiles.
+//! [`PrecompileProvider`] for FPVM-accelerated Base precompiles.
 
 use alloc::{boxed::Box, string::String, vec, vec::Vec};
 

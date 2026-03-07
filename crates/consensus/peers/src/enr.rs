@@ -1,10 +1,10 @@
-//! Contains the Optimism consensus-layer ENR Type.
+//! Contains the Base consensus-layer ENR Type.
 
 use alloy_rlp::{Decodable, Encodable};
 use discv5::Enr;
 use unsigned_varint::{decode, encode};
 
-/// Validates the [`Enr`] for the OP Stack.
+/// Validates the [`Enr`] for Base.
 #[derive(Debug, derive_more::Display, Clone, Default, PartialEq, Eq)]
 pub enum EnrValidation {
     /// Conversion error.
@@ -20,7 +20,7 @@ pub enum EnrValidation {
 }
 
 impl EnrValidation {
-    /// Validates the [`Enr`] for the OP Stack.
+    /// Validates the [`Enr`] for Base.
     pub fn validate(enr: &Enr, chain_id: u64) -> Self {
         let opstack_enr = match OpStackEnr::try_from(enr) {
             Ok(opstack_enr) => opstack_enr,
@@ -58,11 +58,11 @@ pub struct OpStackEnr {
 /// The error type that can be returned when trying to convert an [`Enr`] to an [`OpStackEnr`].
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum OpStackEnrError {
-    /// Missing OP Stack ENR key.
-    #[error("Missing OP Stack ENR key")]
+    /// Missing Base ENR key.
+    #[error("Missing Base ENR key")]
     MissingKey,
-    /// Failed to decode the OP Stack ENR Value.
-    #[error("Failed to decode the OP Stack ENR Value: {0}")]
+    /// Failed to decode the Base ENR Value.
+    #[error("Failed to decode the Base ENR Value: {0}")]
     DecodeError(String),
     /// Invalid version.
     #[error("Invalid version: {0}")]

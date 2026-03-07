@@ -33,7 +33,7 @@
 //!
 //! ## Usage
 //!
-//! The RPC interface is designed to be compatible with existing OP Stack tooling
+//! The RPC interface is designed to be compatible with existing Base tooling
 //! and monitoring systems, providing the same API surface as the reference `op-node`
 //! implementation where applicable.
 //!

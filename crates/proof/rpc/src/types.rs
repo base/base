@@ -1,4 +1,4 @@
-//! RPC response types for OP Stack rollup nodes.
+//! RPC response types for Base rollup nodes.
 
 use alloy_network::Ethereum;
 use alloy_primitives::B256;
@@ -11,10 +11,10 @@ use serde::{Deserialize, Serialize};
 pub type HttpProvider = RootProvider<Ethereum>;
 
 /// L2-specific provider type using the Base network.
-/// Required for deserializing OP Stack deposit transactions (type 0x7E).
+/// Required for deserializing Base deposit transactions (type 0x7E).
 pub type L2HttpProvider = RootProvider<Base>;
 
-/// OP Stack block type with Base-specific transactions.
+/// Base block type with Base-specific transactions.
 ///
 /// Uses `base_alloy_rpc_types::Transaction` which can deserialize deposit transactions (type 0x7E).
 pub type OpBlock = alloy_rpc_types_eth::Block<base_alloy_rpc_types::Transaction>;

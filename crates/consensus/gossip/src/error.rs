@@ -32,12 +32,12 @@ pub enum PublishError {
 /// Error encountered when encoding payloads in the block handler.
 ///
 /// Represents failures in the payload serialization process, typically
-/// occurring when converting OP Stack data structures to network format.
+/// occurring when converting Base data structures to network format.
 #[derive(Debug, Error)]
 pub enum HandlerEncodeError {
-    /// Failed to encode the OP Stack payload envelope.
+    /// Failed to encode the Base payload envelope.
     ///
-    /// This error indicates issues with serializing the OP Stack network payload
+    /// This error indicates issues with serializing the Base network payload
     /// structure, which contains the consensus data being gossiped.
     #[error("Failed to encode payload: {0}")]
     PayloadEncodeError(#[from] base_alloy_rpc_types_engine::PayloadEnvelopeEncodeError),

@@ -1,95 +1,56 @@
-use alloy_primitives::B256;
-use base_proof_primitives::{ProofClaim, ProofEvidence, ProofResult, WitnessBundle};
+use alloy_primitives::{B256, Bytes, U256};
+use base_proof_primitives::{ProofBundle, ProofClaim, ProofEvidence, ProofResult, Proposal};
 
-use crate::{NativeTransport, TransportError, WitnessTransport};
+use crate::{ProofTransport, test_utils::NativeTransport};
 
-fn test_bundle() -> WitnessBundle {
-    WitnessBundle { preimages: vec![] }
+fn test_proposal() -> Proposal {
+    Proposal {
+        output_root: B256::ZERO,
+        signature: Bytes::from(vec![0u8; 65]),
+        l1_origin_hash: B256::ZERO,
+        l1_origin_number: U256::from(100),
+        l2_block_number: U256::from(42),
+        prev_output_root: B256::ZERO,
+        config_hash: B256::ZERO,
+    }
+}
+
+fn test_bundle() -> ProofBundle {
+    ProofBundle { request: Default::default(), preimages: vec![] }
 }
 
 fn test_result() -> ProofResult {
     ProofResult {
-        claim: ProofClaim { l2_block_number: 42, output_root: B256::ZERO, l1_head: B256::ZERO },
+        claim: ProofClaim { aggregate_proposal: test_proposal(), proposals: vec![test_proposal()] },
         evidence: ProofEvidence::Tee { attestation_doc: vec![1, 2, 3], signature: vec![4, 5, 6] },
     }
 }
 
 #[tokio::test]
 async fn roundtrip() {
-    let (transport, backend) = NativeTransport::channel(1);
-    let bundle = test_bundle();
-    let result = test_result();
+    let expected = test_result();
+    let transport = NativeTransport::new(|_| test_result());
 
-    transport.send_witness(&bundle).await.unwrap();
-
-    let received_bundle = backend.recv_witness().await.unwrap();
-    assert_eq!(received_bundle, bundle);
-
-    backend.send_result(result.clone()).await.unwrap();
-
-    let received_result = transport.recv_result().await.unwrap();
-    assert_eq!(received_result, result);
+    let result = transport.prove(&test_bundle()).await.unwrap();
+    assert_eq!(result, expected);
 }
 
 #[tokio::test]
-async fn recv_after_sender_dropped() {
-    let (transport, backend) = NativeTransport::channel(1);
+async fn handler_receives_bundle() {
+    let transport = NativeTransport::new(|bundle| {
+        assert!(bundle.preimages.is_empty());
+        test_result()
+    });
 
-    drop(backend);
-
-    let err = transport.recv_result().await.unwrap_err();
-    assert!(matches!(err, TransportError::ChannelClosed));
+    transport.prove(&test_bundle()).await.unwrap();
 }
 
 #[tokio::test]
-async fn send_after_receiver_dropped() {
-    let (transport, backend) = NativeTransport::channel(1);
-    let bundle = test_bundle();
+async fn multiple_proves() {
+    let transport = NativeTransport::new(|_| test_result());
 
-    drop(backend);
-
-    let err = transport.send_witness(&bundle).await.unwrap_err();
-    assert!(matches!(err, TransportError::Send(_)));
-}
-
-#[tokio::test]
-async fn backend_recv_after_transport_dropped() {
-    let (transport, backend) = NativeTransport::channel(1);
-
-    drop(transport);
-
-    let err = backend.recv_witness().await.unwrap_err();
-    assert!(matches!(err, TransportError::ChannelClosed));
-}
-
-#[tokio::test]
-async fn backend_send_after_transport_dropped() {
-    let (transport, backend) = NativeTransport::channel(1);
-    let result = test_result();
-
-    drop(transport);
-
-    let err = backend.send_result(result).await.unwrap_err();
-    assert!(matches!(err, TransportError::Send(_)));
-}
-
-#[tokio::test]
-async fn multiple_bundles() {
-    let (transport, backend) = NativeTransport::channel(8);
-
-    for i in 0..5u64 {
-        let bundle = WitnessBundle { preimages: vec![] };
-        transport.send_witness(&bundle).await.unwrap();
-
-        let _ = backend.recv_witness().await.unwrap();
-
-        let result = ProofResult {
-            claim: ProofClaim { l2_block_number: i, output_root: B256::ZERO, l1_head: B256::ZERO },
-            evidence: ProofEvidence::Tee { attestation_doc: vec![], signature: vec![] },
-        };
-        backend.send_result(result).await.unwrap();
-
-        let received = transport.recv_result().await.unwrap();
-        assert_eq!(received.claim.l2_block_number, i);
+    for _ in 0..5 {
+        let result = transport.prove(&test_bundle()).await.unwrap();
+        assert_eq!(result.claim.aggregate_proposal.l2_block_number, U256::from(42));
     }
 }

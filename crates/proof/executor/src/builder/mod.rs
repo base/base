@@ -1,4 +1,4 @@
-//! Stateless OP Stack block builder implementation.
+//! Stateless Base block builder implementation.
 
 mod core;
 pub use core::{BlockBuildingOutcome, StatelessL2Builder};

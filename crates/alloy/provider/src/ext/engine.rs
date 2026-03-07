@@ -16,7 +16,7 @@ use base_alloy_rpc_types_engine::{
 /// Note:
 /// > The provider should use a JWT authentication layer.
 ///
-/// This follows the OP Stack specs:
+/// This follows the Base specs:
 /// <https://specs.optimism.io/protocol/exec-engine.html#engine-api>
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]

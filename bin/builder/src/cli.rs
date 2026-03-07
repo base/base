@@ -1,9 +1,10 @@
 //! Contains the CLI arguments
 
-use core::{convert::TryFrom, net::SocketAddr, time::Duration};
-use std::sync::Arc;
+use core::{net::SocketAddr, time::Duration};
 
-use base_builder_core::{BuilderConfig, ExecutionMeteringMode, FlashblocksConfig};
+use base_builder_core::{
+    BuilderConfig, ExecutionMeteringMode, FlashblocksConfig, SharedMeteringProvider,
+};
 use base_builder_metering::MeteringStore;
 use base_node_core::args::RollupArgs;
 
@@ -166,26 +167,29 @@ impl Default for Args {
     }
 }
 
-impl TryFrom<Args> for BuilderConfig {
-    type Error = eyre::Report;
-
-    fn try_from(args: Args) -> Result<Self, Self::Error> {
-        let flashblocks = FlashblocksConfig::try_from(&args)?;
-        let metering_store = args.build_metering_store();
-        Ok(Self {
-            block_time: Duration::from_millis(args.chain_block_time),
-            block_time_leeway: Duration::from_secs(args.extra_block_deadline_secs),
+impl Args {
+    /// Converts these CLI arguments into a [`BuilderConfig`] using the given shared metering
+    /// provider. The same provider must also be passed to the RPC extension so that the
+    /// building loop and the `base_setMeteringInformation` handler share a single store.
+    pub fn into_builder_config(
+        self,
+        metering_provider: SharedMeteringProvider,
+    ) -> eyre::Result<BuilderConfig> {
+        let flashblocks = FlashblocksConfig::try_from(&self)?;
+        Ok(BuilderConfig {
+            block_time: Duration::from_millis(self.chain_block_time),
+            block_time_leeway: Duration::from_secs(self.extra_block_deadline_secs),
             da_config: Default::default(),
             gas_limit_config: Default::default(),
-            sampling_ratio: args.sampling_ratio,
-            max_gas_per_txn: args.max_gas_per_txn,
-            max_execution_time_per_tx_us: args.max_execution_time_per_tx_us,
-            max_state_root_time_per_tx_us: args.max_state_root_time_per_tx_us,
-            flashblock_execution_time_budget_us: args.flashblock_execution_time_budget_us,
-            block_state_root_time_budget_us: args.block_state_root_time_budget_us,
-            execution_metering_mode: args.execution_metering_mode,
-            max_uncompressed_block_size: args.max_uncompressed_block_size,
-            metering_provider: Arc::new(metering_store),
+            sampling_ratio: self.sampling_ratio,
+            max_gas_per_txn: self.max_gas_per_txn,
+            max_execution_time_per_tx_us: self.max_execution_time_per_tx_us,
+            max_state_root_time_per_tx_us: self.max_state_root_time_per_tx_us,
+            flashblock_execution_time_budget_us: self.flashblock_execution_time_budget_us,
+            block_state_root_time_budget_us: self.block_state_root_time_budget_us,
+            execution_metering_mode: self.execution_metering_mode,
+            max_uncompressed_block_size: self.max_uncompressed_block_size,
+            metering_provider,
             flashblocks,
         })
     }
@@ -219,12 +223,16 @@ impl TryFrom<&Args> for FlashblocksConfig {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use rstest::rstest;
 
     use super::*;
 
     fn convert(args: Args) -> BuilderConfig {
-        BuilderConfig::try_from(args).expect("conversion should succeed")
+        let metering_provider: SharedMeteringProvider =
+            Arc::new(base_builder_core::NoopMeteringProvider);
+        args.into_builder_config(metering_provider).expect("conversion should succeed")
     }
 
     #[test]
@@ -311,6 +319,39 @@ mod tests {
         let config = convert(args);
         assert_eq!(config.flashblocks.disable_state_root, disable_expected);
         assert_eq!(config.flashblocks.compute_state_root_on_finalize, finalize_expected);
+    }
+
+    #[test]
+    fn metering_data_written_to_provider_is_readable_from_config() {
+        use alloy_primitives::{B256, TxHash, U256};
+        use base_bundles::MeterBundleResponse;
+
+        let metering_provider: SharedMeteringProvider = Arc::new(MeteringStore::new(true, 100));
+        let args = Args { enable_resource_metering: true, ..Default::default() };
+        let config = args
+            .into_builder_config(Arc::clone(&metering_provider))
+            .expect("conversion should succeed");
+
+        let tx_hash = TxHash::random();
+        metering_provider.insert(
+            tx_hash,
+            MeterBundleResponse {
+                bundle_hash: B256::ZERO,
+                bundle_gas_price: U256::ZERO,
+                coinbase_diff: U256::ZERO,
+                eth_sent_to_coinbase: U256::ZERO,
+                gas_fees: U256::ZERO,
+                results: vec![],
+                state_block_number: 0,
+                state_flashblock_index: None,
+                total_gas_used: 21000,
+                total_execution_time_us: 500,
+                state_root_time_us: 100,
+            },
+        );
+
+        let result = config.metering_provider.get(&tx_hash);
+        assert_eq!(result.unwrap().total_execution_time_us, 500);
     }
 
     #[test]

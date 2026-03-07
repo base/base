@@ -30,7 +30,7 @@ pub enum DerivationDelegateClientError {
     HttpClientBuild(String),
 }
 
-/// Client for fetching sync status from an external OP Stack CL node.
+/// Client for fetching sync status from an external Base CL node.
 #[derive(Debug, Clone)]
 pub struct DerivationDelegateClient {
     /// The RPC client for the Derivation Delegate.

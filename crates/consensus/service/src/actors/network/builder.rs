@@ -16,7 +16,7 @@ use crate::{
     actors::network::{NetworkConfig, NetworkDriver},
 };
 
-/// Constructs a [`NetworkDriver`] for the OP Stack Consensus Layer.
+/// Constructs a [`NetworkDriver`] for the Base Consensus Layer.
 #[derive(Debug)]
 pub struct NetworkBuilder {
     /// The discovery driver.

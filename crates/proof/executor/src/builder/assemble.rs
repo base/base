@@ -41,7 +41,7 @@ where
         // Compute the roots for the block header.
         let state_root = self.trie_db.state_root(&bundle)?;
         let transactions_root = ordered_trie_with_encoder(
-            // SAFETY: The OP Stack protocol will never generate a payload attributes with an empty
+            // SAFETY: The Base protocol will never generate a payload attributes with an empty
             // transactions field. Panicking here is the desired behavior, as it indicates a severe
             // protocol violation.
             attrs.transactions.as_ref().expect("Transactions must be non-empty"),
@@ -85,7 +85,7 @@ where
             _ => Ok(Default::default()),
         }?;
 
-        // The requests hash on the OP Stack, if Isthmus is active, is always the empty SHA256 hash.
+        // The requests hash on Base, if Isthmus is active, is always the empty SHA256 hash.
         let requests_hash = self.config.is_isthmus_active(timestamp).then_some(EMPTY_REQUESTS_HASH);
 
         // Construct the new header.

@@ -5,7 +5,7 @@
 //!
 //! ## Overview
 //!
-//! Flashblocks enable real-time visibility into block construction on OP Stack L2,
+//! Flashblocks enable real-time visibility into block construction on Base L2,
 //! allowing users to see transaction effects before blocks are finalized. Each flashblock
 //! represents a snapshot of the block's evolving state during its construction.
 //!

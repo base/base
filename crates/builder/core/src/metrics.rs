@@ -96,6 +96,8 @@ pub struct BuilderMetrics {
     pub metering_known_transaction: Counter,
     /// Count of the number of times transactions did not have any metering information
     pub metering_unknown_transaction: Counter,
+    /// Number of LRU evictions from `MeteringStore`
+    pub metering_store_lru_evictions: Counter,
 
     // === DA Size Limit Metrics (always enforced, operator-configured) ===
     /// Transactions rejected by per-tx DA size limit

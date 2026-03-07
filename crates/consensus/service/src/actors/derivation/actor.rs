@@ -241,7 +241,8 @@ where
             return Ok(());
         }
 
-        info!(target: "derivation", derivation_state=?self.derivation_state_machine, "Attempting derivation.");
+        info!(target: "derivation", derivation_state=self.derivation_state_machine.confirmed_safe_head.block_info.number, "Attempting derivation.");
+        debug!(target: "derivation", derivation_state=?self.derivation_state_machine, "Attempting derivation.");
 
         // Advance the pipeline as much as possible, new data may be available or there still may be
         // payloads in the attributes queue.

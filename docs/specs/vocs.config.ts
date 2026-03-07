@@ -6,6 +6,7 @@ import rehypeKatex from 'rehype-katex'
 import remarkMath from 'remark-math'
 import { defineConfig, type SidebarItem } from 'vocs'
 
+const docsDir = fileURLToPath(new URL('./', import.meta.url))
 const pagesDir = fileURLToPath(new URL('./pages', import.meta.url))
 
 type NodeInfo = {
@@ -131,79 +132,84 @@ function sectionItemWithoutDirs(
   }
 }
 
-const evmLinks = new Set(['/protocol/precompiles', '/protocol/predeploys', '/protocol/preinstalls'])
+const hiddenProtocolFiles = ['access-lists.md']
 
-function withEvmSection(items: SidebarItem[]): SidebarItem[] {
-  const remainingItems: SidebarItem[] = []
-  const groupedItems: SidebarItem[] = []
-  let insertIndex = -1
+const protocolTodoExcludedDirs = ['bridging', 'consensus', 'execution', 'fault-proof']
 
-  for (const item of items) {
-    if ('link' in item && item.link && evmLinks.has(item.link)) {
-      if (insertIndex === -1) insertIndex = remainingItems.length
-      groupedItems.push(item)
-      continue
-    }
-    remainingItems.push(item)
-  }
+const protocolTodoExcludedFiles = [
+  ...hiddenProtocolFiles,
+  'overview.md',
+  'batcher.md',
+]
 
-  if (groupedItems.length === 0) return items
-  if (insertIndex === -1) insertIndex = remainingItems.length
+const bridgingSection: SidebarItem = {
+  text: 'Bridging',
+  items: [
+    { text: 'Deposits', link: '/protocol/bridging/deposits' },
+    { text: 'Withdrawals', link: '/protocol/bridging/withdrawals' },
+    { text: 'Standard Bridges', link: '/protocol/bridging/bridges' },
+    { text: 'Cross Domain Messengers', link: '/protocol/bridging/messengers' },
+  ],
+  collapsed: true,
+}
 
-  const evmSection: SidebarItem = {
-    text: 'EVM',
-    items: groupedItems,
-    collapsed: true,
-  }
+const consensusSection: SidebarItem = {
+  text: 'Consensus',
+  link: '/protocol/consensus',
+  items: [
+    { text: 'Derivation', link: '/protocol/consensus/derivation' },
+    { text: 'P2P', link: '/protocol/consensus/p2p' },
+    { text: 'RPC', link: '/protocol/consensus/rpc' },
+  ],
+  collapsed: true,
+}
 
-  return [
-    ...remainingItems.slice(0, insertIndex),
-    evmSection,
-    ...remainingItems.slice(insertIndex),
-  ]
+const executionSection: SidebarItem = {
+  text: 'Execution',
+  link: '/protocol/execution',
+  items: [
+    { text: 'Precompiles', link: '/protocol/execution/evm/precompiles' },
+    { text: 'Predeploys', link: '/protocol/execution/evm/predeploys' },
+    { text: 'Preinstalls', link: '/protocol/execution/evm/preinstalls' },
+    { text: 'RPC', link: '/protocol/execution/evm/rpc' },
+  ],
+  collapsed: true,
 }
 
 const sidebar: SidebarItem[] = [
   { text: 'Home', link: '/' },
   {
-    text: 'Hardforks',
+    text: 'Protocol',
     items: [
-      { text: 'Jovian', link: '/protocol/jovian/overview' },
-      { text: 'Isthmus', link: '/protocol/isthmus/overview' },
-      { text: 'Pectra Blob Schedule (Sepolia)', link: '/protocol/pectra-blob-schedule/overview' },
-      { text: 'Holocene', link: '/protocol/holocene/overview' },
-      { text: 'Granite', link: '/protocol/granite/overview' },
-      { text: 'Fjord', link: '/protocol/fjord/overview' },
-      { text: 'Ecotone', link: '/protocol/ecotone/overview' },
-      { text: 'Delta', link: '/protocol/delta/overview' },
-      { text: 'Canyon', link: '/protocol/canyon/overview' },
+      { text: 'Overview', link: '/protocol/overview' },
+      consensusSection,
+      executionSection,
+      bridgingSection,
+      { text: 'Batcher', link: '/protocol/batcher' },
+      { ...sectionItem('protocol/fault-proof', 'Proofs'), collapsed: true },
     ],
   },
-  (() => {
-    const protocol = sectionItemWithoutDirs(
-      'protocol',
-      'Protocol',
-      ['jovian', 'isthmus', 'holocene', 'granite', 'fjord', 'ecotone', 'delta', 'canyon', 'pectra-blob-schedule'],
-      ['access-lists.md'],
-    )
-    const protocolItems = withEvmSection(protocol.items ?? [])
-    return {
-      ...protocol,
-      items: [
-        ...protocolItems,
-        { ...sectionItem('fault-proof', 'Fault Proof'), collapsed: true },
-      ],
-    }
-  })(),
   {
-    text: 'Reference',
-    items: [{ text: 'Glossary', link: '/glossary' }],
+    text: 'Upgrades',
+    items: [
+      { text: 'Jovian', link: '/upgrades/jovian/overview' },
+      { text: 'Isthmus', link: '/upgrades/isthmus/overview' },
+      { text: 'Pectra Blob Schedule (Sepolia)', link: '/upgrades/pectra-blob-schedule/overview' },
+      { text: 'Holocene', link: '/upgrades/holocene/overview' },
+      { text: 'Granite', link: '/upgrades/granite/overview' },
+      { text: 'Fjord', link: '/upgrades/fjord/overview' },
+      { text: 'Ecotone', link: '/upgrades/ecotone/overview' },
+      { text: 'Delta', link: '/upgrades/delta/overview' },
+      { text: 'Canyon', link: '/upgrades/canyon/overview' },
+    ],
   },
+  sectionItemWithoutDirs('protocol', 'TODO', protocolTodoExcludedDirs, protocolTodoExcludedFiles),
+  sectionItem('reference', 'Reference'),
 ]
 
 export default defineConfig({
   title: 'Base Specification',
-  description: 'Base Chain specs inspired by Ethereum and OP Stack, with independent evolution after Jovian.',
+  description: 'Base Chain specs inspired by Ethereum and the OP Stack, with independent evolution after Jovian.',
   logoUrl: '/assets/base/logo.svg',
   iconUrl: '/assets/base/favicon.png',
   topNav: [
@@ -215,5 +221,12 @@ export default defineConfig({
     rehypePlugins: [rehypeKatex],
   },
   rootDir: '.',
+  vite: {
+    server: {
+      fs: {
+        allow: [docsDir, pagesDir],
+      },
+    },
+  },
   sidebar,
 })

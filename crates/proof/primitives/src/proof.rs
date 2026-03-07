@@ -1,17 +1,23 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::B256;
+use base_proof_preimage::PreimageKey;
 
-/// The claim being proven: an L2 output root at a given block, anchored to an L1 head.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use crate::Proposal;
+
+/// The claim being proven, containing an aggregated proposal over a block range
+/// and the individual per-block proposals that were aggregated.
+///
+/// The TEE server generates a [`Proposal`] for each block in the range, then
+/// aggregates them into a single [`Proposal`]. Verifiers can check both
+/// per-block correctness and aggregation integrity.
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ProofClaim {
-    /// The L2 block number this claim covers.
-    pub l2_block_number: u64,
-    /// The L2 output root at `l2_block_number`.
-    pub output_root: B256,
-    /// The L1 head hash used to derive the L2 state.
-    pub l1_head: B256,
+    /// The aggregated proposal covering the entire proven block range.
+    pub aggregate_proposal: Proposal,
+    /// The individual per-block proposals that were aggregated.
+    pub proposals: Vec<Proposal>,
 }
 
 /// Backend-specific evidence that accompanies a [`ProofClaim`].
@@ -61,4 +67,14 @@ pub struct ProofRequest {
     pub claimed_l2_output_root: B256,
     /// L2 block number that the claimed output root commits to.
     pub claimed_l2_block_number: u64,
+}
+
+/// A proof request bundled with the witness data needed to fulfill it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ProofBundle {
+    /// What to prove.
+    pub request: ProofRequest,
+    /// The preimage key-value pairs.
+    pub preimages: Vec<(PreimageKey, Vec<u8>)>,
 }

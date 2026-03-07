@@ -1,11 +1,11 @@
-# OP Stack Configurability
+# Base Configurability
 
-When deploying the OP Stack software to a production environment,
+When deploying the Base software to a production environment,
 certain parameters about the protocol can be configured. These
 configurations can include a variety of parameters which affect the
 resulting properties of the blockspace in question.
 
-There are four categories of OP Stack configuration options:
+There are four categories of Base configuration options:
 
 - **Consensus Parameters**: Parameters and properties of the chain that may
   be set at genesis and fixed for the lifetime of the chain, or may be
@@ -20,7 +20,7 @@ There are four categories of OP Stack configuration options:
   operations of the chain, and therefore are often hot wallets.
 
 Each category also defines the standard configuration values for it's given parameters.
-Standard configuration is the set of requirements for an OP Stack chain to be considered a
+Standard configuration is the set of requirements for Base to be considered a
 Standard Chain within the superchain.
 These requirements are currently a draft, pending governance approval.
 
@@ -32,19 +32,19 @@ Manager-based deployment flow.
 ### [Batch Inbox address](https://github.com/ethereum-optimism/optimism/blob/c927ed9e8af501fd330349607a2b09a876a9a1fb/packages/contracts-bedrock/src/L1/SystemConfig.sol#L176)
 
 **Description:** L1 address where calldata/blobs are posted (
-see [Batcher Transaction](../glossary.md#batcher-transaction)).<br/>
+see [Batcher Transaction](../reference/glossary.md#batcher-transaction)).<br/>
 **Administrator:** Static<br/>
 **Requirement:** Current convention is
 <code>versionByte &vert;&vert; keccak256(bytes32(chainId))\[:19\]</code>, where <code>&vert;&vert;</code> denotes
 concatenation, `versionByte` is `0x00`, and `chainId` is a `uint256`.<br/>
 **Notes:** It is recommended, but not required, to follow this convention.
 
-### [Batcher Hash](./system-config.md#batcher-hash)
+### [Batcher Hash](system-config.md#batcher-hash)
 
 **Description:** A versioned hash of the current authorized batcher sender(s).<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
 **Requirement:** `bytes32(uint256(uint160(batchSubmitterAddress)))`<br/>
-**Notes**: [Batch Submitter](../protocol/batcher.md) address padded with zeros to fit 32 bytes.<br/>
+**Notes**: [Batcher](batcher.md) address padded with zeros to fit 32 bytes.<br/>
 
 ### [Chain ID](https://github.com/ethereum-optimism/superchain-registry/blob/2a011e700e8be22bc18502f3d41c440e7a05015d/chainList.json)
 
@@ -54,7 +54,7 @@ concatenation, `versionByte` is `0x00`, and `chainId` is a `uint256`.<br/>
 **Notes:** Foundation will ensure chains are responsible with their chain IDs until there's a governance process in
 place.<br/>
 
-### [Proof Maturity Delay](../fault-proof/stage-one/bridge-integration.md#fpac-optimismportal-mods-specification)
+### [Proof Maturity Delay](fault-proof/stage-one/bridge-integration.md#fpac-optimismportal-mods-specification)
 
 **Description:** The length of time that must pass between proving and finalizing a withdrawal.<br/>
 **Administrator:** [L1 Proxy Admin](#admin-roles)<br/>
@@ -63,16 +63,16 @@ place.<br/>
 hack if necessary. Allows enough time for other network participants to challenge the integrity of the corresponding
 output root.<br/>
 
-### [Dispute Game Finality](../fault-proof/stage-one/bridge-integration.md#fpac-optimismportal-mods-specification)
+### [Dispute Game Finality](fault-proof/stage-one/bridge-integration.md#fpac-optimismportal-mods-specification)
 
 **Description:** The amount of time given to the `Guardian` role
-to [blacklist a resolved dispute game](../fault-proof/stage-one/bridge-integration.md#blacklisting-disputegames) before
+to [blacklist a resolved dispute game](fault-proof/stage-one/bridge-integration.md#blacklisting-disputegames) before
 any withdrawals proven against it can be finalized, in the case of a system failure.<br/>
 **Administrator:** [L1 Proxy Admin](#admin-roles)<br/>
 **Requirement:** 3.5 days<br/>
 **Notes:** High security. Allows enough time for the `Guardian` to blacklist games.<br/>
 
-### [Respected Game Type](../fault-proof/stage-one/bridge-integration.md#new-state-variables)
+### [Respected Game Type](fault-proof/stage-one/bridge-integration.md#new-state-variables)
 
 **Description:** The respected game type of the `OptimismPortal`. Determines the type of dispute games that can be used
 to finalize withdrawals.<br/>
@@ -168,7 +168,7 @@ using fault proofs from genesis.<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
 **Requirement:** Set such that Fee Margin is between 0 and 50%.<br/>
 
-### [Gas Limit](./system-config.md#l2-gas-limit)
+### [Gas Limit](system-config.md#l2-gas-limit)
 
 **Description:** Gas limit of the L2 blocks is configured through the system config.<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
@@ -179,7 +179,7 @@ careful deliberation is necessary.<br/>
 ### Genesis state
 
 **Description:** Initial state at chain genesis, including code and storage of predeploys (all L2 smart contracts).
-See [Predeploy](../glossary.md#l2-genesis-block).<br/>
+See [Predeploy](../reference/glossary.md#l2-genesis-block).<br/>
 **Administrator:** Static<br/>
 **Requirement:** Only standard predeploys and preinstalls, no additional state.<br/>
 **Notes:** Homogeneity & standardization, ensures initial state is secure.<br/>
@@ -201,7 +201,7 @@ at app layer.<br/>
 in [code](https://github.com/ethereum-optimism/optimism/blob/c927ed9e8af501fd330349607a2b09a876a9a1fb/packages/contracts-bedrock/src/L1/SystemConfig.sol#L345-L365)
 when setting the resource config.<br/>
 
-### [Sequencing window Size](../glossary.md#sequencing-window)
+### [Sequencing window Size](../reference/glossary.md#sequencing-window)
 
 **Description:** Maximum allowed batch submission gap, after which L1 fallback is triggered in derivation.<br/>
 **Administrator:** Static<br/>
@@ -219,7 +219,7 @@ would pose a risk to user protections.<br/>
 
 ### Superchain target
 
-**Description:** Choice of cross-L2 configuration. May be omitted in isolated OP Stack deployments. Includes
+**Description:** Choice of cross-L2 configuration. May be omitted in isolated Base deployments. Includes
 SuperchainConfig and ProtocolVersions contract addresses.<br/>
 **Administrator:** Static<br/>
 **Requirement:** Mainnet or Sepolia<br/>
@@ -233,13 +233,13 @@ contracts deployed on layer 1.<br/>
 **Requirement:** Disabled<br/>
 **Notes:** Simple clear restriction.<br/>
 
-### [Operator Fee Scalar](isthmus/exec-engine.md#operator-fee)
+### [Operator Fee Scalar](../upgrades/isthmus/exec-engine.md#operator-fee)
 
 **Description:** Operator fee scalar -- used to calculate the operator fee<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
 **Requirement:** 0 <br/>
 
-### [Operator Fee Constant](isthmus/exec-engine.md#operator-fee)
+### [Operator Fee Constant](../upgrades/isthmus/exec-engine.md#operator-fee)
 
 **Description:** Operator fee constant -- used to calculate the operator fee<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
@@ -248,13 +248,13 @@ contracts deployed on layer 1.<br/>
 Note that the operator fee scalar and constant are primarily used for non-standard configurations,
 like op-succinct, so their standard values are 0.
 
-### [DA Footprint Gas Scalar](jovian/exec-engine.md#DA-footprint-block-limit)
+### [DA Footprint Gas Scalar](../upgrades/jovian/exec-engine.md#DA-footprint-block-limit)
 
 **Description:** DA footprint gas scalar -- used to calculate the DA footprint<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
 **Requirement:** Requirements (if any) are declared in [standard-config-params-mainnet.toml](https://github.com/ethereum-optimism/superchain-registry/blob/main/validation/standard/standard-config-params-mainnet.toml)
 
-### [Minimum Base Fee](jovian/exec-engine.md#minimum-base-fee)
+### [Minimum Base Fee](../upgrades/jovian/exec-engine.md#minimum-base-fee)
 
 **Description:** Minimum base fee -- sets the minimum base fee on L2<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
@@ -278,7 +278,7 @@ like op-succinct, so their standard values are 0.
 ### Data Availability Type
 
 **Description:** Batcher can currently be configured to use blobs or calldata (
-See [Data Availability Provider](../glossary.md#data-availability-provider)).<br/>
+See [Data Availability Provider](../reference/glossary.md#data-availability-provider)).<br/>
 **Administrator:** [Batch submitter address](#service-roles)<br/>
 **Requirement:** Ethereum (Blobs, Calldata)<br/>
 **Notes:** Alt-DA is not yet supported for the standard configuration, but the sequencer can switch at-will between blob
@@ -287,7 +287,7 @@ and calldata with no restriction, since both are L1 security.<br/>
 ### Batch submission frequency
 
 **Description:** Frequency with which batches are submitted to L1 (
-see [Batcher Transaction](../glossary.md#batcher-transaction)).<br/>
+see [Batcher Transaction](../reference/glossary.md#batcher-transaction)).<br/>
 **Administrator:** [Batch submitter address](#service-roles)<br/>
 **Requirement:** 1_800 base layer blocks (6 hours for an L2 on Ethereum, assuming 12 second L1 blocktime) or lower<br/>
 **Notes:** Batcher needs to fully submit each batch within the sequencing window, so this leaves buffer to account for
@@ -332,7 +332,7 @@ from the latest `op-contracts/vX.Y.X` release of source code in
 
 **Description:** Account authorized to upgrade L2 contracts.<br/>
 **Administrator:** [L2 Proxy Admin Owner](#admin-roles)<br/>
-**Administers:** [Predeploys](./predeploys.md#overview)<br/>
+**Administers:** [Predeploys](execution/evm/predeploys.md#overview)<br/>
 **Requirement:**
 [ProxyAdmin.sol](https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.3.0/packages/contracts-bedrock/src/universal/ProxyAdmin.sol)
 from the latest `op-contracts/vX.Y.X` release of source code
@@ -355,7 +355,7 @@ Address:
 ### [System Config Owner](https://github.com/ethereum-optimism/optimism/blob/c927ed9e8af501fd330349607a2b09a876a9a1fb/packages/contracts-bedrock/src/L1/SystemConfig.sol#L14C26-L14C44)
 
 **Description:** Account authorized to change values in the SystemConfig contract. All configuration is stored on L1 and
-picked up by L2 as part of the [derivation](./derivation.md) of the L2 chain.<br/>
+picked up by L2 as part of the [derivation](consensus/derivation.md) of the L2 chain.<br/>
 **Administrator:** [L1 Proxy Admin](#admin-roles)<br/>
 **Administers:** [Batch submitter address](#service-roles), [Sequencer P2P / Unsafe head signer](#service-roles),
 [Fee Margin](#consensus-parameters), [Gas limit](#consensus-parameters), [System Config Owner](#admin-roles)<br/>
@@ -364,7 +364,7 @@ picked up by L2 as part of the [derivation](./derivation.md) of the L2 chain.<br
 the [Law of Chains](https://github.com/ethereum-optimism/OPerating-manual/blob/main/Law%20of%20Chains.md)<br/>
 
 [^of-sc-gnosis-safe-l1]: 2 of 2 GnosisSafe between Optimism Foundation (OF) and the Security Council (SC) on L1. Mainnet and Sepolia addresses can be found at [privileged roles](https://docs.optimism.io/chain/security/privileged-roles#l1-proxy-admin).
-[^aliased-of-sc-gnosis-safe-l1]: Aliased address of the 2 of 2 Gnosis Safe between Optimism Foundation (OF) and the Security Council (SC) on L1. The reason for aliasing can be found in the [glossary](../glossary.md#address-aliasing). This address was calculated using the following arithmetic: `0x5a0Aae59D09fccBdDb6C6CcEB07B7279367C3d2A` + `0x1111000000000000000000000000000000001111` = `0x6B1BAE59D09fCcbdDB6C6cceb07B7279367C4E3b`.
+[^aliased-of-sc-gnosis-safe-l1]: Aliased address of the 2 of 2 Gnosis Safe between Optimism Foundation (OF) and the Security Council (SC) on L1. The reason for aliasing can be found in the [glossary](../reference/glossary.md#address-aliasing). This address was calculated using the following arithmetic: `0x5a0Aae59D09fccBdDb6C6CcEB07B7279367C3d2A` + `0x1111000000000000000000000000000000001111` = `0x6B1BAE59D09fCcbdDB6C6cceb07B7279367C4E3b`.
 
 ## Service Roles
 
@@ -378,7 +378,7 @@ the [Law of Chains](https://github.com/ethereum-optimism/OPerating-manual/blob/m
 ### [Challenger address](https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/PermissionedDisputeGame.sol#L23)
 
 **Description:** Account which can interact with
-existing [permissioned dispute games](../fault-proof/stage-one/bridge-integration.md#permissioned-faultdisputegame).<br/>
+existing [permissioned dispute games](fault-proof/stage-one/bridge-integration.md#permissioned-faultdisputegame).<br/>
 **Administrator:** [L1 Proxy Admin](#admin-roles)<br/>
 **Requirement:**
 [0x9BA6e03D8B90dE867373Db8cF1A58d2F7F006b3A](https://etherscan.io/address/0x9BA6e03D8B90dE867373Db8cF1A58d2F7F006b3A)
@@ -396,13 +396,13 @@ respected game type in the `OptimismPortal`.<br/>
 **Requirement:**
 [0x09f7150D8c019BeF34450d6920f6B3608ceFdAf2](https://etherscan.io/address/0x09f7150D8c019BeF34450d6920f6B3608ceFdAf2)<br/>
 **Notes:** A 1/1 Safe owned by the Security Council Safe, with
-the [Deputy Pause Module](./deputy-pause-module.md) enabled to allow the Optimism
-Foundation to act as [Pause Deputy](./stage-1.md#pause-deputy).<br/>
+the [Deputy Pause Module](deputy-pause-module.md) enabled to allow the Optimism
+Foundation to act as [Pause Deputy](stage-1.md#pause-deputy).<br/>
 
 ### [Proposer address](https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/PermissionedDisputeGame.sol#L20)
 
 **Description:** Account which can create and interact
-with [permissioned dispute games](../fault-proof/stage-one/bridge-integration.md#permissioned-faultdisputegame) on
+with [permissioned dispute games](fault-proof/stage-one/bridge-integration.md#permissioned-faultdisputegame) on
 L1.<br/>
 **Administrator:** [L1 Proxy Admin](#admin-roles)<br/>
 **Requirement:** No requirement<br/>

@@ -2448,8 +2448,10 @@ dependencies = [
 name = "base-builder-bin"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "base-builder-core",
  "base-builder-metering",
+ "base-bundles",
  "base-cli-utils",
  "base-execution-cli",
  "base-node-core",
@@ -3059,6 +3061,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tower",
+ "tracing",
  "url",
 ]
 
@@ -3177,6 +3180,7 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "base-enclave",
+ "base-proof-primitives",
  "jsonrpsee",
  "rustls 0.23.37",
  "rustls-pki-types",
@@ -4127,6 +4131,7 @@ dependencies = [
  "async-trait",
  "base-proof-preimage",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4186,8 +4191,11 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "base-proof-primitives",
+ "bincode 2.0.1",
+ "serde",
  "thiserror 2.0.18",
  "tokio",
+ "vsock",
 ]
 
 [[package]]

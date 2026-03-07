@@ -1,6 +1,6 @@
 [package]
 name = "base-proof"
-description = "OP Stack Proof SDK"
+description = "Base Proof SDK"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

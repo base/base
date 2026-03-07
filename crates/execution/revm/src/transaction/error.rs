@@ -21,7 +21,7 @@ pub enum OpTransactionError {
     ///
     /// In addition, this error is internal, and bubbles up into an [`OpHaltReason::FailedDeposit`][crate::OpHaltReason::FailedDeposit] error
     /// in the `revm` handler for the consumer to easily handle. This is due to a state transition
-    /// rule on OP Stack chains where, if for any reason a deposit transaction fails, the transaction
+    /// rule on Base where, if for any reason a deposit transaction fails, the transaction
     /// must still be included in the block, the sender nonce is bumped, the `mint` value persists, and
     /// special gas accounting rules are applied. Normally on L1, [`EVMError::Transaction`] errors
     /// are cause for non-inclusion, so a special [`OpHaltReason`][crate::OpHaltReason] variant was introduced to handle this
@@ -36,7 +36,7 @@ pub enum OpTransactionError {
     ///
     /// In addition, this error is internal, and bubbles up into an [`OpHaltReason::FailedDeposit`][crate::OpHaltReason::FailedDeposit] error
     /// in the `revm` handler for the consumer to easily handle. This is due to a state transition
-    /// rule on OP Stack chains where, if for any reason a deposit transaction fails, the transaction
+    /// rule on Base where, if for any reason a deposit transaction fails, the transaction
     /// must still be included in the block, the sender nonce is bumped, the `mint` value persists, and
     /// special gas accounting rules are applied. Normally on L1, [`EVMError::Transaction`] errors
     /// are cause for non-inclusion, so a special [`OpHaltReason`][crate::OpHaltReason] variant was introduced to handle this

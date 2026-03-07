@@ -3,9 +3,8 @@
 ## Overview
 
 The `SystemConfig` is a contract on L1 that can emit rollup configuration changes as log events.
-The rollup [block derivation process](derivation.md) picks up on these log events and applies the
-changes. `SystemConfig` generally acts as the source of truth for configuration values within an
-OP Stack chain.
+The rollup [block derivation process](consensus/derivation.md) picks up on these log events and applies the
+changes. `SystemConfig` generally acts as the source of truth for configuration values within Base.
 
 ## Definitions
 
@@ -104,14 +103,14 @@ introduced the change, as opposed to the 1/1024 adjustments towards a target as 
 updates of L1 blocks.
 
 The gas limit may not be set to a value larger than the
-[maximum gas limit](./configurability.md#gas-limit). This is to ensure that L2 blocks are fault
+[maximum gas limit](configurability.md#gas-limit). This is to ensure that L2 blocks are fault
 provable and of reasonable size to be processed by the client software.
 
 ### Customizable Feature
 
-A **Customizable Feature** is a component of the OP Stack that is maintained as a production-grade
+A **Customizable Feature** is a component of Base that is maintained as a production-grade
 element of the stack behind some sort of toggle. A Customizable Feature is distinct from other
-types of feature-flagged code because it is part of the mainline OP Stack and is intended to remain
+types of feature-flagged code because it is part of the mainline Base and is intended to remain
 as a supported configuration option indefinitely. Unlike short-lived feature flags, which exist
 only to keep develop releasable while work is in progress, customizable features are permanent,
 user-facing options. They must be fully documented, tested in all supported modes, and designed for
@@ -230,14 +229,14 @@ Returns the block number at which the op-node can start searching for logs.
 
 ### paused
 
-(-v4.1.0) This function integrates with the [Pause Mechanism](./stage-1.md#pause-mechanism) by
-using the chain's `ETHLockbox` address as the [Pause Identifier](./stage-1.md#pause-identifier).
+(-v4.1.0) This function integrates with the [Pause Mechanism](stage-1.md#pause-mechanism) by
+using the chain's `ETHLockbox` address as the [Pause Identifier](stage-1.md#pause-identifier).
 Returns the current pause state of the system by checking if the `SuperchainConfig` is paused for
 this chain's `ETHLockbox`.
 
-(+v4.1.0) This function integrates with the [Pause Mechanism](./stage-1.md#pause-mechanism) by
+(+v4.1.0) This function integrates with the [Pause Mechanism](stage-1.md#pause-mechanism) by
 using either the chain's `ETHLockbox` address or the chain's `OptimismPortal` address as the
-[Pause Identifier](./stage-1.md#pause-identifier).
+[Pause Identifier](stage-1.md#pause-identifier).
 
 - (-v4.1.0) MUST return true if `SuperchainConfig.paused(optimismPortal().ethLockbox())` returns
   true OR if `SuperchainConfig.paused(address(0))` returns true.

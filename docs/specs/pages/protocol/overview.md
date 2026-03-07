@@ -5,61 +5,6 @@ an informal manner, and direct readers to other parts of the specification so th
 
 This document combines foundational context and architecture details for Base Chain.
 
-## Background
-
-Base is an Ethereum L2 optimistic rollup. Its architecture is inspired by Ethereum and by the OP Stack, and Base
-diverged after Jovian to evolve independently. This specification is written for Base itself, not as a generic
-framework for third-party rollup deployments.
-
-## Foundations
-
-### Ethereum Scalability
-
-Scaling Ethereum means increasing the number of useful transactions the Ethereum network can process. Ethereum's
-limited resources, specifically bandwidth, computation, and storage, constrain the number of transactions which can be
-processed on the network. Of the three resources, computation and storage are currently the most significant
-bottlenecks. These bottlenecks limit the supply of transactions, leading to extremely high fees. Scaling ethereum and
-reducing fees can be achieved by better utilizing bandwidth, computation and storage.
-
-### Optimistic Rollups
-
-An [Optimistic Rollup](https://vitalik.eth.limo/general/2021/01/05/rollup.html) is a layer 2 scalability construction which
-increases the computation & storage capacity of Ethereum while aiming to minimize sacrifices to scalability or
-decentralization. In a nutshell, an Optimistic Rollup utilizes Ethereum (or some other data availability layer) to host
-transaction data. Layer 2 nodes then execute a state transition function over this data. Users can propose the result of
-this off-chain execution to a smart contract on L1. A "fault proving" process can then demonstrate that a user's proposal
-is (or is not) valid.
-
-### EVM Equivalence
-
-[EVM Equivalence](https://medium.com/ethereum-optimism/introducing-evm-equivalence-5c2021deb306) is complete compliance
-with the state transition function described in the Ethereum yellow paper, the formal definition of the protocol. By
-conforming closely to the Ethereum standard, Base minimizes friction when running Ethereum-native contracts and tools.
-
-## Protocol Guarantees
-
-We strive to preserve three critical properties: liveness, validity, and availability.
-A protocol that can maintain these properties can, effectively, scale Ethereum without sacrificing security.
-
-### Liveness
-
-Liveness is defined as the ability for any party to be able to extend the rollup chain by including a transaction within
-a bounded amount of time. It should not be possible for an actor to block the inclusion of any given transaction for more
-than this bounded time period. This bounded time period should also be acceptable such that inclusion is not just
-theoretically possible but practically useful.
-
-### Validity
-
-Validity is defined as the ability for any party to execute the rollup state transition function, subject to certain lower
-bound expectations for available computing and bandwidth resources. Validity is also extended to refer to the ability for
-a smart contract on Ethereum to be able to validate this state transition function economically.
-
-### Availability
-
-Availability is defined as the ability for any party to retrieve the inputs that are necessary to execute the rollup state
-transition function correctly. Availability is essentially an element of validity and is required to be able to guarantee
-validity in general. Similar to validity, availability is subject to lower bound resource requirements.
-
 ## Network Participants
 
 Generally speaking, there are three primary actors that interact with Base: users, sequencers, and verifiers.
@@ -78,7 +23,7 @@ graph TD
     Verifiers -.->|fetch deposit data| EthereumL1
     Verifiers -->|submit/validate/challenge output proposals| EthereumL1
     Verifiers -.->|fetch realtime P2P updates| Sequencers
-    
+
     Users -->|submit deposits/withdrawals| EthereumL1
     Users -->|submit transactions| Sequencers
     Users -->|query data| Verifiers
@@ -147,8 +92,8 @@ The following diagram demonstrates this interaction and key Base protocol compon
 ```mermaid
 graph TD
     subgraph "Ethereum L1"
-        OptimismPortal(<a href="./protocol/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
-        BatchInbox(<a href="../glossary.html#batcher-transaction">Batch Inbox Address</a>)
+        OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        BatchInbox(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
     end
 
     Sequencer(Sequencer)
@@ -179,10 +124,10 @@ as standard transactions on L2 but are then completed using transactions on L1. 
 ```mermaid
 graph LR
     subgraph "Ethereum L1"
-        BatchInbox(<a href="../glossary.html#batcher-transaction">Batch Inbox Address</a>)
-        DisputeGameFactory(<a href="../fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
-        FaultDisputeGame(<a href="../fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
-        OptimismPortal(<a href="./protocol/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        BatchInbox(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
+        DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
+        FaultDisputeGame(<a href="./fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
+        OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
         ExternalContracts(External Contracts)
     end
 
@@ -248,17 +193,17 @@ graph LR
     end
 
     subgraph "L1 Smart Contracts"
-        BatchDataEOA(<a href="../glossary.html#batcher-transaction">Batch Inbox Address</a>)
-        L1StandardBridge(<a href="./bridges.html">L1StandardBridge</a>)
-        L1ERC721Bridge(<a href="./bridges.html">L1ERC721Bridge</a>)
-        L1CrossDomainMessenger(<a href="./messengers.html">L1CrossDomainMessenger</a>)
-        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        BatchDataEOA(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
+        L1StandardBridge(<a href="./bridging/bridges.html">L1StandardBridge</a>)
+        L1ERC721Bridge(<a href="./bridging/bridges.html">L1ERC721Bridge</a>)
+        L1CrossDomainMessenger(<a href="./bridging/messengers.html">L1CrossDomainMessenger</a>)
+        OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
         SuperchainConfig(SuperchainConfig)
         SystemConfig(<a href="./system-config.html">SystemConfig</a>)
-        DisputeGameFactory(<a href="../fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
-        FaultDisputeGame(<a href="../fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
-        AnchorStateRegistry(<a href="../fault-proof/stage-one/fault-dispute-game.html#anchor-state-registry">AnchorStateRegistry</a>)
-        DelayedWETH(<a href="../fault-proof/stage-one/bond-incentives.html#delayedweth#de">DelayedWETH</a>)
+        DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
+        FaultDisputeGame(<a href="./fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
+        AnchorStateRegistry(<a href="./fault-proof/stage-one/fault-dispute-game.html#anchor-state-registry">AnchorStateRegistry</a>)
+        DelayedWETH(<a href="./fault-proof/stage-one/bond-incentives.html#delayedweth#de">DelayedWETH</a>)
     end
 
     subgraph "User Interactions (Permissionless)"
@@ -331,17 +276,17 @@ graph LR
 
 - The `Batch Inbox Address` described above (**highlighted in GREY**) is _not_ a smart contract and is instead an arbitrarily
   selected account that is assumed to have no known private key. The convention for deriving this account's address is
-  provided on the [Configurability](./configurability.md#consensus-parameters) page.
+  provided on the [Configurability](configurability.md#consensus-parameters) page.
   - Historically, it was often derived as
     `0xFF0000....<L2 chain ID>` where `<L2 chain ID>` is chain ID of the Layer 2 network for which the data is being posted.
-    Historically, some OP Stack deployments used this form; Base may use chain-specific configured values.
+    Historically, some Base deployments used this form; Base may use chain-specific configured values.
 - Smart contracts that sit behind `Proxy` contracts are **highlighted in BLUE**. Refer to the
   [Smart Contract Proxies](#smart-contract-proxies) section below to understand how these proxies are designed.
   - The `L1CrossDomainMessenger` contract sits behind the [`ResolvedDelegateProxy`](https://github.com/ethereum-optimism/optimism/tree/develop/packages/contracts-bedrock/src/legacy/ResolvedDelegateProxy.sol)
-    contract, a legacy proxy contract type inherited from earlier OP Stack implementations. This proxy type is used exclusively
+    contract, a legacy proxy contract type inherited from earlier Base implementations. This proxy type is used exclusively
     for the `L1CrossDomainMessenger` to maintain backwards compatibility.
   - The `L1StandardBridge` contract sits behind the [`L1ChugSplashProxy`](https://github.com/ethereum-optimism/optimism/tree/develop/packages/contracts-bedrock/src/legacy/L1ChugSplashProxy.sol)
-    contract, a legacy proxy contract type inherited from earlier OP Stack implementations. This proxy type is used exclusively
+    contract, a legacy proxy contract type inherited from earlier Base implementations. This proxy type is used exclusively
     for the `L1StandardBridge` contract to maintain backwards compatibility.
 
 ### Core L2 Smart Contracts
@@ -360,18 +305,18 @@ graph LR
     end
 
     subgraph "L2 System Contracts"
-        L1Block(<a href="./predeploys.html#l1block">L1Block</a>)
-        GasPriceOracle(<a href="./predeploys.html#gaspriceoracle">GasPriceOracle</a>)
-        L1FeeVault(<a href="./predeploys.html#l1feevault">L1FeeVault</a>)
-        BaseFeeVault(<a href="./predeploys.html#basefeevault">BaseFeeVault</a>)
-        SequencerFeeVault(<a href="./predeploys.html#sequencerfeevault">SequencerFeeVault</a>)
+        L1Block(<a href="./execution/evm/predeploys.html#l1block">L1Block</a>)
+        GasPriceOracle(<a href="./execution/evm/predeploys.html#gaspriceoracle">GasPriceOracle</a>)
+        L1FeeVault(<a href="./execution/evm/predeploys.html#l1feevault">L1FeeVault</a>)
+        BaseFeeVault(<a href="./execution/evm/predeploys.html#basefeevault">BaseFeeVault</a>)
+        SequencerFeeVault(<a href="./execution/evm/predeploys.html#sequencerfeevault">SequencerFeeVault</a>)
     end
 
     subgraph "L2 Bridge Contracts"
-        L2CrossDomainMessenger(<a href="./predeploys.html#l2crossdomainmessenger">L2CrossDomainMessenger</a>)
-        L2ToL1MessagePasser(<a href="./predeploys.html#l2tol1messagepasser">L2ToL1MessagePasser</a>)
-        L2StandardBridge(<a href="./predeploys.html#l2standardbridge">L2StandardBridge</a>)
-        L2ERC721Bridge(<a href="./predeploys.html">L2ERC721Bridge</a>)
+        L2CrossDomainMessenger(<a href="./execution/evm/predeploys.html#l2crossdomainmessenger">L2CrossDomainMessenger</a>)
+        L2ToL1MessagePasser(<a href="./execution/evm/predeploys.html#l2tol1messagepasser">L2ToL1MessagePasser</a>)
+        L2StandardBridge(<a href="./execution/evm/predeploys.html#l2standardbridge">L2StandardBridge</a>)
+        L2ERC721Bridge(<a href="./execution/evm/predeploys.html">L2ERC721Bridge</a>)
     end
 
     subgraph "Transactions"
@@ -464,21 +409,21 @@ as demonstrations of how different actors use these components to fulfill their 
 ```mermaid
 graph LR
     subgraph "L2 Node"
-        RollupNode(<a href="./rollup-node.html">Rollup Node</a>)
-        ExecutionEngine(<a href="./exec-engine.html">Execution Engine</a>)
+        RollupNode(<a href="./consensus/">Consensus</a>)
+        ExecutionEngine(<a href="./execution/">Execution Engine</a>)
     end
 
     subgraph "System Interactions"
-        BatchSubmitter(<a href="./batcher.html">Batch Submitter</a>)
+        BatchSubmitter(<a href="./batcher.html">Batcher</a>)
         OutputSubmitter(Output Submitter)
         Challenger(Challenger)
     end
 
     subgraph "L1 Smart Contracts"
-        BatchDataEOA(<a href="../glossary.html#batcher-transaction">Batch Inbox Address</a>)
-        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
-        DisputeGameFactory(<a href="../fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
-        FaultDisputeGame(<a href="../fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
+        BatchDataEOA(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
+        OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
+        FaultDisputeGame(<a href="./fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
     end
 
     BatchSubmitter -.->|fetch transaction batch info| RollupNode
@@ -508,7 +453,7 @@ graph LR
 
 **Spec links:**
 
-- [Execution Engine](exec-engine.md)
+- [Execution Engine](execution/index.md)
 
 Since the EE uses Geth under the hood, Base uses Geth's built-in peer-to-peer network and transaction pool to
 propagate transactions. The same network can also be used to propagate submitted blocks and support snap-sync.
@@ -526,7 +471,7 @@ The below diagram illustrates how the sequencer and verifiers fit together:
 
 **Spec links:**
 
-- [Deposits](deposits.md)
+- [Deposits](bridging/deposits.md)
 
 Base supports two types of deposits: user deposits, and L1 attributes deposits. To perform a user deposit, users
 call the `depositTransaction` method on the `OptimismPortal` contract. This in turn emits `TransactionDeposited` events,
@@ -618,7 +563,7 @@ block, and add it to the chain. The basic sequence of the rollup driver is as fo
 4. Call [fork choice updated][EngineAPIVersion] with the fork choice parameter's `headBlockHash` set to the block hash
    returned in step 2. The tip of the L2 chain is now the block created in step 1.
 
-[EngineAPIVersion]: derivation.md#engine-api-usage
+[EngineAPIVersion]: consensus/derivation.md#engine-api-usage
 
 The swimlane diagram below visualizes the process:
 

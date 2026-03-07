@@ -1,6 +1,6 @@
 //! Batch Types
 //!
-//! This module contains the batch types for the OP Stack derivation pipeline.
+//! This module contains the batch types for the Base derivation pipeline.
 //!
 //! ## Batch
 //!

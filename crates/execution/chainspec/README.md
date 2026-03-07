@@ -1,6 +1,6 @@
 # `base-execution-chainspec`
 
-Chainspec types for Base/OP Stack execution.
+Chainspec types for Base execution.
 
 This crate provides `OpChainSpec`, the chain specification type used by Base nodes, along with
 pre-built specs for Base Mainnet, Base Sepolia, and a local dev chain. It also includes base fee
@@ -8,7 +8,7 @@ computation helpers for Holocene and Jovian hardforks.
 
 ## How it works
 
-`OpChainSpec` wraps reth's `ChainSpec` and adds OP Stack-specific hardfork awareness via the
+`OpChainSpec` wraps reth's `ChainSpec` and adds Base-specific hardfork awareness via the
 `OpHardforks` trait. Each network spec is constructed from a bundled genesis JSON file and a
 hardfork schedule:
 
@@ -17,7 +17,7 @@ hardfork schedule:
 - `OP_DEV` - Local dev chain with all hardforks active at genesis, prefunded test accounts.
 
 The genesis header is derived at startup from the genesis JSON using `make_op_genesis_header`,
-which computes the correct state root, storage root, and other fields for OP Stack chains.
+which computes the correct state root, storage root, and other fields for Base.
 
 Chain names are resolved from CLI strings via `parse_op_chain_spec`, which maps `"base"`,
 `"base_sepolia"`, `"base-sepolia"`, and `"dev"` to the corresponding static spec.

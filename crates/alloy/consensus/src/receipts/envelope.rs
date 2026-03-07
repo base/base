@@ -12,7 +12,7 @@ use alloy_rlp::{BufMut, Decodable, Encodable, length_of_length};
 
 use crate::{OpDepositReceipt, OpDepositReceiptWithBloom, OpTxType};
 
-/// Receipt envelope, as defined in [EIP-2718], modified for OP Stack chains.
+/// Receipt envelope, as defined in [EIP-2718], modified for Base.
 ///
 /// This enum distinguishes between tagged and untagged legacy receipts, as the
 /// in-protocol merkle tree may commit to EITHER 0-prefixed or raw. Therefore

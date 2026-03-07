@@ -1,4 +1,4 @@
-//! Contains Optimism specific precompiles.
+//! Contains Base specific precompiles.
 use std::{boxed::Box, string::String};
 
 use revm::{
@@ -15,7 +15,7 @@ use revm::{
 
 use crate::OpSpecId;
 
-/// Optimism precompile provider
+/// Base precompile provider
 #[derive(Debug, Clone)]
 pub struct OpPrecompiles {
     /// Inner precompile provider is same as Ethereums.
@@ -167,7 +167,7 @@ pub mod bn254_pair {
     pub const GRANITE: Precompile =
         Precompile::new(PrecompileId::Bn254Pairing, bn254::pair::ADDRESS, run_pair_granite);
 
-    /// Run the bn254 pair precompile with Optimism input limit.
+    /// Run the bn254 pair precompile with Base input limit.
     pub fn run_pair_granite(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > GRANITE_MAX_INPUT_SIZE {
             return Err(PrecompileError::Bn254PairLength);
@@ -186,7 +186,7 @@ pub mod bn254_pair {
     pub const JOVIAN: Precompile =
         Precompile::new(PrecompileId::Bn254Pairing, bn254::pair::ADDRESS, run_pair_jovian);
 
-    /// Run the bn254 pair precompile with Optimism input limit.
+    /// Run the bn254 pair precompile with Base input limit.
     pub fn run_pair_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > JOVIAN_MAX_INPUT_SIZE {
             return Err(PrecompileError::Bn254PairLength);
@@ -244,61 +244,61 @@ pub mod bls12_381 {
     pub const JOVIAN_PAIRING: Precompile =
         Precompile::new(PrecompileId::Bls12Pairing, PAIRING_ADDRESS, run_pair_jovian);
 
-    /// Run the g1 msm precompile with Optimism input limit.
+    /// Run the g1 msm precompile with Base input limit.
     pub fn run_g1_msm_isthmus(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > ISTHMUS_G1_MSM_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
-                "G1MSM input length too long for OP Stack input size limitation after the Isthmus Hardfork".into(),
+                "G1MSM input length too long for Base input size limitation after the Isthmus Hardfork".into(),
             ));
         }
         precompile::bls12_381::g1_msm::g1_msm(input, gas_limit)
     }
 
-    /// Run the g1 msm precompile with Optimism input limit.
+    /// Run the g1 msm precompile with Base input limit.
     pub fn run_g1_msm_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > JOVIAN_G1_MSM_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
-                "G1MSM input length too long for OP Stack input size limitation after the Jovian Hardfork".into(),
+                "G1MSM input length too long for Base input size limitation after the Jovian Hardfork".into(),
             ));
         }
         precompile::bls12_381::g1_msm::g1_msm(input, gas_limit)
     }
 
-    /// Run the g2 msm precompile with Optimism input limit.
+    /// Run the g2 msm precompile with Base input limit.
     pub fn run_g2_msm_isthmus(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > ISTHMUS_G2_MSM_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
-                "G2MSM input length too long for OP Stack input size limitation".into(),
+                "G2MSM input length too long for Base input size limitation".into(),
             ));
         }
         precompile::bls12_381::g2_msm::g2_msm(input, gas_limit)
     }
 
-    /// Run the g2 msm precompile with Optimism input limit after the Jovian Hardfork.
+    /// Run the g2 msm precompile with Base input limit after the Jovian Hardfork.
     pub fn run_g2_msm_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > JOVIAN_G2_MSM_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
-                "G2MSM input length too long for OP Stack input size limitation after the Jovian Hardfork".into(),
+                "G2MSM input length too long for Base input size limitation after the Jovian Hardfork".into(),
             ));
         }
         precompile::bls12_381::g2_msm::g2_msm(input, gas_limit)
     }
 
-    /// Run the pairing precompile with Optimism input limit.
+    /// Run the pairing precompile with Base input limit.
     pub fn run_pair_isthmus(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > ISTHMUS_PAIRING_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
-                "Pairing input length too long for OP Stack input size limitation".into(),
+                "Pairing input length too long for Base input size limitation".into(),
             ));
         }
         precompile::bls12_381::pairing::pairing(input, gas_limit)
     }
 
-    /// Run the pairing precompile with Optimism input limit after the Jovian Hardfork.
+    /// Run the pairing precompile with Base input limit after the Jovian Hardfork.
     pub fn run_pair_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > JOVIAN_PAIRING_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
-                "Pairing input length too long for OP Stack input size limitation after the Jovian Hardfork".into(),
+                "Pairing input length too long for Base input size limitation after the Jovian Hardfork".into(),
             ));
         }
         precompile::bls12_381::pairing::pairing(input, gas_limit)
