@@ -1,7 +1,16 @@
 /// Enclave runtime: vsock listener, server, crypto, NSM, and attestation.
-use std::io::{Read, Write};
-
 use alloy_primitives::{Address, B256};
+#[cfg(target_os = "linux")]
+use std::time::Duration;
+
+#[cfg(target_os = "linux")]
+use base_proof_primitives::{ProofBundle, ProofResult};
+#[cfg(target_os = "linux")]
+use base_proof_transport::Frame;
+#[cfg(target_os = "linux")]
+use tracing::{debug, info};
+#[cfg(target_os = "linux")]
+use vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener};
 
 mod attestation;
 pub use attestation::{
@@ -32,61 +41,37 @@ pub struct EnclaveConfig {
     pub tee_image_hash: B256,
 }
 
-// ---------------------------------------------------------------------------
-// Frame helpers (same format as base-proof-transport/src/vsock.rs)
-// ---------------------------------------------------------------------------
-
-fn write_frame<T: serde::Serialize>(writer: &mut impl Write, value: &T) -> eyre::Result<()> {
-    let payload = bincode::serde::encode_to_vec(value, bincode::config::standard())?;
-
-    let len = u32::try_from(payload.len()).map_err(|_| eyre::eyre!("payload exceeds u32::MAX"))?;
-
-    writer.write_all(&len.to_be_bytes())?;
-    writer.write_all(&payload)?;
-    writer.flush()?;
-    Ok(())
-}
-
-fn read_frame<T: serde::de::DeserializeOwned>(reader: &mut impl Read) -> eyre::Result<T> {
-    let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf)?;
-    let len = u32::from_be_bytes(len_buf) as usize;
-
-    let mut payload = vec![0u8; len];
-    reader.read_exact(&mut payload)?;
-
-    let (value, _) = bincode::serde::decode_from_slice(&payload, bincode::config::standard())?;
-    Ok(value)
-}
-
-// ---------------------------------------------------------------------------
-// Vsock listener (Linux only)
-// ---------------------------------------------------------------------------
-
-/// Run the enclave process: listen on vsock, prove blocks, return results.
+/// Nitro Enclave runtime.
 #[cfg(target_os = "linux")]
-pub async fn run(config: EnclaveConfig) -> eyre::Result<()> {
-    use std::time::Duration;
+pub struct NitroEnclave {
+    server: Server,
+    vsock_port: u32,
+}
 
-    use base_proof_primitives::{ProofBundle, ProofResult};
-    use tracing::{debug, info};
-    use vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener};
+#[cfg(target_os = "linux")]
+impl NitroEnclave {
+    /// Create a new enclave runtime from the given configuration.
+    pub fn new(config: &EnclaveConfig) -> eyre::Result<Self> {
+        let server = Server::new(config)?;
+        info!(address = %server.signer_address(), "enclave initialized");
+        Ok(Self { server, vsock_port: config.vsock_port })
+    }
 
-    const READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+    /// Listen on vsock, prove blocks, return results.
+    pub async fn run(self) -> eyre::Result<()> {
+        const READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-    let server = Server::new(&config)?;
-    info!(address = %server.signer_address(), "enclave initialized");
+        let listener = VsockListener::bind(&VsockAddr::new(VMADDR_CID_ANY, self.vsock_port))?;
+        info!(port = self.vsock_port, "listening on vsock");
 
-    let listener = VsockListener::bind(&VsockAddr::new(VMADDR_CID_ANY, config.vsock_port))?;
-    info!(port = config.vsock_port, "listening on vsock");
+        loop {
+            let (mut stream, peer) = listener.accept()?;
+            debug!(cid = peer.cid(), port = peer.port(), "accepted connection");
 
-    loop {
-        let (mut stream, peer) = listener.accept()?;
-        debug!(cid = peer.cid(), port = peer.port(), "accepted connection");
-
-        stream.set_read_timeout(Some(READ_TIMEOUT))?;
-        let bundle: ProofBundle = read_frame(&mut stream)?;
-        let result: ProofResult = server.prove(bundle).await?;
-        write_frame(&mut stream, &result)?;
+            stream.set_read_timeout(Some(READ_TIMEOUT))?;
+            let bundle: ProofBundle = Frame::read(&mut stream)?;
+            let result: ProofResult = self.server.prove(bundle).await?;
+            Frame::write(&mut stream, &result)?;
+        }
     }
 }

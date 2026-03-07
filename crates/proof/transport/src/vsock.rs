@@ -1,13 +1,10 @@
-use std::{
-    io::{Read, Write},
-    time::Duration,
-};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use base_proof_primitives::{ProofBundle, ProofResult};
 use vsock::{VsockAddr, VsockStream};
 
-use crate::{ProofTransport, TransportError, TransportResult};
+use crate::{Frame, ProofTransport, TransportError, TransportResult};
 
 const PROVE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
@@ -30,33 +27,6 @@ impl VsockTransport {
     }
 }
 
-fn write_frame<T: serde::Serialize>(writer: &mut impl Write, value: &T) -> TransportResult<()> {
-    let payload = bincode::serde::encode_to_vec(value, bincode::config::standard())
-        .map_err(|e| TransportError::Codec(e.to_string()))?;
-
-    let len = u32::try_from(payload.len())
-        .map_err(|_| TransportError::Codec("payload exceeds u32::MAX".into()))?;
-
-    writer.write_all(&len.to_be_bytes())?;
-    writer.write_all(&payload)?;
-    writer.flush()?;
-    Ok(())
-}
-
-fn read_frame<T: serde::de::DeserializeOwned>(reader: &mut impl Read) -> TransportResult<T> {
-    let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf)?;
-    let len = u32::from_be_bytes(len_buf) as usize;
-
-    let mut payload = vec![0u8; len];
-    reader.read_exact(&mut payload)?;
-
-    let (value, _) = bincode::serde::decode_from_slice(&payload, bincode::config::standard())
-        .map_err(|e| TransportError::Codec(e.to_string()))?;
-
-    Ok(value)
-}
-
 #[async_trait]
 impl ProofTransport for VsockTransport {
     async fn prove(&self, bundle: &ProofBundle) -> TransportResult<ProofResult> {
@@ -66,8 +36,8 @@ impl ProofTransport for VsockTransport {
             let mut stream = VsockStream::connect(&addr)?;
             stream.set_read_timeout(Some(PROVE_TIMEOUT - Duration::from_secs(5)))?;
             stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-            write_frame(&mut stream, &bundle)?;
-            read_frame(&mut stream)
+            Frame::write(&mut stream, &bundle)?;
+            Frame::read(&mut stream)
         });
         tokio::time::timeout(PROVE_TIMEOUT, task).await.map_err(|_| {
             TransportError::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, "prove timed out"))
