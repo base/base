@@ -24,13 +24,13 @@ impl ProofEncoder {
     ///
     /// # Errors
     ///
-    /// Returns an error if the signature is too short or has an invalid v-value.
+    /// Returns an error if the signature is not exactly 65 bytes or has an invalid v-value.
     pub fn encode_proof_bytes(
         signature: &Bytes,
         l1_origin_hash: B256,
         l1_origin_number: u64,
     ) -> Result<Bytes, CryptoError> {
-        if signature.len() < ECDSA_SIGNATURE_LENGTH {
+        if signature.len() != ECDSA_SIGNATURE_LENGTH {
             return Err(CryptoError::InvalidSignatureLength(signature.len()));
         }
 
@@ -141,6 +141,14 @@ mod tests {
     #[test]
     fn test_encode_proof_bytes_short_signature() {
         let sig = Bytes::from(vec![0u8; 32]);
+        let result = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("invalid signature length"));
+    }
+
+    #[test]
+    fn test_encode_proof_bytes_oversized_signature() {
+        let sig = Bytes::from(vec![0u8; 70]);
         let result = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, 0);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("invalid signature length"));
