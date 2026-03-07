@@ -435,8 +435,14 @@ impl Server {
         // corresponding block boundary, preventing a compromised proposer from
         // submitting fake intermediate checkpoints.
         if !intermediate_roots.is_empty() && proposals.len() > 1 {
-            let total_blocks =
-                proposals.last().unwrap().l2_block_number.to::<u64>() - prev_block_number;
+            let last_block = proposals.last().unwrap().l2_block_number.to::<u64>();
+            if last_block < prev_block_number {
+                return Err(ProposalError::ExecutionFailed(
+                    "last proposal block number is less than prev_block_number".to_string(),
+                )
+                .into());
+            }
+            let total_blocks = last_block - prev_block_number;
             if !total_blocks.is_multiple_of(intermediate_roots.len() as u64) {
                 return Err(ProposalError::ExecutionFailed(format!(
                     "block range ({total_blocks}) not divisible by intermediate root count ({})",
@@ -1019,6 +1025,51 @@ mod tests {
         assert!(
             matches!(&result, Err(ServerError::Proposal(ProposalError::ExecutionFailed(_)))),
             "Expected ExecutionFailed error for single proposal with intermediate roots, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_aggregate_rejects_inconsistent_prev_block_number() {
+        let server = Server::new_for_testing().expect("failed to create server");
+
+        let proposer = Address::ZERO;
+        let tee_image_hash = B256::ZERO;
+        let config_hash = B256::repeat_byte(0x11);
+        let l1_origin_hash = B256::repeat_byte(0x22);
+        let l1_origin_number = U256::from(100);
+        let prev_output_root = B256::repeat_byte(0x33);
+        let output_root = B256::repeat_byte(0x44);
+
+        // Create a single proposal at block 100.
+        let proposal = make_proposal(
+            &server,
+            proposer,
+            tee_image_hash,
+            config_hash,
+            l1_origin_hash,
+            l1_origin_number,
+            prev_output_root,
+            99,
+            output_root,
+            100,
+        );
+
+        // Use a prev_block_number that is *after* the proposal's block number, which
+        // should now be rejected with a typed error instead of panicking on underflow.
+        let bad_prev_block_number = 101u64;
+        let result = server.aggregate(
+            config_hash,
+            prev_output_root,
+            bad_prev_block_number,
+            &[proposal],
+            proposer,
+            tee_image_hash,
+            &[output_root],
+        );
+
+        assert!(
+            matches!(&result, Err(ServerError::Proposal(ProposalError::ExecutionFailed(msg))) if msg.contains("last proposal block number is less than prev_block_number")),
+            "Expected ExecutionFailed error for inconsistent prev_block_number, got: {result:?}"
         );
     }
 }
