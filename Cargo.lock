@@ -3174,6 +3174,7 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "base-enclave",
+ "base-proof-primitives",
  "jsonrpsee",
  "rustls 0.23.37",
  "rustls-pki-types",

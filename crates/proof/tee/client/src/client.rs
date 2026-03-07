@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use alloy_primitives::Bytes;
 use base_enclave::{AggregateRequest, ExecuteStatelessRequest, Proposal};
+use base_proof_primitives::{ProofRequest, ProofResult};
 use jsonrpsee::{
     core::client::ClientT,
     http_client::{HttpClient, HttpClientBuilder},
@@ -235,5 +236,21 @@ impl EnclaveClient {
     /// Returns an error if the RPC call fails or signature verification fails.
     pub async fn aggregate(&self, request: AggregateRequest) -> Result<Proposal, ClientError> {
         self.inner.request("enclave_aggregate", rpc_params![request]).await.map_err(Into::into)
+    }
+
+    /// Send a proof request to the TEE server and receive a complete proof result.
+    ///
+    /// Unlike [`execute_stateless`](Self::execute_stateless) and
+    /// [`aggregate`](Self::aggregate), which require the caller to orchestrate individual block
+    /// executions and aggregation, this method delegates all orchestration to the TEE server.
+    /// The server handles generating per-block proposals, aggregating them, and returning a
+    /// complete [`ProofResult`] containing the [`ProofClaim`](base_proof_primitives::ProofClaim)
+    /// and [`ProofEvidence`](base_proof_primitives::ProofEvidence).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the RPC call fails.
+    pub async fn prove(&self, request: &ProofRequest) -> Result<ProofResult, ClientError> {
+        self.inner.request("enclave_prove", rpc_params![request]).await.map_err(Into::into)
     }
 }
