@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 # General
 async-trait.workspace = true
+thiserror.workspace = true
 alloy-primitives = { workspace = true }
 base-proof-preimage = { workspace = true }
 serde = { workspace = true, optional = true, features = ["derive"] }

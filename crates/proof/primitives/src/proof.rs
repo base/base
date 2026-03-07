@@ -1,5 +1,4 @@
 use alloc::vec::Vec;
-use core::fmt;
 
 use alloy_primitives::B256;
 use base_proof_preimage::PreimageKey;
@@ -37,46 +36,36 @@ pub struct ProofClaim {
 }
 
 /// Errors returned by [`ProofClaim::validate`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProofClaimError {
     /// The `proposals` vector is empty.
+    #[error("proposals vector is empty")]
     EmptyProposals,
     /// The `proposals` vector exceeds [`MAX_PROPOSALS`].
+    #[error("too many proposals: {count} exceeds maximum {MAX_PROPOSALS}")]
     TooManyProposals {
         /// The number of proposals present.
         count: usize,
     },
-    /// A proposal has an invalid signature length.
-    InvalidSignatureLength {
-        /// Index of the offending proposal, or `None` for the aggregate.
-        index: Option<usize>,
+    /// The aggregate proposal has an invalid signature length.
+    #[error(
+        "aggregate proposal has invalid signature length: expected {ECDSA_SIGNATURE_LENGTH}, got {length}"
+    )]
+    InvalidAggregateSignatureLength {
+        /// The actual signature length.
+        length: usize,
+    },
+    /// A per-block proposal has an invalid signature length.
+    #[error(
+        "proposal[{index}] has invalid signature length: expected {ECDSA_SIGNATURE_LENGTH}, got {length}"
+    )]
+    InvalidProposalSignatureLength {
+        /// Index of the offending proposal.
+        index: usize,
         /// The actual signature length.
         length: usize,
     },
 }
-
-impl fmt::Display for ProofClaimError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptyProposals => write!(f, "proposals vector is empty"),
-            Self::TooManyProposals { count } => {
-                write!(f, "too many proposals: {count} exceeds maximum {MAX_PROPOSALS}")
-            }
-            Self::InvalidSignatureLength { index, length } => match index {
-                Some(i) => write!(
-                    f,
-                    "proposal[{i}] has invalid signature length: expected {ECDSA_SIGNATURE_LENGTH}, got {length}"
-                ),
-                None => write!(
-                    f,
-                    "aggregate proposal has invalid signature length: expected {ECDSA_SIGNATURE_LENGTH}, got {length}"
-                ),
-            },
-        }
-    }
-}
-
-impl core::error::Error for ProofClaimError {}
 
 impl ProofClaim {
     /// Validates basic structural invariants of this claim.
@@ -99,16 +88,15 @@ impl ProofClaim {
         }
 
         if self.aggregate_proposal.signature.len() != ECDSA_SIGNATURE_LENGTH {
-            return Err(ProofClaimError::InvalidSignatureLength {
-                index: None,
+            return Err(ProofClaimError::InvalidAggregateSignatureLength {
                 length: self.aggregate_proposal.signature.len(),
             });
         }
 
         for (i, proposal) in self.proposals.iter().enumerate() {
             if proposal.signature.len() != ECDSA_SIGNATURE_LENGTH {
-                return Err(ProofClaimError::InvalidSignatureLength {
-                    index: Some(i),
+                return Err(ProofClaimError::InvalidProposalSignatureLength {
+                    index: i,
                     length: proposal.signature.len(),
                 });
             }
@@ -250,7 +238,7 @@ mod tests {
         claim.aggregate_proposal.signature = Bytes::from(vec![0xab; 64]);
         assert_eq!(
             claim.validate(),
-            Err(ProofClaimError::InvalidSignatureLength { index: None, length: 64 })
+            Err(ProofClaimError::InvalidAggregateSignatureLength { length: 64 })
         );
     }
 
@@ -260,7 +248,7 @@ mod tests {
         claim.aggregate_proposal.signature = Bytes::from(vec![0xab; 66]);
         assert_eq!(
             claim.validate(),
-            Err(ProofClaimError::InvalidSignatureLength { index: None, length: 66 })
+            Err(ProofClaimError::InvalidAggregateSignatureLength { length: 66 })
         );
     }
 
@@ -274,7 +262,7 @@ mod tests {
         };
         assert_eq!(
             claim.validate(),
-            Err(ProofClaimError::InvalidSignatureLength { index: Some(1), length: 0 })
+            Err(ProofClaimError::InvalidProposalSignatureLength { index: 1, length: 0 })
         );
     }
 
@@ -288,12 +276,12 @@ mod tests {
         );
 
         assert_eq!(
-            ProofClaimError::InvalidSignatureLength { index: None, length: 64 }.to_string(),
+            ProofClaimError::InvalidAggregateSignatureLength { length: 64 }.to_string(),
             "aggregate proposal has invalid signature length: expected 65, got 64"
         );
 
         assert_eq!(
-            ProofClaimError::InvalidSignatureLength { index: Some(3), length: 0 }.to_string(),
+            ProofClaimError::InvalidProposalSignatureLength { index: 3, length: 0 }.to_string(),
             "proposal[3] has invalid signature length: expected 65, got 0"
         );
     }
