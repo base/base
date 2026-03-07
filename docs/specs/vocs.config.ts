@@ -134,13 +134,24 @@ function sectionItemWithoutDirs(
 
 const hiddenProtocolFiles = ['access-lists.md']
 
-const protocolTodoExcludedDirs = ['consensus', 'execution', 'fault-proof']
+const protocolTodoExcludedDirs = ['bridging', 'consensus', 'execution', 'fault-proof']
 
 const protocolTodoExcludedFiles = [
   ...hiddenProtocolFiles,
   'overview.md',
   'batcher.md',
 ]
+
+const bridgingSection: SidebarItem = {
+  text: 'Bridging',
+  items: [
+    { text: 'Deposits', link: '/protocol/bridging/deposits' },
+    { text: 'Withdrawals', link: '/protocol/bridging/withdrawals' },
+    { text: 'Standard Bridges', link: '/protocol/bridging/bridges' },
+    { text: 'Cross Domain Messengers', link: '/protocol/bridging/messengers' },
+  ],
+  collapsed: true,
+}
 
 const consensusSection: SidebarItem = {
   text: 'Consensus',
@@ -173,6 +184,7 @@ const sidebar: SidebarItem[] = [
       { text: 'Overview', link: '/protocol/overview' },
       consensusSection,
       executionSection,
+      bridgingSection,
       { text: 'Batcher', link: '/protocol/batcher' },
       { ...sectionItem('protocol/fault-proof', 'Fault Proof'), collapsed: true },
     ],

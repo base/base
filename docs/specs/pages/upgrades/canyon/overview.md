@@ -17,7 +17,7 @@
 [payload-attributes]: ../../protocol/consensus/derivation.md#building-individual-payload-attributes
 [1559-params]: ../../protocol/execution/index.md#1559-parameters
 [channel-reading]: ../../protocol/consensus/derivation.md#reading
-[deposit-reading]: ../../protocol/deposits.md#deposit-receipt
+[deposit-reading]: ../../protocol/bridging/deposits.md#deposit-receipt
 [create2deployer]: ../../protocol/execution/evm/predeploys.md#create2deployer
 
 The Canyon upgrade contains the Shapella upgrade from L1 and some minor protocol fixes.
