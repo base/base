@@ -1,9 +1,15 @@
-//! Websocket proxy binary entry point.
+#![doc = include_str!("../README.md")]
 
-use std::{io::Write, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    io::Write,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use axum::{extract::ws::Message, http::Uri};
 use base_cli_utils::LogConfig;
+use bytes::Bytes;
 use clap::Parser;
 use dotenvy::dotenv;
 use metrics_exporter_prometheus::PrometheusBuilder;
@@ -15,8 +21,8 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace, warn};
 use websocket_proxy::{
-    Authentication, InMemoryRateLimit, Metrics, RateLimit, Registry, Server, SubscriberOptions,
-    WebsocketSubscriber,
+    Authentication, FlashblocksRingBuffer, InMemoryRateLimit, Metrics, PositionedMessage,
+    RateLimit, Registry, Server, SubscriberOptions, WebsocketSubscriber,
 };
 
 base_cli_utils::define_log_args!("WEBSOCKET_PROXY");
@@ -148,6 +154,14 @@ struct Args {
         help = "Timeout in milliseconds for sending messages to clients"
     )]
     client_send_timeout_ms: u64,
+
+    #[arg(
+        long,
+        env,
+        default_value = "16",
+        help = "Number of flashblocks to retain in the replay ring buffer (~1.5 blocks)"
+    )]
+    ring_buffer_capacity: usize,
 }
 
 #[tokio::main]
@@ -200,34 +214,45 @@ async fn main() {
     let metrics = Arc::new(Metrics::default());
     let metrics_clone = Arc::clone(&metrics);
 
-    let (send, _rec) = broadcast::channel(args.message_buffer_size);
+    let ring_buffer = Arc::new(RwLock::new(FlashblocksRingBuffer::new(args.ring_buffer_capacity)));
+
+    let (send, _rec) = broadcast::channel::<PositionedMessage>(args.message_buffer_size);
     let sender = send.clone();
 
-    let listener = move |data: String| {
+    let ring_buffer_listener = Arc::clone(&ring_buffer);
+    let listener = move |data: String, pos: Option<(u64, u64)>| {
         trace!(message = "received data", data = data);
         // Subtract one from receiver count, as we have to keep one receiver open at all times (see _rec)
         // to avoid the channel being closed. However this is not an active client connection.
         metrics_clone.active_connections.set((send.receiver_count() - 1) as f64);
 
-        let message_data = if args.enable_compression {
-            let data_bytes = data.as_bytes();
+        // Build outgoing bytes once as refcounted `Bytes` so that cloning
+        // for the broadcast channel and ring buffer is O(1).
+        // `pos` was already parsed by the subscriber; pass it directly to
+        // avoid a second parse.
+        let message_data: Bytes = if args.enable_compression {
             let mut compressed_data_bytes = Vec::new();
             {
                 let mut compressor =
                     brotli::CompressorWriter::new(&mut compressed_data_bytes, 4096, 5, 22);
-                compressor.write_all(data_bytes).unwrap();
+                compressor.write_all(data.as_bytes()).unwrap();
             }
-            compressed_data_bytes
+            compressed_data_bytes.into()
         } else {
-            data.into_bytes()
+            Bytes::from(data.into_bytes())
         };
 
-        match send.send(message_data.into()) {
+        // Broadcast first so that live subscribers never miss a message that
+        // exists in the ring buffer. The ring buffer is then populated for
+        // reconnecting clients.
+        match send.send((pos, Message::Binary(message_data.clone()))) {
             Ok(_) => {
                 metrics_clone.broadcast_queue_size.set(send.len() as f64);
             }
             Err(e) => error!(message = "failed to send data", error = e.to_string()),
         }
+
+        ring_buffer_listener.write().unwrap_or_else(|e| e.into_inner()).push(pos, message_data);
     };
 
     let token = CancellationToken::new();
@@ -271,7 +296,7 @@ async fn main() {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        match ping_sender.send(Message::Ping(vec![].into())) {
+                        match ping_sender.send((None, Message::Ping(vec![].into()))) {
                             Ok(_) => {
                                 trace!(message = "sent ping to all clients");
                                 ping_metrics.broadcast_queue_size.set(ping_sender.len() as f64);
@@ -297,6 +322,7 @@ async fn main() {
         args.client_ping_enabled,
         args.client_pong_timeout_ms,
         Duration::from_millis(args.client_send_timeout_ms),
+        ring_buffer,
     );
 
     let rate_limiter: Arc<dyn RateLimit> = Arc::new(InMemoryRateLimit::new(

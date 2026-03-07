@@ -12,6 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+base-ring-buffer.workspace = true
 serde.workspace = true
 futures.workspace = true
 metrics.workspace = true

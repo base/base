@@ -32,6 +32,7 @@ members = [
   "crates/proof/rpc",
   "crates/proof/proposer",
   "crates/proof/challenge",
+  "crates/shared/ring-buffer",
   "crates/utilities/*",
   "crates/builder/*",
   "crates/infra/*",
@@ -140,6 +141,9 @@ debug = false
 incremental = false
 
 [workspace.dependencies]
+# Shared
+base-ring-buffer = { path = "crates/shared/ring-buffer" }
+
 # Base Primitives
 base-alloy-evm = { path = "crates/alloy/evm", default-features = false }
 base-bundles = { path = "crates/alloy/bundles" }
