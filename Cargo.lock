@@ -2300,6 +2300,7 @@ dependencies = [
  "reth-primitives-traits",
  "reth-zstd-compressors",
  "revm",
+ "rstest",
  "serde",
  "serde_json",
  "serde_with",
