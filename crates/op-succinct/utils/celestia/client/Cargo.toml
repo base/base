@@ -1,8 +1,12 @@
 [package]
 name = "op-succinct-celestia-client-utils"
 version.workspace = true
-license.workspace = true
+
 edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 # local
@@ -24,3 +28,6 @@ hana-oracle.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 spin.workspace = true
+
+[lints]
+workspace = true

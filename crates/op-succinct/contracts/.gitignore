@@ -15,3 +15,9 @@ docs/
 
 # Foundry
 foundry.lock
+
+# lib (replaced by soldeer)
+lib/**
+
+# Soldeer
+/dependencies

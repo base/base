@@ -1,1 +1,0 @@
-# OP Succinct (Validity)

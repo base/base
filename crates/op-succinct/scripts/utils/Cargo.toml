@@ -3,9 +3,9 @@ name = "op-succinct-scripts"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-authors.workspace = true
-repository.workspace = true
+
 homepage.workspace = true
+repository.workspace = true
 
 [lib]
 name = "op_succinct_scripts"
@@ -89,3 +89,6 @@ default = ["ethereum"]
 eigenda = ["op-succinct-proof-utils/eigenda"]
 celestia = ["op-succinct-proof-utils/celestia"]
 ethereum = ["op-succinct-proof-utils/ethereum"]
+
+[lints]
+workspace = true

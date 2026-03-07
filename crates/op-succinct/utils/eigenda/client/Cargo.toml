@@ -1,8 +1,12 @@
 [package]
 name = "op-succinct-eigenda-client-utils"
-version = "0.1.0"
-license.workspace = true
+version.workspace = true
+
 edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 # local
@@ -26,3 +30,6 @@ anyhow.workspace = true
 async-trait.workspace = true
 serde_cbor.workspace = true
 spin.workspace = true
+
+[lints]
+workspace = true

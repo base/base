@@ -1,11 +1,12 @@
 [package]
 name = "op-succinct-bindings"
 version.workspace = true
+
 edition.workspace = true
 license.workspace = true
-authors.workspace = true
-repository.workspace = true
 homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 alloy = { workspace = true }
@@ -14,3 +15,6 @@ alloy-sol-types = { workspace = true }
 [build-dependencies]
 anyhow = { workspace = true }
 cargo_metadata = { workspace = true }
+
+[lints]
+workspace = true

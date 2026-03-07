@@ -1,8 +1,12 @@
 [package]
 name = "op-succinct-host-utils"
 version.workspace = true
-license.workspace = true
+
 edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [features]
 default = ["ansi"]
@@ -80,3 +84,6 @@ opentelemetry_sdk.workspace = true
 opentelemetry-stdout.workspace = true
 opentelemetry-otlp.workspace = true
 opentelemetry-appender-tracing.workspace = true
+
+[lints]
+workspace = true

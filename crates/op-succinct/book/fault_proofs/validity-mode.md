@@ -1,1 +1,0 @@
-# Running OP Succinct Lite
