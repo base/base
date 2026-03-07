@@ -1,7 +1,7 @@
 verbose = "debug"
 no_progress = false
 exclude_all_private = false
-accept = [200, 403] # 403 status code is often returned by private repos instead of 404
+accept = [200, 403, 429] # 403 is often returned by private repos instead of 404; 429 is rate limiting
 exclude_path = [
     "crates/utilities/test-utils/contracts/",
     "package-lock\\.json",
