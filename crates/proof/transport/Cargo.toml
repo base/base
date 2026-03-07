@@ -32,10 +32,13 @@ tokio = { workspace = true, features = ["full"] }
 
 [features]
 test-utils = []
-vsock = [
+frame = [
 	"base-proof-primitives/serde",
 	"dep:bincode",
 	"dep:serde",
+]
+vsock = [
+	"frame",
 	"dep:vsock",
 	"tokio/rt",
 	"tokio/time",
