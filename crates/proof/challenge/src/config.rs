@@ -2,7 +2,7 @@
 
 use std::{fmt, net::SocketAddr, ops::Deref, time::Duration};
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use alloy_signer::k256::ecdsa::SigningKey;
 use alloy_signer_local::PrivateKeySigner;
 use base_cli_utils::{LogConfig, MetricsConfig};
@@ -137,9 +137,6 @@ pub struct ChallengerConfig {
     /// TEE enclave endpoint for nullification proof generation.
     /// When `None`, TEE proof generation is disabled (falls back to ZK).
     pub tee_endpoint: Option<Validated<Url>>,
-    /// Keccak256 hash of the TEE image PCR0.
-    /// Required when `tee_endpoint` is set.
-    pub tee_image_hash: Option<B256>,
     /// Number of past games to scan on startup.
     pub lookback_games: u64,
     /// Health server socket address.
@@ -212,14 +209,6 @@ impl ChallengerConfig {
         let tee_endpoint =
             cli.challenger.tee_endpoint.map(|url| validate(url, "tee-endpoint")).transpose()?;
 
-        // Validate tee_image_hash is provided when tee_endpoint is set
-        let tee_image_hash = cli.challenger.tee_image_hash;
-        if tee_endpoint.is_some() && tee_image_hash.is_none() {
-            return Err(ConfigError::Tee(
-                "--tee-image-hash is required when --tee-endpoint is set".to_string(),
-            ));
-        }
-
         // Validate and extract signing config
         let signing = build_signing_config(
             private_key.as_deref().map(String::as_str),
@@ -239,7 +228,6 @@ impl ChallengerConfig {
             zk_proof_service_endpoint,
             signing,
             tee_endpoint,
-            tee_image_hash,
             lookback_games: cli.challenger.lookback_games,
             health_addr,
             log: LogConfig::from(cli.logging),
@@ -507,7 +495,6 @@ mod tests {
         ]);
         let config = ChallengerConfig::from_cli(cli, None).unwrap();
         assert!(config.tee_endpoint.is_some());
-        assert!(config.tee_image_hash.is_some());
     }
 
     #[test]

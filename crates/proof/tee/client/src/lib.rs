@@ -8,9 +8,8 @@ mod client;
 pub use client::{EnclaveClient, EnclaveProvider};
 
 mod client_error;
-pub use client_error::ClientError;
-
 pub use base_enclave::{AggregateRequest, ExecuteStatelessRequest, Proposal};
 pub use base_proof_primitives::{
     ProofBundle, ProofClaim, ProofEvidence, ProofRequest, ProofResult,
 };
+pub use client_error::ClientError;
