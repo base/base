@@ -1,8 +1,4 @@
-//! Attestation document verification.
-//!
-//! This module provides verification of AWS Nitro Enclave attestation documents,
-//! similar to the `nitrite` Go library.
-
+/// Attestation document verification for AWS Nitro Enclaves.
 use std::{collections::BTreeMap, time::SystemTime};
 
 use aws_nitro_enclaves_cose::CoseSign1;
@@ -15,8 +11,8 @@ use serde::Deserialize;
 use x509_cert::{Certificate, der::Decode};
 
 use crate::{
-    attestation::ca_roots::get_default_ca_root,
-    error::{AttestationError, ServerError},
+    enclave::attestation::ca_roots::get_default_ca_root,
+    error::{AttestationError, NitroError},
 };
 
 /// An attestation document from a Nitro Enclave.
@@ -77,13 +73,10 @@ impl VerifyOptions {
 }
 
 /// Verify that a certificate is valid at the given time.
-///
-/// Checks that the current time is between notBefore and notAfter.
-fn check_certificate_validity(cert: &X509, check_time: &Asn1Time) -> Result<(), ServerError> {
+fn check_certificate_validity(cert: &X509, check_time: &Asn1Time) -> Result<(), NitroError> {
     let not_before = cert.not_before();
     let not_after = cert.not_after();
 
-    // Check if certificate is not yet valid
     if check_time < not_before {
         return Err(AttestationError::CertificateNotYetValid {
             not_before: not_before.to_string(),
@@ -91,7 +84,6 @@ fn check_certificate_validity(cert: &X509, check_time: &Asn1Time) -> Result<(), 
         .into());
     }
 
-    // Check if certificate has expired
     if check_time > not_after {
         return Err(
             AttestationError::CertificateExpired { not_after: not_after.to_string() }.into()
@@ -102,16 +94,12 @@ fn check_certificate_validity(cert: &X509, check_time: &Asn1Time) -> Result<(), 
 }
 
 /// Verify the certificate chain against the AWS CA root.
-///
-/// This builds an X509 store with the CA root and intermediates,
-/// then verifies the leaf certificate chains to the root.
 fn verify_certificate_chain(
     leaf_cert: &X509,
     intermediates: &[X509],
     ca_root: &X509,
     check_time: Option<&Asn1Time>,
-) -> Result<(), ServerError> {
-    // Build the X509 store with the CA root
+) -> Result<(), NitroError> {
     let mut store_builder = X509StoreBuilder::new()
         .map_err(|e| AttestationError::X509StoreError(format!("failed to create store: {e}")))?;
 
@@ -119,13 +107,11 @@ fn verify_certificate_chain(
         .add_cert(ca_root.clone())
         .map_err(|e| AttestationError::X509StoreError(format!("failed to add CA root: {e}")))?;
 
-    // Note: OpenSSL X509StoreBuilder doesn't support setting verification time directly.
     // Certificate validity is checked separately in check_certificate_validity().
-    let _ = check_time; // Suppress unused warning
+    let _ = check_time;
 
     let store = store_builder.build();
 
-    // Build the intermediate certificate chain
     let mut chain = Stack::new()
         .map_err(|e| AttestationError::X509StoreError(format!("failed to create stack: {e}")))?;
 
@@ -135,7 +121,6 @@ fn verify_certificate_chain(
         })?;
     }
 
-    // Create a store context and verify the chain
     let mut store_ctx = X509StoreContext::new()
         .map_err(|e| AttestationError::X509StoreError(format!("failed to create context: {e}")))?;
 
@@ -154,50 +139,40 @@ fn verify_certificate_chain(
 
 /// Verify an attestation document.
 ///
-/// This verifies the COSE signature and certificate chain against the AWS CA roots.
-/// Uses the current system time for certificate validity checking.
-pub fn verify_attestation(attestation_bytes: &[u8]) -> Result<VerificationResult, ServerError> {
+/// Verifies the COSE signature and certificate chain against the AWS CA roots.
+pub fn verify_attestation(
+    attestation_bytes: &[u8],
+) -> Result<VerificationResult, NitroError> {
     verify_attestation_with_options(attestation_bytes, &VerifyOptions::default())
 }
 
 /// Verify an attestation document with custom options.
-///
-/// This verifies the COSE signature and certificate chain against the AWS CA roots.
-/// The `options` parameter allows specifying a custom time for certificate validity checking,
-/// which is useful for testing with recorded attestation documents.
 pub fn verify_attestation_with_options(
     attestation_bytes: &[u8],
     options: &VerifyOptions,
-) -> Result<VerificationResult, ServerError> {
-    // Parse the COSE_Sign1 structure
+) -> Result<VerificationResult, NitroError> {
     let cose_sign1 = CoseSign1::from_bytes(attestation_bytes)
         .map_err(|e| AttestationError::CoseVerify(format!("failed to parse COSE: {e:?}")))?;
 
-    // Get the payload (the attestation document)
     let payload = cose_sign1
         .get_payload::<aws_nitro_enclaves_cose::crypto::Openssl>(None)
         .map_err(|e| AttestationError::CoseVerify(format!("failed to get COSE payload: {e:?}")))?;
 
-    // Parse the CBOR attestation document
     let document: AttestationDocument = ciborium::from_reader(&payload[..])
         .map_err(|e| AttestationError::CborParse(e.to_string()))?;
 
-    // Parse the certificate chain using x509-cert for the result
     let mut certificate_chain = Vec::new();
 
-    // First, parse the leaf certificate using x509-cert
     let leaf_cert = Certificate::from_der(&document.certificate)
         .map_err(|e| AttestationError::CertificateChain(format!("invalid leaf cert: {e}")))?;
     certificate_chain.push(leaf_cert);
 
-    // Parse intermediate certificates from cabundle
     for cert_der in &document.cabundle {
         let cert = Certificate::from_der(cert_der)
             .map_err(|e| AttestationError::CertificateChain(format!("invalid ca cert: {e}")))?;
         certificate_chain.push(cert);
     }
 
-    // Parse certificates using OpenSSL for verification
     let openssl_leaf = X509::from_der(&document.certificate)
         .map_err(|e| AttestationError::CertificateChain(format!("openssl parse error: {e}")))?;
 
@@ -209,20 +184,16 @@ pub fn verify_attestation_with_options(
         openssl_intermediates.push(cert);
     }
 
-    // Get the public key from the certificate
     let public_key = openssl_leaf
         .public_key()
         .map_err(|e| AttestationError::CertificateChain(format!("missing public key: {e}")))?;
 
-    // Verify the COSE signature
     cose_sign1.verify_signature::<aws_nitro_enclaves_cose::crypto::Openssl>(&public_key).map_err(
         |e| AttestationError::CoseVerify(format!("signature verification failed: {e:?}")),
     )?;
 
-    // Get the CA root for chain verification
     let ca_root = get_default_ca_root()?;
 
-    // Determine the time to use for validity checking
     let check_time = match options.current_time {
         Some(time) => {
             let duration = time
@@ -237,14 +208,12 @@ pub fn verify_attestation_with_options(
         })?,
     };
 
-    // Check certificate validity times
     check_certificate_validity(&openssl_leaf, &check_time)?;
     for intermediate in &openssl_intermediates {
         check_certificate_validity(intermediate, &check_time)?;
     }
     check_certificate_validity(&ca_root.openssl_cert, &check_time)?;
 
-    // Verify the certificate chain against the CA root
     verify_certificate_chain(
         &openssl_leaf,
         &openssl_intermediates,
@@ -259,7 +228,7 @@ pub fn verify_attestation_with_options(
 pub fn verify_attestation_with_pcr0(
     attestation_bytes: &[u8],
     expected_pcr0: &[u8],
-) -> Result<VerificationResult, ServerError> {
+) -> Result<VerificationResult, NitroError> {
     verify_attestation_with_pcr0_and_options(
         attestation_bytes,
         expected_pcr0,
@@ -272,10 +241,9 @@ pub fn verify_attestation_with_pcr0_and_options(
     attestation_bytes: &[u8],
     expected_pcr0: &[u8],
     options: &VerifyOptions,
-) -> Result<VerificationResult, ServerError> {
+) -> Result<VerificationResult, NitroError> {
     let result = verify_attestation_with_options(attestation_bytes, options)?;
 
-    // Check PCR0
     let pcr0 = result
         .document
         .pcrs
@@ -290,7 +258,7 @@ pub fn verify_attestation_with_pcr0_and_options(
 }
 
 /// Extract the public key from an attestation document.
-pub fn extract_public_key(document: &AttestationDocument) -> Result<Vec<u8>, ServerError> {
+pub fn extract_public_key(document: &AttestationDocument) -> Result<Vec<u8>, NitroError> {
     document
         .public_key
         .as_ref()
@@ -315,7 +283,6 @@ mod tests {
 
     use super::*;
 
-    /// Helper to create a self-signed test certificate with custom validity period
     fn create_test_cert_with_times(not_before: Asn1Time, not_after: Asn1Time) -> X509 {
         let rsa = Rsa::generate(2048).unwrap();
         let pkey = PKey::from_rsa(rsa).unwrap();
@@ -346,7 +313,6 @@ mod tests {
         builder.build()
     }
 
-    /// Create a test certificate valid from `days_ago` to `valid_for_days` from now
     fn create_valid_test_cert(days_ago: u32, valid_for_days: u32) -> X509 {
         let now_secs =
             SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64;
@@ -355,74 +321,61 @@ mod tests {
         create_test_cert_with_times(not_before, not_after)
     }
 
-    /// Create an expired test certificate
     fn create_expired_test_cert() -> X509 {
         let now_secs =
             SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64;
-        let not_before = Asn1Time::from_unix(now_secs - (20 * 86400)).unwrap(); // 20 days ago
-        let not_after = Asn1Time::from_unix(now_secs - 86400).unwrap(); // 1 day ago
+        let not_before = Asn1Time::from_unix(now_secs - (20 * 86400)).unwrap();
+        let not_after = Asn1Time::from_unix(now_secs - 86400).unwrap();
         create_test_cert_with_times(not_before, not_after)
     }
 
-    /// Create a not-yet-valid test certificate
     fn create_future_test_cert() -> X509 {
         let now_secs =
             SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64;
-        let not_before = Asn1Time::from_unix(now_secs + 86400).unwrap(); // 1 day from now
-        let not_after = Asn1Time::from_unix(now_secs + (10 * 86400)).unwrap(); // 10 days from now
+        let not_before = Asn1Time::from_unix(now_secs + 86400).unwrap();
+        let not_after = Asn1Time::from_unix(now_secs + (10 * 86400)).unwrap();
         create_test_cert_with_times(not_before, not_after)
     }
 
     #[test]
     fn test_certificate_validity_current_time() {
-        // Create a certificate valid from 10 days ago to 10 days in future
         let cert = create_valid_test_cert(10, 10);
         let now = Asn1Time::days_from_now(0).unwrap();
-
-        // Should succeed
         assert!(check_certificate_validity(&cert, &now).is_ok());
     }
 
     #[test]
     fn test_certificate_expired() {
-        // Create a certificate that expired yesterday
         let cert = create_expired_test_cert();
         let now = Asn1Time::days_from_now(0).unwrap();
 
-        // Should fail with CertificateExpired
         let result = check_certificate_validity(&cert, &now);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(err, ServerError::Attestation(AttestationError::CertificateExpired { .. })),
+            matches!(err, NitroError::Attestation(AttestationError::CertificateExpired { .. })),
             "Expected CertificateExpired, got: {err:?}"
         );
     }
 
     #[test]
     fn test_certificate_not_yet_valid() {
-        // Create a certificate that starts tomorrow
         let cert = create_future_test_cert();
         let now = Asn1Time::days_from_now(0).unwrap();
 
-        // Should fail with CertificateNotYetValid
         let result = check_certificate_validity(&cert, &now);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            matches!(
-                err,
-                ServerError::Attestation(AttestationError::CertificateNotYetValid { .. })
-            ),
+            matches!(err, NitroError::Attestation(AttestationError::CertificateNotYetValid { .. })),
             "Expected CertificateNotYetValid, got: {err:?}"
         );
     }
 
     #[test]
     fn test_verify_options_with_time() {
-        let future_time = SystemTime::now() + Duration::from_secs(86400 * 30); // 30 days in future
+        let future_time = SystemTime::now() + Duration::from_secs(86400 * 30);
         let options = VerifyOptions::new().with_time(future_time);
-
         assert!(options.current_time.is_some());
     }
 
@@ -431,8 +384,4 @@ mod tests {
         let options = VerifyOptions::default();
         assert!(options.current_time.is_none());
     }
-
-    // Note: Full attestation verification tests require actual attestation documents
-    // from a Nitro Enclave, which are not available in unit tests.
-    // Integration tests should be run in a Nitro Enclave environment.
 }

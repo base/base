@@ -1,5 +1,4 @@
-//! Error types for enclave server operations.
-
+use alloy_primitives::B256;
 use thiserror::Error;
 
 /// Errors that can occur during NSM operations.
@@ -89,21 +88,6 @@ pub enum AttestationError {
 /// Errors that can occur during cryptographic operations.
 #[derive(Debug, Clone, Error)]
 pub enum CryptoError {
-    /// Failed to generate RSA key.
-    #[error("failed to generate RSA key: {0}")]
-    RsaKeyGeneration(String),
-    /// Failed to serialize public key to PKIX format.
-    #[error("failed to serialize public key to PKIX: {0}")]
-    PkixSerialize(String),
-    /// Failed to parse PKIX public key.
-    #[error("failed to parse PKIX public key: {0}")]
-    PkixParse(String),
-    /// Failed to encrypt with RSA.
-    #[error("RSA encryption failed: {0}")]
-    RsaEncrypt(String),
-    /// Failed to decrypt with RSA.
-    #[error("RSA decryption failed: {0}")]
-    RsaDecrypt(String),
     /// Failed to generate ECDSA key.
     #[error("failed to generate ECDSA key: {0}")]
     EcdsaKeyGeneration(String),
@@ -113,9 +97,6 @@ pub enum CryptoError {
     /// Failed to parse hex string.
     #[error("failed to parse hex string: {0}")]
     HexParse(String),
-    /// Invalid private key length.
-    #[error("invalid private key length: expected 32 bytes, got {0}")]
-    InvalidPrivateKeyLength(usize),
 }
 
 /// Errors that can occur during proposal operations.
@@ -160,9 +141,9 @@ pub enum ProposalError {
     ExecutionFailed(String),
 }
 
-/// Top-level error type for server operations.
+/// Top-level error type for nitro enclave operations.
 #[derive(Debug, Clone, Error)]
-pub enum ServerError {
+pub enum NitroError {
     /// NSM error.
     #[error(transparent)]
     Nsm(#[from] NsmError),
@@ -178,10 +159,21 @@ pub enum ServerError {
     /// Environment variable error.
     #[error("environment variable error: {0}")]
     EnvVar(String),
+    /// Proof pipeline error.
+    #[error("proof pipeline error: {0}")]
+    ProofPipeline(String),
+    /// PCR0 mismatch between config and NSM.
+    #[error("PCR0 mismatch: expected {expected}, actual {actual}")]
+    Pcr0Mismatch {
+        /// Expected PCR0 hash from config.
+        expected: B256,
+        /// Actual PCR0 hash from NSM.
+        actual: B256,
+    },
 }
 
-/// A specialized Result type for server operations.
-pub type Result<T> = std::result::Result<T, ServerError>;
+/// A specialized Result type for nitro enclave operations.
+pub type Result<T> = std::result::Result<T, NitroError>;
 
 #[cfg(test)]
 mod tests {
@@ -195,7 +187,7 @@ mod tests {
         assert_send_sync::<AttestationError>();
         assert_send_sync::<CryptoError>();
         assert_send_sync::<ProposalError>();
-        assert_send_sync::<ServerError>();
+        assert_send_sync::<NitroError>();
     }
 
     #[test]
@@ -206,6 +198,6 @@ mod tests {
         assert_clone::<AttestationError>();
         assert_clone::<CryptoError>();
         assert_clone::<ProposalError>();
-        assert_clone::<ServerError>();
+        assert_clone::<NitroError>();
     }
 }
