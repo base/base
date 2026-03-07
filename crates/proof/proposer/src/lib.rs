@@ -21,7 +21,7 @@ pub use output_proposer::{
 };
 
 mod driver;
-pub use driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl};
+pub use driver::{Driver, DriverConfig, DriverHandle, ParentGameState, ProposerDriverControl};
 
 mod enclave;
 pub use enclave::{
@@ -43,9 +43,6 @@ pub use metrics::{
 
 mod prover;
 pub use prover::{Prover, ProverProposal};
-
-mod recovery;
-pub use recovery::recover_parent_game_state_standalone;
 
 mod rpc;
 pub use rpc::{L2ClientKind, ProverL2Provider, RethExecutionWitness, RethL2Client};

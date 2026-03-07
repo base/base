@@ -9,7 +9,8 @@ use base_enclave::{
     RollupConfig,
 };
 use base_proof_contracts::{
-    AnchorRoot, AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex,
+    AggregateVerifierClient, AnchorRoot, AnchorStateRegistryClient, ContractError,
+    DisputeGameFactoryClient, GameAtIndex, GameInfo,
 };
 use base_proof_rpc::{
     L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OpBlock, RollupProvider, RpcError,
@@ -136,13 +137,41 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
         Ok(self.game_count)
     }
     async fn game_at_index(&self, _: u64) -> Result<GameAtIndex, ContractError> {
-        unimplemented!()
+        Ok(GameAtIndex { game_type: 0, timestamp: 0, proxy: Address::ZERO })
     }
     async fn init_bonds(&self, _: u32) -> Result<U256, ContractError> {
         Ok(U256::ZERO)
     }
     async fn game_impls(&self, _: u32) -> Result<Address, ContractError> {
         Ok(Address::ZERO)
+    }
+}
+
+/// Mock aggregate verifier that returns fixed values.
+pub(crate) struct MockAggregateVerifier;
+
+#[async_trait]
+impl AggregateVerifierClient for MockAggregateVerifier {
+    async fn game_info(&self, _: Address) -> Result<GameInfo, ContractError> {
+        Ok(GameInfo { root_claim: B256::ZERO, l2_block_number: 0, parent_index: 0 })
+    }
+    async fn status(&self, _: Address) -> Result<u8, ContractError> {
+        Ok(0)
+    }
+    async fn zk_prover(&self, _: Address) -> Result<Address, ContractError> {
+        Ok(Address::ZERO)
+    }
+    async fn tee_prover(&self, _: Address) -> Result<Address, ContractError> {
+        Ok(Address::ZERO)
+    }
+    async fn starting_block_number(&self, _: Address) -> Result<u64, ContractError> {
+        Ok(0)
+    }
+    async fn read_block_interval(&self, _: Address) -> Result<u64, ContractError> {
+        Ok(512)
+    }
+    async fn read_intermediate_block_interval(&self, _: Address) -> Result<u64, ContractError> {
+        Ok(512)
     }
 }
 
