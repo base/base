@@ -38,8 +38,6 @@
 mod attributes;
 mod evm;
 mod l2_block_ref;
-mod oracle;
-pub use oracle::Oracle;
 mod stateless;
 mod trie_db;
 mod witness;

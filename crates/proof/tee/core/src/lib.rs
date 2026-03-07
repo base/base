@@ -21,9 +21,9 @@ pub use error::{ConfigError, CryptoError, EnclaveError, ExecutorError, ProviderE
 mod executor;
 pub use executor::{
     BlockExecutionResult, DEPOSIT_EVENT_TOPIC, EnclaveEvmFactory, EnclaveTrieDB, EnclaveTrieHinter,
-    ExecutionResult, ExecutionWitness, L1BlockInfo, MAX_SEQUENCER_DRIFT_FJORD, Oracle,
-    TransformedWitness, TrieProviderError, build_l1_block_info_from_deposit, execute_block,
-    execute_stateless, extract_deposits_from_receipts, l2_block_to_block_info, transform_witness,
+    ExecutionResult, ExecutionWitness, L1BlockInfo, MAX_SEQUENCER_DRIFT_FJORD, TransformedWitness,
+    TrieProviderError, build_l1_block_info_from_deposit, execute_block, execute_stateless,
+    extract_deposits_from_receipts, l2_block_to_block_info, transform_witness,
     validate_not_deposit, validate_sequencer_drift, verify_execution_result,
 };
 

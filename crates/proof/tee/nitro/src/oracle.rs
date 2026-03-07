@@ -5,6 +5,7 @@ use base_proof_preimage::{
     FlushableCache, HintWriterClient, PreimageKey, PreimageOracleClient, WitnessOracle,
     errors::{PreimageOracleError, PreimageOracleResult, WitnessOracleResult},
 };
+use base_proof_primitives::ProofBundle;
 use parking_lot::RwLock;
 
 /// HashMap-backed preimage oracle for in-enclave stateless execution.
@@ -29,6 +30,11 @@ impl Oracle {
     /// Construct an empty [`Oracle`] for witness capture.
     pub fn empty() -> Self {
         Self { preimages: Arc::new(RwLock::new(HashMap::new())) }
+    }
+
+    /// Construct from a [`ProofBundle`], taking ownership of all preimages.
+    pub fn from_bundle(bundle: ProofBundle) -> Self {
+        Self { preimages: Arc::new(RwLock::new(bundle.preimages.into_iter().collect())) }
     }
 }
 
@@ -83,5 +89,41 @@ impl WitnessOracle for Oracle {
 
     fn preimage_count(&self) -> WitnessOracleResult<usize> {
         Ok(self.preimages.read().len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use base_proof_preimage::PreimageKeyType;
+
+    use super::*;
+
+    #[test]
+    fn from_bundle_roundtrip() {
+        let key = PreimageKey::new([1u8; 32], PreimageKeyType::Local);
+        let value = vec![0xAB; 128];
+
+        let bundle = ProofBundle {
+            request: base_proof_primitives::ProofRequest {
+                l1_head: Default::default(),
+                agreed_l2_head_hash: Default::default(),
+                agreed_l2_output_root: Default::default(),
+                claimed_l2_output_root: Default::default(),
+                claimed_l2_block_number: 0,
+            },
+            preimages: vec![(key, value.clone())],
+        };
+
+        let oracle = Oracle::from_bundle(bundle);
+        let read = oracle.preimages.read();
+        assert_eq!(read.get(&key).unwrap(), &value);
+    }
+
+    #[tokio::test]
+    async fn get_returns_key_not_found() {
+        let oracle = Oracle::empty();
+        let key = PreimageKey::new([2u8; 32], PreimageKeyType::Local);
+        let result = oracle.get(key).await;
+        assert!(matches!(result, Err(PreimageOracleError::KeyNotFound)));
     }
 }
