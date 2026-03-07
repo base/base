@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         claimed_l2_block_number: 42,
     };
 
-    let result = client.prove(&request).await?;
+    let result = client.prove(request).await?;
     println!("Proof claim: {:?}", result.claim);
 
     Ok(())
