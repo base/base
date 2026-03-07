@@ -1,11 +1,12 @@
 [package]
 name = "op-succinct-fp"
 version.workspace = true
+
 edition.workspace = true
 license.workspace = true
-authors.workspace = true
-repository.workspace = true
 homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [lib]
 name = "fault_proof"
@@ -86,3 +87,6 @@ celestia = ["op-succinct-proof-utils/celestia"]
 eigenda = ["op-succinct-proof-utils/eigenda"]
 ethereum = ["op-succinct-proof-utils/ethereum"]
 integration = []
+
+[lints]
+workspace = true

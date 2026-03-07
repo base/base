@@ -1,31 +1,31 @@
 [profile.default]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["dependencies"]
 remappings = [
+    # forge-std must come first to override solady's vendored test/utils/forge-std/
+    "forge-std/=dependencies/forge-std-1.10.0/src/",
+    "ds-test/=dependencies/forge-std-1.10.0/lib/ds-test/src/",
     # Use openzeppelin-contracts v4.7.3 as the some contracts are not compatible with 0.8.15
-    "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts",
-    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts",
-    "@optimism/=lib/optimism/packages/contracts-bedrock/",
-    "@forge-std/=lib/forge-std/src/",
-    "@solady/=lib/solady/src",
+    "@openzeppelin/contracts-upgradeable/=dependencies/openzeppelin-contracts-upgradeable-4.7.3/contracts",
+    "@openzeppelin/contracts/=dependencies/openzeppelin-contracts-4.7.3/contracts",
+    "@optimism/=dependencies/optimism-5.0.0/packages/contracts-bedrock/",
+    "@forge-std/=dependencies/forge-std-1.10.0/src/",
+    "@solady/=dependencies/solady-0.0.158/src",
     # Note: Use zobront/sp1-contracts as the current version for SP1 contracts is not compatible with the hard
     # version for 0.8.15 on some Optimism contracts.
-    "@sp1-contracts/=lib/sp1-contracts/contracts/",
-    "@rari-capital/=lib/optimism/packages/contracts-bedrock/lib/",
+    "@sp1-contracts/=dependencies/sp1-contracts-3.0.0/contracts/",
+    "@rari-capital/=dependencies/optimism-5.0.0/packages/contracts-bedrock/lib/",
     # Optimism repo uses absolute imports, so we need to have remappings for the paths we use.
-    "src/libraries/=lib/optimism/packages/contracts-bedrock/src/libraries/",
-    "src/L1/=lib/optimism/packages/contracts-bedrock/src/L1/",
-    "src/L2/=lib/optimism/packages/contracts-bedrock/src/L2/",
-    "src/dispute/=lib/optimism/packages/contracts-bedrock/src/dispute/",
-    "src/cannon/=lib/optimism/packages/contracts-bedrock/src/cannon/",
-    "src/universal/=lib/optimism/packages/contracts-bedrock/src/universal/",
-    "interfaces/=lib/optimism/packages/contracts-bedrock/interfaces/",
-    "@lib-keccak/=lib/lib-keccak/contracts/lib",
+    "src/libraries/=dependencies/optimism-5.0.0/packages/contracts-bedrock/src/libraries/",
+    "src/L1/=dependencies/optimism-5.0.0/packages/contracts-bedrock/src/L1/",
+    "src/L2/=dependencies/optimism-5.0.0/packages/contracts-bedrock/src/L2/",
+    "src/dispute/=dependencies/optimism-5.0.0/packages/contracts-bedrock/src/dispute/",
+    "src/cannon/=dependencies/optimism-5.0.0/packages/contracts-bedrock/src/cannon/",
+    "src/universal/=dependencies/optimism-5.0.0/packages/contracts-bedrock/src/universal/",
+    "interfaces/=dependencies/optimism-5.0.0/packages/contracts-bedrock/interfaces/",
+    "@lib-keccak/=dependencies/lib-keccak-3b1e7bbb/contracts/lib",
 ]
-
-# [lint]
-# severity = ["high", "med", "low", "gas"] # Drop all "info" notes
 
 # Enable read-write access to current directory and read access to temp directories.
 # /tmp (Linux) and /var/folders (macOS) are needed for parallel sysgo-powered e2e tests
@@ -35,5 +35,14 @@ fs_permissions = [
     { access = "read", path = "/tmp" },
     { access = "read", path = "/var/folders" },
 ]
+
+[dependencies]
+forge-std = "1.10.0"
+openzeppelin-contracts = { version = "4.7.3", git = "https://github.com/openzeppelin/openzeppelin-contracts.git", tag = "v4.7.3" }
+openzeppelin-contracts-upgradeable = { version = "4.7.3", git = "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git", tag = "v4.7.3" }
+optimism = { version = "5.0.0", git = "https://github.com/ethereum-optimism/optimism.git", tag = "op-contracts/v5.0.0" }
+solady = { version = "0.0.158", git = "https://github.com/vectorized/solady.git", tag = "v0.0.158" }
+sp1-contracts = { version = "3.0.0", git = "https://github.com/succinctlabs/sp1-contracts.git", rev = "90d99052cf7880fe521f5fb0974b9c51056f9619" }
+lib-keccak = { version = "3b1e7bbb", git = "https://github.com/ethereum-optimism/lib-keccak.git", rev = "3b1e7bbb4cc23e9228097cfebe42aedaf3b8f2b9" }
 
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config

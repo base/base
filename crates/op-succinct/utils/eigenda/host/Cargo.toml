@@ -1,8 +1,12 @@
 [package]
 name = "op-succinct-eigenda-host-utils"
 version.workspace = true
-license.workspace = true
+
 edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 # sp1
@@ -48,3 +52,6 @@ tracing.workspace = true
 
 [features]
 integration = []
+
+[lints]
+workspace = true

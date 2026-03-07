@@ -1,8 +1,12 @@
 [package]
 name = "op-succinct-client-utils"
 version.workspace = true
-license.workspace = true
+
 edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 # ethereum
@@ -13,12 +17,13 @@ alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 
-# Execution
-alloy-evm.workspace = true
-alloy-op-evm.workspace = true
-op-revm.workspace = true
-revm.workspace = true
-revm-precompile.workspace = true
+# Execution — pinned to kona-compatible versions (revm 33 ecosystem)
+# These must NOT use workspace = true since workspace uses revm 34/alloy-evm 0.27
+alloy-evm = { version = "0.24.2", default-features = false }
+alloy-op-evm = { version = "0.24.2", default-features = false }
+op-revm = { version = "14.1.0", default-features = false }
+revm = { version = "33.1.0", default-features = false, features = ["bn"] }
+revm-precompile = { version = "31.0.0", default-features = false }
 
 # kona
 kona-preimage.workspace = true
@@ -33,7 +38,7 @@ kona-genesis.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 serde_json.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["std", "derive"] }
 rkyv.workspace = true
 sha2.workspace = true
 tracing.workspace = true
@@ -42,3 +47,6 @@ spin.workspace = true
 # kzg
 kzg-rs.workspace = true
 cfg-if.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,42 @@
+[[dependencies]]
+name = "forge-std"
+version = "1.10.0"
+url = "https://soldeer-revisions.s3.amazonaws.com/forge-std/1_10_0_02-08-2025_06:50:35_forge-std-1.10.zip"
+checksum = "8cc59e92a7762c170c15f2102c4f3718106dfc78239978fe87c64f316740cc09"
+integrity = "3fd441e2499c5cf04ef9b4126f52150a50dcef9cac1645ff7a955345e947cd04"
+
+[[dependencies]]
+name = "lib-keccak"
+version = "3b1e7bbb"
+git = "https://github.com/ethereum-optimism/lib-keccak.git"
+rev = "3b1e7bbb4cc23e9228097cfebe42aedaf3b8f2b9"
+
+[[dependencies]]
+name = "openzeppelin-contracts"
+version = "4.7.3"
+git = "https://github.com/openzeppelin/openzeppelin-contracts.git"
+rev = "ecd2ca2cd7cac116f7a37d0e474bbb3d7d5e1c4d"
+
+[[dependencies]]
+name = "openzeppelin-contracts-upgradeable"
+version = "4.7.3"
+git = "https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable.git"
+rev = "0a2cb9a445c365870ed7a8ab461b12acf3e27d63"
+
+[[dependencies]]
+name = "optimism"
+version = "5.0.0"
+git = "https://github.com/ethereum-optimism/optimism.git"
+rev = "d09c836f818c73ae139f60b717654c4e53712743"
+
+[[dependencies]]
+name = "solady"
+version = "0.0.158"
+git = "https://github.com/vectorized/solady.git"
+rev = "502cc1ea718e6fa73b380635ee0868b0740595f0"
+
+[[dependencies]]
+name = "sp1-contracts"
+version = "3.0.0"
+git = "https://github.com/succinctlabs/sp1-contracts.git"
+rev = "90d99052cf7880fe521f5fb0974b9c51056f9619"

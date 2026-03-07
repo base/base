@@ -1,8 +1,12 @@
 [package]
 name = "op-succinct-signer-utils"
 version.workspace = true
-license.workspace = true
+
 edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 
@@ -31,3 +35,6 @@ gcloud-sdk.workspace = true
 [dev-dependencies]
 dotenv.workspace = true
 op-succinct-host-utils.workspace = true
+
+[lints]
+workspace = true

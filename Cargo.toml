@@ -38,6 +38,25 @@ members = [
   "crates/infra/*",
   "crates/alloy/*",
   "crates/execution/*",
+  "crates/op-succinct/bindings",
+  "crates/op-succinct/fault-proof",
+  "crates/op-succinct/programs/aggregation",
+  "crates/op-succinct/programs/range/*",
+  "crates/op-succinct/programs/range/utils",
+  "crates/op-succinct/scripts/*",
+  "crates/op-succinct/utils/build",
+  "crates/op-succinct/utils/celestia/client",
+  "crates/op-succinct/utils/celestia/host",
+  "crates/op-succinct/utils/client",
+  "crates/op-succinct/utils/eigenda/client",
+  "crates/op-succinct/utils/eigenda/host",
+  "crates/op-succinct/utils/elfs",
+  "crates/op-succinct/utils/ethereum/client",
+  "crates/op-succinct/utils/ethereum/host",
+  "crates/op-succinct/utils/host",
+  "crates/op-succinct/utils/proof",
+  "crates/op-succinct/utils/signer",
+  "crates/op-succinct/validity",
   "crates/txpool",
   "devnet",
 ]
@@ -120,6 +139,12 @@ debug = "none"
 strip = "symbols"
 panic = "unwind"
 codegen-units = 16
+
+[profile.release-client-lto]
+inherits = "release"
+panic = "abort"
+codegen-units = 1
+lto = "fat"
 
 [profile.maxperf]
 inherits = "release"
@@ -238,6 +263,103 @@ base-test-utils = { path = "crates/utilities/test-utils" }
 base-proofs-extension = { path = "crates/client/proofs" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
 base-macros = { path = "crates/utilities/macros", default-features = false }
+
+# op-succinct internal crates
+op-succinct-fp = { path = "crates/op-succinct/fault-proof" }
+op-succinct-prove = { path = "crates/op-succinct/scripts/prove" }
+op-succinct-elfs = { path = "crates/op-succinct/utils/elfs" }
+op-succinct-bindings = { path = "crates/op-succinct/bindings" }
+op-succinct-validity = { path = "crates/op-succinct/validity" }
+op-succinct-host-utils = { path = "crates/op-succinct/utils/host" }
+op-succinct-proof-utils = { path = "crates/op-succinct/utils/proof" }
+op-succinct-build-utils = { path = "crates/op-succinct/utils/build" }
+op-succinct-range-utils = { path = "crates/op-succinct/programs/range/utils" }
+op-succinct-signer-utils = { path = "crates/op-succinct/utils/signer" }
+op-succinct-client-utils = { path = "crates/op-succinct/utils/client" }
+op-succinct-eigenda-host-utils = { path = "crates/op-succinct/utils/eigenda/host" }
+op-succinct-eigenda-client-utils = { path = "crates/op-succinct/utils/eigenda/client" }
+op-succinct-celestia-host-utils = { path = "crates/op-succinct/utils/celestia/host" }
+op-succinct-celestia-client-utils = { path = "crates/op-succinct/utils/celestia/client" }
+op-succinct-ethereum-host-utils = { path = "crates/op-succinct/utils/ethereum/host" }
+op-succinct-ethereum-client-utils = { path = "crates/op-succinct/utils/ethereum/client" }
+
+# op-succinct deps
+csv = "1.3.0"
+log = "0.4.22"
+alloy = { version = "1.5.2", features = ["reqwest", "network", "providers", "sol-types", "rpc-types"] }
+dotenv = "0.15.0"
+gcloud-sdk = "0.27"
+itertools = "0.13.0"
+lazy_static = "1.5.0"
+num-format = "0.4.4"
+serde_cbor = "0.11.2"
+strum_macros = "0.28"
+vergen = "=9.0.4"
+vergen-git2 = "=1.0.5"
+kzg-rs = { version = "0.2.8", features = ["rkyv", "serde"] }
+rkyv = { version = "0.8", features = ["hashbrown-0_15", "std"] }
+cargo_metadata = "0.18.1"
+alloy-tx-macros = { version = "1.5.0", default-features = false }
+alloy-node-bindings = { version = "1.5.2", default-features = false }
+alloy-signer-gcp = { version = "1.5.2", default-features = false }
+alloy-rpc-types-trace = { version = "1.5.2", default-features = false }
+op-revm = { version = "14.1.0", default-features = false }
+alloy-op-evm = { version = "0.27.0", default-features = false }
+op-alloy-network = { version = "0.22.4", default-features = false }
+op-alloy-rpc-types = { version = "0.22.4", default-features = false }
+op-alloy-consensus = { version = "0.22.4", default-features = false }
+revm-precompile = { version = "31.0.0", default-features = false }
+op-alloy-rpc-types-engine = { version = "0.22.4", default-features = false }
+tracing-opentelemetry = "^0.24"
+opentelemetry_sdk = { version = "^0.23.0", features = ["trace", "rt-tokio", "logs_level_enabled"] }
+opentelemetry-stdout = { version = "0.2.0", features = ["trace"] }
+opentelemetry-otlp = { version = "^0.16.0", features = ["default", "logs"] }
+opentelemetry-appender-tracing = "0.4.0"
+
+# kona (op-succinct)
+kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
+kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
+kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
+kona-client = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
+kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
+kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7", default-features = false }
+kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7", default-features = false }
+kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7", default-features = false }
+kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
+kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7", default-features = false }
+kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7", features = ["rkyv", "serde"] }
+kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
+
+# hana (op-succinct)
+hana-host = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
+hana-oracle = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
+hana-celestia = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
+hana-blobstream = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
+
+# hokulea (op-succinct)
+hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+canoe-sp1-cc-host = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+canoe-sp1-cc-verifier = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+hokulea-compute-proof = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+canoe-verifier-address-fetcher = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
+
+# SP1 (op-succinct)
+sp1-lib = { version = "=6.0.2", features = ["verify"] }
+sp1-sdk = { version = "=6.0.2", features = ["network", "blocking", "profiling"] }
+sp1-zkvm = { version = "=6.0.2", features = ["verify"] }
+sp1-build = "=6.0.2"
+sp1-prover = "=6.0.2"
+sp1-hypercube = "=6.0.2"
+sp1-primitives = "=6.0.2"
+sp1-prover-types = "=6.0.2"
+sp1-core-executor = "=6.0.2"
+sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster.git", tag = "v2.0.3" }
+sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster.git", tag = "v2.0.3" }
+sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster.git", tag = "v2.0.3" }
 
 # revm
 revm = { version = "34.0.0", default-features = false }
@@ -438,11 +560,11 @@ httpmock = "0.8.2"
 serial_test = "3"
 proptest = "1.10.0"
 similar-asserts = "1"
-testcontainers = "0.27"
+testcontainers = "0.26"
 proptest-arbitrary-interop = "0.1.0"
 arbitrary = { version = "1", default-features = false }
 wiremock = { version = "0.6.2", default-features = false }
-testcontainers-modules = { version = "0.15", default-features = false }
+testcontainers-modules = { version = "0.14", default-features = false }
 
 # misc
 snap = "1"
@@ -521,3 +643,11 @@ cfg-if = "1.0"
 proc-macro2 = "1.0"
 ark-ff = { version = "0.5.0", default-features = false }
 ark-bls12-381 = { version = "0.5.0", default-features = false }
+
+[patch.crates-io]
+sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.9-sp1-6.0.0" }
+sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "patch-sha3-0.10.8-sp1-6.0.0" }
+substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-6.0.0-substrate-bn" }
+p256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-p256-13.2-sp1-6.0.0" }
+k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-6.0.0" }
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-6.0.0" }

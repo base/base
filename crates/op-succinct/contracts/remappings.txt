@@ -1,0 +1,7 @@
+forge-std-1.10.0/=dependencies/forge-std-1.10.0/
+lib-keccak-3b1e7bbb/=dependencies/lib-keccak-3b1e7bbb/
+openzeppelin-contracts-4.7.3/=dependencies/openzeppelin-contracts-4.7.3/
+openzeppelin-contracts-upgradeable-4.7.3/=dependencies/openzeppelin-contracts-upgradeable-4.7.3/
+optimism-5.0.0/=dependencies/optimism-5.0.0/
+solady-0.0.158/=dependencies/solady-0.0.158/
+sp1-contracts-3.0.0/=dependencies/sp1-contracts-3.0.0/

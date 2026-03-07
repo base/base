@@ -1,8 +1,12 @@
 [package]
 name = "op-succinct-celestia-host-utils"
 version.workspace = true
-license.workspace = true
+
 edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 # sp1
@@ -38,3 +42,6 @@ reqwest = { version = "0.11", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tracing.workspace = true
+
+[lints]
+workspace = true

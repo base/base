@@ -1,11 +1,12 @@
 [package]
 name = "op-succinct-validity"
 version.workspace = true
+
 edition.workspace = true
 license.workspace = true
-authors.workspace = true
-repository.workspace = true
 homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [[bin]]
 name = "validity"
@@ -74,3 +75,6 @@ default = ["ethereum"]
 celestia = ["op-succinct-proof-utils/celestia"]
 eigenda = ["op-succinct-proof-utils/eigenda"]
 ethereum = ["op-succinct-proof-utils/ethereum"]
+
+[lints]
+workspace = true

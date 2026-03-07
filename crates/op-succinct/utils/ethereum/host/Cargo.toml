@@ -1,8 +1,12 @@
 [package]
 name = "op-succinct-ethereum-host-utils"
 version.workspace = true
-license.workspace = true
+
 edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 # sp1
@@ -27,3 +31,6 @@ alloy-primitives.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 rkyv.workspace = true
+
+[lints]
+workspace = true
