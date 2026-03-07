@@ -23,6 +23,9 @@ async-channel = { workspace = true, optional = true }
 # `serde` feature dependencies
 serde = { workspace = true, optional = true, features = ["derive"] }
 
+# `rkyv` feature dependencies
+rkyv = { workspace = true, optional = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 
@@ -36,3 +39,4 @@ std = [
 	"tracing/std",
 ]
 serde = [ "alloy-primitives/serde", "dep:serde" ]
+rkyv = [ "dep:rkyv" ]

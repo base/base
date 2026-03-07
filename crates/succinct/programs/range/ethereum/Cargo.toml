@@ -1,0 +1,33 @@
+[package]
+name = "base-succinct-programs-range"
+version.workspace = true
+
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+
+[dependencies]
+rkyv.workspace = true
+
+# base proof
+base-proof.workspace = true
+
+# sp1
+sp1-zkvm.workspace = true
+
+# base-succinct
+base-succinct-client-utils.workspace = true
+base-succinct-ethereum-client-utils.workspace = true
+base-succinct-range-utils.workspace = true
+
+# `tracing-subscriber` feature dependencies
+tracing-subscriber = { workspace = true, optional = true }
+
+[features]
+tracing-subscriber = ["dep:tracing-subscriber"]
+
+[lints]
+workspace = true
