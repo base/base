@@ -59,6 +59,8 @@ impl ProofEncoder {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
     fn test_signature(v: u8) -> Bytes {
@@ -68,20 +70,12 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_proof_bytes_length() {
+    fn test_encode_proof_bytes_format() {
         let sig = test_signature(0);
         let proof =
             ProofEncoder::encode_proof_bytes(&sig, B256::repeat_byte(0xCC), U256::from(500))
                 .unwrap();
         assert_eq!(proof.len(), 130);
-    }
-
-    #[test]
-    fn test_encode_proof_bytes_type() {
-        let sig = test_signature(0);
-        let proof =
-            ProofEncoder::encode_proof_bytes(&sig, B256::repeat_byte(0xCC), U256::from(500))
-                .unwrap();
         assert_eq!(proof[0], PROOF_TYPE_TEE);
     }
 
@@ -98,59 +92,27 @@ mod tests {
         let sig = test_signature(0);
         let l1_origin_number = U256::from(12345);
         let proof = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, l1_origin_number).unwrap();
-        // Full 32-byte field should match the U256 big-endian encoding
         assert_eq!(&proof[33..65], &l1_origin_number.to_be_bytes::<32>());
     }
 
-    #[test]
-    fn test_encode_proof_bytes_v_zero_adjusted_to_27() {
-        let sig = test_signature(0);
+    #[rstest]
+    #[case::v_zero_adjusted_to_27(0, 27)]
+    #[case::v_one_adjusted_to_28(1, 28)]
+    #[case::v_27_unchanged(27, 27)]
+    #[case::v_28_unchanged(28, 28)]
+    fn test_encode_proof_bytes_v_value(#[case] input_v: u8, #[case] expected_v: u8) {
+        let sig = test_signature(input_v);
         let proof = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, U256::ZERO).unwrap();
-        assert_eq!(proof[129], 27);
+        assert_eq!(proof[129], expected_v);
     }
 
-    #[test]
-    fn test_encode_proof_bytes_v_one_adjusted_to_28() {
-        let sig = test_signature(1);
-        let proof = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, U256::ZERO).unwrap();
-        assert_eq!(proof[129], 28);
-    }
-
-    #[test]
-    fn test_encode_proof_bytes_v_27_unchanged() {
-        let sig = test_signature(27);
-        let proof = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, U256::ZERO).unwrap();
-        assert_eq!(proof[129], 27);
-    }
-
-    #[test]
-    fn test_encode_proof_bytes_v_28_unchanged() {
-        let sig = test_signature(28);
-        let proof = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, U256::ZERO).unwrap();
-        assert_eq!(proof[129], 28);
-    }
-
-    #[test]
-    fn test_encode_proof_bytes_invalid_v() {
-        let sig = test_signature(5);
-        let result = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, U256::ZERO);
+    #[rstest]
+    #[case::invalid_v(vec![0xAB; 64].into_iter().chain(std::iter::once(5)).collect::<Vec<_>>(), "invalid ECDSA v-value")]
+    #[case::short_signature(vec![0u8; 32], "invalid signature length")]
+    #[case::oversized_signature(vec![0u8; 70], "invalid signature length")]
+    fn test_encode_proof_bytes_errors(#[case] sig: Vec<u8>, #[case] expected_err: &str) {
+        let result = ProofEncoder::encode_proof_bytes(&Bytes::from(sig), B256::ZERO, U256::ZERO);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("invalid ECDSA v-value"));
-    }
-
-    #[test]
-    fn test_encode_proof_bytes_short_signature() {
-        let sig = Bytes::from(vec![0u8; 32]);
-        let result = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, U256::ZERO);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("invalid signature length"));
-    }
-
-    #[test]
-    fn test_encode_proof_bytes_oversized_signature() {
-        let sig = Bytes::from(vec![0u8; 70]);
-        let result = ProofEncoder::encode_proof_bytes(&sig, B256::ZERO, U256::ZERO);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("invalid signature length"));
+        assert!(result.unwrap_err().to_string().contains(expected_err));
     }
 }
