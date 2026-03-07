@@ -360,9 +360,16 @@ impl P2PArgs {
                 .await?;
 
             // Convert the unsafe block signer address to the correct type.
-            return Ok(alloy_primitives::Address::from_slice(
+            let signer = alloy_primitives::Address::from_slice(
                 &unsafe_block_signer_address.to_be_bytes_vec()[12..],
-            ));
+            );
+
+            // If storage returns zero (e.g. L1 is still early in sync and the SystemConfig
+            // contract hadn't been deployed at the queried block), fall through to the
+            // genesis/registry signer rather than using the zero address.
+            if !signer.is_zero() {
+                return Ok(signer);
+            }
         }
 
         // Otherwise use the genesis signer or the configured unsafe block signer.
