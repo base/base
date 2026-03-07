@@ -7,8 +7,7 @@
 mod client;
 mod client_error;
 
-// Re-export core types
-pub use base_enclave::*;
+pub use base_enclave::{AggregateRequest, ExecuteStatelessRequest, Proposal};
 pub use base_proof_primitives::{
     ProofBundle, ProofClaim, ProofEvidence, ProofRequest, ProofResult,
 };
