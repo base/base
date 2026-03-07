@@ -1,8 +1,8 @@
-/// Enclave runtime: vsock listener, server, crypto, NSM, and attestation.
-use alloy_primitives::{Address, B256};
 #[cfg(target_os = "linux")]
 use std::time::Duration;
 
+/// Enclave runtime: vsock listener, server, crypto, NSM, and attestation.
+use alloy_primitives::{Address, B256};
 #[cfg(target_os = "linux")]
 use base_proof_primitives::{ProofBundle, ProofResult};
 #[cfg(target_os = "linux")]
