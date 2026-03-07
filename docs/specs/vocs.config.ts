@@ -186,7 +186,7 @@ const sidebar: SidebarItem[] = [
       executionSection,
       bridgingSection,
       { text: 'Batcher', link: '/protocol/batcher' },
-      { ...sectionItem('protocol/fault-proof', 'Fault Proof'), collapsed: true },
+      { ...sectionItem('protocol/fault-proof', 'Proofs'), collapsed: true },
     ],
   },
   {
