@@ -200,17 +200,18 @@ where
     /// Used at startup, after successful game creation, and when recovering
     /// from `GameAlreadyExists` (so the proposer can chain off games created
     /// by any proposer, not just itself).
-    pub async fn recover_latest_game(&self) -> Option<ParentGameState> {
-        let count = match self.factory_client.game_count().await {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(error = %e, "Failed to get game count for recovery");
-                return None;
-            }
-        };
+    ///
+    /// Returns `Ok(None)` when no matching game exists, or `Err` if an RPC
+    /// call fails so callers can distinguish the two cases.
+    pub async fn recover_latest_game(&self) -> Result<Option<ParentGameState>, ProposerError> {
+        let count = self
+            .factory_client
+            .game_count()
+            .await
+            .map_err(|e| ProposerError::Contract(format!("recovery game_count failed: {e}")))?;
 
         if count == 0 {
-            return None;
+            return Ok(None);
         }
 
         let search_count = count.min(MAX_GAME_RECOVERY_LOOKBACK);
@@ -221,7 +222,7 @@ where
                 Ok(g) => g,
                 Err(e) => {
                     warn!(error = %e, game_index, "Failed to read game at index during recovery");
-                    return None;
+                    continue;
                 }
             };
 
@@ -229,21 +230,15 @@ where
                 continue;
             }
 
-            let game_info = match self.verifier_client.game_info(game.proxy).await {
-                Ok(info) => info,
-                Err(e) => {
-                    warn!(error = %e, game_index, "Failed to read game info during recovery");
-                    return None;
-                }
-            };
+            let game_info = self.verifier_client.game_info(game.proxy).await.map_err(|e| {
+                ProposerError::Contract(format!(
+                    "recovery game_info for index {game_index} failed: {e}"
+                ))
+            })?;
 
-            let idx: u32 = match game_index.try_into() {
-                Ok(v) => v,
-                Err(_) => {
-                    warn!(game_index, "Game index exceeds u32 during recovery");
-                    return None;
-                }
-            };
+            let idx: u32 = game_index.try_into().map_err(|_| {
+                ProposerError::Contract(format!("game index {game_index} exceeds u32"))
+            })?;
 
             info!(
                 game_index,
@@ -253,12 +248,12 @@ where
                 "Recovered parent game state from on-chain"
             );
 
-            return Some(ParentGameState {
+            return Ok(Some(ParentGameState {
                 initialized: true,
                 game_index: idx,
                 output_root: game_info.root_claim,
                 l2_block_number: game_info.l2_block_number,
-            });
+            }));
         }
 
         info!(
@@ -266,7 +261,7 @@ where
             searched = search_count,
             "No games found for our game type during recovery"
         );
-        None
+        Ok(None)
     }
 
     /// Starts the driver loop.
@@ -626,19 +621,26 @@ where
                 self.cached_intermediate_roots.clear();
                 self.last_proposed_block = proposal.to.number;
 
-                if let Some(state) = self.recover_latest_game().await {
-                    info!(
-                        new_game_index = state.game_index,
-                        output_root = ?state.output_root,
-                        l2_block_number = state.l2_block_number,
-                        "Updated parent game state from on-chain"
-                    );
-                    self.parent_game_state = state;
-                } else {
-                    warn!(
-                        "On-chain recovery found no games after successful create, will use anchor on next tick"
-                    );
-                    self.parent_game_state.initialized = false;
+                match self.recover_latest_game().await {
+                    Ok(Some(state)) => {
+                        info!(
+                            new_game_index = state.game_index,
+                            output_root = ?state.output_root,
+                            l2_block_number = state.l2_block_number,
+                            "Updated parent game state from on-chain"
+                        );
+                        self.parent_game_state = state;
+                    }
+                    Ok(None) => {
+                        warn!(
+                            "On-chain recovery found no games after successful create, will use anchor on next tick"
+                        );
+                        self.parent_game_state.initialized = false;
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "On-chain recovery failed after successful create, will use anchor on next tick");
+                        self.parent_game_state.initialized = false;
+                    }
                 }
             }
             Ok(Err(e)) => {
@@ -650,16 +652,19 @@ where
                     self.pending.clear();
                     self.cached_intermediate_roots.clear();
 
-                    if let Some(state) = self.recover_latest_game().await {
-                        info!(
-                            game_index = state.game_index,
-                            output_root = ?state.output_root,
-                            l2_block_number = state.l2_block_number,
-                            "Recovered existing game, chaining off it"
-                        );
-                        self.parent_game_state = state;
-                    } else {
-                        self.parent_game_state.initialized = false;
+                    match self.recover_latest_game().await {
+                        Ok(Some(state)) => {
+                            info!(
+                                game_index = state.game_index,
+                                output_root = ?state.output_root,
+                                l2_block_number = state.l2_block_number,
+                                "Recovered existing game, chaining off it"
+                            );
+                            self.parent_game_state = state;
+                        }
+                        Ok(None) | Err(_) => {
+                            self.parent_game_state.initialized = false;
+                        }
                     }
                 } else {
                     warn!(
@@ -841,10 +846,11 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_primitives::{B256, Bytes};
+    use alloy_primitives::{Address, B256, Bytes};
     use async_trait::async_trait;
     use base_enclave::{Proposal, RollupConfig};
     use base_enclave_client::{ClientError, ExecuteStatelessRequest};
+    use base_proof_contracts::GameAtIndex;
     use base_proof_rpc::SyncStatus;
     use tokio_util::sync::CancellationToken;
 
@@ -1426,6 +1432,224 @@ mod tests {
         let roots = driver.extract_intermediate_roots(100).unwrap();
         assert_eq!(roots.len(), 1, "only the first checkpoint should be found");
         assert_eq!(roots[0], root_a);
+    }
+
+    // ---- recover_latest_game tests ----
+
+    /// Configurable mock factory for recovery tests.
+    struct RecoveryMockFactory {
+        games: Vec<(u32, Address)>,
+        error_indices: Vec<u64>,
+    }
+
+    #[async_trait]
+    impl DisputeGameFactoryClient for RecoveryMockFactory {
+        async fn game_count(&self) -> Result<u64, base_proof_contracts::ContractError> {
+            Ok(self.games.len() as u64)
+        }
+        async fn game_at_index(
+            &self,
+            index: u64,
+        ) -> Result<GameAtIndex, base_proof_contracts::ContractError> {
+            if self.error_indices.contains(&index) {
+                return Err(base_proof_contracts::ContractError::Validation(
+                    "simulated RPC error".into(),
+                ));
+            }
+            let (game_type, proxy) = self.games[index as usize];
+            Ok(GameAtIndex { game_type, timestamp: 0, proxy })
+        }
+        async fn init_bonds(&self, _: u32) -> Result<U256, base_proof_contracts::ContractError> {
+            Ok(U256::ZERO)
+        }
+        async fn game_impls(&self, _: u32) -> Result<Address, base_proof_contracts::ContractError> {
+            Ok(Address::ZERO)
+        }
+    }
+
+    /// Configurable mock verifier for recovery tests.
+    struct RecoveryMockVerifier {
+        l2_block_number: u64,
+        root_claim: B256,
+    }
+
+    #[async_trait]
+    impl base_proof_contracts::AggregateVerifierClient for RecoveryMockVerifier {
+        async fn game_info(
+            &self,
+            _: Address,
+        ) -> Result<base_proof_contracts::GameInfo, base_proof_contracts::ContractError> {
+            Ok(base_proof_contracts::GameInfo {
+                root_claim: self.root_claim,
+                l2_block_number: self.l2_block_number,
+                parent_index: 0,
+            })
+        }
+        async fn status(&self, _: Address) -> Result<u8, base_proof_contracts::ContractError> {
+            Ok(0)
+        }
+        async fn zk_prover(
+            &self,
+            _: Address,
+        ) -> Result<Address, base_proof_contracts::ContractError> {
+            Ok(Address::ZERO)
+        }
+        async fn tee_prover(
+            &self,
+            _: Address,
+        ) -> Result<Address, base_proof_contracts::ContractError> {
+            Ok(Address::ZERO)
+        }
+        async fn starting_block_number(
+            &self,
+            _: Address,
+        ) -> Result<u64, base_proof_contracts::ContractError> {
+            Ok(0)
+        }
+        async fn read_block_interval(
+            &self,
+            _: Address,
+        ) -> Result<u64, base_proof_contracts::ContractError> {
+            Ok(512)
+        }
+        async fn read_intermediate_block_interval(
+            &self,
+            _: Address,
+        ) -> Result<u64, base_proof_contracts::ContractError> {
+            Ok(512)
+        }
+    }
+
+    fn recovery_driver(
+        factory: RecoveryMockFactory,
+        verifier: RecoveryMockVerifier,
+        game_type: u32,
+    ) -> Driver<
+        MockL1,
+        MockL2,
+        MockEnclave,
+        MockRollupClient,
+        MockAnchorStateRegistry,
+        RecoveryMockFactory,
+    > {
+        let sync_status = test_sync_status(200, B256::ZERO);
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let prover = Arc::new(Prover::new(
+            test_per_chain_config(),
+            RollupConfig::default(),
+            Arc::clone(&l1),
+            Arc::clone(&l2),
+            MockEnclave,
+            alloy_primitives::Address::ZERO,
+            B256::ZERO,
+        ));
+
+        Driver::new(
+            DriverConfig { game_type, block_interval: 10, ..Default::default() },
+            prover,
+            l1,
+            l2,
+            Arc::new(MockRollupClient { sync_status }),
+            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) }),
+            Arc::new(factory),
+            Arc::new(verifier),
+            Arc::new(MockOutputProposer),
+            CancellationToken::new(),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_recover_latest_game_no_games() {
+        let driver = recovery_driver(
+            RecoveryMockFactory { games: vec![], error_indices: vec![] },
+            RecoveryMockVerifier { l2_block_number: 100, root_claim: B256::ZERO },
+            0,
+        );
+        let result = driver.recover_latest_game().await.expect("should not error");
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_recover_latest_game_finds_matching_type() {
+        let root = B256::repeat_byte(0xAA);
+        let driver = recovery_driver(
+            RecoveryMockFactory { games: vec![(42, Address::ZERO)], error_indices: vec![] },
+            RecoveryMockVerifier { l2_block_number: 500, root_claim: root },
+            42,
+        );
+
+        let state = driver
+            .recover_latest_game()
+            .await
+            .expect("should not error")
+            .expect("should find game");
+        assert!(state.initialized);
+        assert_eq!(state.game_index, 0);
+        assert_eq!(state.l2_block_number, 500);
+        assert_eq!(state.output_root, root);
+    }
+
+    #[tokio::test]
+    async fn test_recover_latest_game_no_matching_type() {
+        let driver = recovery_driver(
+            RecoveryMockFactory {
+                games: vec![(99, Address::ZERO), (88, Address::ZERO)],
+                error_indices: vec![],
+            },
+            RecoveryMockVerifier { l2_block_number: 100, root_claim: B256::ZERO },
+            42,
+        );
+        let result = driver.recover_latest_game().await.expect("should not error");
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_recover_latest_game_skips_wrong_type() {
+        let root = B256::repeat_byte(0xBB);
+        let driver = recovery_driver(
+            RecoveryMockFactory {
+                games: vec![
+                    (42, Address::ZERO), // index 0: match
+                    (99, Address::ZERO), // index 1: wrong type (scanned first, backwards)
+                ],
+                error_indices: vec![],
+            },
+            RecoveryMockVerifier { l2_block_number: 200, root_claim: root },
+            42,
+        );
+
+        let state = driver
+            .recover_latest_game()
+            .await
+            .expect("should not error")
+            .expect("should skip wrong type and find match");
+        assert_eq!(state.game_index, 0);
+        assert_eq!(state.l2_block_number, 200);
+    }
+
+    #[tokio::test]
+    async fn test_recover_latest_game_continues_on_game_at_index_error() {
+        let root = B256::repeat_byte(0xCC);
+        let driver = recovery_driver(
+            RecoveryMockFactory {
+                games: vec![
+                    (42, Address::ZERO), // index 0: match (reached after error on index 1)
+                    (42, Address::ZERO), // index 1: will error
+                ],
+                error_indices: vec![1],
+            },
+            RecoveryMockVerifier { l2_block_number: 300, root_claim: root },
+            42,
+        );
+
+        let state = driver
+            .recover_latest_game()
+            .await
+            .expect("should not error")
+            .expect("should continue past errored index and find earlier game");
+        assert_eq!(state.game_index, 0);
+        assert_eq!(state.l2_block_number, 300);
     }
 
     #[tokio::test]
