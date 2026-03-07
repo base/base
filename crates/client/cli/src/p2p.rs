@@ -717,6 +717,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_unsafe_block_signer_uses_genesis_when_no_l1() {
+        let args = MockCommand::parse_from(["test"]).p2p;
+        let genesis: Address = "0xAf6E19BE0F9cE7f8afd49a1824851023A8249e8a".parse().unwrap();
+        let signer = args
+            .unsafe_block_signer(8453, &RollupConfig::default(), None, Some(genesis))
+            .await
+            .unwrap();
+        assert_eq!(signer, genesis);
+    }
+
+    #[tokio::test]
+    async fn test_unsafe_block_signer_uses_cli_flag_when_no_genesis() {
+        let expected: Address = "0xAf6E19BE0F9cE7f8afd49a1824851023A8249e8a".parse().unwrap();
+        let args = MockCommand::parse_from([
+            "test",
+            "--p2p.unsafe.block.signer",
+            "0xAf6E19BE0F9cE7f8afd49a1824851023A8249e8a",
+        ])
+        .p2p;
+        let signer = args
+            .unsafe_block_signer(8453, &RollupConfig::default(), None, None)
+            .await
+            .unwrap();
+        assert_eq!(signer, expected);
+    }
+
+    #[tokio::test]
+    async fn test_unsafe_block_signer_genesis_takes_priority_over_cli() {
+        let genesis: Address = "0xAf6E19BE0F9cE7f8afd49a1824851023A8249e8a".parse().unwrap();
+        let args = MockCommand::parse_from([
+            "test",
+            "--p2p.unsafe.block.signer",
+            "0x0000000000000000000000000000000000000001",
+        ])
+        .p2p;
+        let signer = args
+            .unsafe_block_signer(8453, &RollupConfig::default(), None, Some(genesis))
+            .await
+            .unwrap();
+        assert_eq!(signer, genesis);
+    }
+
+    #[tokio::test]
+    async fn test_unsafe_block_signer_errors_with_no_fallbacks() {
+        let args = MockCommand::parse_from(["test"]).p2p;
+        let err = args
+            .unsafe_block_signer(99999, &RollupConfig::default(), None, None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("99999"));
+    }
+
+    #[tokio::test]
     async fn test_p2p_config_errors_on_invalid_bootnode() {
         let args = MockCommand::parse_from(["test", "--p2p.bootnodes", "enr:invalid"]);
 

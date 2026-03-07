@@ -90,6 +90,29 @@ mod tests {
     use crate::test_utils;
 
     #[test]
+    fn test_unsafe_block_signer_mainnet() {
+        let signer = Registry::unsafe_block_signer(8453).unwrap();
+        assert_eq!(
+            signer,
+            "0xAf6E19BE0F9cE7f8afd49a1824851023A8249e8a".parse::<Address>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_unsafe_block_signer_sepolia() {
+        let signer = Registry::unsafe_block_signer(84532).unwrap();
+        assert_eq!(
+            signer,
+            "0xb830b99c95Ea32300039624Cb567d324D4b1D83C".parse::<Address>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_unsafe_block_signer_unknown_chain() {
+        assert!(Registry::unsafe_block_signer(99999).is_none());
+    }
+
+    #[test]
     fn test_hardcoded_rollup_configs() {
         let test_cases =
             [(8453, test_utils::BASE_MAINNET_CONFIG), (84532, test_utils::BASE_SEPOLIA_CONFIG)]

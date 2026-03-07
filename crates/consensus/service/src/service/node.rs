@@ -178,7 +178,7 @@ impl RollupNode {
     ///
     /// If L1 is not ready after the timeout, a warning is logged but the node proceeds anyway
     /// (to handle cases where syncing information is unavailable).
-    async fn wait_for_l1_ready(&self) -> Result<(), String> {
+    async fn wait_for_l1_ready(&self) {
         info!(target: "l1_watcher", "Checking L1 node readiness");
 
         let start = std::time::Instant::now();
@@ -195,7 +195,7 @@ impl RollupNode {
                         elapsed_seconds = elapsed.as_secs(),
                         "L1 is ready, starting consensus service"
                     );
-                    return Ok(());
+                    return;
                 }
                 Ok(None) => {
                     if start.elapsed() > timeout {
@@ -204,7 +204,7 @@ impl RollupNode {
                             elapsed_seconds = timeout.as_secs(),
                             "L1 node not ready after timeout, proceeding anyway"
                         );
-                        return Ok(());
+                        return;
                     }
 
                     info!(
@@ -222,7 +222,7 @@ impl RollupNode {
                             error = %e,
                             "L1 node not ready after timeout, proceeding anyway"
                         );
-                        return Ok(());
+                        return;
                     }
 
                     warn!(
@@ -300,7 +300,7 @@ impl RollupNode {
     pub async fn start(&self) -> Result<(), String> {
         // Wait for L1 node to be ready before proceeding with startup.
         // This prevents crashes when L1 is still syncing and returns null for block queries.
-        self.wait_for_l1_ready().await?;
+        self.wait_for_l1_ready().await;
 
         // Create a global cancellation token for graceful shutdown of tasks.
         let cancellation = CancellationToken::new();
