@@ -1,23 +1,12 @@
 use alloy_primitives::{B256, Bytes, U256};
 
-/// Expected length of an ECDSA signature (r: 32 bytes, s: 32 bytes, v: 1 byte).
-pub const ECDSA_SIGNATURE_LENGTH: usize = 65;
-
 /// A proposal containing an output root and signature.
-///
-/// # Validation
-///
-/// Fields are **untrusted** until validated by the consumer. In particular,
-/// `signature` may have an incorrect length or contain an invalid ECDSA
-/// value when deserialized from an external source. Callers should verify
-/// signature length ([`ECDSA_SIGNATURE_LENGTH`]) and cryptographic validity
-/// before trusting a proposal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Proposal {
     /// The output root hash.
     pub output_root: B256,
-    /// The ECDSA signature (65 bytes: r, s, v). Untrusted until validated.
+    /// The ECDSA signature (65 bytes: r, s, v).
     pub signature: Bytes,
     /// The L1 origin block hash.
     pub l1_origin_hash: B256,

@@ -4,13 +4,10 @@
 extern crate alloc;
 
 mod proof;
-pub use proof::{
-    MAX_PROPOSALS, ProofBundle, ProofClaim, ProofClaimError, ProofEvidence, ProofRequest,
-    ProofResult,
-};
+pub use proof::{ProofBundle, ProofClaim, ProofEvidence, ProofRequest, ProofResult};
 
 mod proposal;
-pub use proposal::{ECDSA_SIGNATURE_LENGTH, Proposal};
+pub use proposal::Proposal;
 
 mod prover;
 pub use prover::ProverBackend;
