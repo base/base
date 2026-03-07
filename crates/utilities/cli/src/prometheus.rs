@@ -1,7 +1,9 @@
 //! Utilities for spinning up a prometheus metrics server.
 
 use std::{
+    any::Any,
     net::{IpAddr, SocketAddr},
+    panic::{self, AssertUnwindSafe},
     thread::{self, sleep},
     time::Duration,
 };
@@ -9,7 +11,7 @@ use std::{
 pub use metrics_exporter_prometheus::BuildError;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use metrics_process::Collector;
-use tracing::info;
+use tracing::{error, info};
 
 /// A wrapper type that initializes a Prometheus metrics server.
 #[derive(Debug, Clone, Copy)]
@@ -33,7 +35,15 @@ impl PrometheusServer {
 
         thread::spawn(move || {
             loop {
-                collector.collect();
+                if let Err(panic_payload) =
+                    panic::catch_unwind(AssertUnwindSafe(|| collector.collect()))
+                {
+                    error!(
+                        target: "prometheus",
+                        panic = %panic_message(panic_payload.as_ref()),
+                        "metrics collector panicked, continuing collection loop"
+                    );
+                }
                 sleep(Duration::from_secs(interval));
             }
         });
@@ -45,6 +55,16 @@ impl PrometheusServer {
         );
 
         Ok(())
+    }
+}
+
+fn panic_message(payload: &(dyn Any + Send)) -> &str {
+    if let Some(msg) = payload.downcast_ref::<&'static str>() {
+        msg
+    } else if let Some(msg) = payload.downcast_ref::<String>() {
+        msg.as_str()
+    } else {
+        "non-string panic payload"
     }
 }
 
