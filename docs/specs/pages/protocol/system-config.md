@@ -103,7 +103,7 @@ introduced the change, as opposed to the 1/1024 adjustments towards a target as 
 updates of L1 blocks.
 
 The gas limit may not be set to a value larger than the
-[maximum gas limit](./configurability.md#gas-limit). This is to ensure that L2 blocks are fault
+[maximum gas limit](configurability.md#gas-limit). This is to ensure that L2 blocks are fault
 provable and of reasonable size to be processed by the client software.
 
 ### Customizable Feature
@@ -229,14 +229,14 @@ Returns the block number at which the op-node can start searching for logs.
 
 ### paused
 
-(-v4.1.0) This function integrates with the [Pause Mechanism](./stage-1.md#pause-mechanism) by
-using the chain's `ETHLockbox` address as the [Pause Identifier](./stage-1.md#pause-identifier).
+(-v4.1.0) This function integrates with the [Pause Mechanism](stage-1.md#pause-mechanism) by
+using the chain's `ETHLockbox` address as the [Pause Identifier](stage-1.md#pause-identifier).
 Returns the current pause state of the system by checking if the `SuperchainConfig` is paused for
 this chain's `ETHLockbox`.
 
-(+v4.1.0) This function integrates with the [Pause Mechanism](./stage-1.md#pause-mechanism) by
+(+v4.1.0) This function integrates with the [Pause Mechanism](stage-1.md#pause-mechanism) by
 using either the chain's `ETHLockbox` address or the chain's `OptimismPortal` address as the
-[Pause Identifier](./stage-1.md#pause-identifier).
+[Pause Identifier](stage-1.md#pause-identifier).
 
 - (-v4.1.0) MUST return true if `SuperchainConfig.paused(optimismPortal().ethLockbox())` returns
   true OR if `SuperchainConfig.paused(address(0))` returns true.

@@ -23,14 +23,14 @@ A **Proven Withdrawal** is a withdrawal transaction that has been proven against
 by a user. Users can prove withdrawals against any Dispute Game contract that meets the following
 conditions:
 
-- The game is a [Registered Game](./anchor-state-registry.md#registered-game)
-- The game is not a [Retired Game](./anchor-state-registry.md#retired-game)
+- The game is a [Registered Game](anchor-state-registry.md#registered-game)
+- The game is not a [Retired Game](anchor-state-registry.md#retired-game)
 - The game has a game type that matches the current
-  [Respected Game Type](./anchor-state-registry.md#respected-game-type)
+  [Respected Game Type](anchor-state-registry.md#respected-game-type)
 - The game has not resolved in favor of the Challenger
 
 Notably, the `OptimismPortal` allows users to prove withdrawals against games that are currently
-in progress (games that are not [Resolved Games](./anchor-state-registry.md#resolved-game)).
+in progress (games that are not [Resolved Games](anchor-state-registry.md#resolved-game)).
 
 Users may re-prove a withdrawal at any time. User withdrawals are stored on a per-user basis such
 that re-proving a withdrawal cannot cause the timer for
@@ -46,7 +46,7 @@ meets the following conditions:
 
 - Withdrawal is a [Proven Withdrawal](#proven-withdrawal)
 - Withdrawal was proven at least [Proof Maturity Delay](#proof-maturity-delay) seconds ago
-- Withdrawal was proven against a game with a [Valid Claim](./anchor-state-registry.md#valid-claim)
+- Withdrawal was proven against a game with a [Valid Claim](anchor-state-registry.md#valid-claim)
 - Withdrawal was not previously finalized
 
 ### Valid Withdrawal
@@ -204,12 +204,12 @@ created.
 ### aOP-003: Incorrectly resolving games will be invalidated before they have Valid Claims
 
 We assume that any games that are resolved incorrectly will be invalidated either by
-[blacklisting](./anchor-state-registry.md#blacklisted-game) or by
-[retirement](./anchor-state-registry.md#retired-game) BEFORE they are considered to have
-[Valid Claims](./anchor-state-registry.md#valid-claim).
+[blacklisting](anchor-state-registry.md#blacklisted-game) or by
+[retirement](anchor-state-registry.md#retired-game) BEFORE they are considered to have
+[Valid Claims](anchor-state-registry.md#valid-claim).
 
 Proper Games that resolve in favor the Defender will be considered to have Valid Claims after the
-[Dispute Game Finality Delay](./anchor-state-registry.md#dispute-game-finality-delay-airgap) has
+[Dispute Game Finality Delay](anchor-state-registry.md#dispute-game-finality-delay-airgap) has
 elapsed UNLESS the Pause Mechanism is active. Therefore, in the absence of the Pause Mechanism,
 parties responsible for game invalidation have exactly the Dispute Game Finality Delay to
 invalidate a withdrawal after it resolves incorrectly. If the Pause Mechanism is active, then any
@@ -223,8 +223,8 @@ incorrectly resolving games must be invalidated before the pause is deactivated.
 
 ## Dependencies
 
-- [iASR-001](./anchor-state-registry.md#iasr-001-games-are-represented-as-proper-games-accurately)
-- [iASR-002](./anchor-state-registry.md#iasr-002-all-valid-claims-are-truly-valid-claims)
+- [iASR-001](anchor-state-registry.md#iasr-001-games-are-represented-as-proper-games-accurately)
+- [iASR-002](anchor-state-registry.md#iasr-002-all-valid-claims-are-truly-valid-claims)
 
 ## Invariants
 
@@ -294,7 +294,7 @@ Returns the DisputeGameFactory contract from the AnchorStateRegistry contract.
 **Legacy Function**
 
 Returns the value of the
-[Dispute Game Finality Delay](./anchor-state-registry.md#dispute-game-finality-delay-airgap) as per
+[Dispute Game Finality Delay](anchor-state-registry.md#dispute-game-finality-delay-airgap) as per
 a call to `AnchorStateRegistry.disputeGameFinalityDelaySeconds()`.
 
 ### respectedGameType
@@ -302,7 +302,7 @@ a call to `AnchorStateRegistry.disputeGameFinalityDelaySeconds()`.
 **Legacy Function**
 
 Returns the value of the current
-[Respected Game Type](./anchor-state-registry.md#respected-game-type) as per a call to
+[Respected Game Type](anchor-state-registry.md#respected-game-type) as per a call to
 `AnchorStateRegistry.respectedGameType`.
 
 ### respectedGameTypeUpdatedAt
@@ -310,7 +310,7 @@ Returns the value of the current
 **Legacy Function**
 
 Returns the value of the current
-[Retirement Timestamp](./anchor-state-registry.md#retirement-timestamp) as per a call to
+[Retirement Timestamp](anchor-state-registry.md#retirement-timestamp) as per a call to
 `AnchorStateRegistry.retirementTimestamp.
 
 ### l2Sender
@@ -327,9 +327,9 @@ Allows a user to [prove](#proven-withdrawal) a withdrawal transaction.
 - MUST revert if the system is paused.
 - MUST revert if the withdrawal target is an [Unsafe Target](#unsafe-target).
 - MUST revert if the withdrawal is being proven against a game that is not a
-  [Proper Game](./anchor-state-registry.md#proper-game).
+  [Proper Game](anchor-state-registry.md#proper-game).
 - MUST revert if the withdrawal is being proven against a game that is not a
-  [Respected Game](./anchor-state-registry.md#respected-game).
+  [Respected Game](anchor-state-registry.md#respected-game).
 - MUST revert if the withdrawal is being proven against a game that has resolved in favor of the
   Challenger.
 - MUST revert if the current timestamp is less than or equal to the dispute game's creation
@@ -359,7 +359,7 @@ Checks that a withdrawal transaction can be [finalized](#finalized-withdrawal).
 - MUST revert if the withdrawal being finalized has been proven less than
   [Proof Maturity Delay](#proof-maturity-delay) seconds ago.
 - MUST revert if the withdrawal being finalized was proven against a game that does not have a
-  [Valid Claim](./anchor-state-registry.md#valid-claim).
+  [Valid Claim](anchor-state-registry.md#valid-claim).
 
 ### finalizeWithdrawalTransaction
 

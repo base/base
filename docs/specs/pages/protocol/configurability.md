@@ -39,12 +39,12 @@ see [Batcher Transaction](../reference/glossary.md#batcher-transaction)).<br/>
 concatenation, `versionByte` is `0x00`, and `chainId` is a `uint256`.<br/>
 **Notes:** It is recommended, but not required, to follow this convention.
 
-### [Batcher Hash](./system-config.md#batcher-hash)
+### [Batcher Hash](system-config.md#batcher-hash)
 
 **Description:** A versioned hash of the current authorized batcher sender(s).<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
 **Requirement:** `bytes32(uint256(uint160(batchSubmitterAddress)))`<br/>
-**Notes**: [Batch Submitter](./batcher.md) address padded with zeros to fit 32 bytes.<br/>
+**Notes**: [Batcher](batcher.md) address padded with zeros to fit 32 bytes.<br/>
 
 ### [Chain ID](https://github.com/ethereum-optimism/superchain-registry/blob/2a011e700e8be22bc18502f3d41c440e7a05015d/chainList.json)
 
@@ -54,7 +54,7 @@ concatenation, `versionByte` is `0x00`, and `chainId` is a `uint256`.<br/>
 **Notes:** Foundation will ensure chains are responsible with their chain IDs until there's a governance process in
 place.<br/>
 
-### [Proof Maturity Delay](./fault-proof/stage-one/bridge-integration.md#fpac-optimismportal-mods-specification)
+### [Proof Maturity Delay](fault-proof/stage-one/bridge-integration.md#fpac-optimismportal-mods-specification)
 
 **Description:** The length of time that must pass between proving and finalizing a withdrawal.<br/>
 **Administrator:** [L1 Proxy Admin](#admin-roles)<br/>
@@ -63,16 +63,16 @@ place.<br/>
 hack if necessary. Allows enough time for other network participants to challenge the integrity of the corresponding
 output root.<br/>
 
-### [Dispute Game Finality](./fault-proof/stage-one/bridge-integration.md#fpac-optimismportal-mods-specification)
+### [Dispute Game Finality](fault-proof/stage-one/bridge-integration.md#fpac-optimismportal-mods-specification)
 
 **Description:** The amount of time given to the `Guardian` role
-to [blacklist a resolved dispute game](./fault-proof/stage-one/bridge-integration.md#blacklisting-disputegames) before
+to [blacklist a resolved dispute game](fault-proof/stage-one/bridge-integration.md#blacklisting-disputegames) before
 any withdrawals proven against it can be finalized, in the case of a system failure.<br/>
 **Administrator:** [L1 Proxy Admin](#admin-roles)<br/>
 **Requirement:** 3.5 days<br/>
 **Notes:** High security. Allows enough time for the `Guardian` to blacklist games.<br/>
 
-### [Respected Game Type](./fault-proof/stage-one/bridge-integration.md#new-state-variables)
+### [Respected Game Type](fault-proof/stage-one/bridge-integration.md#new-state-variables)
 
 **Description:** The respected game type of the `OptimismPortal`. Determines the type of dispute games that can be used
 to finalize withdrawals.<br/>
@@ -168,7 +168,7 @@ using fault proofs from genesis.<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
 **Requirement:** Set such that Fee Margin is between 0 and 50%.<br/>
 
-### [Gas Limit](./system-config.md#l2-gas-limit)
+### [Gas Limit](system-config.md#l2-gas-limit)
 
 **Description:** Gas limit of the L2 blocks is configured through the system config.<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
@@ -332,7 +332,7 @@ from the latest `op-contracts/vX.Y.X` release of source code in
 
 **Description:** Account authorized to upgrade L2 contracts.<br/>
 **Administrator:** [L2 Proxy Admin Owner](#admin-roles)<br/>
-**Administers:** [Predeploys](./predeploys.md#overview)<br/>
+**Administers:** [Predeploys](execution/evm/predeploys.md#overview)<br/>
 **Requirement:**
 [ProxyAdmin.sol](https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.3.0/packages/contracts-bedrock/src/universal/ProxyAdmin.sol)
 from the latest `op-contracts/vX.Y.X` release of source code
@@ -355,7 +355,7 @@ Address:
 ### [System Config Owner](https://github.com/ethereum-optimism/optimism/blob/c927ed9e8af501fd330349607a2b09a876a9a1fb/packages/contracts-bedrock/src/L1/SystemConfig.sol#L14C26-L14C44)
 
 **Description:** Account authorized to change values in the SystemConfig contract. All configuration is stored on L1 and
-picked up by L2 as part of the [derivation](./consensus/derivation.md) of the L2 chain.<br/>
+picked up by L2 as part of the [derivation](consensus/derivation.md) of the L2 chain.<br/>
 **Administrator:** [L1 Proxy Admin](#admin-roles)<br/>
 **Administers:** [Batch submitter address](#service-roles), [Sequencer P2P / Unsafe head signer](#service-roles),
 [Fee Margin](#consensus-parameters), [Gas limit](#consensus-parameters), [System Config Owner](#admin-roles)<br/>
@@ -378,7 +378,7 @@ the [Law of Chains](https://github.com/ethereum-optimism/OPerating-manual/blob/m
 ### [Challenger address](https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/PermissionedDisputeGame.sol#L23)
 
 **Description:** Account which can interact with
-existing [permissioned dispute games](./fault-proof/stage-one/bridge-integration.md#permissioned-faultdisputegame).<br/>
+existing [permissioned dispute games](fault-proof/stage-one/bridge-integration.md#permissioned-faultdisputegame).<br/>
 **Administrator:** [L1 Proxy Admin](#admin-roles)<br/>
 **Requirement:**
 [0x9BA6e03D8B90dE867373Db8cF1A58d2F7F006b3A](https://etherscan.io/address/0x9BA6e03D8B90dE867373Db8cF1A58d2F7F006b3A)
@@ -396,13 +396,13 @@ respected game type in the `OptimismPortal`.<br/>
 **Requirement:**
 [0x09f7150D8c019BeF34450d6920f6B3608ceFdAf2](https://etherscan.io/address/0x09f7150D8c019BeF34450d6920f6B3608ceFdAf2)<br/>
 **Notes:** A 1/1 Safe owned by the Security Council Safe, with
-the [Deputy Pause Module](./deputy-pause-module.md) enabled to allow the Optimism
-Foundation to act as [Pause Deputy](./stage-1.md#pause-deputy).<br/>
+the [Deputy Pause Module](deputy-pause-module.md) enabled to allow the Optimism
+Foundation to act as [Pause Deputy](stage-1.md#pause-deputy).<br/>
 
 ### [Proposer address](https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/PermissionedDisputeGame.sol#L20)
 
 **Description:** Account which can create and interact
-with [permissioned dispute games](./fault-proof/stage-one/bridge-integration.md#permissioned-faultdisputegame) on
+with [permissioned dispute games](fault-proof/stage-one/bridge-integration.md#permissioned-faultdisputegame) on
 L1.<br/>
 **Administrator:** [L1 Proxy Admin](#admin-roles)<br/>
 **Requirement:** No requirement<br/>

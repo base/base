@@ -16,7 +16,7 @@ call each getter for the network specific config and set the returndata into sto
 
 Following the Isthmus upgrade, a new method is introduced: `getOperatorFee(uint256)`. This method
 returns the operator fee for the given `gasUsed`. The operator fee calculation follows the formula
-outlined in the [Operator Fee](./exec-engine.md#) section of the execution engine spec.
+outlined in the [Operator Fee](exec-engine.md#) section of the execution engine spec.
 
 The value returned by `getOperatorFee(uint256)` is capped at `U256` max value.
 
@@ -27,6 +27,6 @@ No special logic is needed in order to insert or withdraw funds.
 
 Its address will be `0x420000000000000000000000000000000000001b`.
 
-See also [Fee Vaults](./exec-engine.md#fee-vaults).
+See also [Fee Vaults](exec-engine.md#fee-vaults).
 
 ## Security Considerations

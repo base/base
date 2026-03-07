@@ -61,7 +61,7 @@ function minBaseFee() external view returns (uint64);
 
 ## DA Footprint Configuration
 
-Jovian adds a `uint16` configuration value to `SystemConfig` to control the [`daFootprintGasScalar`](./derivation.md).
+Jovian adds a `uint16` configuration value to `SystemConfig` to control the [`daFootprintGasScalar`](derivation.md).
 
 The configuration is updated via a new method on `SystemConfig`:
 

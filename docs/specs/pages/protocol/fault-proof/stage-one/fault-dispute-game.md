@@ -69,13 +69,13 @@ states at initialization time so that these updates do not impact active games.
 The Anchor State Registry is a registry that the FDG uses to determine its [anchor state](#anchor-state). It also
 determines if the game is [finalized](anchor-state-registry.md#finalized-game) and
 ["proper"](anchor-state-registry.md#proper-game) for purposes of [Bond
-Distribution](./bond-incentives.md#game-finalization). See [Anchor State Registry](anchor-state-registry.md) for more
+Distribution](bond-incentives.md#game-finalization). See [Anchor State Registry](anchor-state-registry.md) for more
 details.
 
 ### Respected Game Type
 
 A Fault Dispute Game must record whether its game type is respected at the time of its creation. See
-[Respected Game Type](./anchor-state-registry.md#respected-game-type) for more details.
+[Respected Game Type](anchor-state-registry.md#respected-game-type) for more details.
 
 ### DAG
 

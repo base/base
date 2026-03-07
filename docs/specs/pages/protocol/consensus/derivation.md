@@ -680,7 +680,7 @@ This history does not have to be complete, but enables later L1 finality signals
 
 To interact with the engine, the [execution engine API][exec-engine] is used, with the following JSON-RPC methods:
 
-[exec-engine]: ../exec-engine.md
+[exec-engine]: ../execution/index.md
 
 ##### Bedrock, Canyon, Delta: API Usage
 
@@ -706,13 +706,13 @@ Canyon & Delta payloads.
 
 Prior versions of `op-node` used `v3`, `v2` and `v1` methods.
 
-[`engine_forkchoiceUpdatedV2`]: ../exec-engine.md#engine_forkchoiceupdatedv2
-[`engine_forkchoiceUpdatedV3`]: ../exec-engine.md#engine_forkchoiceupdatedv3
-[`engine_getPayloadV2`]: ../exec-engine.md#engine_getpayloadv2
-[`engine_getPayloadV3`]: ../exec-engine.md#engine_getpayloadv3
-[`engine_newPayloadV2`]: ../exec-engine.md#engine_newpayloadv2
-[`engine_newPayloadV3`]: ../exec-engine.md#engine_newpayloadv3
-[`engine_newPayloadV4`]: ../exec-engine.md#engine_newpayloadv4
+[`engine_forkchoiceUpdatedV2`]: ../execution/index.md#engine_forkchoiceupdatedv2
+[`engine_forkchoiceUpdatedV3`]: ../execution/index.md#engine_forkchoiceupdatedv3
+[`engine_getPayloadV2`]: ../execution/index.md#engine_getpayloadv2
+[`engine_getPayloadV3`]: ../execution/index.md#engine_getpayloadv3
+[`engine_newPayloadV2`]: ../execution/index.md#engine_newpayloadv2
+[`engine_newPayloadV3`]: ../execution/index.md#engine_newpayloadv3
+[`engine_newPayloadV4`]: ../execution/index.md#engine_newpayloadv4
 
 The execution payload is an object of type [`ExecutionPayloadV3`][eth-payload].
 
@@ -781,7 +781,7 @@ enact the change, as linear rewinds of the tip of the chain may not be supported
 
 #### L1-sync: payload attributes processing
 
-[exec-engine-comm]: ../exec-engine.md#engine-api
+[exec-engine-comm]: ../execution/index.md#engine-api
 
 If the safe and unsafe L2 heads are identical (whether because of failed consolidation or not), we send the L2 payload
 attributes to the execution engine to be constructed into a proper L2 block.
@@ -949,7 +949,7 @@ which includes additional `transactions` and `noTxPool` fields.
 This process happens during the payloads-attributes queue ran by a verifier node, as well as during block-production
 ran by a sequencer node (the sequencer may enable the tx-pool usage if the transactions are batch-submitted).
 
-[expanded-payload]: ../exec-engine.md#extended-payloadattributesv1
+[expanded-payload]: ../execution/index.md#extended-payloadattributesv1
 
 ## Deriving the Transaction List
 
@@ -1005,8 +1005,8 @@ follows:
 - `gasLimit` is set to the current `gasLimit` value in the [system configuration][g-system-config] of this payload.
 - `withdrawals` is set to nil prior to Canyon and an empty array after Canyon
 
-[extended-attributes]: ../exec-engine.md#extended-payloadattributesv1
-[Fee Vaults]: ../exec-engine.md#fee-vaults
+[extended-attributes]: ../execution/index.md#extended-payloadattributesv1
+[Fee Vaults]: ../execution/index.md#fee-vaults
 
 ## On Future-Proof Transaction Log Derivation
 

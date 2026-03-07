@@ -2,7 +2,7 @@
 
 ## Overview
 
-[Precompiled contracts](../reference/glossary.md#precompiled-contract-precompile) exist on Base at
+[Precompiled contracts](../../../reference/glossary.md#precompiled-contract-precompile) exist on Base at
 predefined addresses. They are similar to predeploys but are implemented as native code in the EVM as opposed to
 bytecode. Precompiles are used for computationally expensive operations, that would be cost prohibitive to implement
 in Solidity. Where possible predeploys are preferred, as precompiles must be implemented in every execution client.

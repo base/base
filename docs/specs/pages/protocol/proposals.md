@@ -27,8 +27,8 @@ are part of later specification milestones.
 
 The proposer's role is to construct and submit output roots, which are commitments to the L2's state,
 to the `L2OutputOracle` contract on L1 (the settlement layer). To do this, the proposer periodically
-queries the [rollup node](./consensus/index.md) for the latest output root derived from the latest
-[finalized](./consensus/index.md#finalization-guarantees) L1 block. It then takes the output root and
+queries the [rollup node](consensus/index.md) for the latest output root derived from the latest
+[finalized](consensus/index.md#finalization-guarantees) L1 block. It then takes the output root and
 submits it to the `L2OutputOracle` contract on the settlement layer (L1).
 
 ### L2OutputOracle v1.0.0

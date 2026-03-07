@@ -45,7 +45,7 @@ Deputy. The Pause Deputy is capable of triggering the Pause Mechanism but does n
 to reset the mechanism or unpause the system.
 
 The Pause Deputy is an optional role within an OP Chain and can be configured if the Guardian is
-a [Safe][safe-docs] that installs the [Deputy Pause Module](./deputy-pause-module.md).
+a [Safe][safe-docs] that installs the [Deputy Pause Module](deputy-pause-module.md).
 
 ### Pause Mechanism
 
@@ -98,7 +98,7 @@ contract, which will check for the status of the pause by passing along the addr
 `address(0)`. This allows for targeted pausing of specific chains, the interop set (which shares an
 `ETHLockbox` contract), or all chains that share the same `SuperchainConfig` when `address(0)` is
 used as the identifier. When the `ETHLockbox`
-[Customizable Feature](./system-config.md#customizable-feature) is enabled, the `ETHLockbox`
+[Customizable Feature](system-config.md#customizable-feature) is enabled, the `ETHLockbox`
 address is to be used as the pause identifier. When the `ETHLockbox` feature is disabled or the
 `ETHLockbox` address has not yet been configured, the `OptimismPortal` address is to be used.
 

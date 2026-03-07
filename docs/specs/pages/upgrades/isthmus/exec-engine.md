@@ -2,7 +2,7 @@
 
 
 
-[l2-to-l1-mp]: ../../protocol/predeploys.md#L2ToL1MessagePasser
+[l2-to-l1-mp]: ../../protocol/execution/evm/predeploys.md#L2ToL1MessagePasser
 [output-root]: ../../reference/glossary.md#l2-output-root
 
 ## Overview
@@ -86,7 +86,7 @@ even if a `withdrawalsRoot` is present and a MPT root is present in the header, 
 Any implementation that calculates output root should be careful not to use the header `withdrawalsRoot`.
 
 Note that there is always nonzero storage in the [`L2ToL1MessagePasser`][l2-to-l1-mp],
-because it is a [proxied predeploy](../../protocol/predeploys.md) -- from genesis it
+because it is a [proxied predeploy](../../protocol/execution/evm/predeploys.md) -- from genesis it
 stores an implementation address and owner address. So from Isthmus,
 the `withdrawalsRoot` will always be non-nil and never be the MPT root of an empty list.
 
@@ -239,7 +239,7 @@ of a transaction now includes the worst-case operator fee.
 #### Configuring Operator Fee Parameters
 
 `operatorFeeScalar` and `operatorFeeConstant` are loaded in a similar way to the `baseFeeScalar` and
-`blobBaseFeeScalar` used in the [`L1Fee`](../../protocol/exec-engine.md#ecotone-l1-cost-fee-changes-eip-4844-da).
+`blobBaseFeeScalar` used in the [`L1Fee`](../../protocol/execution/index.md#ecotone-l1-cost-fee-changes-eip-4844-da).
 calculation. In more detail, these parameters can be accessed in two interchangable ways.
 
 - read from the deposited L1 attributes (`operatorFeeScalar` and `operatorFeeConstant`) of the current L2 block

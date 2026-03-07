@@ -8,7 +8,7 @@ Proposed
 
 The `DeputyPauseModule` is a [Safe Module][safe-modules] designed to be installed into the Security
 Council Guardian Safe that allows a dedicated Deputy address to create an ECDSA signature that
-authorizes the execution of the [Pause Mechanism](./stage-1.md#pause-mechanism). The
+authorizes the execution of the [Pause Mechanism](stage-1.md#pause-mechanism). The
 `DeputyPauseModule` assumes that the Security Council Guardian Safe is the Guardian
 that is permitted to act within the `SuperchainConfig`.
 
@@ -301,7 +301,7 @@ remove the module if necessary.
 ### pause
 
 - Takes a nonce as an untrusted input.
-- Takes a [Pause Identifier](./stage-1.md#pause-identifier) as an untrusted input.
+- Takes a [Pause Identifier](stage-1.md#pause-identifier) as an untrusted input.
 - Takes a signature as an untrusted input.
 - Callable by any address.
 - Must verify that the nonce has not been used.

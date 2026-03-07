@@ -15,10 +15,10 @@
 
 [block-validation]: ../../protocol/consensus/p2p.md#block-validation
 [payload-attributes]: ../../protocol/consensus/derivation.md#building-individual-payload-attributes
-[1559-params]: ../../protocol/exec-engine.md#1559-parameters
+[1559-params]: ../../protocol/execution/index.md#1559-parameters
 [channel-reading]: ../../protocol/consensus/derivation.md#reading
 [deposit-reading]: ../../protocol/deposits.md#deposit-receipt
-[create2deployer]: ../../protocol/predeploys.md#create2deployer
+[create2deployer]: ../../protocol/execution/evm/predeploys.md#create2deployer
 
 The Canyon upgrade contains the Shapella upgrade from L1 and some minor protocol fixes.
 The Canyon upgrade uses a _L2 block-timestamp_ activation-rule, and is specified in both the

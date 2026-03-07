@@ -13,7 +13,7 @@
 ## Introduction
 
 Span-batch is a new batching spec that reduces overhead,
-introduced in the [Delta](./overview.md) network upgrade.
+introduced in the [Delta](overview.md) network upgrade.
 
 The overhead is reduced by representing a span of
 consecutive L2 blocks in a more efficient manner,
