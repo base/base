@@ -18,4 +18,5 @@ exclude = [
     'https://specs.base.org',
     'https://patreon.com',
     'https://www.patreon.com',
+    'https://www.linux-mips.org',
 ]

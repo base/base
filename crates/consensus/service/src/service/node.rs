@@ -178,7 +178,7 @@ impl RollupNode {
     ///
     /// If L1 is not ready after the timeout, a warning is logged but the node proceeds anyway
     /// (to handle cases where syncing information is unavailable).
-    async fn wait_for_l1_ready(&self) {
+    async fn wait_for_l1_ready(&self, cancellation: &CancellationToken) {
         info!(target: "l1_watcher", "Checking L1 node readiness");
 
         let start = std::time::Instant::now();
@@ -212,7 +212,6 @@ impl RollupNode {
                         elapsed_seconds = start.elapsed().as_secs(),
                         "Waiting for L1 to sync"
                     );
-                    tokio::time::sleep(poll_interval).await;
                 }
                 Err(e) => {
                     if start.elapsed() > timeout {
@@ -231,8 +230,15 @@ impl RollupNode {
                         elapsed_seconds = start.elapsed().as_secs(),
                         "Error checking L1 readiness, retrying"
                     );
-                    tokio::time::sleep(poll_interval).await;
                 }
+            }
+
+            tokio::select! {
+                _ = cancellation.cancelled() => {
+                    info!(target: "l1_watcher", "Shutdown requested during L1 readiness check");
+                    return;
+                }
+                _ = tokio::time::sleep(poll_interval) => {}
             }
         }
     }
@@ -298,12 +304,13 @@ impl RollupNode {
     /// finalizes `safe` blocks that it has derived when L1 finalized block updates are
     /// received.
     pub async fn start(&self) -> Result<(), String> {
-        // Wait for L1 node to be ready before proceeding with startup.
-        // This prevents crashes when L1 is still syncing and returns null for block queries.
-        self.wait_for_l1_ready().await;
-
         // Create a global cancellation token for graceful shutdown of tasks.
         let cancellation = CancellationToken::new();
+
+        // Wait for L1 node to be ready before spawning any actors.
+        // This prevents crashes when L1 is still syncing and returns null for block queries.
+        // The cancellation token allows a clean shutdown if SIGTERM arrives during this wait.
+        self.wait_for_l1_ready(&cancellation).await;
 
         let (derivation_actor_request_tx, derivation_actor_request_rx) = mpsc::channel(1024);
 

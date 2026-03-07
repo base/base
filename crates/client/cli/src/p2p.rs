@@ -370,6 +370,13 @@ impl P2PArgs {
             if !signer.is_zero() {
                 return Ok(signer);
             }
+
+            warn!(
+                target: "p2p::flags",
+                block_number = block_info.number,
+                "L1 SystemConfig returned zero unsafe block signer (L1 may still be syncing), \
+                 falling back to registry/genesis signer"
+            );
         }
 
         // Otherwise use the genesis signer or the configured unsafe block signer.
@@ -736,10 +743,8 @@ mod tests {
             "0xAf6E19BE0F9cE7f8afd49a1824851023A8249e8a",
         ])
         .p2p;
-        let signer = args
-            .unsafe_block_signer(8453, &RollupConfig::default(), None, None)
-            .await
-            .unwrap();
+        let signer =
+            args.unsafe_block_signer(8453, &RollupConfig::default(), None, None).await.unwrap();
         assert_eq!(signer, expected);
     }
 
