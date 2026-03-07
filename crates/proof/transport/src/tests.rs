@@ -1,12 +1,14 @@
 use alloy_primitives::{B256, Bytes, U256};
-use base_proof_primitives::{ProofBundle, ProofClaim, ProofEvidence, ProofResult, Proposal};
+use base_proof_primitives::{
+    ECDSA_SIGNATURE_LENGTH, ProofBundle, ProofClaim, ProofEvidence, ProofResult, Proposal,
+};
 
 use crate::{ProofTransport, test_utils::NativeTransport};
 
 fn test_proposal() -> Proposal {
     Proposal {
         output_root: B256::ZERO,
-        signature: Bytes::new(),
+        signature: Bytes::from(vec![0u8; ECDSA_SIGNATURE_LENGTH]),
         l1_origin_hash: B256::ZERO,
         l1_origin_number: U256::from(100),
         l2_block_number: U256::from(42),

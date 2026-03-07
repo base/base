@@ -224,6 +224,15 @@ mod tests {
     }
 
     #[test]
+    fn validate_accepts_max_proposals() {
+        let claim = ProofClaim {
+            aggregate_proposal: valid_proposal(),
+            proposals: vec![valid_proposal(); MAX_PROPOSALS],
+        };
+        assert!(claim.validate().is_ok());
+    }
+
+    #[test]
     fn validate_rejects_too_many_proposals() {
         let claim = ProofClaim {
             aggregate_proposal: valid_proposal(),
@@ -236,12 +245,22 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_bad_aggregate_signature() {
+    fn validate_rejects_short_aggregate_signature() {
         let mut claim = valid_claim();
         claim.aggregate_proposal.signature = Bytes::from(vec![0xab; 64]);
         assert_eq!(
             claim.validate(),
             Err(ProofClaimError::InvalidSignatureLength { index: None, length: 64 })
+        );
+    }
+
+    #[test]
+    fn validate_rejects_long_aggregate_signature() {
+        let mut claim = valid_claim();
+        claim.aggregate_proposal.signature = Bytes::from(vec![0xab; 66]);
+        assert_eq!(
+            claim.validate(),
+            Err(ProofClaimError::InvalidSignatureLength { index: None, length: 66 })
         );
     }
 
