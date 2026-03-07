@@ -217,8 +217,31 @@ build-node:
     cargo build --bin base-reth-node
 
 # Build the contracts used for tests
-build-contracts:
+build-contracts: build-succinct-contracts
     cd crates/utilities/test-utils/contracts && forge soldeer install && forge build
+
+# Build the succinct contracts and pre-warm the forge script cache
+build-succinct-contracts:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    cd crates/succinct/contracts
+
+    forge soldeer install
+    forge build
+
+    # Forge build compiles only the src/ graph; the scripts/ graph is compiled by `forge script`.
+    # On the first invocation, `forge script` may compile a small set of dependencies.
+    # To avoid paying this cost in every CI test, we pre-warm the script cache once here.
+    forge script "script/validity/DeployMockVerifier.s.sol" \
+        --skip "/**/test/**" \
+        --sig "idonotexist()" \
+        --skip-simulation \
+        2>/dev/null || true
+
+# Generate Rust bindings from succinct Solidity contracts (requires forge)
+build-succinct-bindings: build-succinct-contracts
+    cargo build -p base-succinct-bindings
 
 # Cleans the workspace
 clean:

@@ -9,8 +9,8 @@ fn main() -> anyhow::Result<()> {
         MetadataCommand::new().no_deps().exec().context("Failed to get cargo metadata")?;
 
     let workspace_root = metadata.workspace_root;
-    let bindings_codegen_path = workspace_root.join("bindings/src/codegen");
-    let contracts_package_path = workspace_root.join("contracts");
+    let bindings_codegen_path = workspace_root.join("crates/succinct/bindings/src/codegen");
+    let contracts_package_path = workspace_root.join("crates/succinct/contracts");
 
     // Check if the contracts directory exists.
     if !contracts_package_path.exists() {

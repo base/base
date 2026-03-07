@@ -58,7 +58,7 @@ async-trait.workspace = true
 clap = { workspace = true, features = ["derive"] }
 dotenv.workspace = true
 futures.workspace = true
-rand = "0.9"
+rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -67,7 +67,7 @@ tracing.workspace = true
 hex.workspace = true
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
-tikv-jemallocator = "0.6.0"
+tikv-jemallocator.workspace = true
 tempfile = "3"
 
 [dev-dependencies]
@@ -78,7 +78,7 @@ base-succinct-bindings.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 alloy-rpc-types-trace.workspace = true
-rstest = "0.26"
+rstest.workspace = true 
 which = "4.4"
 
 [features]
