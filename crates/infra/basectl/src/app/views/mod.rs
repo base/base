@@ -15,3 +15,6 @@ pub(crate) use flashblocks::FlashblocksView;
 
 mod home;
 pub(crate) use home::HomeView;
+
+mod transaction_pane;
+pub(crate) use transaction_pane::TransactionPane;

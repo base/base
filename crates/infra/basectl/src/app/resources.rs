@@ -261,6 +261,7 @@ impl DaState {
     fn process_flashblock(&mut self, fb: &Flashblock) {
         let block_number = fb.metadata.block_number;
         let da_bytes: u64 = fb.diff.transactions.iter().map(|tx| tx.len() as u64).sum();
+        let tx_count = fb.diff.transactions.len();
         let timestamp = fb.base.as_ref().map(|b| b.timestamp).unwrap_or(0);
 
         if fb.index == 0 {
@@ -273,6 +274,15 @@ impl DaState {
 
             self.tracker.add_block(block_number, da_bytes, timestamp);
 
+            // Set tx_count on the contribution for this specific block.
+            // `add_block` may no-op when the block is already safe, so avoid
+            // mutating the front row unconditionally.
+            if let Some(contrib) =
+                self.tracker.block_contributions.iter_mut().find(|c| c.block_number == block_number)
+            {
+                contrib.tx_count = tx_count;
+            }
+
             if let (Some(prev), Some(tx)) = (prev_block, &self.block_req_tx) {
                 for missing in (prev..block_number).rev() {
                     let _ = tx.try_send(missing);
@@ -282,6 +292,7 @@ impl DaState {
             self.tracker.block_contributions.iter_mut().find(|c| c.block_number == block_number)
         {
             contrib.da_bytes = contrib.da_bytes.saturating_add(da_bytes);
+            contrib.tx_count += tx_count;
             if block_number > self.tracker.safe_l2_block {
                 self.tracker.da_backlog_bytes =
                     self.tracker.da_backlog_bytes.saturating_add(da_bytes);
@@ -368,8 +379,7 @@ impl FlashState {
         }
         self.last_flashblock = Some((block_number, index));
 
-        let base_fee =
-            fb.base.as_ref().map(|base| base.base_fee_per_gas.try_into().unwrap_or(u128::MAX));
+        let base_fee = fb.base.as_ref().and_then(|base| base.base_fee_per_gas.try_into().ok());
 
         let prev_base_fee = self.current_base_fee;
 
@@ -391,6 +401,7 @@ impl FlashState {
             prev_base_fee,
             timestamp: received_at,
             time_diff_ms,
+            raw_txs: fb.diff.transactions,
         };
 
         self.entries.push_front(entry);

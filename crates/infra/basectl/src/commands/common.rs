@@ -3,13 +3,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use alloy_primitives::Bytes;
 use chrono::{DateTime, Local};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
 };
 
-use crate::rpc::{L1BlockInfo, L1ConnectionMode};
+use crate::rpc::{L1BlockInfo, L1ConnectionMode, TxSummary};
 
 /// Size of a single blob in bytes (128 `KiB`).
 pub(crate) const BLOB_SIZE: u64 = 128 * 1024;
@@ -108,6 +109,20 @@ pub(crate) struct FlashblockEntry {
     pub timestamp: DateTime<Local>,
     /// Time difference in milliseconds from the previous flashblock.
     pub time_diff_ms: Option<i64>,
+    /// Raw EIP-2718 encoded transaction bytes, decoded lazily on demand.
+    pub raw_txs: Vec<Bytes>,
+}
+
+impl FlashblockEntry {
+    /// Decodes the raw transaction bytes into summaries on demand.
+    ///
+    /// This avoids the expensive k256 ECDSA signer recovery on the hot path.
+    pub(crate) fn decode_txs(&self) -> Vec<TxSummary> {
+        crate::rpc::decode_flashblock_transactions(
+            &self.raw_txs,
+            self.base_fee.and_then(|f| u64::try_from(f).ok()),
+        )
+    }
 }
 
 /// An L2 block's data availability contribution.
@@ -119,6 +134,8 @@ pub(crate) struct BlockContribution {
     pub da_bytes: u64,
     /// Unix timestamp of the block.
     pub timestamp: u64,
+    /// Total transaction count accumulated from flashblocks.
+    pub tx_count: usize,
 }
 
 impl BlockContribution {
@@ -370,7 +387,7 @@ impl DaTracker {
 
     /// Adds a block from the initial backlog fetch.
     pub(crate) fn add_backlog_block(&mut self, block_number: u64, da_bytes: u64, timestamp: u64) {
-        let contribution = BlockContribution { block_number, da_bytes, timestamp };
+        let contribution = BlockContribution { block_number, da_bytes, timestamp, tx_count: 0 };
         self.block_contributions.push_front(contribution);
         if self.block_contributions.len() > MAX_HISTORY {
             self.block_contributions.pop_back();
@@ -386,7 +403,7 @@ impl DaTracker {
         self.da_backlog_bytes = self.da_backlog_bytes.saturating_add(da_bytes);
         self.growth_tracker.add_sample(da_bytes);
 
-        let contribution = BlockContribution { block_number, da_bytes, timestamp };
+        let contribution = BlockContribution { block_number, da_bytes, timestamp, tx_count: 0 };
         self.block_contributions.push_front(contribution);
         if self.block_contributions.len() > MAX_HISTORY {
             self.block_contributions.pop_back();
@@ -420,7 +437,7 @@ impl DaTracker {
 
         // Block not found - insert it in sorted position (gap fill)
         let contribution =
-            BlockContribution { block_number, da_bytes: accurate_da_bytes, timestamp };
+            BlockContribution { block_number, da_bytes: accurate_da_bytes, timestamp, tx_count: 0 };
 
         if block_number > self.safe_l2_block {
             self.da_backlog_bytes = self.da_backlog_bytes.saturating_add(accurate_da_bytes);
