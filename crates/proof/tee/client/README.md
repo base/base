@@ -22,8 +22,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Proving
 
-The `prove` method sends a [`ProofRequest`] to the TEE server and receives a
-complete [`ProofResult`] back. The server handles all orchestration internally.
+The `prove` method sends a `ProofRequest` to the TEE server and receives a
+complete `ProofResult` back. Unlike the lower-level `execute_stateless` and
+`aggregate` methods which require the caller to orchestrate individual block
+executions and aggregation, `prove` delegates all orchestration to the TEE
+server.
 
 ```ignore
 use base_enclave_client::{EnclaveClient, ProofRequest};

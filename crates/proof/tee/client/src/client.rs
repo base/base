@@ -244,8 +244,7 @@ impl EnclaveClient {
     /// [`aggregate`](Self::aggregate), which require the caller to orchestrate individual block
     /// executions and aggregation, this method delegates all orchestration to the TEE server.
     /// The server handles generating per-block proposals, aggregating them, and returning a
-    /// complete [`ProofResult`] containing the [`ProofClaim`](base_proof_primitives::ProofClaim)
-    /// and [`ProofEvidence`](base_proof_primitives::ProofEvidence).
+    /// complete [`ProofResult`] containing the [`ProofClaim`] and [`ProofEvidence`].
     ///
     /// # Errors
     ///
