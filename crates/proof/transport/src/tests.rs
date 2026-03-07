@@ -21,10 +21,7 @@ fn test_bundle() -> ProofBundle {
 
 fn test_result() -> ProofResult {
     ProofResult {
-        claim: ProofClaim {
-            aggregate_proposal: test_proposal(),
-            proposals: vec![test_proposal()],
-        },
+        claim: ProofClaim { aggregate_proposal: test_proposal(), proposals: vec![test_proposal()] },
         evidence: ProofEvidence::Tee { attestation_doc: vec![1, 2, 3], signature: vec![4, 5, 6] },
     }
 }

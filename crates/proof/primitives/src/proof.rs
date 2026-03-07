@@ -4,8 +4,7 @@ use core::fmt;
 use alloy_primitives::B256;
 use base_proof_preimage::PreimageKey;
 
-use crate::proposal::ECDSA_SIGNATURE_LENGTH;
-use crate::Proposal;
+use crate::{ECDSA_SIGNATURE_LENGTH, Proposal};
 
 /// Maximum number of individual proposals allowed in a [`ProofClaim`].
 ///
