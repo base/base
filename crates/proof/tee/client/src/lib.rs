@@ -5,11 +5,14 @@
 #![deny(rust_2018_idioms)]
 
 mod client;
-mod client_error;
+pub use client::EnclaveClient;
 
+mod client_error;
+pub use client_error::ClientError;
+
+mod tee_prover;
 pub use base_enclave::{AggregateRequest, ExecuteStatelessRequest, Proposal};
 pub use base_proof_primitives::{
     ProofBundle, ProofClaim, ProofEvidence, ProofRequest, ProofResult,
 };
-pub use client::EnclaveClient;
-pub use client_error::ClientError;
+pub use tee_prover::TeeProver;

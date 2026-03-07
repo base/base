@@ -74,7 +74,6 @@ jsonrpsee.workspace = true
 alloy-consensus.workspace = true
 jsonrpsee-types.workspace = true
 alloy-rpc-types-eth.workspace = true
-base-alloy-consensus.workspace = true
-base-alloy-rpc-types.workspace = true
+base-proof-primitives.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["test-util"] }
