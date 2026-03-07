@@ -1,8 +1,8 @@
 //! TEE-based nullification proof generation for the challenger.
 //!
 //! Delegates proof orchestration (per-block execution, aggregation) to the TEE
-//! server via [`TeeProver::prove`] and encodes the resulting aggregate proposal
-//! into the on-chain proof format.
+//! server via [`EnclaveProvider::prove`] and encodes the resulting aggregate
+//! proposal into the on-chain proof format.
 //!
 //! ## Proof format
 //!
@@ -24,7 +24,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::Bytes;
-use base_enclave_client::{ClientError, ProofRequest, TeeProver};
+use base_enclave_client::{ClientError, EnclaveProvider, ProofRequest};
 use base_tee_prover::ProofEncoder;
 use thiserror::Error;
 use tracing::info;
@@ -58,7 +58,7 @@ impl TeeProofError {
 /// Generates TEE-based nullification proofs for invalid candidate games.
 ///
 /// Delegates all proof orchestration (per-block execution and aggregation) to
-/// the TEE server via [`TeeProver::prove`], then encodes the aggregate
+/// the TEE server via [`EnclaveProvider::prove`], then encodes the aggregate
 /// proposal into the 130-byte on-chain format.
 #[derive(Debug)]
 pub struct TeeProofGenerator<P> {
@@ -66,7 +66,7 @@ pub struct TeeProofGenerator<P> {
     prover: Arc<P>,
 }
 
-impl<P: TeeProver> TeeProofGenerator<P> {
+impl<P: EnclaveProvider> TeeProofGenerator<P> {
     /// Creates a new TEE proof generator.
     #[must_use]
     pub const fn new(prover: Arc<P>) -> Self {
@@ -154,7 +154,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl TeeProver for MockTeeProver {
+    impl EnclaveProvider for MockTeeProver {
         async fn prove(&self, _request: ProofRequest) -> Result<ProofResult, ClientError> {
             match &self.result {
                 Ok(r) => Ok(r.clone()),
