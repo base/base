@@ -1,0 +1,29 @@
+[package]
+name = "base-succinct-ethereum-client-utils"
+version.workspace = true
+
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# local
+base-succinct-client-utils.workspace = true
+
+# base proof/consensus
+base-consensus-derive.workspace = true
+base-proof-driver.workspace = true
+base-proof-executor.workspace = true
+base-consensus-genesis.workspace = true
+base-proof-preimage.workspace = true
+base-proof.workspace = true
+
+# general
+anyhow.workspace = true
+async-trait.workspace = true
+spin.workspace = true
+
+[lints]
+workspace = true

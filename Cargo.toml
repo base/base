@@ -37,25 +37,20 @@ members = [
   "crates/infra/*",
   "crates/alloy/*",
   "crates/execution/*",
-  "crates/op-succinct/bindings",
-  "crates/op-succinct/fault-proof",
-  "crates/op-succinct/programs/aggregation",
-  "crates/op-succinct/programs/range/*",
-  "crates/op-succinct/programs/range/utils",
-  "crates/op-succinct/scripts/*",
-  "crates/op-succinct/utils/build",
-  "crates/op-succinct/utils/celestia/client",
-  "crates/op-succinct/utils/celestia/host",
-  "crates/op-succinct/utils/client",
-  "crates/op-succinct/utils/eigenda/client",
-  "crates/op-succinct/utils/eigenda/host",
-  "crates/op-succinct/utils/elfs",
-  "crates/op-succinct/utils/ethereum/client",
-  "crates/op-succinct/utils/ethereum/host",
-  "crates/op-succinct/utils/host",
-  "crates/op-succinct/utils/proof",
-  "crates/op-succinct/utils/signer",
-  "crates/op-succinct/validity",
+  "crates/succinct/fault-proof",
+  "crates/succinct/programs/aggregation",
+  "crates/succinct/programs/range/*",
+  "crates/succinct/programs/range/utils",
+  "crates/succinct/scripts/*",
+  "crates/succinct/utils/build",
+  "crates/succinct/utils/client",
+  "crates/succinct/utils/elfs",
+  "crates/succinct/utils/ethereum/client",
+  "crates/succinct/utils/ethereum/host",
+  "crates/succinct/utils/host",
+  "crates/succinct/utils/proof",
+  "crates/succinct/utils/signer",
+  "crates/succinct/validity",
   "crates/txpool",
   "devnet",
 ]
@@ -262,26 +257,22 @@ base-proofs-extension = { path = "crates/client/proofs" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
 base-macros = { path = "crates/utilities/macros", default-features = false }
 
-# op-succinct internal crates
-op-succinct-fp = { path = "crates/op-succinct/fault-proof" }
-op-succinct-prove = { path = "crates/op-succinct/scripts/prove" }
-op-succinct-elfs = { path = "crates/op-succinct/utils/elfs" }
-op-succinct-bindings = { path = "crates/op-succinct/bindings" }
-op-succinct-validity = { path = "crates/op-succinct/validity" }
-op-succinct-host-utils = { path = "crates/op-succinct/utils/host" }
-op-succinct-proof-utils = { path = "crates/op-succinct/utils/proof" }
-op-succinct-build-utils = { path = "crates/op-succinct/utils/build" }
-op-succinct-range-utils = { path = "crates/op-succinct/programs/range/utils" }
-op-succinct-signer-utils = { path = "crates/op-succinct/utils/signer" }
-op-succinct-client-utils = { path = "crates/op-succinct/utils/client" }
-op-succinct-eigenda-host-utils = { path = "crates/op-succinct/utils/eigenda/host" }
-op-succinct-eigenda-client-utils = { path = "crates/op-succinct/utils/eigenda/client" }
-op-succinct-celestia-host-utils = { path = "crates/op-succinct/utils/celestia/host" }
-op-succinct-celestia-client-utils = { path = "crates/op-succinct/utils/celestia/client" }
-op-succinct-ethereum-host-utils = { path = "crates/op-succinct/utils/ethereum/host" }
-op-succinct-ethereum-client-utils = { path = "crates/op-succinct/utils/ethereum/client" }
+# Base Succinct
+base-succinct-fp = { path = "crates/succinct/fault-proof" }
+base-succinct-prove = { path = "crates/succinct/scripts/prove" }
+base-succinct-elfs = { path = "crates/succinct/utils/elfs" }
+base-succinct-bindings = { path = "crates/succinct/bindings" }
+base-succinct-validity = { path = "crates/succinct/validity" }
+base-succinct-host-utils = { path = "crates/succinct/utils/host" }
+base-succinct-proof-utils = { path = "crates/succinct/utils/proof" }
+base-succinct-build-utils = { path = "crates/succinct/utils/build" }
+base-succinct-range-utils = { path = "crates/succinct/programs/range/utils" }
+base-succinct-signer-utils = { path = "crates/succinct/utils/signer" }
+base-succinct-client-utils = { path = "crates/succinct/utils/client" }
+base-succinct-ethereum-host-utils = { path = "crates/succinct/utils/ethereum/host" }
+base-succinct-ethereum-client-utils = { path = "crates/succinct/utils/ethereum/client" }
 
-# op-succinct deps
+# base-succinct deps
 csv = "1.3.0"
 log = "0.4.22"
 alloy = { version = "1.5.2", features = ["reqwest", "network", "providers", "sol-types", "rpc-types"] }
@@ -301,51 +292,14 @@ alloy-tx-macros = { version = "1.5.0", default-features = false }
 alloy-node-bindings = { version = "1.5.2", default-features = false }
 alloy-signer-gcp = { version = "1.5.2", default-features = false }
 alloy-rpc-types-trace = { version = "1.5.2", default-features = false }
-op-revm = { version = "14.1.0", default-features = false }
-alloy-op-evm = { version = "0.27.0", default-features = false }
-op-alloy-network = { version = "0.22.4", default-features = false }
-op-alloy-rpc-types = { version = "0.22.4", default-features = false }
-op-alloy-consensus = { version = "0.22.4", default-features = false }
-revm-precompile = { version = "31.0.0", default-features = false }
-op-alloy-rpc-types-engine = { version = "0.22.4", default-features = false }
-tracing-opentelemetry = "^0.24"
-opentelemetry_sdk = { version = "^0.23.0", features = ["trace", "rt-tokio", "logs_level_enabled"] }
-opentelemetry-stdout = { version = "0.2.0", features = ["trace"] }
-opentelemetry-otlp = { version = "^0.16.0", features = ["default", "logs"] }
-opentelemetry-appender-tracing = "0.4.0"
+revm-precompile = { version = "32.0.0", default-features = false }
+tracing-opentelemetry = "0.32"
+opentelemetry_sdk = { version = "0.31", features = ["trace", "logs"] }
+opentelemetry-stdout = { version = "0.31", features = ["trace"] }
+opentelemetry-otlp = { version = "0.31", default-features = false, features = ["grpc-tonic", "trace", "logs"] }
+opentelemetry-appender-tracing = "0.31.1"
 
-# kona (op-succinct)
-kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
-kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
-kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
-kona-client = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
-kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
-kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7", default-features = false }
-kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7", default-features = false }
-kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7", default-features = false }
-kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
-kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7", default-features = false }
-kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7", features = ["rkyv", "serde"] }
-kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.2.7" }
-
-# hana (op-succinct)
-hana-host = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
-hana-oracle = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
-hana-celestia = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
-hana-blobstream = { git = "https://github.com/celestiaorg/hana", tag = "1.5.0-mocha" }
-
-# hokulea (op-succinct)
-hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
-hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
-hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
-hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
-canoe-sp1-cc-host = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
-canoe-sp1-cc-verifier = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
-hokulea-compute-proof = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
-hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
-canoe-verifier-address-fetcher = { git = "https://github.com/Layr-Labs/hokulea", tag = "hokulea-client/v1.1.6" }
-
-# SP1 (op-succinct)
+# SP1 (base-succinct)
 sp1-lib = { version = "=6.0.2", features = ["verify"] }
 sp1-sdk = { version = "=6.0.2", features = ["network", "blocking", "profiling"] }
 sp1-zkvm = { version = "=6.0.2", features = ["verify"] }
