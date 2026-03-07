@@ -102,8 +102,6 @@ pub struct FlashblocksExtraCtx {
     pub execution_time_per_batch_us: Option<u128>,
     /// State root time limit per flashblock in microseconds
     pub state_root_time_per_batch_us: Option<u128>,
-    /// Whether to disable state root calculation for each flashblock
-    pub disable_state_root: bool,
 }
 
 impl FlashblocksExtraCtx {

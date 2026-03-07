@@ -25,9 +25,11 @@ fn main() {
     let cli = base_cli_utils::parse_cli!(BuilderCli);
 
     cli.run(|builder, builder_args| async move {
+        let rollup_args = builder_args.rollup_args.clone();
+
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder_args.build_metering_store());
-        let rollup_args = builder_args.rollup_args.clone();
+
         let builder_config = builder_args
             .into_builder_config(Arc::clone(&metering_provider))
             .expect("Failed to convert rollup args to builder config");

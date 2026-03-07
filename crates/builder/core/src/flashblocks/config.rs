@@ -7,8 +7,8 @@ use crate::BuilderConfig;
 
 /// Configuration values specific to the flashblocks builder.
 ///
-/// Controls flashblock timing, WebSocket publishing, and state root
-/// computation settings for progressive block construction.
+/// Controls flashblock timing and WebSocket publishing for progressive
+/// block construction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlashblocksConfig {
     /// The address of the websockets endpoint that listens for subscriptions to
@@ -21,25 +21,9 @@ pub struct FlashblocksConfig {
     pub interval: Duration,
 
     /// How much time would be deducted from block build time to account for latencies in
-    /// milliseconds.
-    ///
-    /// If `dynamic_adjustment` is false this value would be deducted from first flashblock and
-    /// it shouldn't be more than interval
-    ///
-    /// If `dynamic_adjustment` is true this value would be deducted from first flashblock and
-    /// it shouldn't be more than interval
+    /// milliseconds. This value would be deducted from first flashblock and
+    /// it shouldn't be more than interval.
     pub leeway_time: Duration,
-
-    /// Disables dynamic flashblocks number adjustment based on FCU arrival time
-    pub fixed: bool,
-
-    /// Should we disable state root calculation for each flashblock
-    pub disable_state_root: bool,
-
-    /// Whether to compute state root only when `get_payload` is called (finalization).
-    /// When enabled, flashblocks are built without state root, but the final payload
-    /// returned by `get_payload` will have the state root computed.
-    pub compute_state_root_on_finalize: bool,
 }
 
 impl Default for FlashblocksConfig {
@@ -48,9 +32,6 @@ impl Default for FlashblocksConfig {
             ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
             interval: Duration::from_millis(250),
             leeway_time: Duration::from_millis(50),
-            fixed: false,
-            disable_state_root: false,
-            compute_state_root_on_finalize: false,
         }
     }
 }
@@ -63,9 +44,6 @@ impl FlashblocksConfig {
             ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0),
             interval: Duration::from_millis(200),
             leeway_time: Duration::from_millis(100),
-            fixed: false,
-            disable_state_root: false,
-            compute_state_root_on_finalize: false,
         }
     }
 
@@ -78,24 +56,6 @@ impl FlashblocksConfig {
     #[must_use]
     pub const fn with_leeway_time_ms(mut self, ms: u64) -> Self {
         self.leeway_time = Duration::from_millis(ms);
-        self
-    }
-
-    #[must_use]
-    pub const fn with_fixed(mut self, fixed: bool) -> Self {
-        self.fixed = fixed;
-        self
-    }
-
-    #[must_use]
-    pub const fn with_disable_state_root(mut self, disable: bool) -> Self {
-        self.disable_state_root = disable;
-        self
-    }
-
-    #[must_use]
-    pub const fn with_compute_state_root_on_finalize(mut self, compute: bool) -> Self {
-        self.compute_state_root_on_finalize = compute;
         self
     }
 
