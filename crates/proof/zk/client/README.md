@@ -61,7 +61,7 @@ use async_trait::async_trait;
 use base_zk_client::{
     ZkProofProvider, ZkProofError,
     ProveBlockRequest, ProveBlockResponse,
-    GetProofRequest, GetProofResponse, ProofStatus,
+    GetProofRequest, GetProofResponse, ProofJobStatus,
 };
 
 struct MockProvider;
@@ -74,7 +74,7 @@ impl ZkProofProvider for MockProvider {
     ) -> Result<ProveBlockResponse, ZkProofError> {
         Ok(ProveBlockResponse {
             session_id: "mock-session".into(),
-            status: ProofStatus::Pending.into(),
+            status: ProofJobStatus::Pending.into(),
         })
     }
 
@@ -83,7 +83,7 @@ impl ZkProofProvider for MockProvider {
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ZkProofError> {
         Ok(GetProofResponse {
-            status: ProofStatus::Completed.into(),
+            status: ProofJobStatus::Completed.into(),
             proof: vec![1, 2, 3],
             error_message: String::new(),
         })

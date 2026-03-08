@@ -27,12 +27,12 @@ enum ReceiptType {
 }
 
 // Status of a proof job.
-enum Status {
-  STATUS_UNSPECIFIED = 0;
-  STATUS_PENDING = 1;
-  STATUS_PROVING = 2;
-  STATUS_COMPLETED = 3;
-  STATUS_FAILED = 4;
+enum ProofJobStatus {
+  PROOF_JOB_STATUS_UNSPECIFIED = 0;
+  PROOF_JOB_STATUS_PENDING = 1;
+  PROOF_JOB_STATUS_PROVING = 2;
+  PROOF_JOB_STATUS_COMPLETED = 3;
+  PROOF_JOB_STATUS_FAILED = 4;
 }
 
 // Request to initiate a proof job.
@@ -58,7 +58,7 @@ message ProveBlockResponse {
   // Unique session identifier for this proof job.
   string session_id = 1;
   // Current status of the proof job.
-  Status status = 2;
+  ProofJobStatus status = 2;
 }
 
 // Request to poll for a proof result.
@@ -70,7 +70,7 @@ message GetProofRequest {
 // Response containing the proof result.
 message GetProofResponse {
   // Current status of the proof job.
-  Status status = 1;
+  ProofJobStatus status = 1;
   // The proof bytes, populated when status is COMPLETED.
   bytes proof = 2;
   // Error message, populated when status is FAILED.

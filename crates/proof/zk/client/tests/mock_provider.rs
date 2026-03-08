@@ -3,7 +3,7 @@
 
 use async_trait::async_trait;
 use base_zk_client::{
-    GetProofRequest, GetProofResponse, ProofStatus, ProveBlockRequest, ProveBlockResponse,
+    GetProofRequest, GetProofResponse, ProofJobStatus, ProveBlockRequest, ProveBlockResponse,
     ZkProofError, ZkProofProvider,
 };
 use rstest::rstest;
@@ -19,13 +19,13 @@ impl ZkProofProvider for MockZkProvider {
     ) -> Result<ProveBlockResponse, ZkProofError> {
         Ok(ProveBlockResponse {
             session_id: "mock-session-123".into(),
-            status: ProofStatus::Pending.into(),
+            status: ProofJobStatus::Pending.into(),
         })
     }
 
     async fn get_proof(&self, _request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
         Ok(GetProofResponse {
-            status: ProofStatus::Completed.into(),
+            status: ProofJobStatus::Completed.into(),
             proof: vec![0xDE, 0xAD, 0xBE, 0xEF],
             error_message: String::new(),
         })
@@ -67,7 +67,7 @@ async fn mock_prove_block_returns_session_id() {
     let response = provider.prove_block(request).await.expect("prove_block should succeed");
 
     assert_eq!(response.session_id, "mock-session-123");
-    assert_eq!(response.status, i32::from(ProofStatus::Pending));
+    assert_eq!(response.status, i32::from(ProofJobStatus::Pending));
 }
 
 /// Verify that [`get_proof`] returns a completed status with proof bytes.
@@ -79,7 +79,7 @@ async fn mock_get_proof_returns_completed() {
 
     let response = provider.get_proof(request).await.expect("get_proof should succeed");
 
-    assert_eq!(response.status, i32::from(ProofStatus::Completed));
+    assert_eq!(response.status, i32::from(ProofJobStatus::Completed));
     assert_eq!(response.proof, vec![0xDE, 0xAD, 0xBE, 0xEF]);
     assert!(response.error_message.is_empty());
 }
