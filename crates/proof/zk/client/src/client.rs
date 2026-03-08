@@ -114,8 +114,9 @@ impl ZkProofClient {
         &self,
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ZkProofError> {
+        let session_id = request.session_id.clone();
         let response = self.inner.clone().get_proof(request).await?.into_inner();
-        debug!(status = ?response.status, "proof status polled");
+        debug!(session_id = %session_id, status = ?response.status, "proof status polled");
         Ok(response)
     }
 }
