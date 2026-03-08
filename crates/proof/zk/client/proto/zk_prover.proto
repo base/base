@@ -2,8 +2,6 @@ syntax = "proto3";
 
 package prover;
 
-option go_package = "github.com/base/zk-prover/proto";
-
 // Service for requesting ZK proofs from an external proving service.
 service ProverService {
   // Initiate a proof job for a given block range. Returns a session ID
