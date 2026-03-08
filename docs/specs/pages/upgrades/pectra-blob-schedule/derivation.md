@@ -2,7 +2,7 @@
 
 ## If enabled
 
-If this hardfork is enabled (i.e. if there is a non nil hardfork activation timestamp set), the following rules apply:
+If this hardfork is enabled (i.e. if there is a non-nil hardfork activation timestamp set), the following rules apply:
 
 When setting the [L1 Attributes Deposited Transaction](../../reference/glossary.md#l1-attributes-deposited-transaction),
 the adoption of the Pectra blob base fee update fraction

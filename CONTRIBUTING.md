@@ -19,7 +19,7 @@ To ensure we're all rowing in the same direction and to prevent wasted effort, p
 ### What We Accept from External Contributors
 
 - **Small, focused changes**: One-liner fixes, typo corrections in code, small bug fixes, and similar minimal changes are welcome.
-- **Issues labeled `help wanted`**: Want to contribute code? Look for unassigned issues with this label — these are ones we've specifically identified for external contributions. You can find them [here][help-wanted].
+- **Issues labeled `help wanted`**: Want to contribute code? Look for unassigned issues with this label - these are ones we've specifically identified for external contributions. You can find them [here][help-wanted].
 - **Bug reports**: Well-documented bug reports with reproduction steps are always appreciated.
 
 ### Before Starting Work

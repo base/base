@@ -326,13 +326,13 @@ This transaction MUST deploy a contract with the following code hash
 
 # Span Batch Updates
 
-[Span batches](../delta/span-batches.md) are a span of consecutive L2 blocks than are batched submitted.
+[Span batches](../delta/span-batches.md) are a span of consecutive L2 blocks that are submitted in batches.
 
 Span batches contain the L1 transactions and transaction types that are posted containing the span of L2 blocks.
 Since [EIP-7702] introduces a new transaction type, the Span Batch must be updated to support the [EIP-7702]
 transaction.
 
-This corresponds with a new RLP-encoding of the `tx_datas` list as specified in
+This corresponds to a new RLP encoding of the `tx_datas` list as specified in
 [the Delta span batch spec](../delta/span-batches.md), adding a new transaction type:
 
 Transaction type `4` ([EIP-7702] `SetCode`):

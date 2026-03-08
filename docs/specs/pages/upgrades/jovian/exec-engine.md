@@ -112,7 +112,7 @@ As a result, blocks with high DA usage may cause the base fee to increase in sub
 ### Scalar loading
 
 The `daFootprintGasScalar` is loaded in a similar way to the `operatorFeeScalar` and `operatorFeeConstant`
-[included](../isthmus/exec-engine.md#operator-fee) in the Isthmus fork. It can be read in two interchangable ways:
+[included](../isthmus/exec-engine.md#operator-fee) in the Isthmus fork. It can be read in two interchangeable ways:
 
 - read from the deposited L1 attributes (`daFootprintGasScalar`) of the current L2 block
 (decoded according to the [jovian schema](l1-attributes.md))

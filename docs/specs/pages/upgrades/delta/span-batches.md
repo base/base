@@ -83,7 +83,7 @@ Where:
   - `origin_bits`: standard bitlist of `block_count` bits:
     1 bit per L2 block, indicating if the L1 origin changed this L2 block.
   - `block_tx_counts`: for each block, a `uvarint` of `len(block.transactions)`.
-  - `txs`: L2 transactions which is reorganized and encoded as below.
+  - `txs`: L2 transactions that are reorganized and encoded as follows.
 - `txs = contract_creation_bits ++ y_parity_bits ++
 tx_sigs ++ tx_tos ++ tx_datas ++ tx_nonces ++ tx_gases ++ protected_bits`
   - `contract_creation_bits`: standard bitlist of `sum(block_tx_counts)` bits:
@@ -95,7 +95,7 @@ tx_sigs ++ tx_tos ++ tx_datas ++ tx_nonces ++ tx_gases ++ protected_bits`
     - `s` is encoded as big-endian `uint256`
   - `tx_tos`: concatenated list of `to` field. `to` field in contract creation transaction will be `nil` and ignored.
   - `tx_datas`: concatenated list of variable length rlp encoded data,
-    matching the encoding of the fields as in the [EIP-2718] format of the `TransactionType`.
+    matching the encoding of the fields in the [EIP-2718] format of the `TransactionType`.
     - `legacy`: `rlp_encode(value, gasPrice, data)`
     - `1`: ([EIP-2930]): `0x01 ++ rlp_encode(value, gasPrice, data, accessList)`
     - `2`: ([EIP-1559]): `0x02 ++ rlp_encode(value, max_priority_fee_per_gas, max_fee_per_gas, data, access_list)`
@@ -167,8 +167,8 @@ The following fields stores truncated data:
 
 ### `tx_data_headers` removal from initial specs
 
-We do not need to store length per each `tx_datas` elements even if those are variable length,
-because the elements itself is RLP encoded, containing their length in RLP prefix.
+We do not need to store the length of each `tx_datas` element, even though they are variable length,
+because each element is RLP encoded and includes its length in the RLP prefix.
 
 ### `Chain ID` removal from initial specs
 
