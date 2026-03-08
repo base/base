@@ -114,6 +114,10 @@ fn error_retryability() {
 
     let invalid_arg = ZkProofError::GrpcStatus(tonic::Status::invalid_argument("bad request"));
     assert!(!invalid_arg.is_retryable());
+
+    // Verify the derive-generated From<tonic::Status> conversion.
+    let from_status: ZkProofError = tonic::Status::unavailable("test").into();
+    assert!(from_status.is_retryable());
 }
 
 /// Verify that a provider can be used as a trait object behind `Box<dyn ZkProofProvider>`.
@@ -136,11 +140,13 @@ async fn failing_mock_propagates_errors() {
         .prove_block(ProveBlockRequest::default())
         .await
         .expect_err("prove_block should fail");
+    assert!(matches!(prove_err, ZkProofError::Connection(_)));
     assert!(prove_err.is_retryable());
 
     let get_err = provider
         .get_proof(GetProofRequest { session_id: "any".into() })
         .await
         .expect_err("get_proof should fail");
+    assert!(matches!(get_err, ZkProofError::GrpcStatus(_)));
     assert!(get_err.is_retryable());
 }
