@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use tonic::transport::{Channel, Endpoint};
-use tracing::info;
+use tracing::{debug, info};
 use url::Url;
 
 use crate::{
@@ -99,7 +99,9 @@ impl ZkProofClient {
         &self,
         request: ProveBlockRequest,
     ) -> Result<ProveBlockResponse, ZkProofError> {
-        Ok(self.inner.clone().prove_block(request).await?.into_inner())
+        let response = self.inner.clone().prove_block(request).await?.into_inner();
+        debug!(session_id = %response.session_id, status = ?response.status, "proof job initiated");
+        Ok(response)
     }
 
     /// Poll for the result of a previously initiated proof job.
@@ -112,7 +114,9 @@ impl ZkProofClient {
         &self,
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ZkProofError> {
-        Ok(self.inner.clone().get_proof(request).await?.into_inner())
+        let response = self.inner.clone().get_proof(request).await?.into_inner();
+        debug!(status = ?response.status, "proof status polled");
+        Ok(response)
     }
 }
 
