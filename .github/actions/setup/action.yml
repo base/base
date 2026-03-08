@@ -48,8 +48,8 @@ runs:
       if: inputs.native-deps == 'true'
       uses: awalsh128/cache-apt-pkgs-action@5902b33ae29014e6ca012c5d8025d4346556bd40 # v1.4.3
       with:
-        packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config
-        version: 1.2
+        packages: libsqlite3-dev clang libclang-dev llvm llvm-dev build-essential pkg-config protobuf-compiler
+        version: 1.3
 
     - name: Install Rust (stable via rust-toolchain.toml)
       if: inputs.toolchain == 'stable'
