@@ -7,10 +7,12 @@ use tonic::transport::{Channel, Endpoint};
 use tracing::info;
 use url::Url;
 
-use crate::error::ZkProofError;
-use crate::proto::{
-    GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse,
-    prover_service_client::ProverServiceClient,
+use crate::{
+    error::ZkProofError,
+    proto::{
+        GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse,
+        prover_service_client::ProverServiceClient,
+    },
 };
 
 /// Default timeout for establishing the initial gRPC connection.
