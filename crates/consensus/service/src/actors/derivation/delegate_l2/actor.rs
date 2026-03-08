@@ -106,7 +106,11 @@ where
                 .local_l2_provider
                 .get_block_number()
                 .await
-                .map_err(|e| DerivationError::Sender(Box::new(e)))?;
+                .map_err(|error| {
+                    DerivationError::Sender(Box::new(std::io::Error::other(format!(
+                        "failed to fetch local L2 head: {error}"
+                    ))))
+                })?;
             self.sent_head = head;
             self.engine_head = head;
         }
@@ -224,6 +228,13 @@ where
     DerivationEngineClient_: DerivationEngineClient,
     L2Source: L2SourceClient,
 {
+    fn sender_error<E>(error: E) -> DerivationError
+    where
+        E: std::error::Error + Send + 'static,
+    {
+        DerivationError::Sender(Box::new(error))
+    }
+
     pub(super) const fn new(
         engine_client: Arc<DerivationEngineClient_>,
         engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
@@ -250,7 +261,7 @@ where
             .l2_source
             .get_block_number(BlockNumberOrTag::Latest)
             .await
-            .map_err(|e| DerivationError::Sender(Box::new(e)))?;
+            .map_err(Self::sender_error)?;
 
         if remote_head <= self.sent_head {
             return Ok(self.sent_head);
@@ -266,7 +277,7 @@ where
                 .l2_source
                 .get_payload_by_number(block_num)
                 .await
-                .map_err(|e| DerivationError::Sender(Box::new(e)))?;
+                .map_err(Self::sender_error)?;
 
             debug!(
                 target: "derivation",
@@ -287,37 +298,56 @@ where
             self.sent_head = block_num;
         }
 
-        self.update_safe_and_finalized().await?;
+        if let Err(error) = self.update_safe_and_finalized().await {
+            let error_message = error.to_string();
+            warn!(
+                target: "derivation",
+                error = %error_message,
+                engine_head = self.engine_head,
+                sent_head = self.sent_head,
+                "Failed to update delegated safe/finalized heads"
+            );
+        }
 
         Ok(self.sent_head)
     }
 
     async fn update_safe_and_finalized(&self) -> Result<(), DerivationError> {
-        if let Ok(safe_number) = self.l2_source.get_block_number(BlockNumberOrTag::Safe).await {
-            let clamped_safe = safe_number.min(self.engine_head);
-            if let Ok(safe_payload) = self.l2_source.get_payload_by_number(clamped_safe).await {
-                let safe_l2 = L2BlockInfo {
-                    block_info: base_protocol::BlockInfo {
-                        hash: safe_payload.execution_payload.block_hash(),
-                        number: clamped_safe,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
+        let safe_number = self
+            .l2_source
+            .get_block_number(BlockNumberOrTag::Safe)
+            .await
+            .map_err(Self::sender_error)?;
+        let clamped_safe = safe_number.min(self.engine_head);
+        let safe_payload = self
+            .l2_source
+            .get_payload_by_number(clamped_safe)
+            .await
+            .map_err(Self::sender_error)?;
+        let safe_l2 = L2BlockInfo {
+            block_info: base_protocol::BlockInfo {
+                hash: safe_payload.execution_payload.block_hash(),
+                number: clamped_safe,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
-                let _ = self
-                    .engine_client
-                    .send_safe_l2_signal(ConsolidateInput::BlockInfo(safe_l2))
-                    .await;
-            }
-        }
+        self.engine_client
+            .send_safe_l2_signal(ConsolidateInput::BlockInfo(safe_l2))
+            .await
+            .map_err(Self::sender_error)?;
 
-        if let Ok(finalized_number) =
-            self.l2_source.get_block_number(BlockNumberOrTag::Finalized).await
-        {
-            let clamped_finalized = finalized_number.min(self.engine_head);
-            let _ = self.engine_client.send_finalized_l2_block(clamped_finalized).await;
-        }
+        let finalized_number = self
+            .l2_source
+            .get_block_number(BlockNumberOrTag::Finalized)
+            .await
+            .map_err(Self::sender_error)?;
+        let clamped_finalized = finalized_number.min(self.engine_head);
+        self.engine_client
+            .send_finalized_l2_block(clamped_finalized)
+            .await
+            .map_err(Self::sender_error)?;
 
         Ok(())
     }
@@ -540,6 +570,44 @@ mod tests {
                 }
                 other => panic!("Expected ProcessUnsafeL2BlockRequest, got {other:?}"),
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_continues_when_finalized_signal_fails() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+
+        l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Latest)).returning(|_| Ok(1));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(1))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Safe)).returning(|_| Ok(1));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(1))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(1));
+
+        engine_client.expect_send_safe_l2_signal().returning(|_| Ok(()));
+        engine_client.expect_send_finalized_l2_block().returning(|_| {
+            Err(crate::EngineClientError::RequestError("mock finalized failure".to_string()))
+        });
+
+        let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 1, 0);
+        let new_head = task.sync_from_source().await.unwrap();
+        assert_eq!(new_head, 1);
+
+        let req = engine_rx.try_recv().unwrap();
+        match req {
+            EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
+                assert_eq!(envelope.execution_payload.block_number(), 1);
+            }
+            other => panic!("Expected ProcessUnsafeL2BlockRequest, got {other:?}"),
         }
     }
 
