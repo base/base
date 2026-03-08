@@ -19,7 +19,7 @@ use reth_provider::{BlockReaderIdExt, CanonStateNotification, StateProviderFacto
 use reth_revm::cached::CachedReads;
 use reth_tasks::TaskSpawner;
 use tokio::{
-    sync::{Notify, oneshot},
+    sync::oneshot,
     time::{Duration, Sleep},
 };
 use tokio_util::sync::CancellationToken;
@@ -201,7 +201,7 @@ where
 
 use std::{
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
 };
 
 /// A [`PayloadJob`] that builds empty blocks.
@@ -393,24 +393,52 @@ impl<T: Clone> Future for ResolvePayload<T> {
 /// Values can be overwritten by calling [`BlockCell::set`] multiple times.
 #[derive(Clone, Debug)]
 pub struct BlockCell<T> {
-    inner: Arc<Mutex<Option<T>>>,
-    notify: Arc<Notify>,
+    inner: Arc<Mutex<BlockCellInner<T>>>,
+}
+
+#[derive(Debug, Default)]
+struct BlockCellInner<T> {
+    value: Option<T>,
+    waiters: Vec<Waker>,
 }
 
 impl<T: Clone> BlockCell<T> {
     pub fn new() -> Self {
-        Self { inner: Arc::new(Mutex::new(None)), notify: Arc::new(Notify::new()) }
+        Self { inner: Arc::new(Mutex::new(BlockCellInner::default())) }
     }
 
     pub fn set(&self, value: T) {
-        let mut inner = self.inner.lock();
-        *inner = Some(value);
-        self.notify.notify_one();
+        let waiters = {
+            let mut inner = self.inner.lock();
+            inner.value = Some(value);
+            std::mem::take(&mut inner.waiters)
+        };
+
+        for waiter in waiters {
+            waiter.wake();
+        }
     }
 
     pub fn get(&self) -> Option<T> {
         let inner = self.inner.lock();
-        inner.clone()
+        inner.value.clone()
+    }
+
+    fn get_or_register_waker(&self, waker: &Waker) -> Option<T> {
+        let mut inner = self.inner.lock();
+
+        if let Some(value) = inner.value.clone() {
+            return Some(value);
+        }
+
+        if let Some(existing) = inner.waiters.iter_mut().find(|existing| existing.will_wake(waker))
+        {
+            *existing = waker.clone();
+        } else {
+            inner.waiters.push(waker.clone());
+        }
+
+        None
     }
 
     /// Return a future that resolves when a value is set.
@@ -435,13 +463,7 @@ impl<T: Clone> Future for WaitForValue<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.cell.get().map_or_else(
-            || {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            },
-            Poll::Ready,
-        )
+        self.cell.get_or_register_waker(cx.waker()).map_or(Poll::Pending, Poll::Ready)
     }
 }
 
@@ -473,8 +495,11 @@ fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::U256;
+    use futures::task::{ArcWake, waker};
     use base_execution_payload_builder::{
         OpPayloadPrimitives, payload::OpPayloadBuilderAttributes,
     };
@@ -491,6 +516,16 @@ mod tests {
     };
 
     use super::*;
+
+    struct CountingWaker {
+        wake_count: Arc<AtomicUsize>,
+    }
+
+    impl ArcWake for CountingWaker {
+        fn wake_by_ref(arc_self: &Arc<Self>) {
+            arc_self.wake_count.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 
     #[tokio::test]
     async fn test_block_cell_wait_for_value() {
@@ -557,6 +592,22 @@ mod tests {
         // Waiter should get the latest value
         let result = cell.wait_for_value().await;
         assert_eq!(result, 43);
+    }
+
+    #[test]
+    fn test_block_cell_wait_does_not_busy_wake() {
+        let cell = BlockCell::new();
+        let wake_count = Arc::new(AtomicUsize::new(0));
+        let mut wait_future = std::pin::pin!(cell.wait_for_value());
+        let test_waker = waker(Arc::new(CountingWaker { wake_count: wake_count.clone() }));
+        let mut cx = Context::from_waker(&test_waker);
+
+        assert!(wait_future.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(wake_count.load(Ordering::Relaxed), 0);
+
+        cell.set(7);
+        assert_eq!(wake_count.load(Ordering::Relaxed), 1);
+        assert_eq!(wait_future.as_mut().poll(&mut cx), Poll::Ready(7));
     }
 
     #[derive(Debug, Clone)]
