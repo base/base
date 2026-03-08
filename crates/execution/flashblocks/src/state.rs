@@ -1,6 +1,6 @@
 //! Flashblocks state management.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use alloy_consensus::Header;
 use arc_swap::{ArcSwapOption, Guard};
@@ -11,7 +11,6 @@ use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_primitives::RecoveredBlock;
 use reth_provider::{BlockReaderIdExt, StateProviderFactory};
 use tokio::sync::{
-    Mutex,
     broadcast::{self, Sender},
     mpsc,
 };
@@ -29,7 +28,7 @@ const BUFFER_SIZE: usize = 20;
 pub struct FlashblocksState {
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
     queue: mpsc::UnboundedSender<StateUpdate>,
-    rx: Arc<Mutex<mpsc::UnboundedReceiver<StateUpdate>>>,
+    rx: Mutex<Option<mpsc::UnboundedReceiver<StateUpdate>>>,
     flashblock_sender: Sender<Arc<PendingBlocks>>,
     max_pending_blocks_depth: u64,
 }
@@ -47,7 +46,7 @@ impl FlashblocksState {
         Self {
             pending_blocks,
             queue: tx,
-            rx: Arc::new(Mutex::new(rx)),
+            rx: Mutex::new(Some(rx)),
             flashblock_sender,
             max_pending_blocks_depth,
         }
@@ -65,11 +64,25 @@ impl FlashblocksState {
             + Clone
             + 'static,
     {
+        let mut rx_guard = match self.rx.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                error!(message = "state receiver mutex poisoned, recovering ownership");
+                poisoned.into_inner()
+            }
+        };
+
+        let Some(rx) = rx_guard.take() else {
+            warn!(message = "state processor already started, ignoring duplicate start");
+            return;
+        };
+        drop(rx_guard);
+
         let state_processor = StateProcessor::new(
             client,
             Arc::clone(&self.pending_blocks),
             self.max_pending_blocks_depth,
-            Arc::clone(&self.rx),
+            rx,
             self.flashblock_sender.clone(),
         );
 
