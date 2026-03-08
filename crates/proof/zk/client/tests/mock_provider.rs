@@ -40,7 +40,7 @@ impl ZkProofProvider for FailingMockProvider {
         &self,
         _request: ProveBlockRequest,
     ) -> Result<ProveBlockResponse, ZkProofError> {
-        Err(ZkProofError::Connection("mock connection refused".into()))
+        Err(ZkProofError::Timeout("mock connection refused".into()))
     }
 
     async fn get_proof(&self, _request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
@@ -85,10 +85,14 @@ async fn mock_get_proof_returns_completed() {
 
 /// Verify that `is_retryable` classifies all error variants correctly,
 /// including every retryable gRPC status code.
-#[test]
-fn error_retryability() {
+#[tokio::test]
+async fn error_retryability() {
     // Retryable non-gRPC variants.
-    let connection_err = ZkProofError::Connection("connection refused".into());
+    let transport_err = tonic::transport::Endpoint::from_static("http://[::1]:1")
+        .connect()
+        .await
+        .expect_err("should fail to connect");
+    let connection_err = ZkProofError::Connection(transport_err);
     assert!(connection_err.is_retryable());
 
     let timeout_err = ZkProofError::Timeout("deadline exceeded".into());
@@ -140,7 +144,7 @@ async fn failing_mock_propagates_errors() {
         .prove_block(ProveBlockRequest::default())
         .await
         .expect_err("prove_block should fail");
-    assert!(matches!(prove_err, ZkProofError::Connection(_)));
+    assert!(matches!(prove_err, ZkProofError::Timeout(_)));
     assert!(prove_err.is_retryable());
 
     let get_err = provider

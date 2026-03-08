@@ -7,7 +7,7 @@ use thiserror::Error;
 pub enum ZkProofError {
     /// Failed to establish a gRPC connection.
     #[error("connection error: {0}")]
-    Connection(String),
+    Connection(#[from] tonic::transport::Error),
 
     /// The gRPC call returned a non-OK status.
     #[error("gRPC status: {0}")]

@@ -80,8 +80,7 @@ impl ZkProofClient {
             .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
             .timeout(DEFAULT_REQUEST_TIMEOUT)
             .connect()
-            .await
-            .map_err(|e| ZkProofError::Connection(e.to_string()))?;
+            .await?;
 
         info!(endpoint = %endpoint, "ZK client connected");
 
