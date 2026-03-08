@@ -236,7 +236,6 @@ where
             config,
             cancel: block_cancel,
             finalized_cell,
-            compute_state_root_on_finalize,
             publish_guard,
         } = args;
 
@@ -250,14 +249,12 @@ where
         span.record("payload_id", config.attributes.payload_attributes.id.to_string());
 
         let timestamp = config.attributes.timestamp();
-        let disable_state_root = self.config.flashblocks.disable_state_root;
         let ctx = self
             .get_op_payload_builder_ctx(
                 config.clone(),
                 block_cancel.clone(),
                 FlashblocksExtraCtx {
                     target_flashblock_count: self.config.flashblocks_per_block(),
-                    disable_state_root,
                     ..Default::default()
                 },
             )
@@ -280,7 +277,7 @@ where
             &mut state,
             &ctx,
             &mut info,
-            !disable_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+            ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
         )?;
 
         self.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
@@ -300,9 +297,7 @@ where
         }
 
         if ctx.attributes().no_tx_pool {
-            if compute_state_root_on_finalize {
-                finalized_cell.set(payload);
-            }
+            finalized_cell.set(payload);
 
             info!(
                 target: "payload_builder",
@@ -354,7 +349,6 @@ where
             da_footprint_per_batch,
             execution_time_per_batch_us,
             state_root_time_per_batch_us,
-            disable_state_root,
         };
 
         let mut fb_cancel = block_cancel.child_token();
@@ -428,9 +422,7 @@ where
                     &span,
                     "Payload building complete, target flashblock count reached",
                 );
-                if compute_state_root_on_finalize {
-                    self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
-                }
+                self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
                 return Ok(());
             }
 
@@ -458,9 +450,7 @@ where
                         &span,
                         "Payload building complete, job cancelled or target flashblock count reached",
                     );
-                    if compute_state_root_on_finalize {
-                        self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
-                    }
+                    self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
                     return Ok(());
                 }
                 Err(err) => {
@@ -487,9 +477,7 @@ where
                         &span,
                         "Payload building complete, channel closed or job cancelled",
                     );
-                    if compute_state_root_on_finalize {
-                        self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
-                    }
+                    self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
                     return Ok(());
                 }
             }
@@ -624,12 +612,7 @@ where
         ctx.metrics.payload_transaction_simulation_gauge.set(payload_transaction_simulation_time);
 
         let total_block_built_duration = Instant::now();
-        let build_result = build_block(
-            state,
-            ctx,
-            info,
-            !ctx.extra.disable_state_root || ctx.attributes().no_tx_pool,
-        );
+        let build_result = build_block(state, ctx, info, ctx.attributes().no_tx_pool);
         let total_block_built_duration = total_block_built_duration.elapsed();
         ctx.metrics.total_block_built_duration.record(total_block_built_duration);
         ctx.metrics.total_block_built_gauge.set(total_block_built_duration);
@@ -802,17 +785,8 @@ where
         Ok(())
     }
 
-    /// Calculate number of flashblocks.
-    /// If dynamic is enabled this function will take time drift into the account.
+    /// Calculate number of flashblocks, taking time drift into account.
     pub(super) fn calculate_flashblocks(&self, timestamp: u64) -> (u64, Duration) {
-        if self.config.flashblocks.fixed {
-            return (
-                self.config.flashblocks_per_block(),
-                // We adjust first FB to ensure that we have at least some time to make all FB in time
-                self.config.flashblocks.interval - self.config.flashblocks.leeway_time,
-            );
-        }
-
         // We use this system time to determine remaining time to build a block
         // Things to consider:
         // FCU(a) - FCU with attributes

@@ -114,8 +114,6 @@ impl InProcessBuilder {
             flashblocks: FlashblocksConfig {
                 ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), flashblocks_port),
                 interval: Duration::from_millis(200),
-                disable_state_root: true,
-                compute_state_root_on_finalize: true,
                 ..Default::default()
             },
             ..Default::default()
