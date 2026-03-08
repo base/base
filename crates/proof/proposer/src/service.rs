@@ -27,6 +27,25 @@ use crate::{
     rollup_config_to_per_chain_config,
 };
 
+fn validate_block_intervals(block_interval: u64, intermediate_block_interval: u64) -> Result<()> {
+    if block_interval < 2 {
+        return Err(eyre::eyre!(
+            "BLOCK_INTERVAL ({block_interval}) must be at least 2; single-block proposals are not supported"
+        ));
+    }
+    if intermediate_block_interval == 0 {
+        return Err(eyre::eyre!(
+            "INTERMEDIATE_BLOCK_INTERVAL must be greater than 0 to avoid division/modulo by zero"
+        ));
+    }
+    if block_interval % intermediate_block_interval != 0 {
+        return Err(eyre::eyre!(
+            "BLOCK_INTERVAL ({block_interval}) is not divisible by INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval})"
+        ));
+    }
+    Ok(())
+}
+
 /// Runs the full proposer service lifecycle.
 ///
 /// Steps:
@@ -121,16 +140,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let block_interval = verifier_client.read_block_interval(impl_address).await?;
     let intermediate_block_interval =
         verifier_client.read_intermediate_block_interval(impl_address).await?;
-    if block_interval < 2 {
-        return Err(eyre::eyre!(
-            "BLOCK_INTERVAL ({block_interval}) must be at least 2; single-block proposals are not supported"
-        ));
-    }
-    if block_interval % intermediate_block_interval != 0 {
-        return Err(eyre::eyre!(
-            "BLOCK_INTERVAL ({block_interval}) is not divisible by INTERMEDIATE_BLOCK_INTERVAL ({intermediate_block_interval})"
-        ));
-    }
+    validate_block_intervals(block_interval, intermediate_block_interval)?;
     info!(
         block_interval,
         intermediate_block_interval,
@@ -287,4 +297,37 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
 
     info!("Service stopped");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_block_intervals;
+
+    #[test]
+    fn validate_block_intervals_rejects_small_block_interval() {
+        let result = validate_block_intervals(1, 1);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_block_intervals_rejects_zero_intermediate_interval() {
+        let result = validate_block_intervals(512, 0);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("INTERMEDIATE_BLOCK_INTERVAL must be greater than 0"));
+    }
+
+    #[test]
+    fn validate_block_intervals_rejects_non_divisible_intervals() {
+        let result = validate_block_intervals(512, 7);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_block_intervals_accepts_valid_values() {
+        let result = validate_block_intervals(512, 64);
+        assert!(result.is_ok());
+    }
 }
