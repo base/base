@@ -227,8 +227,8 @@ base-enclave-server = { path = "crates/proof/tee/server" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }
-base-challenger = { path = "crates/proof/challenge" }
 base-zk-client = { path = "crates/proof/zk/client" }
+base-challenger = { path = "crates/proof/challenge" }
 base-proof-transport = { path = "crates/proof/transport" }
 
 # Utilities
