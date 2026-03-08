@@ -7,6 +7,12 @@ use tonic::transport::{Channel, Endpoint};
 use tracing::info;
 use url::Url;
 
+use crate::error::ZkProofError;
+use crate::proto::{
+    GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse,
+    prover_service_client::ProverServiceClient,
+};
+
 /// Default timeout for establishing the initial gRPC connection.
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -14,12 +20,6 @@ const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// so this is set conservatively high; callers should override via their own
 /// timeout/retry layer when tighter deadlines are needed.
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
-
-use crate::error::ZkProofError;
-use crate::proto::{
-    GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse,
-    prover_service_client::ProverServiceClient,
-};
 
 /// Abstraction over a ZK proving service that supports a two-step async flow:
 /// initiate a proof job with [`prove_block`](ZkProofProvider::prove_block) and
