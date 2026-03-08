@@ -19,7 +19,7 @@ This crate provides:
 Enable transaction tracing on the Base node CLI:
 
 ```bash
-cargo run -p node --release -- \
+cargo run -p base-reth-node --release -- \
   --enable-transaction-tracing \
   --enable-transaction-tracing-logs  # optional: emit per-tx lifecycle logs
 ```

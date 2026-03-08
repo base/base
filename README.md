@@ -49,6 +49,7 @@ This repository (`base/base`, previously `base/node-reth`) contains **Base Reth 
 - **Rust:** Version 1.93 or later (matches the `rust-version` in `Cargo.toml`). You can install Rust using [rustup](https://rustup.rs/).
 - **Just:** A command runner. Installation instructions can be found [here](https://github.com/casey/just#installation).
 - **Foundry:** Required for compiling Solidity test contracts (`just build-contracts`). Install via [foundry.sh](https://getfoundry.sh/).
+- **Fast Linker:** Required by `.cargo/config.toml` for local builds (`lld` on macOS via `brew install lld`, `mold` on Linux via your package manager).
 - **Docker:** (Optional) For building and running the node in a container. See [Docker installation guide](https://docs.docker.com/get-docker/).
 - **Build Essentials:** `git`, `libclang-dev`, `pkg-config`, `curl`, `build-essential` (these are installed in the Docker build process and may be needed for local builds on some systems).
 
@@ -63,17 +64,17 @@ cd base
 
 ### 2. Build
 
-You can build the project using the `justfile` for a release build:
+For first-time setup (to ensure dependencies and toolchain prerequisites are installed), run:
+
+```bash
+just setup
+```
+
+Then build the project using the `justfile` for a release build:
 
 ```bash
 just build
 ```
-
-*For first-time setup (to ensure all dependencies are installed), you can optionally run **just setup** as a precursor:*
-
-  ```bash
-  just setup
-  ```
 
 Alternatively, if performance is critical, you can build with all optimizations enabled + jemalloc:
 
@@ -94,8 +95,8 @@ The main binary will be located at `target/release/base-reth-node`.
 To ensure everything is set up correctly, run the checks and tests:
 
 ```bash
-just check  # Runs cargo fmt --check and cargo clippy
-just test   # Runs cargo test
+just check  # Runs format, udeps, clippy, tests, and cargo-deny checks
+just test   # Runs workspace tests with cargo nextest (excluding devnet)
 ```
 
 To automatically fix formatting and clippy warnings:
