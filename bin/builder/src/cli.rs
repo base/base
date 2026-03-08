@@ -2,9 +2,7 @@
 
 use core::{net::SocketAddr, time::Duration};
 
-use base_builder_core::{
-    BuilderConfig, ExecutionMeteringMode, FlashblocksConfig, SharedMeteringProvider,
-};
+use base_builder_core::{BuilderConfig, ExecutionMeteringMode, SharedMeteringProvider};
 use base_builder_metering::MeteringStore;
 use base_node_core::args::RollupArgs;
 
@@ -147,13 +145,22 @@ impl Args {
         self,
         metering_provider: SharedMeteringProvider,
     ) -> eyre::Result<BuilderConfig> {
-        let flashblocks = FlashblocksConfig::try_from(&self)?;
+        let flashblocks_ws_addr = SocketAddr::new(
+            self.flashblocks.flashblocks_addr.parse()?,
+            self.flashblocks.flashblocks_port,
+        );
+
         Ok(BuilderConfig {
             block_time: Duration::from_millis(self.chain_block_time),
             block_time_leeway: Duration::from_secs(self.extra_block_deadline_secs),
             da_config: Default::default(),
             gas_limit_config: Default::default(),
             sampling_ratio: self.sampling_ratio,
+            flashblocks_ws_addr,
+            flashblocks_interval: Duration::from_millis(self.flashblocks.flashblocks_block_time),
+            flashblocks_leeway_time: Duration::from_millis(
+                self.flashblocks.flashblocks_leeway_time,
+            ),
             max_gas_per_txn: self.max_gas_per_txn,
             max_execution_time_per_tx_us: self.max_execution_time_per_tx_us,
             max_state_root_time_per_tx_us: self.max_state_root_time_per_tx_us,
@@ -162,25 +169,7 @@ impl Args {
             execution_metering_mode: self.execution_metering_mode,
             max_uncompressed_block_size: self.max_uncompressed_block_size,
             metering_provider,
-            flashblocks,
         })
-    }
-}
-
-impl TryFrom<&Args> for FlashblocksConfig {
-    type Error = eyre::Report;
-
-    fn try_from(args: &Args) -> Result<Self, Self::Error> {
-        let interval = Duration::from_millis(args.flashblocks.flashblocks_block_time);
-
-        let ws_addr = SocketAddr::new(
-            args.flashblocks.flashblocks_addr.parse()?,
-            args.flashblocks.flashblocks_port,
-        );
-
-        let leeway_time = Duration::from_millis(args.flashblocks.flashblocks_leeway_time);
-
-        Ok(Self { ws_addr, interval, leeway_time })
     }
 }
 
@@ -245,7 +234,7 @@ mod tests {
             ..Default::default()
         };
         let config = convert(args);
-        assert_eq!(config.flashblocks.interval, Duration::from_millis(expected_ms));
+        assert_eq!(config.flashblocks_interval, Duration::from_millis(expected_ms));
     }
 
     #[test]
@@ -299,7 +288,7 @@ mod tests {
         assert_eq!(config.block_time, Duration::from_millis(2000));
         assert_eq!(config.max_gas_per_txn, Some(100000));
         assert_eq!(config.block_time_leeway, Duration::from_secs(10));
-        assert_eq!(config.flashblocks.interval, Duration::from_millis(200));
-        assert_eq!(config.flashblocks.leeway_time, Duration::from_millis(50));
+        assert_eq!(config.flashblocks_interval, Duration::from_millis(200));
+        assert_eq!(config.flashblocks_leeway_time, Duration::from_millis(50));
     }
 }

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use alloy_primitives::{Address, B256, U256};
 use base_builder_core::{
-    BuilderConfig, FlashblocksConfig,
+    BuilderConfig,
     test_utils::{TransactionBuilderExt, funded_signer, setup_test_instance_with_builder_config},
 };
 
@@ -14,8 +14,8 @@ use base_builder_core::{
 /// `take_bundle()` emptied the bundle state, producing an always-empty map.
 #[tokio::test]
 async fn test_flashblock_metadata_balances_and_receipts() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests().with_leeway_time_ms(50);
-    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let config =
+        BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks_leeway_time_ms(50);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -99,8 +99,7 @@ async fn test_flashblock_metadata_balances_and_receipts() -> eyre::Result<()> {
 /// 2. The final payload returned by `get_payload` has a valid state root (non-zero)
 #[tokio::test]
 async fn test_state_root_computed_on_finalize() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests();
-    let config = BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks(flashblocks);
+    let config = BuilderConfig::for_tests().with_block_time_ms(2000);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -141,8 +140,7 @@ async fn test_state_root_computed_on_finalize() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn smoke_dynamic_base() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests();
-    let config = BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks(flashblocks);
+    let config = BuilderConfig::for_tests().with_block_time_ms(2000);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -166,8 +164,7 @@ async fn smoke_dynamic_base() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn smoke_dynamic_unichain() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests();
-    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let config = BuilderConfig::for_tests().with_block_time_ms(1000);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -191,8 +188,8 @@ async fn smoke_dynamic_unichain() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn smoke_classic_unichain() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests().with_leeway_time_ms(50);
-    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let config =
+        BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks_leeway_time_ms(50);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -216,8 +213,8 @@ async fn smoke_classic_unichain() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn smoke_classic_base() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests().with_leeway_time_ms(50);
-    let config = BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks(flashblocks);
+    let config =
+        BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks_leeway_time_ms(50);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -240,8 +237,7 @@ async fn smoke_classic_base() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn unichain_dynamic_with_lag() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests();
-    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let config = BuilderConfig::for_tests().with_block_time_ms(1000);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -267,8 +263,8 @@ async fn unichain_dynamic_with_lag() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn dynamic_with_full_block_lag() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests().with_leeway_time_ms(0);
-    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let config =
+        BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks_leeway_time_ms(0);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -292,8 +288,7 @@ async fn dynamic_with_full_block_lag() -> eyre::Result<()> {
 /// (historical sync), `resolve_kind` must still return a payload.
 #[tokio::test]
 async fn test_no_tx_pool_with_finalize() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests();
-    let config = BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks(flashblocks);
+    let config = BuilderConfig::for_tests().with_block_time_ms(2000);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
 
@@ -326,8 +321,7 @@ async fn test_no_tx_pool_with_finalize() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn test_flashblocks_state_root_computed_on_finalize() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests();
-    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let config = BuilderConfig::for_tests().with_block_time_ms(1000);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
 
