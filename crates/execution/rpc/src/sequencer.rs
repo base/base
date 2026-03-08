@@ -63,7 +63,8 @@ impl SequencerClient {
 
     /// Creates a new `SequencerClient` for the given URL with the given headers
     ///
-    /// This expects headers in the form: `header=value`
+    /// This expects headers in the form: `header=value`.
+    /// Invalid entries return [`Error::InvalidHeader`] instead of being ignored.
     pub async fn new_with_headers(
         sequencer_endpoint: impl Into<String>,
         headers: Vec<String>,
@@ -77,18 +78,31 @@ impl SequencerClient {
 
             if !headers.is_empty() {
                 let mut header_map = alloy_reqwest::header::HeaderMap::new();
-                for header in headers {
-                    if let Some((key, value)) = header.split_once('=') {
-                        header_map.insert(
-                            key.trim()
-                                .parse::<alloy_reqwest::header::HeaderName>()
-                                .map_err(|err| Error::InvalidHeader(err.to_string()))?,
-                            value
-                                .trim()
-                                .parse::<alloy_reqwest::header::HeaderValue>()
-                                .map_err(|err| Error::InvalidHeader(err.to_string()))?,
-                        );
+                for (idx, header) in headers.into_iter().enumerate() {
+                    let (key, value) = header.split_once('=').ok_or_else(|| {
+                        Error::InvalidHeader(format!(
+                            "header at index {idx} must be in `key=value` format"
+                        ))
+                    })?;
+                    let key = key.trim();
+                    let value = value.trim();
+                    if key.is_empty() {
+                        return Err(Error::InvalidHeader(format!(
+                            "header at index {idx} has an empty key"
+                        )));
                     }
+                    if value.is_empty() {
+                        return Err(Error::InvalidHeader(format!(
+                            "header at index {idx} has an empty value"
+                        )));
+                    }
+                    header_map.insert(
+                        key.parse::<alloy_reqwest::header::HeaderName>()
+                            .map_err(|err| Error::InvalidHeader(err.to_string()))?,
+                        value
+                            .parse::<alloy_reqwest::header::HeaderValue>()
+                            .map_err(|err| Error::InvalidHeader(err.to_string()))?,
+                    );
                 }
                 builder = builder.default_headers(header_map);
             }
@@ -222,5 +236,34 @@ mod tests {
             body,
             r#"{"method":"eth_getBlockByNumber","params":["0xa"],"id":0,"jsonrpc":"2.0"}"#
         );
+    }
+
+    #[tokio::test]
+    async fn test_new_with_headers_rejects_missing_separator() {
+        let result = SequencerClient::new_with_headers(
+            "http://localhost:8545",
+            vec!["x-auth-token".to_string()],
+        )
+        .await;
+
+        assert!(matches!(result, Err(Error::InvalidHeader(_))));
+    }
+
+    #[tokio::test]
+    async fn test_new_with_headers_rejects_empty_key() {
+        let result =
+            SequencerClient::new_with_headers("http://localhost:8545", vec![" = value".to_string()])
+                .await;
+
+        assert!(matches!(result, Err(Error::InvalidHeader(_))));
+    }
+
+    #[tokio::test]
+    async fn test_new_with_headers_rejects_empty_value() {
+        let result =
+            SequencerClient::new_with_headers("http://localhost:8545", vec!["x-auth-token=".to_string()])
+                .await;
+
+        assert!(matches!(result, Err(Error::InvalidHeader(_))));
     }
 }
