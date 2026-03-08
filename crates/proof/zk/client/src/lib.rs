@@ -15,7 +15,7 @@ mod proto {
 }
 pub use proto::{
     GetProofRequest, GetProofResponse, ProofType, ProveBlockRequest, ProveBlockResponse,
-    ReceiptType, Status, prover_service_client::ProverServiceClient,
+    ReceiptType, Status as ProofStatus,
 };
 
 mod client;
