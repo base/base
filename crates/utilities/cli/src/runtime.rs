@@ -1,4 +1,8 @@
-//! Tokio runtime utilities with graceful Ctrl+C shutdown handling.
+//! Tokio runtime utilities with graceful shutdown handling.
+//!
+//! Provides [`RuntimeManager`] for creating Tokio runtimes and installing
+//! OS signal handlers (SIGINT + SIGTERM on unix, SIGINT on other platforms)
+//! that cancel a [`CancellationToken`] for cooperative shutdown.
 
 use std::future::Future;
 
