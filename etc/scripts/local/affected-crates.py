@@ -90,12 +90,17 @@ def main():
 
     crate_dirs = build_crate_map(meta)
 
-    # Files at the workspace root that affect all crates when changed
+    # Paths that should trigger workspace-wide testing when changed.
+    # These include toolchain/build files and CI/scripting infrastructure.
     workspace_root_patterns = (
         "Cargo.toml",
         "Cargo.lock",
         ".cargo/",
         "rust-toolchain.toml",
+        ".github/",
+        "etc/scripts/",
+        "justfile",
+        "deny.toml",
     )
 
     # Map changed files to their crate (longest prefix match)
