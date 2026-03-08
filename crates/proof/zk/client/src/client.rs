@@ -46,6 +46,10 @@ pub trait ZkProofProvider: Send + Sync {
 }
 
 /// gRPC client for requesting ZK proofs from an external proving service.
+///
+/// The client wraps a [`tonic`] gRPC channel which is internally
+/// reference-counted, so cloning a `ZkProofClient` is cheap and all clones
+/// share the same underlying HTTP/2 connection.
 #[derive(Debug, Clone)]
 pub struct ZkProofClient {
     inner: ProverServiceClient<Channel>,
@@ -88,7 +92,8 @@ impl ZkProofClient {
     ///
     /// # Errors
     ///
-    /// Returns an error if the gRPC call fails.
+    /// Returns [`ZkProofError::GrpcStatus`] if the server returns a non-OK
+    /// status.
     pub async fn prove_block(
         &self,
         request: ProveBlockRequest,
@@ -102,7 +107,8 @@ impl ZkProofClient {
     ///
     /// # Errors
     ///
-    /// Returns an error if the gRPC call fails.
+    /// Returns [`ZkProofError::GrpcStatus`] if the server returns a non-OK
+    /// status.
     pub async fn get_proof(
         &self,
         request: GetProofRequest,

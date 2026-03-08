@@ -33,6 +33,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## Error Handling
+
+All fallible operations return [`ZkProofError`]. Use `is_retryable()` to
+decide whether to retry a failed call:
+
+```ignore
+use base_zk_client::ZkProofError;
+
+fn handle_error(err: &ZkProofError) {
+    if err.is_retryable() {
+        // Connection failures, timeouts, and transient gRPC codes
+        // (UNAVAILABLE, DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED)
+        // are safe to retry with backoff.
+    } else {
+        // InvalidUrl and permanent gRPC failures should not be retried.
+    }
+}
+```
+
 ## Testability
 
 The `ZkProofProvider` trait allows consumers to mock the client for testing:
