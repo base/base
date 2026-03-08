@@ -10,7 +10,8 @@ use std::{future::Future, sync::Arc};
 
 use alloy_eips::Encodable2718;
 use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+use alloy_rpc_types_eth::TransactionReceipt;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::{TransactionInput, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
@@ -79,8 +80,10 @@ async fn submit_proposal<F, Fut>(
     init_bond: U256,
     l2_block_number: u64,
     chain_id_cell: &OnceCell<u64>,
+    game_type: u32,
+    root_claim: B256,
     sign_tx: F,
-) -> Result<(), ProposerError>
+) -> Result<Address, ProposerError>
 where
     F: FnOnce(TransactionRequest) -> Fut,
     Fut: Future<Output = Result<Bytes, ProposerError>>,
@@ -145,7 +148,56 @@ where
         block_number = receipt.block_number,
         "Proposal transaction confirmed"
     );
-    Ok(())
+
+    extract_created_dispute_proxy(&receipt, factory_address, game_type, root_claim).ok_or_else(|| {
+        ProposerError::Contract(format!(
+            "transaction {tx_hash} succeeded but no matching DisputeGameCreated event was found"
+        ))
+    })
+}
+
+const DISPUTE_GAME_CREATED_EVENT: &str = "DisputeGameCreated(address,uint32,bytes32)";
+
+fn topic_for_u32(value: u32) -> B256 {
+    let mut bytes = [0u8; 32];
+    bytes[28..].copy_from_slice(&value.to_be_bytes());
+    B256::from(bytes)
+}
+
+fn topic_to_address(topic: B256) -> Option<Address> {
+    if topic.as_slice()[..12].iter().any(|byte| *byte != 0) {
+        return None;
+    }
+    let mut address = [0u8; 20];
+    address.copy_from_slice(&topic.as_slice()[12..]);
+    Some(Address::from(address))
+}
+
+fn extract_created_dispute_proxy(
+    receipt: &TransactionReceipt,
+    factory_address: Address,
+    game_type: u32,
+    root_claim: B256,
+) -> Option<Address> {
+    let expected_topic = keccak256(DISPUTE_GAME_CREATED_EVENT);
+    let expected_game_type_topic = topic_for_u32(game_type);
+
+    for log in receipt.inner.logs() {
+        if log.inner.address != factory_address {
+            continue;
+        }
+        let topics = log.inner.data.topics();
+        if topics.len() != 4 || topics[0] != expected_topic {
+            continue;
+        }
+        if topics[2] != expected_game_type_topic || topics[3] != root_claim {
+            continue;
+        }
+        if let Some(proxy) = topic_to_address(topics[1]) {
+            return Some(proxy);
+        }
+    }
+    None
 }
 
 const fn is_retryable(e: &ProposerError) -> bool {
@@ -162,14 +214,14 @@ pub const fn is_game_already_exists(e: &ProposerError) -> bool {
 pub trait OutputProposer: Send + Sync {
     /// Creates a new dispute game for the given proposal.
     ///
-    /// Returns the result of the transaction. The caller should query
-    /// factory `gameCount()` afterwards to get the new game's factory index.
+    /// Returns the created dispute game's proxy address from the transaction
+    /// receipt logs.
     async fn propose_output(
         &self,
         proposal: &ProverProposal,
         parent_index: u32,
         intermediate_roots: &[B256],
-    ) -> Result<(), ProposerError>;
+    ) -> Result<Address, ProposerError>;
 }
 
 /// Output proposer that signs transactions locally with a private key.
@@ -224,7 +276,7 @@ impl OutputProposer for LocalOutputProposer {
         proposal: &ProverProposal,
         parent_index: u32,
         intermediate_roots: &[B256],
-    ) -> Result<(), ProposerError> {
+    ) -> Result<Address, ProposerError> {
         let proof_data = build_proof_data(proposal)?;
         let extra_data = encode_extra_data(proposal.to.number, parent_index, intermediate_roots);
         let calldata = encode_create_calldata(
@@ -256,6 +308,8 @@ impl OutputProposer for LocalOutputProposer {
                 self.init_bond,
                 l2_block_number,
                 &self.chain_id,
+                self.game_type,
+                proposal.output.output_root,
                 |tx| async {
                     let envelope = <TransactionRequest as TransactionBuilder<
                         alloy_network::Ethereum,
@@ -336,7 +390,7 @@ impl OutputProposer for RemoteOutputProposer {
         proposal: &ProverProposal,
         parent_index: u32,
         intermediate_roots: &[B256],
-    ) -> Result<(), ProposerError> {
+    ) -> Result<Address, ProposerError> {
         let proof_data = build_proof_data(proposal)?;
         let extra_data = encode_extra_data(proposal.to.number, parent_index, intermediate_roots);
         let calldata = encode_create_calldata(
@@ -366,6 +420,8 @@ impl OutputProposer for RemoteOutputProposer {
                 self.init_bond,
                 l2_block_number,
                 &self.chain_id,
+                self.game_type,
+                proposal.output.output_root,
                 |tx| async move {
                     let mut params = ArrayParams::new();
                     params.insert(&tx).map_err(|e| {
