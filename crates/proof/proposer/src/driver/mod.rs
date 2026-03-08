@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
 use base_proof_rpc::{L1Provider, L2BlockRef, RollupProvider, RpcError};
@@ -532,27 +532,31 @@ where
             "Proposing output (creating dispute game)"
         );
 
+        let pre_create_count = match self.factory_client.game_count().await {
+            Ok(count) => Some(count),
+            Err(e) => {
+                warn!(error = %e, "Failed to read game_count before create, falling back to full scan");
+                None
+            }
+        };
+
         match tokio::time::timeout(
             PROPOSAL_TIMEOUT,
             self.output_proposer.propose_output(proposal, parent_index, intermediate_roots),
         )
         .await
         {
-            Ok(Ok(())) => {
-                info!(l2_block_number = proposal.to.number, "Dispute game created successfully");
+            Ok(Ok(dispute_proxy)) => {
+                info!(
+                    l2_block_number = proposal.to.number,
+                    dispute_proxy = %dispute_proxy,
+                    "Dispute game created successfully"
+                );
                 metrics::counter!(proposer_metrics::L2_OUTPUT_PROPOSALS_TOTAL).increment(1);
 
-                // TODO: This uses `game_count - 1` to infer the new game's index,
-                // which is racy if another proposer creates a game between our
-                // `create()` and this `game_count()` call. Consider parsing the
-                // game index from the transaction receipt's event logs instead.
-                // The current approach self-heals via `GameAlreadyExists` recovery.
-                match self.factory_client.game_count().await {
-                    Ok(count) if count > 0 => {
-                        let new_index = u32::try_from(count - 1).unwrap_or_else(|_| {
-                            warn!(count, "game_count exceeds u32::MAX, clamping to u32::MAX");
-                            u32::MAX
-                        });
+                let start_index = pre_create_count.unwrap_or(0);
+                match self.find_game_index_by_proxy(dispute_proxy, start_index).await {
+                    Ok(Some(new_index)) => {
                         self.parent_game_state = ParentGameState {
                             initialized: true,
                             game_index: new_index,
@@ -565,19 +569,33 @@ where
 
                         info!(
                             new_game_index = new_index,
+                            dispute_proxy = %dispute_proxy,
                             output_root = ?proposal.output.output_root,
                             l2_block_number = proposal.to.number,
                             "Updated parent game state"
                         );
                     }
-                    Ok(_) => {
-                        warn!("gameCount returned 0 after successful create");
+                    Ok(None) => {
+                        warn!(
+                            dispute_proxy = %dispute_proxy,
+                            start_index,
+                            "Created game not found by proxy lookup; recovering parent on next tick"
+                        );
+                        self.last_proposed_block = proposal.to.number;
+                        self.pending.clear();
+                        self.cached_intermediate_roots.clear();
+                        self.parent_game_state.initialized = false;
                     }
                     Err(e) => {
                         warn!(
                             error = %e,
-                            "Failed to get new game index, will recover on next tick"
+                            dispute_proxy = %dispute_proxy,
+                            "Failed to resolve game index by proxy, will recover on next tick"
                         );
+                        self.last_proposed_block = proposal.to.number;
+                        self.pending.clear();
+                        self.cached_intermediate_roots.clear();
+                        self.parent_game_state.initialized = false;
                     }
                 }
             }
@@ -605,6 +623,55 @@ where
                 );
             }
         }
+    }
+
+    async fn find_game_index_by_proxy(
+        &self,
+        dispute_proxy: Address,
+        preferred_start_index: u64,
+    ) -> Result<Option<u32>, ProposerError> {
+        let count = self
+            .factory_client
+            .game_count()
+            .await
+            .map_err(|e| ProposerError::Contract(format!("game_count failed: {e}")))?;
+        if count == 0 {
+            return Ok(None);
+        }
+
+        let start = preferred_start_index.min(count);
+
+        for index in (start..count).rev() {
+            let game = self
+                .factory_client
+                .game_at_index(index)
+                .await
+                .map_err(|e| ProposerError::Contract(format!("game_at_index({index}) failed: {e}")))?;
+            if game.proxy == dispute_proxy {
+                let resolved = u32::try_from(index).unwrap_or_else(|_| {
+                    warn!(index, "game index exceeds u32::MAX, clamping to u32::MAX");
+                    u32::MAX
+                });
+                return Ok(Some(resolved));
+            }
+        }
+
+        for index in (0..start).rev() {
+            let game = self
+                .factory_client
+                .game_at_index(index)
+                .await
+                .map_err(|e| ProposerError::Contract(format!("game_at_index({index}) failed: {e}")))?;
+            if game.proxy == dispute_proxy {
+                let resolved = u32::try_from(index).unwrap_or_else(|_| {
+                    warn!(index, "game index exceeds u32::MAX, clamping to u32::MAX");
+                    u32::MAX
+                });
+                return Ok(Some(resolved));
+            }
+        }
+
+        Ok(None)
     }
 }
 
@@ -897,9 +964,14 @@ mod tests {
             l1_block_number,
             sync_status,
             canonical_hash,
-            Arc::new(MockOutputProposer),
+            mock_output_proposer(),
             CancellationToken::new(),
         )
+    }
+
+    fn mock_output_proposer() -> Arc<dyn OutputProposer> {
+        let proposer: Arc<dyn OutputProposer> = Arc::new(MockOutputProposer);
+        proposer
     }
 
     // ---- Tests ----
@@ -1063,7 +1135,7 @@ mod tests {
             400,
             sync_status,
             Some(canonical_hash),
-            Arc::new(MockOutputProposer),
+            mock_output_proposer(),
             cancel,
         );
 
@@ -1088,7 +1160,7 @@ mod tests {
     #[tokio::test]
     async fn test_step_calls_output_proposer() {
         struct TrackingOutputProposer {
-            called: AtomicBool,
+            called: Arc<AtomicBool>,
         }
 
         #[async_trait]
@@ -1098,15 +1170,17 @@ mod tests {
                 _proposal: &ProverProposal,
                 _parent_index: u32,
                 _intermediate_roots: &[B256],
-            ) -> Result<(), ProposerError> {
+            ) -> Result<Address, ProposerError> {
                 self.called.store(true, Ordering::SeqCst);
-                Ok(())
+                Ok(Address::ZERO)
             }
         }
 
         let canonical_hash = B256::repeat_byte(0x30);
         let sync_status = test_sync_status(200, canonical_hash);
-        let tracking = Arc::new(TrackingOutputProposer { called: AtomicBool::new(false) });
+        let called = Arc::new(AtomicBool::new(false));
+        let tracking_concrete = Arc::new(TrackingOutputProposer { called: called.clone() });
+        let tracking_proposer: Arc<dyn OutputProposer> = tracking_concrete;
 
         let mut driver = test_driver_custom(
             MockEnclave,
@@ -1114,7 +1188,7 @@ mod tests {
             1000,
             sync_status,
             Some(canonical_hash),
-            Arc::clone(&tracking) as Arc<dyn OutputProposer>,
+            tracking_proposer,
             CancellationToken::new(),
         );
 
@@ -1125,7 +1199,7 @@ mod tests {
         let result = driver.step().await;
         assert!(result.is_ok(), "step() should succeed, got: {result:?}");
         assert!(
-            tracking.called.load(Ordering::SeqCst),
+            called.load(Ordering::SeqCst),
             "OutputProposer::propose_output should have been called"
         );
     }
@@ -1145,7 +1219,7 @@ mod tests {
             1000,
             sync_status,
             None,
-            Arc::new(MockOutputProposer),
+            mock_output_proposer(),
             cancel.clone(),
         );
 
@@ -1182,7 +1256,7 @@ mod tests {
             1000,
             sync_status,
             None,
-            Arc::new(MockOutputProposer),
+            mock_output_proposer(),
             global_cancel.child_token(),
         );
         DriverHandle::new(driver, global_cancel)
@@ -1294,7 +1368,7 @@ mod tests {
             1000,
             sync_status,
             None,
-            Arc::new(MockOutputProposer),
+            mock_output_proposer(),
             CancellationToken::new(),
         );
 
@@ -1334,7 +1408,7 @@ mod tests {
             1000,
             sync_status,
             None,
-            Arc::new(MockOutputProposer),
+            mock_output_proposer(),
             CancellationToken::new(),
         );
 
@@ -1367,7 +1441,7 @@ mod tests {
             1000,
             sync_status,
             None,
-            Arc::new(MockOutputProposer),
+            mock_output_proposer(),
             CancellationToken::new(),
         );
 
