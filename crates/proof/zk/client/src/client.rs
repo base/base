@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use tonic::transport::{Channel, Endpoint};
-use tracing::debug;
+use tracing::{debug, warn};
 use url::Url;
 
 use crate::{
@@ -112,7 +112,10 @@ impl ZkProofClient {
     ) -> Result<GetProofResponse, ZkProofError> {
         let session_id = request.session_id.clone();
         let response = self.inner.clone().get_proof(request).await?.into_inner();
-        let status = Status::try_from(response.status).unwrap_or(Status::Unspecified);
+        let status = Status::try_from(response.status).unwrap_or_else(|_| {
+            warn!(raw_status = response.status, "unknown proof status value");
+            Status::Unspecified
+        });
         debug!(session_id = %session_id, status = ?status, "proof status polled");
         Ok(response)
     }
