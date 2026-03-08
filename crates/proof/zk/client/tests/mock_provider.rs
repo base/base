@@ -6,6 +6,7 @@ use base_zk_client::{
     GetProofRequest, GetProofResponse, ProofStatus, ProveBlockRequest, ProveBlockResponse,
     ZkProofError, ZkProofProvider,
 };
+use rstest::rstest;
 
 /// A mock implementation of [`ZkProofProvider`] that returns canned responses.
 struct MockZkProvider;
@@ -85,35 +86,38 @@ async fn mock_get_proof_returns_completed() {
 
 /// Verify that `is_retryable` classifies all error variants correctly,
 /// including every retryable gRPC status code.
-#[tokio::test]
-async fn error_retryability() {
-    // Non-retryable non-gRPC variants.
-    let invalid_url_err = ZkProofError::InvalidUrl("not a url".into());
-    assert!(!invalid_url_err.is_retryable());
+#[rstest]
+#[case::invalid_url(ZkProofError::InvalidUrl("not a url".into()), false)]
+#[case::grpc_unavailable(
+    ZkProofError::GrpcStatus(tonic::Status::unavailable("service down")),
+    true
+)]
+#[case::grpc_deadline_exceeded(
+    ZkProofError::GrpcStatus(tonic::Status::deadline_exceeded("timeout")),
+    true
+)]
+#[case::grpc_resource_exhausted(
+    ZkProofError::GrpcStatus(tonic::Status::resource_exhausted("rate limited")),
+    true
+)]
+#[case::grpc_aborted(
+    ZkProofError::GrpcStatus(tonic::Status::aborted("transaction conflict")),
+    true
+)]
+#[case::grpc_not_found(ZkProofError::GrpcStatus(tonic::Status::not_found("session gone")), false)]
+#[case::grpc_invalid_argument(
+    ZkProofError::GrpcStatus(tonic::Status::invalid_argument("bad request")),
+    false
+)]
+fn error_retryability(#[case] error: ZkProofError, #[case] expected: bool) {
+    assert_eq!(error.is_retryable(), expected);
+}
 
-    // Retryable gRPC status codes.
-    let unavailable = ZkProofError::GrpcStatus(tonic::Status::unavailable("service down"));
-    assert!(unavailable.is_retryable());
-
-    let deadline = ZkProofError::GrpcStatus(tonic::Status::deadline_exceeded("timeout"));
-    assert!(deadline.is_retryable());
-
-    let exhausted = ZkProofError::GrpcStatus(tonic::Status::resource_exhausted("rate limited"));
-    assert!(exhausted.is_retryable());
-
-    let aborted = ZkProofError::GrpcStatus(tonic::Status::aborted("transaction conflict"));
-    assert!(aborted.is_retryable());
-
-    // Non-retryable gRPC status codes.
-    let not_found = ZkProofError::GrpcStatus(tonic::Status::not_found("session gone"));
-    assert!(!not_found.is_retryable());
-
-    let invalid_arg = ZkProofError::GrpcStatus(tonic::Status::invalid_argument("bad request"));
-    assert!(!invalid_arg.is_retryable());
-
-    // Verify the derive-generated From<tonic::Status> conversion.
-    let from_status: ZkProofError = tonic::Status::unavailable("test").into();
-    assert!(from_status.is_retryable());
+/// Verify the `From<tonic::Status>` conversion produces a retryable error.
+#[test]
+fn grpc_status_from_conversion() {
+    let error: ZkProofError = tonic::Status::unavailable("test").into();
+    assert!(error.is_retryable());
 }
 
 /// Verify that a provider can be used as a trait object behind `Box<dyn ZkProofProvider>`.
@@ -137,12 +141,10 @@ async fn failing_mock_propagates_errors() {
         .await
         .expect_err("prove_block should fail");
     assert!(matches!(prove_err, ZkProofError::GrpcStatus(_)));
-    assert!(prove_err.is_retryable());
 
     let get_err = provider
         .get_proof(GetProofRequest { session_id: "any".into() })
         .await
         .expect_err("get_proof should fail");
     assert!(matches!(get_err, ZkProofError::GrpcStatus(_)));
-    assert!(get_err.is_retryable());
 }

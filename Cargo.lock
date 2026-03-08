@@ -4472,6 +4472,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "prost",
+ "rstest",
  "thiserror 2.0.18",
  "tokio",
  "tonic",

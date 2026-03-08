@@ -25,6 +25,7 @@ tonic-build.workspace = true
 tonic-prost-build.workspace = true
 
 [dev-dependencies]
+rstest.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
