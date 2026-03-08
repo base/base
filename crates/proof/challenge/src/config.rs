@@ -129,6 +129,10 @@ pub struct ChallengerConfig {
     pub poll_interval: Duration,
     /// URL of the ZK proof service endpoint.
     pub zk_proof_service_endpoint: Validated<Url>,
+    /// Timeout for establishing the initial gRPC connection to the ZK proof service.
+    pub zk_connect_timeout: Duration,
+    /// Timeout for individual gRPC requests to the ZK proof service.
+    pub zk_request_timeout: Duration,
     /// Signing configuration for L1 transaction submission.
     pub signing: SigningConfig,
     /// Number of past games to scan on startup.
@@ -183,6 +187,24 @@ impl ChallengerConfig {
             });
         }
 
+        // Validate zk_connect_timeout > 0
+        if cli.challenger.zk_connect_timeout.is_zero() {
+            return Err(ConfigError::OutOfRange {
+                field: "zk-connect-timeout",
+                constraint: "greater than 0",
+                value: "0".to_string(),
+            });
+        }
+
+        // Validate zk_request_timeout > 0
+        if cli.challenger.zk_request_timeout.is_zero() {
+            return Err(ConfigError::OutOfRange {
+                field: "zk-request-timeout",
+                constraint: "greater than 0",
+                value: "0".to_string(),
+            });
+        }
+
         // Validate lookback_games > 0
         if cli.challenger.lookback_games == 0 {
             return Err(ConfigError::OutOfRange {
@@ -216,6 +238,8 @@ impl ChallengerConfig {
             anchor_state_registry_addr: cli.challenger.anchor_state_registry_addr,
             poll_interval: cli.challenger.poll_interval,
             zk_proof_service_endpoint,
+            zk_connect_timeout: cli.challenger.zk_connect_timeout,
+            zk_request_timeout: cli.challenger.zk_request_timeout,
             signing,
             lookback_games: cli.challenger.lookback_games,
             health_addr,
@@ -311,6 +335,8 @@ mod tests {
         let cli = cli_from_args(&[]);
         let config = ChallengerConfig::from_cli(cli, None).unwrap();
         assert_eq!(config.poll_interval, Duration::from_secs(12));
+        assert_eq!(config.zk_connect_timeout, Duration::from_secs(10));
+        assert_eq!(config.zk_request_timeout, Duration::from_secs(30));
         assert_eq!(config.lookback_games, 1000);
         assert_eq!(config.health_addr, "0.0.0.0:8080".parse::<SocketAddr>().unwrap());
         assert!(matches!(config.signing, SigningConfig::Remote { .. }));
@@ -321,6 +347,20 @@ mod tests {
         let cli = cli_from_args(&["--poll-interval", "0s"]);
         let result = ChallengerConfig::from_cli(cli, None);
         assert!(matches!(result, Err(ConfigError::OutOfRange { field: "poll-interval", .. })));
+    }
+
+    #[test]
+    fn test_zero_zk_connect_timeout() {
+        let cli = cli_from_args(&["--zk-connect-timeout", "0s"]);
+        let result = ChallengerConfig::from_cli(cli, None);
+        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "zk-connect-timeout", .. })));
+    }
+
+    #[test]
+    fn test_zero_zk_request_timeout() {
+        let cli = cli_from_args(&["--zk-request-timeout", "0s"]);
+        let result = ChallengerConfig::from_cli(cli, None);
+        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "zk-request-timeout", .. })));
     }
 
     #[rstest]

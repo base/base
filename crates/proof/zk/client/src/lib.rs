@@ -19,7 +19,7 @@ pub use proto::{
 };
 
 mod client;
-pub use client::{ZkProofClient, ZkProofProvider};
+pub use client::{ZkProofClient, ZkProofClientConfig, ZkProofProvider};
 
 mod error;
 pub use error::ZkProofError;

@@ -9,13 +9,21 @@ initiate a proof job (returns a session ID) and `get_proof` to poll for results.
 ## Example
 
 ```ignore
+use std::time::Duration;
 use url::Url;
-use base_zk_client::{ZkProofClient, ZkProofProvider, ProveBlockRequest, ProofType};
+use base_zk_client::{
+    ZkProofClient, ZkProofClientConfig, ZkProofProvider,
+    ProveBlockRequest, ProofType,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let endpoint = Url::parse("http://127.0.0.1:50051")?;
-    let client = ZkProofClient::new(&endpoint)?;
+    let config = ZkProofClientConfig {
+        endpoint: Url::parse("http://127.0.0.1:50051")?,
+        connect_timeout: Duration::from_secs(10),
+        request_timeout: Duration::from_secs(30),
+    };
+    let client = ZkProofClient::new(config)?;
 
     let request = ProveBlockRequest {
         start_block_number: 42,
