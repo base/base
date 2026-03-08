@@ -1,9 +1,19 @@
 //! ZK proof gRPC client.
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use tonic::transport::{Channel, Endpoint};
 use tracing::info;
 use url::Url;
+
+/// Default timeout for establishing the initial gRPC connection.
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Default timeout for individual gRPC requests. Proving can be long-running,
+/// so this is set conservatively high; callers should override via their own
+/// timeout/retry layer when tighter deadlines are needed.
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 
 use crate::error::ZkProofError;
 use crate::proto::{
@@ -44,6 +54,10 @@ pub struct ZkProofClient {
 impl ZkProofClient {
     /// Connect to a ZK proving service at the given endpoint.
     ///
+    /// A 10-second connection timeout and a 300-second request timeout are
+    /// applied by default. Production deployments should use `https://`
+    /// endpoints to ensure proof data is encrypted in transit.
+    ///
     /// # Arguments
     ///
     /// * `endpoint` - The URL of the gRPC proving service
@@ -59,6 +73,8 @@ impl ZkProofClient {
 
         let channel = Endpoint::from_shared(endpoint_str.to_owned())
             .map_err(|e| ZkProofError::InvalidUrl(e.to_string()))?
+            .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
+            .timeout(DEFAULT_REQUEST_TIMEOUT)
             .connect()
             .await
             .map_err(|e| ZkProofError::Connection(e.to_string()))?;
