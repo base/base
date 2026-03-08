@@ -136,7 +136,7 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
         Ok(self.game_count)
     }
     async fn game_at_index(&self, _: u64) -> Result<GameAtIndex, ContractError> {
-        unimplemented!()
+        Ok(GameAtIndex { game_type: 0, timestamp: 0, proxy: Address::ZERO })
     }
     async fn init_bonds(&self, _: u32) -> Result<U256, ContractError> {
         Ok(U256::ZERO)
@@ -225,7 +225,7 @@ impl OutputProposer for MockOutputProposer {
         _proposal: &ProverProposal,
         _parent_index: u32,
         _intermediate_roots: &[B256],
-    ) -> Result<(), ProposerError> {
-        Ok(())
+    ) -> Result<Address, ProposerError> {
+        Ok(Address::ZERO)
     }
 }
