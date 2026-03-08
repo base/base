@@ -79,7 +79,7 @@ impl ZkProofClient {
         let endpoint_str = endpoint.as_str();
 
         let channel = Endpoint::from_shared(endpoint_str.to_owned())
-            .map_err(|e| ZkProofError::InvalidUrl(e.to_string()))?
+            .map_err(|e| ZkProofError::InvalidUrl(format!("{endpoint}: {e}")))?
             .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
             .timeout(DEFAULT_REQUEST_TIMEOUT)
             .connect_lazy();
