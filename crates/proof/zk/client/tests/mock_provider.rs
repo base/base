@@ -40,7 +40,7 @@ impl ZkProofProvider for FailingMockProvider {
         &self,
         _request: ProveBlockRequest,
     ) -> Result<ProveBlockResponse, ZkProofError> {
-        Err(ZkProofError::Timeout("mock connection refused".into()))
+        Err(ZkProofError::GrpcStatus(tonic::Status::unavailable("mock connection refused")))
     }
 
     async fn get_proof(&self, _request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
@@ -95,9 +95,6 @@ async fn error_retryability() {
     let connection_err = ZkProofError::Connection(transport_err);
     assert!(connection_err.is_retryable());
 
-    let timeout_err = ZkProofError::Timeout("deadline exceeded".into());
-    assert!(timeout_err.is_retryable());
-
     // Non-retryable non-gRPC variants.
     let invalid_url_err = ZkProofError::InvalidUrl("not a url".into());
     assert!(!invalid_url_err.is_retryable());
@@ -144,7 +141,7 @@ async fn failing_mock_propagates_errors() {
         .prove_block(ProveBlockRequest::default())
         .await
         .expect_err("prove_block should fail");
-    assert!(matches!(prove_err, ZkProofError::Timeout(_)));
+    assert!(matches!(prove_err, ZkProofError::GrpcStatus(_)));
     assert!(prove_err.is_retryable());
 
     let get_err = provider

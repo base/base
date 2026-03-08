@@ -43,7 +43,7 @@ use base_zk_client::ZkProofError;
 
 fn handle_error(err: &ZkProofError) {
     if err.is_retryable() {
-        // Connection failures, timeouts, and transient gRPC codes
+        // Connection failures and transient gRPC codes
         // (UNAVAILABLE, DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED)
         // are safe to retry with backoff.
     } else {
