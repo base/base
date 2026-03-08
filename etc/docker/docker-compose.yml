@@ -205,8 +205,6 @@ services:
       - --flashblocks.addr=0.0.0.0
       - --flashblocks.port=${L2_BUILDER_FLASHBLOCKS_PORT}
       - --flashblocks.block-time=200
-      - --flashblocks.disable-state-root
-      - --flashblocks.compute-state-root-on-finalize
       - --rollup.chain-block-time=2000
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
       - --txpool.nolocals
