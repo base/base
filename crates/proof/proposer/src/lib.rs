@@ -53,9 +53,6 @@ pub use rpc::{L2ClientKind, ProverL2Provider, RethExecutionWitness, RethL2Client
 mod service;
 pub use service::run;
 
-mod signal;
-pub use signal::SignalHandler;
-
 /// Shared mock implementations for tests.
 #[cfg(test)]
 pub mod test_utils;

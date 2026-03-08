@@ -21,6 +21,8 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use base_cli_utils::RuntimeManager;
+
 use crate::{
     Driver, DriverConfig, DriverHandle, L2ClientKind, ProposerConfig, ProposerDriverControl,
     Prover, SigningConfig, create_enclave_client, create_output_proposer,
@@ -51,7 +53,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
 
     // ── 1. Global cancellation token and signal handler ──────────────────
     let cancel = CancellationToken::new();
-    crate::SignalHandler::install(cancel.clone());
+    RuntimeManager::install_signal_handler(cancel.clone());
 
     // ── 2. Metrics recorder and HTTP server (if enabled) ─────────────────
     config.metrics.init().expect("failed to install Prometheus recorder");
