@@ -9,11 +9,7 @@
 // generated types is handled via build.rs `message_attribute`/`enum_attribute`;
 // the remaining allows cover impl-block clippy lints and the `unreachable_pub`
 // on the generated client sub-module.
-#[allow(
-    unreachable_pub,
-    clippy::doc_markdown,
-    clippy::missing_const_for_fn
-)]
+#[allow(unreachable_pub, clippy::doc_markdown, clippy::missing_const_for_fn)]
 mod proto {
     tonic::include_proto!("prover");
 }

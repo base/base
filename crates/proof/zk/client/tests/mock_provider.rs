@@ -3,8 +3,8 @@
 
 use async_trait::async_trait;
 use base_zk_client::{
-    GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse, Status,
-    ZkProofError, ZkProofProvider,
+    GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse, Status, ZkProofError,
+    ZkProofProvider,
 };
 
 /// A mock implementation of [`ZkProofProvider`] that returns canned responses.
@@ -22,10 +22,7 @@ impl ZkProofProvider for MockZkProvider {
         })
     }
 
-    async fn get_proof(
-        &self,
-        _request: GetProofRequest,
-    ) -> Result<GetProofResponse, ZkProofError> {
+    async fn get_proof(&self, _request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
         Ok(GetProofResponse {
             status: Status::Completed.into(),
             proof: vec![0xDE, 0xAD, 0xBE, 0xEF],
@@ -60,9 +57,7 @@ async fn mock_prove_block_returns_session_id() {
 async fn mock_get_proof_returns_completed() {
     let provider = MockZkProvider;
 
-    let request = GetProofRequest {
-        session_id: "mock-session-123".into(),
-    };
+    let request = GetProofRequest { session_id: "mock-session-123".into() };
 
     let response = provider.get_proof(request).await.expect("get_proof should succeed");
 
@@ -90,8 +85,7 @@ async fn error_retryability() {
     let not_found = ZkProofError::GrpcStatus(tonic::Status::not_found("session gone"));
     assert!(!not_found.is_retryable());
 
-    let invalid_arg =
-        ZkProofError::GrpcStatus(tonic::Status::invalid_argument("bad request"));
+    let invalid_arg = ZkProofError::GrpcStatus(tonic::Status::invalid_argument("bad request"));
     assert!(!invalid_arg.is_retryable());
 }
 

@@ -32,10 +32,7 @@ pub trait ZkProofProvider: Send + Sync {
     ///
     /// The caller should poll until the returned [`GetProofResponse`] indicates
     /// a terminal status (completed or failed).
-    async fn get_proof(
-        &self,
-        request: GetProofRequest,
-    ) -> Result<GetProofResponse, ZkProofError>;
+    async fn get_proof(&self, request: GetProofRequest) -> Result<GetProofResponse, ZkProofError>;
 }
 
 /// gRPC client for requesting ZK proofs from an external proving service.
@@ -68,9 +65,7 @@ impl ZkProofClient {
 
         info!(endpoint = %endpoint, "ZK client connected");
 
-        Ok(Self {
-            inner: ProverServiceClient::new(channel),
-        })
+        Ok(Self { inner: ProverServiceClient::new(channel) })
     }
 
     /// Initiate a proof job for a given block range.
@@ -82,12 +77,7 @@ impl ZkProofClient {
         &self,
         request: ProveBlockRequest,
     ) -> Result<ProveBlockResponse, ZkProofError> {
-        let response = self
-            .inner
-            .clone()
-            .prove_block(request)
-            .await?
-            .into_inner();
+        let response = self.inner.clone().prove_block(request).await?.into_inner();
 
         Ok(response)
     }
@@ -101,12 +91,7 @@ impl ZkProofClient {
         &self,
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ZkProofError> {
-        let response = self
-            .inner
-            .clone()
-            .get_proof(request)
-            .await?
-            .into_inner();
+        let response = self.inner.clone().get_proof(request).await?.into_inner();
 
         Ok(response)
     }
@@ -121,10 +106,7 @@ impl ZkProofProvider for ZkProofClient {
         self.prove_block(request).await
     }
 
-    async fn get_proof(
-        &self,
-        request: GetProofRequest,
-    ) -> Result<GetProofResponse, ZkProofError> {
+    async fn get_proof(&self, request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
         self.get_proof(request).await
     }
 }
