@@ -15,7 +15,7 @@ use base_zk_client::{ZkProofClient, ZkProofProvider, ProveBlockRequest};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let endpoint = Url::parse("http://127.0.0.1:50051")?;
-    let client = ZkProofClient::connect(&endpoint).await?;
+    let client = ZkProofClient::new(&endpoint)?;
 
     let request = ProveBlockRequest {
         l1_head: vec![0u8; 32],

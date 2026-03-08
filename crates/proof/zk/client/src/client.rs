@@ -58,11 +58,13 @@ pub struct ZkProofClient {
 }
 
 impl ZkProofClient {
-    /// Connect to a ZK proving service at the given endpoint.
+    /// Create a new ZK proof client for the given endpoint.
     ///
-    /// A 10-second connection timeout and a 300-second request timeout are
-    /// applied by default. Production deployments should use `https://`
-    /// endpoints to ensure proof data is encrypted in transit.
+    /// The underlying gRPC channel is created lazily — no TCP connection is
+    /// established until the first RPC call. A 10-second connection timeout
+    /// and a 300-second request timeout are applied by default. Production
+    /// deployments should use `https://` endpoints to ensure proof data is
+    /// encrypted in transit.
     ///
     /// # Arguments
     ///
@@ -72,19 +74,17 @@ impl ZkProofClient {
     /// # Errors
     ///
     /// Returns [`ZkProofError::InvalidUrl`] if the URL cannot be parsed as a
-    /// valid gRPC endpoint, or [`ZkProofError::Connection`] if the channel
-    /// cannot be established.
-    pub async fn connect(endpoint: &Url) -> Result<Self, ZkProofError> {
+    /// valid gRPC endpoint.
+    pub fn new(endpoint: &Url) -> Result<Self, ZkProofError> {
         let endpoint_str = endpoint.as_str();
 
         let channel = Endpoint::from_shared(endpoint_str.to_owned())
             .map_err(|e| ZkProofError::InvalidUrl(e.to_string()))?
             .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
             .timeout(DEFAULT_REQUEST_TIMEOUT)
-            .connect()
-            .await?;
+            .connect_lazy();
 
-        info!(endpoint = %endpoint, "ZK client connected");
+        info!(endpoint = %endpoint, "ZK client created");
 
         Ok(Self { inner: ProverServiceClient::new(channel) })
     }
