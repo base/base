@@ -31,6 +31,23 @@ impl ZkProofProvider for MockZkProvider {
     }
 }
 
+/// A mock that always returns errors, demonstrating error-path mockability.
+struct FailingMockProvider;
+
+#[async_trait]
+impl ZkProofProvider for FailingMockProvider {
+    async fn prove_block(
+        &self,
+        _request: ProveBlockRequest,
+    ) -> Result<ProveBlockResponse, ZkProofError> {
+        Err(ZkProofError::Connection("mock connection refused".into()))
+    }
+
+    async fn get_proof(&self, _request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
+        Err(ZkProofError::GrpcStatus(tonic::Status::unavailable("mock service down")))
+    }
+}
+
 /// Verify that [`prove_block`] returns the expected canned session ID and
 /// pending status.
 #[tokio::test]
@@ -66,22 +83,32 @@ async fn mock_get_proof_returns_completed() {
     assert!(response.error_message.is_empty());
 }
 
-/// Verify that a mock can return errors and that `is_retryable` classifies them
-/// correctly.
-#[tokio::test]
-async fn error_retryability() {
+/// Verify that `is_retryable` classifies all error variants correctly,
+/// including every retryable gRPC status code.
+#[test]
+fn error_retryability() {
+    // Retryable non-gRPC variants.
     let connection_err = ZkProofError::Connection("connection refused".into());
     assert!(connection_err.is_retryable());
 
     let timeout_err = ZkProofError::Timeout("deadline exceeded".into());
     assert!(timeout_err.is_retryable());
 
+    // Non-retryable non-gRPC variants.
     let invalid_url_err = ZkProofError::InvalidUrl("not a url".into());
     assert!(!invalid_url_err.is_retryable());
 
+    // Retryable gRPC status codes.
     let unavailable = ZkProofError::GrpcStatus(tonic::Status::unavailable("service down"));
     assert!(unavailable.is_retryable());
 
+    let deadline = ZkProofError::GrpcStatus(tonic::Status::deadline_exceeded("timeout"));
+    assert!(deadline.is_retryable());
+
+    let exhausted = ZkProofError::GrpcStatus(tonic::Status::resource_exhausted("rate limited"));
+    assert!(exhausted.is_retryable());
+
+    // Non-retryable gRPC status codes.
     let not_found = ZkProofError::GrpcStatus(tonic::Status::not_found("session gone"));
     assert!(!not_found.is_retryable());
 
@@ -98,4 +125,22 @@ async fn trait_object_usage() {
     let response = provider.prove_block(request).await.expect("prove_block should succeed");
 
     assert_eq!(response.session_id, "mock-session-123");
+}
+
+/// Verify that errors propagate correctly through the trait when a mock fails.
+#[tokio::test]
+async fn failing_mock_propagates_errors() {
+    let provider = FailingMockProvider;
+
+    let prove_err = provider
+        .prove_block(ProveBlockRequest::default())
+        .await
+        .expect_err("prove_block should fail");
+    assert!(prove_err.is_retryable());
+
+    let get_err = provider
+        .get_proof(GetProofRequest { session_id: "any".into() })
+        .await
+        .expect_err("get_proof should fail");
+    assert!(get_err.is_retryable());
 }
