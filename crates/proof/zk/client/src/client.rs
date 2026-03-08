@@ -8,11 +8,10 @@ use tracing::debug;
 use url::Url;
 
 use crate::{
-    ProofJobStatus,
     error::ZkProofError,
     proto::{
         GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse,
-        prover_service_client::ProverServiceClient,
+        get_proof_response::Status, prover_service_client::ProverServiceClient,
     },
 };
 
@@ -101,9 +100,7 @@ impl ZkProofClient {
         request: ProveBlockRequest,
     ) -> Result<ProveBlockResponse, ZkProofError> {
         let response = self.inner.clone().prove_block(request).await?.into_inner();
-        let status =
-            ProofJobStatus::try_from(response.status).unwrap_or(ProofJobStatus::Unspecified);
-        debug!(session_id = %response.session_id, status = ?status, "proof job initiated");
+        debug!(session_id = %response.session_id, "proof job initiated");
         Ok(response)
     }
 
@@ -119,8 +116,7 @@ impl ZkProofClient {
     ) -> Result<GetProofResponse, ZkProofError> {
         let session_id = request.session_id.clone();
         let response = self.inner.clone().get_proof(request).await?.into_inner();
-        let status =
-            ProofJobStatus::try_from(response.status).unwrap_or(ProofJobStatus::Unspecified);
+        let status = Status::try_from(response.status).unwrap_or(Status::Unspecified);
         debug!(session_id = %session_id, status = ?status, "proof status polled");
         Ok(response)
     }

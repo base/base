@@ -3,8 +3,8 @@
 
 use async_trait::async_trait;
 use base_zk_client::{
-    GetProofRequest, GetProofResponse, ProofJobStatus, ProveBlockRequest, ProveBlockResponse,
-    ZkProofError, ZkProofProvider,
+    GetProofRequest, GetProofResponse, ProofType, ProveBlockRequest, ProveBlockResponse,
+    ZkProofError, ZkProofProvider, get_proof_response,
 };
 use rstest::rstest;
 
@@ -17,17 +17,13 @@ impl ZkProofProvider for MockZkProvider {
         &self,
         _request: ProveBlockRequest,
     ) -> Result<ProveBlockResponse, ZkProofError> {
-        Ok(ProveBlockResponse {
-            session_id: "mock-session-123".into(),
-            status: ProofJobStatus::Pending.into(),
-        })
+        Ok(ProveBlockResponse { session_id: "mock-session-123".into() })
     }
 
     async fn get_proof(&self, _request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
         Ok(GetProofResponse {
-            status: ProofJobStatus::Completed.into(),
-            proof: vec![0xDE, 0xAD, 0xBE, 0xEF],
-            error_message: String::new(),
+            status: get_proof_response::Status::Succeeded.into(),
+            receipt: vec![0xDE, 0xAD, 0xBE, 0xEF],
         })
     }
 }
@@ -56,18 +52,15 @@ async fn mock_prove_block_returns_session_id() {
     let provider = MockZkProvider;
 
     let request = ProveBlockRequest {
-        l1_head: vec![0u8; 32],
-        agreed_l2_head_hash: vec![0u8; 32],
-        agreed_l2_output_root: vec![0u8; 32],
-        claimed_l2_output_root: vec![0u8; 32],
-        claimed_l2_block_number: 100,
-        ..Default::default()
+        start_block_number: 100,
+        number_of_blocks_to_prove: 1,
+        sequence_window: None,
+        proof_type: ProofType::KailuaBentoStark.into(),
     };
 
     let response = provider.prove_block(request).await.expect("prove_block should succeed");
 
     assert_eq!(response.session_id, "mock-session-123");
-    assert_eq!(response.status, i32::from(ProofJobStatus::Pending));
 }
 
 /// Verify that [`get_proof`] returns a completed status with proof bytes.
@@ -75,13 +68,12 @@ async fn mock_prove_block_returns_session_id() {
 async fn mock_get_proof_returns_completed() {
     let provider = MockZkProvider;
 
-    let request = GetProofRequest { session_id: "mock-session-123".into() };
+    let request = GetProofRequest { session_id: "mock-session-123".into(), receipt_type: None };
 
     let response = provider.get_proof(request).await.expect("get_proof should succeed");
 
-    assert_eq!(response.status, i32::from(ProofJobStatus::Completed));
-    assert_eq!(response.proof, vec![0xDE, 0xAD, 0xBE, 0xEF]);
-    assert!(response.error_message.is_empty());
+    assert_eq!(response.status, i32::from(get_proof_response::Status::Succeeded));
+    assert_eq!(response.receipt, vec![0xDE, 0xAD, 0xBE, 0xEF]);
 }
 
 /// Verify that `is_retryable` classifies all error variants correctly,
@@ -143,7 +135,7 @@ async fn failing_mock_propagates_errors() {
     assert!(matches!(prove_err, ZkProofError::GrpcStatus(_)));
 
     let get_err = provider
-        .get_proof(GetProofRequest { session_id: "any".into() })
+        .get_proof(GetProofRequest { session_id: "any".into(), receipt_type: None })
         .await
         .expect_err("get_proof should fail");
     assert!(matches!(get_err, ZkProofError::GrpcStatus(_)));

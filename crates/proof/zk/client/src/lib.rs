@@ -14,8 +14,8 @@ mod proto {
     tonic::include_proto!("prover");
 }
 pub use proto::{
-    GetProofRequest, GetProofResponse, ProofJobStatus, ProofType, ProveBlockRequest,
-    ProveBlockResponse, ReceiptType,
+    GetProofRequest, GetProofResponse, ProofType, ProveBlockRequest, ProveBlockResponse,
+    ReceiptType, get_proof_response,
 };
 
 mod client;

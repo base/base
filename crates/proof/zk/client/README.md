@@ -10,7 +10,7 @@ initiate a proof job (returns a session ID) and `get_proof` to poll for results.
 
 ```ignore
 use url::Url;
-use base_zk_client::{ZkProofClient, ZkProofProvider, ProveBlockRequest};
+use base_zk_client::{ZkProofClient, ZkProofProvider, ProveBlockRequest, ProofType};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -18,12 +18,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = ZkProofClient::new(&endpoint)?;
 
     let request = ProveBlockRequest {
-        l1_head: vec![0u8; 32],
-        agreed_l2_head_hash: vec![0u8; 32],
-        agreed_l2_output_root: vec![0u8; 32],
-        claimed_l2_output_root: vec![0u8; 32],
-        claimed_l2_block_number: 42,
-        ..Default::default()
+        start_block_number: 42,
+        number_of_blocks_to_prove: 1,
+        sequence_window: None,
+        proof_type: ProofType::KailuaBentoStark.into(),
     };
 
     let response = client.prove_block(request).await?;
@@ -61,7 +59,7 @@ use async_trait::async_trait;
 use base_zk_client::{
     ZkProofProvider, ZkProofError,
     ProveBlockRequest, ProveBlockResponse,
-    GetProofRequest, GetProofResponse, ProofJobStatus,
+    GetProofRequest, GetProofResponse, get_proof_response,
 };
 
 struct MockProvider;
@@ -74,7 +72,6 @@ impl ZkProofProvider for MockProvider {
     ) -> Result<ProveBlockResponse, ZkProofError> {
         Ok(ProveBlockResponse {
             session_id: "mock-session".into(),
-            status: ProofJobStatus::Pending.into(),
         })
     }
 
@@ -83,9 +80,8 @@ impl ZkProofProvider for MockProvider {
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ZkProofError> {
         Ok(GetProofResponse {
-            status: ProofJobStatus::Completed.into(),
-            proof: vec![1, 2, 3],
-            error_message: String::new(),
+            status: get_proof_response::Status::Succeeded.into(),
+            receipt: vec![1, 2, 3],
         })
     }
 }
