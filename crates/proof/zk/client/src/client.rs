@@ -18,10 +18,10 @@ use crate::{
 /// Default timeout for establishing the initial gRPC connection.
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Default timeout for individual gRPC requests. Proving can be long-running,
-/// so this is set conservatively high; callers should override via their own
-/// timeout/retry layer when tighter deadlines are needed.
-const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+/// Default timeout for individual gRPC requests. Both RPCs are quick
+/// request/response exchanges (proving runs asynchronously on the server),
+/// so a moderate timeout is sufficient.
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Abstraction over a ZK proving service that supports a two-step async flow:
 /// initiate a proof job with [`prove_block`](ZkProofProvider::prove_block) and
@@ -62,7 +62,7 @@ impl ZkProofClient {
     ///
     /// The underlying gRPC channel is created lazily — no TCP connection is
     /// established until the first RPC call. A 10-second connection timeout
-    /// and a 300-second request timeout are applied by default. Production
+    /// and a 30-second request timeout are applied by default. Production
     /// deployments should use `https://` endpoints to ensure proof data is
     /// encrypted in transit.
     ///
