@@ -95,6 +95,9 @@ where
                     debug!(message = "processing canonical block", block_number = block.number);
                     match self.process_canonical_block(prev_pending_blocks, &block) {
                         Ok(new_pending_blocks) => {
+                            if let Some(ref pb) = new_pending_blocks {
+                                _ = self.sender.send(Arc::clone(pb));
+                            }
                             self.pending_blocks.swap(new_pending_blocks);
 
                             let mut cache = self.cache.lock().await;
