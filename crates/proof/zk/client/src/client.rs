@@ -99,9 +99,7 @@ impl ZkProofClient {
         &self,
         request: ProveBlockRequest,
     ) -> Result<ProveBlockResponse, ZkProofError> {
-        let response = self.inner.clone().prove_block(request).await?.into_inner();
-
-        Ok(response)
+        Ok(self.inner.clone().prove_block(request).await?.into_inner())
     }
 
     /// Poll for the result of a previously initiated proof job.
@@ -114,9 +112,7 @@ impl ZkProofClient {
         &self,
         request: GetProofRequest,
     ) -> Result<GetProofResponse, ZkProofError> {
-        let response = self.inner.clone().get_proof(request).await?.into_inner();
-
-        Ok(response)
+        Ok(self.inner.clone().get_proof(request).await?.into_inner())
     }
 }
 
