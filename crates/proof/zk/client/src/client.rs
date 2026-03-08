@@ -71,7 +71,7 @@ impl ZkProofClient {
     ///
     /// Returns [`ZkProofError::InvalidUrl`] if the URL cannot be parsed as a
     /// valid gRPC endpoint.
-    pub fn new(config: ZkProofClientConfig) -> Result<Self, ZkProofError> {
+    pub fn new(config: &ZkProofClientConfig) -> Result<Self, ZkProofError> {
         let endpoint_str = config.endpoint.as_str();
 
         let channel = Endpoint::from_shared(endpoint_str.to_owned())

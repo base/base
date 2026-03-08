@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         connect_timeout: Duration::from_secs(10),
         request_timeout: Duration::from_secs(30),
     };
-    let client = ZkProofClient::new(config)?;
+    let client = ZkProofClient::new(&config)?;
 
     let request = ProveBlockRequest {
         start_block_number: 42,
