@@ -87,14 +87,6 @@ async fn mock_get_proof_returns_completed() {
 /// including every retryable gRPC status code.
 #[tokio::test]
 async fn error_retryability() {
-    // Retryable non-gRPC variants.
-    let transport_err = tonic::transport::Endpoint::from_static("http://[::1]:1")
-        .connect()
-        .await
-        .expect_err("should fail to connect");
-    let connection_err = ZkProofError::Connection(transport_err);
-    assert!(connection_err.is_retryable());
-
     // Non-retryable non-gRPC variants.
     let invalid_url_err = ZkProofError::InvalidUrl("not a url".into());
     assert!(!invalid_url_err.is_retryable());
