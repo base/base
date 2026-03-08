@@ -20,6 +20,7 @@ impl ZkProofError {
     /// Certain gRPC status codes (`UNAVAILABLE`, `DEADLINE_EXCEEDED`,
     /// `RESOURCE_EXHAUSTED`, `ABORTED`) are considered retryable.
     /// Configuration errors (`InvalidUrl`) and permanent gRPC failures are not.
+    #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
             Self::GrpcStatus(status) => matches!(
