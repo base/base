@@ -12,8 +12,8 @@ use crate::{
     commands::common::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, L1_BLOCK_WINDOW, L1BlockFilter,
         L1BlocksTableParams, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S, format_duration,
-        format_rate, render_da_backlog_bar, render_l1_blocks_table, target_usage_color,
-        truncate_block_number,
+        format_rate, open_in_browser, render_da_backlog_bar, render_l1_blocks_table,
+        target_usage_color, truncate_block_number,
     },
     tui::Keybinding,
 };
@@ -25,8 +25,8 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "g/G", description: "Top/Bottom" },
     Keybinding { key: "←/h →/l", description: "Switch panel" },
     Keybinding { key: "Tab", description: "Next panel" },
+    Keybinding { key: "Enter", description: "Inspect / Open in Blobscan" },
     Keybinding { key: "f", description: "Filter L1 blocks" },
-    Keybinding { key: "Enter", description: "View transactions" },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,6 +174,14 @@ impl View for DaMonitorView {
                     && selected < max
                 {
                     state.select(Some(selected + 1));
+                }
+                Action::None
+            }
+            KeyCode::Enter if self.selected_panel == Panel::L1Blocks => {
+                let row = self.l1_table_state.selected().unwrap_or(0);
+                if let Some(l1) = resources.da.tracker.filtered_l1_blocks(self.l1_filter).nth(row) {
+                    let url = format!("https://blobscan.com/block/{}", l1.block_number);
+                    resources.toasts.push(open_in_browser(&url));
                 }
                 Action::None
             }

@@ -10,7 +10,10 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
 };
 
-use crate::rpc::{L1BlockInfo, L1ConnectionMode, TxSummary};
+use crate::{
+    rpc::{L1BlockInfo, L1ConnectionMode, TxSummary},
+    tui::Toast,
+};
 
 /// Size of a single blob in bytes (128 `KiB`).
 pub(crate) const BLOB_SIZE: u64 = 128 * 1024;
@@ -1167,5 +1170,21 @@ pub(crate) fn time_diff_color(ms: i64) -> Color {
         Color::Yellow
     } else {
         Color::Red
+    }
+}
+
+/// Opens a URL in the system browser and reaps the child process.
+///
+/// Returns a toast message describing the result.
+pub(crate) fn open_in_browser(url: &str) -> Toast {
+    let cmd = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    match std::process::Command::new(cmd).arg(url).spawn() {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            Toast::info(format!("Opening {url}"))
+        }
+        Err(e) => Toast::warning(format!("Failed to open browser: {e}")),
     }
 }

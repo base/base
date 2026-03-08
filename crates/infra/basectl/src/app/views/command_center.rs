@@ -14,8 +14,8 @@ use crate::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED,
         L1_BLOCK_WINDOW, L1BlockFilter, L1BlocksTableParams, RATE_WINDOW_2M, backlog_size_color,
         block_color, block_color_bright, build_gas_bar, format_bytes, format_duration, format_gwei,
-        format_rate, render_da_backlog_bar, render_gas_usage_bar, render_l1_blocks_table,
-        target_usage_color, time_diff_color, truncate_block_number,
+        format_rate, open_in_browser, render_da_backlog_bar, render_gas_usage_bar,
+        render_l1_blocks_table, target_usage_color, time_diff_color, truncate_block_number,
     },
     tui::{Keybinding, Toast},
 };
@@ -27,9 +27,9 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "↑/↓/j/k", description: "Navigate" },
     Keybinding { key: "g/G", description: "Top/Bottom" },
     Keybinding { key: "Space", description: "Pause flashblocks" },
+    Keybinding { key: "Enter", description: "Inspect / Open in Blobscan" },
     Keybinding { key: "y", description: "Copy block number" },
     Keybinding { key: "f", description: "Filter L1 blocks" },
-    Keybinding { key: "Enter", description: "View transactions" },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -312,6 +312,15 @@ impl View for CommandCenterView {
                             ));
                             self.tx_origin_panel = Some(Panel::Da);
                             self.focused_panel = Panel::Txns;
+                        }
+                    }
+                    Panel::L1Blocks => {
+                        let row = self.selected_row(Panel::L1Blocks);
+                        if let Some(l1) =
+                            resources.da.tracker.filtered_l1_blocks(self.l1_filter).nth(row)
+                        {
+                            let url = format!("https://blobscan.com/block/{}", l1.block_number);
+                            resources.toasts.push(open_in_browser(&url));
                         }
                     }
                     _ => {}
