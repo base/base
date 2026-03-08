@@ -342,25 +342,15 @@ mod tests {
         assert!(matches!(config.signing, SigningConfig::Remote { .. }));
     }
 
-    #[test]
-    fn test_zero_poll_interval() {
-        let cli = cli_from_args(&["--poll-interval", "0s"]);
+    #[rstest]
+    #[case::poll_interval("--poll-interval", "0s", "poll-interval")]
+    #[case::zk_connect_timeout("--zk-connect-timeout", "0s", "zk-connect-timeout")]
+    #[case::zk_request_timeout("--zk-request-timeout", "0s", "zk-request-timeout")]
+    #[case::lookback_games("--lookback-games", "0", "lookback-games")]
+    fn test_zero_value_rejected(#[case] flag: &str, #[case] value: &str, #[case] field: &str) {
+        let cli = cli_from_args(&[flag, value]);
         let result = ChallengerConfig::from_cli(cli, None);
-        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "poll-interval", .. })));
-    }
-
-    #[test]
-    fn test_zero_zk_connect_timeout() {
-        let cli = cli_from_args(&["--zk-connect-timeout", "0s"]);
-        let result = ChallengerConfig::from_cli(cli, None);
-        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "zk-connect-timeout", .. })));
-    }
-
-    #[test]
-    fn test_zero_zk_request_timeout() {
-        let cli = cli_from_args(&["--zk-request-timeout", "0s"]);
-        let result = ChallengerConfig::from_cli(cli, None);
-        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "zk-request-timeout", .. })));
+        assert!(matches!(result, Err(ConfigError::OutOfRange { field: f, .. }) if f == field));
     }
 
     #[rstest]
@@ -477,13 +467,6 @@ mod tests {
         } else {
             assert!(matches!(result, Err(ConfigError::Signing(_))));
         }
-    }
-
-    #[test]
-    fn test_zero_lookback_games() {
-        let cli = cli_from_args(&["--lookback-games", "0"]);
-        let result = ChallengerConfig::from_cli(cli, None);
-        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "lookback-games", .. })));
     }
 
     #[test]
