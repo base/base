@@ -101,6 +101,9 @@ async fn error_retryability() {
     let exhausted = ZkProofError::GrpcStatus(tonic::Status::resource_exhausted("rate limited"));
     assert!(exhausted.is_retryable());
 
+    let aborted = ZkProofError::GrpcStatus(tonic::Status::aborted("transaction conflict"));
+    assert!(aborted.is_retryable());
+
     // Non-retryable gRPC status codes.
     let not_found = ZkProofError::GrpcStatus(tonic::Status::not_found("session gone"));
     assert!(!not_found.is_retryable());

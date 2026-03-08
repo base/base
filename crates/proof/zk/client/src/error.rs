@@ -18,7 +18,7 @@ impl ZkProofError {
     /// Returns `true` if this error is transient and the operation can be retried.
     ///
     /// Certain gRPC status codes (`UNAVAILABLE`, `DEADLINE_EXCEEDED`,
-    /// `RESOURCE_EXHAUSTED`) are considered retryable.
+    /// `RESOURCE_EXHAUSTED`, `ABORTED`) are considered retryable.
     /// Configuration errors (`InvalidUrl`) and permanent gRPC failures are not.
     pub fn is_retryable(&self) -> bool {
         match self {
@@ -27,6 +27,7 @@ impl ZkProofError {
                 tonic::Code::Unavailable
                     | tonic::Code::DeadlineExceeded
                     | tonic::Code::ResourceExhausted
+                    | tonic::Code::Aborted
             ),
             Self::InvalidUrl(_) => false,
         }
