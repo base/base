@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package prover;
+
+option go_package = "github.com/base/zk-prover/proto";
+
+// Service for requesting ZK proofs from an external proving service.
+service ProverService {
+  // Initiate a proof job for a given block range. Returns a session ID
+  // that can be used to poll for the result via GetProof.
+  rpc ProveBlock(ProveBlockRequest) returns (ProveBlockResponse);
+
+  // Poll for the result of a previously initiated proof job.
+  rpc GetProof(GetProofRequest) returns (GetProofResponse);
+}
+
+// The type of ZK proof to generate.
+enum ProofType {
+  PROOF_TYPE_UNSPECIFIED = 0;
+  PROOF_TYPE_GROTH16 = 1;
+  PROOF_TYPE_PLONK = 2;
+}
+
+// The type of receipt to return.
+enum ReceiptType {
+  RECEIPT_TYPE_UNSPECIFIED = 0;
+  RECEIPT_TYPE_SNARK = 1;
+  RECEIPT_TYPE_GROTH16 = 2;
+}
+
+// Status of a proof job.
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_PENDING = 1;
+  STATUS_PROVING = 2;
+  STATUS_COMPLETED = 3;
+  STATUS_FAILED = 4;
+}
+
+// Request to initiate a proof job.
+message ProveBlockRequest {
+  // L1 head block hash.
+  bytes l1_head = 1;
+  // Agreed-upon L2 head block hash.
+  bytes agreed_l2_head_hash = 2;
+  // Agreed-upon L2 output root.
+  bytes agreed_l2_output_root = 3;
+  // Claimed L2 output root to prove.
+  bytes claimed_l2_output_root = 4;
+  // Claimed L2 block number.
+  uint64 claimed_l2_block_number = 5;
+  // Type of proof to generate.
+  ProofType proof_type = 6;
+  // Type of receipt to return.
+  ReceiptType receipt_type = 7;
+}
+
+// Response from initiating a proof job.
+message ProveBlockResponse {
+  // Unique session identifier for this proof job.
+  string session_id = 1;
+  // Current status of the proof job.
+  Status status = 2;
+}
+
+// Request to poll for a proof result.
+message GetProofRequest {
+  // Session identifier returned by ProveBlock.
+  string session_id = 1;
+}
+
+// Response containing the proof result.
+message GetProofResponse {
+  // Current status of the proof job.
+  Status status = 1;
+  // The proof bytes, populated when status is COMPLETED.
+  bytes proof = 2;
+  // Error message, populated when status is FAILED.
+  string error_message = 3;
+}

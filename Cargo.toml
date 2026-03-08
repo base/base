@@ -27,6 +27,7 @@ members = [
   "crates/proof/tee/core",
   "crates/proof/tee/client",
   "crates/proof/tee/server",
+  "crates/proof/zk/client",
   "crates/proof/transport",
   "crates/proof/contracts",
   "crates/proof/rpc",
@@ -227,6 +228,7 @@ base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }
 base-challenger = { path = "crates/proof/challenge" }
+base-zk-client = { path = "crates/proof/zk/client" }
 base-proof-transport = { path = "crates/proof/transport" }
 
 # Utilities
@@ -355,7 +357,12 @@ reqwest = "0.13.1"
 async-trait = "0.1.83"
 
 # rpc
+prost = "0.14"
+tonic = "0.14"
+tonic-prost = "0.14"
+tonic-build = "0.14"
 jsonrpsee = "0.26.0"
+tonic-prost-build = "0.14"
 jsonrpsee-core = "0.26.0"
 jsonrpsee-types = "0.26.0"
 
