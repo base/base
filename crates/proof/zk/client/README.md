@@ -44,7 +44,7 @@ use base_zk_client::ZkProofError;
 fn handle_error(err: &ZkProofError) {
     if err.is_retryable() {
         // Connection failures and transient gRPC codes
-        // (UNAVAILABLE, DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED)
+        // (UNAVAILABLE, DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED, ABORTED)
         // are safe to retry with backoff.
     } else {
         // InvalidUrl and permanent gRPC failures should not be retried.
