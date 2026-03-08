@@ -44,9 +44,9 @@ pub enum StateUpdate {
 }
 
 /// Processes flashblocks and canonical blocks to keep pending state updated.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct StateProcessor<Client> {
-    rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
+    rx: UnboundedReceiver<StateUpdate>,
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
     max_depth: u64,
     metrics: Metrics,
@@ -68,7 +68,7 @@ where
         client: Client,
         pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
         max_depth: u64,
-        rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
+        rx: UnboundedReceiver<StateUpdate>,
         sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
         let cache = client
@@ -87,8 +87,8 @@ where
     }
 
     /// Processes updates from the queue until the channel closes.
-    pub async fn start(&self) {
-        while let Some(update) = self.rx.lock().await.recv().await {
+    pub async fn start(mut self) {
+        while let Some(update) = self.rx.recv().await {
             let prev_pending_blocks = self.pending_blocks.load_full();
             match update {
                 StateUpdate::Canonical(block) => {
