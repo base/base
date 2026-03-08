@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use tonic::transport::{Channel, Endpoint};
-use tracing::{debug, info};
+use tracing::debug;
 use url::Url;
 
 use crate::{
@@ -84,7 +84,7 @@ impl ZkProofClient {
             .timeout(DEFAULT_REQUEST_TIMEOUT)
             .connect_lazy();
 
-        info!(endpoint = %endpoint, "ZK client created");
+        debug!(endpoint = %endpoint, "ZK client created");
 
         Ok(Self { inner: ProverServiceClient::new(channel) })
     }
