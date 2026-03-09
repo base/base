@@ -10,7 +10,7 @@ use url::Url;
 /// Default resend-after window in milliseconds (~2 blocks on Base).
 pub const DEFAULT_RESEND_AFTER_MS: u64 = 4000;
 /// Default maximum number of transactions per RPC batch.
-pub const DEFAULT_MAX_BATCH_SIZE: usize = 500;
+pub const DEFAULT_MAX_BATCH_SIZE: usize = 100;
 /// Default maximum RPC requests per second per forwarder.
 pub const DEFAULT_MAX_RPS: u32 = 200;
 /// Full configuration for the transaction forwarding extension.
