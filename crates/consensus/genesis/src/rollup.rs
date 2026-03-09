@@ -467,6 +467,8 @@ mod tests {
         assert_eq!(config.spec_id(50), base_revm::OpSpecId::HOLOCENE);
         config.hardforks.isthmus_time = Some(60);
         assert_eq!(config.spec_id(60), base_revm::OpSpecId::ISTHMUS);
+        config.hardforks.jovian_time = Some(65);
+        assert_eq!(config.spec_id(65), base_revm::OpSpecId::JOVIAN);
         config.hardforks.base = Some(crate::BaseHardforkConfig { v1: Some(70) });
         assert_eq!(config.spec_id(70), base_revm::OpSpecId::BASE_V1);
     }
