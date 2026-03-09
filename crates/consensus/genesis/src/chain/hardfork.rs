@@ -3,6 +3,8 @@
 use alloc::string::{String, ToString};
 use core::fmt::Display;
 
+use base_alloy_hardforks::OpHardfork;
+
 /// Hardfork configuration.
 ///
 /// See: <https://github.com/ethereum-optimism/superchain-registry/blob/8ff62ada16e14dd59d0fb94ffb47761c7fa96e01/ops/internal/config/chain.go#L102-L110>
@@ -85,6 +87,32 @@ impl Display for HardForkConfig {
 }
 
 impl HardForkConfig {
+    /// Returns the activation timestamp for `hardfork`, or `None` if not scheduled.
+    ///
+    /// Two [`HardForkConfig`] fields have no corresponding [`OpHardfork`] variant and are
+    /// therefore not reachable via this method:
+    ///
+    /// - **`delta_time`** — Delta was never promoted to an [`OpHardfork`] variant; features
+    ///   cannot be gated at Delta via the feature system.
+    /// - **`pectra_blob_schedule_time`** — cross-layer L1 blob schedule; not an OP hardfork.
+    ///
+    /// [`OpHardfork::Bedrock`] is block-based rather than timestamp-based and always
+    /// returns `None`.
+    pub const fn timestamp_for(&self, hardfork: OpHardfork) -> Option<u64> {
+        match hardfork {
+            OpHardfork::Regolith => self.regolith_time,
+            OpHardfork::Canyon => self.canyon_time,
+            OpHardfork::Ecotone => self.ecotone_time,
+            OpHardfork::Fjord => self.fjord_time,
+            OpHardfork::Granite => self.granite_time,
+            OpHardfork::Holocene => self.holocene_time,
+            OpHardfork::Isthmus => self.isthmus_time,
+            OpHardfork::Jovian => self.jovian_time,
+            // Bedrock is block-based, not timestamp-based. Future variants default to None.
+            _ => None,
+        }
+    }
+
     /// Returns an iterator of hardfork names -> their activation times (if scheduled.)
     pub fn iter(&self) -> impl Iterator<Item = (&'static str, Option<u64>)> {
         [
@@ -100,6 +128,56 @@ impl HardForkConfig {
             ("Jovian", self.jovian_time),
         ]
         .into_iter()
+    }
+}
+
+#[cfg(test)]
+mod timestamp_for_tests {
+    use base_alloy_hardforks::OpHardfork;
+    use rstest::rstest;
+
+    use super::*;
+
+    /// A [`HardForkConfig`] with every timestamp-based field set to a unique value
+    /// so that each `timestamp_for` case is unambiguous.
+    fn all_timestamps() -> HardForkConfig {
+        HardForkConfig {
+            regolith_time: Some(1),
+            canyon_time: Some(2),
+            // delta_time (=9) has no OpHardfork variant; only present as a raw field.
+            delta_time: Some(9),
+            ecotone_time: Some(3),
+            fjord_time: Some(4),
+            granite_time: Some(5),
+            holocene_time: Some(6),
+            // pectra_blob_schedule_time (=10) has no OpHardfork variant.
+            pectra_blob_schedule_time: Some(10),
+            isthmus_time: Some(7),
+            jovian_time: Some(8),
+        }
+    }
+
+    #[rstest]
+    #[case::regolith(OpHardfork::Regolith, Some(1))]
+    #[case::canyon(OpHardfork::Canyon, Some(2))]
+    #[case::ecotone(OpHardfork::Ecotone, Some(3))]
+    #[case::fjord(OpHardfork::Fjord, Some(4))]
+    #[case::granite(OpHardfork::Granite, Some(5))]
+    #[case::holocene(OpHardfork::Holocene, Some(6))]
+    #[case::isthmus(OpHardfork::Isthmus, Some(7))]
+    #[case::jovian(OpHardfork::Jovian, Some(8))]
+    // Bedrock is block-based — always returns None.
+    #[case::bedrock(OpHardfork::Bedrock, None)]
+    fn test_timestamp_for_hardfork(#[case] hardfork: OpHardfork, #[case] expected: Option<u64>) {
+        assert_eq!(all_timestamps().timestamp_for(hardfork), expected);
+    }
+
+    #[test]
+    fn test_timestamp_for_returns_none_when_not_scheduled() {
+        let hf = HardForkConfig::default();
+        assert_eq!(hf.timestamp_for(OpHardfork::Jovian), None);
+        assert_eq!(hf.timestamp_for(OpHardfork::Isthmus), None);
+        assert_eq!(hf.timestamp_for(OpHardfork::Canyon), None);
     }
 }
 

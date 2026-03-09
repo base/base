@@ -7,8 +7,8 @@ use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::Address;
 
 use crate::{
-    AddressList, BaseFeeConfig, ChainGenesis, GRANITE_CHANNEL_TIMEOUT, HardForkConfig, Roles,
-    RollupConfig, base_fee_params, base_fee_params_canyon, params::base_fee_config,
+    AddressList, BaseFeeConfig, ChainGenesis, FeatureMap, GRANITE_CHANNEL_TIMEOUT, HardForkConfig,
+    Roles, RollupConfig, base_fee_params, base_fee_params_canyon, params::base_fee_config,
 };
 
 /// L1 chain configuration from the `alloy-genesis` crate.
@@ -141,6 +141,7 @@ impl ChainConfig {
             channel_timeout: 300,
             granite_channel_timeout: GRANITE_CHANNEL_TIMEOUT,
             chain_op_config: self.base_fee_config(),
+            features: FeatureMap::new(),
         }
     }
 }

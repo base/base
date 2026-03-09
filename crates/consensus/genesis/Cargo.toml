@@ -38,6 +38,7 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
+rstest.workspace = true
 serde_json.workspace = true
 rand = { workspace = true, features = ["thread_rng"] }
 arbitrary = { workspace = true, features = ["derive"] }
