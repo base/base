@@ -1,5 +1,5 @@
 use alloy_consensus::{Header, Receipt};
-use alloy_primitives::{Address, Bytes, Log, B256};
+use alloy_primitives::{Address, B256, Bytes, Log};
 use base_protocol::BlockInfo;
 use tracing::info;
 
@@ -85,12 +85,12 @@ pub struct L1Block {
 
 impl L1Block {
     /// Return the block number.
-    pub fn number(&self) -> u64 {
+    pub const fn number(&self) -> u64 {
         self.header.number
     }
 
     /// Return the block timestamp.
-    pub fn timestamp(&self) -> u64 {
+    pub const fn timestamp(&self) -> u64 {
         self.header.timestamp
     }
 
@@ -230,12 +230,7 @@ impl L1Miner {
         self.fork_id += 1;
         let discarded: Vec<L1Block> = self.blocks.drain((number as usize + 1)..).collect();
 
-        info!(
-            reorg_to = number,
-            fork_id = self.fork_id,
-            discarded = discarded.len(),
-            "L1 reorg"
-        );
+        info!(reorg_to = number, fork_id = self.fork_id, discarded = discarded.len(), "L1 reorg");
 
         Ok(discarded)
     }
@@ -389,11 +384,7 @@ mod tests {
     #[test]
     fn pending_txs_cleared_after_mining() {
         let mut m = miner();
-        m.submit_tx(PendingTx {
-            from: Address::ZERO,
-            to: Address::ZERO,
-            input: Bytes::new(),
-        });
+        m.submit_tx(PendingTx { from: Address::ZERO, to: Address::ZERO, input: Bytes::new() });
         m.mine_block();
         m.mine_block();
         // Second block should have no batcher txs.
@@ -465,7 +456,7 @@ mod tests {
 
         // Reorg all the way back to genesis (now allowed); mine a new block 1 on fork 1.
         m.reorg_to(0).unwrap(); // fork_id → 1; chain back to [genesis]
-        m.mine_block();         // new block 1 on fork 1
+        m.mine_block(); // new block 1 on fork 1
 
         let new_hash_1 = m.block_by_number(1).unwrap().hash();
         assert_ne!(
@@ -520,7 +511,11 @@ mod tests {
 
         // Reorg back to block 5 — safe head must recalculate.
         m.reorg_to(5).unwrap();
-        assert_eq!(m.safe_head().number(), 0, "safe head should clamp to genesis after short reorg");
+        assert_eq!(
+            m.safe_head().number(),
+            0,
+            "safe head should clamp to genesis after short reorg"
+        );
         assert_eq!(m.latest_number(), 5);
     }
 }

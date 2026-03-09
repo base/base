@@ -1,7 +1,7 @@
 #![doc = "Action tests for L1 block mining."]
 
-use base_action_harness::{Action, ActionTestHarness, L1MinerConfig, PendingTx};
 use alloy_primitives::{Address, Bytes};
+use base_action_harness::{Action, ActionTestHarness, L1MinerConfig, PendingTx};
 
 /// Mine a single block and verify the chain advances.
 #[test]
@@ -20,7 +20,7 @@ fn mine_n_blocks_via_harness() {
     assert_eq!(h.l1.latest_number(), 5);
 }
 
-/// Block numbers increment by one and timestamps by block_time each step.
+/// Block numbers increment by one and timestamps by `block_time` each step.
 #[test]
 fn blocks_advance_number_and_timestamp() {
     let mut h = ActionTestHarness::default();
@@ -34,7 +34,7 @@ fn blocks_advance_number_and_timestamp() {
     }
 }
 
-/// Each block's parent_hash matches the hash of the preceding block.
+/// Each block's `parent_hash` matches the hash of the preceding block.
 #[test]
 fn parent_hash_chain_is_valid() {
     let mut h = ActionTestHarness::default();
@@ -97,11 +97,7 @@ fn batcher_txs_included_in_mined_block() {
 #[test]
 fn batcher_txs_do_not_carry_over_to_next_block() {
     let mut h = ActionTestHarness::default();
-    h.l1.submit_tx(PendingTx {
-        from: Address::ZERO,
-        to: Address::ZERO,
-        input: Bytes::new(),
-    });
+    h.l1.submit_tx(PendingTx { from: Address::ZERO, to: Address::ZERO, input: Bytes::new() });
     h.l1.mine_block(); // consumes the tx
     h.l1.mine_block(); // nothing pending
 
@@ -158,7 +154,7 @@ fn mine_after_reorg_extends_correct_tip() {
     h.mine_l1_blocks(4);
 
     h.l1.reorg_to(2).unwrap(); // chain: 0–1–2
-    h.mine_l1_blocks(3);       // chain: 0–1–2–3'–4'–5'
+    h.mine_l1_blocks(3); // chain: 0–1–2–3'–4'–5'
 
     assert_eq!(h.l1.latest_number(), 5);
 
@@ -204,7 +200,7 @@ fn resubmit_after_reorg_lands_on_new_fork() {
     h.l1.reorg_to(1).unwrap(); // discard block 2
 
     // Resubmit the same frame data on the new fork.
-    h.l1.submit_tx(PendingTx { from, to, input: input.clone() });
+    h.l1.submit_tx(PendingTx { from, to, input });
     h.l1.mine_block(); // new block 2 on fork 1
 
     assert_eq!(h.l1.latest_number(), 2);
@@ -214,10 +210,7 @@ fn resubmit_after_reorg_lands_on_new_fork() {
 /// Configurable block time is respected.
 #[test]
 fn custom_block_time_is_respected() {
-    let mut h = ActionTestHarness::new(
-        L1MinerConfig { block_time: 6 },
-        Default::default(),
-    );
+    let mut h = ActionTestHarness::new(L1MinerConfig { block_time: 6 }, Default::default());
     h.mine_l1_blocks(3);
     assert_eq!(h.l1.latest().timestamp(), 18); // 3 × 6s
 }

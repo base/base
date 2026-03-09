@@ -129,20 +129,9 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
             });
         }
 
-        info!(
-            batches = batch_count,
-            frames = frames.len(),
-            "batcher submitted frames to L1"
-        );
+        info!(batches = batch_count, frames = frames.len(), "batcher submitted frames to L1");
 
         Ok(frames)
-    }
-
-    /// Return the number of L2 blocks remaining in the source.
-    pub fn remaining_l2_blocks(&self) -> usize {
-        // Peek is not available generically; track externally if needed.
-        // This is intentionally not implemented to keep the trait minimal.
-        0
     }
 }
 

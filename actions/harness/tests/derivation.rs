@@ -2,9 +2,11 @@
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{Address, B256, LogData};
-use base_action_harness::{ActionTestHarness, BatcherConfig, L1MinerConfig, MockL2Block, block_info_from};
+use base_action_harness::{
+    ActionTestHarness, BatcherConfig, L1MinerConfig, MockL2Block, block_info_from,
+};
 use base_consensus_genesis::{
-    ChainGenesis, CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, HardForkConfig, RollupConfig,
+    CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, ChainGenesis, HardForkConfig, RollupConfig,
     SystemConfig,
 };
 use base_protocol::{BlockInfo, L2BlockInfo};
@@ -155,7 +157,7 @@ async fn multiple_l1_blocks_each_derive_one_l2_block() {
         let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
         verifier.act_l1_head_signal(l1_block).await.expect("signal ok");
         let derived = verifier.act_l2_pipeline_full().await.expect("pipeline ok");
-        assert_eq!(derived, 1, "L1 block {} should derive exactly one L2 block", i);
+        assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
 
     assert_eq!(verifier.l2_safe().block_info.number, L2_BLOCK_COUNT);
@@ -250,7 +252,7 @@ async fn reorg_reverts_derived_safe_head() {
     // Reset the pipeline: revert safe head and L1 origin to genesis.
     let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis always present"));
     let l2_genesis = l2_genesis_for(&rollup_cfg, l1_genesis);
-    let genesis_sys_cfg = rollup_cfg.genesis.system_config.clone().unwrap_or_default();
+    let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
 
     verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset");
     // Drain the reset origin (genesis has no batch data).
@@ -305,7 +307,7 @@ async fn reorg_and_resubmit_rederives_l2_block() {
     // Reset pipeline to genesis.
     let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis always present"));
     let l2_genesis = l2_genesis_for(&rollup_cfg, l1_genesis);
-    let genesis_sys_cfg = rollup_cfg.genesis.system_config.clone().unwrap_or_default();
+    let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
 
     verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset");
     verifier.act_l2_pipeline_full().await.expect("drain genesis after reset");
@@ -363,7 +365,7 @@ async fn reorg_flip_flop() {
     // genesis is immutable.
     let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis always present"));
     let l2_genesis = l2_genesis_for(&rollup_cfg, l1_genesis);
-    let genesis_sys_cfg = rollup_cfg.genesis.system_config.clone().unwrap_or_default();
+    let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
 
     // --- Phase 1: Fork A canonical (genesis → A1 with batch). ---
     h.push_l2_block(l2_block_1.clone());
@@ -391,7 +393,7 @@ async fn reorg_flip_flop() {
     chain.truncate_to(0);
     chain.push(h.l1.tip().clone());
 
-    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg.clone()).await.expect("reset to B");
+    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset to B");
     verifier.act_l2_pipeline_full().await.expect("drain genesis (reset to B)");
     verifier.act_l1_head_signal(fork_b1).await.expect("signal B1");
     let derived = verifier.act_l2_pipeline_full().await.expect("step B");
@@ -410,10 +412,7 @@ async fn reorg_flip_flop() {
     chain.truncate_to(0);
     chain.push(h.l1.tip().clone());
 
-    verifier
-        .act_reset(l1_genesis, l2_genesis, genesis_sys_cfg)
-        .await
-        .expect("reset to A'");
+    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset to A'");
     verifier.act_l2_pipeline_full().await.expect("drain genesis (reset to A')");
     verifier.act_l1_head_signal(fork_a_prime1).await.expect("signal A1'");
     let derived = verifier.act_l2_pipeline_full().await.expect("step A'");
@@ -499,14 +498,13 @@ async fn batch_accepted_at_last_seq_window_block() {
 ///
 /// Log layout (mirrors the on-chain `SystemConfig.sol` event):
 /// - `topics[0]` = `CONFIG_UPDATE_TOPIC`
-/// - `topics[1]` = `CONFIG_UPDATE_EVENT_VERSION_0` (B256::ZERO)
+/// - `topics[1]` = `CONFIG_UPDATE_EVENT_VERSION_0` (`B256::ZERO`)
 /// - `topics[2]` = `B256::ZERO` (`UpdateType::BatcherAddress = 0`)
 /// - `data`      = ABI-encoded `bytes`: pointer(0x20) ++ length(0x20) ++
-///                 right-aligned 20-byte batcher address
+///   right-aligned 20-byte batcher address
 ///
 /// [`IndexedTraversal`]: base_consensus_derive::IndexedTraversal
 fn batcher_update_log(l1_sys_cfg_addr: Address, new_batcher: Address) -> alloy_primitives::Log {
-
     // 96 bytes: pointer (32) + length (32) + padded address (32).
     let mut data = [0u8; 96];
     data[31] = 0x20; // pointer → offset 32
@@ -551,7 +549,8 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     // matches our synthetic ConfigUpdate logs.
     let l1_sys_cfg_addr = Address::repeat_byte(0xCC);
     let batcher_a = BatcherConfig::default(); // 0xBA…BA
-    let batcher_b = BatcherConfig { batcher_address: Address::repeat_byte(0xBB), ..batcher_a.clone() };
+    let batcher_b =
+        BatcherConfig { batcher_address: Address::repeat_byte(0xBB), ..batcher_a.clone() };
 
     let rollup_cfg = RollupConfig {
         batch_inbox_address: batcher_a.inbox_address,

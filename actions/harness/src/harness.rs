@@ -53,8 +53,11 @@ impl ActionTestHarness {
     /// Generate `count` sequential mock L2 blocks and enqueue them in the
     /// L2 source.
     ///
-    /// Blocks are numbered starting from the current queue length, and
-    /// timestamps use the rollup config's block time.
+    /// Blocks are numbered starting from the current queue length. Timestamps
+    /// are computed assuming a uniform `block_time` from block 0: the first
+    /// generated block gets `start * block_time` where `start` is the current
+    /// queue length. Interleaving manual `push_l2_block` calls with
+    /// `generate_l2_blocks` may produce non-contiguous timestamps.
     pub fn generate_l2_blocks(&mut self, count: u64) {
         let start = self.l2.remaining() as u64;
         let block_time = self.rollup_config.block_time;
@@ -110,10 +113,7 @@ impl ActionTestHarness {
                 parent_hash: Default::default(),
                 timestamp: self.rollup_config.genesis.l2_time,
             },
-            l1_origin: BlockNumHash {
-                number: genesis_l1.number,
-                hash: genesis_l1.hash,
-            },
+            l1_origin: BlockNumHash { number: genesis_l1.number, hash: genesis_l1.hash },
             seq_num: 0,
         };
 

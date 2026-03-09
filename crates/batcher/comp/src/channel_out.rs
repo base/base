@@ -142,11 +142,8 @@ where
         // The first frame carries the channel version prefix (if any) so that
         // the reader can identify the compression format.  For brotli this is
         // `0x01`; zlib data is self-identifying and needs no prefix.
-        let version_byte = if self.frame_number == 0 {
-            self.compressor.channel_version_byte()
-        } else {
-            None
-        };
+        let version_byte =
+            if self.frame_number == 0 { self.compressor.channel_version_byte() } else { None };
         let prefix_len = usize::from(version_byte.is_some());
 
         let mut max_size = max_size - FRAME_V0_OVERHEAD - prefix_len;

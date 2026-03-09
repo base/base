@@ -122,12 +122,8 @@ impl L2Verifier {
         let l1_origin = self.pipeline.origin().unwrap_or_default();
         self.pipeline
             .signal(
-                ActivationSignal {
-                    l2_safe_head: self.safe_head,
-                    l1_origin,
-                    system_config: None,
-                }
-                .signal(),
+                ActivationSignal { l2_safe_head: self.safe_head, l1_origin, system_config: None }
+                    .signal(),
             )
             .await
             .map_err(VerifierError::Signal)?;
@@ -138,7 +134,7 @@ impl L2Verifier {
     }
 
     /// Return the current L2 safe head.
-    pub fn l2_safe(&self) -> L2BlockInfo {
+    pub const fn l2_safe(&self) -> L2BlockInfo {
         self.safe_head
     }
 
@@ -146,14 +142,11 @@ impl L2Verifier {
     ///
     /// This is equivalent to op-e2e's `ActL1HeadSignal`. The [`IndexedTraversal`]
     /// stage will accept the block only if it is the next sequential block
-    /// (number = current + 1 and parent_hash matches).
+    /// (number = current + 1 and `parent_hash` matches).
     ///
     /// [`IndexedTraversal`]: base_consensus_derive::IndexedTraversal
     pub async fn act_l1_head_signal(&mut self, head: BlockInfo) -> Result<(), VerifierError> {
-        self.pipeline
-            .signal(Signal::ProvideBlock(head))
-            .await
-            .map_err(VerifierError::Signal)
+        self.pipeline.signal(Signal::ProvideBlock(head)).await.map_err(VerifierError::Signal)
     }
 
     /// Reset the pipeline to the given L1 origin and L2 safe head.
@@ -167,12 +160,8 @@ impl L2Verifier {
     ) -> Result<(), VerifierError> {
         self.pipeline
             .signal(
-                ResetSignal {
-                    l1_origin,
-                    l2_safe_head,
-                    system_config: Some(system_config),
-                }
-                .signal(),
+                ResetSignal { l1_origin, l2_safe_head, system_config: Some(system_config) }
+                    .signal(),
             )
             .await
             .map_err(VerifierError::Signal)?;
