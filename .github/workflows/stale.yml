@@ -58,5 +58,7 @@ jobs:
           stale-pr-message: 'This pull request has been automatically marked as stale because it has not had recent activity. It will be closed if no further activity occurs. Thank you for your contributions.'
           close-issue-message: 'This issue was closed because it has been inactive for 5 days since being marked as stale.'
           close-pr-message: 'This pull request was closed because it has been inactive for 5 days since being marked as stale.'
-          exempt-issue-labels: 'keep-open,M-prevent-stale'
-          exempt-pr-labels: keep-open
+          stale-issue-label: F-stale
+          stale-pr-label: F-stale
+          exempt-issue-labels: 'M-keep-open,M-prevent-stale'
+          exempt-pr-labels: M-keep-open
