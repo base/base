@@ -33,6 +33,15 @@ enum ReceiptType {
     RECEIPT_TYPE_SNARK = 2;
 }
 
+enum ProofJobStatus {
+    PROOF_JOB_STATUS_UNSPECIFIED = 0;
+    PROOF_JOB_STATUS_CREATED = 1;
+    PROOF_JOB_STATUS_PENDING = 2;
+    PROOF_JOB_STATUS_RUNNING = 3;
+    PROOF_JOB_STATUS_SUCCEEDED = 4;
+    PROOF_JOB_STATUS_FAILED = 5;
+}
+
 message GetProofRequest {
     string session_id = 1;
     // Optional: specify which receipt type to return (STARK or SNARK)
@@ -41,15 +50,6 @@ message GetProofRequest {
 }
 
 message GetProofResponse {
-    enum Status {
-       STATUS_UNSPECIFIED = 0;
-       STATUS_CREATED = 1;
-       STATUS_PENDING = 2;
-       STATUS_RUNNING = 3;
-       STATUS_SUCCEEDED = 4;
-       STATUS_FAILED = 5;
-    }
-
-    Status status = 1;
+    ProofJobStatus status = 1;
     bytes receipt = 2; // the actual zk proof, only populated if status is SUCCEEDED
 }

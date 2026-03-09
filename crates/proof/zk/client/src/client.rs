@@ -10,8 +10,8 @@ use url::Url;
 use crate::{
     error::ZkProofError,
     proto::{
-        GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse,
-        get_proof_response::Status, prover_service_client::ProverServiceClient,
+        GetProofRequest, GetProofResponse, ProofJobStatus, ProveBlockRequest, ProveBlockResponse,
+        prover_service_client::ProverServiceClient,
     },
 };
 
@@ -112,9 +112,9 @@ impl ZkProofClient {
     ) -> Result<GetProofResponse, ZkProofError> {
         let session_id = request.session_id.clone();
         let response = self.inner.clone().get_proof(request).await?.into_inner();
-        let status = Status::try_from(response.status).unwrap_or_else(|_| {
+        let status = ProofJobStatus::try_from(response.status).unwrap_or_else(|_| {
             warn!(raw_status = response.status, "unknown proof status value");
-            Status::Unspecified
+            ProofJobStatus::Unspecified
         });
         debug!(session_id = %session_id, status = ?status, "proof status polled");
         Ok(response)

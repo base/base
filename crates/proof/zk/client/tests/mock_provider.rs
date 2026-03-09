@@ -3,8 +3,8 @@
 
 use async_trait::async_trait;
 use base_zk_client::{
-    GetProofRequest, GetProofResponse, ProofType, ProveBlockRequest, ProveBlockResponse,
-    ZkProofError, ZkProofProvider, get_proof_response,
+    GetProofRequest, GetProofResponse, ProofJobStatus, ProofType, ProveBlockRequest,
+    ProveBlockResponse, ZkProofError, ZkProofProvider,
 };
 use rstest::rstest;
 
@@ -22,7 +22,7 @@ impl ZkProofProvider for MockZkProvider {
 
     async fn get_proof(&self, _request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
         Ok(GetProofResponse {
-            status: get_proof_response::Status::Succeeded.into(),
+            status: ProofJobStatus::Succeeded.into(),
             receipt: vec![0xDE, 0xAD, 0xBE, 0xEF],
         })
     }
@@ -72,7 +72,7 @@ async fn mock_get_proof_returns_completed() {
 
     let response = provider.get_proof(request).await.expect("get_proof should succeed");
 
-    assert_eq!(response.status, i32::from(get_proof_response::Status::Succeeded));
+    assert_eq!(response.status, i32::from(ProofJobStatus::Succeeded));
     assert_eq!(response.receipt, vec![0xDE, 0xAD, 0xBE, 0xEF]);
 }
 
