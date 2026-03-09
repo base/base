@@ -21,7 +21,6 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [build-dependencies]
-tonic-build.workspace = true
 tonic-prost-build.workspace = true
 
 [dev-dependencies]

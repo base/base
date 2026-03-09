@@ -4476,7 +4476,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tonic",
- "tonic-build",
  "tonic-prost",
  "tonic-prost-build",
  "tracing",
