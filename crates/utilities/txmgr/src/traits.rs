@@ -1,4 +1,6 @@
 //! Transaction manager trait definitions.
 
+use std::fmt::Debug;
+
 /// Trait defining the transaction manager public API.
-pub trait TxManager: std::fmt::Debug {}
+pub trait TxManager: Debug {}
