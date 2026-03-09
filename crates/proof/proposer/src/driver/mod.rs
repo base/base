@@ -204,17 +204,19 @@ where
                 continue;
             }
 
-            let game_info = self.verifier_client.game_info(game.proxy).await.map_err(|e| {
-                ProposerError::Contract(format!(
-                    "recovery game_info for index {game_index} failed: {e}"
-                ))
-            })?;
+            let game_info = match self.verifier_client.game_info(game.proxy).await {
+                Ok(info) => info,
+                Err(e) => {
+                    warn!(error = %e, game_index, "Failed to read game_info during recovery");
+                    continue;
+                }
+            };
 
             let idx: u32 = game_index.try_into().map_err(|_| {
                 ProposerError::Contract(format!("game index {game_index} exceeds u32"))
             })?;
 
-            info!(
+            debug!(
                 game_index,
                 game_proxy = %game.proxy,
                 output_root = ?game_info.root_claim,
@@ -229,7 +231,7 @@ where
             }));
         }
 
-        info!(
+        debug!(
             game_type = self.config.game_type,
             searched = search_count,
             "No games found for our game type during recovery"
@@ -1112,9 +1114,9 @@ mod tests {
             CancellationToken::new(),
         );
 
-        // The mock factory has game_count=1 with game_type=0, and MockAggregateVerifier
-        // returns l2_block_number=0 -- so recover_latest_game() finds a game at block 0.
-        // Pre-populate pending with a proposal starting from block 1.
+        // The mock factory returns game_type=u32::MAX which doesn't match DriverConfig's
+        // game_type=0, so recover_latest_game() finds no games and falls back to the
+        // anchor registry (block 0). Pre-populate pending starting from block 1.
         driver.pending.push_back(test_proposal(1, 10, false));
 
         let result = driver.step().await;

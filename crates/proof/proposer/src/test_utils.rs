@@ -137,7 +137,7 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
         Ok(self.game_count)
     }
     async fn game_at_index(&self, _: u64) -> Result<GameAtIndex, ContractError> {
-        Ok(GameAtIndex { game_type: 0, timestamp: 0, proxy: Address::ZERO })
+        Ok(GameAtIndex { game_type: u32::MAX, timestamp: 0, proxy: Address::ZERO })
     }
     async fn init_bonds(&self, _: u32) -> Result<U256, ContractError> {
         Ok(U256::ZERO)
