@@ -1,11 +1,13 @@
+use std::collections::{HashMap, hash_map::Entry};
+
 use alloy_primitives::keccak256;
 use async_trait::async_trait;
-use base_proof_preimage::{errors::{PreimageOracleError, PreimageOracleResult},
-HintWriterClient, PreimageKey, PreimageKeyType, PreimageOracleClient,};
-use base_proof_preimage::FlushableCache;
+use base_proof_preimage::{
+    FlushableCache, HintWriterClient, PreimageKey, PreimageKeyType, PreimageOracleClient,
+    errors::{PreimageOracleError, PreimageOracleResult},
+};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use std::collections::{hash_map::Entry, HashMap};
 
 #[derive(
     Clone, Debug, Default, Serialize, Deserialize, rkyv::Serialize, rkyv::Archive, rkyv::Deserialize,
@@ -31,7 +33,7 @@ impl PreimageStore {
             }
             Entry::Occupied(e) => {
                 if e.get() != &value {
-                    return Err(PreimageOracleError::Other("cannot overwrite key".to_string()))
+                    return Err(PreimageOracleError::Other("cannot overwrite key".to_string()));
                 }
             }
         };
@@ -48,10 +50,9 @@ pub fn check_preimage(key: &PreimageKey, value: &[u8]) -> PreimageOracleResult<(
         PreimageKeyType::Local | PreimageKeyType::GlobalGeneric => None,
         PreimageKeyType::Precompile => unimplemented!("Precompile not supported in zkVM"),
         PreimageKeyType::Blob => unreachable!("Blob keys validated in blob witness"),
-    } {
-        if key != &PreimageKey::new(expected_hash, key.key_type()) {
-            return Err(PreimageOracleError::InvalidPreimageKey);
-        }
+    } && key != &PreimageKey::new(expected_hash, key.key_type())
+    {
+        return Err(PreimageOracleError::InvalidPreimageKey);
     }
     Ok(())
 }

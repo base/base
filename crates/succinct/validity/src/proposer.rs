@@ -2,41 +2,42 @@ use std::{collections::HashMap, ops::Range, str::FromStr, sync::Arc, time::Durat
 
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, U256};
-use alloy_provider::{network::ReceiptResponse, Provider};
-use anyhow::{anyhow, Context, Result};
-use chrono::Utc;
-use futures_util::{stream, StreamExt, TryStreamExt};
+use alloy_provider::{Provider, network::ReceiptResponse};
+use anyhow::{Context, Result, anyhow};
 use base_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
 use base_succinct_elfs::AGGREGATION_ELF;
 use base_succinct_host_utils::{
+    DisputeGameFactory::DisputeGameFactoryInstance as DisputeGameFactoryContract,
+    OPSuccinctL2OutputOracle::OPSuccinctL2OutputOracleInstance as OPSuccinctL2OOContract,
     fetcher::OPSuccinctDataFetcher,
     host::OPSuccinctHost,
     metrics::MetricsGauge,
     network::{determine_network_mode, get_network_signer},
-    DisputeGameFactory::DisputeGameFactoryInstance as DisputeGameFactoryContract,
-    OPSuccinctL2OutputOracle::OPSuccinctL2OutputOracleInstance as OPSuccinctL2OOContract,
 };
 use base_succinct_proof_utils::{
-    cluster_poll_proof, cluster_setup_keys, get_range_elf_embedded, is_cluster_mode,
-    reconstruct_proof_request, ClusterProofConfig, ClusterProofHandle, ClusterProofHandleJson,
+    ClusterProofConfig, ClusterProofHandle, ClusterProofHandleJson, cluster_poll_proof,
+    cluster_setup_keys, get_range_elf_embedded, is_cluster_mode, reconstruct_proof_request,
 };
 use base_succinct_signer_utils::SignerLock;
+use chrono::Utc;
+use futures_util::{StreamExt, TryStreamExt, stream};
 use sp1_sdk::{
-    network::{
-        proto::types::{ExecutionStatus, FulfillmentStatus},
-        NetworkMode,
-    },
     Elf, HashableKey, NetworkProver, Prover, ProverClient, ProvingKey, SP1Proof,
     SP1ProofWithPublicValues,
+    network::{
+        NetworkMode,
+        proto::types::{ExecutionStatus, FulfillmentStatus},
+    },
 };
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 use crate::{
+    CommitmentConfig, ContractConfig, OPSuccinctProofRequester, ProgramConfig,
+    RequestExecutionStatistics, RequesterConfig, ValidityGauge,
     db::{DriverDBClient, OPSuccinctRequest, RequestMode, RequestStatus, RequestType},
     find_gaps, get_latest_proposed_block_number, get_ranges_to_prove_by_blocks,
-    get_ranges_to_prove_by_gas, CommitmentConfig, ContractConfig, OPSuccinctProofRequester,
-    ProgramConfig, RequestExecutionStatistics, RequesterConfig, ValidityGauge,
+    get_ranges_to_prove_by_gas,
 };
 
 /// Number of consecutive poll failures before a cluster proof is marked as permanently failed.
@@ -181,7 +182,7 @@ where
         let dgf_contract =
             DisputeGameFactoryContract::new(requester_config.dgf_address, provider.clone());
 
-        let proposer = Proposer {
+        let proposer = Self {
             driver_config: DriverConfig {
                 network_prover,
                 fetcher,
@@ -227,7 +228,9 @@ where
                 block_number
             }
             None => {
-                tracing::debug!("No new finalized block number found since last proposed block. No new range proof requests will be added.");
+                tracing::debug!(
+                    "No new finalized block number found since last proposed block. No new range proof requests will be added."
+                );
                 return Ok(());
             }
         };
@@ -408,9 +411,9 @@ where
             if let Some(request_details) = request_details {
                 let auction_deadline =
                     request_details.created_at + self.requester_config.auction_timeout;
-                if network_prover.network_mode() == NetworkMode::Mainnet &&
-                    request_details.fulfillment_status == FulfillmentStatus::Requested as i32 &&
-                    current_time > auction_deadline
+                if network_prover.network_mode() == NetworkMode::Mainnet
+                    && request_details.fulfillment_status == FulfillmentStatus::Requested as i32
+                    && current_time > auction_deadline
                 {
                     // Cancel the request in the network.
                     self.network_call_with_timeout(
@@ -485,7 +488,9 @@ where
 
                 let proof_bytes = match proof.proof {
                     // If it's a compressed proof, serialize with bincode.
-                    SP1Proof::Compressed(_) => bincode::serde::encode_to_vec(&proof, bincode::config::standard())?,
+                    SP1Proof::Compressed(_) => {
+                        bincode::serde::encode_to_vec(&proof, bincode::config::standard())?
+                    }
                     // If it's Groth16 or PLONK, get the on-chain proof bytes.
                     SP1Proof::Groth16(_) | SP1Proof::Plonk(_) => proof.bytes(),
                     SP1Proof::Core(_) => return Err(anyhow!("Core proofs are not supported.")),
@@ -723,7 +728,9 @@ where
                 let proof = SP1ProofWithPublicValues::from(results.proof);
 
                 let proof_bytes = match proof.proof {
-                    SP1Proof::Compressed(_) => bincode::serde::encode_to_vec(&proof, bincode::config::standard())?,
+                    SP1Proof::Compressed(_) => {
+                        bincode::serde::encode_to_vec(&proof, bincode::config::standard())?
+                    }
                     SP1Proof::Groth16(_) | SP1Proof::Plonk(_) => proof.bytes(),
                     SP1Proof::Core(_) => return Err(anyhow!("Core proofs are not supported.")),
                 };
@@ -845,7 +852,9 @@ where
             .await?;
 
         if active_agg_proofs_count > 0 {
-            tracing::debug!("There is already an Aggregation proof queued with the same start block, range vkey commitment, and aggregation vkey.");
+            tracing::debug!(
+                "There is already an Aggregation proof queued with the same start block, range vkey commitment, and aggregation vkey."
+            );
             return Ok(());
         }
 
@@ -884,8 +893,8 @@ where
 
         // If the highest proven contiguous block number is greater than the latest proposed block
         // number plus the submission interval, create an aggregation proof.
-        if (highest_proven_contiguous_block_number - latest_proposed_block_number) >=
-            submission_interval
+        if (highest_proven_contiguous_block_number - latest_proposed_block_number)
+            >= submission_interval
         {
             // If an aggregation request with the same start block and end block and commitment
             // config exists, there's no need to checkpoint the L1 block hash.
@@ -946,40 +955,39 @@ where
                 None
             };
 
-            let (checkpointed_l1_block_hash, checkpointed_l1_block_number) = if let Some(reuse) =
-                reuse_checkpoint
-            {
-                reuse
-            } else {
-                // Checkpoint an L1 block hash that will be used to create the aggregation proof.
-                let latest_header =
-                    self.driver_config.fetcher.get_l1_header(BlockId::latest()).await?;
+            let (checkpointed_l1_block_hash, checkpointed_l1_block_number) =
+                if let Some(reuse) = reuse_checkpoint {
+                    reuse
+                } else {
+                    // Checkpoint an L1 block hash that will be used to create the aggregation proof.
+                    let latest_header =
+                        self.driver_config.fetcher.get_l1_header(BlockId::latest()).await?;
 
-                // Checkpoint the L1 block hash.
-                let transaction_request = self
-                    .contract_config
-                    .l2oo_contract
-                    .checkpointBlockHash(U256::from(latest_header.number))
-                    .into_transaction_request();
+                    // Checkpoint the L1 block hash.
+                    let transaction_request = self
+                        .contract_config
+                        .l2oo_contract
+                        .checkpointBlockHash(U256::from(latest_header.number))
+                        .into_transaction_request();
 
-                let receipt = self
-                    .driver_config
-                    .signer
-                    .send_transaction_request(
-                        self.driver_config.fetcher.as_ref().rpc_config.l1_rpc.clone(),
-                        transaction_request,
-                    )
-                    .await?;
+                    let receipt = self
+                        .driver_config
+                        .signer
+                        .send_transaction_request(
+                            self.driver_config.fetcher.as_ref().rpc_config.l1_rpc.clone(),
+                            transaction_request,
+                        )
+                        .await?;
 
-                // If transaction reverted, log the error.
-                if !receipt.status() {
-                    return Err(anyhow!("Checkpoint block transaction reverted: {:?}", receipt));
-                }
+                    // If transaction reverted, log the error.
+                    if !receipt.status() {
+                        return Err(anyhow!("Checkpoint block transaction reverted: {receipt:?}"));
+                    }
 
-                tracing::info!("Checkpointed L1 block number: {:?}.", latest_header.number);
+                    tracing::info!("Checkpointed L1 block number: {:?}.", latest_header.number);
 
-                (latest_header.hash_slow(), latest_header.number as i64)
-            };
+                    (latest_header.hash_slow(), latest_header.number as i64)
+                };
 
             // Create an aggregation proof request to cover the range with the checkpointed L1 block
             // hash.
@@ -1009,12 +1017,12 @@ where
         Ok(())
     }
 
-    /// Request all unrequested proofs up to MAX_CONCURRENT_PROOF_REQUESTS. If there are already
-    /// MAX_CONCURRENT_PROOF_REQUESTS proofs in WitnessGeneration, Execute, and Prove status,
-    /// return. If there are already MAX_CONCURRENT_WITNESS_GEN proofs in WitnessGeneration or
+    /// Request all unrequested proofs up to `MAX_CONCURRENT_PROOF_REQUESTS`. If there are already
+    /// `MAX_CONCURRENT_PROOF_REQUESTS` proofs in `WitnessGeneration`, Execute, and Prove status,
+    /// return. If there are already `MAX_CONCURRENT_WITNESS_GEN` proofs in `WitnessGeneration` or
     /// Execute status, return.
     ///
-    /// Note: In the future, submit up to MAX_CONCURRENT_PROOF_REQUESTS at a time. Don't do one per
+    /// Note: In the future, submit up to `MAX_CONCURRENT_PROOF_REQUESTS` at a time. Don't do one per
     /// loop.
     #[tracing::instrument(name = "proposer.request_queued_proofs", skip(self))]
     async fn request_queued_proofs(&self) -> Result<()> {
@@ -1047,10 +1055,12 @@ where
 
         // If there are already MAX_CONCURRENT_PROOF_REQUESTS proofs in WitnessGeneration, Execute,
         // and Prove status, return.
-        if witness_gen_count + execution_count + prove_count >=
-            self.requester_config.max_concurrent_proof_requests as i64
+        if witness_gen_count + execution_count + prove_count
+            >= self.requester_config.max_concurrent_proof_requests as i64
         {
-            debug!("There are already MAX_CONCURRENT_PROOF_REQUESTS proofs in WitnessGeneration, Execute, and Prove status.");
+            debug!(
+                "There are already MAX_CONCURRENT_PROOF_REQUESTS proofs in WitnessGeneration, Execute, and Prove status."
+            );
             return Ok(());
         }
 
@@ -1387,7 +1397,7 @@ where
 
         // If the transaction reverted, log the error.
         if !receipt.status() {
-            return Err(anyhow!("Transaction reverted: {:?}", receipt));
+            return Err(anyhow!("Transaction reverted: {receipt:?}"));
         }
 
         Ok(receipt.transaction_hash())
@@ -1444,14 +1454,16 @@ where
                 );
             }
 
-            return Err(anyhow::anyhow!("Config mismatches detected. Please run {{cargo run --bin config --release -- --env-file ENV_FILE}} to get the expected config for your contract."));
+            return Err(anyhow::anyhow!(
+                "Config mismatches detected. Please run {{cargo run --bin config --release -- --env-file ENV_FILE}} to get the expected config for your contract."
+            ));
         }
 
         Ok(())
     }
 
     /// Set orphaned tasks to status FAILED. If a task is in the database in status Execution or
-    /// WitnessGeneration but not in the tasks map, set it to status FAILED.
+    /// `WitnessGeneration` but not in the tasks map, set it to status FAILED.
     async fn set_orphaned_tasks_to_failed(&self) -> Result<()> {
         let witnessgen_requests = self
             .driver_config
@@ -1577,7 +1589,7 @@ where
     ///
     /// This function performs several key tasks:
     /// 1. Validates that the proposer's config matches the contract
-    /// 2. Deletes unrecoverable requests (UNREQUESTED, EXECUTION, WITNESS_GENERATION)
+    /// 2. Deletes unrecoverable requests (UNREQUESTED, EXECUTION, `WITNESS_GENERATION`)
     /// 3. Cancels PROVE requests with mismatched commitment configs
     /// 4. Identifies gaps between the latest proposed block and finalized block
     /// 5. Creates new range proof requests to cover those gaps
@@ -1617,7 +1629,9 @@ where
             )
             .await?;
 
-        info!("Deleted all unrequested, execution, and witness generation requests and canceled all prove requests with different commitment configs.");
+        info!(
+            "Deleted all unrequested, execution, and witness generation requests and canceled all prove requests with different commitment configs."
+        );
 
         Ok(())
     }

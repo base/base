@@ -31,8 +31,8 @@ tokio.workspace = true
 tracing.workspace = true
 
 [features]
-default = ["ethereum"]
-ethereum = ["base-succinct-ethereum-host-utils"]
+default = [ "ethereum" ]
+ethereum = [ "base-succinct-ethereum-host-utils" ]
 
 [lints]
 workspace = true

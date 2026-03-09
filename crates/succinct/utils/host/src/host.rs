@@ -32,7 +32,6 @@ impl PreimageServerStarter for HostConfig {
     }
 }
 
-
 #[async_trait]
 pub trait OPSuccinctHost: Send + Sync + 'static {
     type Args: Send + Sync + 'static + Clone + PreimageServerStarter;
@@ -47,7 +46,7 @@ pub trait OPSuccinctHost: Send + Sync + 'static {
     /// - `l2_end_block`: The ending L2 block number.
     /// - `l1_head_hash`: Optionally supplied L1 head block hash used as the L1 origin.
     /// - `safe_db_fallback`: Flag to indicate whether to fallback to timestamp-based L1 head
-    ///   estimation when SafeDB is not available.
+    ///   estimation when `SafeDB` is not available.
     async fn fetch(
         &self,
         l2_start_block: u64,
@@ -99,7 +98,7 @@ pub trait OPSuccinctHost: Send + Sync + 'static {
     /// Parameters:
     /// - `fetcher`: The data fetcher for accessing blockchain data.
     /// - `l2_end_block`: The ending L2 block number for the range.
-    /// - `safe_db_fallback`: Whether to fallback to timestamp-based estimation when SafeDB is
+    /// - `safe_db_fallback`: Whether to fallback to timestamp-based estimation when `SafeDB` is
     ///   unavailable.
     async fn calculate_safe_l1_head(
         &self,

@@ -1,10 +1,11 @@
+use std::{fmt::Debug, sync::Arc};
+
 use alloy_primitives::{Address, B256};
 use anyhow::Result;
-use chrono::{Local, NaiveDateTime};
 use base_succinct_host_utils::fetcher::{BlockInfo, OPSuccinctDataFetcher};
+use chrono::{Local, NaiveDateTime};
 use serde_json::Value;
-use sqlx::{types::BigDecimal, FromRow, PgPool};
-use std::{fmt::Debug, sync::Arc};
+use sqlx::{FromRow, PgPool, types::BigDecimal};
 
 #[derive(sqlx::Type, Debug, Copy, Clone, PartialEq, Eq, Default)]
 #[sqlx(type_name = "smallint")]
@@ -24,14 +25,14 @@ pub enum RequestStatus {
 impl From<i16> for RequestStatus {
     fn from(value: i16) -> Self {
         match value {
-            0 => RequestStatus::Unrequested,
-            1 => RequestStatus::WitnessGeneration,
-            2 => RequestStatus::Execution,
-            3 => RequestStatus::Prove,
-            4 => RequestStatus::Complete,
-            5 => RequestStatus::Relayed,
-            6 => RequestStatus::Failed,
-            7 => RequestStatus::Cancelled,
+            0 => Self::Unrequested,
+            1 => Self::WitnessGeneration,
+            2 => Self::Execution,
+            3 => Self::Prove,
+            4 => Self::Complete,
+            5 => Self::Relayed,
+            6 => Self::Failed,
+            7 => Self::Cancelled,
             _ => panic!("Invalid request status: {value}"),
         }
     }
@@ -49,8 +50,8 @@ pub enum RequestType {
 impl From<i16> for RequestType {
     fn from(value: i16) -> Self {
         match value {
-            0 => RequestType::Range,
-            1 => RequestType::Aggregation,
+            0 => Self::Range,
+            1 => Self::Aggregation,
             _ => panic!("Invalid request type: {value}"),
         }
     }
@@ -68,8 +69,8 @@ pub enum RequestMode {
 impl From<i16> for RequestMode {
     fn from(value: i16) -> Self {
         match value {
-            0 => RequestMode::Real,
-            1 => RequestMode::Mock,
+            0 => Self::Real,
+            1 => Self::Mock,
             _ => panic!("Invalid request mode: {value}"),
         }
     }
@@ -108,7 +109,7 @@ pub struct OPSuccinctRequest {
     pub prover_address: Option<Vec<u8>>,   //Address
     pub l1_head_block_number: Option<i64>, // L1 head block number used for request
     /// Cluster proof handle JSON for self-hosted cluster mode.
-    /// Contains {"proof_id": "...", "proof_output_id": "..."} for handle reconstruction.
+    /// Contains {"`proof_id"`: "...", "`proof_output_id"`: "..."} for handle reconstruction.
     /// NULL for network mode requests (which use `proof_request_id` BYTEA for B256 instead).
     pub cluster_proof_handle: Option<Value>,
 }

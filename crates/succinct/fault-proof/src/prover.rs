@@ -1,13 +1,13 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use base_succinct_host_utils::metrics::MetricsGauge;
 use base_succinct_proof_utils::{cluster_agg_proof, cluster_range_proof, get_range_elf_embedded};
 use sp1_sdk::{
-    network::{proto::types::FulfillmentStatus, NetworkMode},
-    Elf, NetworkProver, ProveRequest, Prover, SP1ProofMode, SP1ProofWithPublicValues,
-    SP1ProvingKey, SP1Stdin, SP1VerifyingKey, SP1_CIRCUIT_VERSION,
+    Elf, NetworkProver, ProveRequest, Prover, SP1_CIRCUIT_VERSION, SP1ProofMode,
+    SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
+    network::{NetworkMode, proto::types::FulfillmentStatus},
 };
 use tokio::time::sleep;
 
@@ -15,7 +15,7 @@ use crate::{config::ProofProviderConfig, prometheus::ProposerGauge};
 
 /// Polling interval (in seconds) for checking proof status.
 /// Matches the SP1 SDK's internal polling interval:
-/// https://github.com/succinctlabs/sp1/blob/dev/crates/sdk/src/network/prover.rs#L551
+/// <https://github.com/succinctlabs/sp1/blob/dev/crates/sdk/src/network/prover.rs#L551>
 pub const PROOF_STATUS_POLL_INTERVAL: u64 = 2;
 
 /// Unique identifier for a proof request.
@@ -60,15 +60,15 @@ impl ProofProvider {
     /// In mock mode: executes locally and returns execution stats.
     /// In network mode: submits to network, waits for completion, returns (proof, 0, 0).
     ///
-    /// Returns: (proof, instruction_cycles, sp1_gas)
+    /// Returns: (proof, `instruction_cycles`, `sp1_gas`)
     pub async fn generate_range_proof(
         &self,
         stdin: SP1Stdin,
     ) -> Result<(SP1ProofWithPublicValues, u64, u64)> {
         match self {
-            ProofProvider::Network(p) => p.generate_range_proof(stdin).await,
-            ProofProvider::Mock(p) => p.generate_range_proof(stdin).await,
-            ProofProvider::Cluster(p) => p.generate_range_proof(stdin).await,
+            Self::Network(p) => p.generate_range_proof(stdin).await,
+            Self::Mock(p) => p.generate_range_proof(stdin).await,
+            Self::Cluster(p) => p.generate_range_proof(stdin).await,
         }
     }
 
@@ -79,27 +79,27 @@ impl ProofProvider {
     /// In cluster mode: submits to self-hosted cluster, waits for completion.
     pub async fn generate_agg_proof(&self, stdin: SP1Stdin) -> Result<SP1ProofWithPublicValues> {
         match self {
-            ProofProvider::Network(p) => p.generate_agg_proof(stdin).await,
-            ProofProvider::Mock(p) => p.generate_agg_proof(stdin).await,
-            ProofProvider::Cluster(p) => p.generate_agg_proof(stdin).await,
+            Self::Network(p) => p.generate_agg_proof(stdin).await,
+            Self::Mock(p) => p.generate_agg_proof(stdin).await,
+            Self::Cluster(p) => p.generate_agg_proof(stdin).await,
         }
     }
 
     /// Access to proving keys.
-    pub fn keys(&self) -> &ProofKeys {
+    pub const fn keys(&self) -> &ProofKeys {
         match self {
-            ProofProvider::Network(p) => &p.keys,
-            ProofProvider::Mock(p) => &p.keys,
-            ProofProvider::Cluster(p) => &p.keys,
+            Self::Network(p) => &p.keys,
+            Self::Mock(p) => &p.keys,
+            Self::Cluster(p) => &p.keys,
         }
     }
 
     /// Access to configuration.
-    pub fn config(&self) -> &ProofProviderConfig {
+    pub const fn config(&self) -> &ProofProviderConfig {
         match self {
-            ProofProvider::Network(p) => &p.config,
-            ProofProvider::Mock(p) => &p.config,
-            ProofProvider::Cluster(p) => &p.config,
+            Self::Network(p) => &p.config,
+            Self::Mock(p) => &p.config,
+            Self::Cluster(p) => &p.config,
         }
     }
 }
@@ -114,7 +114,7 @@ pub struct NetworkProofProvider {
 }
 
 impl NetworkProofProvider {
-    pub fn new(
+    pub const fn new(
         prover: Arc<NetworkProver>,
         keys: ProofKeys,
         config: ProofProviderConfig,
@@ -286,10 +286,7 @@ impl NetworkProofProvider {
                     }
                     ProposerGauge::AuctionTimeoutError.increment(1.0);
                     bail!(
-                        "Auction timeout: proof_id={}, elapsed={}s, timeout={}s",
-                        proof_id,
-                        elapsed_secs,
-                        timeout_secs
+                        "Auction timeout: proof_id={proof_id}, elapsed={elapsed_secs}s, timeout={timeout_secs}s"
                     );
                 }
             }
@@ -305,11 +302,8 @@ impl NetworkProofProvider {
                 );
                 ProposerGauge::DeadlineExceededError.increment(1.0);
                 bail!(
-                    "Deadline exceeded: proof_id={}, deadline={}, current_time={} \
-                     (consider reducing workload: increase RANGE_SPLIT_COUNT or reduce PROPOSAL_INTERVAL_IN_BLOCKS)",
-                    proof_id,
-                    deadline,
-                    current_time
+                    "Deadline exceeded: proof_id={proof_id}, deadline={deadline}, current_time={current_time} \
+                     (consider reducing workload: increase RANGE_SPLIT_COUNT or reduce PROPOSAL_INTERVAL_IN_BLOCKS)"
                 );
             }
 
@@ -357,12 +351,7 @@ impl NetworkProofProvider {
             Err(_) => {
                 tracing::warn!(proof_id = %proof_id, operation, timeout_secs, "Network call timed out");
                 ProposerGauge::NetworkCallTimeout.increment(1.0);
-                bail!(
-                    "Network timeout after {}s for {} (proof_id={})",
-                    timeout_secs,
-                    operation,
-                    proof_id
-                )
+                bail!("Network timeout after {timeout_secs}s for {operation} (proof_id={proof_id})")
             }
         }
     }
@@ -378,7 +367,7 @@ pub struct MockProofProvider {
 }
 
 impl MockProofProvider {
-    pub fn new(
+    pub const fn new(
         prover: Arc<NetworkProver>,
         keys: ProofKeys,
         config: ProofProviderConfig,
@@ -452,7 +441,7 @@ pub struct ClusterProofProvider {
 }
 
 impl ClusterProofProvider {
-    pub fn new(keys: ProofKeys, config: ProofProviderConfig) -> Self {
+    pub const fn new(keys: ProofKeys, config: ProofProviderConfig) -> Self {
         Self { keys, config }
     }
 
@@ -471,7 +460,7 @@ impl ClusterProofProvider {
 }
 
 /// Result of checking if proving has timed out.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ProvingTimeout {
     /// Still within timeout, continue polling.
     Ok,
@@ -489,7 +478,7 @@ pub fn check_timeout(elapsed: Duration, timeout: Duration) -> ProvingTimeout {
 }
 
 /// Result of checking auction timeout.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum AuctionTimeout {
     /// No timeout issue, continue.
     Ok,
@@ -502,7 +491,7 @@ pub enum AuctionTimeout {
 /// Check if the auction has timed out (no prover picked up the request).
 ///
 /// Only applies on mainnet when the request is still in "Requested" state.
-pub fn check_auction(
+pub const fn check_auction(
     is_mainnet: bool,
     fulfillment_status: i32,
     created_at: u64,
@@ -526,7 +515,7 @@ pub fn check_auction(
 }
 
 /// Result of checking server deadline.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Deadline {
     /// Still within deadline.
     Ok,
@@ -535,16 +524,12 @@ pub enum Deadline {
 }
 
 /// Check if the server-side proof deadline has been exceeded.
-pub fn check_deadline(deadline: u64, current_time: u64) -> Deadline {
-    if current_time >= deadline {
-        Deadline::Exceeded { deadline }
-    } else {
-        Deadline::Ok
-    }
+pub const fn check_deadline(deadline: u64, current_time: u64) -> Deadline {
+    if current_time >= deadline { Deadline::Exceeded { deadline } } else { Deadline::Ok }
 }
 
 /// Result of checking proof fulfillment status.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ProofStatus {
     /// Proof is ready, return it.
     Ready,
@@ -565,9 +550,11 @@ pub fn check_status(status: i32) -> ProofStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use rstest::rstest;
     use std::time::Duration;
+
+    use rstest::rstest;
+
+    use super::*;
 
     #[rstest]
     #[case::ok(30, 60, ProvingTimeout::Ok)]

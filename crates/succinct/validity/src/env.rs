@@ -5,7 +5,7 @@ use anyhow::Result;
 use base_succinct_host_utils::network::parse_fulfillment_strategy;
 use base_succinct_signer_utils::SignerLock;
 use reqwest::Url;
-use sp1_sdk::{network::FulfillmentStrategy, SP1ProofMode};
+use sp1_sdk::{SP1ProofMode, network::FulfillmentStrategy};
 
 #[derive(Debug, Clone)]
 pub struct EnvironmentConfig {
@@ -48,11 +48,11 @@ where
 {
     match env::var(key) {
         Ok(value) => {
-            value.parse::<T>().map_err(|e| anyhow::anyhow!("Failed to parse {}: {:?}", key, e))
+            value.parse::<T>().map_err(|e| anyhow::anyhow!("Failed to parse {key}: {e:?}"))
         }
         Err(_) => match default {
             Some(default_val) => Ok(default_val),
-            None => anyhow::bail!("{} is not set", key),
+            None => anyhow::bail!("{key} is not set"),
         },
     }
 }
@@ -68,9 +68,9 @@ fn parse_whitelist(whitelist_str: &str) -> Result<Option<Vec<Address>>> {
         .map(|addr_str| {
             let addr_str = addr_str.trim().trim_start_matches("0x");
             // Add 0x prefix since addresses are provided without it
-            let addr_with_prefix = format!("0x{}", addr_str);
+            let addr_with_prefix = format!("0x{addr_str}");
             Address::from_str(&addr_with_prefix)
-                .map_err(|e| anyhow::anyhow!("Failed to parse address '{}': {:?}", addr_str, e))
+                .map_err(|e| anyhow::anyhow!("Failed to parse address '{addr_str}': {e:?}"))
         })
         .collect();
 
@@ -137,7 +137,7 @@ pub async fn read_proposer_env() -> Result<EnvironmentConfig> {
         range_gas_limit: get_env_var("RANGE_GAS_LIMIT", Some(1_000_000_000_000))?, // 1 trillion
         agg_cycle_limit: get_env_var("AGG_CYCLE_LIMIT", Some(1_000_000_000_000))?, // 1 trillion
         agg_gas_limit: get_env_var("AGG_GAS_LIMIT", Some(1_000_000_000_000))?,   // 1 trillion
-        whitelist: parse_whitelist(&get_env_var("WHITELIST", Some("".to_string()))?)?,
+        whitelist: parse_whitelist(&get_env_var("WHITELIST", Some(String::new()))?)?,
         min_auction_period: get_env_var("MIN_AUCTION_PERIOD", Some(1))?,
         auction_timeout: get_env_var("AUCTION_TIMEOUT", Some(60))?, // 1 minute
     };

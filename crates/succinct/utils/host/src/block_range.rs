@@ -3,15 +3,15 @@ use std::{
     collections::HashSet,
 };
 
-use crate::rpc_types::{OutputResponse, SafeHeadResponse};
 use alloy_eips::BlockId;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     fetcher::{OPSuccinctDataFetcher, RPCMode},
     host::OPSuccinctHost,
+    rpc_types::{OutputResponse, SafeHeadResponse},
 };
 
 const TWO_HOURS_IN_BLOCKS: u64 = 3600;
@@ -44,9 +44,7 @@ pub async fn get_validated_block_range<H: OPSuccinctHost>(
         Some(end) => {
             if end > end_number {
                 bail!(
-                    "The end block ({}) is greater than the latest finalized block ({})",
-                    end,
-                    end_number
+                    "The end block ({end}) is greater than the latest finalized block ({end_number})"
                 );
             }
             end
@@ -61,7 +59,7 @@ pub async fn get_validated_block_range<H: OPSuccinctHost>(
     };
 
     if l2_start_block >= l2_end_block {
-        bail!("Start block ({}) must be less than end block ({})", l2_start_block, l2_end_block);
+        bail!("Start block ({l2_start_block}) must be less than end block ({l2_end_block})");
     }
 
     Ok((l2_start_block, l2_end_block))
@@ -109,12 +107,12 @@ pub fn split_range_basic(start: u64, end: u64, max_range_size: u64) -> Vec<SpanB
 
 /// Split a range of blocks into a list of span batch ranges based on L2 safeHeads.
 ///
-/// 1. Get the L1 block range [L1 origin of l2_start, L1Head] where L1Head is the block from which
-///    l2_end can be derived
+/// 1. Get the L1 block range [L1 origin of `l2_start`, `L1Head`] where `L1Head` is the block from which
+///    `l2_end` can be derived
 /// 2. Loop over L1 blocks to get safeHead increases (batch posts) which form a step function
 /// 3. Split ranges based on safeHead increases and max batch size
 ///
-/// Example: If safeHeads are [27,49,90] and max_size=30, ranges will be [(0,27), (27,49), (49,69),
+/// Example: If safeHeads are [27,49,90] and `max_size=30`, ranges will be [(0,27), (27,49), (49,69),
 /// (69,90)]
 pub async fn split_range_based_on_safe_heads(
     l2_start: u64,

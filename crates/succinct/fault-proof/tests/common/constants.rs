@@ -1,6 +1,6 @@
 //! Shared constants for E2E tests.
 
-use alloy_primitives::{address, Address, U256};
+use alloy_primitives::{Address, U256, address};
 
 // Anvil predefined accounts
 pub const ANVIL_ACCOUNT_0: Address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");

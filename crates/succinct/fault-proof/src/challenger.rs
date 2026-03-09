@@ -7,11 +7,14 @@ use std::{
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, ProviderBuilder};
-use anyhow::{bail, Context, Result};
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use anyhow::{Context, Result, bail};
+use base_succinct_host_utils::metrics::MetricsGauge;
+use base_succinct_signer_utils::SignerLock;
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use tokio::{sync::Mutex, time};
 
 use crate::{
+    FactoryTrait, L1Provider, L2Provider, L2ProviderTrait, TX_REVERTED_PREFIX, TxErrorExt,
     config::ChallengerConfig,
     contract::{
         AnchorStateRegistry::AnchorStateRegistryInstance,
@@ -20,10 +23,7 @@ use crate::{
     },
     is_parent_challenger_wins, is_parent_resolved,
     prometheus::ChallengerGauge,
-    FactoryTrait, L1Provider, L2Provider, L2ProviderTrait, TxErrorExt, TX_REVERTED_PREFIX,
 };
-use base_succinct_host_utils::metrics::MetricsGauge;
-use base_succinct_signer_utils::SignerLock;
 
 pub struct OPSuccinctChallenger<P>
 where
@@ -53,10 +53,10 @@ where
     ) -> Self {
         let l2_rpc = config.l2_rpc.clone();
 
-        OPSuccinctChallenger {
+        Self {
             config,
             signer,
-            l1_provider: l1_provider.clone(),
+            l1_provider,
             l2_provider: ProviderBuilder::default().connect_http(l2_rpc),
             anchor_state_registry,
             factory,
@@ -94,7 +94,7 @@ where
             // Synchronize cached dispute state before scheduling work.
             if let Err(e) = self.sync_state().await {
                 tracing::warn!("Failed to sync challenger state: {:?}", e);
-                continue
+                continue;
             }
 
             if let Err(e) = self.handle_game_challenging().await {

@@ -125,29 +125,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
-name = "alloy"
-version = "1.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4973038846323e4e69a433916522195dce2947770076c03078fc21c80ea0f1c4"
-dependencies = [
- "alloy-consensus",
- "alloy-contract",
- "alloy-core",
- "alloy-eips",
- "alloy-genesis",
- "alloy-network",
- "alloy-provider",
- "alloy-rpc-client",
- "alloy-rpc-types",
- "alloy-serde",
- "alloy-signer",
- "alloy-signer-local",
- "alloy-transport",
- "alloy-transport-http",
- "alloy-trie",
-]
-
-[[package]]
 name = "alloy-chains"
 version = "0.2.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -225,19 +202,6 @@ dependencies = [
  "futures-util",
  "serde_json",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "alloy-core"
-version = "1.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23e8604b0c092fabc80d075ede181c9b9e596249c70b99253082d7e689836529"
-dependencies = [
- "alloy-dyn-abi",
- "alloy-json-abi",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-sol-types",
 ]
 
 [[package]]
@@ -2634,6 +2598,7 @@ dependencies = [
  "reth-primitives-traits",
  "reth-zstd-compressors",
  "revm",
+ "rstest",
  "serde",
  "serde_json",
  "serde_with",
@@ -3496,6 +3461,7 @@ dependencies = [
  "hex-literal 1.1.0",
  "parking_lot",
  "revm",
+ "rstest",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -4696,7 +4662,7 @@ dependencies = [
 name = "base-succinct-bindings"
 version = "0.0.0"
 dependencies = [
- "alloy",
+ "alloy-contract",
  "alloy-sol-types",
  "anyhow",
  "cargo_metadata 0.18.1",
@@ -4787,7 +4753,6 @@ dependencies = [
 name = "base-succinct-fp"
 version = "0.0.0"
 dependencies = [
- "alloy",
  "alloy-contract",
  "alloy-eips",
  "alloy-network",
@@ -4959,7 +4924,7 @@ dependencies = [
  "clap",
  "csv",
  "dotenv",
- "reqwest 0.12.28",
+ "reqwest 0.13.2",
  "rustls 0.23.37",
  "serde_json",
  "sp1-cluster-utils",
@@ -5190,11 +5155,11 @@ name = "base-zk-client"
 version = "0.0.0"
 dependencies = [
  "async-trait",
- "prost",
+ "prost 0.14.3",
  "rstest",
  "thiserror 2.0.18",
  "tokio",
- "tonic",
+ "tonic 0.14.5",
  "tonic-prost",
  "tonic-prost-build",
  "tracing",
@@ -13012,6 +12977,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "petgraph"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8701b58ea97060d5e5b155d383a69952a60943f0e6dfe30b04c287beb0b27455"
+dependencies = [
+ "fixedbitset 0.5.7",
+ "hashbrown 0.15.5",
+ "indexmap 2.13.0",
+]
+
+[[package]]
 name = "pharos"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13668,10 +13644,31 @@ dependencies = [
  "log",
  "multimap",
  "once_cell",
- "petgraph",
+ "petgraph 0.7.1",
  "prettyplease",
  "prost 0.13.5",
  "prost-types 0.13.5",
+ "regex",
+ "syn 2.0.117",
+ "tempfile",
+]
+
+[[package]]
+name = "prost-build"
+version = "0.14.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
+dependencies = [
+ "heck",
+ "itertools 0.14.0",
+ "log",
+ "multimap",
+ "petgraph 0.8.3",
+ "prettyplease",
+ "prost 0.14.3",
+ "prost-types 0.14.3",
+ "pulldown-cmark",
+ "pulldown-cmark-to-cmark",
  "regex",
  "syn 2.0.117",
  "tempfile",
@@ -13701,27 +13698,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "prost-build"
-version = "0.14.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
-dependencies = [
- "heck",
- "itertools 0.14.0",
- "log",
- "multimap",
- "petgraph",
- "prettyplease",
- "prost",
- "prost-types",
- "pulldown-cmark",
- "pulldown-cmark-to-cmark",
- "regex",
- "syn 2.0.117",
- "tempfile",
 ]
 
 [[package]]
@@ -19320,7 +19296,7 @@ dependencies = [
  "sp1-prover-types",
  "tokio-blocked",
  "tonic 0.12.3",
- "tonic-build",
+ "tonic-build 0.12.3",
  "tracing",
  "tracing-opentelemetry 0.24.0",
  "tracing-subscriber 0.3.22",
@@ -19663,7 +19639,7 @@ dependencies = [
  "serde",
  "tokio",
  "tonic 0.12.3",
- "tonic-build",
+ "tonic-build 0.12.3",
  "tracing",
 ]
 
@@ -21247,7 +21223,7 @@ checksum = "9557ce109ea773b399c9b9e5dca39294110b74f1f342cb347a80d1fce8c26a11"
 dependencies = [
  "prettyplease",
  "proc-macro2",
- "prost-build",
+ "prost-build 0.13.5",
  "prost-types 0.13.5",
  "quote",
  "syn 2.0.117",
@@ -21277,6 +21253,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "tonic-prost-build"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3144df636917574672e93d0f56d7edec49f90305749c668df5101751bb8f95a"
+dependencies = [
+ "prettyplease",
+ "proc-macro2",
+ "prost-build 0.14.3",
+ "prost-types 0.14.3",
+ "quote",
+ "syn 2.0.117",
+ "tempfile",
+ "tonic-build 0.14.5",
+]
+
+[[package]]
 name = "tower"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21294,22 +21286,6 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
-]
-
-[[package]]
-name = "tonic-prost-build"
-version = "0.14.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3144df636917574672e93d0f56d7edec49f90305749c668df5101751bb8f95a"
-dependencies = [
- "prettyplease",
- "proc-macro2",
- "prost-build",
- "prost-types",
- "quote",
- "syn 2.0.117",
- "tempfile",
- "tonic-build",
 ]
 
 [[package]]

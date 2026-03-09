@@ -1,10 +1,11 @@
 use std::fmt;
 
-use crate::fetcher::BlockInfo;
-use num_format::{Locale, ToFormattedString};
 use base_succinct_client_utils::precompiles::cycle_tracker::keys;
+use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use sp1_sdk::ExecutionReport;
+
+use crate::fetcher::BlockInfo;
 
 /// Statistics for the range execution.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -132,12 +133,12 @@ impl ExecutionStats {
     }
 }
 
-/// A [ExecutionStats] that can be displayed as Markdown.
+/// A [`ExecutionStats`] that can be displayed as Markdown.
 pub struct MarkdownExecutionStats(ExecutionStats);
 
 impl MarkdownExecutionStats {
-    /// Creates a [MarkdownExecutionStats].
-    pub fn new(inner: ExecutionStats) -> Self {
+    /// Creates a [`MarkdownExecutionStats`].
+    pub const fn new(inner: ExecutionStats) -> Self {
         Self(inner)
     }
 }

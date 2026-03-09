@@ -1,13 +1,13 @@
 #![allow(missing_docs)]
 use alloy_primitives::B256;
 use anyhow::Result;
-use clap::Parser;
 use base_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
 use base_succinct_elfs::AGGREGATION_ELF;
 use base_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
 use base_succinct_proof_utils::get_range_elf_embedded;
 use base_succinct_scripts::ConfigArgs;
-use sp1_sdk::{utils, Elf, HashableKey, Prover, ProverClient, ProvingKey};
+use clap::Parser;
+use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, ProvingKey, utils};
 
 // Get the verification keys for the ELFs and check them against the contract.
 #[tokio::main]

@@ -2,14 +2,12 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use async_trait::async_trait;
+use base_proof::{CachingOracle, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider};
 use base_proof_preimage::{HintWriter, NativeChannel, OracleReader};
-use base_proof::{
-    OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider, CachingOracle,
-};
 use base_succinct_client_utils::witness::{
-    executor::{get_inputs_for_pipeline, WitnessExecutor},
-    preimage_store::PreimageStore,
     BlobData, WitnessData,
+    executor::{WitnessExecutor, get_inputs_for_pipeline},
+    preimage_store::PreimageStore,
 };
 use sp1_sdk::SP1Stdin;
 

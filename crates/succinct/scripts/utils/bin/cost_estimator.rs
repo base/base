@@ -1,12 +1,17 @@
 #![allow(missing_docs)]
+use std::{
+    cmp::{max, min},
+    fs::{self, OpenOptions},
+    io::Seek,
+    path::PathBuf,
+    sync::Arc,
+};
+
 use anyhow::Result;
-use clap::Parser;
-use futures::StreamExt;
-use log::info;
 use base_succinct_host_utils::{
     block_range::{
-        get_rolling_block_range, get_validated_block_range, split_range_based_on_safe_heads,
-        split_range_basic, SpanBatchRange,
+        SpanBatchRange, get_rolling_block_range, get_validated_block_range,
+        split_range_based_on_safe_heads, split_range_basic,
     },
     fetcher::OPSuccinctDataFetcher,
     host::OPSuccinctHost,
@@ -16,17 +21,14 @@ use base_succinct_host_utils::{
 };
 use base_succinct_proof_utils::{get_range_elf_embedded, initialize_host};
 use base_succinct_scripts::HostExecutorArgs;
+use clap::Parser;
+use futures::StreamExt;
+use log::info;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use sp1_sdk::{
+    Elf,
     blocking::{CpuProver, Prover},
-    utils, Elf,
-};
-use std::{
-    cmp::{max, min},
-    fs::{self, OpenOptions},
-    io::Seek,
-    path::PathBuf,
-    sync::Arc,
+    utils,
 };
 
 /// Run the zkVM execution process for each split range in parallel. Writes the execution stats for
@@ -63,10 +65,10 @@ where
     let report_path =
         root_dir.join(format!("execution-reports/{l2_chain_id}/{start}-{end}-report.csv"));
     // Create the parent directory if it doesn't exist
-    if let Some(parent) = report_path.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent).unwrap();
-        }
+    if let Some(parent) = report_path.parent()
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent).unwrap();
     }
 
     // Create an empty file since canonicalize requires the path to exist
@@ -84,12 +86,12 @@ where
             if cache_enabled {
                 match load_stdin_from_cache(l2_chain_id, start, end) {
                     Ok(Some(stdin)) => {
-                        info!("Loaded stdin from cache for range {}-{}", start, end);
+                        info!("Loaded stdin from cache for range {start}-{end}");
                         return stdin;
                     }
                     Ok(None) => {} // No cache, generate below
                     Err(e) => {
-                        log::warn!("Failed to load stdin cache for range {}-{}: {e}", start, end);
+                        log::warn!("Failed to load stdin cache for range {start}-{end}: {e}");
                     }
                 }
             }
@@ -99,10 +101,10 @@ where
             let stdin = host.witness_generator().get_sp1_stdin(witness_data).unwrap();
 
             // Save SP1Stdin to cache
-            if cache_enabled {
-                if let Ok(cache_path) = save_stdin_to_cache(l2_chain_id, start, end, &stdin) {
-                    info!("Saved stdin to cache: {}", cache_path.display());
-                }
+            if cache_enabled
+                && let Ok(cache_path) = save_stdin_to_cache(l2_chain_id, start, end, &stdin)
+            {
+                info!("Saved stdin to cache: {}", cache_path.display());
             }
 
             stdin
@@ -156,7 +158,7 @@ where
                 .from_writer(file);
 
             csv_writer
-                .serialize(execution_stats.clone())
+                .serialize(execution_stats)
                 .expect("Failed to write execution stats to CSV.");
             csv_writer.flush().expect("Failed to flush CSV writer.");
         });

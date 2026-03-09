@@ -1,4 +1,9 @@
-use alloy_primitives::{hex, Address};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
+
+use alloy_primitives::{Address, hex};
 use alloy_signer_local::PrivateKeySigner;
 use anyhow::Result;
 use base_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
@@ -6,10 +11,6 @@ use base_succinct_elfs::AGGREGATION_ELF;
 use base_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
 use base_succinct_proof_utils::get_range_elf_embedded;
 use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, ProvingKey};
-use std::{
-    env, fs,
-    path::{Path, PathBuf},
-};
 
 pub const TWO_WEEKS_IN_SECONDS: u64 = 14 * 24 * 60 * 60;
 
@@ -24,8 +25,8 @@ pub struct SharedConfigData {
 }
 
 /// Returns an address based on environment variables and private key settings:
-/// - If env_var exists, returns that address
-/// - Otherwise if private_key_by_default=true and PRIVATE_KEY exists, returns address derived from
+/// - If `env_var` exists, returns that address
+/// - Otherwise if `private_key_by_default=true` and `PRIVATE_KEY` exists, returns address derived from
 ///   private key
 /// - Otherwise returns zero address
 pub fn get_address(env_var: &str, private_key_by_default: bool) -> String {
@@ -35,11 +36,9 @@ pub fn get_address(env_var: &str, private_key_by_default: bool) -> String {
     }
 
     // Next try to derive address from private key if enabled.
-    if private_key_by_default {
-        if let Ok(pk) = env::var("PRIVATE_KEY") {
-            let signer: PrivateKeySigner = pk.parse().unwrap();
-            return signer.address().to_string();
-        }
+    if private_key_by_default && let Ok(pk) = env::var("PRIVATE_KEY") {
+        let signer: PrivateKeySigner = pk.parse().unwrap();
+        return signer.address().to_string();
     }
 
     // Fallback to zero address.
@@ -53,11 +52,7 @@ pub fn parse_addresses(env_var: &str) -> Vec<String> {
         .split(',')
         .filter_map(|s| {
             let trimmed = s.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
+            if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
         })
         .collect()
 }

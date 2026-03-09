@@ -1,6 +1,7 @@
-use crate::OPSuccinctL2OutputOracle::opSuccinctConfigsReturn;
 use alloy_primitives::B256;
 use alloy_sol_types::sol;
+
+use crate::OPSuccinctL2OutputOracle::opSuccinctConfigsReturn;
 
 // Sourced from op-succinct/contracts/src/validity/OPSuccinctL2OutputOracle.sol
 sol! {
@@ -45,15 +46,15 @@ sol! {
 }
 
 impl opSuccinctConfigsReturn {
-    pub fn aggregation_vkey(&self) -> B256 {
+    pub const fn aggregation_vkey(&self) -> B256 {
         self._0
     }
 
-    pub fn range_vkey_commitment(&self) -> B256 {
+    pub const fn range_vkey_commitment(&self) -> B256 {
         self._1
     }
 
-    pub fn rollup_config_hash(&self) -> B256 {
+    pub const fn rollup_config_hash(&self) -> B256 {
         self._2
     }
 }
@@ -109,11 +110,11 @@ sol! {
          /// @notice Returns the required bonds for initializing a dispute game of the given type.
         mapping(GameType => uint256) public initBonds;
 
-        /// @notice Creates a new DisputeGame proxy contract.
-        /// @param _gameType The type of the DisputeGame - used to decide the proxy implementation.
-        /// @param _rootClaim The root claim of the DisputeGame.
+        /// @notice Creates a new `DisputeGame` proxy contract.
+        /// @param _gameType The type of the `DisputeGame` - used to decide the proxy implementation.
+        /// @param _rootClaim The root claim of the `DisputeGame`.
         /// @param _extraData Any extra data that should be provided to the created dispute game.
-        /// @return proxy_ The address of the created DisputeGame proxy.
+        /// @return proxy_ The address of the created `DisputeGame` proxy.
         function create(
             GameType _gameType,
             Claim _rootClaim,

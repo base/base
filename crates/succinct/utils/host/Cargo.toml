@@ -9,7 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["ansi"]
+default = [ "ansi" ]
 ansi = []
 
 [dependencies]

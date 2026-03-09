@@ -4,26 +4,27 @@ pub mod common;
 mod proposer_sync {
     use std::collections::HashMap;
 
+    use alloy_primitives::{Bytes, FixedBytes, U256, Uint};
+    use alloy_sol_types::{SolCall, SolValue};
+    use anyhow::{Context, Result};
+    use base_succinct_bindings::dispute_game_factory::DisputeGameFactory;
+    use base_succinct_host_utils::host::OPSuccinctHost;
+    use fault_proof::{
+        contract::ProposalStatus,
+        proposer::{
+            Game, GameFetchResult, MAX_GAME_DEADLINE_LAG, OPSuccinctProposer, ProposerStateSnapshot,
+        },
+    };
+    use rand::Rng;
+    use rstest::rstest;
+
     use crate::common::{
+        TestEnvironment,
         constants::{
             DISPUTE_GAME_FINALITY_DELAY_SECONDS, MAX_CHALLENGE_DURATION, MAX_PROVE_DURATION,
             MOCK_PERMISSIONED_GAME_TYPE, PROPOSER_ADDRESS, TEST_GAME_TYPE,
         },
-        TestEnvironment,
     };
-    use alloy_primitives::{Bytes, FixedBytes, Uint, U256};
-    use alloy_sol_types::{SolCall, SolValue};
-    use anyhow::{Context, Result};
-    use fault_proof::{
-        contract::ProposalStatus,
-        proposer::{
-            Game, GameFetchResult, OPSuccinctProposer, ProposerStateSnapshot, MAX_GAME_DEADLINE_LAG,
-        },
-    };
-    use base_succinct_bindings::dispute_game_factory::DisputeGameFactory;
-    use base_succinct_host_utils::host::OPSuccinctHost;
-    use rand::Rng;
-    use rstest::rstest;
 
     const M: u32 = u32::MAX;
 
@@ -1372,7 +1373,9 @@ mod proposer_sync {
             game_0.should_attempt_to_claim_bond,
             "Game 0: should_attempt_to_claim_bond should be true (finalized + credit > 0)"
         );
-        tracing::info!("✓ Case 2: DEFENDER_WINS + finalized + credit > 0 → should_attempt_to_claim_bond = true");
+        tracing::info!(
+            "✓ Case 2: DEFENDER_WINS + finalized + credit > 0 → should_attempt_to_claim_bond = true"
+        );
 
         // Claim bond for game 0 to set credit = 0
         env.claim_bond(address, PROPOSER_ADDRESS).await?;
@@ -1384,7 +1387,9 @@ mod proposer_sync {
             !game_0.should_attempt_to_claim_bond,
             "Game 0: should_attempt_to_claim_bond should be false (credit = 0)"
         );
-        tracing::info!("✓ Case 3: DEFENDER_WINS + finalized + credit = 0 → should_attempt_to_claim_bond = false");
+        tracing::info!(
+            "✓ Case 3: DEFENDER_WINS + finalized + credit = 0 → should_attempt_to_claim_bond = false"
+        );
 
         Ok(())
     }
@@ -1494,28 +1499,29 @@ mod proposer_sync {
 
 #[cfg(feature = "integration")]
 mod challenger_sync {
-    use crate::common::{
-        constants::{
-            CHALLENGER_ADDRESS, DISPUTE_GAME_FINALITY_DELAY_SECONDS, MAX_CHALLENGE_DURATION,
-            MAX_PROVE_DURATION, MOCK_PERMISSIONED_GAME_TYPE, TEST_GAME_TYPE,
-        },
-        TestEnvironment,
-    };
     use alloy_primitives::{Bytes, FixedBytes, U256};
     use alloy_sol_types::{SolCall, SolValue};
     use anyhow::{Context, Result};
+    use base_succinct_bindings::dispute_game_factory::DisputeGameFactory;
     use fault_proof::{
         challenger::{Game, OPSuccinctChallenger},
         contract::{GameStatus, ProposalStatus},
     };
-    use base_succinct_bindings::dispute_game_factory::DisputeGameFactory;
     use rand::Rng;
     use rstest::rstest;
 
+    use crate::common::{
+        TestEnvironment,
+        constants::{
+            CHALLENGER_ADDRESS, DISPUTE_GAME_FINALITY_DELAY_SECONDS, MAX_CHALLENGE_DURATION,
+            MAX_PROVE_DURATION, MOCK_PERMISSIONED_GAME_TYPE, TEST_GAME_TYPE,
+        },
+    };
+
     const M: u32 = u32::MAX;
 
-    async fn setup(
-    ) -> Result<(TestEnvironment, OPSuccinctChallenger<fault_proof::L1Provider>, U256)> {
+    async fn setup()
+    -> Result<(TestEnvironment, OPSuccinctChallenger<fault_proof::L1Provider>, U256)> {
         let env = TestEnvironment::setup().await?;
         let factory = env.factory()?;
         let init_bond = factory.initBonds(TEST_GAME_TYPE).call().await?;

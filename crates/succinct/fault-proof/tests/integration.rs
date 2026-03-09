@@ -2,31 +2,32 @@ pub mod common;
 
 #[cfg(feature = "integration")]
 mod integration {
-    use super::*;
     use std::sync::Arc;
 
-    use alloy_primitives::{Bytes, FixedBytes, B256, U256};
+    use alloy_primitives::{B256, Bytes, FixedBytes, U256};
     use alloy_sol_types::{SolCall, SolValue};
     use anyhow::{Context, Result};
+    use base_succinct_bindings::dispute_game_factory::DisputeGameFactory;
     use common::{
+        TestEnvironment,
         constants::{
             CHALLENGER_ADDRESS, DISPUTE_GAME_FINALITY_DELAY_SECONDS,
             L2_BLOCK_OFFSET_FROM_FINALIZED, MAX_CHALLENGE_DURATION, MAX_PROVE_DURATION,
             MOCK_PERMISSIONED_GAME_TYPE, PROPOSER_ADDRESS, TEST_GAME_TYPE, WAIT_TIMEOUT,
         },
         env::compute_vkeys,
-        monitor::{verify_all_resolved_correctly, TrackedGame},
-        new_proposer, TestEnvironment,
+        monitor::{TrackedGame, verify_all_resolved_correctly},
+        new_proposer,
     };
     use fault_proof::{
         challenger::Game,
         contract::{GameStatus, ProposalStatus},
     };
-    use base_succinct_bindings::dispute_game_factory::DisputeGameFactory;
     use rand::Rng;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
     use tracing::info;
 
+    use super::*;
     use crate::common::new_challenger;
 
     alloy_sol_types::sol! {
@@ -65,7 +66,9 @@ mod integration {
 
         // Warp by max challenge duration
         env.warp_time(MAX_CHALLENGE_DURATION).await?;
-        info!("✓ Warped time by max challenge duration ({MAX_CHALLENGE_DURATION} seconds) to trigger resolution");
+        info!(
+            "✓ Warped time by max challenge duration ({MAX_CHALLENGE_DURATION} seconds) to trigger resolution"
+        );
 
         // Verify proposer is still running
         assert!(!proposer_handle.is_finished(), "Proposer should still be running");
@@ -82,7 +85,9 @@ mod integration {
 
         // Warp past DISPUTE_GAME_FINALITY_DELAY_SECONDS
         env.warp_time(DISPUTE_GAME_FINALITY_DELAY_SECONDS).await?;
-        info!("✓ Warped time by DISPUTE_GAME_FINALITY_DELAY_SECONDS ({DISPUTE_GAME_FINALITY_DELAY_SECONDS} seconds) to trigger bond claims");
+        info!(
+            "✓ Warped time by DISPUTE_GAME_FINALITY_DELAY_SECONDS ({DISPUTE_GAME_FINALITY_DELAY_SECONDS} seconds) to trigger bond claims"
+        );
 
         // Verify proposer is still running
         assert!(!proposer_handle.is_finished(), "Proposer should still be running");
@@ -325,8 +330,7 @@ mod integration {
         env.warp_time(MAX_CHALLENGE_DURATION + MAX_PROVE_DURATION).await?;
         info!(
             "✓ Warped time past prove deadline (challenge {}s + prove {}s) to trigger challenger wins",
-            MAX_CHALLENGE_DURATION,
-            MAX_PROVE_DURATION
+            MAX_CHALLENGE_DURATION, MAX_PROVE_DURATION
         );
 
         // Wait for and verify challenger wins
@@ -461,8 +465,8 @@ mod integration {
 
                 // The new game should either be an anchor game or build on the valid anchor game
                 assert!(
-                    claim_data.parentIndex == u32::MAX ||
-                        U256::from(claim_data.parentIndex) <= anchor_game_index,
+                    claim_data.parentIndex == u32::MAX
+                        || U256::from(claim_data.parentIndex) <= anchor_game_index,
                     "Proposer should not build on invalid chain"
                 );
 
@@ -627,12 +631,15 @@ mod integration {
                 // The new game should be a new anchor game (parentIndex = u32::MAX)
                 // since the entire chain is invalid due to challenged parent
                 assert_eq!(
-                claim_data.parentIndex,
-                u32::MAX,
-                "Proposer should create a new anchor game when all chains have challenged ancestors"
-            );
+                    claim_data.parentIndex,
+                    u32::MAX,
+                    "Proposer should create a new anchor game when all chains have challenged ancestors"
+                );
 
-                info!("✓ Proposer correctly skipped chain with challenged parent and created new anchor game at index {}", new_game_index);
+                info!(
+                    "✓ Proposer correctly skipped chain with challenged parent and created new anchor game at index {}",
+                    new_game_index
+                );
                 info!("  New game parent index: {} (anchor game)", claim_data.parentIndex);
                 break;
             }

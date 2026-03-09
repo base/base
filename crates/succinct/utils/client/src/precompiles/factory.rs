@@ -1,16 +1,19 @@
 //! [`EvmFactory`] implementation for the EVM in the ZKVM environment.
 
-use super::OpZkvmPrecompiles;
 use alloy_evm::{Database, EvmEnv, EvmFactory};
 use base_alloy_evm::OpEvm;
-use base_revm::{DefaultOp, OpContext, OpEvm as RevmOpEvm, OpHaltReason, OpSpecId, OpTransaction,
-OpTransactionError,};
+use base_revm::{
+    DefaultOp, OpContext, OpEvm as RevmOpEvm, OpHaltReason, OpSpecId, OpTransaction,
+    OpTransactionError,
+};
 use revm::{
-    context::{result::EVMError, BlockEnv, Evm as RevmEvm, TxEnv},
+    Context, Inspector,
+    context::{BlockEnv, Evm as RevmEvm, TxEnv, result::EVMError},
     handler::instructions::EthInstructions,
     inspector::NoOpInspector,
-    Context, Inspector,
 };
+
+use super::OpZkvmPrecompiles;
 
 /// Factory producing [`OpEvm`]s with FPVM-accelerated precompile overrides enabled.
 #[derive(Debug, Clone)]
@@ -18,7 +21,7 @@ pub struct ZkvmOpEvmFactory {}
 
 impl ZkvmOpEvmFactory {
     /// Creates a new [`ZkvmOpEvmFactory`].
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {}
     }
 }

@@ -5,15 +5,16 @@
 #[cfg(target_os = "zkvm")]
 sp1_zkvm::entrypoint!(main);
 
+use std::collections::HashMap;
+
 use alloy_consensus::Header;
 use alloy_primitives::B256;
 use alloy_sol_types::SolValue;
 use base_succinct_client_utils::{
     boot::BootInfoStruct,
-    types::{u32_to_u8, AggregationInputs, AggregationOutputs},
+    types::{AggregationInputs, AggregationOutputs, u32_to_u8},
 };
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 
 pub fn main() {
     // Read in the public values corresponding to each range proof.
@@ -41,7 +42,8 @@ pub fn main() {
     agg_inputs.boot_infos.iter().for_each(|boot_info| {
         // In the range program, the public values digest is just the hash of the ABI encoded
         // boot info.
-        let serialized_boot_info = bincode::serde::encode_to_vec(&boot_info, bincode::config::standard()).unwrap();
+        let serialized_boot_info =
+            bincode::serde::encode_to_vec(boot_info, bincode::config::standard()).unwrap();
         let pv_digest = Sha256::digest(serialized_boot_info);
 
         sp1_lib::verify::verify_sp1_proof(&agg_inputs.multi_block_vkey, &pv_digest.into());
@@ -66,7 +68,7 @@ pub fn main() {
     }
 
     // Check if all l1 heads were found in the chain.
-    for (l1_head, found) in l1_heads_map.iter() {
+    for (l1_head, found) in &l1_heads_map {
         assert!(*found, "l1 head {l1_head:?} not found in the provided header chain");
     }
 

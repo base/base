@@ -5,6 +5,11 @@ use alloy_primitives::Address;
 use alloy_provider::ProviderBuilder;
 use alloy_transport_http::reqwest::Url;
 use anyhow::Result;
+use base_succinct_host_utils::{
+    metrics::{MetricsGauge, init_metrics},
+    setup_logger,
+};
+use base_succinct_signer_utils::SignerLock;
 use clap::Parser;
 use fault_proof::{
     challenger::OPSuccinctChallenger,
@@ -12,11 +17,6 @@ use fault_proof::{
     contract::{AnchorStateRegistry, DisputeGameFactory},
     prometheus::ChallengerGauge,
 };
-use base_succinct_host_utils::{
-    metrics::{init_metrics, MetricsGauge},
-    setup_logger,
-};
-use base_succinct_signer_utils::SignerLock;
 use tikv_jemallocator::Jemalloc;
 
 #[global_allocator]

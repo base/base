@@ -1,7 +1,6 @@
+use base_succinct_host_utils::metrics::MetricsGauge;
 use strum::EnumMessage;
 use strum_macros::{Display, EnumIter};
-
-use base_succinct_host_utils::metrics::MetricsGauge;
 
 // Define an enum for all validity metrics gauges.
 #[derive(Debug, Clone, Copy, Display, EnumIter, EnumMessage)]

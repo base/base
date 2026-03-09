@@ -14,19 +14,19 @@ use sp1_cluster_artifact::{
 };
 use sp1_cluster_common::client::ClusterServiceClient;
 use sp1_cluster_utils::{
-    check_proof_status, create_request, request_config_from_env, request_proof_from_env,
     ArtifactStoreConfig, ClusterElf, ProofRequest, ProofRequestConfig, ProofRequestResults,
+    check_proof_status, create_request, request_config_from_env, request_proof_from_env,
 };
 use sp1_prover_types::Artifact;
 use sp1_sdk::{
-    blocking::{CpuProver, Prover as BlockingProver},
-    network::proto::types::ProofMode,
     Elf, ProvingKey, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
+    blocking::{CpuProver, Prover as BlockingProver},
+    network::proto::types::ProofMode,
 };
 
 /// Get the range ELF depending on the feature flag.
-pub fn get_range_elf_embedded() -> &'static [u8] {
+pub const fn get_range_elf_embedded() -> &'static [u8] {
     base_succinct_elfs::RANGE_ELF_EMBEDDED
 }
 
@@ -49,12 +49,12 @@ pub fn is_cluster_mode() -> bool {
     std::env::var("SP1_PROVER").unwrap_or_default() == "cluster"
 }
 
-/// Set up range and aggregation proving/verifying keys via blocking CpuProver.
+/// Set up range and aggregation proving/verifying keys via blocking `CpuProver`.
 ///
 /// Runs in `spawn_blocking` because `CpuProver` creates its own tokio runtime
 /// internally, which would panic if called directly from an async context.
-pub async fn cluster_setup_keys(
-) -> Result<(SP1ProvingKey, SP1VerifyingKey, SP1ProvingKey, SP1VerifyingKey)> {
+pub async fn cluster_setup_keys()
+-> Result<(SP1ProvingKey, SP1VerifyingKey, SP1ProvingKey, SP1VerifyingKey)> {
     tokio::task::spawn_blocking(|| {
         let cpu_prover = CpuProver::new();
         let range_pk = cpu_prover
@@ -69,7 +69,7 @@ pub async fn cluster_setup_keys(
     .await?
 }
 
-fn to_proto_proof_mode(mode: SP1ProofMode) -> ProofMode {
+const fn to_proto_proof_mode(mode: SP1ProofMode) -> ProofMode {
     match mode {
         SP1ProofMode::Core => ProofMode::Core,
         SP1ProofMode::Compressed => ProofMode::Compressed,

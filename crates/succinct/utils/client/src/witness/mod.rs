@@ -13,10 +13,10 @@ use crate::BlobStore;
 
 #[async_trait]
 pub trait WitnessData: Sized {
-    /// Creates a new WitnessData from the given preimage store and blob data.
+    /// Creates a new `WitnessData` from the given preimage store and blob data.
     fn from_parts(preimage_store: PreimageStore, blob_data: BlobData) -> Self;
 
-    /// Consumes the WitnessData to extract its core components.
+    /// Consumes the `WitnessData` to extract its core components.
     fn into_parts(self) -> (PreimageStore, BlobData);
 
     /// Gets the oracle and blob provider from the witness data and validates the correctness of the
@@ -57,7 +57,6 @@ impl WitnessData for DefaultWitnessData {
         (self.preimage_store, self.blob_data)
     }
 }
-
 
 #[derive(
     Clone, Debug, Default, Serialize, Deserialize, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,

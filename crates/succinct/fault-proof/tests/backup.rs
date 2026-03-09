@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use alloy_primitives::{Address, B256, U256};
 use fault_proof::{
-    backup::{ProposerBackup, BACKUP_VERSION},
+    backup::{BACKUP_VERSION, ProposerBackup},
     contract::{GameStatus, ProposalStatus},
     proposer::Game,
 };
@@ -29,8 +29,9 @@ fn test_game(index: u64, parent_index: u32) -> Game {
 }
 
 mod validation {
-    use super::*;
     use rstest::rstest;
+
+    use super::*;
 
     const M: u32 = u32::MAX;
 
@@ -136,10 +137,10 @@ mod integration {
 
     use anyhow::Result;
     use tempfile::TempDir;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
     use tracing::info;
 
-    use crate::common::{new_proposer, TestEnvironment};
+    use crate::common::{TestEnvironment, new_proposer};
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_proposer_backup_persistence() -> Result<()> {

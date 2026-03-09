@@ -1,9 +1,9 @@
 use std::env;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use sp1_sdk::{
-    network::{signer::NetworkSigner, FulfillmentStrategy, NetworkMode},
     NetworkProver, ProverClient,
+    network::{FulfillmentStrategy, NetworkMode, signer::NetworkSigner},
 };
 
 /// Parse a fulfillment strategy from a string.
@@ -24,23 +24,21 @@ pub fn determine_network_mode(
     agg_proof_strategy: FulfillmentStrategy,
 ) -> Result<NetworkMode> {
     match (range_proof_strategy, agg_proof_strategy) {
-            (FulfillmentStrategy::Auction, FulfillmentStrategy::Auction) => {
-                Ok(NetworkMode::Mainnet)
-            }
-            (
-                FulfillmentStrategy::Hosted | FulfillmentStrategy::Reserved,
-                FulfillmentStrategy::Hosted | FulfillmentStrategy::Reserved,
-            ) => Ok(NetworkMode::Reserved),
-            (FulfillmentStrategy::UnspecifiedFulfillmentStrategy, _) |
-            (_, FulfillmentStrategy::UnspecifiedFulfillmentStrategy) => Err(anyhow!(
-                "The range and agg fulfillment Strategies must be specified"
-            )),
-            _ => Err(anyhow!(
-                "The range fulfillment Strategy '{}' and agg fulfillment Strategy '{}' are incompatible",
-                range_proof_strategy.as_str_name().to_ascii_lowercase(),
-                agg_proof_strategy.as_str_name().to_ascii_lowercase()
-            )),
+        (FulfillmentStrategy::Auction, FulfillmentStrategy::Auction) => Ok(NetworkMode::Mainnet),
+        (
+            FulfillmentStrategy::Hosted | FulfillmentStrategy::Reserved,
+            FulfillmentStrategy::Hosted | FulfillmentStrategy::Reserved,
+        ) => Ok(NetworkMode::Reserved),
+        (FulfillmentStrategy::UnspecifiedFulfillmentStrategy, _)
+        | (_, FulfillmentStrategy::UnspecifiedFulfillmentStrategy) => {
+            Err(anyhow!("The range and agg fulfillment Strategies must be specified"))
         }
+        _ => Err(anyhow!(
+            "The range fulfillment Strategy '{}' and agg fulfillment Strategy '{}' are incompatible",
+            range_proof_strategy.as_str_name().to_ascii_lowercase(),
+            agg_proof_strategy.as_str_name().to_ascii_lowercase()
+        )),
+    }
 }
 
 /// Compute the network signer using the `NETWORK_PRIVATE_KEY` env var.

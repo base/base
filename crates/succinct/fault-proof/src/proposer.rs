@@ -2,21 +2,18 @@ use std::{
     collections::{HashMap, HashSet},
     path::Path,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
 
-use tempfile::NamedTempFile;
-
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{Address, FixedBytes, TxHash, B256, U256};
+use alloy_primitives::{Address, B256, FixedBytes, TxHash, U256};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_sol_types::{SolEvent, SolValue};
-use anyhow::{bail, Context, Result};
-use futures::stream::{self, StreamExt, TryStreamExt};
-use base_succinct_client_utils::boot::{hash_rollup_config, BootInfoStruct};
+use anyhow::{Context, Result, bail};
+use base_succinct_client_utils::boot::{BootInfoStruct, hash_rollup_config};
 use base_succinct_elfs::AGGREGATION_ELF;
 use base_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher,
@@ -28,15 +25,18 @@ use base_succinct_host_utils::{
 };
 use base_succinct_proof_utils::{cluster_setup_keys, get_range_elf_embedded, is_cluster_mode};
 use base_succinct_signer_utils::SignerLock;
+use futures::stream::{self, StreamExt, TryStreamExt};
 use sp1_sdk::{
     Elf, HashableKey, Prover, ProverClient, ProvingKey, SP1ProofWithPublicValues, SP1Stdin,
 };
+use tempfile::NamedTempFile;
 use tokio::{
     sync::{Mutex, RwLock, Semaphore},
     time,
 };
 
 use crate::{
+    FactoryTrait, L1Provider, L2Provider, L2ProviderTrait, TX_REVERTED_PREFIX, TxErrorExt,
     backup::ProposerBackup,
     config::ProposerConfig,
     contract::{
@@ -49,7 +49,6 @@ use crate::{
     prover::{
         ClusterProofProvider, MockProofProvider, NetworkProofProvider, ProofKeys, ProofProvider,
     },
-    FactoryTrait, L1Provider, L2Provider, L2ProviderTrait, TxErrorExt, TX_REVERTED_PREFIX,
 };
 
 /// Max allowed time (secs) between a game's deadline and the anchor game's deadline.
@@ -102,11 +101,11 @@ pub struct ProposerIdentity {
 
 impl ProposerIdentity {
     /// Returns the DA layer based on compile-time feature flags.
-    fn detect_da_layer() -> &'static str {
+    const fn detect_da_layer() -> &'static str {
         "ethereum"
     }
 
-    /// Creates a new ProposerIdentity from computed vkeys and rollup config hash.
+    /// Creates a new `ProposerIdentity` from computed vkeys and rollup config hash.
     pub fn new(
         aggregation_vkey: B256,
         range_vkey_commitment: B256,
@@ -114,7 +113,7 @@ impl ProposerIdentity {
     ) -> Self {
         let pkg_version = env!("CARGO_PKG_VERSION");
         let da_layer = Self::detect_da_layer();
-        let version = format!("{}-{}", pkg_version, da_layer);
+        let version = format!("{pkg_version}-{da_layer}");
 
         Self { version, aggregation_vkey, range_vkey_commitment, rollup_config_hash }
     }
@@ -160,12 +159,12 @@ pub struct Game {
 
 impl Game {
     /// Returns true if this game's identity params match the proposer's (owned = can
-    /// prove/resolve/claim). Checks aggregation_vkey, range_vkey_commitment, and
-    /// rollup_config_hash.
+    /// prove/resolve/claim). Checks `aggregation_vkey`, `range_vkey_commitment`, and
+    /// `rollup_config_hash`.
     pub fn is_owned(&self, identity: &ProposerIdentity) -> bool {
-        self.aggregation_vkey == identity.aggregation_vkey &&
-            self.range_vkey_commitment == identity.range_vkey_commitment &&
-            self.rollup_config_hash == identity.rollup_config_hash
+        self.aggregation_vkey == identity.aggregation_vkey
+            && self.range_vkey_commitment == identity.range_vkey_commitment
+            && self.rollup_config_hash == identity.rollup_config_hash
     }
 }
 
@@ -326,15 +325,12 @@ where
         };
 
         let prover = if is_cluster {
-            ProofProvider::Cluster(ClusterProofProvider::new(
-                keys.clone(),
-                config.proof_provider.clone(),
-            ))
+            ProofProvider::Cluster(ClusterProofProvider::new(keys, config.proof_provider.clone()))
         } else if config.mock_mode {
             ProofProvider::Mock(MockProofProvider::new(
                 network_prover
                     .ok_or_else(|| anyhow::anyhow!("network_prover must be set in mock mode"))?,
-                keys.clone(),
+                keys,
                 config.proof_provider.clone(),
                 AGGREGATION_ELF,
             ))
@@ -342,7 +338,7 @@ where
             ProofProvider::Network(NetworkProofProvider::new(
                 network_prover
                     .ok_or_else(|| anyhow::anyhow!("network_prover must be set in network mode"))?,
-                keys.clone(),
+                keys,
                 config.proof_provider.clone(),
                 network_mode
                     .ok_or_else(|| anyhow::anyhow!("network_mode must be set in network mode"))?,
@@ -428,7 +424,7 @@ where
             // 1. Synchronize cached dispute state before scheduling work.
             if let Err(e) = self.sync_state().await {
                 tracing::warn!("Failed to sync proposer state: {:?}", e);
-                continue
+                continue;
             }
 
             self.backup().await;
@@ -532,16 +528,17 @@ where
         // Validate backup path and restore state if available.
         if let Some(path) = &self.config.backup_path {
             // Validate parent directory exists.
-            if let Some(parent) = path.parent() {
-                if !parent.as_os_str().is_empty() && !parent.exists() {
-                    anyhow::bail!("backup path parent directory does not exist: {:?}", parent);
-                }
+            if let Some(parent) = path.parent()
+                && !parent.as_os_str().is_empty()
+                && !parent.exists()
+            {
+                anyhow::bail!("backup path parent directory does not exist: {parent:?}");
             }
 
             // Validate path is writable by creating a temp file in the same directory.
             let dir = path.parent().unwrap_or(Path::new("."));
             NamedTempFile::new_in(dir)
-                .with_context(|| format!("backup path is not writable: {:?}", path))?;
+                .with_context(|| format!("backup path is not writable: {path:?}"))?;
 
             // Restore state from backup if available.
             if let Some(restored) = ProposerState::try_restore(path) {
@@ -579,14 +576,12 @@ where
 
         if anchor_l2_block > U256::from(finalized_l2_block) {
             return Err(anyhow::anyhow!(
-                "Contract misconfiguration detected: Contract's anchor L2 block ({}) is ahead of \
-                 the current finalized L2 block ({}). This indicates:\n\
+                "Contract misconfiguration detected: Contract's anchor L2 block ({anchor_l2_block}) is ahead of \
+                 the current finalized L2 block ({finalized_l2_block}). This indicates:\n\
                  1. The contract's startingL2BlockNumber is misconfigured to a future value, OR\n\
                  2. Your L2 node is not fully synced, OR\n\
                  3. Your L2 RPC endpoint is incorrect.\n\n\
-                 Please verify your configuration before starting the proposer.",
-                anchor_l2_block,
-                finalized_l2_block
+                 Please verify your configuration before starting the proposer."
             ));
         }
 
@@ -644,7 +639,7 @@ where
     ///    - Games are marked for bond claim if they are finalized and there is credit to claim.
     /// 3. Evict games from the cache.
     ///    - Games that are finalized but there is no credit left to claim.
-    ///    - The entire subtree of a CHALLENGER_WINS game.
+    ///    - The entire subtree of a `CHALLENGER_WINS` game.
     pub async fn sync_games(&self) -> Result<()> {
         // 1. Load new games.
         let latest_index = if let Some(index) = self.factory.fetch_latest_game_index().await? {
@@ -694,23 +689,23 @@ where
                     }
 
                     // Once we know the anchor deadline, enforce the lag constraint.
-                    if let Some(anchor_d) = anchor_deadline {
-                        if anchor_d.abs_diff(deadline) > MAX_GAME_DEADLINE_LAG {
-                            tracing::debug!(
-                                game_index = %index,
-                                game_address = ?game_address,
-                                game_deadline = %deadline,
-                                anchor_deadline = %anchor_d,
-                                "Game deadline exceeds max lag from anchor: stopping incremental fetch"
-                            );
-                            break;
-                        }
+                    if let Some(anchor_d) = anchor_deadline
+                        && anchor_d.abs_diff(deadline) > MAX_GAME_DEADLINE_LAG
+                    {
+                        tracing::debug!(
+                            game_index = %index,
+                            game_address = ?game_address,
+                            game_deadline = %deadline,
+                            anchor_deadline = %anchor_d,
+                            "Game deadline exceeds max lag from anchor: stopping incremental fetch"
+                        );
+                        break;
                     }
                 }
                 GameFetchResult::UnsupportedType { game_address } => {
                     // Stop fetching once we find the anchor on an unsupported game.
                     if game_address == anchor_address {
-                        break
+                        break;
                     }
                 }
                 GameFetchResult::InvalidGame { index } => {
@@ -787,24 +782,24 @@ where
                             is_parent_resolved(parent_index, self.factory.as_ref()).await?;
                         let is_game_over = match claim_data.status {
                             ProposalStatus::Unchallenged => now_ts >= deadline,
-                            ProposalStatus::UnchallengedAndValidProofProvided |
-                            ProposalStatus::ChallengedAndValidProofProvided => true,
+                            ProposalStatus::UnchallengedAndValidProofProvided
+                            | ProposalStatus::ChallengedAndValidProofProvided => true,
                             _ => false,
                         };
                         let creator = contract.gameCreator().call().await?;
                         let is_own_game = match claim_data.status {
                             ProposalStatus::Unchallenged => creator == signer_address,
-                            ProposalStatus::UnchallengedAndValidProofProvided |
-                            ProposalStatus::ChallengedAndValidProofProvided => {
+                            ProposalStatus::UnchallengedAndValidProofProvided
+                            | ProposalStatus::ChallengedAndValidProofProvided => {
                                 creator == signer_address || claim_data.prover == signer_address
                             }
                             _ => false,
                         };
 
-                        let should_attempt_to_resolve = game_type == self.config.game_type &&
-                            parent_resolved &&
-                            is_game_over &&
-                            is_own_game;
+                        let should_attempt_to_resolve = game_type == self.config.game_type
+                            && parent_resolved
+                            && is_game_over
+                            && is_own_game;
 
                         actions.push(GameSyncAction::Update {
                             index,
@@ -963,9 +958,9 @@ where
                         .values()
                         .filter(|g| !reachable.contains(&g.index))
                         .filter(|g| {
-                            g.l2_block > anchor.l2_block &&
-                                (g.parent_index == u32::MAX ||
-                                    g.parent_index < anchor.parent_index)
+                            g.l2_block > anchor.l2_block
+                                && (g.parent_index == u32::MAX
+                                    || g.parent_index < anchor.parent_index)
                         })
                         .max_by_key(|g| g.l2_block)
                 });
@@ -1004,19 +999,21 @@ where
     }
 
     /// Returns true if on-chain vkeys match ours (safe to create games).
-    /// Checks all 3 identity fields: aggregation_vkey, range_vkey_commitment, rollup_config_hash.
+    /// Checks all 3 identity fields: `aggregation_vkey`, `range_vkey_commitment`, `rollup_config_hash`.
     async fn on_chain_vkeys_match(&self) -> Result<bool> {
         let game_impl = self.factory.game_impl(self.config.game_type).await?;
         let on_chain_agg = B256::from(game_impl.aggregationVkey().call().await?.0);
         let on_chain_range = B256::from(game_impl.rangeVkeyCommitment().call().await?.0);
         let on_chain_rollup_hash = B256::from(game_impl.rollupConfigHash().call().await?.0);
 
-        let matches = on_chain_agg == self.identity.aggregation_vkey &&
-            on_chain_range == self.identity.range_vkey_commitment &&
-            on_chain_rollup_hash == self.identity.rollup_config_hash;
+        let matches = on_chain_agg == self.identity.aggregation_vkey
+            && on_chain_range == self.identity.range_vkey_commitment
+            && on_chain_rollup_hash == self.identity.rollup_config_hash;
 
         if !matches {
-            tracing::info!("Proposer vkeys mismatch with on-chain vkeys - skipping game creation (hardfork detected)");
+            tracing::info!(
+                "Proposer vkeys mismatch with on-chain vkeys - skipping game creation (hardfork detected)"
+            );
         }
         Ok(matches)
     }
@@ -1158,7 +1155,7 @@ where
             Ok(witness) => witness,
             Err(e) => {
                 tracing::error!("Failed to generate witness: {}", e);
-                return Err(anyhow::anyhow!("Failed to generate witness: {}", e));
+                return Err(anyhow::anyhow!("Failed to generate witness: {e}"));
             }
         };
 
@@ -1166,7 +1163,7 @@ where
             Ok(stdin) => stdin,
             Err(e) => {
                 tracing::error!("Failed to get proof stdin: {}", e);
-                return Err(anyhow::anyhow!("Failed to get proof stdin: {}", e));
+                return Err(anyhow::anyhow!("Failed to get proof stdin: {e}"));
             }
         };
 
@@ -2045,7 +2042,7 @@ where
             return Ok(false);
         }
 
-        let proposer: OPSuccinctProposer<P, H> = self.clone();
+        let proposer: Self = self.clone();
         let task_id = self.next_task_id.fetch_add(1, Ordering::Relaxed);
 
         // Get the game block number to include in logs
@@ -2248,12 +2245,12 @@ pub struct Cursor {
 
 impl Cursor {
     /// Create a cursor with no index.
-    pub fn none() -> Self {
-        Cursor { index: None }
+    pub const fn none() -> Self {
+        Self { index: None }
     }
 
     /// Get the current index of the cursor.
-    pub fn index(&self) -> Option<U256> {
+    pub const fn index(&self) -> Option<U256> {
         self.index
     }
 
@@ -2314,7 +2311,7 @@ pub fn check_deadline_status(now: u64, deadline: u64, max_duration: u64) -> Dead
 
 impl ProposerState {
     /// Serialize the current state to a backup struct.
-    pub fn to_backup(&self) -> ProposerBackup {
+    pub(crate) fn to_backup(&self) -> ProposerBackup {
         ProposerBackup::new(
             self.cursor.index(),
             self.games.values().cloned().collect(),
@@ -2340,7 +2337,7 @@ impl ProposerState {
     }
 
     /// Try to restore state from a backup file. Returns None if file doesn't exist or is invalid.
-    pub fn try_restore(path: &Path) -> Option<Self> {
+    pub(crate) fn try_restore(path: &Path) -> Option<Self> {
         let backup = ProposerBackup::load(path)?;
         let state = Self::from_backup(backup);
         tracing::info!(
@@ -2355,11 +2352,13 @@ impl ProposerState {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::RangeSplitCount;
-    use anyhow::{bail, Result};
+    use std::time::Duration;
+
+    use anyhow::{Result, bail};
     use futures::stream::{self, StreamExt, TryStreamExt};
     use rstest::rstest;
-    use std::time::Duration;
+
+    use crate::config::RangeSplitCount;
 
     async fn mock_prove(
         idx: usize,
@@ -2408,7 +2407,7 @@ mod tests {
         let results =
             prove_ranges(ranges, None, concurrency, Duration::from_millis(5)).await.unwrap();
 
-        let mut indices: Vec<_> = results.clone();
+        let mut indices: Vec<_> = results;
         indices.sort();
         assert_eq!(indices, (0..16).collect::<Vec<_>>());
     }
@@ -2423,8 +2422,9 @@ mod tests {
     }
 
     mod proving_deadline_tests {
-        use super::super::{check_deadline_status, DeadlineStatus};
         use rstest::rstest;
+
+        use super::super::{DeadlineStatus, check_deadline_status};
 
         const HOUR: u64 = 3600;
         const MAX_DURATION: u64 = 6 * HOUR;
@@ -2455,7 +2455,7 @@ mod tests {
                 DeadlineStatus::Approaching { hours_remaining } => {
                     assert!((hours_remaining - expected_hours).abs() < 0.01);
                 }
-                other => panic!("Expected Approaching, got {:?}", other),
+                other => panic!("Expected Approaching, got {other:?}"),
             }
         }
     }

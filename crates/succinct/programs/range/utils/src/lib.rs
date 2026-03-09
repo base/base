@@ -3,12 +3,12 @@ use std::sync::Arc;
 
 use base_proof::{OracleL1ChainProvider, OracleL2ChainProvider};
 use base_succinct_client_utils::{
+    BlobStore,
     boot::BootInfoStruct,
     witness::{
-        executor::{get_inputs_for_pipeline, WitnessExecutor},
+        executor::{WitnessExecutor, get_inputs_for_pipeline},
         preimage_store::PreimageStore,
     },
-    BlobStore,
 };
 
 /// Sets up tracing for the range program

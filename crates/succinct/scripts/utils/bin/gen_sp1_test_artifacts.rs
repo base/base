@@ -1,8 +1,11 @@
 #![allow(missing_docs)]
+use std::{
+    fs::{self},
+    path::PathBuf,
+    sync::Arc,
+};
+
 use anyhow::Result;
-use clap::Parser;
-use futures::StreamExt;
-use log::info;
 use base_succinct_host_utils::{
     block_range::{get_validated_block_range, split_range_basic},
     fetcher::OPSuccinctDataFetcher,
@@ -11,12 +14,10 @@ use base_succinct_host_utils::{
 };
 use base_succinct_proof_utils::{get_range_elf_embedded, initialize_host};
 use base_succinct_scripts::HostExecutorArgs;
+use clap::Parser;
+use futures::StreamExt;
+use log::info;
 use sp1_sdk::utils;
-use std::{
-    fs::{self},
-    path::PathBuf,
-    sync::Arc,
-};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -77,7 +78,10 @@ async fn main() -> Result<()> {
 
         fs::write(program_dir.join("program.bin"), get_range_elf_embedded())?;
 
-        fs::write(program_dir.join("stdin.bin"), bincode::serde::encode_to_vec(&sp1_stdin, bincode::config::standard()).unwrap())?;
+        fs::write(
+            program_dir.join("stdin.bin"),
+            bincode::serde::encode_to_vec(&sp1_stdin, bincode::config::standard()).unwrap(),
+        )?;
     }
 
     Ok(())

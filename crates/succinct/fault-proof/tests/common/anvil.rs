@@ -10,10 +10,9 @@ use alloy_provider::Provider;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use anyhow::{Context, Result};
 use base_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCMode};
+use fault_proof::L1Provider;
 use serde_json::Value;
 use tracing::info;
-
-use fault_proof::L1Provider;
 
 use super::constants::L2_BLOCK_OFFSET_FROM_FINALIZED;
 
@@ -34,7 +33,7 @@ pub struct AnvilFork {
 
 /// Setup a fresh Anvil chain for testing.
 ///
-/// Returns AnvilFork with provider and endpoint
+/// Returns `AnvilFork` with provider and endpoint
 pub async fn setup_anvil_chain() -> Result<AnvilFork> {
     info!("Starting fresh Anvil chain");
     let fetcher = OPSuccinctDataFetcher::new();
@@ -74,12 +73,7 @@ pub async fn setup_anvil_chain() -> Result<AnvilFork> {
     // Create provider
     let provider = L1Provider::new_http(endpoint.parse()?);
 
-    Ok(AnvilFork {
-        provider,
-        endpoint: endpoint.to_string(),
-        starting_l2_block_number: target_l2,
-        starting_root,
-    })
+    Ok(AnvilFork { provider, endpoint, starting_l2_block_number: target_l2, starting_root })
 }
 
 /// Time manipulation utility for the forked chain

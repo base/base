@@ -4,8 +4,8 @@ use base_proof::OracleBlobProvider;
 use base_succinct_client_utils::witness::DefaultWitnessData;
 use base_succinct_ethereum_client_utils::executor::ETHDAWitnessExecutor;
 use base_succinct_host_utils::witness_generation::{
-    online_blob_store::OnlineBlobStore, preimage_witness_collector::PreimageWitnessCollector,
-    DefaultOracleBase, WitnessGenerator,
+    DefaultOracleBase, WitnessGenerator, online_blob_store::OnlineBlobStore,
+    preimage_witness_collector::PreimageWitnessCollector,
 };
 use rkyv::to_bytes;
 use sp1_sdk::SP1Stdin;

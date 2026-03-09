@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use sp1_build::{build_program_with_args, BuildArgs};
+use sp1_build::{BuildArgs, build_program_with_args};
 
 #[allow(unused)]
 fn build_program(program_name: &str, elf_name: &str, features: Option<Vec<String>>) {
@@ -27,7 +27,7 @@ fn build_program(program_name: &str, elf_name: &str, features: Option<Vec<String
 
 /// Build all the native programs and the native host runner. Optional flag to build the zkVM
 /// programs.
-pub fn build_all() {
+pub const fn build_all() {
     // TODO: Uncomment when SP1 toolchain is available.
     // build_program("aggregation", "aggregation-elf", None);
     // build_program("range/ethereum", "range-elf-embedded", Some(vec!["embedded".to_string()]));

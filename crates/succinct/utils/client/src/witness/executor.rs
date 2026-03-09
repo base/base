@@ -1,19 +1,20 @@
 use std::{fmt::Debug, sync::Arc};
 
 use alloy_primitives::Sealed;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use base_consensus_derive::{BlobProvider, ChainProvider, DataAvailabilityProvider, L2ChainProvider, Pipeline,
-SignalReceiver,};
+use base_consensus_derive::{
+    BlobProvider, ChainProvider, DataAvailabilityProvider, L2ChainProvider, Pipeline,
+    SignalReceiver,
+};
+use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_proof::{
+    BaseExecutor, BootInfo, OracleL1ChainProvider, OracleL2ChainProvider, OraclePipeline,
+    new_oracle_pipeline_cursor,
+};
 use base_proof_driver::{Driver, DriverPipeline, PipelineCursor};
 use base_proof_executor::TrieDBProvider;
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
-use base_proof_preimage::CommsClient;
-use base_proof::{
-    BaseExecutor, BootInfo, OracleL1ChainProvider, OraclePipeline,
-    OracleL2ChainProvider, new_oracle_pipeline_cursor,
-};
-use base_proof_preimage::FlushableCache;
+use base_proof_preimage::{CommsClient, FlushableCache};
 use spin::RwLock;
 use tracing::info;
 
@@ -39,7 +40,7 @@ where
     let boot = match BootInfo::load(oracle.as_ref()).await {
         Ok(boot) => boot,
         Err(e) => {
-            return Err(anyhow!("Failed to load boot info: {:?}", e));
+            return Err(anyhow!("Failed to load boot info: {e:?}"));
         }
     };
 
@@ -155,11 +156,11 @@ pub trait WitnessExecutor {
 
         if output_root != boot.claimed_l2_output_root {
             return Err(anyhow!(
-            "Failed to validate L2 block #{number} with claimed output root {claimed_output_root}. Got {output_root} instead",
-            number = safe_head.block_info.number,
-            output_root = output_root,
-            claimed_output_root = boot.claimed_l2_output_root,
-        ));
+                "Failed to validate L2 block #{number} with claimed output root {claimed_output_root}. Got {output_root} instead",
+                number = safe_head.block_info.number,
+                output_root = output_root,
+                claimed_output_root = boot.claimed_l2_output_root,
+            ));
         }
 
         info!(

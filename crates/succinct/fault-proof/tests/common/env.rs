@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_network::EthereumWallet;
-use alloy_primitives::{hex, Address, Bytes, FixedBytes, Uint, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, FixedBytes, U256, Uint, hex};
 use alloy_provider::ProviderBuilder;
 use alloy_rpc_types_eth::TransactionReceipt;
 use alloy_signer_local::PrivateKeySigner;
@@ -17,38 +17,37 @@ use base_succinct_bindings::{
     anchor_state_registry::AnchorStateRegistry::{self, AnchorStateRegistryInstance},
     dispute_game_factory::DisputeGameFactory::{self, DisputeGameFactoryInstance},
     mock_optimism_portal2::MockOptimismPortal2::{self, MockOptimismPortal2Instance},
-    base_succinct_fault_dispute_game::OPSuccinctFaultDisputeGame::{
+    op_succinct_fault_dispute_game::OPSuccinctFaultDisputeGame::{
         self, OPSuccinctFaultDisputeGameInstance,
     },
 };
 use base_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
 use base_succinct_elfs::AGGREGATION_ELF;
 use base_succinct_host_utils::{
-    fetcher::{get_rpcs_from_env, OPSuccinctDataFetcher, RPCConfig},
-    host::OPSuccinctHost,
     OP_SUCCINCT_FAULT_DISPUTE_GAME_CONFIG_PATH,
+    fetcher::{OPSuccinctDataFetcher, RPCConfig, get_rpcs_from_env},
+    host::OPSuccinctHost,
 };
 use base_succinct_proof_utils::get_range_elf_embedded;
 use base_succinct_signer_utils::{Signer, SignerLock};
+use fault_proof::{
+    L2ProviderTrait, challenger::OPSuccinctChallenger, config::FaultDisputeGameConfig,
+    proposer::OPSuccinctProposer,
+};
 use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, ProvingKey};
 use tokio::task::JoinHandle;
-use tracing::{info, Level};
-
-use fault_proof::{
-    challenger::OPSuccinctChallenger, config::FaultDisputeGameConfig, proposer::OPSuccinctProposer,
-    L2ProviderTrait,
-};
+use tracing::{Level, info};
 use tracing_subscriber::{filter::Targets, fmt, prelude::*, util::SubscriberInitExt};
 
+use super::{
+    anvil::{AnvilFork, setup_anvil_chain},
+    contracts::{DeployedContracts, deploy_test_contracts},
+};
 use crate::common::{
+    ANVIL,
     constants::*,
     contracts::{deploy_mock_permissioned_game, send_contract_transaction},
-    new_challenger, new_proposer, start_challenger, start_proposer, warp_time, ANVIL,
-};
-
-use super::{
-    anvil::{setup_anvil_chain, AnvilFork},
-    contracts::{deploy_test_contracts, DeployedContracts},
+    new_challenger, new_proposer, start_challenger, start_proposer, warp_time,
 };
 
 /// Role for selecting which private key to use when creating providers
@@ -86,7 +85,7 @@ impl Drop for TestEnvironment {
 }
 
 /// Compute vkeys from ELF programs.
-/// Returns (aggregation_vkey, range_vkey_commitment) as B256 values.
+/// Returns (`aggregation_vkey`, `range_vkey_commitment`) as B256 values.
 /// Uses the same computation as `proposer.rs` and `config_common.rs`.
 pub async fn compute_vkeys() -> anyhow::Result<(B256, B256)> {
     let prover = ProverClient::builder().cpu().build().await;
@@ -187,12 +186,12 @@ impl TestEnvironment {
     /// # Arguments
     /// * `offset` - Positive offset creates future block (for testing misconfiguration). Negative
     ///   offset creates past block (for testing valid scenarios). Zero offset is equivalent to
-    ///   normal setup().
+    ///   normal `setup()`.
     ///
     /// # Examples
     /// * `setup_with_starting_block_offset(1_000_000)` - 1M blocks ahead (misconfigured)
     /// * `setup_with_starting_block_offset(-100)` - 100 blocks behind (valid)
-    /// * `setup_with_starting_block_offset(0)` - same as setup()
+    /// * `setup_with_starting_block_offset(0)` - same as `setup()`
     pub async fn setup_with_starting_block_offset(offset: i64) -> Result<Self> {
         init_logging();
 
@@ -369,8 +368,8 @@ impl TestEnvironment {
         Ok(legacy_impl)
     }
 
-    /// Set the respected game type on the AnchorStateRegistry.
-    /// In v5.0.0, respected game type is stored in AnchorStateRegistry, not OptimismPortal2.
+    /// Set the respected game type on the `AnchorStateRegistry`.
+    /// In v5.0.0, respected game type is stored in `AnchorStateRegistry`, not `OptimismPortal2`.
     pub async fn set_respected_game_type(&self, game_type: u32) -> Result<()> {
         let set_type_call = AnchorStateRegistry::setRespectedGameTypeCall { _gameType: game_type };
         self.send_anchor_state_registry_tx(set_type_call.abi_encode(), None).await?;
@@ -605,7 +604,7 @@ impl TestEnvironment {
 
     /// Deploy a new game implementation with custom vkeys via forge script and set it in the
     /// factory. This simulates a hardfork where the game implementation changes.
-    /// Note: This also sets the implementation in the factory, so calling set_game_implementation
+    /// Note: This also sets the implementation in the factory, so calling `set_game_implementation`
     /// afterwards is not required.
     pub async fn deploy_game_impl_with_vkeys(
         &self,
@@ -657,7 +656,7 @@ impl TestEnvironment {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("Forge script failed: {}", stderr);
+            anyhow::bail!("Forge script failed: {stderr}");
         }
 
         // Parse JSON output to extract gameImpl address

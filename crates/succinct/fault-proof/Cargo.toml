@@ -81,8 +81,8 @@ rstest.workspace = true
 which.workspace = true
 
 [features]
-default = ["ethereum"]
-ethereum = ["base-succinct-proof-utils/ethereum"]
+default = [ "ethereum" ]
+ethereum = [ "base-succinct-proof-utils/ethereum" ]
 integration = []
 
 [lints]

@@ -5,11 +5,10 @@
 
 use std::{collections::HashSet, io::Write, path::Path};
 
-use tempfile::NamedTempFile;
-
 use alloy_primitives::U256;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use tempfile::NamedTempFile;
 
 use crate::proposer::Game;
 
@@ -27,7 +26,11 @@ pub struct ProposerBackup {
 
 impl ProposerBackup {
     /// Create a new backup with the current version.
-    pub fn new(cursor: Option<U256>, games: Vec<Game>, anchor_game_index: Option<U256>) -> Self {
+    pub const fn new(
+        cursor: Option<U256>,
+        games: Vec<Game>,
+        anchor_game_index: Option<U256>,
+    ) -> Self {
         Self { version: BACKUP_VERSION, cursor, games, anchor_game_index }
     }
 
@@ -39,17 +42,18 @@ impl ProposerBackup {
     /// - Games with parent indices that don't exist in the backup (orphaned games)
     pub fn validate(&self) -> Result<()> {
         // Check: cursor exists but no games
-        if let Some(cursor) = self.cursor {
-            if self.games.is_empty() && cursor > U256::ZERO {
-                bail!("cursor exists but no games");
-            }
+        if let Some(cursor) = self.cursor
+            && self.games.is_empty()
+            && cursor > U256::ZERO
+        {
+            bail!("cursor exists but no games");
         }
 
         // Check: anchor game index references non-existent game
-        if let Some(anchor_idx) = self.anchor_game_index {
-            if !self.games.iter().any(|g| g.index == anchor_idx) {
-                bail!("anchor game index references non-existent game");
-            }
+        if let Some(anchor_idx) = self.anchor_game_index
+            && !self.games.iter().any(|g| g.index == anchor_idx)
+        {
+            bail!("anchor game index references non-existent game");
         }
 
         // Check: games with orphaned parent references (parent_index == u32::MAX means genesis)
@@ -121,12 +125,13 @@ impl ProposerBackup {
 mod tests {
     use super::*;
 
-    /// Schema guard: if this test fails, you likely need to bump BACKUP_VERSION.
+    /// Schema guard: if this test fails, you likely need to bump `BACKUP_VERSION`.
     /// This catches accidental schema changes that would break backup compatibility.
     #[test]
     fn backup_schema_guard() {
-        use crate::contract::{GameStatus, ProposalStatus};
         use alloy_primitives::{Address, B256};
+
+        use crate::contract::{GameStatus, ProposalStatus};
 
         // If Game fields change, this won't compile or the JSON keys will differ
         let game = Game {

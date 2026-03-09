@@ -41,7 +41,7 @@ sol! {
 
 impl From<BootInfo> for BootInfoStruct {
     fn from(boot_info: BootInfo) -> Self {
-        BootInfoStruct {
+        Self {
             l1Head: boot_info.l1_head,
             l2PreRoot: boot_info.agreed_l2_output_root,
             l2PostRoot: boot_info.claimed_l2_output_root,

@@ -1,6 +1,7 @@
+use std::path::PathBuf;
+
 use cargo_metadata::MetadataCommand;
 use lazy_static::lazy_static;
-use std::path::PathBuf;
 
 fn get_workspace_root() -> PathBuf {
     let metadata = MetadataCommand::new().exec().unwrap();

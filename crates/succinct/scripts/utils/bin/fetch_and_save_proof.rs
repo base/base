@@ -1,18 +1,19 @@
 #![allow(missing_docs)]
-use alloy_primitives::{hex, B256};
+use std::fs;
+
+use alloy_primitives::{B256, hex};
 use alloy_sol_types::SolValue;
 use anyhow::Result;
-use clap::Parser;
-use base_succinct_client_utils::{boot::BootInfoStruct, AGGREGATION_OUTPUTS_SIZE};
+use base_succinct_client_utils::{AGGREGATION_OUTPUTS_SIZE, boot::BootInfoStruct};
 use base_succinct_host_utils::proof_cache::{get_range_proof_dir, save_range_proof};
+use clap::Parser;
 use sp1_sdk::{
-    network::proto::{
-        types::{ExecutionStatus, FulfillmentStatus},
-        GetProofRequestStatusResponse,
-    },
     ProverClient, SP1ProofWithPublicValues,
+    network::proto::{
+        GetProofRequestStatusResponse,
+        types::{ExecutionStatus, FulfillmentStatus},
+    },
 };
-use std::fs;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

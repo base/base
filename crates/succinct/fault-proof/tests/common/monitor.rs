@@ -5,12 +5,12 @@ use std::time::Duration;
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use anyhow::Result;
-use fault_proof::contract::{GameStatus, ProposalStatus};
 use base_succinct_bindings::{
     dispute_game_factory::DisputeGameFactory,
-    base_succinct_fault_dispute_game::OPSuccinctFaultDisputeGame,
+    op_succinct_fault_dispute_game::OPSuccinctFaultDisputeGame,
 };
-use tokio::time::{sleep, Instant};
+use fault_proof::contract::{GameStatus, ProposalStatus};
+use tokio::time::{Instant, sleep};
 use tracing::info;
 
 use crate::common::TestEnvironment;
@@ -303,14 +303,9 @@ pub fn verify_games_resolved(
     winner_name: &str,
 ) -> Result<()> {
     if let Some((i, &status)) =
-        statuses.iter().enumerate().find(|(_, &status)| status != expected_status)
+        statuses.iter().enumerate().find(|&(_, &status)| status != expected_status)
     {
-        anyhow::bail!(
-            "Game {} did not resolve to {}: got status {:?} instead",
-            i,
-            winner_name,
-            status
-        );
+        anyhow::bail!("Game {i} did not resolve to {winner_name}: got status {status:?} instead");
     }
     info!("All {} games resolved correctly ({})", statuses.len(), winner_name);
     Ok(())
@@ -343,7 +338,7 @@ pub async fn wait_and_verify_game_resolutions<P: Provider>(
 
         let mut statuses = Vec::new();
 
-        for &game_address in game_addresses.iter() {
+        for &game_address in game_addresses {
             let game = OPSuccinctFaultDisputeGame::new(game_address, provider);
             let status = GameStatus::try_from(game.status().call().await?)?;
             statuses.push(status);

@@ -13,20 +13,20 @@ use base_succinct_host_utils::{
     metrics::MetricsGauge, witness_generation::WitnessGenerator,
 };
 use base_succinct_proof_utils::{
-    cluster_submit_agg_proof, cluster_submit_range_proof, get_range_elf_embedded,
-    ClusterProofConfig, ClusterProofHandle, ClusterProofHandleJson,
+    ClusterProofConfig, ClusterProofHandle, ClusterProofHandleJson, cluster_submit_agg_proof,
+    cluster_submit_range_proof, get_range_elf_embedded,
 };
 use sp1_sdk::{
-    network::{proto::types::ExecutionStatus, FulfillmentStrategy},
-    Elf, NetworkProver, ProveRequest, Prover, SP1ProofMode, SP1ProofWithPublicValues, SP1Stdin,
-    SP1_CIRCUIT_VERSION,
+    Elf, NetworkProver, ProveRequest, Prover, SP1_CIRCUIT_VERSION, SP1ProofMode,
+    SP1ProofWithPublicValues, SP1Stdin,
+    network::{FulfillmentStrategy, proto::types::ExecutionStatus},
 };
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::{
-    db::DriverDBClient, OPSuccinctRequest, ProgramConfig, RequestExecutionStatistics,
-    RequestStatus, RequestType, ValidityGauge,
+    OPSuccinctRequest, ProgramConfig, RequestExecutionStatistics, RequestStatus, RequestType,
+    ValidityGauge, db::DriverDBClient,
 };
 
 pub struct OPSuccinctProofRequester<H: OPSuccinctHost> {
@@ -116,7 +116,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
 
     /// Returns true if proofs are generated synchronously (mock mode only).
     /// Cluster mode now uses async submit-then-poll and enters the Prove state.
-    pub fn is_synchronous_proving(&self) -> bool {
+    pub const fn is_synchronous_proving(&self) -> bool {
         self.mock
     }
 
@@ -207,7 +207,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
         let mut boot_infos = Vec::with_capacity(range_proofs.len());
         let mut proofs = Vec::with_capacity(range_proofs.len());
 
-        for proof in range_proofs.iter() {
+        for proof in &range_proofs {
             let proof_bytes = proof.proof.as_ref().ok_or_else(|| {
                 anyhow::anyhow!(
                     "Range proof for blocks {}-{} is missing proof data.",
@@ -216,14 +216,16 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
                 )
             })?;
 
-            let mut proof_with_pv: SP1ProofWithPublicValues = bincode::serde::decode_from_slice(proof_bytes, bincode::config::standard()).map(|(v, _)| v)
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to deserialize range proof for blocks {}-{}: {e:?}",
-                        proof.start_block,
-                        proof.end_block,
-                    )
-                })?;
+            let mut proof_with_pv: SP1ProofWithPublicValues =
+                bincode::serde::decode_from_slice(proof_bytes, bincode::config::standard())
+                    .map(|(v, _)| v)
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Failed to deserialize range proof for blocks {}-{}: {e:?}",
+                            proof.start_block,
+                            proof.end_block,
+                        )
+                    })?;
 
             boot_infos.push(proof_with_pv.public_values.read());
             proofs.push(proof_with_pv.proof.clone());
@@ -434,8 +436,8 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
     ///
     /// If the request is a range proof and the number of failed requests is greater than 2 or the
     /// execution status is unexecutable, the request is split into two new requests. Otherwise,
-    /// add_new_ranges will insert the new request. This ensures better failure-resilience. If the
-    /// request to add two range requests fails, add_new_ranges will handle it gracefully by
+    /// `add_new_ranges` will insert the new request. This ensures better failure-resilience. If the
+    /// request to add two range requests fails, `add_new_ranges` will handle it gracefully by
     /// submitting the same range.
     #[tracing::instrument(
         name = "proof_requester.handle_failed_request",
@@ -592,7 +594,8 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
             RequestType::Range => {
                 if self.mock {
                     let proof = self.generate_mock_range_proof(&request, stdin).await?;
-                    let proof_bytes = bincode::serde::encode_to_vec(&proof, bincode::config::standard())?;
+                    let proof_bytes =
+                        bincode::serde::encode_to_vec(&proof, bincode::config::standard())?;
                     self.db_client.update_proof_to_complete(request.id, &proof_bytes).await?;
                 } else if self.cluster {
                     let cluster_config = self

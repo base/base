@@ -1,5 +1,5 @@
 use std::{
-    cmp::{min, Ordering},
+    cmp::{Ordering, min},
     env, fs,
     path::PathBuf,
     str::FromStr,
@@ -7,31 +7,33 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::rpc_types::{OutputResponse, SafeHeadResponse};
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{BlockId, BlockNumberOrTag};
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
+use alloy_network::{Network, primitives::HeaderResponse};
+use alloy_primitives::{Address, B256, Bytes, U64, U256, keccak256};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
-use anyhow::{anyhow, bail, Context, Result};
-use futures::{stream, StreamExt};
-use base_consensus_genesis::RollupConfig;
-use base_proof_host::HostConfig;
-use base_protocol::L2BlockInfo;
-use base_consensus_registry::{L1Config, Registry};
+use anyhow::{Context, Result, anyhow, bail};
 use base_alloy_consensus::OpBlock;
 use base_alloy_network::{Base, BlockResponse};
-use alloy_network::{primitives::HeaderResponse, Network};
+use base_consensus_genesis::RollupConfig;
+use base_consensus_registry::Registry;
+use base_proof_host::HostConfig;
+use base_protocol::L2BlockInfo;
 use base_succinct_client_utils::boot::BootInfoStruct;
+use futures::{StreamExt, stream};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::L2Output;
+use crate::{
+    L2Output,
+    rpc_types::{OutputResponse, SafeHeadResponse},
+};
 
 #[derive(Clone)]
-/// The OPSuccinctDataFetcher struct is used to fetch the L2 output data and L2 claim data for a
+/// The `OPSuccinctDataFetcher` struct is used to fetch the L2 output data and L2 claim data for a
 /// given block number. It is used to generate the boot info for the native host program.
 /// FIXME: Add retries for all requests (3 retries).
 pub struct OPSuccinctDataFetcher {
@@ -45,7 +47,7 @@ pub struct OPSuccinctDataFetcher {
 
 impl Default for OPSuccinctDataFetcher {
     fn default() -> Self {
-        OPSuccinctDataFetcher::new()
+        Self::new()
     }
 }
 
@@ -69,10 +71,10 @@ pub enum RPCMode {
 
 /// Gets the RPC URLs from environment variables.
 ///
-/// L1_RPC: The L1 RPC URL.
-/// L1_BEACON_RPC: The L1 beacon RPC URL.
-/// L2_RPC: The L2 RPC URL.
-/// L2_NODE_RPC: The L2 node RPC URL.
+/// `L1_RPC`: The L1 RPC URL.
+/// `L1_BEACON_RPC`: The L1 beacon RPC URL.
+/// `L2_RPC`: The L2 RPC URL.
+/// `L2_NODE_RPC`: The L2 node RPC URL.
 pub fn get_rpcs_from_env() -> RPCConfig {
     let l1_rpc = env::var("L1_RPC").expect("L1_RPC must be set");
     let maybe_l1_beacon_rpc = env::var("L1_BEACON_RPC").ok();
@@ -124,7 +126,7 @@ impl OPSuccinctDataFetcher {
         let l2_provider =
             Arc::new(ProviderBuilder::default().connect_http(rpc_config.l2_rpc.clone()));
 
-        OPSuccinctDataFetcher {
+        Self {
             rpc_config,
             l1_provider,
             l2_provider,
@@ -149,13 +151,15 @@ impl OPSuccinctDataFetcher {
         // Add warning if the chain is pre-Holocene, as derivation is significantly slower.
         let unix_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         if !rollup_config.is_holocene_active(unix_timestamp) {
-            tracing::warn!("Chain is not using Holocene hard fork. This will cause significant performance degradation compared to chains that have activated Holocene.");
+            tracing::warn!(
+                "Chain is not using Holocene hard fork. This will cause significant performance degradation compared to chains that have activated Holocene."
+            );
         }
 
         // Fetch and save L1 config based on the rollup config's L1 chain ID
         let l1_config_path = Self::fetch_and_save_l1_config(&rollup_config).await?;
 
-        Ok(OPSuccinctDataFetcher {
+        Ok(Self {
             rpc_config,
             l1_provider,
             l2_provider,
@@ -201,8 +205,8 @@ impl OPSuccinctDataFetcher {
                         // tx.inner.effective_gas_price * tx.inner.gas_used +
                         // tx.l1_block_info.l1_fee is the total fee for the transaction.
                         // tx.inner.effective_gas_price * tx.inner.gas_used is the tx fee on L2.
-                        tx.inner.effective_gas_price * tx.inner.gas_used as u128 +
-                            tx.l1_block_info.l1_fee.unwrap_or(0)
+                        tx.inner.effective_gas_price * tx.inner.gas_used as u128
+                            + tx.l1_block_info.l1_fee.unwrap_or(0)
                     })
                     .sum();
 
@@ -532,7 +536,7 @@ impl OPSuccinctDataFetcher {
 
     /// Get the L1 block from which the `l2_end_block` can be derived.
     ///
-    /// Use binary search to find the first L1 block with an L2 safe head >= l2_end_block.
+    /// Use binary search to find the first L1 block with an L2 safe head >= `l2_end_block`.
     pub async fn get_safe_l1_block_for_l2_block(&self, l2_end_block: u64) -> Result<(B256, u64)> {
         let latest_l1_header = self.get_l1_header(BlockId::finalized()).await?;
 
@@ -599,7 +603,9 @@ impl OPSuccinctDataFetcher {
             Ok(safe_head) => Ok(safe_head),
             Err(e) => {
                 if safe_db_fallback {
-                    tracing::warn!("SafeDB not activated - falling back to timestamp-based L1 head estimation. WARNING: This fallback method is more expensive and less reliable. Derivation may fail if the L2 block batch is posted after our estimated L1 head. Enable SafeDB on op-node to fix this.");
+                    tracing::warn!(
+                        "SafeDB not activated - falling back to timestamp-based L1 head estimation. WARNING: This fallback method is more expensive and less reliable. Derivation may fail if the L2 block batch is posted after our estimated L1 head. Enable SafeDB on op-node to fix this."
+                    );
                     // Fallback: estimate L1 block based on timestamp
                     let max_batch_post_delay_minutes = 40;
                     let l2_block_timestamp =
@@ -614,8 +620,7 @@ impl OPSuccinctDataFetcher {
                     self.find_l1_block_by_timestamp(target_timestamp).await
                 } else {
                     Err(anyhow::anyhow!(
-                        "SafeDB is not activated on your op-node and the `SAFE_DB_FALLBACK` flag is set to false. Please enable the safeDB on your op-node to fix this, or set `SAFE_DB_FALLBACK` flag to true, which will be more expensive: {}",
-                        e
+                        "SafeDB is not activated on your op-node and the `SAFE_DB_FALLBACK` flag is set to false. Please enable the safeDB on your op-node to fix this, or set `SAFE_DB_FALLBACK` flag to true, which will be more expensive: {e}"
                     ))
                 }
             }
@@ -642,7 +647,7 @@ impl OPSuccinctDataFetcher {
         Ok(L2BlockInfo::from_block_and_genesis(&block, &genesis)?)
     }
 
-    /// Get the L2 safe head corresponding to the L1 block number using optimism_safeHeadAtL1Block.
+    /// Get the L2 safe head corresponding to the L1 block number using `optimism_safeHeadAtL1Block`.
     pub async fn get_l2_safe_head_from_l1_block_number(&self, l1_block_number: u64) -> Result<u64> {
         let l1_block_number_hex = format!("0x{l1_block_number:x}");
         let result: SafeHeadResponse = self
@@ -670,7 +675,7 @@ impl OPSuccinctDataFetcher {
     }
 
     /// Get the L2 output data for a given block number and save the boot info to a file in the data
-    /// directory with block_number. Return the arguments to be passed to the native host for
+    /// directory with `block_number`. Return the arguments to be passed to the native host for
     /// datagen.
     pub async fn get_host_args(
         &self,
@@ -684,19 +689,17 @@ impl OPSuccinctDataFetcher {
 
         if l2_start_block >= l2_end_block {
             return Err(anyhow::anyhow!(
-                "L2 start block is greater than or equal to L2 end block. Start: {}, End: {}",
-                l2_start_block,
-                l2_end_block
+                "L2 start block is greater than or equal to L2 end block. Start: {l2_start_block}, End: {l2_end_block}"
             ));
         }
 
         let l2_provider = self.l2_provider.clone();
 
         // Get L2 output data.
-        let l2_output_block =
-            l2_provider.get_block_by_number(l2_start_block.into()).await?.ok_or_else(|| {
-                anyhow::anyhow!("Block not found for block number {}", l2_start_block)
-            })?;
+        let l2_output_block = l2_provider
+            .get_block_by_number(l2_start_block.into())
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Block not found for block number {l2_start_block}"))?;
         let l2_output_state_root = l2_output_block.header.state_root;
         let agreed_l2_head_hash = l2_output_block.header.hash;
         let l2_output_storage_hash = l2_provider
@@ -744,7 +747,9 @@ impl OPSuccinctDataFetcher {
             serde_json::from_reader(file)?
         } else {
             Registry::l1_config(rollup_config.l1_chain_id)
-                .ok_or_else(|| anyhow::anyhow!("No L1 config for chain ID {}", rollup_config.l1_chain_id))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("No L1 config for chain ID {}", rollup_config.l1_chain_id)
+                })?
                 .clone()
         };
 
@@ -766,10 +771,6 @@ impl OPSuccinctDataFetcher {
             enable_experimental_witness_endpoint: false,
         };
 
-        Ok(HostConfig {
-            request,
-            prover,
-            data_dir: None,
-        })
+        Ok(HostConfig { request, prover, data_dir: None })
     }
 }

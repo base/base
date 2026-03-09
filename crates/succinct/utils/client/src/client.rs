@@ -1,19 +1,20 @@
+use std::fmt::Debug;
+
 use alloy_consensus::BlockBody;
 use alloy_primitives::B256;
 use alloy_rlp::Decodable;
 use anyhow::Result;
-use base_consensus_derive::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
-use base_proof_driver::{Driver, DriverError, DriverPipeline, DriverResult, Executor, TipCursor};
-use base_consensus_genesis::RollupConfig;
-use base_proof_preimage::{CommsClient, PreimageKey};
-use base_proof::{OracleProviderError, HintType};
-use base_protocol::L2BlockInfo;
 use base_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType};
-use std::fmt::Debug;
+use base_consensus_derive::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
+use base_consensus_genesis::RollupConfig;
+use base_proof::{HintType, OracleProviderError};
+use base_proof_driver::{Driver, DriverError, DriverPipeline, DriverResult, Executor, TipCursor};
+use base_proof_preimage::{CommsClient, PreimageKey};
+use base_protocol::L2BlockInfo;
 use tracing::{error, info, warn};
 
 /// Fetches the safe head hash of the L2 chain based on the agreed upon L2 output root in the
-/// [BootInfo].
+/// [`BootInfo`].
 pub(crate) async fn fetch_safe_head_hash<O>(
     caching_oracle: &O,
     agreed_l2_output_root: B256,
@@ -45,7 +46,7 @@ where
 /// - `target`: The target block number.
 ///
 /// ## Returns
-/// - `Ok((l2_safe_head, output_root))` - A tuple containing the [L2BlockInfo] of the produced block
+/// - `Ok((l2_safe_head, output_root))` - A tuple containing the [`L2BlockInfo`] of the produced block
 ///   and the output root.
 /// - `Err(e)` - An error if the block could not be produced.
 pub async fn advance_to_target<E, DP, P>(
@@ -62,11 +63,11 @@ where
         // Check if we have reached the target block number.
         let pipeline_cursor = driver.cursor.read();
         let tip_cursor = pipeline_cursor.tip();
-        if let Some(tb) = target {
-            if tip_cursor.l2_safe_head.block_info.number >= tb {
-                info!(target: "client", "Derivation complete, reached L2 safe head.");
-                return Ok((tip_cursor.l2_safe_head, tip_cursor.l2_safe_head_output_root));
-            }
+        if let Some(tb) = target
+            && tip_cursor.l2_safe_head.block_info.number >= tb
+        {
+            info!(target: "client", "Derivation complete, reached L2 safe head.");
+            return Ok((tip_cursor.l2_safe_head, tip_cursor.l2_safe_head_output_root));
         }
 
         #[cfg(target_os = "zkvm")]
@@ -86,9 +87,8 @@ where
                 // Otherwise, we continue the loop to halt derivation on the next iteration.
                 if cfg.is_isthmus_active(driver.cursor.read().l2_safe_head().block_info.number) {
                     return Err(PipelineError::EndOfSource.crit().into());
-                } else {
-                    continue;
                 }
+                continue;
             }
             Err(e) => {
                 error!(target: "client", "Failed to produce payload: {:?}", e);
@@ -118,11 +118,14 @@ where
                     driver.pipeline.signal(Signal::FlushChannel).await?;
 
                     // Strip out all transactions that are not deposits.
-                    attributes.transactions = attributes.transactions.map(|txs: Vec<alloy_primitives::Bytes>| {
-                        txs.into_iter()
-                            .filter(|tx: &alloy_primitives::Bytes| !tx.is_empty() && tx[0] == OpTxType::Deposit as u8)
-                            .collect::<Vec<_>>()
-                    });
+                    attributes.transactions =
+                        attributes.transactions.map(|txs: Vec<alloy_primitives::Bytes>| {
+                            txs.into_iter()
+                                .filter(|tx: &alloy_primitives::Bytes| {
+                                    !tx.is_empty() && tx[0] == OpTxType::Deposit as u8
+                                })
+                                .collect::<Vec<_>>()
+                        });
 
                     // Retry the execution.
                     driver.executor.update_safe_head(tip_cursor.l2_safe_head_header.clone());
@@ -154,7 +157,9 @@ where
                     .as_ref()
                     .unwrap_or(&Vec::new())
                     .iter()
-                    .map(|tx: &alloy_primitives::Bytes| OpTxEnvelope::decode(&mut tx.as_ref()).map_err(DriverError::Rlp))
+                    .map(|tx: &alloy_primitives::Bytes| {
+                        OpTxEnvelope::decode(&mut tx.as_ref()).map_err(DriverError::Rlp)
+                    })
                     .collect::<DriverResult<Vec<OpTxEnvelope>, E::Error>>()?,
                 ommers: Vec::new(),
                 withdrawals: None,

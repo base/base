@@ -8,11 +8,11 @@ pub mod proposer;
 pub mod prover;
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{address, keccak256, Address, FixedBytes, B256, U256};
+use alloy_primitives::{Address, B256, FixedBytes, U256, address, keccak256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::Block;
 use alloy_sol_types::SolValue;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use base_alloy_network::Base;
 use base_alloy_rpc_types::Transaction;

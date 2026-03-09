@@ -1,12 +1,14 @@
-use crate::witness::BlobData;
 use alloc::{boxed::Box, vec::Vec};
+
 use alloy_consensus::Blob;
-use alloy_eips::eip4844::{kzg_to_versioned_hash, IndexedBlobHash};
+use alloy_eips::eip4844::{IndexedBlobHash, kzg_to_versioned_hash};
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_consensus_derive::{BlobProvider, BlobProviderError};
 use base_protocol::BlockInfo;
 use kzg_rs::get_kzg_settings;
+
+use crate::witness::BlobData;
 
 #[derive(Clone, Debug, Default)]
 pub struct BlobStore {
@@ -33,7 +35,7 @@ impl From<BlobData> for BlobStore {
         ) {
             Ok(true) => {} // Verification passed
             Ok(false) => panic!("KZG proof verification failed: invalid proofs"),
-            Err(e) => panic!("KZG proof verification error: {}", e),
+            Err(e) => panic!("KZG proof verification error: {e}"),
         }
 
         Self { versioned_blobs }

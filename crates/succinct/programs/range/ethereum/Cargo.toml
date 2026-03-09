@@ -27,7 +27,7 @@ base-succinct-range-utils.workspace = true
 tracing-subscriber = { workspace = true, optional = true }
 
 [features]
-tracing-subscriber = ["dep:tracing-subscriber"]
+tracing-subscriber = [ "dep:tracing-subscriber" ]
 
 [lints]
 workspace = true

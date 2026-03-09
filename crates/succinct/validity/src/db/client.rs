@@ -1,12 +1,13 @@
+use std::time::Duration;
+
 use alloy_primitives::{Address, B256};
 use anyhow::Result;
 use base_succinct_proof_utils::ClusterProofHandleJson;
 use serde_json::Value;
 use sqlx::{
-    postgres::{types::PgInterval, PgQueryResult},
     Error, PgPool,
+    postgres::{PgQueryResult, types::PgInterval},
 };
-use std::time::Duration;
 use tracing::info;
 
 use crate::{CommitmentConfig, DriverDBClient, OPSuccinctRequest, RequestStatus, RequestType};
@@ -20,7 +21,7 @@ impl DriverDBClient {
 
         info!("Database configured successfully.");
 
-        Ok(DriverDBClient { pool })
+        Ok(Self { pool })
     }
 
     /// Adds a chain lock to the database.
@@ -199,7 +200,7 @@ impl DriverDBClient {
     }
 
     /// Fetch all range requests that have one of the given statuses and start block >=
-    /// latest_contract_l2_block. Returns only the start and end block as tuples.
+    /// `latest_contract_l2_block`. Returns only the start and end block as tuples.
     pub async fn fetch_ranges_after_block(
         &self,
         statuses: &[RequestStatus],
@@ -357,7 +358,7 @@ impl DriverDBClient {
         Ok(result.count.unwrap_or(0))
     }
 
-    /// Fetch the sorted list of Aggregation proofs with status Unrequested that have a start_block
+    /// Fetch the sorted list of Aggregation proofs with status Unrequested that have a `start_block`
     /// >= latest_contract_l2_block.
     ///
     /// Checks that the request has the same range vkey commitment, aggregation vkey, and rollup
@@ -390,8 +391,8 @@ impl DriverDBClient {
         Ok(request)
     }
 
-    /// Fetch the first Range proof with status Unrequested that has a start_block >=
-    /// latest_contract_l2_block.
+    /// Fetch the first Range proof with status Unrequested that has a `start_block` >=
+    /// `latest_contract_l2_block`.
     pub async fn fetch_first_unrequested_range_proof(
         &self,
         latest_contract_l2_block: i64,
@@ -415,8 +416,8 @@ impl DriverDBClient {
         Ok(request)
     }
 
-    /// Fetch start and end blocks of all completed range proofs with matching range_vkey_commitment
-    /// and start_block >= latest_contract_l2_block
+    /// Fetch start and end blocks of all completed range proofs with matching `range_vkey_commitment`
+    /// and `start_block` >= `latest_contract_l2_block`
     pub async fn fetch_completed_ranges(
         &self,
         commitment: &CommitmentConfig,
@@ -440,7 +441,7 @@ impl DriverDBClient {
         Ok(blocks.iter().map(|block| (block.start_block, block.end_block)).collect())
     }
 
-    /// Update the l1_head_block_number for a request.
+    /// Update the `l1_head_block_number` for a request.
     pub async fn update_l1_head_block_number(
         &self,
         id: i64,
@@ -457,7 +458,7 @@ impl DriverDBClient {
         .await
     }
 
-    /// Update the prove_duration based on the current time and the proof_request_time.
+    /// Update the `prove_duration` based on the current time and the `proof_request_time`.
     pub async fn update_prove_duration(&self, id: i64) -> Result<PgQueryResult, Error> {
         sqlx::query!(
             r#"
@@ -525,7 +526,7 @@ impl DriverDBClient {
 
     /// Update the status of a request to Prove.
     ///
-    /// Updates the proof_request_time to the current time.
+    /// Updates the `proof_request_time` to the current time.
     pub async fn update_request_to_prove(
         &self,
         id: i64,
@@ -766,17 +767,19 @@ impl DriverDBClient {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{CommitmentConfig, OPSuccinctRequest, RequestMode, RequestStatus, RequestType};
+    use std::str::FromStr;
+
     use alloy_primitives::B256;
     use chrono::Local;
     use postgresql_embedded::{PostgreSQL, Settings};
     use sqlx::types::BigDecimal;
-    use std::str::FromStr;
+
+    use super::*;
+    use crate::{CommitmentConfig, OPSuccinctRequest, RequestMode, RequestStatus, RequestType};
 
     // ==================== Test Harness ====================
 
-    /// A test database instance that manages an embedded PostgreSQL server.
+    /// A test database instance that manages an embedded `PostgreSQL` server.
     /// Automatically cleans up when dropped.
     struct TestDb {
         #[allow(dead_code)] // Held to keep embedded PostgreSQL alive
@@ -974,7 +977,7 @@ mod tests {
         assert!(!c.is_chain_locked(999, L2ID, interval).await.unwrap());
     }
 
-    /// Tests batch chunking logic (BATCH_SIZE = 100) to avoid PostgreSQL parameter limit.
+    /// Tests batch chunking logic (`BATCH_SIZE` = 100) to avoid `PostgreSQL` parameter limit.
     #[tokio::test]
     async fn test_insert_requests_handles_large_batches() {
         let db = TestDb::new().await;

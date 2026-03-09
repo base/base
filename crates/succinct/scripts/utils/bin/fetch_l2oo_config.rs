@@ -1,22 +1,24 @@
 #![allow(missing_docs)]
+use std::{env, sync::Arc};
+
 use alloy_eips::BlockId;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use base_succinct_host_utils::{
+    OP_SUCCINCT_L2_OUTPUT_ORACLE_CONFIG_PATH,
     fetcher::{OPSuccinctDataFetcher, RPCMode},
     host::OPSuccinctHost,
-    setup_logger, OP_SUCCINCT_L2_OUTPUT_ORACLE_CONFIG_PATH,
+    setup_logger,
 };
 use base_succinct_proof_utils::initialize_host;
 use base_succinct_scripts::config_common::{
-    find_project_root, get_address, get_shared_config_data, write_config_file, TWO_WEEKS_IN_SECONDS,
+    TWO_WEEKS_IN_SECONDS, find_project_root, get_address, get_shared_config_data, write_config_file,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{env, sync::Arc};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// The config for deploying the OPSuccinctL2OutputOracle.
+/// The config for deploying the `OPSuccinctL2OutputOracle`.
 /// Note: The fields should be in alphabetical order for Solidity to parse it correctly.
 struct L2OOConfig {
     aggregation_vkey: String,
@@ -41,13 +43,13 @@ struct L2OOConfig {
 /// is deployed.
 ///
 /// Specifically, updates the following fields in `opsuccinctl2ooconfig.json`:
-/// - rollup_config_hash: Get the hash of the rollup config from the rollup config file.
-/// - l2_block_time: Get the block time from the rollup config.
-/// - starting_block_number: If `STARTING_BLOCK_NUMBER` is not set, set starting_block_number to the
+/// - `rollup_config_hash`: Get the hash of the rollup config from the rollup config file.
+/// - `l2_block_time`: Get the block time from the rollup config.
+/// - `starting_block_number`: If `STARTING_BLOCK_NUMBER` is not set, set `starting_block_number` to the
 ///   latest finalized block on L2.
-/// - starting_output_root: Set to the output root of the starting block number.
-/// - starting_timestamp: Set to the timestamp of the starting block number.
-/// - chain_id: Get the chain id from the rollup config.
+/// - `starting_output_root`: Set to the output root of the starting block number.
+/// - `starting_timestamp`: Set to the timestamp of the starting block number.
+/// - `chain_id`: Get the chain id from the rollup config.
 /// - vkey: Get the vkey from the aggregation program ELF.
 /// - owner: Set to the address associated with the private key.
 async fn update_l2oo_config() -> Result<()> {
@@ -75,7 +77,8 @@ async fn update_l2oo_config() -> Result<()> {
     let challenger = get_address("CHALLENGER", true);
 
     let proxy_admin = get_address("PROXY_ADMIN", false);
-    let base_succinct_l2_output_oracle_impl = get_address("OP_SUCCINCT_L2_OUTPUT_ORACLE_IMPL", false);
+    let base_succinct_l2_output_oracle_impl =
+        get_address("OP_SUCCINCT_L2_OUTPUT_ORACLE_IMPL", false);
 
     let fallback_timeout_secs = env::var("FALLBACK_TIMEOUT_SECS")
         .map(|p| p.parse().unwrap())
@@ -104,9 +107,7 @@ async fn update_l2oo_config() -> Result<()> {
             // NOT part of the chain state.
             if finalized_l2_block_number <= num_blocks_for_finality {
                 bail!(
-                    "finalized L2 block ({}) too low for finality window ({} blocks)",
-                    finalized_l2_block_number,
-                    num_blocks_for_finality,
+                    "finalized L2 block ({finalized_l2_block_number}) too low for finality window ({num_blocks_for_finality} blocks)",
                 );
             }
 

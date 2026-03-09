@@ -1,9 +1,9 @@
 //! Contract deployment utilities for E2E tests.
 use alloy_primitives::{Address, Bytes, TxKind, U256};
-use alloy_rpc_types_eth::{transaction::request::TransactionInput, TransactionRequest};
+use alloy_rpc_types_eth::{TransactionRequest, transaction::request::TransactionInput};
 use alloy_sol_types::SolConstructor;
 use alloy_transport_http::reqwest::Url;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use base_succinct_bindings::mock_permissioned_dispute_game::MockPermissionedDisputeGame;
 use base_succinct_signer_utils::SignerLock;
 use serde::{Deserialize, Serialize};
@@ -65,7 +65,7 @@ fn parse_forge_output(output: &str) -> Result<DeployedContracts> {
 
     // Parse the forge output structure
     let forge_output: ForgeOutput = serde_json::from_str(json_line)
-        .map_err(|e| anyhow!("Failed to parse forge output JSON: {}\n{}", e, json_line))?;
+        .map_err(|e| anyhow!("Failed to parse forge output JSON: {e}\n{json_line}"))?;
 
     if !forge_output.success {
         return Err(anyhow!("Forge script execution was not successful"));
@@ -101,11 +101,11 @@ pub async fn deploy_test_contracts(rpc_url: &str, private_key: &str) -> Result<D
         .env("RUST_LOG", "off")
         .current_dir(&contracts_dir)
         .output()
-        .map_err(|e| anyhow!("Failed to execute forge script: {}", e))?;
+        .map_err(|e| anyhow!("Failed to execute forge script: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!("Forge script failed: {}", stderr));
+        return Err(anyhow!("Forge script failed: {stderr}"));
     }
 
     // Parse the JSON output to extract contract addresses

@@ -70,8 +70,8 @@ base-succinct-build-utils.workspace = true
 postgresql_embedded = { version = "0.20", features = ["bundled"] }
 
 [features]
-default = ["ethereum"]
-ethereum = ["base-succinct-proof-utils/ethereum"]
+default = [ "ethereum" ]
+ethereum = [ "base-succinct-proof-utils/ethereum" ]
 
 [lints]
 workspace = true

@@ -3,11 +3,10 @@ use std::{fmt::Debug, sync::Arc};
 use anyhow::Result;
 use async_trait::async_trait;
 use base_consensus_derive::{BlobProvider, EthereumDataSource};
-use base_proof_driver::PipelineCursor;
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
-use base_proof_preimage::CommsClient;
-use base_proof::{OracleL1ChainProvider, OraclePipeline, OracleL2ChainProvider};
-use base_proof_preimage::FlushableCache;
+use base_proof::{OracleL1ChainProvider, OracleL2ChainProvider, OraclePipeline};
+use base_proof_driver::PipelineCursor;
+use base_proof_preimage::{CommsClient, FlushableCache};
 use base_succinct_client_utils::witness::executor::WitnessExecutor;
 use spin::RwLock;
 
@@ -25,7 +24,7 @@ where
     O: CommsClient + FlushableCache + Send + Sync + Debug,
     B: BlobProvider + Send + Sync + Debug + Clone,
 {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { _marker: std::marker::PhantomData }
     }
 }

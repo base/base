@@ -7,10 +7,10 @@ use std::{
 
 use alloy_primitives::Address;
 use alloy_transport_http::reqwest::Url;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use base_succinct_host_utils::network::parse_fulfillment_strategy;
 use serde::{Deserialize, Serialize};
-use sp1_sdk::{network::FulfillmentStrategy, SP1ProofMode};
+use sp1_sdk::{SP1ProofMode, network::FulfillmentStrategy};
 
 #[derive(Debug, Clone)]
 pub struct ProposerConfig {
@@ -20,7 +20,7 @@ pub struct ProposerConfig {
     /// The L2 RPC URL.
     pub l2_rpc: Url,
 
-    /// The address of the AnchorStateRegistry contract.
+    /// The address of the `AnchorStateRegistry` contract.
     pub anchor_state_registry_address: Address,
 
     /// The address of the factory contract.
@@ -49,7 +49,7 @@ pub struct ProposerConfig {
     /// The max number of defense tasks to run concurrently.
     pub max_concurrent_defense_tasks: u64,
 
-    /// Whether to fallback to timestamp-based L1 head estimation even though SafeDB is not
+    /// Whether to fallback to timestamp-based L1 head estimation even though `SafeDB` is not
     /// activated for op-node.
     pub safe_db_fallback: bool,
 
@@ -60,7 +60,7 @@ pub struct ProposerConfig {
     /// This limit prevents game creation when proving capacity is reached.
     pub fast_finality_proving_limit: u64,
 
-    /// Whether to expect NETWORK_PRIVATE_KEY to be an AWS KMS key ARN instead of a
+    /// Whether to expect `NETWORK_PRIVATE_KEY` to be an AWS KMS key ARN instead of a
     /// plaintext private key.
     pub use_kms_requester: bool,
 
@@ -91,9 +91,9 @@ fn parse_whitelist(whitelist_str: &str) -> Result<Option<Vec<Address>>> {
         .map(|addr_str| {
             let addr_str = addr_str.trim().trim_start_matches("0x");
             // Add 0x prefix since addresses are provided without it
-            let addr_with_prefix = format!("0x{}", addr_str);
+            let addr_with_prefix = format!("0x{addr_str}");
             Address::from_str(&addr_with_prefix)
-                .map_err(|e| anyhow::anyhow!("Failed to parse address '{}': {:?}", addr_str, e))
+                .map_err(|e| anyhow::anyhow!("Failed to parse address '{addr_str}': {e:?}"))
         })
         .collect();
 
@@ -244,8 +244,8 @@ impl ProofProviderConfig {
             )?,
             agg_proof_mode: if env::var("AGG_PROOF_MODE")
                 .unwrap_or("plonk".to_string())
-                .to_lowercase() ==
-                "groth16"
+                .to_lowercase()
+                == "groth16"
             {
                 SP1ProofMode::Groth16
             } else {
@@ -269,7 +269,7 @@ impl ProofProviderConfig {
             min_auction_period: env::var("MIN_AUCTION_PERIOD")
                 .unwrap_or("1".to_string())
                 .parse()?,
-            whitelist: parse_whitelist(&env::var("WHITELIST").unwrap_or("".to_string()))?,
+            whitelist: parse_whitelist(&env::var("WHITELIST").unwrap_or_default())?,
         })
     }
 }
@@ -279,7 +279,7 @@ pub struct ChallengerConfig {
     pub l1_rpc: Url,
     pub l2_rpc: Url,
 
-    /// The address of the AnchorStateRegistry contract.
+    /// The address of the `AnchorStateRegistry` contract.
     pub anchor_state_registry_address: Address,
 
     pub factory_address: Address,
@@ -337,7 +337,7 @@ impl ChallengerConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-/// The config for deploying the OPSuccinctFaultDisputeGame.
+/// The config for deploying the `OPSuccinctFaultDisputeGame`.
 /// Note: The fields should be in alphabetical order for Solidity to parse it correctly.
 pub struct FaultDisputeGameConfig {
     pub aggregation_vkey: String,
@@ -381,12 +381,12 @@ impl RangeSplitCount {
     }
 
     /// Returns a `RangeSplitCount` of one.
-    pub fn one() -> Self {
+    pub const fn one() -> Self {
         Self(NonZeroU8::new(1).expect("1 is non-zero"))
     }
 
     /// Convert to `usize`.
-    pub fn to_usize(self) -> usize {
+    pub const fn to_usize(self) -> usize {
         self.0.get() as usize
     }
 
@@ -464,8 +464,9 @@ impl FromStr for RangeSplitCount {
 
 #[cfg(test)]
 mod split_range_tests {
-    use crate::config::RangeSplitCount;
     use rstest::rstest;
+
+    use crate::config::RangeSplitCount;
 
     fn range_split_count(count: u8) -> RangeSplitCount {
         RangeSplitCount::new(count).expect("valid range split count")

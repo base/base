@@ -1,9 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use base_proof_preimage::{errors::{PreimageOracleError, PreimageOracleResult},
-CommsClient, HintWriterClient, PreimageKey, PreimageOracleClient,};
-use base_proof_preimage::FlushableCache;
+use base_proof_preimage::{
+    CommsClient, FlushableCache, HintWriterClient, PreimageKey, PreimageOracleClient,
+    errors::{PreimageOracleError, PreimageOracleResult},
+};
 use base_succinct_client_utils::witness::preimage_store::PreimageStore;
 
 #[derive(Clone, Debug)]

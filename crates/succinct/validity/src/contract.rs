@@ -1,6 +1,6 @@
 use alloy_primitives::Address;
 use anyhow::Result;
-use base_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, OPSuccinctL2OutputOracle};
+use base_succinct_host_utils::{OPSuccinctL2OutputOracle, fetcher::OPSuccinctDataFetcher};
 
 /// Get the latest proposed block number from the L2 output oracle.
 pub async fn get_latest_proposed_block_number(

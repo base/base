@@ -36,7 +36,7 @@ sol! {
         /// @notice Returns the UUID for a given dispute game configuration.
         function getGameUUID(GameType gameType, Claim rootClaim, bytes extraData) external pure returns (Hash uuid);
 
-        /// @notice Creates a new DisputeGame proxy contract.
+        /// @notice Creates a new `DisputeGame` proxy contract.
         function create(GameType gameType, Claim rootClaim, bytes extraData) external;
     }
 
@@ -64,7 +64,7 @@ sol! {
         function l2SequenceNumber() public pure returns (uint256 l2SequenceNumber_);
 
         /// @notice The L2 block number for which this game is proposing an output root.
-        /// @dev Alias for l2SequenceNumber() for backward compatibility.
+        /// @dev Alias for `l2SequenceNumber()` for backward compatibility.
         function l2BlockNumber() public pure returns (uint256 l2BlockNumber_);
 
         /// @notice Only the starting block number of the game.
@@ -150,7 +150,7 @@ sol! {
         function respectedGameType() external view returns (GameType);
     }
 
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
     #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
     /// @notice The current status of the dispute game.
     enum GameStatus {
@@ -162,7 +162,7 @@ sol! {
         DEFENDER_WINS
     }
 
-    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
     enum ProposalStatus {
         // The initial state of a new proposal.
         Unchallenged,

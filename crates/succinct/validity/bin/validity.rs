@@ -1,18 +1,19 @@
 #![recursion_limit = "256"]
 #![allow(missing_docs)]
 
+use std::sync::Arc;
+
 use alloy_provider::{Provider, ProviderBuilder};
 use anyhow::Result;
 use base_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher,
-    metrics::{init_metrics, MetricsGauge},
+    metrics::{MetricsGauge, init_metrics},
     setup_logger,
 };
 use base_succinct_proof_utils::initialize_host;
 use base_succinct_validity::{
-    read_proposer_env, DriverDBClient, Proposer, RequesterConfig, ValidityGauge,
+    DriverDBClient, Proposer, RequesterConfig, ValidityGauge, read_proposer_env,
 };
-use std::sync::Arc;
 use tikv_jemallocator::Jemalloc;
 use tracing::info;
 
@@ -34,7 +35,7 @@ async fn main() -> Result<()> {
     let provider = rustls::crypto::ring::default_provider();
     provider
         .install_default()
-        .map_err(|e| anyhow::anyhow!("Failed to install default provider: {:?}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to install default provider: {e:?}"))?;
 
     let args = Args::parse();
 

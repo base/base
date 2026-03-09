@@ -3,6 +3,13 @@ use std::sync::Arc;
 
 use alloy_provider::ProviderBuilder;
 use anyhow::Result;
+use base_succinct_host_utils::{
+    fetcher::OPSuccinctDataFetcher,
+    metrics::{MetricsGauge, init_metrics},
+    setup_logger,
+};
+use base_succinct_proof_utils::initialize_host;
+use base_succinct_signer_utils::SignerLock;
 use clap::Parser;
 use fault_proof::{
     config::ProposerConfig,
@@ -10,13 +17,6 @@ use fault_proof::{
     prometheus::ProposerGauge,
     proposer::OPSuccinctProposer,
 };
-use base_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher,
-    metrics::{init_metrics, MetricsGauge},
-    setup_logger,
-};
-use base_succinct_proof_utils::initialize_host;
-use base_succinct_signer_utils::SignerLock;
 use tikv_jemallocator::Jemalloc;
 
 #[global_allocator]

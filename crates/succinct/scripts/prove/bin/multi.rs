@@ -1,6 +1,11 @@
 #![allow(missing_docs)]
+use std::{
+    env, fs,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use anyhow::{Context, Result};
-use clap::Parser;
 use base_succinct_host_utils::{
     block_range::get_validated_block_range,
     fetcher::OPSuccinctDataFetcher,
@@ -16,12 +21,8 @@ use base_succinct_proof_utils::{
 };
 use base_succinct_prove::execute_multi;
 use base_succinct_scripts::HostExecutorArgs;
-use sp1_sdk::{utils, Elf, ProveRequest, Prover};
-use std::{
-    env, fs,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use clap::Parser;
+use sp1_sdk::{Elf, ProveRequest, Prover, utils};
 use tracing::{debug, info, warn};
 
 /// Execute the OP Succinct program for multiple blocks.

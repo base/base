@@ -4,19 +4,19 @@ use std::{num::NonZero, path::PathBuf, sync::Arc};
 use alloy_primitives::Address;
 use alloy_provider::ProviderBuilder;
 use anyhow::Result;
-use fault_proof::{
-    challenger::OPSuccinctChallenger,
-    config::{ChallengerConfig, ProofProviderConfig, RangeSplitCount},
-    contract::{AnchorStateRegistry, DisputeGameFactory},
-    proposer::OPSuccinctProposer,
-};
 use base_succinct_host_utils::{
     fetcher::{OPSuccinctDataFetcher, RPCConfig},
     host::OPSuccinctHost,
 };
 use base_succinct_proof_utils::initialize_host;
 use base_succinct_signer_utils::SignerLock;
-use sp1_sdk::{network::FulfillmentStrategy, SP1ProofMode};
+use fault_proof::{
+    challenger::OPSuccinctChallenger,
+    config::{ChallengerConfig, ProofProviderConfig, RangeSplitCount},
+    contract::{AnchorStateRegistry, DisputeGameFactory},
+    proposer::OPSuccinctProposer,
+};
+use sp1_sdk::{SP1ProofMode, network::FulfillmentStrategy};
 use tracing::Instrument;
 
 pub async fn new_proposer(
@@ -28,7 +28,8 @@ pub async fn new_proposer(
     backup_path: Option<PathBuf>,
 ) -> Result<OPSuccinctProposer<fault_proof::L1Provider, impl OPSuccinctHost + Clone>> {
     // Create signer directly from private key
-    let signer = SignerLock::new(base_succinct_signer_utils::Signer::new_local_signer(private_key)?);
+    let signer =
+        SignerLock::new(base_succinct_signer_utils::Signer::new_local_signer(private_key)?);
 
     // Create proposer config with test-specific settings
     let config = fault_proof::config::ProposerConfig {
@@ -108,7 +109,8 @@ pub async fn new_challenger(
     game_type: u32,
     malicious_percentage: Option<f64>,
 ) -> Result<OPSuccinctChallenger<fault_proof::L1Provider>> {
-    let signer = SignerLock::new(base_succinct_signer_utils::Signer::new_local_signer(private_key)?);
+    let signer =
+        SignerLock::new(base_succinct_signer_utils::Signer::new_local_signer(private_key)?);
 
     let config = ChallengerConfig {
         l1_rpc: rpc_config.l1_rpc.clone(),

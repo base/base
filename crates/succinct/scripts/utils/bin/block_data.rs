@@ -1,13 +1,14 @@
 #![allow(missing_docs)]
-use anyhow::Result;
-use clap::Parser;
-use log::info;
-use base_succinct_host_utils::fetcher::{BlockInfo, OPSuccinctDataFetcher};
-use sp1_sdk::utils;
 use std::{
     fs::{self},
     path::PathBuf,
 };
+
+use anyhow::Result;
+use base_succinct_host_utils::fetcher::{BlockInfo, OPSuccinctDataFetcher};
+use clap::Parser;
+use log::info;
+use sp1_sdk::utils;
 
 /// The arguments for the host executable.
 #[derive(Debug, Clone, Parser)]

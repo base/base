@@ -85,8 +85,8 @@ sp1-sdk.workspace = true
 base-succinct-build-utils.workspace = true
 
 [features]
-default = ["ethereum"]
-ethereum = ["base-succinct-proof-utils/ethereum"]
+default = [ "ethereum" ]
+ethereum = [ "base-succinct-proof-utils/ethereum" ]
 
 [lints]
 workspace = true

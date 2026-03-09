@@ -2,25 +2,26 @@
 use std::{env, sync::Arc};
 
 use alloy_eips::BlockId;
-use anyhow::{bail, Result};
-use fault_proof::config::FaultDisputeGameConfig;
+use anyhow::{Result, bail};
 use base_succinct_host_utils::{
+    OP_SUCCINCT_FAULT_DISPUTE_GAME_CONFIG_PATH,
     fetcher::{OPSuccinctDataFetcher, RPCMode},
     host::OPSuccinctHost,
-    setup_logger, OP_SUCCINCT_FAULT_DISPUTE_GAME_CONFIG_PATH,
+    setup_logger,
 };
 use base_succinct_proof_utils::initialize_host;
 use base_succinct_scripts::config_common::{
-    find_project_root, get_shared_config_data, parse_addresses, write_config_file,
-    TWO_WEEKS_IN_SECONDS,
+    TWO_WEEKS_IN_SECONDS, find_project_root, get_shared_config_data, parse_addresses,
+    write_config_file,
 };
+use fault_proof::config::FaultDisputeGameConfig;
 use serde_json::Value;
 
 /// Updates and generates the fault dispute game configuration file.
 ///
 /// This function fetches the necessary configuration parameters from environment variables
 /// and shared configuration data to generate a JSON configuration file used for deploying
-/// the OPSuccinctFaultDisputeGame contract.
+/// the `OPSuccinctFaultDisputeGame` contract.
 ///
 /// # Environment Variables
 ///
@@ -51,10 +52,10 @@ use serde_json::Value;
 ///   (ignored if permissionless mode is true)
 ///
 /// ## Contract Configuration
-/// - `OPTIMISM_PORTAL2_ADDRESS`: Address of the OptimismPortal2 contract. If not provided or set to
-///   zero address, a MockOptimismPortal2 will be deployed (default: zero address)
-/// - `SYSTEM_CONFIG_ADDRESS`: Address of the SystemConfig contract. If not provided, it is
-///   auto-derived from the rollup config. For testing, if set to zero address, a MockSystemConfig
+/// - `OPTIMISM_PORTAL2_ADDRESS`: Address of the `OptimismPortal2` contract. If not provided or set to
+///   zero address, a `MockOptimismPortal2` will be deployed (default: zero address)
+/// - `SYSTEM_CONFIG_ADDRESS`: Address of the `SystemConfig` contract. If not provided, it is
+///   auto-derived from the rollup config. For testing, if set to zero address, a `MockSystemConfig`
 ///   will be deployed (default: derived from rollup config)
 ///
 /// ## Starting State Configuration
@@ -167,9 +168,7 @@ async fn update_fdg_config() -> Result<()> {
             // NOT part of the chain state.
             if finalized_l2_block_number <= num_blocks_for_finality {
                 bail!(
-                    "finalized L2 block ({}) too low for finality window ({} blocks)",
-                    finalized_l2_block_number,
-                    num_blocks_for_finality,
+                    "finalized L2 block ({finalized_l2_block_number}) too low for finality window ({num_blocks_for_finality} blocks)",
                 );
             }
 

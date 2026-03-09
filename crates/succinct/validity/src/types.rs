@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use alloy_primitives::B256;
-use base64::{engine::general_purpose, Engine as _};
 use base_succinct_client_utils::precompiles::cycle_tracker::keys;
+use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use sp1_sdk::{
-    network::{proto::types::ProofRequest, FulfillmentStrategy},
     ExecutionReport, NetworkProver, SP1ProofMode, SP1ProvingKey, SP1VerifyingKey,
+    network::{FulfillmentStrategy, proto::types::ProofRequest},
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -61,10 +61,10 @@ pub enum UnclaimDescription {
 impl From<String> for UnclaimDescription {
     fn from(description: String) -> Self {
         match description.as_str().to_lowercase().as_str() {
-            "unexpected prover error" => UnclaimDescription::UnexpectedProverError,
-            "program execution error" => UnclaimDescription::ProgramExecutionError,
-            "cycle limit exceeded" => UnclaimDescription::CycleLimitExceeded,
-            _ => UnclaimDescription::Other,
+            "unexpected prover error" => Self::UnexpectedProverError,
+            "program execution error" => Self::ProgramExecutionError,
+            "cycle limit exceeded" => Self::CycleLimitExceeded,
+            _ => Self::Other,
         }
     }
 }

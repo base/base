@@ -1,7 +1,8 @@
 #![allow(missing_docs)]
+use std::env;
+
 use alloy_primitives::{Address, B256};
 use anyhow::{Context, Result};
-use clap::Parser;
 use base_succinct_client_utils::{boot::BootInfoStruct, types::u32_to_u8};
 use base_succinct_elfs::AGGREGATION_ELF;
 use base_succinct_host_utils::{
@@ -13,12 +14,13 @@ use base_succinct_host_utils::{
 use base_succinct_proof_utils::{
     cluster_agg_proof, cluster_setup_keys, get_range_elf_embedded, is_cluster_mode,
 };
+use clap::Parser;
 use sp1_sdk::{
-    blocking::{self, Prover as BlockingProver},
-    utils, Elf, HashableKey, ProveRequest, Prover, ProvingKey, SP1Proof, SP1ProofMode,
+    Elf, HashableKey, ProveRequest, Prover, ProvingKey, SP1Proof, SP1ProofMode,
     SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey,
+    blocking::{self, Prover as BlockingProver},
+    utils,
 };
-use std::env;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -39,7 +41,7 @@ struct Args {
     #[arg(default_value = ".env", short, long)]
     env_file: String,
 
-    /// Cluster proving timeout in seconds (only used when SP1_PROVER=cluster).
+    /// Cluster proving timeout in seconds (only used when `SP1_PROVER=cluster`).
     #[arg(long, default_value = "21600")]
     cluster_timeout: u64,
 }
@@ -61,7 +63,7 @@ async fn load_aggregation_proof_data(
 
         let prover = blocking::CpuProver::new();
 
-        for proof_name in proof_names.iter() {
+        for proof_name in &proof_names {
             let proof_path = proof_directory.join(format!("{proof_name}.bin"));
             if !proof_path.exists() {
                 panic!("Proof file not found: {}", proof_path.display());

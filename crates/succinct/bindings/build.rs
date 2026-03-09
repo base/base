@@ -63,7 +63,7 @@ fn main() -> anyhow::Result<()> {
     let status = forge_command.current_dir(&contracts_package_path).status()?;
 
     if !status.success() {
-        anyhow::bail!("Forge command failed with exit code: {}", status);
+        anyhow::bail!("Forge command failed with exit code: {status}");
     }
 
     rewrite_alloy_imports(bindings_codegen_path.as_std_path())?;

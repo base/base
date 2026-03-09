@@ -1,12 +1,13 @@
+use std::sync::{Arc, Mutex};
+
 use alloy_consensus::Blob;
-use alloy_eips::eip4844::{env_settings::EnvKzgSettings, IndexedBlobHash};
+use alloy_eips::eip4844::{IndexedBlobHash, env_settings::EnvKzgSettings};
 use anyhow::Result;
 use async_trait::async_trait;
 use base_consensus_derive::BlobProvider;
 use base_protocol::BlockInfo;
-use kzg_rs::{Blob as KzgRsBlob, Bytes48};
 use base_succinct_client_utils::witness::BlobData;
-use std::sync::{Arc, Mutex};
+use kzg_rs::{Blob as KzgRsBlob, Bytes48};
 
 #[derive(Clone, Debug)]
 pub struct OnlineBlobStore<T: BlobProvider> {

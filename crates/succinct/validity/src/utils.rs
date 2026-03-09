@@ -1,6 +1,7 @@
-use anyhow::{anyhow, Result};
-use base_succinct_host_utils::fetcher::BlockInfo;
 use std::{collections::HashMap, ops::Range};
+
+use anyhow::{Result, anyhow};
+use base_succinct_host_utils::fetcher::BlockInfo;
 
 /// Identifies gaps not covered by the given sub-ranges in the overall range.
 ///
@@ -47,7 +48,7 @@ pub fn find_gaps(overall_start: i64, overall_end: i64, ranges: &[(i64, i64)]) ->
 /// # Arguments
 /// * `disjoint_ranges` - The ranges to split based on gas usage
 /// * `gas_limit` - Maximum gas allowed per range
-/// * `block_infos` - Map of block number to BlockInfo for all blocks in the ranges
+/// * `block_infos` - Map of block number to `BlockInfo` for all blocks in the ranges
 ///
 /// # Example
 ///
@@ -80,10 +81,7 @@ pub fn get_ranges_to_prove_by_gas(
         // Note: We don't prove the start block, only use its hash as starting point
         for block_num in (start + 1)..=end {
             let block_info = block_infos.get(&(block_num)).ok_or(anyhow!(
-                "Missing BlockInfo for block {} in range ({}, {})",
-                block_num,
-                start,
-                end
+                "Missing BlockInfo for block {block_num} in range ({start}, {end})"
             ))?;
 
             // Validate block number consistency
@@ -96,8 +94,8 @@ pub fn get_ranges_to_prove_by_gas(
             }
 
             // Check if adding this block would exceed gas limit or block count limit
-            if (accumulated_gas > 0 && accumulated_gas + block_info.gas_used > evm_gas_limit) ||
-                (range_proof_interval > 0 && block_num - current_start > range_proof_interval)
+            if (accumulated_gas > 0 && accumulated_gas + block_info.gas_used > evm_gas_limit)
+                || (range_proof_interval > 0 && block_num - current_start > range_proof_interval)
             {
                 // Create a range from current_start to the previous block
                 ranges.push(current_start..block_num - 1);
@@ -115,10 +113,10 @@ pub fn get_ranges_to_prove_by_gas(
     }
 
     // Remove the last range if it's empty
-    if let Some(r) = ranges.last() {
-        if r.is_empty() {
-            ranges.pop();
-        }
+    if let Some(r) = ranges.last()
+        && r.is_empty()
+    {
+        ranges.pop();
     }
 
     Ok(ranges)
@@ -160,10 +158,10 @@ pub fn get_ranges_to_prove_by_blocks(
     // For the last range, remove it if it's less than range_proof_interval. This is to ensure when
     // inserting the ranges near the tip, only requests of size range_proof_interval are
     // inserted.
-    if let Some(r) = ranges.last() {
-        if r.end - r.start < range_proof_interval {
-            ranges.pop();
-        }
+    if let Some(r) = ranges.last()
+        && r.end - r.start < range_proof_interval
+    {
+        ranges.pop();
     }
 
     ranges
@@ -202,9 +200,11 @@ fn merge_ranges(mut ranges: Vec<Range<i64>>) -> Vec<Range<i64>> {
 #[cfg(test)]
 #[allow(clippy::single_range_in_vec_init)]
 mod tests {
-    use super::*;
-    use base_succinct_host_utils::fetcher::BlockInfo;
     use std::collections::HashMap;
+
+    use base_succinct_host_utils::fetcher::BlockInfo;
+
+    use super::*;
 
     // Tests for find_gaps
     macro_rules! test_find_gaps {

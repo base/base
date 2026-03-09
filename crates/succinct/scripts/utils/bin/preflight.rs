@@ -9,11 +9,7 @@ use alloy_provider::{Provider, ProviderBuilder};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use alloy_transport_http::reqwest::Url;
-use anyhow::{anyhow, Context, Result};
-use clap::Parser;
-use fault_proof::contract::{
-    AnchorStateRegistry, DisputeGameFactory, OPSuccinctFaultDisputeGame, ProposalStatus,
-};
+use anyhow::{Context, Result, anyhow};
 use base_succinct_client_utils::boot::BootInfoStruct;
 use base_succinct_elfs::AGGREGATION_ELF;
 use base_succinct_host_utils::{
@@ -25,7 +21,11 @@ use base_succinct_host_utils::{
     witness_generation::WitnessGenerator,
 };
 use base_succinct_proof_utils::{get_range_elf_embedded, initialize_host};
-use sp1_sdk::{utils, Elf, ProveRequest, Prover, ProverClient, ProvingKey, SP1ProofMode};
+use clap::Parser;
+use fault_proof::contract::{
+    AnchorStateRegistry, DisputeGameFactory, OPSuccinctFaultDisputeGame, ProposalStatus,
+};
+use sp1_sdk::{Elf, ProveRequest, Prover, ProverClient, ProvingKey, SP1ProofMode, utils};
 use tracing::info;
 
 #[derive(Parser, Debug)]
@@ -37,7 +37,7 @@ struct Args {
 }
 
 /// Fetches the block number when the game implementation was set for the given game type.
-/// Queries the ImplementationSet event from the DisputeGameFactory contract.
+/// Queries the `ImplementationSet` event from the `DisputeGameFactory` contract.
 /// Uses chunked queries to avoid exceeding RPC provider's max block range limits.
 async fn get_implementation_set_block(
     factory_address: Address,
@@ -86,7 +86,7 @@ async fn get_implementation_set_block(
         // If we found any events, return the most recent one
         if !logs.is_empty() {
             let (_event, log) = logs.last().ok_or_else(|| {
-                anyhow!("No ImplementationSet event found for game type {}", game_type)
+                anyhow!("No ImplementationSet event found for game type {game_type}")
             })?;
 
             let block_number = log
@@ -103,8 +103,7 @@ async fn get_implementation_set_block(
         // If we've reached block 0 and haven't found anything, error out
         if start_block == 0 {
             return Err(anyhow!(
-                "No ImplementationSet event found for game type {} in entire chain history",
-                game_type
+                "No ImplementationSet event found for game type {game_type} in entire chain history"
             ));
         }
 
@@ -279,9 +278,8 @@ async fn main() -> Result<()> {
         "plonk" => SP1ProofMode::Plonk,
         other => {
             return Err(anyhow!(
-                "Invalid AGG_PROOF_MODE '{}'. Expected one of: plonk, groth16",
-                other
-            ))
+                "Invalid AGG_PROOF_MODE '{other}'. Expected one of: plonk, groth16"
+            ));
         }
     };
     info!("Aggregation proof mode: {:?}", agg_proof_mode);

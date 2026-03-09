@@ -2,10 +2,10 @@
 //! the preimage oracle.
 
 use alloy_primitives::{B256, Keccak256, U256};
-#[cfg(feature = "serde")]
-use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 #[cfg(feature = "rkyv")]
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+#[cfg(feature = "serde")]
+use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 
 use crate::errors::PreimageOracleError;
 
