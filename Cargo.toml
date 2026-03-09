@@ -27,6 +27,7 @@ members = [
   "crates/proof/tee/core",
   "crates/proof/tee/client",
   "crates/proof/tee/server",
+  "crates/proof/zk/client",
   "crates/proof/transport",
   "crates/proof/contracts",
   "crates/proof/rpc",
@@ -226,6 +227,7 @@ base-enclave-server = { path = "crates/proof/tee/server" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }
+base-zk-client = { path = "crates/proof/zk/client" }
 base-challenger = { path = "crates/proof/challenge" }
 base-proof-transport = { path = "crates/proof/transport" }
 
@@ -353,6 +355,12 @@ tokio-tungstenite = "0.28.0"
 futures = "0.3.31"
 reqwest = "0.13.1"
 async-trait = "0.1.83"
+
+# grpc
+prost = "0.14"
+tonic = "0.14"
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
 
 # rpc
 jsonrpsee = "0.26.0"

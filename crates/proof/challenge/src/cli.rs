@@ -81,6 +81,26 @@ pub struct ChallengerArgs {
     #[arg(long = "zk-proof-service-endpoint", env = "CHALLENGER_ZK_PROOF_SERVICE_ENDPOINT")]
     pub zk_proof_service_endpoint: Url,
 
+    /// Timeout for establishing the initial gRPC connection to the ZK proof
+    /// service (e.g., "10s", "1m").
+    #[arg(
+        long = "zk-connect-timeout",
+        env = "CHALLENGER_ZK_CONNECT_TIMEOUT",
+        default_value = "10s",
+        value_parser = humantime::parse_duration
+    )]
+    pub zk_connect_timeout: Duration,
+
+    /// Timeout for individual gRPC requests to the ZK proof service
+    /// (e.g., "30s", "1m").
+    #[arg(
+        long = "zk-request-timeout",
+        env = "CHALLENGER_ZK_REQUEST_TIMEOUT",
+        default_value = "30s",
+        value_parser = humantime::parse_duration
+    )]
+    pub zk_request_timeout: Duration,
+
     /// URL of the signer sidecar JSON-RPC endpoint (for production).
     /// Must be used together with --signer-address.
     #[arg(long = "signer-endpoint", env = "CHALLENGER_SIGNER_ENDPOINT")]
@@ -114,6 +134,8 @@ impl std::fmt::Debug for ChallengerArgs {
             .field("anchor_state_registry_addr", &self.anchor_state_registry_addr)
             .field("poll_interval", &self.poll_interval)
             .field("zk_proof_service_endpoint", &self.zk_proof_service_endpoint)
+            .field("zk_connect_timeout", &self.zk_connect_timeout)
+            .field("zk_request_timeout", &self.zk_request_timeout)
             .field("signer_endpoint", &self.signer_endpoint)
             .field("signer_address", &self.signer_address)
             .field("lookback_games", &self.lookback_games)
