@@ -1495,14 +1495,21 @@ mod tests {
     struct RecoveryMockVerifier {
         l2_block_number: u64,
         root_claim: B256,
+        /// Proxy addresses for which `game_info` should return an error.
+        error_proxies: Vec<Address>,
     }
 
     #[async_trait]
     impl base_proof_contracts::AggregateVerifierClient for RecoveryMockVerifier {
         async fn game_info(
             &self,
-            _: Address,
+            proxy: Address,
         ) -> Result<base_proof_contracts::GameInfo, base_proof_contracts::ContractError> {
+            if self.error_proxies.contains(&proxy) {
+                return Err(base_proof_contracts::ContractError::Validation(
+                    "simulated game_info RPC error".into(),
+                ));
+            }
             Ok(base_proof_contracts::GameInfo {
                 root_claim: self.root_claim,
                 l2_block_number: self.l2_block_number,
@@ -1587,7 +1594,11 @@ mod tests {
     async fn test_recover_latest_game_no_games() {
         let driver = recovery_driver(
             RecoveryMockFactory { games: vec![], error_indices: vec![] },
-            RecoveryMockVerifier { l2_block_number: 100, root_claim: B256::ZERO },
+            RecoveryMockVerifier {
+                l2_block_number: 100,
+                root_claim: B256::ZERO,
+                error_proxies: vec![],
+            },
             0,
         );
         let result = driver.recover_latest_game().await.expect("should not error");
@@ -1599,7 +1610,7 @@ mod tests {
         let root = B256::repeat_byte(0xAA);
         let driver = recovery_driver(
             RecoveryMockFactory { games: vec![(42, Address::ZERO)], error_indices: vec![] },
-            RecoveryMockVerifier { l2_block_number: 500, root_claim: root },
+            RecoveryMockVerifier { l2_block_number: 500, root_claim: root, error_proxies: vec![] },
             42,
         );
 
@@ -1620,7 +1631,11 @@ mod tests {
                 games: vec![(99, Address::ZERO), (88, Address::ZERO)],
                 error_indices: vec![],
             },
-            RecoveryMockVerifier { l2_block_number: 100, root_claim: B256::ZERO },
+            RecoveryMockVerifier {
+                l2_block_number: 100,
+                root_claim: B256::ZERO,
+                error_proxies: vec![],
+            },
             42,
         );
         let result = driver.recover_latest_game().await.expect("should not error");
@@ -1638,7 +1653,7 @@ mod tests {
                 ],
                 error_indices: vec![],
             },
-            RecoveryMockVerifier { l2_block_number: 200, root_claim: root },
+            RecoveryMockVerifier { l2_block_number: 200, root_claim: root, error_proxies: vec![] },
             42,
         );
 
@@ -1662,7 +1677,7 @@ mod tests {
                 ],
                 error_indices: vec![1],
             },
-            RecoveryMockVerifier { l2_block_number: 300, root_claim: root },
+            RecoveryMockVerifier { l2_block_number: 300, root_claim: root, error_proxies: vec![] },
             42,
         );
 
@@ -1673,6 +1688,37 @@ mod tests {
             .expect("should continue past errored index and find earlier game");
         assert_eq!(state.game_index, 0);
         assert_eq!(state.l2_block_number, 300);
+    }
+
+    #[tokio::test]
+    async fn test_recover_latest_game_continues_on_game_info_error() {
+        let root = B256::repeat_byte(0xDD);
+        let error_proxy = Address::repeat_byte(0xEE);
+        let healthy_proxy = Address::repeat_byte(0xFF);
+        let driver = recovery_driver(
+            RecoveryMockFactory {
+                games: vec![
+                    (42, healthy_proxy), // index 0: match, game_info succeeds
+                    (42, error_proxy),   // index 1: match, but game_info will error
+                ],
+                error_indices: vec![],
+            },
+            RecoveryMockVerifier {
+                l2_block_number: 400,
+                root_claim: root,
+                error_proxies: vec![error_proxy],
+            },
+            42,
+        );
+
+        let state = driver
+            .recover_latest_game()
+            .await
+            .expect("should not error")
+            .expect("should continue past game_info error and find earlier game");
+        assert_eq!(state.game_index, 0);
+        assert_eq!(state.l2_block_number, 400);
+        assert_eq!(state.output_root, root);
     }
 
     #[tokio::test]
