@@ -134,7 +134,7 @@ impl DisputeGameFactoryClient for DisputeGameFactoryContractClient {
     }
 }
 
-/// Encodes the `extraData` for `DisputeGameFactory.create()`.
+/// Encodes the `extraData` for `DisputeGameFactory.createWithInitData()`.
 ///
 /// Format: `l2BlockNumber(32) + parentIndex(4) + intermediateRoots(32 * N)`.
 pub fn encode_extra_data(
