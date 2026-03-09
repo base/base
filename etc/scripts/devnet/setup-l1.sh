@@ -8,9 +8,9 @@ SLOT_DURATION="${SLOT_DURATION:-2}"
 L1_DATA_DIR="${L1_DATA_DIR:-/data}"
 TEMPLATE_DIR="${TEMPLATE_DIR:-/templates}"
 
-# Error if genesis already exists (run devnet-down first)
+# Error if genesis already exists (run devnet down first)
 if [ -f "$OUTPUT_DIR/el/genesis.json" ] || [ -f "$OUTPUT_DIR/cl/genesis.ssz" ]; then
-  echo "ERROR: L1 genesis already exists. Run 'just devnet-down' first." >&2
+  echo "ERROR: L1 genesis already exists. Run 'just devnet down' first." >&2
   exit 1
 fi
 
