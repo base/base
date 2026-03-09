@@ -1,30 +1,36 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
+use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
 use base_alloy_network::Base;
 use base_consensus_engine::{Engine, EngineState};
 use base_consensus_genesis::RollupConfig;
+use base_consensus_rpc::RpcBuilder;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use super::LocalEngineActor;
 use crate::{
-    DelegateL2Client, DelegateL2DerivationActor, EngineActor, EngineActorRequest, EngineConfig,
-    EngineProcessor, EngineRpcProcessor, NodeActor, QueuedDerivationEngineClient,
-    QueuedEngineDerivationClient,
+    BlockStream, DelegateL2Client, DelegateL2DerivationActor, EngineActor, EngineActorRequest,
+    EngineConfig, EngineProcessor, EngineRpcProcessor, L1Config, L1WatcherActor, NodeActor,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
+    QueuedL1WatcherDerivationClient, RpcActor, RpcContext,
+    service::node::{FINALIZED_STREAM_POLL_INTERVAL, HEAD_STREAM_POLL_INTERVAL},
 };
 
 /// A lightweight node that follows another L2 node by polling its execution
 /// layer RPC and driving the local engine via `NewPayload` + FCU.
 ///
-/// Runs only the [`EngineActor`] and [`DelegateL2DerivationActor`] — no L1
-/// watcher, derivation pipeline, P2P, or sequencer.
+/// Runs only the [`EngineActor`] and [`DelegateL2DerivationActor`] — no derivation
+/// pipeline, P2P, or sequencer.
 #[derive(Debug)]
 pub struct FollowNode {
     config: Arc<RollupConfig>,
     engine_config: EngineConfig,
     local_l2_provider: RootProvider<Base>,
     l2_source: DelegateL2Client,
+    l1_config: L1Config,
+    rpc_builder: Option<RpcBuilder>,
 }
 
 impl FollowNode {
@@ -34,8 +40,10 @@ impl FollowNode {
         engine_config: EngineConfig,
         local_l2_provider: RootProvider<Base>,
         l2_source: DelegateL2Client,
+        rpc_builder: Option<RpcBuilder>,
+        l1_config: L1Config,
     ) -> Self {
-        Self { config, engine_config, local_l2_provider, l2_source }
+        Self { config, engine_config, local_l2_provider, l2_source, rpc_builder, l1_config }
     }
 
     fn create_engine_actor(
@@ -84,23 +92,72 @@ impl FollowNode {
         let engine_actor = self.create_engine_actor(
             cancellation.clone(),
             engine_actor_request_rx,
-            QueuedEngineDerivationClient::new(derivation_actor_request_tx),
+            QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()),
         );
 
         let derivation = DelegateL2DerivationActor::<_>::new(
             QueuedDerivationEngineClient {
                 engine_actor_request_tx: engine_actor_request_tx.clone(),
             },
-            engine_actor_request_tx,
+            engine_actor_request_tx.clone(),
             cancellation.clone(),
             derivation_actor_request_rx,
             self.local_l2_provider.clone(),
             self.l2_source.clone(),
         );
 
+        // Create the RPC server actor if configured.
+        let rpc = self.rpc_builder.clone().map(|b| {
+            RpcActor::new(
+                b,
+                QueuedEngineRpcClient::new(engine_actor_request_tx.clone()),
+                None::<crate::QueuedSequencerAdminAPIClient>,
+            )
+        });
+
+        let (l1_query_tx, l1_query_rx) = mpsc::channel(1024);
+
+        let head_stream = BlockStream::new_as_stream(
+            self.l1_config.engine_provider.clone(),
+            BlockNumberOrTag::Latest,
+            Duration::from_secs(HEAD_STREAM_POLL_INTERVAL),
+        )?;
+        let finalized_stream = BlockStream::new_as_stream(
+            self.l1_config.engine_provider.clone(),
+            BlockNumberOrTag::Finalized,
+            Duration::from_secs(FINALIZED_STREAM_POLL_INTERVAL),
+        )?;
+
+        let (l1_head_updates_tx, _l1_head_updates_rx) = watch::channel(None);
+        // Create the [`L1WatcherActor`]. Previously known as the DA watcher actor.
+        let l1_watcher = L1WatcherActor::new(
+            Arc::clone(&self.config),
+            self.l1_config.engine_provider.clone(),
+            l1_query_rx,
+            l1_head_updates_tx,
+            QueuedL1WatcherDerivationClient { derivation_actor_request_tx },
+            None,
+            cancellation.clone(),
+            head_stream,
+            finalized_stream,
+        );
+
         crate::service::spawn_and_wait!(
             cancellation,
-            actors = [Some((derivation, ())), Some((engine_actor, ())),]
+            actors = [
+                rpc.map(|r| (
+                    r,
+                    RpcContext {
+                        cancellation: cancellation.clone(),
+                        p2p_network: None,
+                        network_admin: None,
+                        l1_watcher_queries: l1_query_tx,
+                    }
+                )),
+                Some((derivation, ())),
+                Some((engine_actor, ())),
+                Some((l1_watcher, ())),
+            ]
         );
         Ok(())
     }

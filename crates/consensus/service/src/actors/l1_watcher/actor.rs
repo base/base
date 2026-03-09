@@ -48,7 +48,7 @@ where
     /// Client used to interact with the [`crate::DerivationActor`].
     derivation_client: L1WatcherDerivationClient_,
     /// The block signer sender.
-    block_signer_sender: mpsc::Sender<Address>,
+    block_signer_sender: Option<mpsc::Sender<Address>>,
     /// The cancellation token, shared between all tasks.
     cancellation: CancellationToken,
     /// A stream over the latest head.
@@ -71,7 +71,7 @@ where
         l1_query_rx: mpsc::Receiver<L1WatcherQueries>,
         l1_head_updates_tx: watch::Sender<Option<BlockInfo>>,
         derivation_client: L1WatcherDerivationClient_,
-        signer: mpsc::Sender<Address>,
+        signer: Option<mpsc::Sender<Address>>,
         cancellation: CancellationToken,
         head_stream: BlockStream,
         finalized_stream: BlockStream,
@@ -143,7 +143,7 @@ where
                                     target: "l1_watcher",
                                     "Unsafe block signer update: {unsafe_block_signer}"
                                 );
-                                if let Err(e) = self.block_signer_sender.send(unsafe_block_signer).await {
+                                if let Some(ref block_signer_sender) = self.block_signer_sender && let Err(e) = block_signer_sender.send(unsafe_block_signer).await {
                                     error!(
                                         target: "l1_watcher",
                                         "Error sending unsafe block signer update: {e}"
