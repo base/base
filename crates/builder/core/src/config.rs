@@ -63,6 +63,10 @@ pub struct BuilderConfig {
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
     pub max_uncompressed_block_size: Option<u64>,
 
+    /// When true, use a fixed number of flashblocks per block (block_time / interval)
+    /// instead of dynamically adjusting based on time drift.
+    pub fixed: bool,
+
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
 }
@@ -95,6 +99,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("block_state_root_time_budget_us", &self.block_state_root_time_budget_us)
             .field("execution_metering_mode", &self.execution_metering_mode)
             .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
+            .field("fixed", &self.fixed)
             .field("metering_provider", &self.metering_provider)
             .finish()
     }
@@ -118,6 +123,7 @@ impl Default for BuilderConfig {
             block_state_root_time_budget_us: None,
             execution_metering_mode: ExecutionMeteringMode::Off,
             max_uncompressed_block_size: None,
+            fixed: false,
             metering_provider: Arc::new(NoopMeteringProvider),
         }
     }
@@ -161,6 +167,13 @@ impl BuilderConfig {
     #[must_use]
     pub const fn with_flashblocks_interval_ms(mut self, ms: u64) -> Self {
         self.flashblocks_interval = Duration::from_millis(ms);
+        self
+    }
+
+    /// Sets the fixed flashblocks mode.
+    #[must_use]
+    pub const fn with_fixed(mut self, fixed: bool) -> Self {
+        self.fixed = fixed;
         self
     }
 

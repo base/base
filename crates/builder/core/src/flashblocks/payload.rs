@@ -782,6 +782,12 @@ where
 
     /// Calculate number of flashblocks, taking time drift into account.
     pub(super) fn calculate_flashblocks(&self, timestamp: u64) -> (u64, Duration) {
+        if self.config.fixed {
+            return (
+                self.config.flashblocks_per_block(),
+                self.config.flashblocks_interval - self.config.flashblocks_leeway_time,
+            );
+        }
         // We use this system time to determine remaining time to build a block
         // Things to consider:
         // FCU(a) - FCU with attributes

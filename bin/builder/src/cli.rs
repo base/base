@@ -32,6 +32,10 @@ pub struct FlashblocksArgs {
     /// building time before calculating number of fbs.
     #[arg(long = "flashblocks.leeway-time", default_value = "75", env = "FLASHBLOCK_LEEWAY_TIME")]
     pub flashblocks_leeway_time: u64,
+
+    /// Use a fixed number of flashblocks per block instead of dynamically adjusting
+    #[arg(long = "flashblocks.fixed", default_value = "false", env = "FLASHBLOCKS_FIXED")]
+    pub flashblocks_fixed: bool,
 }
 
 impl Default for FlashblocksArgs {
@@ -41,6 +45,7 @@ impl Default for FlashblocksArgs {
             flashblocks_addr: "127.0.0.1".to_string(),
             flashblocks_block_time: 250,
             flashblocks_leeway_time: 75,
+            flashblocks_fixed: false,
         }
     }
 }
@@ -168,6 +173,7 @@ impl Args {
             block_state_root_time_budget_us: self.block_state_root_time_budget_us,
             execution_metering_mode: self.execution_metering_mode,
             max_uncompressed_block_size: self.max_uncompressed_block_size,
+            fixed: self.flashblocks.flashblocks_fixed,
             metering_provider,
         })
     }
@@ -270,6 +276,18 @@ mod tests {
         assert_eq!(result.unwrap().total_execution_time_us, 500);
     }
 
+    #[rstest]
+    #[case::fixed_true(true, true)]
+    #[case::fixed_false(false, false)]
+    fn flashblocks_fixed_mode_maps_correctly(#[case] input: bool, #[case] expected: bool) {
+        let args = Args {
+            flashblocks: FlashblocksArgs { flashblocks_fixed: input, ..Default::default() },
+            ..Default::default()
+        };
+        let config = convert(args);
+        assert_eq!(config.fixed, expected);
+    }
+
     #[test]
     fn combined_overrides_work_together() {
         let args = Args {
@@ -279,6 +297,7 @@ mod tests {
             flashblocks: FlashblocksArgs {
                 flashblocks_block_time: 200,
                 flashblocks_leeway_time: 50,
+                flashblocks_fixed: true,
                 ..Default::default()
             },
             ..Default::default()
@@ -290,5 +309,6 @@ mod tests {
         assert_eq!(config.block_time_leeway, Duration::from_secs(10));
         assert_eq!(config.flashblocks_interval, Duration::from_millis(200));
         assert_eq!(config.flashblocks_leeway_time, Duration::from_millis(50));
+        assert!(config.fixed);
     }
 }
