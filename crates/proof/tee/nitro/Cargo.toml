@@ -12,6 +12,7 @@ base-proof-preimage.workspace = true
 base-proof-primitives.workspace = true
 base-proof-transport = { workspace = true, features = ["frame"] }
 base-proof-host = { workspace = true, optional = true }
+jsonrpsee = { workspace = true, optional = true, features = ["server", "macros"] }
 
 # Alloy
 alloy-signer.workspace = true
@@ -61,7 +62,13 @@ rand_08.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [features]
-host = [ "base-proof-transport/vsock", "dep:base-proof-host" ]
+host = [
+	"dep:base-proof-host",
+	"dep:jsonrpsee",
+	"base-proof-primitives/rpc",
+	"base-proof-transport/vsock",
+	"tokio/net",
+]
 
 [lints]
 workspace = true

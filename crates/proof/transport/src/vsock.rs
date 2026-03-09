@@ -31,10 +31,7 @@ impl VsockTransport {
 
 #[async_trait]
 impl ProofTransport for VsockTransport {
-    async fn prove(
-        &self,
-        preimages: &[(PreimageKey, Vec<u8>)],
-    ) -> TransportResult<ProofResult> {
+    async fn prove(&self, preimages: &[(PreimageKey, Vec<u8>)]) -> TransportResult<ProofResult> {
         let addr = VsockAddr::new(self.cid, self.port);
 
         let mut stream = tokio::time::timeout(CONNECT_TIMEOUT, VsockStream::connect(addr))

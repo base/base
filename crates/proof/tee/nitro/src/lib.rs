@@ -20,4 +20,4 @@ pub use enclave::{
 #[cfg(feature = "host")]
 mod host;
 #[cfg(feature = "host")]
-pub use host::{NitroBackend, NitroServer};
+pub use host::{NitroBackend, NitroProverServer};

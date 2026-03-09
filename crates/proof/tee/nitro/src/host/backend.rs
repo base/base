@@ -36,10 +36,7 @@ impl ProverBackend for NitroBackend {
 
     async fn prove(&self, witness: Oracle) -> Result<ProofResult, NitroError> {
         let preimages = witness.into_preimages();
-        self.transport
-            .prove(&preimages)
-            .await
-            .map_err(|e| NitroError::Transport(e.to_string()))
+        self.transport.prove(&preimages).await.map_err(|e| NitroError::Transport(e.to_string()))
     }
 }
 
