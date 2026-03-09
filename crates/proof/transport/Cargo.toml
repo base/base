@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 # Proof
+base-proof-preimage = { workspace = true }
 base-proof-primitives = { workspace = true, features = ["std"] }
 
 # Async
@@ -33,6 +34,7 @@ tokio = { workspace = true, features = ["full"] }
 [features]
 test-utils = []
 frame = [
+	"base-proof-preimage/serde",
 	"base-proof-primitives/serde",
 	"dep:bincode",
 	"dep:serde",

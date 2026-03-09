@@ -30,6 +30,21 @@ impl Oracle {
     pub fn empty() -> Self {
         Self { preimages: Arc::new(RwLock::new(HashMap::new())) }
     }
+
+    /// Consume the oracle and return all captured preimages.
+    ///
+    /// # Panics
+    ///
+    /// Panics if other references to the internal preimage map still exist.
+    /// This is only valid after [`Host::build_witness`] has returned the owned
+    /// oracle and all internal clones have been dropped.
+    pub fn into_preimages(self) -> Vec<(PreimageKey, Vec<u8>)> {
+        Arc::try_unwrap(self.preimages)
+            .expect("Oracle still has outstanding Arc references")
+            .into_inner()
+            .into_iter()
+            .collect()
+    }
 }
 
 impl fmt::Debug for Oracle {
@@ -89,7 +104,6 @@ impl WitnessOracle for Oracle {
 #[cfg(test)]
 mod tests {
     use base_proof_preimage::PreimageKeyType;
-    use base_proof_primitives::ProofBundle;
 
     use super::*;
 
@@ -98,18 +112,7 @@ mod tests {
         let key = PreimageKey::new([1u8; 32], PreimageKeyType::Local);
         let value = vec![0xAB; 128];
 
-        let bundle = ProofBundle {
-            request: base_proof_primitives::ProofRequest {
-                l1_head: Default::default(),
-                agreed_l2_head_hash: Default::default(),
-                agreed_l2_output_root: Default::default(),
-                claimed_l2_output_root: Default::default(),
-                claimed_l2_block_number: 0,
-            },
-            preimages: vec![(key, value.clone())],
-        };
-
-        let oracle = Oracle::new(bundle.preimages);
+        let oracle = Oracle::new(vec![(key, value.clone())]);
         let read = oracle.preimages.read();
         assert_eq!(read.get(&key).unwrap(), &value);
     }

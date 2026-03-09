@@ -174,6 +174,10 @@ pub enum NitroError {
         /// Actual PCR0 hash from NSM.
         actual: B256,
     },
+    /// Proof transport failed.
+    #[cfg(feature = "host")]
+    #[error("transport error: {0}")]
+    Transport(String),
 }
 
 /// A specialized Result type for nitro enclave operations.

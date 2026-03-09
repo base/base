@@ -2,8 +2,9 @@
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_signer_local::PrivateKeySigner;
 use base_alloy_evm::OpEvmFactory;
-use base_proof_client::Prologue;
-use base_proof_primitives::{ProofBundle, ProofClaim, ProofEvidence, ProofResult, Proposal};
+use base_proof_client::{BootInfo, Prologue};
+use base_proof_preimage::PreimageKey;
+use base_proof_primitives::{ProofClaim, ProofEvidence, ProofResult, Proposal};
 use parking_lot::RwLock;
 use tracing::{info, warn};
 
@@ -129,11 +130,17 @@ impl Server {
         self.signer_attestation().unwrap_or_default()
     }
 
-    /// Run the proof-client pipeline for a proof bundle and return per-block proposals
+    /// Run the proof-client pipeline for the given preimages and return per-block proposals
     /// with an aggregate.
-    pub async fn prove(&self, bundle: ProofBundle) -> Result<ProofResult> {
-        let ProofBundle { request, preimages } = bundle;
+    pub async fn prove(
+        &self,
+        preimages: impl IntoIterator<Item = (PreimageKey, Vec<u8>)>,
+    ) -> Result<ProofResult> {
         let oracle = Oracle::new(preimages);
+
+        let boot_info =
+            BootInfo::load(&oracle).await.map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
+        let agreed_l2_output_root = boot_info.agreed_l2_output_root;
 
         let prologue = Prologue::new(oracle.clone(), oracle, OpEvmFactory::default());
         let driver = prologue.load().await.map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
@@ -150,7 +157,7 @@ impl Server {
         epilogue.validate().map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
 
         let mut proposals = Vec::with_capacity(block_results.len());
-        let mut prev_output_root = request.agreed_l2_output_root;
+        let mut prev_output_root = agreed_l2_output_root;
 
         for (l2_info, output_root) in &block_results {
             let l2_block_number = U256::from(l2_info.block_info.number);
@@ -200,7 +207,7 @@ impl Server {
             let signing_data = Signing::build_data(
                 self.proposer,
                 last.l1_origin_hash,
-                request.agreed_l2_output_root,
+                agreed_l2_output_root,
                 first
                     .l2_block_number
                     .checked_sub(U256::from(1))
@@ -222,7 +229,7 @@ impl Server {
                 l1_origin_hash: last.l1_origin_hash,
                 l1_origin_number: last.l1_origin_number,
                 l2_block_number: last.l2_block_number,
-                prev_output_root: request.agreed_l2_output_root,
+                prev_output_root: agreed_l2_output_root,
                 config_hash: self.config_hash,
             }
         };
