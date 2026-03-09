@@ -98,10 +98,7 @@ where
     /// and the claimed output root for validation.
     pub async fn execute_with_intermediates(
         self,
-    ) -> Result<
-        (Vec<(base_protocol::L2BlockInfo, B256)>, B256),
-        FaultProofProgramError,
-    > {
+    ) -> Result<(Vec<(base_protocol::L2BlockInfo, B256)>, B256), FaultProofProgramError> {
         let executor = BaseExecutor::new(
             self.rollup_config.as_ref(),
             self.l2_provider.clone(),

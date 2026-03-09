@@ -3,9 +3,8 @@
 use alloy_consensus::{Header, ReceiptEnvelope};
 use alloy_primitives::{Address, B256, Bytes};
 use base_consensus_genesis::ChainConfig;
-use serde::{Deserialize, Serialize};
-
 use base_proof_primitives::Proposal;
+use serde::{Deserialize, Serialize};
 
 use crate::{executor::ExecutionWitness, types::account::AccountResult};
 

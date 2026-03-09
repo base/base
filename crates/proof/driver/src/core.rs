@@ -162,8 +162,7 @@ where
                 &block,
                 &self.pipeline.rollup_config().genesis,
             )?;
-            let output_root =
-                self.executor.compute_output_root().map_err(DriverError::Executor)?;
+            let output_root = self.executor.compute_output_root().map_err(DriverError::Executor)?;
             results.push((l2_info, output_root));
             let tip_cursor = TipCursor::new(l2_info, outcome.header.clone(), output_root);
 
