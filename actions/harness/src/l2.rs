@@ -1,5 +1,6 @@
-use alloy_primitives::{BlockHash, Bytes};
 use std::collections::VecDeque;
+
+use alloy_primitives::{BlockHash, Bytes};
 
 use crate::L2BlockProvider;
 
