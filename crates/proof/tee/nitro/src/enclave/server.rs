@@ -299,6 +299,4 @@ mod tests {
         let pk2 = server.signer_public_key();
         assert_eq!(pk1, pk2);
     }
-
-
 }
