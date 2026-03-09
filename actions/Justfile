@@ -1,0 +1,23 @@
+# Recipes for the action test framework.
+# Import this module from the root Justfile with:
+#   mod actions 'actions'
+
+# Default to display help menu
+default:
+    @just --list --list-prefix '  actions::'
+
+# Run all action tests
+test:
+    cargo nextest run -p base-action-harness
+
+# Run action tests with output shown (useful when debugging a failing test)
+test-verbose:
+    cargo nextest run -p base-action-harness --no-capture
+
+# Check the action harness crate without running tests
+check:
+    cargo check -p base-action-harness
+
+# Clippy the action harness crate
+lint:
+    cargo clippy -p base-action-harness --all-targets -- -D warnings

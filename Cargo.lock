@@ -2276,6 +2276,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-action-harness"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "base-batcher-driver",
+ "base-consensus-genesis",
+ "base-protocol",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "base-alloy-consensus"
 version = "0.0.0"
 dependencies = [
@@ -2443,6 +2456,17 @@ dependencies = [
  "sha2 0.10.9",
  "snap",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "base-batcher-driver"
+version = "0.0.0"
+dependencies = [
+ "base-comp",
+ "base-consensus-genesis",
+ "base-protocol",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
