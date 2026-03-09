@@ -415,6 +415,8 @@ impl OpHardforks for RollupConfig {
                 .jovian_time
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
+            // BaseV1 is standalone: not part of the OP-stack cascade chain. It only activates
+            // when explicitly configured and never implies (or is implied by) Jovian being active.
             OpHardfork::BaseV1 => self
                 .hardforks
                 .base

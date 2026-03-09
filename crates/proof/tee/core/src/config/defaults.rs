@@ -208,6 +208,8 @@ mod tests {
 
         // Regolith should also be active at genesis
         assert_eq!(config.hardforks.regolith_time, Some(0));
+        assert_eq!(config.hardforks.jovian_time, Some(0));
+        assert_eq!(config.hardforks.base.unwrap().v1, Some(0));
     }
 
     #[test]

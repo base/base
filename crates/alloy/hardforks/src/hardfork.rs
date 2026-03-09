@@ -158,6 +158,9 @@ impl OpHardfork {
                 ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_ISTHMUS_TIMESTAMP),
             ),
             (Self::Jovian, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
+            // BaseV1 co-activates with Jovian on this devnet. Both resolve to OpSpecId::BASE_V1
+            // since spec_by_timestamp_after_bedrock checks BaseV1 first (newest wins). This is
+            // intentional: BaseV1 is a strict superset of Jovian on this devnet configuration.
             (Self::BaseV1, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
         ]
     }
