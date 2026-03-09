@@ -31,13 +31,12 @@ aws-nitro-enclaves-nsm-api.workspace = true
 # Encoding
 base64.workspace = true
 ciborium.workspace = true
-serde_json.workspace = true
 serde_bytes.workspace = true
 serde = { workspace = true, features = ["derive"] }
 zip = { workspace = true, features = ["deflate"] }
 
 # Async
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt", "time"] }
 async-trait.workspace = true
 
 # Error
@@ -54,7 +53,7 @@ tracing.workspace = true
 rand_08.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-vsock.workspace = true
+tokio-vsock.workspace = true
 
 [dev-dependencies]
 rand_08.workspace = true

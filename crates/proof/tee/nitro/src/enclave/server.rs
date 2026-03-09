@@ -15,11 +15,14 @@ use crate::{
         crypto::{Ecdsa, Signing},
         nsm::{NsmRng, NsmSession},
     },
-    error::{NitroError, NsmError, ProposalError},
+    error::{NitroError, NsmError, ProposalError, Result},
 };
 
 /// Environment variable for setting the signer key in local mode.
 const SIGNER_KEY_ENV_VAR: &str = "OP_ENCLAVE_SIGNER_KEY";
+
+/// PCR0 length
+const PCR0_LENGTH: usize = 32;
 
 /// The enclave server.
 ///
@@ -44,20 +47,24 @@ impl Server {
     ///
     /// Attempts to open an NSM session and verify PCR0 against `config.tee_image_hash`.
     /// Falls back to local mode if NSM is unavailable.
-    pub fn new(config: &EnclaveConfig) -> Result<Self, NitroError> {
+    pub fn new(config: &EnclaveConfig) -> Result<Self> {
         let (mut rng, pcr0) = match NsmSession::open()? {
             Some(session) => {
                 let pcr0 = session.describe_pcr0()?;
 
-                // Verify PCR0 matches expected value
-                if pcr0.len() == 32 {
-                    let actual_hash = B256::from_slice(&pcr0);
-                    if actual_hash != config.tee_image_hash {
-                        return Err(NitroError::Pcr0Mismatch {
-                            expected: config.tee_image_hash,
-                            actual: actual_hash,
-                        });
-                    }
+                if pcr0.len() != PCR0_LENGTH {
+                    return Err(NsmError::DescribePcr(format!(
+                        "unexpected PCR0 length {}, expected 32.",
+                        pcr0.len()
+                    ))
+                    .into());
+                }
+                let actual_hash = B256::from_slice(&pcr0);
+                if actual_hash != config.tee_image_hash {
+                    return Err(NitroError::Pcr0Mismatch {
+                        expected: config.tee_image_hash,
+                        actual: actual_hash,
+                    });
                 }
 
                 let rng = NsmRng::new()
@@ -111,7 +118,7 @@ impl Server {
     }
 
     /// Get an attestation document containing the signer's public key.
-    pub fn signer_attestation(&self) -> Result<Vec<u8>, NitroError> {
+    pub fn signer_attestation(&self) -> Result<Vec<u8>> {
         let session = NsmSession::open()?
             .ok_or_else(|| NsmError::SessionOpen("NSM not available".to_string()))?;
         let public_key = self.signer_public_key();
@@ -124,10 +131,7 @@ impl Server {
     }
 
     /// Run the proof-client pipeline for a proof bundle.
-    pub async fn prove(
-        &self,
-        bundle: base_proof_primitives::ProofBundle,
-    ) -> Result<ProofResult, NitroError> {
+    pub async fn prove(&self, bundle: base_proof_primitives::ProofBundle) -> Result<ProofResult> {
         let request = bundle.request.clone();
         let oracle = Oracle::from_bundle(bundle);
 
@@ -148,7 +152,7 @@ impl Server {
             self.proposer,
             request.l1_head,
             request.agreed_l2_output_root,
-            U256::from(l2_block_number - 1),
+            U256::from(l2_block_number.saturating_sub(1)),
             output_root,
             U256::from(l2_block_number),
             &[],
@@ -180,7 +184,7 @@ impl Server {
         proposer: Address,
         tee_image_hash: B256,
         intermediate_roots: &[B256],
-    ) -> Result<Proposal, NitroError> {
+    ) -> Result<Proposal> {
         if proposals.is_empty() {
             return Err(ProposalError::EmptyProposals.into());
         }
@@ -220,11 +224,20 @@ impl Server {
                 tee_image_hash,
             );
 
-            let valid = Signing::verify(&public_key, &signing_data, &proposal.signature)
-                .map_err(|_| ProposalError::InvalidSignature { index })?;
-
-            if !valid {
-                return Err(ProposalError::InvalidSignature { index }.into());
+            match Signing::verify(&public_key, &signing_data, &proposal.signature) {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(ProposalError::InvalidSignature {
+                        index,
+                        reason: "signature mismatch".to_string(),
+                    }
+                    .into());
+                }
+                Err(e) => {
+                    return Err(
+                        ProposalError::InvalidSignature { index, reason: e.to_string() }.into()
+                    );
+                }
             }
 
             output_root = proposal.output_root;
@@ -233,8 +246,12 @@ impl Server {
 
         // Validate intermediate roots against proposals
         if !intermediate_roots.is_empty() && proposals.len() > 1 {
-            let total_blocks =
-                proposals.last().unwrap().l2_block_number.to::<u64>() - prev_block_number;
+            let last_block = proposals.last().unwrap().l2_block_number.to::<u64>();
+            let total_blocks = last_block.checked_sub(prev_block_number).ok_or_else(|| {
+                ProposalError::ExecutionFailed(format!(
+                    "last block ({last_block}) is before previous block ({prev_block_number})"
+                ))
+            })?;
             if !total_blocks.is_multiple_of(intermediate_roots.len() as u64) {
                 return Err(ProposalError::ExecutionFailed(format!(
                     "block range ({total_blocks}) not divisible by intermediate root count ({})",
@@ -302,7 +319,7 @@ impl Server {
 
     /// Create a server for testing (no NSM, no PCR0 verification).
     #[cfg(test)]
-    pub fn new_for_testing(config: &EnclaveConfig) -> Result<Self, NitroError> {
+    pub fn new_for_testing(config: &EnclaveConfig) -> Result<Self> {
         let signer_key = Ecdsa::generate(&mut rand_08::rngs::OsRng)?;
         Ok(Self {
             pcr0: Vec::new(),
@@ -579,7 +596,7 @@ mod tests {
         assert!(
             matches!(
                 &result,
-                Err(NitroError::Proposal(ProposalError::InvalidSignature { index: 1 }))
+                Err(NitroError::Proposal(ProposalError::InvalidSignature { index: 1, .. }))
             ),
             "Expected InvalidSignature error at index 1, got: {result:?}"
         );

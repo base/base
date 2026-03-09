@@ -22,7 +22,7 @@ tokio = { workspace = true }
 thiserror = { workspace = true }
 
 # Vsock transport (optional, unix-only)
-vsock = { workspace = true, optional = true }
+tokio-vsock = { workspace = true, optional = true }
 bincode = { workspace = true, optional = true, features = ["serde"] }
 serde = { workspace = true, optional = true }
 
@@ -32,5 +32,10 @@ tokio = { workspace = true, features = ["full"] }
 
 [features]
 test-utils = []
-frame = [ "base-proof-primitives/serde", "dep:bincode", "dep:serde" ]
-vsock = [ "dep:vsock", "frame", "tokio/rt", "tokio/time" ]
+frame = [
+	"base-proof-primitives/serde",
+	"dep:bincode",
+	"dep:serde",
+	"tokio/io-util",
+]
+vsock = [ "dep:tokio-vsock", "frame", "tokio/rt", "tokio/time" ]

@@ -108,10 +108,12 @@ pub enum ProposalError {
     #[error("no proposals provided for aggregation")]
     EmptyProposals,
     /// Signature verification failed at the given index.
-    #[error("invalid signature at proposal index {index}")]
+    #[error("invalid signature at proposal index {index}: {reason}")]
     InvalidSignature {
         /// Index of the proposal with invalid signature.
         index: usize,
+        /// Reason for the failure.
+        reason: String,
     },
     /// Signature is not the expected 65 bytes.
     #[error("invalid signature length: expected 65 bytes, got {0}")]
@@ -175,7 +177,7 @@ pub enum NitroError {
 }
 
 /// A specialized Result type for nitro enclave operations.
-pub(crate) type Result<T> = std::result::Result<T, NitroError>;
+pub type Result<T> = std::result::Result<T, NitroError>;
 
 #[cfg(test)]
 mod tests {

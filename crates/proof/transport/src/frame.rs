@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{TransportError, TransportResult};
 
@@ -10,27 +10,35 @@ pub struct Frame;
 
 impl Frame {
     /// Write a value as a length-prefixed bincode frame.
-    pub fn write<T: serde::Serialize>(writer: &mut impl Write, value: &T) -> TransportResult<()> {
+    pub async fn write<T: serde::Serialize>(
+        writer: &mut (impl AsyncWriteExt + Unpin),
+        value: &T,
+    ) -> TransportResult<()> {
         let payload = bincode::serde::encode_to_vec(value, bincode::config::standard())
             .map_err(|e| TransportError::Codec(e.to_string()))?;
 
         let len = u32::try_from(payload.len())
             .map_err(|_| TransportError::Codec("payload exceeds u32::MAX".into()))?;
 
-        writer.write_all(&len.to_be_bytes())?;
-        writer.write_all(&payload)?;
-        writer.flush()?;
+        writer.write_u32(len).await?;
+        writer.write_all(&payload).await?;
+        writer.flush().await?;
         Ok(())
     }
 
     /// Read a value from a length-prefixed bincode frame.
-    pub fn read<T: serde::de::DeserializeOwned>(reader: &mut impl Read) -> TransportResult<T> {
-        let mut len_buf = [0u8; 4];
-        reader.read_exact(&mut len_buf)?;
-        let len = u32::from_be_bytes(len_buf) as usize;
+    ///
+    /// The theoretical maximum frame size is `u32::MAX` (~4 `GiB`). All transport
+    /// peers run locally within the same host (enclave ↔ host over vsock), and
+    /// witness bundles can be large, so we intentionally allow the full u32
+    /// range rather than imposing an artificial cap.
+    pub async fn read<T: serde::de::DeserializeOwned>(
+        reader: &mut (impl AsyncReadExt + Unpin),
+    ) -> TransportResult<T> {
+        let len = reader.read_u32().await? as usize;
 
         let mut payload = vec![0u8; len];
-        reader.read_exact(&mut payload)?;
+        reader.read_exact(&mut payload).await?;
 
         let (value, _) = bincode::serde::decode_from_slice(&payload, bincode::config::standard())
             .map_err(|e| TransportError::Codec(e.to_string()))?;

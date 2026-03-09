@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 mod error;
-pub use error::{AttestationError, CryptoError, NitroError, NsmError, ProposalError};
+pub use error::{AttestationError, CryptoError, NitroError, NsmError, ProposalError, Result};
 
 mod oracle;
 pub use oracle::Oracle;
