@@ -14,7 +14,10 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_forwarding::TxForwardingConfig;
 use base_txpool::ValidatedTransaction;
-use devnet::{DevnetBuilder, config::ANVIL_ACCOUNT_1};
+use devnet::{
+    DevnetBuilder,
+    config::{ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4},
+};
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 
@@ -283,6 +286,144 @@ async fn test_tx_forwarding_pipeline_e2e() -> Result<()> {
     assert!(receipt.inner.block_number.is_some(), "Receipt should have block number");
     assert_eq!(receipt.inner.from, sender);
     assert_eq!(receipt.inner.to, Some(recipient));
+
+    Ok(())
+}
+
+/// Tests that the forwarding pipeline handles high transaction load under rate limiting.
+///
+/// Uses all 4 available test accounts (`ANVIL_ACCOUNT_1` through `ANVIL_ACCOUNT_4`) to send
+/// transactions concurrently, with `max_rps = 1` forcing the forwarder to buffer heavily.
+/// Each account sends 10 transactions for a total of 40, verifying that all are eventually
+/// forwarded to the builder and included in blocks despite the constrained send rate.
+#[tokio::test]
+async fn test_tx_forwarding_pipeline_e2e_high_load() -> Result<()> {
+    const TXS_PER_ACCOUNT: usize = 10;
+
+    let accounts = [&*ANVIL_ACCOUNT_1, &*ANVIL_ACCOUNT_2, &*ANVIL_ACCOUNT_3, &*ANVIL_ACCOUNT_4];
+
+    let devnet = DevnetBuilder::new()
+        .with_l1_chain_id(L1_CHAIN_ID)
+        .with_l2_chain_id(L2_CHAIN_ID)
+        .with_tx_forwarding(
+            TxForwardingConfig::new(vec![]).with_max_rps(1).with_resend_after_ms(30_000), // high resend window so we don't double-send
+        )
+        .build()
+        .await?;
+
+    let builder_provider = devnet.l2_builder_provider()?;
+    let client_provider = devnet.l2_client_provider()?;
+
+    // Wait for some blocks to be produced so both nodes are synced
+    timeout(Duration::from_secs(15), async {
+        loop {
+            let builder_block = builder_provider.get_block_number().await?;
+            let client_block = client_provider.get_block_number().await?;
+            if builder_block >= 3 && client_block >= 3 {
+                return Ok::<_, eyre::Error>((builder_block, client_block));
+            }
+            sleep(Duration::from_millis(500)).await;
+        }
+    })
+    .await
+    .wrap_err("Block production/sync timed out")??;
+
+    // Set up signers for all accounts
+    let signers: Vec<PrivateKeySigner> = accounts
+        .iter()
+        .map(|acct| {
+            let hex = format!("0x{}", hex::encode(acct.private_key.as_slice()));
+            hex.parse().expect("valid private key")
+        })
+        .collect();
+
+    // Wait for all accounts to have balance on the client
+    timeout(Duration::from_secs(15), async {
+        loop {
+            let mut all_funded = true;
+            for signer in &signers {
+                let balance = client_provider.get_balance(signer.address()).await?;
+                if balance == U256::ZERO {
+                    all_funded = false;
+                    break;
+                }
+            }
+            if all_funded {
+                return Ok::<_, eyre::Error>(());
+            }
+            sleep(Duration::from_millis(500)).await;
+        }
+    })
+    .await
+    .wrap_err("Timed out waiting for all accounts to sync balance")??;
+
+    let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
+
+    // Send TXS_PER_ACCOUNT transactions from each signer, interleaving accounts
+    // to maximize concurrency pressure on the forwarder
+    let mut expected: Vec<(Address, alloy_primitives::B256)> = Vec::new();
+    let mut nonces: Vec<u64> = Vec::with_capacity(signers.len());
+    for signer in &signers {
+        let nonce = client_provider.get_transaction_count(signer.address()).await?;
+        nonces.push(nonce);
+    }
+
+    for tx_idx in 0..TXS_PER_ACCOUNT {
+        for (acct_idx, signer) in signers.iter().enumerate() {
+            let nonce = nonces[acct_idx] + tx_idx as u64;
+            let (_, raw_tx, expected_tx_hash) =
+                create_signed_eip1559_tx(signer, L2_CHAIN_ID, nonce, recipient)?;
+
+            let pending_tx = client_provider
+                .send_raw_transaction(&raw_tx)
+                .await
+                .wrap_err_with(|| format!("Failed to send tx {tx_idx} from account {acct_idx}"))?;
+
+            assert_eq!(
+                *pending_tx.tx_hash(),
+                expected_tx_hash,
+                "Transaction hash mismatch for tx {tx_idx} from account {acct_idx}"
+            );
+            expected.push((signer.address(), expected_tx_hash));
+        }
+    }
+
+    let total_txs = expected.len();
+
+    // Wait for ALL transactions to be included on the builder.
+    // With max_rps=1 and 40 txs, the forwarder needs significant time to drain.
+    let mut received = vec![false; total_txs];
+
+    timeout(Duration::from_secs(180), async {
+        loop {
+            let mut all_received = true;
+            for (i, (sender, hash)) in expected.iter().enumerate() {
+                if received[i] {
+                    continue;
+                }
+                if let Some(receipt) = builder_provider.get_transaction_receipt(*hash).await? {
+                    assert_eq!(receipt.inner.transaction_hash, *hash);
+                    assert_eq!(receipt.inner.from, *sender);
+                    assert_eq!(receipt.inner.to, Some(recipient));
+                    received[i] = true;
+                } else {
+                    all_received = false;
+                }
+            }
+            if all_received {
+                return Ok::<_, eyre::Error>(());
+            }
+            sleep(Duration::from_secs(2)).await;
+        }
+    })
+    .await
+    .wrap_err("Timed out waiting for all transactions - forwarding under load may have failed")??;
+
+    let included_count = received.iter().filter(|&&r| r).count();
+    assert_eq!(
+        included_count, total_txs,
+        "Expected all {total_txs} transactions to be included, got {included_count}"
+    );
 
     Ok(())
 }
