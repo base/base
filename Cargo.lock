@@ -4171,7 +4171,6 @@ dependencies = [
  "aws-nitro-enclaves-cose",
  "aws-nitro-enclaves-nsm-api",
  "base-alloy-evm",
- "base-enclave",
  "base-proof-client",
  "base-proof-preimage",
  "base-proof-primitives",
