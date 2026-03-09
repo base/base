@@ -2,7 +2,9 @@
 
 use base_flashblocks::FlashblocksConfig;
 use base_node_core::args::RollupArgs;
-use base_tx_forwarding::TxForwardingConfig;
+use base_tx_forwarding::{
+    DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
+};
 use url::Url;
 
 /// CLI Arguments
@@ -48,7 +50,11 @@ pub struct Args {
     pub enable_metering: bool,
 
     /// Enable transaction forwarding for mempool nodes to builder RPC endpoints
-    #[arg(long = "enable-tx-forwarding", value_name = "ENABLE_TX_FORWARDING")]
+    #[arg(
+        long = "enable-tx-forwarding",
+        value_name = "ENABLE_TX_FORWARDING",
+        requires = "builder-rpc-urls"
+    )]
     pub enable_tx_forwarding: bool,
 
     /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
@@ -63,7 +69,7 @@ pub struct Args {
     #[arg(
         long = "tx-forwarding-resend-after-ms",
         value_name = "TX_FORWARDING_RESEND_AFTER_MS",
-        default_value = "4000",
+        default_value_t = DEFAULT_RESEND_AFTER_MS,
         requires = "enable-tx-forwarding"
     )]
     pub tx_forwarding_resend_after_ms: u64,
@@ -72,19 +78,19 @@ pub struct Args {
     #[arg(
         long = "tx-forwarding-batch-size",
         value_name = "TX_FORWARDING_BATCH_SIZE",
-        default_value = "100",
+        default_value_t = DEFAULT_MAX_BATCH_SIZE,
         requires = "enable-tx-forwarding"
     )]
     pub tx_forwarding_batch_size: usize,
 
-    /// Maximum time to wait before sending an incomplete batch in ms
+    /// Maximum RPC requests per second per forwarder (0 = unlimited).
     #[arg(
-        long = "tx-forwarding-batch-timeout-ms",
-        value_name = "TX_FORWARDING_BATCH_TIMEOUT_MS",
-        default_value = "50",
+        long = "tx-forwarding-max-rps",
+        value_name = "TX_FORWARDING_MAX_RPS",
+        default_value_t = DEFAULT_MAX_RPS,
         requires = "enable-tx-forwarding"
     )]
-    pub tx_forwarding_batch_timeout_ms: u64,
+    pub tx_forwarding_max_rps: u32,
 }
 
 impl From<&Args> for Option<FlashblocksConfig> {
@@ -106,5 +112,6 @@ impl From<&Args> for TxForwardingConfig {
         Self::new(args.builder_rpc_urls.clone())
             .with_resend_after_ms(args.tx_forwarding_resend_after_ms)
             .with_max_batch_size(args.tx_forwarding_batch_size)
+            .with_max_rps(args.tx_forwarding_max_rps)
     }
 }

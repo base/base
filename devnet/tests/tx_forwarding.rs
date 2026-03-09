@@ -12,6 +12,8 @@ use alloy_provider::Provider;
 use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use base_alloy_network::TransactionBuilder;
+use base_alloy_rpc_types::OpTransactionRequest;
 use base_tx_forwarding::TxForwardingConfig;
 use base_txpool::ValidatedTransaction;
 use devnet::{
@@ -32,9 +34,6 @@ fn create_signed_eip1559_tx(
     nonce: u64,
     recipient: Address,
 ) -> Result<(Address, Bytes, alloy_primitives::B256)> {
-    use base_alloy_network::TransactionBuilder;
-    use base_alloy_rpc_types::OpTransactionRequest;
-
     let sender = signer.address();
 
     let tx_request = OpTransactionRequest::default()
@@ -48,7 +47,9 @@ fn create_signed_eip1559_tx(
         .with_chain_id(chain_id)
         .with_nonce(nonce);
 
-    let tx = tx_request.build_typed_tx().map_err(|_| eyre::eyre!("invalid transaction request"))?;
+    let tx = tx_request
+        .build_typed_tx()
+        .map_err(|e| eyre::eyre!("invalid transaction request: {e:?}"))?;
     let signature = signer.sign_hash_sync(&tx.signature_hash())?;
     let signed_tx = tx.into_signed(signature);
     let tx_hash = *signed_tx.hash();
@@ -333,9 +334,9 @@ async fn test_tx_forwarding_pipeline_e2e_high_load() -> Result<()> {
         .iter()
         .map(|acct| {
             let hex = format!("0x{}", hex::encode(acct.private_key.as_slice()));
-            hex.parse().expect("valid private key")
+            hex.parse::<PrivateKeySigner>().map_err(|e| eyre::eyre!("invalid private key: {e:?}"))
         })
-        .collect();
+        .collect::<Result<Vec<PrivateKeySigner>>>()?;
 
     // Wait for all accounts to have balance on the client
     timeout(Duration::from_secs(15), async {

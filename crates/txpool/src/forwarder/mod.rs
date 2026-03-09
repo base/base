@@ -99,6 +99,15 @@ impl ForwarderHandle {
             warn!("forwarder tasks did not finish within shutdown timeout");
         }
     }
+
+    /// Detaches the forwarder tasks, allowing them to run for the process lifetime.
+    ///
+    /// The spawned tasks will continue running without a way to cancel them.
+    /// This is useful when the forwarders should live as long as the process.
+    pub const fn detach(self) {
+        // Prevent Drop from cancelling the forwarder tasks.
+        std::mem::forget(self);
+    }
 }
 
 impl Drop for ForwarderHandle {

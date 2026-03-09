@@ -159,15 +159,16 @@ impl L2Stack {
 
         // 4. Start the client (in-process EL).
         // If tx forwarding is enabled, configure it with the builder's RPC URL
-        let tx_forwarding_config = config.tx_forwarding_config.map(|mut cfg| {
+        let tx_forwarding_config = if let Some(mut cfg) = config.tx_forwarding_config {
             // Add the builder's RPC URL to the forwarding config
             // The config may have empty builder_urls which we need to populate
             if cfg.builder_urls.is_empty() {
-                cfg.builder_urls =
-                    vec![builder.rpc_url().expect("builder RPC URL should be available")];
+                cfg.builder_urls = vec![builder.rpc_url()?];
             }
-            cfg
-        });
+            Some(cfg)
+        } else {
+            None
+        };
 
         let client_config = InProcessClientConfig {
             genesis_json: config.l2_genesis.clone(),

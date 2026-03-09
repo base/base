@@ -1,4 +1,4 @@
-//! Transaction forwarding configuration types.
+//! Configuration for the transaction forwarding extension.
 
 use std::time::Duration;
 
@@ -6,6 +6,13 @@ use base_txpool::{
     ConsumerConfig as TxpoolConsumerConfig, ForwarderConfig as TxpoolForwarderConfig,
 };
 use url::Url;
+
+/// Default resend-after window in milliseconds (~2 blocks on Base).
+pub const DEFAULT_RESEND_AFTER_MS: u64 = 4000;
+/// Default maximum number of transactions per RPC batch.
+pub const DEFAULT_MAX_BATCH_SIZE: usize = 100;
+/// Default maximum RPC requests per second per forwarder.
+pub const DEFAULT_MAX_RPS: u32 = 200;
 
 /// Full configuration for the transaction forwarding extension.
 #[derive(Debug, Clone)]
@@ -28,9 +35,9 @@ impl Default for TxForwardingConfig {
             enabled: false,
             builder_urls: Vec::new(),
             // Default: 2 blocks (~4 seconds on Base)
-            resend_after_ms: 4000,
-            max_batch_size: 500,
-            max_rps: 200,
+            resend_after_ms: DEFAULT_RESEND_AFTER_MS,
+            max_batch_size: DEFAULT_MAX_BATCH_SIZE,
+            max_rps: DEFAULT_MAX_RPS,
         }
     }
 }

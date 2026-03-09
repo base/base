@@ -4,7 +4,9 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod config;
-pub use config::TxForwardingConfig;
+pub use config::{
+    DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
+};
 
 mod extension;
 pub use extension::TxForwardingExtension;

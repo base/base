@@ -11,7 +11,7 @@ use crate::TxForwardingConfig;
 #[derive(Debug)]
 pub struct TxForwardingExtension {
     /// Transaction forwarding configuration.
-    config: TxForwardingConfig,
+    pub config: TxForwardingConfig,
 }
 
 impl TxForwardingExtension {
@@ -52,14 +52,12 @@ impl BaseNodeExtension for TxForwardingExtension {
             let forwarder_handle =
                 ForwarderHandle::spawn(&consumer_handle.sender, forwarder_config);
 
-            // Store handles in the RPC context to keep them alive for the node's
-            // lifetime. The handles will gracefully shut down when dropped.
-            //
-            // We use Box::leak here because the handles need to live for the
-            // entire duration of the node. This is intentional — the node process
-            // will clean up on exit.
-            Box::leak(Box::new(consumer_handle));
-            Box::leak(Box::new(forwarder_handle));
+            // Detach handles so the consumer and forwarder tasks run for the
+            // process lifetime. Both handles cancel their tasks on Drop, but this
+            // closure's scope is too short — detach() prevents Drop from firing
+            // while keeping the Drop impl available for callers who want clean shutdown.
+            consumer_handle.detach();
+            forwarder_handle.detach();
 
             Ok(())
         })
