@@ -140,7 +140,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        BASE_MAINNET_BEDROCK_BLOCK, BASE_MAINNET_CANYON_TIMESTAMP, BASE_MAINNET_ECOTONE_TIMESTAMP,
+        BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP, BASE_MAINNET_BEDROCK_BLOCK,
+        BASE_MAINNET_CANYON_TIMESTAMP, BASE_MAINNET_ECOTONE_TIMESTAMP,
         BASE_MAINNET_FJORD_TIMESTAMP, BASE_MAINNET_GRANITE_TIMESTAMP,
         BASE_MAINNET_HOLOCENE_TIMESTAMP, BASE_MAINNET_ISTHMUS_TIMESTAMP,
         BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_MAINNET_REGOLITH_TIMESTAMP, BASE_SEPOLIA_BEDROCK_BLOCK,
@@ -148,7 +149,6 @@ mod tests {
         BASE_SEPOLIA_FJORD_TIMESTAMP, BASE_SEPOLIA_GRANITE_TIMESTAMP,
         BASE_SEPOLIA_HOLOCENE_TIMESTAMP, BASE_SEPOLIA_ISTHMUS_TIMESTAMP,
         BASE_SEPOLIA_JOVIAN_TIMESTAMP, BASE_SEPOLIA_REGOLITH_TIMESTAMP,
-        BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP,
     };
 
     #[test]
@@ -267,11 +267,14 @@ mod tests {
 
         // BaseV1 activates alongside Jovian on devnet-0-sepolia-dev-0
         let devnet0_forks = OpChainHardforks::base_devnet_0_sepolia_dev_0();
-        assert!(!devnet0_forks.is_base_v1_active_at_timestamp(
-            BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP - 1
-        ));
-        assert!(devnet0_forks
-            .is_base_v1_active_at_timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP));
+        assert!(
+            !devnet0_forks
+                .is_base_v1_active_at_timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP - 1)
+        );
+        assert!(
+            devnet0_forks
+                .is_base_v1_active_at_timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)
+        );
     }
 
     #[test]
