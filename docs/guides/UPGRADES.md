@@ -126,15 +126,13 @@ Also update `HardForkConfig::iter()` to include the new entry, and re-export any
 
 **File:** [`crates/consensus/genesis/src/rollup.rs`](https://github.com/base/base/blob/main/crates/consensus/genesis/src/rollup.rs)
 
-Add `is_X_active` and `is_first_X_block` after the previous upgrade's methods. Update the previous terminal upgrade to cascade into the new one:
+Add `is_X_active` and `is_first_X_block` after the previous upgrade's methods.
+
+There are two patterns depending on whether the new upgrade is **standalone** or **cascading**:
+
+**Standalone** (e.g. `pectra_blob_schedule`, `BaseV1`) — activated independently, never implied by a later upgrade being active. Use this pattern when the upgrade affects only protocol-level behavior and is not a prerequisite for the next upgrade:
 
 ```rust
-/// Returns true if Jovian is active at the given timestamp.
-pub fn is_jovian_active(&self, timestamp: u64) -> bool {
-    self.hardforks.jovian_time.is_some_and(|t| timestamp >= t)
-        || self.is_base_v1_active(timestamp)  // <-- cascade to next fork
-}
-
 /// Returns true if Base V1 is active at the given timestamp.
 pub fn is_base_v1_active(&self, timestamp: u64) -> bool {
     self.hardforks.base.as_ref().and_then(|b| b.v1).is_some_and(|t| timestamp >= t)
@@ -147,16 +145,31 @@ pub fn is_first_base_v1_block(&self, timestamp: u64) -> bool {
 }
 ```
 
-> **Note on standalone upgrades:** Some upgrades (e.g. `pectra_blob_schedule`, `BaseV1`) do not participate in the cascade — they are activated independently. For these, omit the `|| self.is_next_active(timestamp)` call and do not cascade the previous upgrade into them.
+The previous terminal upgrade's `is_X_active` method is left unchanged (no cascade added).
 
-Also update `op_fork_activation` in `impl OpHardforks for RollupConfig` to add the new arm and update the previous terminal arm's fallback:
+**Cascading** (e.g. `Canyon`, `Ecotone`, `Isthmus`) — the previous upgrade is considered active whenever the new one is. Update the previous terminal upgrade's method and add the new one:
+
+```rust
+/// Returns true if Jovian is active at the given timestamp.
+pub fn is_jovian_active(&self, timestamp: u64) -> bool {
+    self.hardforks.jovian_time.is_some_and(|t| timestamp >= t)
+        || self.is_next_active(timestamp)  // <-- cascade to next fork
+}
+
+/// Returns true if Next is active at the given timestamp.
+pub fn is_next_active(&self, timestamp: u64) -> bool {
+    self.hardforks.next_time.is_some_and(|t| timestamp >= t)
+}
+```
+
+Also update `op_fork_activation` in `impl OpHardforks for RollupConfig` to add the new arm. For **standalone** upgrades, the previous arm keeps `unwrap_or(ForkCondition::Never)`:
 
 ```rust
 OpHardfork::Jovian => self
     .hardforks
     .jovian_time
     .map(ForkCondition::Timestamp)
-    .unwrap_or_else(|| self.op_fork_activation(OpHardfork::BaseV1)),  // <-- cascade
+    .unwrap_or(ForkCondition::Never),  // standalone: no cascade
 OpHardfork::BaseV1 => self
     .hardforks
     .base
@@ -166,6 +179,8 @@ OpHardfork::BaseV1 => self
     .unwrap_or(ForkCondition::Never),
 _ => ForkCondition::Never,  // required: OpHardfork is #[non_exhaustive]
 ```
+
+For **cascading** upgrades, replace the previous arm's `unwrap_or(ForkCondition::Never)` with `.unwrap_or_else(|| self.op_fork_activation(OpHardfork::Next))`.
 
 ---
 
