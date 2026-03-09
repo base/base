@@ -9,7 +9,7 @@ rust-version.workspace = true
 url.workspace = true
 prost.workspace = true
 tonic-prost.workspace = true
-tonic = { workspace = true, features = ["transport", "channel"] }
+tonic = { workspace = true, features = ["transport"] }
 
 # Async
 async-trait.workspace = true
