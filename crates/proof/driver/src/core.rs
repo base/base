@@ -76,9 +76,8 @@ where
                 && tip_cursor.l2_safe_head.block_info.number >= tb
             {
                 info!(target: "client", "Derivation complete, reached L2 safe head.");
-                return result.ok_or(DriverError::Pipeline(PipelineErrorKind::Critical(
-                    PipelineError::EndOfSource,
-                )));
+                return Ok(result
+                    .unwrap_or((tip_cursor.l2_safe_head, tip_cursor.l2_safe_head_output_root)));
             }
 
             let mut attributes = match self.pipeline.produce_payload(tip_cursor.l2_safe_head).await

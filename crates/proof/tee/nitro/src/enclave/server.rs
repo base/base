@@ -161,7 +161,9 @@ impl Server {
                 self.proposer,
                 l1_origin_hash,
                 prev_output_root,
-                l2_block_number.saturating_sub(U256::from(1)),
+                l2_block_number
+                    .checked_sub(U256::from(1))
+                    .ok_or_else(|| NitroError::ProofPipeline("l2_block_number is 0".into()))?,
                 *output_root,
                 l2_block_number,
                 &[],
@@ -199,7 +201,10 @@ impl Server {
                 self.proposer,
                 last.l1_origin_hash,
                 request.agreed_l2_output_root,
-                first.l2_block_number.saturating_sub(U256::from(1)),
+                first
+                    .l2_block_number
+                    .checked_sub(U256::from(1))
+                    .ok_or_else(|| NitroError::ProofPipeline("l2_block_number is 0".into()))?,
                 last.output_root,
                 last.l2_block_number,
                 &intermediate_roots,
