@@ -55,8 +55,8 @@ sp1-sdk.workspace = true
 sp1-cluster-utils.workspace = true
 
 [dev-dependencies]
-reqwest = { version = "0.12.4", features = ["json"] }
-rustls = { version = "0.23", features = ["ring"] }
+reqwest = { workspace = true, features = ["json"] }
+rustls = { workspace = true, features = ["ring"] }
 
 [build-dependencies]
 base-succinct-build-utils.workspace = true

@@ -9,7 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-alloy = { workspace = true }
+alloy-contract = { workspace = true }
 alloy-sol-types = { workspace = true }
 
 [build-dependencies]

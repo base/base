@@ -68,18 +68,17 @@ hex.workspace = true
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
 tikv-jemallocator.workspace = true
-tempfile = "3"
+tempfile.workspace = true 
 
 [dev-dependencies]
 alloy-signer-local.workspace = true
 alloy-node-bindings.workspace = true
-alloy.workspace = true
 base-succinct-bindings.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 alloy-rpc-types-trace.workspace = true
 rstest.workspace = true 
-which = "4.4"
+which.workspace = true
 
 [features]
 default = ["ethereum"]

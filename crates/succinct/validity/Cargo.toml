@@ -21,7 +21,6 @@ alloy-primitives.workspace = true
 # tracing and telemetry
 tracing.workspace = true
 
-
 # local
 base-succinct-client-utils.workspace = true
 base-succinct-elfs.workspace = true
@@ -56,11 +55,11 @@ sqlx = { version = "0.8.3", features = [
     "runtime-tokio",
     "tls-native-tls",
 ] }
-chrono = "0.4.39"
+chrono.workspace = true
 futures-util = "0.3.31"
 clap.workspace = true
 tikv-jemallocator = "0.6.0"
-rustls = "0.23.23"
+rustls.workspace = true 
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
 

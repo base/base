@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use std::process::Command;
+use std::{fs, process::Command};
 
 use anyhow::Context;
 use cargo_metadata::MetadataCommand;
@@ -66,5 +66,26 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("Forge command failed with exit code: {}", status);
     }
 
+    rewrite_alloy_imports(bindings_codegen_path.as_std_path())?;
+
+    Ok(())
+}
+
+/// Rewrite generated code to use direct crate imports (`alloy_sol_types`,
+/// `alloy_contract`) instead of paths through the `alloy` umbrella crate.
+fn rewrite_alloy_imports(codegen_dir: &std::path::Path) -> anyhow::Result<()> {
+    for entry in fs::read_dir(codegen_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "rs") {
+            let contents = fs::read_to_string(&path)?;
+            let rewritten = contents
+                .replace("alloy::sol_types", "alloy_sol_types")
+                .replace("alloy::contract", "alloy_contract");
+            if rewritten != contents {
+                fs::write(&path, rewritten)?;
+            }
+        }
+    }
     Ok(())
 }
