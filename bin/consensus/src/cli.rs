@@ -4,13 +4,16 @@ use std::sync::Arc;
 
 use alloy_chains::Chain;
 use alloy_primitives::Address;
+use alloy_provider::RootProvider;
 use base_cli_utils::{CliStyles, LogConfig, RuntimeManager};
 use base_client_cli::{
     L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
 };
 use base_consensus_node::{
-    DelegateL2Client, EngineConfig, FollowNode, L1ConfigBuilder, NodeMode, RollupNodeBuilder,
+    DelegateL2Client, EngineConfig, FollowNode, L1Config, L1ConfigBuilder, NodeMode,
+    RollupNodeBuilder,
 };
+use base_consensus_providers::OnlineBeaconClient;
 use base_consensus_registry::Registry;
 use clap::{Args, Parser, Subcommand};
 use strum::IntoEnumIterator;
@@ -75,10 +78,6 @@ pub struct Follow {
     )]
     pub l2_rpc_url: Url,
 
-    /// L1 execution layer RPC URL.
-    #[arg(long = "l1-eth-rpc", env = "BASE_NODE_L1_ETH_RPC")]
-    pub l1_eth_rpc: Url,
-
     /// L2 engine CLI arguments.
     #[clap(flatten)]
     pub l2_client_args: L2ClientArgs,
@@ -97,9 +96,21 @@ pub struct Follow {
     #[command(flatten)]
     pub logging: LogArgs,
 
+    /// RPC CLI arguments.
+    #[command(flatten)]
+    pub rpc_flags: RpcArgs,
+
     /// L2 configuration file.
     #[clap(flatten)]
     pub l2_config: L2ConfigFile,
+
+    /// L1 configuration file.
+    #[clap(flatten)]
+    pub l1_config: L1ConfigFile,
+
+    /// L1 RPC CLI arguments.
+    #[clap(flatten)]
+    pub l1_rpc_args: L1ClientArgs,
 }
 
 impl Follow {
@@ -124,25 +135,43 @@ impl Follow {
         );
 
         let jwt_secret = self.l2_client_args.validate_jwt().await?;
-        let rollup_config = Arc::new(cfg);
+        let rollup_config = Arc::new(cfg.clone());
 
         let engine_config = EngineConfig {
             config: Arc::clone(&rollup_config),
             l2_url: self.l2_client_args.l2_engine_rpc.clone(),
             l2_jwt_secret: jwt_secret,
-            l1_url: self.l1_eth_rpc.clone(),
+            l1_url: self.l1_rpc_args.l1_eth_rpc.clone(),
             mode: NodeMode::Validator,
         };
 
-        let local_l2_provider = alloy_provider::RootProvider::<base_alloy_network::Base>::new_http(
-            self.l2_rpc_url.clone(),
-        );
-        let l2_source = DelegateL2Client::new(self.source_l2_rpc.clone());
+        let l1_chain_config =
+            self.l1_config.load(cfg.l1_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
 
-        FollowNode::new(rollup_config, engine_config, local_l2_provider, l2_source)
-            .start()
-            .await
-            .map_err(|e| {
+        let local_l2_provider =
+            RootProvider::<base_alloy_network::Base>::new_http(self.l2_rpc_url.clone());
+        let l2_source = DelegateL2Client::new(self.source_l2_rpc.clone());
+        let rpc_builder = self.rpc_flags.clone().into();
+        let l1_beacon = OnlineBeaconClient::new_http(self.l1_rpc_args.l1_beacon.to_string());
+
+        let l1_config = L1Config {
+            chain_config: Arc::new(l1_chain_config),
+            trust_rpc: self.l1_rpc_args.l1_trust_rpc,
+            beacon_client: l1_beacon,
+            engine_provider: RootProvider::new_http(self.l1_rpc_args.l1_eth_rpc.clone()),
+        };
+
+        FollowNode::new(
+            rollup_config,
+            engine_config,
+            local_l2_provider,
+            l2_source,
+            rpc_builder,
+            l1_config,
+        )
+        .start()
+        .await
+        .map_err(|e| {
             error!(target: "rollup_node", error = %e, "Failed to start follow node");
             eyre::eyre!("{e}")
         })?;
