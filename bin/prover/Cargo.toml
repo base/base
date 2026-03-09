@@ -15,6 +15,9 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
+[features]
+local = ["base-proof-transport/test-utils"]
+
 [dependencies]
 # workspace
 base-proof-tee-nitro = { workspace = true, features = ["host"] }
