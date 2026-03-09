@@ -37,4 +37,16 @@ pub trait CompressorWriter {
 pub trait ChannelCompressor: CompressorWriter {
     /// Returns the compressed data buffer.
     fn get_compressed(&self) -> Vec<u8>;
+
+    /// Returns the single-byte channel version prefix to prepend to the first
+    /// frame's data, or `None` if the compression format is self-identifying
+    /// (e.g. zlib, whose header bytes are recognised without a prefix).
+    ///
+    /// The [`BatchReader`](base_protocol::BatchReader) inspects the first byte
+    /// of assembled channel data to determine the decompression algorithm.
+    /// Brotli-compressed channels must start with `0x01`; zlib data is
+    /// recognised by its natural header without an explicit prefix.
+    fn channel_version_byte(&self) -> Option<u8> {
+        None
+    }
 }

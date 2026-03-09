@@ -1,6 +1,13 @@
-use base_consensus_genesis::RollupConfig;
+use std::sync::Arc;
 
-use crate::{Batcher, BatcherConfig, L1Miner, L1MinerConfig, MockL2Block, MockL2Source};
+use alloy_eips::BlockNumHash;
+use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_protocol::{BlockInfo, L2BlockInfo};
+
+use crate::{
+    ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, Batcher, BatcherConfig,
+    L1Miner, L1MinerConfig, L2Verifier, MockL2Block, MockL2Source, SharedL1Chain, block_info_from,
+};
 
 /// Top-level test harness that owns all actors for a single action test.
 ///
@@ -57,6 +64,58 @@ impl ActionTestHarness {
     /// Push a single hand-crafted L2 block into the source.
     pub fn push_l2_block(&mut self, block: MockL2Block) {
         self.l2.push(block);
+    }
+
+    /// Create an [`L2Verifier`] wired to the harness's L1 chain.
+    ///
+    /// A [`SharedL1Chain`] is initialised from the miner's current chain and
+    /// returned alongside the verifier. Mine new blocks with `l1.mine_block()`
+    /// then call `chain.push(l1.tip().clone())` and
+    /// `verifier.act_l1_head_signal(block_info).await` to feed them into the
+    /// pipeline.
+    ///
+    /// The pipeline is seeded with the L1 genesis block as its origin and with
+    /// the L2 genesis state from `rollup_config`.
+    pub fn create_verifier(&self) -> (L2Verifier, SharedL1Chain) {
+        let chain = SharedL1Chain::from_blocks(self.l1.chain().to_vec());
+        let rollup_config = Arc::new(self.rollup_config.clone());
+        let l1_chain_config = Arc::new(L1ChainConfig::default());
+
+        let l1_provider = ActionL1ChainProvider::new(chain.clone());
+        let dap_source =
+            ActionDataSource::new(chain.clone(), self.rollup_config.batch_inbox_address);
+        let l2_provider = ActionL2ChainProvider::from_genesis(&self.rollup_config);
+
+        // Seed the pipeline origin from the actual genesis block so parent-hash
+        // chaining validates correctly when block 1 is provided.
+        let genesis_l1_block = self.l1.chain().first().expect("genesis always present");
+        let genesis_l1 = block_info_from(genesis_l1_block);
+
+        let safe_head = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: self.rollup_config.genesis.l2.hash,
+                number: self.rollup_config.genesis.l2.number,
+                parent_hash: Default::default(),
+                timestamp: self.rollup_config.genesis.l2_time,
+            },
+            l1_origin: BlockNumHash {
+                number: genesis_l1.number,
+                hash: genesis_l1.hash,
+            },
+            seq_num: 0,
+        };
+
+        let verifier = L2Verifier::new(
+            rollup_config,
+            l1_chain_config,
+            l1_provider,
+            dap_source,
+            l2_provider,
+            safe_head,
+            genesis_l1,
+        );
+
+        (verifier, chain)
     }
 
     /// Create a [`Batcher`] that drains the harness's L2 source.

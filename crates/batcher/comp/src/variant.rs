@@ -81,6 +81,13 @@ impl ChannelCompressor for VariantCompressor {
             Self::Zlib(compressor) => compressor.get_compressed(),
         }
     }
+
+    fn channel_version_byte(&self) -> Option<u8> {
+        match self {
+            Self::Brotli(compressor) => compressor.channel_version_byte(),
+            Self::Zlib(compressor) => compressor.channel_version_byte(),
+        }
+    }
 }
 
 impl From<CompressionAlgo> for VariantCompressor {

@@ -1,8 +1,19 @@
 use alloy_consensus::Header;
 use alloy_primitives::{Address, Bytes, B256};
+use base_protocol::BlockInfo;
 use tracing::info;
 
 use crate::Action;
+
+/// Convert an [`L1Block`] reference to a [`BlockInfo`].
+pub fn block_info_from(block: &L1Block) -> BlockInfo {
+    BlockInfo {
+        hash: block.hash(),
+        number: block.number(),
+        parent_hash: block.header.parent_hash,
+        timestamp: block.timestamp(),
+    }
+}
 
 /// Error returned by [`L1Miner::reorg_to`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

@@ -2280,11 +2280,17 @@ name = "base-action-harness"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips",
  "alloy-primitives",
+ "alloy-rlp",
+ "async-trait",
+ "base-alloy-consensus",
  "base-batcher-driver",
+ "base-consensus-derive",
  "base-consensus-genesis",
  "base-protocol",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
 ]
 
@@ -2773,6 +2779,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
+ "alloy-rlp",
  "alloy-sol-types",
  "arbitrary",
  "base-consensus-genesis",
