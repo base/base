@@ -286,22 +286,16 @@ where
             ctx.metrics.flashblock_byte_size_histogram.record(flashblock_byte_size as f64);
         }
 
+        let mut build_immediately = false;
         if ctx.attributes().no_tx_pool {
-            finalized_cell.set(payload);
-
             info!(
                 target: "payload_builder",
                 "No transaction pool, skipping transaction pool processing",
             );
 
-            let total_block_building_time = block_build_start_time.elapsed();
-            ctx.metrics.total_block_built_duration.record(total_block_building_time);
-            ctx.metrics.total_block_built_gauge.set(total_block_building_time);
-            ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
-            ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
-
-            return Ok(());
+            build_immediately = true;
         }
+
         // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
         let (flashblocks_per_block, first_flashblock_offset) =
             self.calculate_flashblocks(timestamp);
@@ -316,6 +310,21 @@ where
             self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block) as f64,
         );
         ctx.metrics.first_flashblock_time_offset.record(first_flashblock_offset.as_millis() as f64);
+
+        // build immediately if flashblocks_per_block <= 0
+        build_immediately = build_immediately || flashblocks_per_block == 0;
+
+        if build_immediately {
+            finalized_cell.set(payload);
+            let total_block_building_time = block_build_start_time.elapsed();
+            ctx.metrics.total_block_built_duration.record(total_block_building_time);
+            ctx.metrics.total_block_built_gauge.set(total_block_building_time);
+            ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
+            ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
+
+            return Ok(());
+        }
+
         let gas_per_batch = ctx.block_gas_limit() / flashblocks_per_block;
         let da_per_batch = ctx
             .builder_config
@@ -796,12 +805,14 @@ where
         else {
             error!(
                 target: "payload_builder",
-                message = "FCU arrived too late or system clock are unsynced",
+                message = "FCU arrived too late or system clock are unsynced, building 0 flashblocks",
                 ?target_time,
                 ?now,
             );
-            return (self.config.flashblocks_per_block(), self.config.flashblocks_interval);
+            // in this case, we have no time to produce any flashblocks
+            return (0, Duration::ZERO);
         };
+
         self.metrics.flashblocks_time_drift.record(
             self.config.block_time.as_millis().saturating_sub(time_drift.as_millis()) as f64,
         );
