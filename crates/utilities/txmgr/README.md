@@ -28,6 +28,15 @@ Add the dependency to your `Cargo.toml`:
 base-txmgr = { git = "https://github.com/base/base" }
 ```
 
+```rust,ignore
+use base_txmgr::{SimpleTxManager, TxCandidate, TxManagerConfig};
+
+// Build a transaction candidate and submit it via the manager
+let config = TxManagerConfig;
+let manager = SimpleTxManager;
+let candidate = TxCandidate;
+```
+
 ## License
 
 [MIT License](https://github.com/base/base/blob/main/LICENSE)
