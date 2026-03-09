@@ -42,36 +42,24 @@ L1 RPC            │                │ Signed proposal
 
 ### Game Tracking and Parent Selection
 
-Each dispute game references a parent game via `parentIndex` in the factory. The proposer determines its starting point (parent game) using on-chain discovery:
+Each dispute game references a parent game via `parentIndex` in the factory. The proposer carries no cached parent state -- it loads the latest game from chain at the top of every tick:
 
 ```mermaid
 flowchart TD
-    A[step] --> B{parent_game_state initialized?}
-    B -->|Yes| C[Use parent_game_state]
-    B -->|No| D["Use AnchorStateRegistry"]
-    C --> E[Generate proofs and propose]
-    D --> E
-    E --> F{create result?}
-    F -->|Success| G["recover_latest_game() from factory"]
-    F -->|GameAlreadyExists| H["recover_latest_game() from factory"]
-    F -->|Other error| I[Log and retry next tick]
-    G --> J[Set parent_game_state from on-chain]
-    H --> K{Found game?}
-    K -->|Yes| L[Set parent_game_state, chain off it]
-    K -->|No| M["Reset to uninitialized (anchor fallback)"]
+    A[step] --> B["recover_latest_game() from factory"]
+    B --> C{Found game?}
+    C -->|Yes| D[Use as parent]
+    C -->|No| E["Use AnchorStateRegistry"]
+    C -->|Error| F[Skip tick]
+    D --> G[Generate proofs and propose]
+    E --> G
+    G --> H{create result?}
+    H -->|Success| I[Clear pending, next tick loads fresh state]
+    H -->|GameAlreadyExists| I
+    H -->|Other error| J[Log, next tick retries]
 ```
 
-#### Key Scenarios
-
-| Scenario | Parent source | Parent index |
-|---|---|---|
-| First run, no games exist | `AnchorStateRegistry.getAnchorRoot()` | `NO_PARENT_INDEX` (0xFFFFFFFF) |
-| Startup with existing games | Most recent game of correct type (any proposer) | That game's factory index |
-| After creating a game | On-chain scan for latest game of our type | Discovered game's factory index |
-| After `GameAlreadyExists` | On-chain scan for latest game of our type | Discovered game's factory index |
-| On-chain scan finds nothing | `AnchorStateRegistry.getAnchorRoot()` | `NO_PARENT_INDEX` |
-
-The `recover_latest_game()` method walks backwards through the `DisputeGameFactory` (up to `MAX_GAME_RECOVERY_LOOKBACK` entries) to find the most recent game matching the configured `game_type`. This allows the proposer to chain off games created by any proposer, not just itself.
+`recover_latest_game()` walks backwards through the `DisputeGameFactory` (up to `MAX_GAME_RECOVERY_LOOKBACK` entries) to find the most recent game matching the configured `game_type`. Because state is always loaded from chain, the proposer naturally chains off games created by any proposer, handles `GameAlreadyExists` without special recovery logic, and cannot enter stale-state livelocks.
 
 #### Data Sources
 

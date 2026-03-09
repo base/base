@@ -183,7 +183,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         game_type: config.game_type,
         allow_non_finalized: config.allow_non_finalized,
     };
-    let mut driver = Driver::new(
+    let driver = Driver::new(
         driver_config,
         prover,
         Arc::clone(&l1_client),
@@ -195,21 +195,6 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         output_proposer,
         cancel.child_token(),
     );
-
-    // ── 7. Recover parent game state from on-chain ──────────────────────
-    match driver.recover_latest_game().await {
-        Ok(Some(state)) => {
-            driver.set_parent_game_state(
-                state.game_index,
-                state.output_root,
-                state.l2_block_number,
-            );
-        }
-        Ok(None) => {}
-        Err(e) => {
-            warn!(error = %e, "Failed to recover parent game state, will start from anchor");
-        }
-    }
 
     let driver_handle: Arc<dyn ProposerDriverControl> =
         Arc::new(DriverHandle::new(driver, cancel.clone()));

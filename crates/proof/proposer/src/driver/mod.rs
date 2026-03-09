@@ -70,19 +70,14 @@ impl Default for DriverConfig {
     }
 }
 
-/// Tracks the most recent dispute game for parent chaining.
-///
-/// Each new game references its parent via `game_index`. This state is
-/// recovered from on-chain data at startup and after each game creation.
-#[derive(Debug, Clone, Default)]
-pub struct ParentGameState {
-    /// Whether this state has been populated from on-chain data.
-    pub initialized: bool,
-    /// Factory index of the parent game.
+/// A dispute game discovered on-chain via `recover_latest_game()`.
+#[derive(Debug, Clone)]
+pub struct RecoveredGame {
+    /// Factory index of the game.
     pub game_index: u32,
-    /// Output root claimed by the parent game.
+    /// Output root claimed by the game.
     pub output_root: B256,
-    /// L2 block number of the parent game's claim.
+    /// L2 block number of the game's claim.
     pub l2_block_number: u64,
 }
 
@@ -110,10 +105,6 @@ where
     pending: VecDeque<ProverProposal>,
     /// Cached intermediate roots for the current proposal (survives retry after failed submission).
     cached_intermediate_roots: Vec<B256>,
-    /// Tracks the most recent dispute game for parent chaining.
-    parent_game_state: ParentGameState,
-    /// Prevents re-proposing the same block.
-    last_proposed_block: u64,
 }
 
 impl<L1, L2, E, R, ASR, F> std::fmt::Debug for Driver<L1, L2, E, R, ASR, F>
@@ -129,7 +120,6 @@ where
         f.debug_struct("Driver")
             .field("config", &self.config)
             .field("pending_count", &self.pending.len())
-            .field("parent_game_state", &self.parent_game_state)
             .finish_non_exhaustive()
     }
 }
@@ -170,8 +160,6 @@ where
             cancel,
             pending: VecDeque::new(),
             cached_intermediate_roots: Vec::new(),
-            parent_game_state: ParentGameState::default(),
-            last_proposed_block: 0,
         }
     }
 
@@ -183,27 +171,13 @@ where
         self.cancel = cancel;
     }
 
-    /// Sets the parent game state directly (typically from recovery in `main.rs`).
-    pub const fn set_parent_game_state(
-        &mut self,
-        game_index: u32,
-        output_root: B256,
-        l2_block_number: u64,
-    ) {
-        self.parent_game_state =
-            ParentGameState { initialized: true, game_index, output_root, l2_block_number };
-    }
-
     /// Scans the `DisputeGameFactory` on-chain to find the most recent game
-    /// of our `game_type` and returns it as a `ParentGameState`.
+    /// of our `game_type`.
     ///
-    /// Used at startup, after successful game creation, and when recovering
-    /// from `GameAlreadyExists` (so the proposer can chain off games created
-    /// by any proposer, not just itself).
-    ///
-    /// Returns `Ok(None)` when no matching game exists, or `Err` if an RPC
-    /// call fails so callers can distinguish the two cases.
-    pub async fn recover_latest_game(&self) -> Result<Option<ParentGameState>, ProposerError> {
+    /// Called at the top of every tick to determine the parent game.
+    /// Returns `Ok(None)` when no matching game exists (use anchor instead),
+    /// or `Err` on RPC failure (skip this tick).
+    async fn recover_latest_game(&self) -> Result<Option<RecoveredGame>, ProposerError> {
         let count = self
             .factory_client
             .game_count()
@@ -248,8 +222,7 @@ where
                 "Recovered parent game state from on-chain"
             );
 
-            return Ok(Some(ParentGameState {
-                initialized: true,
+            return Ok(Some(RecoveredGame {
                 game_index: idx,
                 output_root: game_info.root_claim,
                 l2_block_number: game_info.l2_block_number,
@@ -288,22 +261,19 @@ where
 
     /// Performs a single driver step (one tick of the loop).
     async fn step(&mut self) -> Result<(), ProposerError> {
-        // Determine starting point: parent game state or anchor registry.
+        // Always load parent state from chain to stay in sync with other proposers.
         let (starting_block_number, starting_root, parent_index) =
-            if self.parent_game_state.initialized {
-                (
-                    self.parent_game_state.l2_block_number,
-                    self.parent_game_state.output_root,
-                    self.parent_game_state.game_index,
-                )
-            } else {
-                let anchor = self.anchor_registry.get_anchor_root().await?;
-                debug!(
-                    l2_block_number = anchor.l2_block_number,
-                    root = ?anchor.root,
-                    "Using anchor state registry as starting point"
-                );
-                (anchor.l2_block_number, anchor.root, NO_PARENT_INDEX)
+            match self.recover_latest_game().await? {
+                Some(g) => (g.l2_block_number, g.output_root, g.game_index),
+                None => {
+                    let anchor = self.anchor_registry.get_anchor_root().await?;
+                    debug!(
+                        l2_block_number = anchor.l2_block_number,
+                        root = ?anchor.root,
+                        "No on-chain games found, using anchor state registry"
+                    );
+                    (anchor.l2_block_number, anchor.root, NO_PARENT_INDEX)
+                }
             };
 
         // Generate proofs for blocks in the range.
@@ -545,11 +515,6 @@ where
             }
         }
 
-        // Don't re-propose for a block we've already submitted.
-        if proposal.to.number <= self.last_proposed_block {
-            return Ok(None);
-        }
-
         // Check BLOCKHASH window: L1 origin must be recent enough.
         let l1_latest = match self.l1_client.block_number().await {
             Ok(n) => n,
@@ -587,37 +552,11 @@ where
         self.latest_safe_block().await.map(|b| b.number)
     }
 
-    /// Attempts on-chain recovery and updates `parent_game_state`. On failure
-    /// or when no game is found, resets to uninitialized so the next tick
-    /// falls back to the anchor registry, and clears `last_proposed_block` to
-    /// avoid the livelock where the anchor's block number is below the stale
-    /// `last_proposed_block` guard.
-    async fn recover_or_reset_parent_state(&mut self, context: &str) {
-        match self.recover_latest_game().await {
-            Ok(Some(state)) => {
-                info!(
-                    game_index = state.game_index,
-                    output_root = ?state.output_root,
-                    l2_block_number = state.l2_block_number,
-                    context,
-                    "Recovered parent game state from on-chain"
-                );
-                self.parent_game_state = state;
-            }
-            Ok(None) => {
-                warn!(context, "On-chain recovery found no games, will use anchor on next tick");
-                self.parent_game_state.initialized = false;
-                self.last_proposed_block = 0;
-            }
-            Err(e) => {
-                warn!(error = %e, context, "On-chain recovery failed, will use anchor on next tick");
-                self.parent_game_state.initialized = false;
-                self.last_proposed_block = 0;
-            }
-        }
-    }
-
     /// Submits a proposal by creating a dispute game via the factory.
+    ///
+    /// Always clears pending state afterward so the next tick starts fresh
+    /// from on-chain state — this prevents stale aggregated proposals with
+    /// mismatched intermediate roots from leaking across ticks.
     async fn propose_output(
         &mut self,
         proposal: &ProverProposal,
@@ -646,21 +585,13 @@ where
             Ok(Ok(())) => {
                 info!(l2_block_number = proposal.to.number, "Dispute game created successfully");
                 metrics::counter!(proposer_metrics::L2_OUTPUT_PROPOSALS_TOTAL).increment(1);
-
-                self.pending.clear();
-                self.cached_intermediate_roots.clear();
-                self.last_proposed_block = proposal.to.number;
-                self.recover_or_reset_parent_state("after successful create").await;
             }
             Ok(Err(e)) => {
                 if is_game_already_exists(&e) {
                     info!(
                         l2_block_number = proposal.to.number,
-                        "Game already exists, recovering from on-chain"
+                        "Game already exists, next tick will load fresh state from chain"
                     );
-                    self.pending.clear();
-                    self.cached_intermediate_roots.clear();
-                    self.recover_or_reset_parent_state("after GameAlreadyExists").await;
                 } else {
                     warn!(
                         error = %e,
@@ -677,6 +608,9 @@ where
                 );
             }
         }
+
+        self.pending.clear();
+        self.cached_intermediate_roots.clear();
     }
 }
 
@@ -1090,21 +1024,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_next_output_already_proposed() {
-        // Proposal for block 110, but we already proposed for that block
-        let canonical_hash = B256::repeat_byte(0x30);
-        let sync_status = test_sync_status(200, canonical_hash);
-        let mut driver = test_driver(1000, sync_status, Some(canonical_hash));
-
-        driver.pending.push_back(test_proposal(101, 110, false));
-        driver.last_proposed_block = 110;
-
-        let result = driver.next_output(100, B256::ZERO, &[]).await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-    }
-
-    #[tokio::test]
     async fn test_next_output_happy_path() {
         // target = 100 + 10 = 110, safe = 200, l1_latest = 1000
         // test_proposal sets l1origin.number = 100 + to_number = 210, well within BLOCKHASH window
@@ -1193,15 +1112,123 @@ mod tests {
             CancellationToken::new(),
         );
 
-        // Set parent game state so step() uses it as starting point
-        driver.set_parent_game_state(0, B256::ZERO, 100);
-        driver.pending.push_back(test_proposal(101, 110, false));
+        // The mock factory has game_count=1 with game_type=0, and MockAggregateVerifier
+        // returns l2_block_number=0 -- so recover_latest_game() finds a game at block 0.
+        // Pre-populate pending with a proposal starting from block 1.
+        driver.pending.push_back(test_proposal(1, 10, false));
 
         let result = driver.step().await;
         assert!(result.is_ok(), "step() should succeed, got: {result:?}");
         assert!(
             tracking.called.load(Ordering::SeqCst),
             "OutputProposer::propose_output should have been called"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_step_falls_back_to_anchor_when_no_games() {
+        struct TrackingOutputProposer {
+            parent_index: std::sync::Mutex<Option<u32>>,
+        }
+
+        #[async_trait]
+        impl OutputProposer for TrackingOutputProposer {
+            async fn propose_output(
+                &self,
+                _proposal: &ProverProposal,
+                parent_index: u32,
+                _intermediate_roots: &[B256],
+            ) -> Result<(), ProposerError> {
+                *self.parent_index.lock().unwrap() = Some(parent_index);
+                Ok(())
+            }
+        }
+
+        let canonical_hash = B256::repeat_byte(0x30);
+        let sync_status = test_sync_status(200, canonical_hash);
+        let tracking =
+            Arc::new(TrackingOutputProposer { parent_index: std::sync::Mutex::new(None) });
+
+        // Build a driver whose factory has zero games so recover_latest_game()
+        // returns None and step() must fall back to the anchor registry.
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: Some(canonical_hash) });
+        let prover = Arc::new(Prover::new(
+            test_per_chain_config(),
+            RollupConfig::default(),
+            Arc::clone(&l1),
+            Arc::clone(&l2),
+            MockEnclave,
+            Address::ZERO,
+            B256::ZERO,
+        ));
+        let factory = Arc::new(MockDisputeGameFactory { game_count: 0 });
+
+        let mut driver = Driver::new(
+            DriverConfig { block_interval: 10, ..Default::default() },
+            prover,
+            l1,
+            l2,
+            Arc::new(MockRollupClient { sync_status }),
+            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) }),
+            factory,
+            Arc::new(MockAggregateVerifier),
+            Arc::clone(&tracking) as Arc<dyn OutputProposer>,
+            CancellationToken::new(),
+        );
+
+        // Pre-populate pending so step() has a proposal ready to submit.
+        driver.pending.push_back(test_proposal(1, 10, false));
+
+        let result = driver.step().await;
+        assert!(result.is_ok(), "step() should succeed via anchor fallback, got: {result:?}");
+
+        // The anchor fallback should use NO_PARENT_INDEX.
+        let idx = tracking.parent_index.lock().unwrap();
+        assert_eq!(*idx, Some(NO_PARENT_INDEX), "should use NO_PARENT_INDEX when no games exist");
+    }
+
+    #[tokio::test]
+    async fn test_propose_output_clears_pending_on_error() {
+        struct FailingOutputProposer;
+
+        #[async_trait]
+        impl OutputProposer for FailingOutputProposer {
+            async fn propose_output(
+                &self,
+                _proposal: &ProverProposal,
+                _parent_index: u32,
+                _intermediate_roots: &[B256],
+            ) -> Result<(), ProposerError> {
+                Err(ProposerError::Contract("simulated failure".into()))
+            }
+        }
+
+        let canonical_hash = B256::repeat_byte(0x30);
+        let sync_status = test_sync_status(200, canonical_hash);
+
+        let mut driver = test_driver_custom(
+            MockEnclave,
+            DriverConfig { block_interval: 10, ..Default::default() },
+            1000,
+            sync_status,
+            Some(canonical_hash),
+            Arc::new(FailingOutputProposer),
+            CancellationToken::new(),
+        );
+
+        // Pre-populate pending and cached intermediate roots.
+        driver.pending.push_back(test_proposal(1, 10, false));
+        driver.cached_intermediate_roots = vec![B256::repeat_byte(0xAA)];
+
+        let proposal = test_proposal(1, 10, false);
+        driver.propose_output(&proposal, 0, &[B256::repeat_byte(0xAA)]).await;
+
+        // Both should be cleared even though the proposer returned an error.
+        assert!(driver.pending.is_empty(), "pending should be cleared after error");
+        assert!(
+            driver.cached_intermediate_roots.is_empty(),
+            "cached_intermediate_roots should be cleared after error"
         );
     }
 
@@ -1579,7 +1606,6 @@ mod tests {
             .await
             .expect("should not error")
             .expect("should find game");
-        assert!(state.initialized);
         assert_eq!(state.game_index, 0);
         assert_eq!(state.l2_block_number, 500);
         assert_eq!(state.output_root, root);
