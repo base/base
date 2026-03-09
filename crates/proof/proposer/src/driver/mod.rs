@@ -72,7 +72,7 @@ impl Default for DriverConfig {
 
 /// A dispute game discovered on-chain via `recover_latest_game()`.
 #[derive(Debug, Clone)]
-pub(crate) struct RecoveredGame {
+pub struct RecoveredGame {
     /// Factory index of the game.
     pub game_index: u32,
     /// Output root claimed by the game.
