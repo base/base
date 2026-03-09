@@ -77,6 +77,19 @@ impl ActionTestHarness {
     /// The pipeline is seeded with the L1 genesis block as its origin and with
     /// the L2 genesis state from `rollup_config`.
     pub fn create_verifier(&self) -> (L2Verifier, SharedL1Chain) {
+        let l2_provider = ActionL2ChainProvider::from_genesis(&self.rollup_config);
+        self.create_verifier_with_l2_provider(l2_provider)
+    }
+
+    /// Create an [`L2Verifier`] using a caller-supplied [`ActionL2ChainProvider`].
+    ///
+    /// Use this variant when the test needs to pre-populate the provider with
+    /// custom [`SystemConfig`] entries (e.g. a batcher-address rotation) before
+    /// derivation starts. For the common case, prefer [`create_verifier`].
+    pub fn create_verifier_with_l2_provider(
+        &self,
+        l2_provider: ActionL2ChainProvider,
+    ) -> (L2Verifier, SharedL1Chain) {
         let chain = SharedL1Chain::from_blocks(self.l1.chain().to_vec());
         let rollup_config = Arc::new(self.rollup_config.clone());
         let l1_chain_config = Arc::new(L1ChainConfig::default());
@@ -84,7 +97,6 @@ impl ActionTestHarness {
         let l1_provider = ActionL1ChainProvider::new(chain.clone());
         let dap_source =
             ActionDataSource::new(chain.clone(), self.rollup_config.batch_inbox_address);
-        let l2_provider = ActionL2ChainProvider::from_genesis(&self.rollup_config);
 
         // Seed the pipeline origin from the actual genesis block so parent-hash
         // chaining validates correctly when block 1 is provided.

@@ -198,8 +198,8 @@ fn resubmit_after_reorg_lands_on_new_fork() {
     h.l1.mine_block(); // block 1 contains the batch
     let original_tx_hash = h.l1.block_by_number(1).unwrap().batcher_txs[0].input.clone();
 
-    // Reorg back to genesis is not allowed, so reorg to block 1 (no-op), then
-    // add another block and reorg that away to simulate a real scenario.
+    // Mine a second block and reorg it away, simulating a short reorg while
+    // keeping the first (batch-carrying) block on the canonical chain.
     h.l1.mine_block(); // block 2
     h.l1.reorg_to(1).unwrap(); // discard block 2
 
