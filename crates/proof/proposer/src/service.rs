@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use base_cli_utils::RuntimeManager;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
@@ -35,12 +35,11 @@ use crate::{
 /// 2. Create RPC clients (L1, L2, rollup, enclave)
 /// 3. Read onchain config (`BLOCK_INTERVAL`, `initBond`)
 /// 4. Create prover, output proposer, and driver
-/// 5. Recover parent game state from onchain data
-/// 6. Start health / admin HTTP server
-/// 7. Start balance monitor (if metrics enabled)
-/// 8. Start the driver loop
-/// 9. Wait for SIGTERM or SIGINT
-/// 10. Graceful shutdown in reverse order
+/// 5. Start health / admin HTTP server
+/// 6. Start balance monitor (if metrics enabled)
+/// 7. Start the driver loop
+/// 8. Wait for SIGTERM or SIGINT
+/// 9. Graceful shutdown in reverse order
 pub async fn run(config: ProposerConfig) -> Result<()> {
     config.log.init_tracing_subscriber()?;
 
@@ -146,6 +145,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
 
     // Wrap in Arc for shared ownership.
     let factory_client = Arc::new(factory_client);
+    let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
 
     // ── 5. Create prover and output proposer ─────────────────────────────
     let proposer_address = match &config.signing {
@@ -174,26 +174,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     )?;
     info!("Output proposer initialized");
 
-    // ── 6. Recover parent game state before creating driver ─────────────
-    // Recovery needs direct access to the factory client before it's moved
-    // into the driver. We store the recovered state and set it after driver creation.
-    let recovered_state: Option<(u32, B256, u64)> =
-        match crate::recover_parent_game_state_standalone(
-            factory_client.as_ref(),
-            &verifier_client,
-            config.game_type,
-        )
-        .await
-        {
-            Ok(Some(state)) => Some(state),
-            Ok(None) => None,
-            Err(e) => {
-                warn!(error = %e, "Failed to recover parent game state, will start from anchor");
-                None
-            }
-        };
-
-    // ── 7. Create driver + lifecycle handle ───────────────────────────────
+    // ── 6. Create driver ───────────────────────────────────────────────────
     let driver_config = DriverConfig {
         poll_interval: config.poll_interval,
         block_interval,
@@ -202,7 +183,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         game_type: config.game_type,
         allow_non_finalized: config.allow_non_finalized,
     };
-    let mut driver = Driver::new(
+    let driver = Driver::new(
         driver_config,
         prover,
         Arc::clone(&l1_client),
@@ -210,19 +191,15 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         rollup_client,
         anchor_registry,
         factory_client,
+        verifier_client,
         output_proposer,
         cancel.child_token(),
     );
 
-    // Apply recovered parent game state.
-    if let Some((game_index, output_root, l2_block_number)) = recovered_state {
-        driver.set_parent_game_state(game_index, output_root, l2_block_number);
-    }
-
     let driver_handle: Arc<dyn ProposerDriverControl> =
         Arc::new(DriverHandle::new(driver, cancel.clone()));
 
-    // ── 8. Start health / admin HTTP server ──────────────────────────────
+    // ── 7. Start health / admin HTTP server ──────────────────────────────
     let ready = Arc::new(AtomicBool::new(false));
     let admin_driver = if config.rpc.enable_admin {
         info!("Admin RPC enabled");
@@ -239,7 +216,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         )
     };
 
-    // ── 9. Start balance monitor (if metrics enabled) ────────────────────
+    // ── 8. Start balance monitor (if metrics enabled) ────────────────────
     let balance_handle: Option<JoinHandle<()>> = if config.metrics.enabled {
         let handle = tokio::spawn(crate::balance_monitor(
             Arc::clone(&l1_client),
@@ -252,7 +229,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         None
     };
 
-    // ── 10. Start the driver loop ────────────────────────────────────────
+    // ── 9. Start the driver loop ─────────────────────────────────────────
     driver_handle.start_proposer().await.map_err(|e| eyre::eyre!(e))?;
 
     ready.store(true, Ordering::SeqCst);
@@ -263,11 +240,11 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         "Service is ready"
     );
 
-    // ── 11. Wait for shutdown signal ─────────────────────────────────────
+    // ── 10. Wait for shutdown signal ─────────────────────────────────────
     cancel.cancelled().await;
     info!("Shutdown signal received, stopping service...");
 
-    // ── 12. Graceful shutdown (reverse initialisation order) ─────────────
+    // ── 11. Graceful shutdown (reverse initialisation order) ─────────────
     ready.store(false, Ordering::SeqCst);
 
     if driver_handle.is_running()
