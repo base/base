@@ -14,7 +14,9 @@ pub fn spec(chain_spec: impl OpHardforks, header: impl BlockHeader) -> OpSpecId 
 /// This is only intended to be used after the Bedrock, when hardforks are activated by
 /// timestamp.
 pub fn spec_by_timestamp_after_bedrock(chain_spec: impl OpHardforks, timestamp: u64) -> OpSpecId {
-    if chain_spec.is_jovian_active_at_timestamp(timestamp) {
+    if chain_spec.is_base_v1_active_at_timestamp(timestamp) {
+        OpSpecId::BASE_V1
+    } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
         OpSpecId::JOVIAN
     } else if chain_spec.is_isthmus_active_at_timestamp(timestamp) {
         OpSpecId::ISTHMUS
