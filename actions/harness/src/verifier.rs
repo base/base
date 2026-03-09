@@ -178,17 +178,26 @@ impl L2Verifier {
     ///
     /// Returns the number of L2 attributes that were applied (i.e. how many L2
     /// blocks were derived).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifierError::Pipeline`] if the pipeline returns a
+    /// non-transient error, or if `NotEnoughData` is returned more than
+    /// 1 000 consecutive times without progress (indicating a stuck pipeline).
     pub async fn act_l2_pipeline_full(&mut self) -> Result<usize, VerifierError> {
         let mut derived = 0;
+        let mut no_progress = 0usize;
         loop {
             match self.pipeline.step(self.safe_head).await {
                 StepResult::PreparedAttributes => {
+                    no_progress = 0;
                     if let Some(attrs) = self.pipeline.next() {
                         self.apply_attributes(attrs);
                         derived += 1;
                     }
                 }
                 StepResult::AdvancedOrigin => {
+                    no_progress = 0;
                     // Pipeline consumed an L1 block and is ready for more; keep stepping.
                 }
                 StepResult::StepFailed(err) => {
@@ -201,6 +210,14 @@ impl L2Verifier {
                             // The channel bank just ingested a frame but the channel isn't
                             // assembled yet, or the batch reader needs another read attempt.
                             // This is a transient state — step again immediately.
+                            no_progress += 1;
+                            if no_progress > 1_000 {
+                                return Err(VerifierError::Pipeline(
+                                    PipelineError::Provider(
+                                        "pipeline stuck: 1000 consecutive NotEnoughData without progress".into()
+                                    ).temp()
+                                ));
+                            }
                         }
                         _ => return Err(VerifierError::Pipeline(err)),
                     }
@@ -243,6 +260,11 @@ impl L2Verifier {
             .l1_origin_from_attrs(&attrs)
             .or_else(|| attrs.derived_from.map(|b| BlockNumHash { hash: b.hash, number: b.number }))
             .unwrap_or_default();
+        // seq_num tracks position within the L1 epoch: 0 for the first L2 block
+        // of an epoch, incrementing for each subsequent block in the same epoch.
+        // BatchQueue uses this for batch ordering validation.
+        let seq_num =
+            if l1_origin == self.safe_head.l1_origin { self.safe_head.seq_num + 1 } else { 0 };
         self.safe_head = L2BlockInfo {
             block_info: BlockInfo {
                 number: new_number,
@@ -252,7 +274,7 @@ impl L2Verifier {
                 ..Default::default()
             },
             l1_origin,
-            seq_num: 0,
+            seq_num,
         };
     }
 
