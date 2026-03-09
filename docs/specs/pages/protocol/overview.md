@@ -92,7 +92,7 @@ The following diagram demonstrates this interaction and key Base protocol compon
 ```mermaid
 graph TD
     subgraph "Ethereum L1"
-        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
         BatchInbox(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
     end
 
@@ -127,7 +127,7 @@ graph LR
         BatchInbox(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
         DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
         FaultDisputeGame(<a href="./fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
-        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
         ExternalContracts(External Contracts)
     end
 
@@ -194,10 +194,10 @@ graph LR
 
     subgraph "L1 Smart Contracts"
         BatchDataEOA(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
-        L1StandardBridge(<a href="./bridges.html">L1StandardBridge</a>)
-        L1ERC721Bridge(<a href="./bridges.html">L1ERC721Bridge</a>)
-        L1CrossDomainMessenger(<a href="./messengers.html">L1CrossDomainMessenger</a>)
-        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        L1StandardBridge(<a href="./bridging/bridges.html">L1StandardBridge</a>)
+        L1ERC721Bridge(<a href="./bridging/bridges.html">L1ERC721Bridge</a>)
+        L1CrossDomainMessenger(<a href="./bridging/messengers.html">L1CrossDomainMessenger</a>)
+        OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
         SuperchainConfig(SuperchainConfig)
         SystemConfig(<a href="./system-config.html">SystemConfig</a>)
         DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
@@ -276,7 +276,7 @@ graph LR
 
 - The `Batch Inbox Address` described above (**highlighted in GREY**) is _not_ a smart contract and is instead an arbitrarily
   selected account that is assumed to have no known private key. The convention for deriving this account's address is
-  provided on the [Configurability](./configurability.md#consensus-parameters) page.
+  provided on the [Configurability](configurability.md#consensus-parameters) page.
   - Historically, it was often derived as
     `0xFF0000....<L2 chain ID>` where `<L2 chain ID>` is chain ID of the Layer 2 network for which the data is being posted.
     Historically, some Base deployments used this form; Base may use chain-specific configured values.
@@ -305,18 +305,18 @@ graph LR
     end
 
     subgraph "L2 System Contracts"
-        L1Block(<a href="./predeploys.html#l1block">L1Block</a>)
-        GasPriceOracle(<a href="./predeploys.html#gaspriceoracle">GasPriceOracle</a>)
-        L1FeeVault(<a href="./predeploys.html#l1feevault">L1FeeVault</a>)
-        BaseFeeVault(<a href="./predeploys.html#basefeevault">BaseFeeVault</a>)
-        SequencerFeeVault(<a href="./predeploys.html#sequencerfeevault">SequencerFeeVault</a>)
+        L1Block(<a href="./execution/evm/predeploys.html#l1block">L1Block</a>)
+        GasPriceOracle(<a href="./execution/evm/predeploys.html#gaspriceoracle">GasPriceOracle</a>)
+        L1FeeVault(<a href="./execution/evm/predeploys.html#l1feevault">L1FeeVault</a>)
+        BaseFeeVault(<a href="./execution/evm/predeploys.html#basefeevault">BaseFeeVault</a>)
+        SequencerFeeVault(<a href="./execution/evm/predeploys.html#sequencerfeevault">SequencerFeeVault</a>)
     end
 
     subgraph "L2 Bridge Contracts"
-        L2CrossDomainMessenger(<a href="./predeploys.html#l2crossdomainmessenger">L2CrossDomainMessenger</a>)
-        L2ToL1MessagePasser(<a href="./predeploys.html#l2tol1messagepasser">L2ToL1MessagePasser</a>)
-        L2StandardBridge(<a href="./predeploys.html#l2standardbridge">L2StandardBridge</a>)
-        L2ERC721Bridge(<a href="./predeploys.html">L2ERC721Bridge</a>)
+        L2CrossDomainMessenger(<a href="./execution/evm/predeploys.html#l2crossdomainmessenger">L2CrossDomainMessenger</a>)
+        L2ToL1MessagePasser(<a href="./execution/evm/predeploys.html#l2tol1messagepasser">L2ToL1MessagePasser</a>)
+        L2StandardBridge(<a href="./execution/evm/predeploys.html#l2standardbridge">L2StandardBridge</a>)
+        L2ERC721Bridge(<a href="./execution/evm/predeploys.html">L2ERC721Bridge</a>)
     end
 
     subgraph "Transactions"
@@ -410,18 +410,18 @@ as demonstrations of how different actors use these components to fulfill their 
 graph LR
     subgraph "L2 Node"
         RollupNode(<a href="./consensus/">Consensus</a>)
-        ExecutionEngine(<a href="./exec-engine.html">Execution Engine</a>)
+        ExecutionEngine(<a href="./execution/">Execution Engine</a>)
     end
 
     subgraph "System Interactions"
-        BatchSubmitter(<a href="./batcher.html">Batch Submitter</a>)
+        BatchSubmitter(<a href="./batcher.html">Batcher</a>)
         OutputSubmitter(Output Submitter)
         Challenger(Challenger)
     end
 
     subgraph "L1 Smart Contracts"
         BatchDataEOA(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
-        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
         DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
         FaultDisputeGame(<a href="./fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
     end
@@ -453,7 +453,7 @@ graph LR
 
 **Spec links:**
 
-- [Execution Engine](exec-engine.md)
+- [Execution Engine](execution/index.md)
 
 Since the EE uses Geth under the hood, Base uses Geth's built-in peer-to-peer network and transaction pool to
 propagate transactions. The same network can also be used to propagate submitted blocks and support snap-sync.
@@ -471,7 +471,7 @@ The below diagram illustrates how the sequencer and verifiers fit together:
 
 **Spec links:**
 
-- [Deposits](deposits.md)
+- [Deposits](bridging/deposits.md)
 
 Base supports two types of deposits: user deposits, and L1 attributes deposits. To perform a user deposit, users
 call the `depositTransaction` method on the `OptimismPortal` contract. This in turn emits `TransactionDeposited` events,

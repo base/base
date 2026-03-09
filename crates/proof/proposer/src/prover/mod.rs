@@ -13,10 +13,9 @@ use alloy_rpc_types_eth::TransactionReceipt;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_rpc_types::Transaction as OpTransaction;
 use base_enclave::{
-    AggregateRequest, ChainConfig, Proposal, RollupConfig, l2_block_to_block_info,
-    output_root_v0_with_hash,
+    AggregateRequest, ChainConfig, ExecuteStatelessRequest, Proposal, RollupConfig,
+    l2_block_to_block_info, output_root_v0_with_hash,
 };
-use base_enclave_client::ExecuteStatelessRequest;
 use base_proof_rpc::{L1BlockId, L1Provider, L2BlockRef, OpBlock};
 use base_protocol::Predeploys;
 pub use types::ProverProposal;
@@ -526,7 +525,7 @@ mod tests {
 
     use alloy_primitives::{B256, Bloom, BloomInput, Bytes, U256};
     use async_trait::async_trait;
-    use base_enclave_client::{ClientError, ExecuteStatelessRequest};
+    use base_enclave_client::ClientError;
     use rstest::rstest;
     use types::test_helpers::test_proposal;
 

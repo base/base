@@ -12,10 +12,7 @@ use base_alloy_evm::OpReceiptBuilder;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use base_execution_forks::OpHardforks;
-use base_execution_payload_builder::{
-    config::{OpDAConfig, OpGasLimitConfig},
-    error::OpPayloadBuilderError,
-};
+use base_execution_payload_builder::error::OpPayloadBuilderError;
 use base_execution_primitives::{OpReceipt, OpTransactionSigned};
 use base_node_core::OpPayloadBuilderAttributes;
 use base_revm::{L1BlockInfo, OpSpecId};
@@ -37,9 +34,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, trace, warn};
 
 use crate::{
-    BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, ExecutionMeteringMode,
-    PayloadTxsBounds, ResourceLimits, SharedMeteringProvider, TxResources, TxnExecutionError,
-    TxnOutcome,
+    BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, PayloadTxsBounds,
+    ResourceLimits, TxResources, TxnExecutionError, TxnOutcome,
 };
 
 /// Records the priority fee of a rejected transaction with the given reason as a label.
@@ -102,8 +98,6 @@ pub struct FlashblocksExtraCtx {
     pub execution_time_per_batch_us: Option<u128>,
     /// State root time limit per flashblock in microseconds
     pub state_root_time_per_batch_us: Option<u128>,
-    /// Whether to disable state root calculation for each flashblock
-    pub disable_state_root: bool,
 }
 
 impl FlashblocksExtraCtx {
@@ -136,10 +130,6 @@ impl FlashblocksExtraCtx {
 pub struct OpPayloadBuilderCtx {
     /// The type that knows how to perform system calls and configure the evm.
     pub evm_config: OpEvmConfig,
-    /// The DA config for the payload builder
-    pub da_config: OpDAConfig,
-    // Gas limit configuration for the payload builder
-    pub gas_limit_config: OpGasLimitConfig,
     /// The chainspec
     pub chain_spec: Arc<OpChainSpec>,
     /// How to build the payload.
@@ -154,22 +144,8 @@ pub struct OpPayloadBuilderCtx {
     pub metrics: Arc<BuilderMetrics>,
     /// Extra context for the payload builder
     pub extra: FlashblocksExtraCtx,
-    /// Max gas that can be used by a transaction.
-    pub max_gas_per_txn: Option<u64>,
-    /// Max execution time per transaction in microseconds.
-    pub max_execution_time_per_tx_us: Option<u128>,
-    /// Max state root calculation time per transaction in microseconds.
-    pub max_state_root_time_per_tx_us: Option<u128>,
-    /// Flashblock-level execution time budget in microseconds.
-    pub flashblock_execution_time_budget_us: Option<u128>,
-    /// Block-level state root calculation time budget in microseconds.
-    pub block_state_root_time_budget_us: Option<u128>,
-    /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
-    pub max_uncompressed_block_size: Option<u64>,
-    /// Execution metering mode: off, dry-run, or enforce.
-    pub execution_metering_mode: ExecutionMeteringMode,
-    /// Resource metering provider
-    pub metering_provider: SharedMeteringProvider,
+    /// Builder configuration containing limits and metering settings.
+    pub builder_config: BuilderConfig,
 }
 
 impl OpPayloadBuilderCtx {
@@ -218,7 +194,7 @@ impl OpPayloadBuilderCtx {
 
     /// Returns the block gas limit to target.
     pub fn block_gas_limit(&self) -> u64 {
-        self.gas_limit_config.gas_limit().unwrap_or_else(|| {
+        self.builder_config.gas_limit_config.gas_limit().unwrap_or_else(|| {
             self.attributes().gas_limit.unwrap_or(self.evm_env.block_env.gas_limit)
         })
     }
@@ -473,17 +449,12 @@ impl OpPayloadBuilderCtx {
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns `Ok(Some(())` if the job was cancelled.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn execute_best_transactions(
         &self,
         info: &mut ExecutionInfo,
         db: &mut State<impl Database>,
         best_txs: &mut impl PayloadTxsBounds,
-        block_gas_limit: u64,
-        block_da_limit: Option<u64>,
-        block_da_footprint_limit: Option<u64>,
-        flashblock_execution_time_limit_us: Option<u128>,
-        block_state_root_time_limit_us: Option<u128>,
+        limits: &ResourceLimits,
     ) -> Result<Option<()>, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
@@ -492,36 +463,21 @@ impl OpPayloadBuilderCtx {
         let mut num_txs_simulated_fail = 0;
         let mut reverted_gas_used = 0;
         let base_fee = self.base_fee();
-        let tx_da_limit = self.da_config.max_da_tx_size();
 
         let mut fbal_db = FBALBuilderDb::new(&mut *db);
         let min_tx_index = info.executed_transactions.len() as u64;
         fbal_db.set_index(min_tx_index);
         let mut evm = self.evm_config.evm_with_env(&mut fbal_db, self.evm_env.clone());
 
-        // Build resource limits struct for limit checking
-        let limits = ResourceLimits {
-            block_gas_limit,
-            tx_data_limit: tx_da_limit,
-            block_data_limit: block_da_limit,
-            da_footprint_gas_scalar: info.da_footprint_scalar,
-            block_da_footprint_limit,
-            tx_execution_time_limit_us: self.max_execution_time_per_tx_us,
-            flashblock_execution_time_limit_us,
-            tx_state_root_time_limit_us: self.max_state_root_time_per_tx_us,
-            block_state_root_time_limit_us,
-            block_uncompressed_size_limit: self.max_uncompressed_block_size,
-        };
-
         debug!(
             target: "payload_builder",
             message = "Executing best transactions",
-            block_da_limit = ?block_da_limit,
-            tx_da_limit = ?tx_da_limit,
-            block_gas_limit = ?block_gas_limit,
-            flashblock_execution_time_limit_us = ?flashblock_execution_time_limit_us,
-            block_state_root_time_limit_us = ?block_state_root_time_limit_us,
-            execution_metering_mode = ?self.execution_metering_mode,
+            block_data_limit = ?limits.block_data_limit,
+            tx_data_limit = ?limits.tx_data_limit,
+            block_gas_limit = ?limits.block_gas_limit,
+            flashblock_execution_time_limit_us = ?limits.flashblock_execution_time_limit_us,
+            block_state_root_time_limit_us = ?limits.block_state_root_time_limit_us,
+            execution_metering_mode = ?self.builder_config.execution_metering_mode,
         );
 
         while let Some(tx) = best_txs.next(()) {
@@ -546,7 +502,7 @@ impl OpPayloadBuilderCtx {
 
             num_txs_considered += 1;
 
-            let resource_usage = self.metering_provider.get(&tx_hash);
+            let resource_usage = self.builder_config.metering_provider.get(&tx_hash);
 
             // Extract predicted execution and state root times from metering data
             let predicted_execution_time_us =
@@ -564,14 +520,14 @@ impl OpPayloadBuilderCtx {
             };
 
             // ensure we still have capacity for this transaction
-            if let Err(err) = info.is_tx_over_limits(&tx_resources, &limits) {
+            if let Err(err) = info.is_tx_over_limits(&tx_resources, limits) {
                 // Check if this is an execution metering limit that should be handled
                 // according to the metering mode (dry-run vs enforce)
                 if let TxnExecutionError::ExecutionMeteringLimitExceeded(ref limit_err) = err {
                     // Record metrics for the exceeded limit
                     self.record_execution_metering_limit_exceeded(limit_err);
 
-                    if self.execution_metering_mode.is_dry_run() {
+                    if self.builder_config.execution_metering_mode.is_dry_run() {
                         // In dry-run mode, log but don't reject
                         warn!(
                             target: "payload_builder",
@@ -675,7 +631,7 @@ impl OpPayloadBuilderCtx {
 
             // add gas used by the transaction to cumulative gas used, before creating the
             // receipt
-            if let Some(max_gas_per_txn) = self.max_gas_per_txn
+            if let Some(max_gas_per_txn) = self.builder_config.max_gas_per_txn
                 && gas_used > max_gas_per_txn
             {
                 log_txn(Err(TxnExecutionError::MaxGasUsageExceeded));

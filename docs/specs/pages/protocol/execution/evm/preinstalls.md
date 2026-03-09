@@ -2,14 +2,14 @@
 
 ## Overview
 
-[Preinstalled smart contracts](../reference/glossary.md#preinstalled-contract-preinstall) exist on Optimism
+[Preinstalled smart contracts](../../../reference/glossary.md#preinstalled-contract-preinstall) exist on Optimism
 at predetermined addresses in the genesis state. They are similar to precompiles but instead run
 directly in the EVM instead of running native code outside of the EVM and are developed by third
 parties unaffiliated with the Optimism Collective.
 
 These preinstalls are commonly deployed smart contracts that are being placed at genesis for convenience.
 It's important to note that these contracts do not have the same security guarantees
-as [Predeployed smart contracts](../reference/glossary.md#predeployed-contract-predeploy).
+as [Predeployed smart contracts](../../../reference/glossary.md#predeployed-contract-predeploy).
 
 The following table includes each of the preinstalls.
 

@@ -15,7 +15,7 @@ built-in support for:
    auth conditions internally.
 
 For more information about the Security Council and Guardian roles, refer to the
-[Stage One Roles and Requirements](./stage-1.md) document.
+[Stage One Roles and Requirements](stage-1.md) document.
 
 ## Security Council Liveness Checking Extensions
 

@@ -16,6 +16,7 @@ use alloy_rpc_types_eth::{TransactionInput, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
 use backon::Retryable;
+use base_enclave::ProofEncoder;
 use base_proof_contracts::{
     encode_create_calldata, encode_extra_data, game_already_exists_selector,
 };
@@ -28,10 +29,7 @@ use url::Url;
 use crate::{
     ProposerError,
     config::SigningConfig,
-    constants::{
-        ECDSA_SIGNATURE_LENGTH, ECDSA_V_OFFSET, GAS_LIMIT_MULTIPLIER_DENOMINATOR,
-        GAS_LIMIT_MULTIPLIER_NUMERATOR, PROOF_TYPE_TEE,
-    },
+    constants::{GAS_LIMIT_MULTIPLIER_DENOMINATOR, GAS_LIMIT_MULTIPLIER_NUMERATOR},
     prover::ProverProposal,
 };
 
@@ -60,39 +58,12 @@ fn classify_contract_error(context: &str, err: impl std::fmt::Display) -> Propos
 ///
 /// Matches Go's `buildProofData()` in `driver.go`.
 pub fn build_proof_data(proposal: &ProverProposal) -> Result<Bytes, ProposerError> {
-    let sig = &proposal.output.signature;
-    if sig.len() < ECDSA_SIGNATURE_LENGTH {
-        return Err(ProposerError::Internal(format!(
-            "signature too short: expected at least {ECDSA_SIGNATURE_LENGTH} bytes, got {}",
-            sig.len()
-        )));
-    }
-
-    let mut proof_data = vec![0u8; 1 + 32 + 32 + ECDSA_SIGNATURE_LENGTH];
-
-    // Byte 0: proof type (TEE = 0)
-    proof_data[0] = PROOF_TYPE_TEE;
-
-    // Bytes 1-32: L1 origin hash
-    proof_data[1..33].copy_from_slice(proposal.to.l1origin.hash.as_slice());
-
-    // Bytes 33-64: L1 origin number as 32-byte big-endian uint256
-    // The uint64 is placed in the last 8 bytes of the 32-byte field (bytes 57-64)
-    proof_data[57..65].copy_from_slice(&proposal.to.l1origin.number.to_be_bytes());
-
-    // Bytes 65-129: ECDSA signature with v-value adjusted from 0/1 to 27/28
-    proof_data[65..130].copy_from_slice(&sig[..ECDSA_SIGNATURE_LENGTH]);
-    proof_data[129] = match proof_data[129] {
-        0 | 1 => proof_data[129] + ECDSA_V_OFFSET,
-        27 | 28 => proof_data[129],
-        v => {
-            return Err(ProposerError::Internal(format!(
-                "unexpected ECDSA v-value: {v}, expected 0, 1, 27, or 28"
-            )));
-        }
-    };
-
-    Ok(Bytes::from(proof_data))
+    ProofEncoder::encode_proof_bytes(
+        &proposal.output.signature,
+        proposal.to.l1origin.hash,
+        U256::from(proposal.to.l1origin.number),
+    )
+    .map_err(|e| ProposerError::Internal(e.to_string()))
 }
 
 /// Shared logic for building, signing, broadcasting, and confirming a proposal transaction.
@@ -457,6 +428,8 @@ pub fn create_output_proposer(
 
 #[cfg(test)]
 mod tests {
+    use base_enclave::PROOF_TYPE_TEE;
+
     use super::*;
     use crate::prover::test_helpers::test_proposal;
 
@@ -534,7 +507,7 @@ mod tests {
 
         let result = build_proof_data(&proposal);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("unexpected ECDSA v-value"));
+        assert!(result.unwrap_err().to_string().contains("invalid ECDSA v-value"));
     }
 
     // ========================================================================

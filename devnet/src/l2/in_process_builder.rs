@@ -9,9 +9,7 @@ use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
-use base_builder_core::{
-    BuilderConfig, FlashblocksConfig, FlashblocksServiceBuilder, test_utils::get_available_port,
-};
+use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, test_utils::get_available_port};
 use base_execution_chainspec::OpChainSpec;
 use base_node_core::{args::RollupArgs, node::OpPoolBuilder};
 use base_node_runner::BaseNode;
@@ -111,17 +109,12 @@ impl InProcessBuilder {
         let flashblocks_port = config.flashblocks_port.unwrap_or_else(get_available_port);
         let builder_config = BuilderConfig {
             block_time: Duration::from_millis(2000),
-            flashblocks: FlashblocksConfig {
-                ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), flashblocks_port),
-                interval: Duration::from_millis(200),
-                disable_state_root: true,
-                compute_state_root_on_finalize: true,
-                ..Default::default()
-            },
+            flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::LOCALHOST.into(), flashblocks_port),
+            flashblocks_interval: Duration::from_millis(200),
             ..Default::default()
         };
 
-        let flashblocks_ws_addr = builder_config.flashblocks.ws_addr;
+        let flashblocks_ws_addr = builder_config.flashblocks_ws_addr;
 
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();

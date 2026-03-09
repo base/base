@@ -69,7 +69,7 @@ You can build the project using the `justfile` for a release build:
 just build
 ```
 
-*For first-time setup (to ensure all dependencies are installed), you can optionally **setup** run as a precursor:*
+*For first-time setup (to ensure all dependencies are installed), you can optionally run **just setup** as a precursor:*
 
   ```bash
   just setup

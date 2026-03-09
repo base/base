@@ -449,10 +449,10 @@ The VM does not support Linux open(2). However, the VM can read from and write t
 | stdin              | 0               | read-only standard input stream.                                             |
 | stdout             | 1               | write-only standard output stream.                                           |
 | stderr             | 2               | write-only standard error stream.                                            |
-| hint response      | 3               | read-only. Used to read the status of [pre-image hinting](./index.md#hinting). |
-| hint request       | 4               | write-only. Used to provide [pre-image hints](./index.md#hinting)              |
-| pre-image response | 5               | read-only. Used to [read pre-images](./index.md#pre-image-communication).      |
-| pre-image request  | 6               | write-only. Used to [request pre-images](./index.md#pre-image-communication).  |
+| hint response      | 3               | read-only. Used to read the status of [pre-image hinting](index.md#hinting). |
+| hint request       | 4               | write-only. Used to provide [pre-image hints](index.md#hinting)              |
+| pre-image response | 5               | read-only. Used to [read pre-images](index.md#pre-image-communication).      |
+| pre-image request  | 6               | write-only. Used to [request pre-images](index.md#pre-image-communication).  |
 | eventfd            | 100             | read-write. Created by `eventfd2` syscall. Reads return `EAGAIN`. Writes return `EAGAIN`.   |
 
 Syscalls referencing unknown file descriptors fail with an `EBADF` errno as done on Linux.

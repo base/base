@@ -60,7 +60,7 @@ L1 re-orgs can happen because of network conditions or attacks. L2 re-orgs are a
 
 A contract placed in the L2 genesis state (i.e. at the start of the chain).
 
-All predeploy contracts are specified in the [predeploys specification](../protocol/predeploys.md).
+All predeploy contracts are specified in the [predeploys specification](../protocol/execution/evm/predeploys.md).
 
 ### Preinstalled Contract ("Preinstall")
 
@@ -70,7 +70,7 @@ A contract placed in the L2 genesis state (i.e. at the start of the chain). Thes
 security guarantees as [predeploys](#predeployed-contract-predeploy), but are general use contracts made
 available to improve the L2's UX.
 
-All preinstall contracts are specified in the [preinstalls specification](../protocol/preinstalls.md).
+All preinstall contracts are specified in the [preinstalls specification](../protocol/execution/evm/preinstalls.md).
 
 ### Precompiled Contract ("Precompile")
 
@@ -80,7 +80,7 @@ A contract implemented natively in the EVM that performs a specific operation mo
 (e.g. Solidity) implementation. Precompiles exist at predefined addresses. They are created and modified through
 network upgrades.
 
-All precompile contracts are specified in the [precompiles specification](../protocol/precompiles.md).
+All precompile contracts are specified in the [precompiles specification](../protocol/execution/evm/precompiles.md).
 
 ### Receipt
 
@@ -226,7 +226,7 @@ That contract can then be used to read the attributes of the L1 block correspond
 L1 attributes deposited transactions are specified in the [L1 Attributes Deposit][l1-attributes-tx-spec] section of the
 deposits specification.
 
-[l1-attributes-tx-spec]: ../protocol/deposits.md#l1-attributes-deposited-transaction
+[l1-attributes-tx-spec]: ../protocol/bridging/deposits.md#l1-attributes-deposited-transaction
 
 ### User-Deposited Transaction
 
@@ -238,7 +238,7 @@ contract][deposit-contract] (a [depositing call][depositing-call]).
 User-deposited transactions are specified in the [Transaction Deposits][tx-deposits-spec] section of the deposits
 specification.
 
-[tx-deposits-spec]: ../protocol/deposits.md#user-deposited-transactions
+[tx-deposits-spec]: ../protocol/bridging/deposits.md#user-deposited-transactions
 
 ### Depositing Call
 
@@ -271,7 +271,7 @@ and correct handling of a [deposited transaction][deposited].
 
 See the [corresponding section][spec-deposit-tx-type] of the deposits spec for more information.
 
-[spec-deposit-tx-type]: ../protocol/deposits.md#the-deposited-transaction-type
+[spec-deposit-tx-type]: ../protocol/bridging/deposits.md#the-deposited-transaction-type
 
 ### Deposit Contract
 
@@ -614,7 +614,7 @@ blocks older than two L1 epochs (64 L1 [time slots][time-slot]).
 When a contract submits a [deposit][deposits] from L1 to L2, its address (as returned by `ORIGIN` and `CALLER`) will be
 aliased with a modified representation of the address of a contract.
 
-- cf. [Deposit Specification](../protocol/deposits.md#address-aliasing)
+- cf. [Deposit Specification](../protocol/bridging/deposits.md#address-aliasing)
 
 ### Rollup Node
 
@@ -656,7 +656,7 @@ from the L1 chain (L1 [blocks][block] and their associated [receipts][receipt]).
 A [predeployed contract][predeploy] on L2 that can be used to retrieve the L1 block attributes of L1 blocks with a given
 block number or a given block hash.
 
-cf. [L1 Attributes Predeployed Contract Specification](../protocol/deposits.md#l1-attributes-predeployed-contract)
+cf. [L1 Attributes Predeployed Contract Specification](../protocol/bridging/deposits.md#l1-attributes-predeployed-contract)
 
 ### L2 Output Root
 
@@ -749,9 +749,9 @@ In these specifications, "execution engine" always refer to the L2 execution eng
 
 
 
-[deposits-spec]: ../protocol/deposits.md
+[deposits-spec]: ../protocol/bridging/deposits.md
 [system-config]: ../protocol/system-config.md
-[exec-engine]: ../protocol/exec-engine.md
+[exec-engine]: ../protocol/execution/index.md
 [derivation-spec]: ../protocol/consensus/derivation.md
 [rollup-node-spec]: ../protocol/consensus/index.md
 

@@ -7,7 +7,7 @@ backends:
 
 - **`Proposal`** — An output root proposal with its ECDSA signature and L1/L2 context.
 - **`ProofBundle`** — Request plus preimage key-value pairs sent to a prover.
-- **`ProofClaim`** — The claim being proven: L2 block number, output root, and
-  L1 head.
+- **`ProofClaim`** — The claim being proven: an aggregated `Proposal` covering the
+  entire block range and the individual per-block `Proposal`s that were aggregated.
 - **`ProofEvidence`** — Backend-specific evidence (TEE attestation or ZK proof).
 - **`ProofResult`** — A claim paired with its evidence.

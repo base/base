@@ -19,3 +19,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+### Proving
+
+The `prove` method sends a `ProofRequest` to the TEE server and receives a
+complete `ProofResult` back. Unlike the lower-level `execute_stateless` and
+`aggregate` methods which require the caller to orchestrate individual block
+executions and aggregation, `prove` delegates all orchestration to the TEE
+server.
+
+```ignore
+use base_enclave_client::{EnclaveClient, ProofRequest};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = EnclaveClient::new("http://127.0.0.1:1234")?;
+
+    let request = ProofRequest {
+        l1_head: Default::default(),
+        agreed_l2_head_hash: Default::default(),
+        agreed_l2_output_root: Default::default(),
+        claimed_l2_output_root: Default::default(),
+        claimed_l2_block_number: 42,
+    };
+
+    let result = client.prove(request).await?;
+    println!("Proof claim: {:?}", result.claim);
+
+    Ok(())
+}
+```

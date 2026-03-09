@@ -6,6 +6,7 @@ import rehypeKatex from 'rehype-katex'
 import remarkMath from 'remark-math'
 import { defineConfig, type SidebarItem } from 'vocs'
 
+const docsDir = fileURLToPath(new URL('./', import.meta.url))
 const pagesDir = fileURLToPath(new URL('./pages', import.meta.url))
 
 type NodeInfo = {
@@ -133,16 +134,24 @@ function sectionItemWithoutDirs(
 
 const hiddenProtocolFiles = ['access-lists.md']
 
-const protocolTodoExcludedDirs = ['consensus', 'fault-proof']
+const protocolTodoExcludedDirs = ['bridging', 'consensus', 'execution', 'fault-proof']
 
 const protocolTodoExcludedFiles = [
   ...hiddenProtocolFiles,
   'overview.md',
-  'precompiles.md',
-  'predeploys.md',
-  'preinstalls.md',
-  'flashblocks-rpc-methods.md',
+  'batcher.md',
 ]
+
+const bridgingSection: SidebarItem = {
+  text: 'Bridging',
+  items: [
+    { text: 'Deposits', link: '/protocol/bridging/deposits' },
+    { text: 'Withdrawals', link: '/protocol/bridging/withdrawals' },
+    { text: 'Standard Bridges', link: '/protocol/bridging/bridges' },
+    { text: 'Cross Domain Messengers', link: '/protocol/bridging/messengers' },
+  ],
+  collapsed: true,
+}
 
 const consensusSection: SidebarItem = {
   text: 'Consensus',
@@ -155,19 +164,15 @@ const consensusSection: SidebarItem = {
   collapsed: true,
 }
 
-const evmSection: SidebarItem = {
-  text: 'EVM',
+const executionSection: SidebarItem = {
+  text: 'Execution',
+  link: '/protocol/execution',
   items: [
-    { text: 'Precompiles', link: '/protocol/precompiles' },
-    { text: 'Predeploys', link: '/protocol/predeploys' },
-    { text: 'Preinstalls', link: '/protocol/preinstalls' },
+    { text: 'Precompiles', link: '/protocol/execution/evm/precompiles' },
+    { text: 'Predeploys', link: '/protocol/execution/evm/predeploys' },
+    { text: 'Preinstalls', link: '/protocol/execution/evm/preinstalls' },
+    { text: 'RPC', link: '/protocol/execution/evm/rpc' },
   ],
-  collapsed: true,
-}
-
-const rpcSection: SidebarItem = {
-  text: 'RPC',
-  items: [{ text: 'Flashblocks RPC', link: '/protocol/flashblocks-rpc-methods' }],
   collapsed: true,
 }
 
@@ -178,9 +183,10 @@ const sidebar: SidebarItem[] = [
     items: [
       { text: 'Overview', link: '/protocol/overview' },
       consensusSection,
-      evmSection,
-      rpcSection,
-      { ...sectionItem('protocol/fault-proof', 'Fault Proof'), collapsed: true },
+      executionSection,
+      bridgingSection,
+      { text: 'Batcher', link: '/protocol/batcher' },
+      { ...sectionItem('protocol/fault-proof', 'Proofs'), collapsed: true },
     ],
   },
   {
@@ -215,5 +221,12 @@ export default defineConfig({
     rehypePlugins: [rehypeKatex],
   },
   rootDir: '.',
+  vite: {
+    server: {
+      fs: {
+        allow: [docsDir, pagesDir],
+      },
+    },
+  },
   sidebar,
 })

@@ -5,9 +5,7 @@
 #![deny(rust_2018_idioms)]
 
 mod client;
-mod client_error;
+pub use client::{EnclaveClient, EnclaveProvider};
 
-// Re-export core types
-pub use base_enclave::*;
-pub use client::EnclaveClient;
+mod client_error;
 pub use client_error::ClientError;

@@ -777,8 +777,8 @@ mod tests {
 
     use alloy_primitives::{Address, B256, Bytes};
     use async_trait::async_trait;
-    use base_enclave::{Proposal, RollupConfig};
-    use base_enclave_client::{ClientError, ExecuteStatelessRequest};
+    use base_enclave::{ExecuteStatelessRequest, Proposal, RollupConfig};
+    use base_enclave_client::ClientError;
     use base_proof_contracts::GameAtIndex;
     use base_proof_rpc::SyncStatus;
     use tokio_util::sync::CancellationToken;

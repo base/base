@@ -288,7 +288,7 @@ the L2 state by applying L1 data to prior agreed L2 history.
 
 This process is also known as the [L2 derivation process](../consensus/derivation.md),
 and matches the processing in the [rollup node](../consensus/index.md) and
-[execution-engine](../exec-engine.md).
+[execution-engine](../execution/index.md).
 
 The difference is that rather than retrieving inputs from an RPC and applying state changes to disk,
 the inputs are loaded through the [pre-image oracle][oracle] and the changes accumulate in memory.

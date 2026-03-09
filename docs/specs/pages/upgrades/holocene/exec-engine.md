@@ -78,17 +78,17 @@ invalid.
 At and after Holocene activation, any `ExecutionPayload` corresponding to some `PayloadAttributesV3` must contain
 `extraData` formatted as the [header value](#eip-1559-parameters-in-block-header). The `denominator` and `elasticity`
 values within this `extraData` must correspond to those in `eip1559Parameters`, unless both are 0.  When both are 0, the
-[prior EIP-1559 constants](../../protocol/exec-engine.md#1559-parameters) must be used to populate `extraData` instead.
+[prior EIP-1559 constants](../../protocol/execution/index.md#1559-parameters) must be used to populate `extraData` instead.
 
 #### Base Fee Computation
 
 Prior to the Holocene upgrade, the EIP-1559 denominator and elasticity parameters used to compute the block base fee
-were [constants](../../protocol/exec-engine.md#1559-parameters).
+were [constants](../../protocol/execution/index.md#1559-parameters).
 
 With the Holocene upgrade, these parameters are instead determined as follows:
 
 - if Holocene is not active in `parent_header.timestamp`, the [prior EIP-1559
-  constants](../../protocol/exec-engine.md#1559-parameters) are used. Note that `parent_header.extraData` is empty
+  constants](../../protocol/execution/index.md#1559-parameters) are used. Note that `parent_header.extraData` is empty
   prior to Holocene, except possibly for the genesis block.
 - if Holocene is active at `parent_header.timestamp`, then the parameters from `parent_header.extraData` are used.
 

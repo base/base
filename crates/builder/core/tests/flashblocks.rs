@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use alloy_primitives::{Address, B256, U256};
 use base_builder_core::{
-    BuilderConfig, FlashblocksConfig,
+    BuilderConfig,
     test_utils::{TransactionBuilderExt, funded_signer, setup_test_instance_with_builder_config},
 };
 
@@ -14,8 +14,8 @@ use base_builder_core::{
 /// `take_bundle()` emptied the bundle state, producing an always-empty map.
 #[tokio::test]
 async fn test_flashblock_metadata_balances_and_receipts() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests().with_fixed(true).with_leeway_time_ms(50);
-    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let config =
+        BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks_leeway_time_ms(50);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -94,16 +94,12 @@ async fn test_flashblock_metadata_balances_and_receipts() -> eyre::Result<()> {
     flashblocks_listener.stop().await
 }
 
-/// Test that when `compute_state_root_on_finalize` is enabled:
+/// Test that state root is computed on finalization:
 /// 1. Flashblocks are built without state root (`state_root` = ZERO in intermediate blocks)
 /// 2. The final payload returned by `get_payload` has a valid state root (non-zero)
 #[tokio::test]
 async fn test_state_root_computed_on_finalize() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests()
-        .with_fixed(true)
-        .with_disable_state_root(true)
-        .with_compute_state_root_on_finalize(true);
-    let config = BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks(flashblocks);
+    let config = BuilderConfig::for_tests().with_block_time_ms(2000);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -124,12 +120,7 @@ async fn test_state_root_computed_on_finalize() -> eyre::Result<()> {
     );
 
     // Verify that the FINAL block has a valid (non-zero) state root
-    // when compute_state_root_on_finalize is enabled
-    assert_ne!(
-        block.header.state_root,
-        B256::ZERO,
-        "Final block state root should NOT be zero when compute_state_root_on_finalize is enabled"
-    );
+    assert_ne!(block.header.state_root, B256::ZERO, "Final block state root should NOT be zero");
 
     // Verify flashblocks were produced
     let flashblocks = flashblocks_listener.get_flashblocks();
@@ -149,8 +140,7 @@ async fn test_state_root_computed_on_finalize() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn smoke_dynamic_base() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests().with_fixed(false);
-    let config = BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks(flashblocks);
+    let config = BuilderConfig::for_tests().with_block_time_ms(2000);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -174,8 +164,7 @@ async fn smoke_dynamic_base() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn smoke_dynamic_unichain() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests().with_fixed(false);
-    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let config = BuilderConfig::for_tests().with_block_time_ms(1000);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -199,8 +188,8 @@ async fn smoke_dynamic_unichain() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn smoke_classic_unichain() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests().with_fixed(true).with_leeway_time_ms(50);
-    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let config =
+        BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks_leeway_time_ms(50);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -224,8 +213,8 @@ async fn smoke_classic_unichain() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn smoke_classic_base() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests().with_fixed(true).with_leeway_time_ms(50);
-    let config = BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks(flashblocks);
+    let config =
+        BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks_leeway_time_ms(50);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -248,8 +237,7 @@ async fn smoke_classic_base() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn unichain_dynamic_with_lag() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests().with_fixed(false);
-    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let config = BuilderConfig::for_tests().with_block_time_ms(1000);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -275,8 +263,8 @@ async fn unichain_dynamic_with_lag() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn dynamic_with_full_block_lag() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests().with_fixed(false).with_leeway_time_ms(0);
-    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+    let config =
+        BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks_leeway_time_ms(0);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -296,16 +284,11 @@ async fn dynamic_with_full_block_lag() -> eyre::Result<()> {
     flashblocks_listener.stop().await
 }
 
-/// Regression test: when `compute_state_root_on_finalize` is enabled and the builder
-/// receives an FCU with `no_tx_pool = true` (historical sync), `resolve_kind` must still
-/// return a payload.
+/// Regression test: when the builder receives an FCU with `no_tx_pool = true`
+/// (historical sync), `resolve_kind` must still return a payload.
 #[tokio::test]
-async fn test_no_tx_pool_with_compute_state_root_on_finalize() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests()
-        .with_fixed(true)
-        .with_disable_state_root(true)
-        .with_compute_state_root_on_finalize(true);
-    let config = BuilderConfig::for_tests().with_block_time_ms(2000).with_flashblocks(flashblocks);
+async fn test_no_tx_pool_with_finalize() -> eyre::Result<()> {
+    let config = BuilderConfig::for_tests().with_block_time_ms(2000);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
 
@@ -337,30 +320,21 @@ async fn test_no_tx_pool_with_compute_state_root_on_finalize() -> eyre::Result<(
 }
 
 #[tokio::test]
-async fn test_flashblocks_no_state_root_calculation() -> eyre::Result<()> {
-    let flashblocks = FlashblocksConfig::for_tests()
-        .with_fixed(false)
-        .with_disable_state_root(true)
-        .with_compute_state_root_on_finalize(false);
-    let config = BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks(flashblocks);
+async fn test_flashblocks_state_root_computed_on_finalize() -> eyre::Result<()> {
+    let config = BuilderConfig::for_tests().with_block_time_ms(1000);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
 
     // Send a transaction to ensure block has some activity
     let _tx = driver.create_transaction().random_valid_transfer().send().await?;
 
-    // Build a block with current timestamp (not historical) and disable_state_root: true
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
     // Verify that flashblocks are still produced (block should have transactions)
     assert_eq!(block.transactions.len(), 2, "Block should contain deposit + user transaction");
 
-    // Verify that state root is not calculated (should be zero)
-    assert_eq!(
-        block.header.state_root,
-        B256::ZERO,
-        "State root should be zero when disable_state_root is true"
-    );
+    // State root is always computed on finalize
+    assert_ne!(block.header.state_root, B256::ZERO, "State root should be computed on finalize");
 
     Ok(())
 }

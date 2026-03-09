@@ -20,12 +20,6 @@ pub const BLOCKHASH_SAFETY_MARGIN: u64 = 100;
 /// Maximum time to wait for a proposal to be included on-chain.
 pub const PROPOSAL_TIMEOUT: Duration = Duration::from_secs(600);
 
-/// Length of an ECDSA signature in bytes.
-pub const ECDSA_SIGNATURE_LENGTH: usize = 65;
-
-/// Offset to add to ECDSA v-value (0/1 -> 27/28).
-pub const ECDSA_V_OFFSET: u8 = 27;
-
 /// Default poll interval for checking new blocks.
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(12);
 
@@ -33,9 +27,6 @@ pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(12);
 /// the anchor state registry (i.e., no parent game exists).
 /// This is `uint32.max` per the `DisputeGameFactory` contract.
 pub const NO_PARENT_INDEX: u32 = 0xFFFF_FFFF;
-
-/// Proof type byte for TEE proofs (matches `AggregateVerifier.ProofType.TEE`).
-pub const PROOF_TYPE_TEE: u8 = 0;
 
 /// Maximum number of games to scan backwards when recovering parent game state
 /// on startup.
