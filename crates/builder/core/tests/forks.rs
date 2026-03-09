@@ -6,7 +6,6 @@ use alloy_eips::{BlockNumberOrTag::Latest, Encodable2718, eip1559::MIN_PROTOCOL_
 use alloy_primitives::bytes;
 use base_builder_core::test_utils::{BlockTransactionsExt, setup_test_instance};
 use chrono::Utc;
-use tracing::info;
 
 #[tokio::test]
 async fn jovian_block_parameters_set() -> eyre::Result<()> {
@@ -111,7 +110,6 @@ async fn jovian_minimum_base_fee() -> eyre::Result<()> {
 async fn jovian_minimum_fee_must_be_set() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
-    let genesis = driver.get_block(Latest).await?.expect("must have genesis block");
     let block_timestamp = Duration::from_secs(Utc::now().timestamp() as u64 + 2);
     let response = driver
         .build_new_block_with_txs_timestamp(vec![], None, Some(block_timestamp), None, None)
