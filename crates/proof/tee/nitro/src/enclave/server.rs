@@ -152,7 +152,9 @@ impl Server {
             self.proposer,
             request.l1_head,
             request.agreed_l2_output_root,
-            U256::from(l2_block_number.saturating_sub(1)),
+            U256::from(l2_block_number.checked_sub(1).ok_or_else(|| {
+                NitroError::ProofPipeline("l2_block_number is 0, cannot compute starting block".into())
+            })?),
             output_root,
             U256::from(l2_block_number),
             &[],
