@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use base_proof_primitives::{ProofBundle, ProofResult};
+use base_proof_preimage::PreimageKey;
+use base_proof_primitives::ProofResult;
 use tokio_vsock::{VsockAddr, VsockStream};
 
 use crate::{Frame, ProofTransport, TransportError, TransportResult};
@@ -30,7 +31,10 @@ impl VsockTransport {
 
 #[async_trait]
 impl ProofTransport for VsockTransport {
-    async fn prove(&self, bundle: &ProofBundle) -> TransportResult<ProofResult> {
+    async fn prove(
+        &self,
+        preimages: &[(PreimageKey, Vec<u8>)],
+    ) -> TransportResult<ProofResult> {
         let addr = VsockAddr::new(self.cid, self.port);
 
         let mut stream = tokio::time::timeout(CONNECT_TIMEOUT, VsockStream::connect(addr))
@@ -42,7 +46,7 @@ impl ProofTransport for VsockTransport {
             ))
         })??;
 
-        Frame::write(&mut stream, bundle).await?;
+        Frame::write(&mut stream, &preimages).await?;
 
         tokio::time::timeout(PROVE_TIMEOUT, Frame::read(&mut stream)).await.map_err(|_| {
             TransportError::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, "prove timed out"))

@@ -41,8 +41,8 @@ impl<B: ProverBackend> ProverService<B> {
     pub async fn prove_block(&self, request: ProofRequest) -> Result<ProofResult, ProverError<B>> {
         info!(l2_block = request.claimed_l2_block_number, "starting proof generation");
 
-        let host = Host::new(HostConfig { request, prover: self.config.clone(), data_dir: None });
         let oracle = self.backend.create_oracle();
+        let host = Host::new(HostConfig { request, prover: self.config.clone(), data_dir: None });
         let oracle = host.build_witness(oracle).await.map_err(ProverError::Host)?;
 
         self.backend.prove(oracle).await.map_err(ProverError::Backend)
