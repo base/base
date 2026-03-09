@@ -63,10 +63,10 @@ tokio = { workspace = true, features = ["macros", "rt"] }
 
 [features]
 host = [
-	"dep:base-proof-host",
-	"dep:jsonrpsee",
 	"base-proof-primitives/rpc",
 	"base-proof-transport/vsock",
+	"dep:base-proof-host",
+	"dep:jsonrpsee",
 	"tokio/net",
 ]
 
