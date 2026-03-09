@@ -1,6 +1,7 @@
 set positional-arguments := true
 
 mod tee 'crates/proof/tee'
+mod actions 'actions'
 # Docker-based local devnet management
 mod devnet 'etc/docker'
 
