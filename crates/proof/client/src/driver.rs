@@ -80,25 +80,6 @@ where
     ///
     /// Returns an error if derivation fails.
     pub async fn execute(self) -> Result<Epilogue, FaultProofProgramError> {
-        let (results, claimed_l2_output_root): (Vec<_>, _) =
-            self.execute_with_intermediates().await?;
-
-        let (safe_head, output_root) = results.last().copied().ok_or_else(|| {
-            FaultProofProgramError::Driver(base_proof_driver::DriverError::Pipeline(
-                base_consensus_derive::PipelineErrorKind::Critical(
-                    base_consensus_derive::PipelineError::EndOfSource,
-                ),
-            ))
-        })?;
-
-        Ok(Epilogue { safe_head, output_root, claimed_output_root: claimed_l2_output_root })
-    }
-
-    /// Executes the derivation pipeline, returning per-block `(L2BlockInfo, output_root)` pairs
-    /// and the claimed output root for validation.
-    pub async fn execute_with_intermediates(
-        self,
-    ) -> Result<(Vec<(base_protocol::L2BlockInfo, B256)>, B256), FaultProofProgramError> {
         let executor = BaseExecutor::new(
             self.rollup_config.as_ref(),
             self.l2_provider.clone(),
@@ -107,14 +88,50 @@ where
             None,
         );
         let mut driver = Driver::new(Arc::clone(&self.cursor), executor, self.pipeline);
-        let results = driver
-            .advance_to_target(self.rollup_config.as_ref(), Some(self.claimed_l2_block_number))
+        let (safe_head, output_root) = driver
+            .advance_to_target(
+                self.rollup_config.as_ref(),
+                Some(self.claimed_l2_block_number),
+                |_, _| {},
+            )
             .await
             .map_err(|e| {
                 error!(error = ?e, "driver failed");
                 FaultProofProgramError::Driver(e)
             })?;
 
-        Ok((results, self.claimed_l2_output_root))
+        Ok(Epilogue { safe_head, output_root, claimed_output_root: self.claimed_l2_output_root })
+    }
+
+    /// Like [`execute`](Self::execute), but also collects per-block `(L2BlockInfo, output_root)`
+    /// pairs for all intermediate blocks.
+    pub async fn execute_with_intermediates(
+        self,
+    ) -> Result<(Epilogue, Vec<(base_protocol::L2BlockInfo, B256)>), FaultProofProgramError> {
+        let mut intermediates = Vec::new();
+        let executor = BaseExecutor::new(
+            self.rollup_config.as_ref(),
+            self.l2_provider.clone(),
+            self.l2_provider.clone(),
+            self.evm_factory,
+            None,
+        );
+        let mut driver = Driver::new(Arc::clone(&self.cursor), executor, self.pipeline);
+        let (safe_head, output_root) = driver
+            .advance_to_target(
+                self.rollup_config.as_ref(),
+                Some(self.claimed_l2_block_number),
+                |l2_info, output_root| intermediates.push((l2_info, output_root)),
+            )
+            .await
+            .map_err(|e| {
+                error!(error = ?e, "driver failed");
+                FaultProofProgramError::Driver(e)
+            })?;
+
+        let epilogue =
+            Epilogue { safe_head, output_root, claimed_output_root: self.claimed_l2_output_root };
+
+        Ok((epilogue, intermediates))
     }
 }

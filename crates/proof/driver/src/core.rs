@@ -59,13 +59,14 @@ where
 
     /// Advances the derivation pipeline to the target block number.
     ///
-    /// Returns per-block `(L2BlockInfo, B256)` for every block derived.
+    /// Calls `on_block` for each derived block before advancing the cursor.
     pub async fn advance_to_target(
         &mut self,
         cfg: &RollupConfig,
         mut target: Option<u64>,
-    ) -> DriverResult<Vec<(L2BlockInfo, B256)>, E::Error> {
-        let mut results = Vec::new();
+        mut on_block: impl FnMut(L2BlockInfo, B256),
+    ) -> DriverResult<(L2BlockInfo, B256), E::Error> {
+        let mut result = None;
 
         loop {
             // Check if we have reached the target block number.
@@ -75,7 +76,9 @@ where
                 && tip_cursor.l2_safe_head.block_info.number >= tb
             {
                 info!(target: "client", "Derivation complete, reached L2 safe head.");
-                return Ok(results);
+                return result.ok_or(DriverError::Pipeline(PipelineErrorKind::Critical(
+                    PipelineError::EndOfSource,
+                )));
             }
 
             let mut attributes = match self.pipeline.produce_payload(tip_cursor.l2_safe_head).await
@@ -163,9 +166,9 @@ where
                 &self.pipeline.rollup_config().genesis,
             )?;
             let output_root = self.executor.compute_output_root().map_err(DriverError::Executor)?;
-            results.push((l2_info, output_root));
+            on_block(l2_info, output_root);
+            result = Some((l2_info, output_root));
             let tip_cursor = TipCursor::new(l2_info, outcome.header.clone(), output_root);
-
             // Advance the derivation pipeline cursor
             drop(pipeline_cursor);
             self.cursor.write().advance(origin, tip_cursor);

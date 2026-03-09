@@ -137,7 +137,7 @@ impl Server {
 
         let prologue = Prologue::new(oracle.clone(), oracle, OpEvmFactory::default());
         let driver = prologue.load().await.map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
-        let (block_results, claimed_l2_output_root) = driver
+        let (epilogue, block_results) = driver
             .execute_with_intermediates()
             .await
             .map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
@@ -147,12 +147,7 @@ impl Server {
         }
 
         // Trust-critical: validate final output root against claim
-        let (_, final_output_root) = block_results.last().unwrap();
-        if *final_output_root != claimed_l2_output_root {
-            return Err(NitroError::ProofPipeline(format!(
-                "output root mismatch: computed {final_output_root}, claimed {claimed_l2_output_root}"
-            )));
-        }
+        epilogue.validate().map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
 
         let mut proposals = Vec::with_capacity(block_results.len());
         let mut prev_output_root = request.agreed_l2_output_root;
