@@ -4,7 +4,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_alloy_evm::OpEvmFactory;
 use base_enclave::{Proposal, ProposalParams};
 use base_proof_client::{Epilogue, Prologue};
-use base_proof_primitives::{ProofClaim, ProofEvidence, ProofResult};
+use base_proof_primitives::{ProofBundle, ProofClaim, ProofEvidence, ProofResult};
 use parking_lot::RwLock;
 use tracing::{info, warn};
 
@@ -131,9 +131,9 @@ impl Server {
     }
 
     /// Run the proof-client pipeline for a proof bundle.
-    pub async fn prove(&self, bundle: base_proof_primitives::ProofBundle) -> Result<ProofResult> {
-        let request = bundle.request.clone();
-        let oracle = Oracle::from_bundle(bundle);
+    pub async fn prove(&self, bundle: ProofBundle) -> Result<ProofResult> {
+        let ProofBundle { request, preimages } = bundle;
+        let oracle = Oracle::new(preimages);
 
         // Run proof-client pipeline
         let prologue = Prologue::new(oracle.clone(), oracle, OpEvmFactory::default());

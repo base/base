@@ -31,11 +31,6 @@ impl Oracle {
     pub fn empty() -> Self {
         Self { preimages: Arc::new(RwLock::new(HashMap::new())) }
     }
-
-    /// Construct from a [`ProofBundle`], taking ownership of all preimages.
-    pub fn from_bundle(bundle: ProofBundle) -> Self {
-        Self { preimages: Arc::new(RwLock::new(bundle.preimages.into_iter().collect())) }
-    }
 }
 
 impl fmt::Debug for Oracle {
@@ -99,7 +94,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn from_bundle_roundtrip() {
+    fn new_roundtrip() {
         let key = PreimageKey::new([1u8; 32], PreimageKeyType::Local);
         let value = vec![0xAB; 128];
 
@@ -114,7 +109,7 @@ mod tests {
             preimages: vec![(key, value.clone())],
         };
 
-        let oracle = Oracle::from_bundle(bundle);
+        let oracle = Oracle::new(bundle.preimages);
         let read = oracle.preimages.read();
         assert_eq!(read.get(&key).unwrap(), &value);
     }
