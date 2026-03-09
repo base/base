@@ -2,9 +2,21 @@
 
 ZK proof gRPC client implementation.
 
-This crate provides a gRPC client for requesting ZK proofs from an external
-proving service. It implements a two-step async proving flow: `prove_block` to
-initiate a proof job (returns a session ID) and `get_proof` to poll for results.
+## Overview
+
+Provides a gRPC client for requesting ZK proofs from an external proving service.
+Implements a two-step async flow: `prove_block` initiates a proof job and returns a session ID,
+and `get_proof` polls for the result. The `ZkProofProvider` trait abstracts the client for
+testability, and `ZkProofError::is_retryable()` guides backoff logic for transient failures.
+
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-zk-client = { workspace = true }
+```
 
 ## Example
 

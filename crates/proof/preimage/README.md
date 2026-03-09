@@ -1,8 +1,31 @@
 # `base-proof-preimage`
 
-This crate offers a high-level API over the [`Preimage Oracle`][preimage-abi-spec]. It is `no_std` compatible to be used in
-`client` programs, and the `host` handles are `async` colored to allow for the `host` programs to reach out to external
-data sources to populate the `Preimage Oracle`.
+High-level `no_std`-compatible API over the [Preimage Oracle][preimage-abi-spec].
+
+## Overview
+
+Provides client and host abstractions for the fault proof preimage oracle protocol. Client-side
+traits (`PreimageOracleClient`, `HintWriterClient`) allow `no_std` FPVM programs to fetch
+preimages and write hints. Host-side traits (`PreimageOracleServer`, `HintReaderServer`,
+`HintRouter`, `PreimageFetcher`) are `async`-colored to allow host programs to fetch data from
+external sources and serve it to the client over pipes or shared memory.
+
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-proof-preimage = { workspace = true }
+```
+
+```rust,ignore
+use base_proof_preimage::{PreimageOracleClient, HintWriterClient};
+
+// In a no_std FPVM client:
+let data = oracle.get(preimage_key)?;
+hint_writer.write(&hint)?;
+```
 
 [preimage-abi-spec]: https://specs.optimism.io/experimental/fault-proof/index.html#pre-image-oracle
 

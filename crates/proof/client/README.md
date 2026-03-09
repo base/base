@@ -2,6 +2,8 @@
 
 Oracle-backed derivation and execution orchestration for the Base ZK proof program.
 
+## Overview
+
 This crate defines the three phases of a fault proof (or ZK proof) run: prologue, execution,
 and epilogue. It is intentionally decoupled from any specific runtime or FPVM binary so that
 the same logic can be reused across proof systems. The concrete EVM factory (including

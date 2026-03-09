@@ -3,9 +3,12 @@
 <a href="https://crates.io/crates/base-consensus-registry"><img src="https://img.shields.io/crates/v/base-consensus-registry.svg?label=base-consensus-registry&labelColor=2a2f35" alt="base-consensus-registry"></a>
 <a href="https://rollup.yoga"><img src="https://img.shields.io/badge/Docs-854a15?style=flat&labelColor=1C2C2E&color=BEC5C9&logo=mdBook&logoColor=BEC5C9" alt="Docs" /></a>
 
-[`base-consensus-registry`][sc] is a `no_std` crate that exports chain configurations for Base networks.
-Chain configurations are stored as TOML files in the `configs/` directory, parsed at init time
-via [`serde`][serde] and the [`toml`][toml] crate.
+## Overview
+
+`base-consensus-registry` exports chain configurations for Base networks as `RollupConfig`
+instances. Configurations are stored as TOML files in the `configs/` directory and parsed at
+init time. Provides `Registry` with a `rollup_config(chain_id)` lookup for Base Mainnet (8453)
+and Base Sepolia (84532). `no_std` compatible when default features are disabled.
 
 ## Usage
 

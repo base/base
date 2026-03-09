@@ -1,16 +1,29 @@
 # `base-proof-mpt`
 
-A recursive, in-memory implementation of Ethereum's hexary Merkle Patricia Trie (MPT), supporting:
-- Retrieval
-- Insertion
-- Deletion
-- Root Computation
-    - Trie Node RLP Encoding
+A recursive, in-memory implementation of Ethereum's hexary Merkle Patricia Trie (MPT).
 
-This implementation is intended to serve as a backend for a stateless executor of Ethereum blocks, like
-the one in the [`base-proof-executor`](../executor) crate. Starting with a trie root, the `TrieNode` can be
-unravelled to access, insert, or delete values. These operations are all backed by the `TrieProvider`,
-which enables fetching the preimages of hashed trie nodes.
+## Overview
+
+Implements Ethereum's Merkle Patricia Trie with support for retrieval, insertion, deletion, and
+root computation via RLP-encoded trie node encoding. Starting from a trie root hash, `TrieNode`
+lazily fetches and caches node preimages via `TrieProvider`, enabling stateless block execution
+without storing the full state. Designed as the trie backend for [`base-proof-executor`](../executor).
+
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-proof-mpt = { workspace = true }
+```
+
+```rust,ignore
+use base_proof_mpt::{TrieNode, TrieProvider};
+
+let root = TrieNode::from_hash(state_root);
+let value = root.get(key, &provider)?;
+```
 
 ## License
 

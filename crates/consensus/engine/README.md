@@ -71,6 +71,26 @@ Version selection follows Optimism hardfork activation times (Bedrock, Canyon, D
 
 [base-specs]: https://specs.base.org
 
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-consensus-engine = { workspace = true }
+```
+
+Submit engine tasks via the `Engine`:
+
+```rust,ignore
+use base_consensus_engine::{Engine, EngineClient, InsertTask};
+
+let client = EngineClient::new(engine_url, jwt_secret)?;
+let engine = Engine::new(client, rollup_config);
+
+engine.submit(InsertTask::new(payload)).await?;
+```
+
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

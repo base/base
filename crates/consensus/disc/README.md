@@ -47,6 +47,27 @@ Key configuration parameters include:
 - Storage location for persistent peer cache
 - Network interface and port bindings
 
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-consensus-disc = { workspace = true }
+```
+
+Construct and run the discovery service via `Discv5Builder`:
+
+```rust,ignore
+use base_consensus_disc::{Discv5Builder, LocalNode};
+
+let driver = Discv5Builder::new()
+    .with_local_node(local_node)
+    .build();
+
+driver.start().await?;
+```
+
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

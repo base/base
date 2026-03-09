@@ -18,6 +18,24 @@ Also provides shared data types (`GameAtIndex`, `AnchorRoot`, `GameInfo`), pure 
 
 These bindings are used by both [`base-proposer`](../proposer/) and the challenger.
 
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-proof-contracts = { workspace = true }
+```
+
+Use the Alloy-backed clients to interact with onchain contracts:
+
+```rust,ignore
+use base_proof_contracts::DisputeGameFactoryClient;
+
+let factory = DisputeGameFactoryClient::new(provider, factory_address);
+let games = factory.get_all_games(game_type, 0, count).await?;
+```
+
 ## License
 
 [MIT License](https://github.com/base/base/blob/main/LICENSE)

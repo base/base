@@ -2,7 +2,21 @@
 
 Enclave client implementation.
 
-This crate provides a client for communicating with the enclave RPC server.
+## Overview
+
+Provides `EnclaveClient`, an async RPC client for communicating with the `base-enclave-server`.
+Supports querying the signer's public key, performing individual stateless block executions via
+`execute_stateless`, aggregating proposals via `aggregate`, and the high-level `prove` method
+that delegates full proof orchestration to the enclave server.
+
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-enclave-client = { workspace = true }
+```
 
 ## Example
 

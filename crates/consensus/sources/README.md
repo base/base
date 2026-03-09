@@ -5,6 +5,29 @@
 
 Data source types and utilities for the base-consensus-node.
 
+## Overview
+
+Defines block signing interfaces for the consensus node. Provides `BlockSigner` and
+`BlockSignerHandler` for local signing, `RemoteSigner` and `RemoteSignerHandler` for delegating
+signing to an external service, and certificate handling types (`ClientCert`, `CertificateError`)
+for mTLS authentication with remote signers.
+
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-consensus-sources = { workspace = true }
+```
+
+```rust,ignore
+use base_consensus_sources::{BlockSigner, RemoteSigner};
+
+let signer = BlockSigner::new(key);
+let signed = signer.sign(&block).await?;
+```
+
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

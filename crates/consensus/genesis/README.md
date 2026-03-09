@@ -3,7 +3,12 @@
 <a href="https://crates.io/crates/base-consensus-genesis"><img src="https://img.shields.io/crates/v/base-consensus-genesis.svg" alt="base-consensus-genesis crate"></a>
 <a href="https://rollup.yoga"><img src="https://img.shields.io/badge/Docs-854a15?style=flat&labelColor=1C2C2E&color=BEC5C9&logo=mdBook&logoColor=BEC5C9" alt="Docs" /></a>
 
-Genesis types for Optimism.
+## Overview
+
+Genesis types for Optimism. Provides the `RollupConfig` type — the primary configuration
+for OP Stack chains — encoding hardfork activation timestamps, L1 and L2 genesis block
+information, batch inbox address, and system config. `no_std` compatible when default
+features are disabled.
 
 ## Usage
 

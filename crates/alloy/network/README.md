@@ -2,9 +2,29 @@
 
 Base chain network types and RPC behavior abstraction.
 
-This crate contains a simple abstraction of the RPC behavior of a Base chain. It is intended to be used
-by the Alloy client to provide a consistent interface to the rest of the library, regardless of
-changes the underlying blockchain makes to the RPC interface.
+## Overview
+
+Defines the `Base` network type that implements the `alloy_network::Network` trait with OP Stack
+transaction and receipt types. This provides a consistent interface to alloy providers and signers
+regardless of Base-specific RPC changes. Also re-exports alloy response types (`BlockResponse`,
+`ReceiptResponse`, `TransactionResponse`) and OP transaction types (`OpTxType`, `OpTxEnvelope`,
+`OpTypedTransaction`).
+
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-alloy-network = { workspace = true }
+```
+
+```rust,ignore
+use base_alloy_network::Base;
+use alloy_provider::ProviderBuilder;
+
+let provider = ProviderBuilder::new().network::<Base>().on_http(url);
+```
 
 ## License
 
