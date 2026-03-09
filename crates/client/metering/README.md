@@ -1,6 +1,24 @@
-# base-metering
+# `base-metering`
 
 Metering RPC for Base node. Provides RPC methods for measuring transaction and block execution timing.
+
+## Overview
+
+Exposes JSON-RPC endpoints for profiling transaction and block execution on the Base node.
+`base_meterBundle` simulates a bundle and returns per-transaction gas and timing metrics.
+`base_meterBlockByHash` and `base_meterBlockByNumber` re-execute a historical block and return
+a breakdown of signer recovery, EVM execution, and state root computation times.
+`base_meteredPriorityFeePerGas` combines bundle metering with a priority fee recommendation
+based on recent block resource usage.
+
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-metering = { workspace = true }
+```
 
 ## RPC Methods
 
@@ -83,3 +101,7 @@ Meters a bundle and returns a recommended priority fee based on recent block con
    - Stop when adding another tx would leave less room than the bundle needs
    - The last included tx's fee is the threshold
 4. Return the maximum fee across all resources as `priorityFee`
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

@@ -1,10 +1,11 @@
 # `base-consensus-gossip`
 
-Gossip protocol implementation for Base.
+## Overview
 
-This crate provides a comprehensive gossip networking implementation for Base,
-including GossipSub-based consensus layer networking, RPC interfaces for network
-administration, and metrics collection.
+GossipSub-based P2P networking for Base consensus. `GossipDriver` manages a libp2p swarm
+that subscribes to unsafe block topics and propagates validated payloads. `BlockHandler`
+validates incoming blocks against the rollup config, `ConnectionGater` enforces IP-based rate
+limits and peer bans, and Prometheus metrics are recorded via `Metrics`.
 
 ## Key Components
 
@@ -14,3 +15,16 @@ administration, and metrics collection.
 - [`ConnectionGater`]: Sophisticated connection management and rate limiting
 - [`P2pRpcRequest`]: RPC interface for network administration
 - [`Metrics`]: Metrics collection for monitoring and observability
+
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-consensus-gossip = { workspace = true }
+```
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

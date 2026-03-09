@@ -19,6 +19,25 @@ an `RpcError` type for error handling.
 
 These abstractions are used by both [`base-proposer`](../proposer/) and the challenger.
 
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-proof-rpc = { workspace = true }
+```
+
+Instantiate the Alloy-backed clients to query L1, L2, and rollup nodes:
+
+```rust,ignore
+use base_proof_rpc::{L1Client, L2Client, RollupClient};
+
+let l1 = L1Client::new(l1_url)?;
+let l2 = L2Client::new(l2_url)?;
+let rollup = RollupClient::new(rollup_url)?;
+```
+
 ## License
 
 [MIT License](https://github.com/base/base/blob/main/LICENSE)
