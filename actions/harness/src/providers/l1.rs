@@ -151,6 +151,11 @@ impl ActionDataSource {
     fn load_block(&mut self, block_ref: &BlockInfo, batcher_address: Address) {
         self.chain.with(|blocks| {
             if let Some(block) = blocks.get(block_ref.number as usize) {
+                // Guard against stale block_refs after a reorg: if the block at
+                // this height was replaced, its hash will differ.
+                if block.hash() != block_ref.hash {
+                    return;
+                }
                 for tx in &block.batcher_txs {
                     if tx.from == batcher_address && tx.to == self.inbox_address {
                         self.pending.push_back(tx.input.clone());
