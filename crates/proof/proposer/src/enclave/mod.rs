@@ -5,9 +5,10 @@ use async_trait::async_trait;
 use base_enclave::{
     AggregateRequest, BlockId, ExecuteStatelessRequest, Genesis, GenesisSystemConfig, RollupConfig,
 };
-pub use base_enclave::{PerChainConfig, Proposal};
+pub use base_enclave::PerChainConfig;
 use base_enclave_client::ClientError;
 pub use base_enclave_client::EnclaveClient;
+use base_proof_primitives::Proposal;
 
 use crate::ProposerError;
 

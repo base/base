@@ -36,6 +36,7 @@ base-alloy-consensus = { workspace = true, features = ["std", "serde"] }
 # Proof
 base-proof-rpc.workspace = true
 base-proof-contracts.workspace = true
+base-proof-primitives = { workspace = true, features = ["serde"] }
 
 # Consensus
 base-protocol.workspace = true

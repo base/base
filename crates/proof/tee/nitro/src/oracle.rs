@@ -5,7 +5,6 @@ use base_proof_preimage::{
     FlushableCache, HintWriterClient, PreimageKey, PreimageOracleClient, WitnessOracle,
     errors::{PreimageOracleError, PreimageOracleResult, WitnessOracleResult},
 };
-use base_proof_primitives::ProofBundle;
 use parking_lot::RwLock;
 
 /// HashMap-backed preimage oracle for in-enclave stateless execution.
@@ -90,6 +89,7 @@ impl WitnessOracle for Oracle {
 #[cfg(test)]
 mod tests {
     use base_proof_preimage::PreimageKeyType;
+    use base_proof_primitives::ProofBundle;
 
     use super::*;
 
