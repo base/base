@@ -414,7 +414,7 @@ impl OpHardforks for RollupConfig {
                 .hardforks
                 .jovian_time
                 .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.op_fork_activation(OpHardfork::BaseV1)),
+                .unwrap_or(ForkCondition::Never),
             OpHardfork::BaseV1 => self
                 .hardforks
                 .base
