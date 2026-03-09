@@ -137,7 +137,9 @@ impl RollupConfig {
     /// ## Returns
     /// The active [`base_revm::OpSpecId`] for the executor.
     pub fn spec_id(&self, timestamp: u64) -> base_revm::OpSpecId {
-        if self.is_jovian_active(timestamp) {
+        if self.is_base_v1_active(timestamp) {
+            base_revm::OpSpecId::BASE_V1
+        } else if self.is_jovian_active(timestamp) {
             base_revm::OpSpecId::JOVIAN
         } else if self.is_isthmus_active(timestamp) {
             base_revm::OpSpecId::ISTHMUS
@@ -276,6 +278,17 @@ impl RollupConfig {
             && !self.is_jovian_active(timestamp.saturating_sub(self.block_time))
     }
 
+    /// Returns true if Base V1 is active at the given timestamp.
+    pub fn is_base_v1_active(&self, timestamp: u64) -> bool {
+        self.hardforks.base.as_ref().and_then(|b| b.v1).is_some_and(|t| timestamp >= t)
+    }
+
+    /// Returns true if the timestamp marks the first Base V1 block.
+    pub fn is_first_base_v1_block(&self, timestamp: u64) -> bool {
+        self.is_base_v1_active(timestamp)
+            && !self.is_base_v1_active(timestamp.saturating_sub(self.block_time))
+    }
+
     /// Returns the max sequencer drift for the given timestamp.
     pub fn max_sequencer_drift(&self, timestamp: u64) -> u64 {
         if self.is_fjord_active(timestamp) {
@@ -401,6 +414,13 @@ impl OpHardforks for RollupConfig {
                 .hardforks
                 .jovian_time
                 .map(ForkCondition::Timestamp)
+                .unwrap_or_else(|| self.op_fork_activation(OpHardfork::BaseV1)),
+            OpHardfork::BaseV1 => self
+                .hardforks
+                .base
+                .as_ref()
+                .and_then(|b| b.v1)
+                .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
             _ => ForkCondition::Never,
         }
@@ -447,6 +467,8 @@ mod tests {
         assert_eq!(config.spec_id(50), base_revm::OpSpecId::HOLOCENE);
         config.hardforks.isthmus_time = Some(60);
         assert_eq!(config.spec_id(60), base_revm::OpSpecId::ISTHMUS);
+        config.hardforks.base = Some(crate::BaseHardforkConfig { v1: Some(70) });
+        assert_eq!(config.spec_id(70), base_revm::OpSpecId::BASE_V1);
     }
 
     #[test]
@@ -583,10 +605,26 @@ mod tests {
         assert!(config.is_isthmus_active(10));
         assert!(config.is_jovian_active(10));
         assert!(!config.is_jovian_active(9));
+        assert!(!config.is_base_v1_active(10));
+    }
+
+    #[test]
+    fn test_base_v1_active() {
+        use crate::BaseHardforkConfig;
+        let mut config = RollupConfig::default();
+        assert!(!config.is_base_v1_active(0));
+        config.hardforks.base = Some(BaseHardforkConfig { v1: Some(10) });
+        // BaseV1 does not cascade upward to existing forks
+        assert!(!config.is_regolith_active(10));
+        assert!(!config.is_canyon_active(10));
+        assert!(!config.is_jovian_active(10));
+        assert!(config.is_base_v1_active(10));
+        assert!(!config.is_base_v1_active(9));
     }
 
     #[test]
     fn test_is_first_fork_block() {
+        use crate::BaseHardforkConfig;
         let cfg = RollupConfig {
             hardforks: HardForkConfig {
                 regolith_time: Some(10),
@@ -599,6 +637,7 @@ mod tests {
                 pectra_blob_schedule_time: Some(80),
                 isthmus_time: Some(90),
                 jovian_time: Some(100),
+                base: Some(BaseHardforkConfig { v1: Some(110) }),
             },
             block_time: 2,
             ..Default::default()
@@ -653,6 +692,11 @@ mod tests {
         assert!(!cfg.is_first_jovian_block(98));
         assert!(cfg.is_first_jovian_block(100));
         assert!(!cfg.is_first_jovian_block(102));
+
+        // Base V1
+        assert!(!cfg.is_first_base_v1_block(108));
+        assert!(cfg.is_first_base_v1_block(110));
+        assert!(!cfg.is_first_base_v1_block(112));
     }
 
     #[test]

@@ -60,6 +60,7 @@ impl OpChainHardforksExt for OpChainHardforks {
         forks.push((OpHardfork::Isthmus.boxed(), isthmus));
 
         forks.push((OpHardfork::Jovian.boxed(), self[OpHardfork::Jovian]));
+        forks.push((OpHardfork::BaseV1.boxed(), self[OpHardfork::BaseV1]));
 
         ChainHardforks::new(forks)
     }

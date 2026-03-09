@@ -42,6 +42,8 @@ hardfork!(
         Isthmus,
         /// Jovian: <https://github.com/ethereum-optimism/specs/tree/main/specs/protocol/jovian>
         Jovian,
+        /// Base V1: First Base-specific network upgrade.
+        BaseV1,
     }
 );
 
@@ -77,7 +79,7 @@ impl OpHardfork {
     }
 
     /// Base mainnet list of hardforks.
-    pub const fn base_mainnet() -> [(Self, ForkCondition); 9] {
+    pub const fn base_mainnet() -> [(Self, ForkCondition); 10] {
         [
             (Self::Bedrock, ForkCondition::Block(BASE_MAINNET_BEDROCK_BLOCK)),
             (Self::Regolith, ForkCondition::Timestamp(BASE_MAINNET_REGOLITH_TIMESTAMP)),
@@ -88,11 +90,12 @@ impl OpHardfork {
             (Self::Holocene, ForkCondition::Timestamp(BASE_MAINNET_HOLOCENE_TIMESTAMP)),
             (Self::Isthmus, ForkCondition::Timestamp(BASE_MAINNET_ISTHMUS_TIMESTAMP)),
             (Self::Jovian, ForkCondition::Timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP)),
+            (Self::BaseV1, ForkCondition::Never),
         ]
     }
 
     /// Base Sepolia list of hardforks.
-    pub const fn base_sepolia() -> [(Self, ForkCondition); 9] {
+    pub const fn base_sepolia() -> [(Self, ForkCondition); 10] {
         [
             (Self::Bedrock, ForkCondition::Block(BASE_SEPOLIA_BEDROCK_BLOCK)),
             (Self::Regolith, ForkCondition::Timestamp(BASE_SEPOLIA_REGOLITH_TIMESTAMP)),
@@ -103,11 +106,12 @@ impl OpHardfork {
             (Self::Holocene, ForkCondition::Timestamp(BASE_SEPOLIA_HOLOCENE_TIMESTAMP)),
             (Self::Isthmus, ForkCondition::Timestamp(BASE_SEPOLIA_ISTHMUS_TIMESTAMP)),
             (Self::Jovian, ForkCondition::Timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP)),
+            (Self::BaseV1, ForkCondition::Never),
         ]
     }
 
     /// Devnet list of hardforks.
-    pub const fn devnet() -> [(Self, ForkCondition); 9] {
+    pub const fn devnet() -> [(Self, ForkCondition); 10] {
         [
             (Self::Bedrock, ForkCondition::ZERO_BLOCK),
             (Self::Regolith, ForkCondition::ZERO_TIMESTAMP),
@@ -118,11 +122,12 @@ impl OpHardfork {
             (Self::Holocene, ForkCondition::ZERO_TIMESTAMP),
             (Self::Isthmus, ForkCondition::ZERO_TIMESTAMP),
             (Self::Jovian, ForkCondition::ZERO_TIMESTAMP),
+            (Self::BaseV1, ForkCondition::ZERO_TIMESTAMP),
         ]
     }
 
     /// Base devnet-0-sepolia-dev-0 list of hardforks.
-    pub const fn base_devnet_0_sepolia_dev_0() -> [(Self, ForkCondition); 9] {
+    pub const fn base_devnet_0_sepolia_dev_0() -> [(Self, ForkCondition); 10] {
         [
             (Self::Bedrock, ForkCondition::Block(BASE_DEVNET_0_SEPOLIA_DEV_0_BEDROCK_BLOCK)),
             (
@@ -148,6 +153,7 @@ impl OpHardfork {
                 ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_ISTHMUS_TIMESTAMP),
             ),
             (Self::Jovian, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
+            (Self::BaseV1, ForkCondition::ZERO_TIMESTAMP),
         ]
     }
 
@@ -169,7 +175,7 @@ mod tests {
     fn check_op_hardfork_from_str() {
         let hardfork_str = [
             "beDrOck", "rEgOlITH", "cAnYoN", "eCoToNe", "FJorD", "GRaNiTe", "hOlOcEnE", "isthMUS",
-            "jOvIaN",
+            "jOvIaN", "bAsEv1",
         ];
         let expected_hardforks = [
             OpHardfork::Bedrock,
@@ -181,6 +187,7 @@ mod tests {
             OpHardfork::Holocene,
             OpHardfork::Isthmus,
             OpHardfork::Jovian,
+            OpHardfork::BaseV1,
         ];
 
         let hardforks: alloc::vec::Vec<OpHardfork> =

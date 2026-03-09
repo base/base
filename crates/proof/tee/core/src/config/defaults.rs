@@ -53,6 +53,7 @@ pub fn default_rollup_config() -> RollupConfig {
             pectra_blob_schedule_time: None,
             isthmus_time: Some(0),
             jovian_time: Some(0),
+            base: None,
         },
 
         // Base fee config

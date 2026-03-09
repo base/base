@@ -7,7 +7,9 @@ use EthereumHardfork::{
     Constantinople, Dao, Frontier, GrayGlacier, Homestead, Istanbul, London, MuirGlacier, Osaka,
     Paris, Petersburg, Prague, Shanghai, SpuriousDragon, Tangerine,
 };
-use OpHardfork::{Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith};
+use OpHardfork::{
+    BaseV1, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
+};
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::U256;
 
@@ -101,6 +103,7 @@ impl Index<OpHardfork> for OpChainHardforks {
             Holocene => &self.forks[Holocene.idx()].1,
             Isthmus => &self.forks[Isthmus.idx()].1,
             Jovian => &self.forks[Jovian.idx()].1,
+            BaseV1 => &self.forks[BaseV1.idx()].1,
         }
     }
 }
@@ -131,7 +134,7 @@ impl Index<EthereumHardfork> for OpChainHardforks {
 #[cfg(test)]
 mod tests {
     use OpHardfork::{
-        Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
+        BaseV1, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
     };
     use alloy_hardforks::EthereumHardfork;
 
@@ -242,6 +245,18 @@ mod tests {
         assert!(
             base_sepolia_forks.is_jovian_active_at_timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP + 1000)
         );
+    }
+
+    #[test]
+    fn is_base_v1_active_at_timestamp() {
+        // BaseV1 is not scheduled on mainnet or sepolia yet
+        let base_mainnet_forks = OpChainHardforks::base_mainnet();
+        assert!(!base_mainnet_forks.is_base_v1_active_at_timestamp(0));
+        assert!(!base_mainnet_forks.is_base_v1_active_at_timestamp(u64::MAX));
+
+        let base_sepolia_forks = OpChainHardforks::base_sepolia();
+        assert!(!base_sepolia_forks.is_base_v1_active_at_timestamp(0));
+        assert!(!base_sepolia_forks.is_base_v1_active_at_timestamp(u64::MAX));
     }
 
     #[test]
