@@ -180,21 +180,9 @@ mod tests {
 
         // Simulate channel assembly: channel data is the concatenation of frame data.
         let channel_data = frames[0].data.clone();
-        eprintln!("frame.data[0] = 0x{:02x}", channel_data[0]);
-        eprintln!("frame.data len = {}", channel_data.len());
-
         let max_rlp = 10_000_000usize;
         let mut reader = BatchReader::new(channel_data, max_rlp);
-        let decompress_result = reader.decompress();
-        eprintln!("decompress result: {decompress_result:?}");
-        eprintln!("brotli_used: {}", reader.brotli_used);
-        eprintln!("decompressed len = {}", reader.decompressed.len());
-        if !reader.decompressed.is_empty() {
-            eprintln!("decompressed[0] = 0x{:02x}", reader.decompressed[0]);
-            if reader.decompressed.len() > 1 {
-                eprintln!("decompressed[1] = 0x{:02x}", reader.decompressed[1]);
-            }
-        }
+        reader.decompress().expect("decompression should succeed");
         let decoded = reader.next_batch(&rollup_config).expect("should decode batch");
         match decoded {
             Batch::Single(sb) => assert_eq!(sb.timestamp, 2),
