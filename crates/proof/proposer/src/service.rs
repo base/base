@@ -9,6 +9,7 @@ use std::{
 };
 
 use alloy_primitives::Address;
+use base_cli_utils::RuntimeManager;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient,
@@ -50,7 +51,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
 
     // ── 1. Global cancellation token and signal handler ──────────────────
     let cancel = CancellationToken::new();
-    crate::SignalHandler::install(cancel.clone());
+    let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
 
     // ── 2. Metrics recorder and HTTP server (if enabled) ─────────────────
     config.metrics.init().expect("failed to install Prometheus recorder");
@@ -260,6 +261,10 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         Ok(Ok(())) => {}
         Ok(Err(e)) => warn!(error = %e, "Health server error during shutdown"),
         Err(e) => warn!(error = %e, "Health server task panicked"),
+    }
+
+    if let Err(e) = signal_handle.await {
+        warn!(error = %e, "Signal handler task panicked");
     }
 
     info!("Service stopped");
