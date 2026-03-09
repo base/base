@@ -21,7 +21,7 @@ pub use output_proposer::{
 };
 
 mod driver;
-pub use driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl, RecoveredGame};
+pub use driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl};
 
 mod enclave;
 pub use enclave::{
