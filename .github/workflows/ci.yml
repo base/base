@@ -264,6 +264,6 @@ jobs:
         with:
           key: docker-${{ runner.os }}-${{ hashFiles('devnet/src/images.rs', 'etc/docker/Dockerfile.devnet') }}
       - name: Pre-pull docker images
-        run: just devnet-pull-images
+        run: just devnet pull-images
       - name: Run devnet tests
-        run: just devnet-tests-ci
+        run: just devnet tests-ci
