@@ -1,5 +1,5 @@
-use alloy_consensus::Header;
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_consensus::{Header, Receipt};
+use alloy_primitives::{Address, Bytes, Log, B256};
 use base_protocol::BlockInfo;
 use tracing::info;
 
@@ -26,9 +26,6 @@ pub enum ReorgError {
         /// The current chain tip.
         tip: u64,
     },
-    /// Cannot reorg away the genesis block.
-    #[error("cannot reorg away the genesis block (block 0 is immutable)")]
-    Genesis,
 }
 
 /// Configuration for the [`L1Miner`].
@@ -69,13 +66,21 @@ pub struct PendingTx {
 /// Mirrors the structure the derivation pipeline reads from L1: a block
 /// header (for timestamp, number, and hash chaining) together with the
 /// ordered list of batcher transactions that were submitted before the
-/// block was mined.
+/// block was mined, and any receipts emitted during block execution.
 #[derive(Debug, Clone)]
 pub struct L1Block {
     /// Consensus header.
     pub header: Header,
     /// Batcher transactions included in this block, in submission order.
     pub batcher_txs: Vec<PendingTx>,
+    /// Synthetic receipts carrying [`Log`]s that the derivation pipeline
+    /// should process (e.g. `ConfigUpdate` logs for [`SystemConfig`] changes).
+    ///
+    /// In the real chain every transaction produces a receipt; here we bundle
+    /// all test-emitted logs into a single receipt for simplicity.
+    ///
+    /// [`SystemConfig`]: base_consensus_genesis::SystemConfig
+    pub receipts: Vec<Receipt>,
 }
 
 impl L1Block {
@@ -131,6 +136,8 @@ pub struct L1Miner {
     blocks: Vec<L1Block>,
     /// Batcher transactions waiting to be included in the next block.
     pending: Vec<PendingTx>,
+    /// Logs to be wrapped into a single receipt in the next mined block.
+    pending_logs: Vec<Log>,
     /// Configuration.
     config: L1MinerConfig,
     /// Monotonically increasing fork counter, stamped into every block's
@@ -144,8 +151,21 @@ impl L1Miner {
         let genesis = L1Block {
             header: Header { number: 0, timestamp: 0, ..Default::default() },
             batcher_txs: vec![],
+            receipts: vec![],
         };
-        Self { blocks: vec![genesis], pending: vec![], config, fork_id: 0 }
+        Self { blocks: vec![genesis], pending: vec![], pending_logs: vec![], config, fork_id: 0 }
+    }
+
+    /// Queue a [`Log`] to be included in a synthetic receipt in the next
+    /// mined block.
+    ///
+    /// Logs are wrapped into a single [`Receipt`] during [`mine_block`], which
+    /// is how the derivation pipeline receives `ConfigUpdate` events and other
+    /// L1-emitted signals.
+    ///
+    /// [`mine_block`]: L1Miner::mine_block
+    pub fn enqueue_log(&mut self, log: Log) {
+        self.pending_logs.push(log);
     }
 
     /// Return the most recently mined block.
@@ -199,15 +219,12 @@ impl L1Miner {
     /// # Errors
     ///
     /// Returns [`ReorgError::BeyondTip`] if `number` is greater than the
-    /// current chain tip, and [`ReorgError::Genesis`] if `number` is 0 (the
-    /// genesis block is immutable — you cannot reorg it away).
+    /// current chain tip. Reorging to block 0 is valid — it keeps only the
+    /// immutable genesis block and discards all subsequent blocks.
     pub fn reorg_to(&mut self, number: u64) -> Result<Vec<L1Block>, ReorgError> {
         let tip = self.latest_number();
         if number > tip {
             return Err(ReorgError::BeyondTip { requested: number, tip });
-        }
-        if number == 0 {
-            return Err(ReorgError::Genesis);
         }
 
         self.fork_id += 1;
@@ -257,6 +274,12 @@ impl L1Miner {
         let timestamp = parent.header.timestamp + self.config.block_time;
 
         let batcher_txs = core::mem::take(&mut self.pending);
+        let logs = core::mem::take(&mut self.pending_logs);
+        let receipts = if logs.is_empty() {
+            vec![]
+        } else {
+            vec![Receipt { status: true.into(), cumulative_gas_used: 0, logs }]
+        };
 
         let block = L1Block {
             header: Header {
@@ -273,6 +296,7 @@ impl L1Miner {
                 ..Default::default()
             },
             batcher_txs,
+            receipts,
         };
 
         info!(
@@ -436,25 +460,18 @@ mod tests {
     #[test]
     fn post_reorg_blocks_have_distinct_hashes() {
         let mut m = miner();
-        m.mine_block(); // 1 on fork 0
-        let original_hash = m.latest().hash();
+        m.mine_block(); // block 1 on fork 0
+        let original_hash_1 = m.block_by_number(1).unwrap().hash();
 
-        m.reorg_to(0).err().unwrap(); // genesis reorg returns error
-        m.mine_block();               // not actually mined yet
+        // Reorg all the way back to genesis (now allowed); mine a new block 1 on fork 1.
+        m.reorg_to(0).unwrap(); // fork_id → 1; chain back to [genesis]
+        m.mine_block();         // new block 1 on fork 1
 
-        // Reorg to block 1 is a no-op (nothing to discard), but fork_id hasn't changed yet.
-        // Real distinct-hash test: reorg back to genesis isn't allowed, so reorg to 1 after 2.
-        m.mine_block(); // 2 on fork 0
-        m.reorg_to(1).unwrap(); // discard block 2, fork_id → 1
-        m.mine_block(); // new 2 on fork 1
-
-        let new_hash = m.block_by_number(2).unwrap().hash();
-        // The new block 2 is on fork 1 and must not collide with the hash that
-        // block 2 on fork 0 would have had (different extra_data).
-        // We can't compare with the discarded block directly, but we can at
-        // least confirm the fork_id stamp causes two otherwise-identical blocks
-        // mined at the same height to differ.
-        assert_ne!(new_hash, original_hash, "post-reorg block must differ from pre-reorg block");
+        let new_hash_1 = m.block_by_number(1).unwrap().hash();
+        assert_ne!(
+            new_hash_1, original_hash_1,
+            "block 1 on fork 1 must have a different hash than block 1 on fork 0",
+        );
     }
 
     #[test]
@@ -483,10 +500,13 @@ mod tests {
     }
 
     #[test]
-    fn reorg_to_genesis_returns_error() {
+    fn reorg_to_genesis_discards_all_non_genesis_blocks() {
         let mut m = miner();
-        m.mine_block();
-        assert!(matches!(m.reorg_to(0), Err(ReorgError::Genesis)));
+        m.mine_block(); // block 1
+        m.mine_block(); // block 2
+        let discarded = m.reorg_to(0).expect("reorg to genesis should succeed");
+        assert_eq!(discarded.len(), 2, "blocks 1 and 2 should be discarded");
+        assert_eq!(m.latest_number(), 0, "only genesis remains");
     }
 
     #[test]

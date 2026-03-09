@@ -32,6 +32,14 @@ impl SharedL1Chain {
         self.0.lock().expect("chain lock poisoned").push(block);
     }
 
+    /// Truncate the chain to retain only blocks `0..=number`.
+    ///
+    /// Use this after an L1 reorg to remove orphaned blocks from the shared
+    /// view before pushing replacement blocks mined on the new fork.
+    pub fn truncate_to(&self, number: u64) {
+        self.0.lock().expect("chain lock poisoned").truncate((number + 1) as usize);
+    }
+
     fn with<R>(&self, f: impl FnOnce(&[L1Block]) -> R) -> R {
         let g = self.0.lock().expect("chain lock poisoned");
         f(&g)
@@ -95,8 +103,10 @@ impl ChainProvider for ActionL1ChainProvider {
         })
     }
 
-    async fn receipts_by_hash(&mut self, _hash: B256) -> Result<Vec<Receipt>, Self::Error> {
-        Ok(vec![])
+    async fn receipts_by_hash(&mut self, hash: B256) -> Result<Vec<Receipt>, Self::Error> {
+        self.chain.with(|blocks| {
+            Ok(blocks.iter().find(|b| b.hash() == hash).map(|b| b.receipts.clone()).unwrap_or_default())
+        })
     }
 
     async fn block_info_and_transactions_by_hash(
