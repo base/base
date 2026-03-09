@@ -3156,7 +3156,6 @@ dependencies = [
  "base-consensus-genesis",
  "base-proof-executor",
  "base-proof-mpt",
- "base-proof-preimage",
  "base-protocol",
  "base-revm",
  "hex",
@@ -4185,12 +4184,11 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_bytes",
- "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-vsock",
  "tracing",
- "vsock",
  "x509-cert",
  "zip",
 ]
@@ -4206,7 +4204,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tokio",
- "vsock",
+ "tokio-vsock",
 ]
 
 [[package]]
@@ -17356,6 +17354,19 @@ dependencies = [
  "pin-project-lite",
  "slab",
  "tokio",
+]
+
+[[package]]
+name = "tokio-vsock"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b319ef9394889dab2e1b4f0085b45ba11d0c79dc9d1a9d1afc057d009d0f1c7"
+dependencies = [
+ "bytes",
+ "futures",
+ "libc",
+ "tokio",
+ "vsock",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-/// NSM (Nitro Secure Module) session management and random number generation.
+//! NSM (Nitro Secure Module) session management and random number generation.
 
 #[cfg(target_os = "linux")]
 use aws_nitro_enclaves_nsm_api::api::{Request, Response};
@@ -7,7 +7,7 @@ use aws_nitro_enclaves_nsm_api::driver::{nsm_exit, nsm_init, nsm_process_request
 use rand_08::{CryptoRng, RngCore};
 use tracing::warn;
 
-use crate::error::{NitroError, NsmError};
+use crate::error::{NsmError, Result};
 
 // ---------------------------------------------------------------------------
 // NsmSession
@@ -31,7 +31,7 @@ impl NsmSession {
     /// Returns `Ok(Some(session))` if NSM is available.
     /// Returns `Ok(None)` if NSM is unavailable (non-Linux or device not present).
     #[cfg(target_os = "linux")]
-    pub fn open() -> Result<Option<Self>, NitroError> {
+    pub fn open() -> Result<Option<Self>> {
         let fd = nsm_init();
         if fd < 0 {
             warn!("failed to open Nitro Secure Module session, running in local mode");
@@ -45,7 +45,7 @@ impl NsmSession {
     ///
     /// On non-Linux platforms, always returns `None` (local mode).
     #[cfg(not(target_os = "linux"))]
-    pub fn open() -> Result<Option<Self>, NitroError> {
+    pub fn open() -> Result<Option<Self>> {
         warn!("NSM not available on this platform, running in local mode");
         Ok(None)
     }
@@ -54,7 +54,7 @@ impl NsmSession {
     ///
     /// Returns the PCR0 value as a byte vector.
     #[cfg(target_os = "linux")]
-    pub fn describe_pcr0(&self) -> Result<Vec<u8>, NitroError> {
+    pub fn describe_pcr0(&self) -> Result<Vec<u8>> {
         let request = Request::DescribePCR { index: 0 };
         let response = nsm_process_request(self.fd, request);
 
@@ -73,7 +73,7 @@ impl NsmSession {
 
     /// Describe PCR0 - stub for non-Linux platforms.
     #[cfg(not(target_os = "linux"))]
-    pub fn describe_pcr0(&self) -> Result<Vec<u8>, NitroError> {
+    pub fn describe_pcr0(&self) -> Result<Vec<u8>> {
         Err(NsmError::DescribePcr("NSM not available".to_string()).into())
     }
 
@@ -81,7 +81,7 @@ impl NsmSession {
     ///
     /// The public key is included in the attestation document.
     #[cfg(target_os = "linux")]
-    pub fn get_attestation(&self, public_key: Vec<u8>) -> Result<Vec<u8>, NitroError> {
+    pub fn get_attestation(&self, public_key: Vec<u8>) -> Result<Vec<u8>> {
         let request = Request::Attestation {
             user_data: None,
             nonce: None,
@@ -98,13 +98,13 @@ impl NsmSession {
 
     /// Get attestation - stub for non-Linux platforms.
     #[cfg(not(target_os = "linux"))]
-    pub fn get_attestation(&self, _public_key: Vec<u8>) -> Result<Vec<u8>, NitroError> {
+    pub fn get_attestation(&self, _public_key: Vec<u8>) -> Result<Vec<u8>> {
         Err(NsmError::Attestation("NSM not available".to_string()).into())
     }
 
     /// Get random bytes from the NSM device.
     #[cfg(target_os = "linux")]
-    pub fn get_random(&self, count: usize) -> Result<Vec<u8>, NitroError> {
+    pub fn get_random(&self, count: usize) -> Result<Vec<u8>> {
         let mut result = Vec::with_capacity(count);
 
         while result.len() < count {
@@ -131,7 +131,7 @@ impl NsmSession {
 
     /// Get random bytes - stub for non-Linux platforms.
     #[cfg(not(target_os = "linux"))]
-    pub fn get_random(&self, _count: usize) -> Result<Vec<u8>, NitroError> {
+    pub fn get_random(&self, _count: usize) -> Result<Vec<u8>> {
         Err(NsmError::Random("NSM not available".to_string()).into())
     }
 }
@@ -267,13 +267,13 @@ impl RngCore for NsmRng {
     }
 
     #[cfg(target_os = "linux")]
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_08::Error> {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> std::result::Result<(), rand_08::Error> {
         self.fill_bytes(dest);
         Ok(())
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_08::Error> {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> std::result::Result<(), rand_08::Error> {
         self.inner.try_fill_bytes(dest)
     }
 }

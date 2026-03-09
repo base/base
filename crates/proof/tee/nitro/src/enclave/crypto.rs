@@ -8,7 +8,7 @@ use alloy_signer_local::PrivateKeySigner;
 use k256::ecdsa::{Signature, SigningKey, VerifyingKey, signature::hazmat::PrehashVerifier};
 use rand_08::CryptoRng;
 
-use crate::error::{CryptoError, NitroError, ProposalError};
+use crate::error::{CryptoError, ProposalError, Result};
 
 /// Expected length of an ECDSA signature (r: 32 bytes, s: 32 bytes, v: 1 byte).
 pub const SIGNATURE_LENGTH: usize = 65;
@@ -18,19 +18,18 @@ pub const SIGNATURE_LENGTH: usize = 65;
 pub const SIGNING_DATA_BASE_LENGTH: usize = 244;
 
 /// ECDSA secp256k1 operations.
+#[derive(Debug)]
 pub struct Ecdsa;
 
 impl Ecdsa {
     /// Generate a new signer with a random private key.
-    pub fn generate<R: CryptoRng + rand_08::RngCore>(
-        rng: &mut R,
-    ) -> Result<PrivateKeySigner, NitroError> {
+    pub fn generate<R: CryptoRng + rand_08::RngCore>(rng: &mut R) -> Result<PrivateKeySigner> {
         let signing_key = SigningKey::random(rng);
         Ok(PrivateKeySigner::from_signing_key(signing_key))
     }
 
     /// Create a signer from a 32-byte private key.
-    pub fn from_bytes(bytes: &[u8]) -> Result<PrivateKeySigner, NitroError> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<PrivateKeySigner> {
         let signing_key =
             SigningKey::from_slice(bytes).map_err(|e| CryptoError::EcdsaKeyParse(e.to_string()))?;
         Ok(PrivateKeySigner::from_signing_key(signing_key))
@@ -39,7 +38,7 @@ impl Ecdsa {
     /// Create a signer from a hex-encoded private key.
     ///
     /// The hex string may optionally be prefixed with "0x".
-    pub fn from_hex(hex_str: &str) -> Result<PrivateKeySigner, NitroError> {
+    pub fn from_hex(hex_str: &str) -> Result<PrivateKeySigner> {
         let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
         let bytes = alloy_primitives::hex::decode(hex_str)
             .map_err(|e| CryptoError::HexParse(e.to_string()))?;
@@ -69,6 +68,7 @@ impl Ecdsa {
 }
 
 /// Proposal signing and verification (`AggregateVerifier` journal format).
+#[derive(Debug)]
 pub struct Signing;
 
 impl Signing {
@@ -129,7 +129,7 @@ impl Signing {
     }
 
     /// Sign data with keccak256 hash, returns 65-byte signature (r || s || v).
-    pub fn sign(signer: &PrivateKeySigner, data: &[u8]) -> Result<Bytes, NitroError> {
+    pub fn sign(signer: &PrivateKeySigner, data: &[u8]) -> Result<Bytes> {
         let hash = keccak256(data);
         let signature = signer
             .sign_hash_sync(&hash)
@@ -142,7 +142,7 @@ impl Signing {
     /// Verify a proposal signature.
     ///
     /// Uses only the first 64 bytes (r, s), matching Go's `crypto.VerifySignature`.
-    pub fn verify(public_key: &[u8], data: &[u8], signature: &[u8]) -> Result<bool, NitroError> {
+    pub fn verify(public_key: &[u8], data: &[u8], signature: &[u8]) -> Result<bool> {
         if signature.len() != SIGNATURE_LENGTH {
             return Err(ProposalError::InvalidSignatureLength(signature.len()).into());
         }
@@ -164,6 +164,7 @@ mod tests {
     use rand_08::rngs::OsRng;
 
     use super::*;
+    use crate::NitroError;
 
     fn test_signing_data() -> Vec<u8> {
         Signing::build_data(

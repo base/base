@@ -2,11 +2,12 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use base_proof_primitives::{ProofBundle, ProofResult};
-use vsock::{VsockAddr, VsockStream};
+use tokio_vsock::{VsockAddr, VsockStream};
 
 use crate::{Frame, ProofTransport, TransportError, TransportResult};
 
 const PROVE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Vsock-backed proof transport for Nitro Enclaves.
 ///
@@ -30,17 +31,21 @@ impl VsockTransport {
 #[async_trait]
 impl ProofTransport for VsockTransport {
     async fn prove(&self, bundle: &ProofBundle) -> TransportResult<ProofResult> {
-        let bundle = bundle.clone();
         let addr = VsockAddr::new(self.cid, self.port);
-        let task = tokio::task::spawn_blocking(move || {
-            let mut stream = VsockStream::connect(&addr)?;
-            stream.set_read_timeout(Some(PROVE_TIMEOUT - Duration::from_secs(5)))?;
-            stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-            Frame::write(&mut stream, &bundle)?;
-            Frame::read(&mut stream)
-        });
-        tokio::time::timeout(PROVE_TIMEOUT, task).await.map_err(|_| {
+
+        let mut stream = tokio::time::timeout(CONNECT_TIMEOUT, VsockStream::connect(addr))
+            .await
+            .map_err(|_| {
+            TransportError::Io(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "connect timed out",
+            ))
+        })??;
+
+        Frame::write(&mut stream, bundle).await?;
+
+        tokio::time::timeout(PROVE_TIMEOUT, Frame::read(&mut stream)).await.map_err(|_| {
             TransportError::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, "prove timed out"))
-        })??
+        })?
     }
 }
