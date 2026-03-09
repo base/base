@@ -1,5 +1,5 @@
 [package]
-name = "base-txmgr"
+name = "base-tx-manager"
 description = "Transaction lifecycle management for Base onchain components"
 version.workspace = true
 edition.workspace = true

@@ -233,7 +233,7 @@ base-proof-transport = { path = "crates/proof/transport" }
 
 # Utilities
 base-jwt = { path = "crates/utilities/jwt" }
-base-txmgr = { path = "crates/utilities/txmgr" }
+base-tx-manager = { path = "crates/utilities/tx-manager" }
 base-cli-utils = { path = "crates/utilities/cli" }
 base-test-utils = { path = "crates/utilities/test-utils" }
 base-proofs-extension = { path = "crates/client/proofs" }

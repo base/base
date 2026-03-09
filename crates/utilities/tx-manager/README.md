@@ -1,4 +1,4 @@
-# `base-txmgr`
+# `base-tx-manager`
 
 <a href="https://github.com/base/base/actions/workflows/ci.yml"><img src="https://github.com/base/base/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
 <a href="https://github.com/base/base/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
@@ -25,11 +25,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-txmgr = { git = "https://github.com/base/base" }
+base-tx-manager = { git = "https://github.com/base/base" }
 ```
 
 ```rust,ignore
-use base_txmgr::{SimpleTxManager, TxCandidate, TxManagerConfig};
+use base_tx_manager::{SimpleTxManager, TxCandidate, TxManagerConfig};
 
 // Build a transaction candidate and submit it via the manager
 let config = TxManagerConfig;

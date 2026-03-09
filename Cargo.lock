@@ -4379,7 +4379,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-txmgr"
+name = "base-tx-manager"
 version = "0.0.0"
 
 [[package]]
