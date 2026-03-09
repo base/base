@@ -5,7 +5,9 @@ use alloy_primitives::{Address, B256, Bytes};
 use base_consensus_genesis::ChainConfig;
 use serde::{Deserialize, Serialize};
 
-use crate::{Proposal, executor::ExecutionWitness, types::account::AccountResult};
+use base_proof_primitives::Proposal;
+
+use crate::{executor::ExecutionWitness, types::account::AccountResult};
 
 /// Request for the `executeStateless` RPC method.
 ///

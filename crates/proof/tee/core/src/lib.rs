@@ -36,11 +36,9 @@ pub use providers::{
     compute_receipt_root, compute_tx_root,
 };
 
-mod serde_utils;
-
 mod types;
 pub use types::{
     AccountResult, AggregateRequest, BlockId, ExecuteStatelessRequest, Genesis,
-    GenesisSystemConfig, MARSHAL_BINARY_SIZE, PerChainConfig, Proposal, ProposalParams,
-    RollupConfig, SIGNATURE_LENGTH, StorageProof, output_root_v0, output_root_v0_with_hash,
+    GenesisSystemConfig, MARSHAL_BINARY_SIZE, PerChainConfig, RollupConfig, StorageProof,
+    output_root_v0, output_root_v0_with_hash,
 };

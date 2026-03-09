@@ -1,10 +1,9 @@
 /// Enclave server — manages keys, attestation, signing, and proof execution.
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_signer_local::PrivateKeySigner;
 use base_alloy_evm::OpEvmFactory;
-use base_enclave::{Proposal, ProposalParams};
-use base_proof_client::{Epilogue, Prologue};
-use base_proof_primitives::{ProofBundle, ProofClaim, ProofEvidence, ProofResult};
+use base_proof_client::Prologue;
+use base_proof_primitives::{ProofBundle, ProofClaim, ProofEvidence, ProofResult, Proposal};
 use parking_lot::RwLock;
 use tracing::{info, warn};
 
@@ -130,188 +129,116 @@ impl Server {
         self.signer_attestation().unwrap_or_default()
     }
 
-    /// Run the proof-client pipeline for a proof bundle.
+    /// Run the proof-client pipeline for a proof bundle and return per-block proposals
+    /// with an aggregate.
     pub async fn prove(&self, bundle: ProofBundle) -> Result<ProofResult> {
         let ProofBundle { request, preimages } = bundle;
         let oracle = Oracle::new(preimages);
 
-        // Run proof-client pipeline
         let prologue = Prologue::new(oracle.clone(), oracle, OpEvmFactory::default());
         let driver = prologue.load().await.map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
-        let epilogue: Epilogue =
-            driver.execute().await.map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
+        let (block_results, claimed_l2_output_root) = driver
+            .execute_with_intermediates()
+            .await
+            .map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
 
-        let output_root = epilogue.output_root;
-        let l2_block_number = epilogue.safe_head.block_info.number;
-
-        // Trust-critical check inside TEE
-        epilogue.validate().map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
-
-        // Sign using AggregateVerifier journal format
-        let signing_data = Signing::build_data(
-            self.proposer,
-            request.l1_head,
-            request.agreed_l2_output_root,
-            U256::from(l2_block_number.checked_sub(1).ok_or_else(|| {
-                NitroError::ProofPipeline("l2_block_number is 0, cannot compute starting block".into())
-            })?),
-            output_root,
-            U256::from(l2_block_number),
-            &[],
-            self.config_hash,
-            self.tee_image_hash,
-        );
-
-        let signer = self.signer_key.read();
-        let signature = Signing::sign(&signer, &signing_data)?;
-        drop(signer);
-        let attestation_doc = self.try_get_attestation_bytes();
-
-        Ok(ProofResult {
-            claim: ProofClaim { l2_block_number, output_root, l1_head: request.l1_head },
-            evidence: ProofEvidence::Tee { attestation_doc, signature: signature.to_vec() },
-        })
-    }
-
-    /// Aggregate multiple proposals into a single proposal.
-    ///
-    /// Verifies the signature chain and creates a new aggregated proposal.
-    #[allow(clippy::too_many_arguments)]
-    pub fn aggregate(
-        &self,
-        config_hash: B256,
-        prev_output_root: B256,
-        prev_block_number: u64,
-        proposals: &[Proposal],
-        proposer: Address,
-        tee_image_hash: B256,
-        intermediate_roots: &[B256],
-    ) -> Result<Proposal> {
-        if proposals.is_empty() {
+        if block_results.is_empty() {
             return Err(ProposalError::EmptyProposals.into());
         }
 
-        if proposals.len() == 1 {
-            if !intermediate_roots.is_empty() {
-                return Err(ProposalError::ExecutionFailed(
-                    "intermediate roots must be empty for single-proposal aggregation".to_string(),
-                )
-                .into());
-            }
-            return Ok(proposals[0].clone());
+        // Trust-critical: validate final output root against claim
+        let (_, final_output_root) = block_results.last().unwrap();
+        if *final_output_root != claimed_l2_output_root {
+            return Err(NitroError::ProofPipeline(format!(
+                "output root mismatch: computed {final_output_root}, claimed {claimed_l2_output_root}"
+            )));
         }
 
-        let public_key = self.signer_public_key();
+        let mut proposals = Vec::with_capacity(block_results.len());
+        let mut prev_output_root = request.agreed_l2_output_root;
 
-        let mut output_root = prev_output_root;
-        let mut l1_origin_hash = B256::ZERO;
-        let mut l1_origin_number = U256::ZERO;
-        let mut l2_block_number = U256::ZERO;
-        let mut prev_l2_block = U256::from(prev_block_number);
-
-        for (index, proposal) in proposals.iter().enumerate() {
-            l1_origin_hash = proposal.l1_origin_hash;
-            l1_origin_number = proposal.l1_origin_number;
-            l2_block_number = proposal.l2_block_number;
+        for (l2_info, output_root) in &block_results {
+            let l2_block_number = U256::from(l2_info.block_info.number);
+            let l1_origin_hash = l2_info.l1_origin.hash;
+            let l1_origin_number = U256::from(l2_info.l1_origin.number);
 
             let signing_data = Signing::build_data(
-                proposer,
+                self.proposer,
                 l1_origin_hash,
-                output_root,
-                prev_l2_block,
-                proposal.output_root,
+                prev_output_root,
+                l2_block_number.saturating_sub(U256::from(1)),
+                *output_root,
                 l2_block_number,
                 &[],
-                config_hash,
-                tee_image_hash,
+                self.config_hash,
+                self.tee_image_hash,
             );
 
-            match Signing::verify(&public_key, &signing_data, &proposal.signature) {
-                Ok(true) => {}
-                Ok(false) => {
-                    return Err(ProposalError::InvalidSignature {
-                        index,
-                        reason: "signature mismatch".to_string(),
-                    }
-                    .into());
-                }
-                Err(e) => {
-                    return Err(
-                        ProposalError::InvalidSignature { index, reason: e.to_string() }.into()
-                    );
-                }
-            }
+            let signer = self.signer_key.read();
+            let signature = Signing::sign(&signer, &signing_data)?;
+            drop(signer);
 
-            output_root = proposal.output_root;
-            prev_l2_block = l2_block_number;
+            proposals.push(Proposal {
+                output_root: *output_root,
+                signature: Bytes::from(signature.to_vec()),
+                l1_origin_hash,
+                l1_origin_number,
+                l2_block_number,
+                prev_output_root,
+                config_hash: self.config_hash,
+            });
+
+            prev_output_root = *output_root;
         }
 
-        // Validate intermediate roots against proposals
-        if !intermediate_roots.is_empty() && proposals.len() > 1 {
-            let last_block = proposals.last().unwrap().l2_block_number.to::<u64>();
-            let total_blocks = last_block.checked_sub(prev_block_number).ok_or_else(|| {
-                ProposalError::ExecutionFailed(format!(
-                    "last block ({last_block}) is before previous block ({prev_block_number})"
-                ))
-            })?;
-            if !total_blocks.is_multiple_of(intermediate_roots.len() as u64) {
-                return Err(ProposalError::ExecutionFailed(format!(
-                    "block range ({total_blocks}) not divisible by intermediate root count ({})",
-                    intermediate_roots.len()
-                ))
-                .into());
+        let aggregate_proposal = if proposals.len() == 1 {
+            proposals[0].clone()
+        } else {
+            let first = &proposals[0];
+            let last = proposals.last().unwrap();
+
+            let intermediate_roots: Vec<B256> =
+                proposals[..proposals.len() - 1].iter().map(|p| p.output_root).collect();
+
+            let signing_data = Signing::build_data(
+                self.proposer,
+                last.l1_origin_hash,
+                request.agreed_l2_output_root,
+                first.l2_block_number.saturating_sub(U256::from(1)),
+                last.output_root,
+                last.l2_block_number,
+                &intermediate_roots,
+                self.config_hash,
+                self.tee_image_hash,
+            );
+
+            let signer = self.signer_key.read();
+            let signature = Signing::sign(&signer, &signing_data)?;
+            drop(signer);
+
+            Proposal {
+                output_root: last.output_root,
+                signature: Bytes::from(signature.to_vec()),
+                l1_origin_hash: last.l1_origin_hash,
+                l1_origin_number: last.l1_origin_number,
+                l2_block_number: last.l2_block_number,
+                prev_output_root: request.agreed_l2_output_root,
+                config_hash: self.config_hash,
             }
-            let interval = total_blocks / intermediate_roots.len() as u64;
+        };
 
-            for (i, expected_root) in intermediate_roots.iter().enumerate() {
-                let target_block = U256::from(prev_block_number + (i as u64 + 1) * interval);
-                match proposals.iter().find(|p| p.l2_block_number == target_block) {
-                    Some(p) if p.output_root == *expected_root => {}
-                    Some(p) => {
-                        return Err(ProposalError::InvalidIntermediateRoot {
-                            index: i,
-                            expected: format!("{:?}", p.output_root),
-                            actual: format!("{expected_root:?}"),
-                        }
-                        .into());
-                    }
-                    None => {
-                        return Err(ProposalError::MissingIntermediateProposal {
-                            block: target_block.to::<u64>(),
-                        }
-                        .into());
-                    }
-                }
-            }
-        }
-
-        let final_output_root = output_root;
-        let starting_l2_block = U256::from(prev_block_number);
-
-        let signing_data = Signing::build_data(
-            proposer,
-            l1_origin_hash,
-            prev_output_root,
-            starting_l2_block,
-            final_output_root,
-            l2_block_number,
-            intermediate_roots,
-            config_hash,
-            tee_image_hash,
-        );
-
+        let attestation_doc = self.try_get_attestation_bytes();
         let signer = self.signer_key.read();
-        let signature = Signing::sign(&signer, &signing_data)?;
+        let evidence_signature = Signing::sign(&signer, &aggregate_proposal.signature)?;
+        drop(signer);
 
-        Ok(Proposal::new(ProposalParams {
-            output_root: final_output_root,
-            signature,
-            l1_origin_hash,
-            l1_origin_number,
-            l2_block_number,
-            prev_output_root,
-            config_hash,
-        }))
+        Ok(ProofResult {
+            claim: ProofClaim { aggregate_proposal, proposals },
+            evidence: ProofEvidence::Tee {
+                attestation_doc,
+                signature: evidence_signature.to_vec(),
+            },
+        })
     }
 
     /// Get a read guard for the signer.
@@ -335,10 +262,6 @@ impl Server {
 
 #[cfg(test)]
 mod tests {
-    use std::slice;
-
-    use alloy_primitives::Bytes;
-
     use super::*;
 
     fn test_config() -> EnclaveConfig {
@@ -377,451 +300,5 @@ mod tests {
         assert_eq!(pk1, pk2);
     }
 
-    #[test]
-    fn test_aggregate_empty_proposals() {
-        let config = test_config();
-        let server = Server::new_for_testing(&config).expect("failed to create server");
 
-        let result =
-            server.aggregate(B256::ZERO, B256::ZERO, 99u64, &[], Address::ZERO, B256::ZERO, &[]);
-
-        assert!(matches!(result, Err(NitroError::Proposal(ProposalError::EmptyProposals))));
-    }
-
-    #[test]
-    fn test_aggregate_single_proposal() {
-        let config = test_config();
-        let server = Server::new_for_testing(&config).expect("failed to create server");
-
-        let config_hash = B256::repeat_byte(0x11);
-        let l1_origin_hash = B256::repeat_byte(0x22);
-        let l1_origin_number = U256::from(100);
-        let l2_block_number = U256::from(100);
-        let prev_output_root = B256::repeat_byte(0x33);
-        let output_root = B256::repeat_byte(0x44);
-        let proposer = Address::ZERO;
-        let tee_image_hash = B256::ZERO;
-        let prev_block_number = 99u64;
-
-        let signing_data = Signing::build_data(
-            proposer,
-            l1_origin_hash,
-            prev_output_root,
-            U256::from(prev_block_number),
-            output_root,
-            l2_block_number,
-            &[],
-            config_hash,
-            tee_image_hash,
-        );
-
-        let signer = server.signer();
-        let signature = Signing::sign(&signer, &signing_data).expect("signing failed");
-        drop(signer);
-
-        let proposal = Proposal::new(ProposalParams {
-            output_root,
-            signature,
-            l1_origin_hash,
-            l1_origin_number,
-            l2_block_number,
-            prev_output_root,
-            config_hash,
-        });
-
-        let result = server.aggregate(
-            config_hash,
-            prev_output_root,
-            prev_block_number,
-            slice::from_ref(&proposal),
-            proposer,
-            tee_image_hash,
-            &[],
-        );
-
-        assert!(result.is_ok());
-        let aggregated = result.unwrap();
-        assert_eq!(aggregated, proposal);
-    }
-
-    #[test]
-    fn test_aggregate_multiple_proposals() {
-        let config = test_config();
-        let server = Server::new_for_testing(&config).expect("failed to create server");
-
-        let config_hash = B256::repeat_byte(0x11);
-        let l1_origin_hash_1 = B256::repeat_byte(0x22);
-        let l1_origin_hash_2 = B256::repeat_byte(0x23);
-        let l1_origin_number = U256::from(100);
-        let prev_output_root = B256::repeat_byte(0x33);
-        let output_root_1 = B256::repeat_byte(0x44);
-        let output_root_2 = B256::repeat_byte(0x55);
-        let proposer = Address::ZERO;
-        let tee_image_hash = B256::ZERO;
-        let prev_block_number = 99u64;
-
-        let signing_data_1 = Signing::build_data(
-            proposer,
-            l1_origin_hash_1,
-            prev_output_root,
-            U256::from(prev_block_number),
-            output_root_1,
-            U256::from(100),
-            &[],
-            config_hash,
-            tee_image_hash,
-        );
-
-        let signer = server.signer();
-        let signature_1 = Signing::sign(&signer, &signing_data_1).expect("signing failed");
-        drop(signer);
-
-        let proposal_1 = Proposal::new(ProposalParams {
-            output_root: output_root_1,
-            signature: signature_1,
-            l1_origin_hash: l1_origin_hash_1,
-            l1_origin_number,
-            l2_block_number: U256::from(100),
-            prev_output_root,
-            config_hash,
-        });
-
-        let signing_data_2 = Signing::build_data(
-            proposer,
-            l1_origin_hash_2,
-            output_root_1,
-            U256::from(100),
-            output_root_2,
-            U256::from(101),
-            &[],
-            config_hash,
-            tee_image_hash,
-        );
-
-        let signer = server.signer();
-        let signature_2 = Signing::sign(&signer, &signing_data_2).expect("signing failed");
-        drop(signer);
-
-        let proposal_2 = Proposal::new(ProposalParams {
-            output_root: output_root_2,
-            signature: signature_2,
-            l1_origin_hash: l1_origin_hash_2,
-            l1_origin_number,
-            l2_block_number: U256::from(101),
-            prev_output_root: output_root_1,
-            config_hash,
-        });
-
-        let result = server.aggregate(
-            config_hash,
-            prev_output_root,
-            prev_block_number,
-            &[proposal_1, proposal_2],
-            proposer,
-            tee_image_hash,
-            &[],
-        );
-
-        assert!(result.is_ok());
-        let aggregated = result.unwrap();
-        assert_eq!(aggregated.output_root, output_root_2);
-        assert_eq!(aggregated.prev_output_root, prev_output_root);
-        assert_eq!(aggregated.l1_origin_hash, l1_origin_hash_2);
-        assert_eq!(aggregated.l2_block_number, U256::from(101));
-        assert_eq!(aggregated.config_hash, config_hash);
-    }
-
-    #[test]
-    fn test_aggregate_invalid_signature_rejected() {
-        let config = test_config();
-        let server = Server::new_for_testing(&config).expect("failed to create server");
-
-        let config_hash = B256::repeat_byte(0x11);
-        let l1_origin_hash_1 = B256::repeat_byte(0x22);
-        let l1_origin_hash_2 = B256::repeat_byte(0x23);
-        let l1_origin_number = U256::from(100);
-        let prev_output_root = B256::repeat_byte(0x33);
-        let output_root_1 = B256::repeat_byte(0x44);
-        let output_root_2 = B256::repeat_byte(0x55);
-        let proposer = Address::ZERO;
-        let tee_image_hash = B256::ZERO;
-        let prev_block_number = 99u64;
-
-        let signing_data_1 = Signing::build_data(
-            proposer,
-            l1_origin_hash_1,
-            prev_output_root,
-            U256::from(prev_block_number),
-            output_root_1,
-            U256::from(100),
-            &[],
-            config_hash,
-            tee_image_hash,
-        );
-
-        let signer = server.signer();
-        let signature_1 = Signing::sign(&signer, &signing_data_1).expect("signing failed");
-        drop(signer);
-
-        let proposal_1 = Proposal::new(ProposalParams {
-            output_root: output_root_1,
-            signature: signature_1,
-            l1_origin_hash: l1_origin_hash_1,
-            l1_origin_number,
-            l2_block_number: U256::from(100),
-            prev_output_root,
-            config_hash,
-        });
-
-        let invalid_signature = Bytes::from(vec![0xab; 65]);
-
-        let proposal_2 = Proposal::new(ProposalParams {
-            output_root: output_root_2,
-            signature: invalid_signature,
-            l1_origin_hash: l1_origin_hash_2,
-            l1_origin_number,
-            l2_block_number: U256::from(101),
-            prev_output_root: output_root_1,
-            config_hash,
-        });
-
-        let result = server.aggregate(
-            config_hash,
-            prev_output_root,
-            prev_block_number,
-            &[proposal_1, proposal_2],
-            proposer,
-            tee_image_hash,
-            &[],
-        );
-
-        assert!(
-            matches!(
-                &result,
-                Err(NitroError::Proposal(ProposalError::InvalidSignature { index: 1, .. }))
-            ),
-            "Expected InvalidSignature error at index 1, got: {result:?}"
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn make_proposal(
-        server: &Server,
-        proposer: Address,
-        tee_image_hash: B256,
-        config_hash: B256,
-        l1_origin_hash: B256,
-        l1_origin_number: U256,
-        prev_output_root: B256,
-        prev_block: u64,
-        output_root: B256,
-        block: u64,
-    ) -> Proposal {
-        let signing_data = Signing::build_data(
-            proposer,
-            l1_origin_hash,
-            prev_output_root,
-            U256::from(prev_block),
-            output_root,
-            U256::from(block),
-            &[],
-            config_hash,
-            tee_image_hash,
-        );
-        let signer = server.signer();
-        let signature = Signing::sign(&signer, &signing_data).expect("signing failed");
-        drop(signer);
-
-        Proposal::new(ProposalParams {
-            output_root,
-            signature,
-            l1_origin_hash,
-            l1_origin_number,
-            l2_block_number: U256::from(block),
-            prev_output_root,
-            config_hash,
-        })
-    }
-
-    #[test]
-    fn test_aggregate_validates_intermediate_roots() {
-        let config = test_config();
-        let server = Server::new_for_testing(&config).expect("failed to create server");
-
-        let proposer = Address::ZERO;
-        let tee_image_hash = B256::ZERO;
-        let config_hash = B256::repeat_byte(0x11);
-        let l1_origin_hash = B256::repeat_byte(0x22);
-        let l1_origin_number = U256::from(100);
-        let prev_output_root = B256::repeat_byte(0x33);
-        let output_root_1 = B256::repeat_byte(0x44);
-        let output_root_2 = B256::repeat_byte(0x55);
-        let output_root_3 = B256::repeat_byte(0x66);
-        let prev_block_number = 0u64;
-
-        let p1 = make_proposal(
-            &server,
-            proposer,
-            tee_image_hash,
-            config_hash,
-            l1_origin_hash,
-            l1_origin_number,
-            prev_output_root,
-            0,
-            output_root_1,
-            1,
-        );
-        let p2 = make_proposal(
-            &server,
-            proposer,
-            tee_image_hash,
-            config_hash,
-            l1_origin_hash,
-            l1_origin_number,
-            output_root_1,
-            1,
-            output_root_2,
-            2,
-        );
-        let p3 = make_proposal(
-            &server,
-            proposer,
-            tee_image_hash,
-            config_hash,
-            l1_origin_hash,
-            l1_origin_number,
-            output_root_2,
-            2,
-            output_root_3,
-            3,
-        );
-
-        let result = server.aggregate(
-            config_hash,
-            prev_output_root,
-            prev_block_number,
-            &[p1, p2, p3],
-            proposer,
-            tee_image_hash,
-            &[output_root_3],
-        );
-
-        assert!(result.is_ok(), "expected success, got: {result:?}");
-    }
-
-    #[test]
-    fn test_aggregate_rejects_wrong_intermediate_roots() {
-        let config = test_config();
-        let server = Server::new_for_testing(&config).expect("failed to create server");
-
-        let proposer = Address::ZERO;
-        let tee_image_hash = B256::ZERO;
-        let config_hash = B256::repeat_byte(0x11);
-        let l1_origin_hash = B256::repeat_byte(0x22);
-        let l1_origin_number = U256::from(100);
-        let prev_output_root = B256::repeat_byte(0x33);
-        let output_root_1 = B256::repeat_byte(0x44);
-        let output_root_2 = B256::repeat_byte(0x55);
-        let output_root_3 = B256::repeat_byte(0x66);
-        let prev_block_number = 0u64;
-
-        let p1 = make_proposal(
-            &server,
-            proposer,
-            tee_image_hash,
-            config_hash,
-            l1_origin_hash,
-            l1_origin_number,
-            prev_output_root,
-            0,
-            output_root_1,
-            1,
-        );
-        let p2 = make_proposal(
-            &server,
-            proposer,
-            tee_image_hash,
-            config_hash,
-            l1_origin_hash,
-            l1_origin_number,
-            output_root_1,
-            1,
-            output_root_2,
-            2,
-        );
-        let p3 = make_proposal(
-            &server,
-            proposer,
-            tee_image_hash,
-            config_hash,
-            l1_origin_hash,
-            l1_origin_number,
-            output_root_2,
-            2,
-            output_root_3,
-            3,
-        );
-
-        let wrong_root = B256::repeat_byte(0xFF);
-        let result = server.aggregate(
-            config_hash,
-            prev_output_root,
-            prev_block_number,
-            &[p1, p2, p3],
-            proposer,
-            tee_image_hash,
-            &[wrong_root],
-        );
-
-        assert!(
-            matches!(
-                &result,
-                Err(NitroError::Proposal(ProposalError::InvalidIntermediateRoot { .. }))
-            ),
-            "Expected InvalidIntermediateRoot error, got: {result:?}"
-        );
-    }
-
-    #[test]
-    fn test_aggregate_rejects_intermediate_roots_with_single_proposal() {
-        let config = test_config();
-        let server = Server::new_for_testing(&config).expect("failed to create server");
-
-        let proposer = Address::ZERO;
-        let tee_image_hash = B256::ZERO;
-        let config_hash = B256::repeat_byte(0x11);
-        let l1_origin_hash = B256::repeat_byte(0x22);
-        let l1_origin_number = U256::from(100);
-        let prev_output_root = B256::repeat_byte(0x33);
-        let output_root = B256::repeat_byte(0x44);
-        let prev_block_number = 99u64;
-
-        let proposal = make_proposal(
-            &server,
-            proposer,
-            tee_image_hash,
-            config_hash,
-            l1_origin_hash,
-            l1_origin_number,
-            prev_output_root,
-            prev_block_number,
-            output_root,
-            100,
-        );
-
-        let result = server.aggregate(
-            config_hash,
-            prev_output_root,
-            prev_block_number,
-            &[proposal],
-            proposer,
-            tee_image_hash,
-            &[B256::repeat_byte(0xFF)],
-        );
-
-        assert!(
-            matches!(&result, Err(NitroError::Proposal(ProposalError::ExecutionFailed(_)))),
-            "Expected ExecutionFailed error for single proposal with intermediate roots, got: {result:?}"
-        );
-    }
 }

@@ -9,8 +9,5 @@ pub use config::{
 mod output;
 pub use output::{output_root_v0, output_root_v0_with_hash};
 
-mod proposal;
-pub use proposal::{Proposal, ProposalParams, SIGNATURE_LENGTH};
-
 mod rpc;
 pub use rpc::{AggregateRequest, ExecuteStatelessRequest};
