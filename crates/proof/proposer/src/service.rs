@@ -52,7 +52,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
 
     // ── 1. Global cancellation token and signal handler ──────────────────
     let cancel = CancellationToken::new();
-    RuntimeManager::install_signal_handler(cancel.clone());
+    let _signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
 
     // ── 2. Metrics recorder and HTTP server (if enabled) ─────────────────
     config.metrics.init().expect("failed to install Prometheus recorder");

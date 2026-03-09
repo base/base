@@ -6,6 +6,7 @@
 
 use std::future::Future;
 
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -26,7 +27,7 @@ impl RuntimeManager {
     /// only SIGINT (Ctrl-C) is handled. When a signal is received the
     /// [`CancellationToken`] is cancelled, allowing all holders of child tokens
     /// to begin cooperative shutdown.
-    pub fn install_signal_handler(cancel: CancellationToken) {
+    pub fn install_signal_handler(cancel: CancellationToken) -> JoinHandle<()> {
         tokio::spawn(async move {
             #[cfg(unix)]
             {
@@ -51,7 +52,7 @@ impl RuntimeManager {
             }
 
             cancel.cancel();
-        });
+        })
     }
 
     /// Run a fallible future until ctrl-c is pressed.
