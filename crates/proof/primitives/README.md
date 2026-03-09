@@ -1,4 +1,4 @@
-# base-proof-primitives
+# `base-proof-primitives`
 
 Shared primitive types and traits for the Base proof system.
 
@@ -11,3 +11,7 @@ backends:
   entire block range and the individual per-block `Proposal`s that were aggregated.
 - **`ProofEvidence`** — Backend-specific evidence (TEE attestation or ZK proof).
 - **`ProofResult`** — A claim paired with its evidence.
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

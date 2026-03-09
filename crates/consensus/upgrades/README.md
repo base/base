@@ -10,3 +10,7 @@ Consensus layer hardfork types for Base including network upgrade transactions.
 This code was ported from [op-alloy] as part of the `base` monorepo.
 
 [op-alloy]: https://github.com/alloy-rs/op-alloy
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

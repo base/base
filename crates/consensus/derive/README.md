@@ -60,3 +60,7 @@ Some features include the following.
 By default, `base-consensus-derive` enables the `serde` feature.
 
 [ff]: https://github.com/base/base/blob/main/crates/consensus/derive/Cargo.toml
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

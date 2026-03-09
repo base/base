@@ -1,4 +1,4 @@
-# base-proof-client
+# `base-proof-client`
 
 Oracle-backed derivation and execution orchestration for the Base ZK proof program.
 
@@ -77,4 +77,4 @@ translate into a non-zero exit code or a MIPS `halt` instruction depending on th
 
 ## License
 
-This project is licensed under the MIT License.
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

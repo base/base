@@ -53,3 +53,7 @@ assert!(channel_out.closed);
 | `serde` | Enables serialization support |
 | `test-utils` | Exports [`MockCompressor`] for testing |
 | `arbitrary` | Enables property-based testing support |
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

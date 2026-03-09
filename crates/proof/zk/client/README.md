@@ -94,3 +94,7 @@ impl ZkProofProvider for MockProvider {
     }
 }
 ```
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

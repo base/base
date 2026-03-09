@@ -1,4 +1,4 @@
-# base-proofs-extension
+# `base-proofs-extension`
 
 Proofs history extension for Base node. Enables on-disk storage and retrieval of historical Merkle proofs for state verification.
 
@@ -34,3 +34,7 @@ The extension is installed as part of the node builder and automatically:
 3. Serves proof requests via extended RPC methods
 4. Prunes old proofs based on the retention window
 5. Reports metrics for monitoring storage and performance
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

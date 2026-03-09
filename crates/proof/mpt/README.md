@@ -11,3 +11,7 @@ This implementation is intended to serve as a backend for a stateless executor o
 the one in the [`base-proof-executor`](../executor) crate. Starting with a trie root, the `TrieNode` can be
 unravelled to access, insert, or delete values. These operations are all backed by the `TrieProvider`,
 which enables fetching the preimages of hashed trie nodes.
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

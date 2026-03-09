@@ -37,3 +37,7 @@ In short, the types are as follows:
   required.
 - `AnyNode`: An enum over `PeerId`, `NodeRecord`, and `discv5::Enr`, useful in
   deserialization when the type of the node record is not known.
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

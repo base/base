@@ -1,6 +1,10 @@
-# base-test-utils
+# `base-test-utils`
 
 Shared test utilities for integration testing across Base crates.
 
 Provides hardcoded test accounts, genesis configuration, and Solidity contract
 bindings for use in integration tests.
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

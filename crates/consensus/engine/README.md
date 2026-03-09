@@ -70,3 +70,7 @@ Version selection follows Optimism hardfork activation times (Bedrock, Canyon, D
 <!-- Hyper Links -->
 
 [base-specs]: https://specs.base.org
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

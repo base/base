@@ -5,3 +5,7 @@ This crate offers a high-level API over the [`Preimage Oracle`][preimage-abi-spe
 data sources to populate the `Preimage Oracle`.
 
 [preimage-abi-spec]: https://specs.optimism.io/experimental/fault-proof/index.html#pre-image-oracle
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

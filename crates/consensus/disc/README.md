@@ -46,3 +46,7 @@ Key configuration parameters include:
 - Bootstrap node list
 - Storage location for persistent peer cache
 - Network interface and port bindings
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

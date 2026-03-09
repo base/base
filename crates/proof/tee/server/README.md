@@ -20,3 +20,7 @@ the server operates in "local mode":
 - No NSM operations (attestation unavailable)
 - Uses OS random number generator
 - Optionally loads signer key from `OP_ENCLAVE_SIGNER_KEY` environment variable
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

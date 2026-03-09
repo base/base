@@ -1,4 +1,4 @@
-# base-metering
+# `base-metering`
 
 Metering RPC for Base node. Provides RPC methods for measuring transaction and block execution timing.
 
@@ -83,3 +83,7 @@ Meters a bundle and returns a recommended priority fee based on recent block con
    - Stop when adding another tx would leave less room than the bundle needs
    - The last included tx's fee is the threshold
 4. Return the maximum fee across all resources as `priorityFee`
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

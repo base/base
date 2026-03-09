@@ -14,3 +14,7 @@ administration, and metrics collection.
 - [`ConnectionGater`]: Sophisticated connection management and rate limiting
 - [`P2pRpcRequest`]: RPC interface for network administration
 - [`Metrics`]: Metrics collection for monitoring and observability
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

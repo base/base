@@ -1,4 +1,4 @@
-## `base-consensus-registry`
+# `base-consensus-registry`
 
 <a href="https://crates.io/crates/base-consensus-registry"><img src="https://img.shields.io/crates/v/base-consensus-registry.svg?label=base-consensus-registry&labelColor=2a2f35" alt="base-consensus-registry"></a>
 <a href="https://rollup.yoga"><img src="https://img.shields.io/badge/Docs-854a15?style=flat&labelColor=1C2C2E&color=BEC5C9&logo=mdBook&logoColor=BEC5C9" alt="Docs" /></a>
@@ -7,7 +7,7 @@
 Chain configurations are stored as TOML files in the `configs/` directory, parsed at init time
 via [`serde`][serde] and the [`toml`][toml] crate.
 
-### Usage
+## Usage
 
 Add the following to your `Cargo.toml`.
 
@@ -33,13 +33,11 @@ let base_rollup_config = Registry::rollup_config(base_chain_id);
 println!("Base Mainnet Rollup Config: {:?}", base_rollup_config);
 ```
 
-
-### Feature Flags
+## Feature Flags
 
 - `std`: Uses the standard library to pull in environment variables.
 
-
-### Credits
+## Credits
 
 [alloy] and [op-alloy] for creating and maintaining high quality Ethereum and Optimism types in rust.
 
@@ -52,3 +50,7 @@ println!("Base Mainnet Rollup Config: {:?}", base_rollup_config);
 [op-alloy]: https://github.com/alloy-rs/op-alloy
 
 [sc]: https://crates.io/crates/base-consensus-registry
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

@@ -1,4 +1,4 @@
-# base-proof-transport
+# `base-proof-transport`
 
 Proof transport abstraction for proof backends.
 
@@ -12,3 +12,7 @@ vsock connection, or remote API — so callers remain transport-agnostic.
 |-----------|---------|
 | `NativeTransport` | In-process channel for testing and single-process provers |
 | `VsockTransport` | Connect-per-request bincode over `AF_VSOCK` for Nitro Enclaves (feature `vsock`, unix-only) |
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

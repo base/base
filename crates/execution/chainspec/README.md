@@ -67,4 +67,4 @@ Compute the next base fee under Holocene rules:
 
 ## License
 
-MIT
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).
