@@ -356,14 +356,16 @@ futures = "0.3.31"
 reqwest = "0.13.1"
 async-trait = "0.1.83"
 
-# rpc
+# grpc
 prost = "0.14"
 tonic = "0.14"
 tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+
+# rpc
 jsonrpsee = "0.26.0"
 jsonrpsee-core = "0.26.0"
 jsonrpsee-types = "0.26.0"
-tonic-prost-build = "0.14"
 
 # cli
 clap = "4.5.57"
