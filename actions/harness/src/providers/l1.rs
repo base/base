@@ -4,7 +4,7 @@ use std::{
 };
 
 use alloy_consensus::{Header, Receipt};
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, B256, Bytes};
 use async_trait::async_trait;
 use base_consensus_derive::{
     ChainProvider, DataAvailabilityProvider, PipelineError, PipelineErrorKind, PipelineResult,
@@ -75,7 +75,7 @@ pub struct ActionL1ChainProvider {
 
 impl ActionL1ChainProvider {
     /// Create a new provider backed by the given shared chain.
-    pub fn new(chain: SharedL1Chain) -> Self {
+    pub const fn new(chain: SharedL1Chain) -> Self {
         Self { chain }
     }
 }
@@ -105,7 +105,11 @@ impl ChainProvider for ActionL1ChainProvider {
 
     async fn receipts_by_hash(&mut self, hash: B256) -> Result<Vec<Receipt>, Self::Error> {
         self.chain.with(|blocks| {
-            Ok(blocks.iter().find(|b| b.hash() == hash).map(|b| b.receipts.clone()).unwrap_or_default())
+            Ok(blocks
+                .iter()
+                .find(|b| b.hash() == hash)
+                .map(|b| b.receipts.clone())
+                .unwrap_or_default())
         })
     }
 
@@ -140,7 +144,7 @@ pub struct ActionDataSource {
 
 impl ActionDataSource {
     /// Create a new data source backed by the given shared chain.
-    pub fn new(chain: SharedL1Chain, inbox_address: Address) -> Self {
+    pub const fn new(chain: SharedL1Chain, inbox_address: Address) -> Self {
         Self { chain, inbox_address, pending: VecDeque::new(), open: false }
     }
 

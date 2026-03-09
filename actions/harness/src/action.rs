@@ -27,7 +27,4 @@ pub trait Action {
 pub trait L2BlockProvider {
     /// Return the next L2 block, or `None` if the source is exhausted.
     fn next_block(&mut self) -> Option<MockL2Block>;
-
-    /// Peek at the next block without consuming it.
-    fn peek(&self) -> Option<&MockL2Block>;
 }

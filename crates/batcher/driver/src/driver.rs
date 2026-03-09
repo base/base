@@ -41,7 +41,7 @@ pub struct ChannelDriver {
 impl ChannelDriver {
     /// Create a new [`ChannelDriver`] with the given rollup config and
     /// encoding configuration.
-    pub fn new(rollup_config: RollupConfig, config: ChannelDriverConfig) -> Self {
+    pub const fn new(rollup_config: RollupConfig, config: ChannelDriverConfig) -> Self {
         Self { rollup_config, config, pending: Vec::new() }
     }
 
@@ -53,12 +53,12 @@ impl ChannelDriver {
     }
 
     /// Return the number of batches queued but not yet flushed.
-    pub fn pending_count(&self) -> usize {
+    pub const fn pending_count(&self) -> usize {
         self.pending.len()
     }
 
     /// Return `true` if no batches are queued.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.pending.is_empty()
     }
 
@@ -83,9 +83,9 @@ impl ChannelDriver {
         let mut channel_out =
             ChannelOut::new(ChannelId::default(), &self.rollup_config, compressor);
 
-        for batch in self.pending.drain(..) {
+        for batch in &self.pending {
             let timestamp = batch.timestamp;
-            channel_out.add_batch(Batch::Single(batch))?;
+            channel_out.add_batch(Batch::Single(batch.clone()))?;
             debug!(timestamp, "encoded batch into channel");
         }
 
@@ -93,6 +93,10 @@ impl ChannelDriver {
         channel_out.close();
 
         let frame = channel_out.output_frame(self.config.max_frame_size)?;
+
+        // Clear pending only after all operations succeed so a failed flush
+        // leaves the queue intact for retry or inspection.
+        self.pending.clear();
 
         debug!(
             channel_id = ?frame.id,
@@ -153,12 +157,14 @@ mod tests {
         d.add_batch(SingleBatch { timestamp: 20, ..Default::default() });
         let frames_b = d.flush().unwrap();
 
-        // Each flush produces a valid frame — channel IDs differ because
-        // ChannelOut::new randomises the ID on creation.
+        // Each flush produces an independent, valid frame.
+        // Both share the same channel ID ([0u8; 16]) because ChannelId::default()
+        // is passed to ChannelOut::new each time; ChannelOut does not randomise it.
         assert_eq!(frames_a.len(), 1);
         assert_eq!(frames_b.len(), 1);
         assert!(frames_a[0].is_last);
         assert!(frames_b[0].is_last);
+        assert_eq!(frames_a[0].id, frames_b[0].id);
     }
 
     #[test]
@@ -180,7 +186,7 @@ mod tests {
         let max_rlp = 10_000_000usize;
         let mut reader = BatchReader::new(channel_data, max_rlp);
         let decompress_result = reader.decompress();
-        eprintln!("decompress result: {:?}", decompress_result);
+        eprintln!("decompress result: {decompress_result:?}");
         eprintln!("brotli_used: {}", reader.brotli_used);
         eprintln!("decompressed len = {}", reader.decompressed.len());
         if !reader.decompressed.is_empty() {

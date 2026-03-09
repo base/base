@@ -39,7 +39,7 @@ pub struct MockL2Source {
 
 impl MockL2Source {
     /// Create an empty [`MockL2Source`].
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { blocks: VecDeque::new() }
     }
 
@@ -59,7 +59,13 @@ impl MockL2Source {
     /// advancing by `block_time` seconds each. Parent hashes are left as
     /// `B256::ZERO` — action tests that inspect parent-hash chaining should
     /// construct blocks manually.
-    pub fn generate(&mut self, start_number: u64, start_timestamp: u64, block_time: u64, count: u64) {
+    pub fn generate(
+        &mut self,
+        start_number: u64,
+        start_timestamp: u64,
+        block_time: u64,
+        count: u64,
+    ) {
         for i in 0..count {
             self.blocks.push_back(MockL2Block {
                 number: start_number + i,
@@ -78,15 +84,16 @@ impl MockL2Source {
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }
+
+    /// Peek at the next block without consuming it.
+    pub fn peek(&self) -> Option<&MockL2Block> {
+        self.blocks.front()
+    }
 }
 
 impl L2BlockProvider for MockL2Source {
     fn next_block(&mut self) -> Option<MockL2Block> {
         self.blocks.pop_front()
-    }
-
-    fn peek(&self) -> Option<&MockL2Block> {
-        self.blocks.front()
     }
 }
 

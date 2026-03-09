@@ -70,11 +70,7 @@ impl ActionL2ChainProvider {
             seq_num: 0,
         };
 
-        let genesis_config = rollup_config
-            .genesis
-            .system_config
-            .clone()
-            .unwrap_or_default();
+        let genesis_config = rollup_config.genesis.system_config.unwrap_or_default();
 
         provider.insert_block(genesis_l2);
         provider.insert_system_config(rollup_config.genesis.l2.number, genesis_config);
@@ -105,17 +101,11 @@ impl BatchValidationProvider for ActionL2ChainProvider {
         &mut self,
         number: u64,
     ) -> Result<L2BlockInfo, L2ProviderError> {
-        self.blocks
-            .get(&number)
-            .copied()
-            .ok_or(L2ProviderError::BlockNotFound(number))
+        self.blocks.get(&number).copied().ok_or(L2ProviderError::BlockNotFound(number))
     }
 
     async fn block_by_number(&mut self, number: u64) -> Result<OpBlock, L2ProviderError> {
-        self.op_blocks
-            .get(&number)
-            .cloned()
-            .ok_or(L2ProviderError::BlockNotFound(number))
+        self.op_blocks.get(&number).cloned().ok_or(L2ProviderError::BlockNotFound(number))
     }
 }
 
@@ -129,9 +119,7 @@ impl L2ChainProvider for ActionL2ChainProvider {
         _rollup_config: Arc<RollupConfig>,
     ) -> Result<SystemConfig, L2ProviderError> {
         // Walk back from `number` to find the nearest config at or before this block.
-        let config = (0..=number)
-            .rev()
-            .find_map(|n| self.system_configs.get(&n).copied());
+        let config = (0..=number).rev().find_map(|n| self.system_configs.get(&n).copied());
         config.ok_or(L2ProviderError::SystemConfigNotFound(number))
     }
 }
