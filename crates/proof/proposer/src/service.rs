@@ -34,12 +34,11 @@ use crate::{
 /// 2. Create RPC clients (L1, L2, rollup, enclave)
 /// 3. Read onchain config (`BLOCK_INTERVAL`, `initBond`)
 /// 4. Create prover, output proposer, and driver
-/// 5. Recover parent game state from onchain data
-/// 6. Start health / admin HTTP server
-/// 7. Start balance monitor (if metrics enabled)
-/// 8. Start the driver loop
-/// 9. Wait for SIGTERM or SIGINT
-/// 10. Graceful shutdown in reverse order
+/// 5. Start health / admin HTTP server
+/// 6. Start balance monitor (if metrics enabled)
+/// 7. Start the driver loop
+/// 8. Wait for SIGTERM or SIGINT
+/// 9. Graceful shutdown in reverse order
 pub async fn run(config: ProposerConfig) -> Result<()> {
     config.log.init_tracing_subscriber()?;
 
@@ -199,7 +198,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let driver_handle: Arc<dyn ProposerDriverControl> =
         Arc::new(DriverHandle::new(driver, cancel.clone()));
 
-    // ── 8. Start health / admin HTTP server ──────────────────────────────
+    // ── 7. Start health / admin HTTP server ──────────────────────────────
     let ready = Arc::new(AtomicBool::new(false));
     let admin_driver = if config.rpc.enable_admin {
         info!("Admin RPC enabled");
@@ -216,7 +215,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         )
     };
 
-    // ── 9. Start balance monitor (if metrics enabled) ────────────────────
+    // ── 8. Start balance monitor (if metrics enabled) ────────────────────
     let balance_handle: Option<JoinHandle<()>> = if config.metrics.enabled {
         let handle = tokio::spawn(crate::balance_monitor(
             Arc::clone(&l1_client),
@@ -229,7 +228,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         None
     };
 
-    // ── 10. Start the driver loop ────────────────────────────────────────
+    // ── 9. Start the driver loop ─────────────────────────────────────────
     driver_handle.start_proposer().await.map_err(|e| eyre::eyre!(e))?;
 
     ready.store(true, Ordering::SeqCst);
@@ -240,11 +239,11 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         "Service is ready"
     );
 
-    // ── 11. Wait for shutdown signal ─────────────────────────────────────
+    // ── 10. Wait for shutdown signal ─────────────────────────────────────
     cancel.cancelled().await;
     info!("Shutdown signal received, stopping service...");
 
-    // ── 12. Graceful shutdown (reverse initialisation order) ─────────────
+    // ── 11. Graceful shutdown (reverse initialisation order) ─────────────
     ready.store(false, Ordering::SeqCst);
 
     if driver_handle.is_running()
