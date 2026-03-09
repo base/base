@@ -471,6 +471,9 @@ mod tests {
         assert_eq!(config.spec_id(65), base_revm::OpSpecId::JOVIAN);
         config.hardforks.base = Some(crate::BaseHardforkConfig { v1: Some(70) });
         assert_eq!(config.spec_id(70), base_revm::OpSpecId::BASE_V1);
+        // BaseV1 takes precedence over Jovian when both are active at the same timestamp
+        config.hardforks.base = Some(crate::BaseHardforkConfig { v1: Some(65) });
+        assert_eq!(config.spec_id(65), base_revm::OpSpecId::BASE_V1);
     }
 
     #[test]

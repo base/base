@@ -40,7 +40,7 @@ hardfork!(
 );
 ```
 
-Then update all four chain config array methods from `[(Self, ForkCondition); N]` to `N+1` and append the new entry. Mainnet and sepolia use `ForkCondition::Never` until the upgrade is scheduled; devnets use `ForkCondition::ZERO_TIMESTAMP`:
+Then update all four chain config array methods from `[(Self, ForkCondition); N]` to `N+1` and append the new entry. Mainnet and sepolia use `ForkCondition::Never` until the upgrade is scheduled; the generic devnet uses `ForkCondition::ZERO_TIMESTAMP`:
 
 ```rust
 pub const fn base_mainnet() -> [(Self, ForkCondition); 10] {
@@ -54,6 +54,18 @@ pub const fn devnet() -> [(Self, ForkCondition); 10] {
     [
         // ... existing entries ...
         (Self::BaseV1, ForkCondition::ZERO_TIMESTAMP),
+    ]
+}
+```
+
+For named devnets like `base_devnet_0_sepolia_dev_0`, use the same timestamp as the previous upgrade rather than `ZERO_TIMESTAMP`, so the new upgrade does not activate before the one it follows:
+
+```rust
+pub const fn base_devnet_0_sepolia_dev_0() -> [(Self, ForkCondition); 10] {
+    [
+        // ... existing entries ...
+        (Self::Jovian, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
+        (Self::BaseV1, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
     ]
 }
 ```

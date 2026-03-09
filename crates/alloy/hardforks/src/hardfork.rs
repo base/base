@@ -50,6 +50,11 @@ hardfork!(
 impl OpHardfork {
     /// Reverse lookup to find the hardfork given a chain ID and block timestamp.
     /// Returns the active hardfork at the given timestamp for the specified OP chain.
+    ///
+    /// Note: standalone upgrades like [`OpHardfork::BaseV1`] are not included here because
+    /// they do not participate in the sequential cascade and have no scheduled activation
+    /// timestamp on production chains. Use [`crate::OpHardforks::is_base_v1_active_at_timestamp`]
+    /// to check those independently.
     pub fn from_chain_and_timestamp(chain: Chain, timestamp: u64) -> Option<Self> {
         let named = chain.named()?;
 

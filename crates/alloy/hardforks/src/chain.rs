@@ -148,6 +148,7 @@ mod tests {
         BASE_SEPOLIA_FJORD_TIMESTAMP, BASE_SEPOLIA_GRANITE_TIMESTAMP,
         BASE_SEPOLIA_HOLOCENE_TIMESTAMP, BASE_SEPOLIA_ISTHMUS_TIMESTAMP,
         BASE_SEPOLIA_JOVIAN_TIMESTAMP, BASE_SEPOLIA_REGOLITH_TIMESTAMP,
+        BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP,
     };
 
     #[test]
@@ -186,6 +187,7 @@ mod tests {
             base_mainnet_forks[Jovian],
             ForkCondition::Timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP)
         );
+        assert_eq!(base_mainnet_forks[BaseV1], ForkCondition::Never);
     }
 
     #[test]
@@ -224,6 +226,7 @@ mod tests {
             base_sepolia_forks.op_fork_activation(Jovian),
             ForkCondition::Timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP)
         );
+        assert_eq!(base_sepolia_forks[BaseV1], ForkCondition::Never);
     }
 
     #[test]
@@ -249,7 +252,7 @@ mod tests {
 
     #[test]
     fn is_base_v1_active_at_timestamp() {
-        // BaseV1 is not scheduled on mainnet or sepolia yet
+        // BaseV1 is not scheduled on mainnet or sepolia yet (ForkCondition::Never)
         let base_mainnet_forks = OpChainHardforks::base_mainnet();
         assert!(!base_mainnet_forks.is_base_v1_active_at_timestamp(0));
         assert!(!base_mainnet_forks.is_base_v1_active_at_timestamp(u64::MAX));
@@ -257,6 +260,18 @@ mod tests {
         let base_sepolia_forks = OpChainHardforks::base_sepolia();
         assert!(!base_sepolia_forks.is_base_v1_active_at_timestamp(0));
         assert!(!base_sepolia_forks.is_base_v1_active_at_timestamp(u64::MAX));
+
+        // BaseV1 is active at genesis on devnet (ForkCondition::ZERO_TIMESTAMP)
+        let devnet_forks = OpChainHardforks::devnet();
+        assert!(devnet_forks.is_base_v1_active_at_timestamp(0));
+
+        // BaseV1 activates alongside Jovian on devnet-0-sepolia-dev-0
+        let devnet0_forks = OpChainHardforks::base_devnet_0_sepolia_dev_0();
+        assert!(!devnet0_forks.is_base_v1_active_at_timestamp(
+            BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP - 1
+        ));
+        assert!(devnet0_forks
+            .is_base_v1_active_at_timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP));
     }
 
     #[test]
