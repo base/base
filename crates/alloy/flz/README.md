@@ -4,8 +4,8 @@
 
 ## Overview
 
-Implements FastLZ compression size estimation and Fjord-era L1 data fee calculation. The key
-function `data_gas_fjord` computes how much L1 data gas a transaction consumes after FastLZ
+Implements `FastLZ` compression size estimation and Fjord-era L1 data fee calculation. The key
+function `data_gas_fjord` computes how much L1 data gas a transaction consumes after `FastLZ`
 compression, using the Fjord cost model (16 gas/byte compressed). Also provides
 `tx_estimated_size_fjord` for raw size estimates and constants for the fee formula coefficients.
 

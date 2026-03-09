@@ -18,7 +18,7 @@ Add the dependency to your `Cargo.toml`:
 base-execution-exex = { workspace = true }
 ```
 
-The ExEx is installed into the node builder during node setup and runs automatically as blocks
+The `ExEx` is installed into the node builder during node setup and runs automatically as blocks
 are processed.
 
 ## License
