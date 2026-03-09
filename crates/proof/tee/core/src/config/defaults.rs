@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use alloy_eips::{eip1898::BlockNumHash, eip7840::BlobParams};
 use alloy_primitives::Address;
 use base_consensus_genesis::{
-    BaseFeeConfig, ChainGenesis, HardForkConfig, L1ChainConfig, RollupConfig, SystemConfig,
+    BaseFeeConfig, BaseHardforkConfig, ChainGenesis, HardForkConfig, L1ChainConfig, RollupConfig,
+    SystemConfig,
 };
 
 /// Create a default rollup config matching Go's `DefaultDeployConfig()`.
@@ -53,7 +54,7 @@ pub fn default_rollup_config() -> RollupConfig {
             pectra_blob_schedule_time: None,
             isthmus_time: Some(0),
             jovian_time: Some(0),
-            base: None,
+            base: Some(BaseHardforkConfig { v1: Some(0) }),
         },
 
         // Base fee config
