@@ -95,8 +95,15 @@ impl ZkProofClient {
         &self,
         request: ProveBlockRequest,
     ) -> Result<ProveBlockResponse, ZkProofError> {
+        let start_block = request.start_block_number;
+        let num_blocks = request.number_of_blocks_to_prove;
         let response = self.inner.clone().prove_block(request).await?.into_inner();
-        debug!(session_id = %response.session_id, "proof job initiated");
+        debug!(
+            start_block,
+            num_blocks,
+            session_id = %response.session_id,
+            "proof job initiated",
+        );
         Ok(response)
     }
 
