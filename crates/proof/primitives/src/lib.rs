@@ -11,3 +11,8 @@ pub use proposal::{Proposal, SIGNATURE_LENGTH};
 
 mod prover;
 pub use prover::ProverBackend;
+
+#[cfg(feature = "rpc")]
+mod rpc;
+#[cfg(feature = "rpc")]
+pub use rpc::{ProverApiClient, ProverApiServer};

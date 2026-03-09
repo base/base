@@ -17,8 +17,5 @@ pub type TransportResult<T> = Result<T, TransportError>;
 #[async_trait]
 pub trait ProofTransport: Send + Sync {
     /// Send preimages to the prover and return the proof result.
-    async fn prove(
-        &self,
-        preimages: &[(PreimageKey, Vec<u8>)],
-    ) -> TransportResult<ProofResult>;
+    async fn prove(&self, preimages: &[(PreimageKey, Vec<u8>)]) -> TransportResult<ProofResult>;
 }

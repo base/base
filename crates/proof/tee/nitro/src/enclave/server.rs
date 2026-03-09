@@ -138,9 +138,8 @@ impl Server {
     ) -> Result<ProofResult> {
         let oracle = Oracle::new(preimages);
 
-        let boot_info = BootInfo::load(&oracle)
-            .await
-            .map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
+        let boot_info =
+            BootInfo::load(&oracle).await.map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
         let agreed_l2_output_root = boot_info.agreed_l2_output_root;
 
         let prologue = Prologue::new(oracle.clone(), oracle, OpEvmFactory::default());

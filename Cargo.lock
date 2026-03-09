@@ -4106,6 +4106,7 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "base-proof-preimage",
+ "jsonrpsee",
  "serde",
  "serde_json",
 ]
@@ -4179,6 +4180,7 @@ dependencies = [
  "base64 0.22.1",
  "ciborium",
  "eyre",
+ "jsonrpsee",
  "k256",
  "openssl",
  "parking_lot",
