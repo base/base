@@ -129,6 +129,10 @@ impl ChannelCompressor for BrotliCompressor {
     fn get_compressed(&self) -> Vec<u8> {
         self.compressed.clone()
     }
+
+    fn channel_version_byte(&self) -> Option<u8> {
+        Some(0x01)
+    }
 }
 
 #[cfg(test)]
