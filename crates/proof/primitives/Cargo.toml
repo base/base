@@ -25,4 +25,4 @@ serde_json = { workspace = true, features = ["std"] }
 default = []
 std = [ "alloy-primitives/std", "base-proof-preimage/std", "serde?/std" ]
 serde = [ "alloy-primitives/serde", "base-proof-preimage/serde", "dep:serde" ]
-rpc = [ "std", "serde", "dep:jsonrpsee" ]
+rpc = [ "dep:jsonrpsee", "serde", "std" ]
