@@ -1,4 +1,4 @@
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded, revm::context::BlockEnv};
@@ -80,6 +80,25 @@ where
     ///
     /// Returns an error if derivation fails.
     pub async fn execute(self) -> Result<Epilogue, FaultProofProgramError> {
+        self.run_pipeline(|_, _| {}).await
+    }
+
+    /// Like [`execute`](Self::execute), but also collects per-block `(L2BlockInfo, output_root)`
+    /// pairs for all intermediate blocks.
+    pub async fn execute_with_intermediates(
+        self,
+    ) -> Result<(Epilogue, Vec<(base_protocol::L2BlockInfo, B256)>), FaultProofProgramError> {
+        let mut intermediates = Vec::new();
+        let epilogue = self
+            .run_pipeline(|l2_info, output_root| intermediates.push((l2_info, output_root)))
+            .await?;
+        Ok((epilogue, intermediates))
+    }
+
+    async fn run_pipeline(
+        self,
+        on_block: impl FnMut(base_protocol::L2BlockInfo, B256),
+    ) -> Result<Epilogue, FaultProofProgramError> {
         let executor = BaseExecutor::new(
             self.rollup_config.as_ref(),
             self.l2_provider.clone(),
@@ -89,12 +108,17 @@ where
         );
         let mut driver = Driver::new(Arc::clone(&self.cursor), executor, self.pipeline);
         let (safe_head, output_root) = driver
-            .advance_to_target(self.rollup_config.as_ref(), Some(self.claimed_l2_block_number))
+            .advance_to_target(
+                self.rollup_config.as_ref(),
+                Some(self.claimed_l2_block_number),
+                on_block,
+            )
             .await
             .map_err(|e| {
                 error!(error = ?e, "driver failed");
                 FaultProofProgramError::Driver(e)
             })?;
+
         Ok(Epilogue { safe_head, output_root, claimed_output_root: self.claimed_l2_output_root })
     }
 }

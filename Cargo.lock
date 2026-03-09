@@ -3156,7 +3156,7 @@ dependencies = [
  "base-consensus-genesis",
  "base-proof-executor",
  "base-proof-mpt",
- "base-proof-preimage",
+ "base-proof-primitives",
  "base-protocol",
  "base-revm",
  "hex",
@@ -3188,40 +3188,17 @@ dependencies = [
 name = "base-enclave-server"
 version = "0.0.0"
 dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-signer",
- "alloy-signer-local",
- "async-trait",
- "aws-nitro-enclaves-cose",
- "aws-nitro-enclaves-nsm-api",
- "base-consensus-genesis",
- "base-enclave",
- "base64 0.22.1",
- "ciborium",
  "eyre",
- "hex",
  "http-body-util",
  "hyper 1.8.1",
  "hyper-util",
- "jsonrpsee",
- "k256",
- "openssl",
  "parking_lot",
  "rand 0.8.5",
- "reqwest 0.13.2",
  "rsa 0.9.10",
- "serde",
- "serde_bytes",
  "serde_json",
- "sha2 0.10.9",
- "spki 0.7.3",
- "thiserror 2.0.18",
  "tokio",
  "tracing",
  "vsock",
- "x509-cert",
- "zip",
 ]
 
 [[package]]
@@ -4184,6 +4161,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-tee-nitro"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
+ "async-trait",
+ "aws-nitro-enclaves-cose",
+ "aws-nitro-enclaves-nsm-api",
+ "base-alloy-evm",
+ "base-proof-client",
+ "base-proof-preimage",
+ "base-proof-primitives",
+ "base-proof-transport",
+ "base64 0.22.1",
+ "ciborium",
+ "eyre",
+ "k256",
+ "openssl",
+ "parking_lot",
+ "rand 0.8.5",
+ "serde",
+ "serde_bytes",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-vsock",
+ "tracing",
+ "x509-cert",
+ "zip",
+]
+
+[[package]]
 name = "base-proof-transport"
 version = "0.0.0"
 dependencies = [
@@ -4194,7 +4204,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "tokio",
- "vsock",
+ "tokio-vsock",
 ]
 
 [[package]]
@@ -4242,6 +4252,7 @@ dependencies = [
  "base-enclave",
  "base-enclave-client",
  "base-proof-contracts",
+ "base-proof-primitives",
  "base-proof-rpc",
  "base-protocol",
  "bytes",
@@ -12388,9 +12399,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "encoding_rs",
- "futures-channel",
  "futures-core",
- "futures-util",
  "h2 0.4.13",
  "http 1.4.0",
  "http-body 1.0.1",
@@ -17350,6 +17359,19 @@ dependencies = [
  "pin-project-lite",
  "slab",
  "tokio",
+]
+
+[[package]]
+name = "tokio-vsock"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b319ef9394889dab2e1b4f0085b45ba11d0c79dc9d1a9d1afc057d009d0f1c7"
+dependencies = [
+ "bytes",
+ "futures",
+ "libc",
+ "tokio",
+ "vsock",
 ]
 
 [[package]]
