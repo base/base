@@ -4172,6 +4172,7 @@ dependencies = [
  "aws-nitro-enclaves-nsm-api",
  "base-alloy-evm",
  "base-proof-client",
+ "base-proof-host",
  "base-proof-preimage",
  "base-proof-primitives",
  "base-proof-transport",
@@ -4199,6 +4200,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "async-trait",
+ "base-proof-preimage",
  "base-proof-primitives",
  "bincode 2.0.1",
  "serde",

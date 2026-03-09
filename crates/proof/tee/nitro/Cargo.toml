@@ -11,6 +11,7 @@ base-proof-client.workspace = true
 base-proof-preimage.workspace = true
 base-proof-primitives.workspace = true
 base-proof-transport = { workspace = true, features = ["frame"] }
+base-proof-host = { workspace = true, optional = true }
 
 # Alloy
 alloy-signer.workspace = true
@@ -55,8 +56,12 @@ rand_08.workspace = true
 tokio-vsock.workspace = true
 
 [dev-dependencies]
+base-proof-transport = { workspace = true, features = ["test-utils"] }
 rand_08.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
+
+[features]
+host = [ "base-proof-transport/vsock", "dep:base-proof-host" ]
 
 [lints]
 workspace = true

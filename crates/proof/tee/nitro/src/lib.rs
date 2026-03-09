@@ -16,3 +16,8 @@ pub use enclave::{
     verify_attestation_with_options, verify_attestation_with_pcr0,
     verify_attestation_with_pcr0_and_options,
 };
+
+#[cfg(feature = "host")]
+mod host;
+#[cfg(feature = "host")]
+pub use host::{NitroBackend, NitroServer};
