@@ -6,7 +6,6 @@ rust-version.workspace = true
 
 [dependencies]
 # Core
-base-enclave.workspace = true
 base-alloy-evm.workspace = true
 base-proof-client.workspace = true
 base-proof-preimage.workspace = true
