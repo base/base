@@ -10,6 +10,12 @@ exclude = [
     'localhost',
     'https://img.shields.io/github/commit-activity/w/base/base',
     'https://img.shields.io/github/issues-pr-raw/base/base',
+    'https://img.shields.io/website-up-down-green-red/https/base.org.svg',
     'https://rustup.rs/',
     'https://base.mirror.xyz/',
+    # GitHub URLs that get rate-limited (429) - they are valid
+    'https://github.com/base/base/blob/main/LICENSE',
+    'https://github.com/base/base/blob/master/LICENSE',
+    'https://github.com/base/base/blob/main/crates/',
+    'https://github.com/paradigmxyz/reth/',
 ]

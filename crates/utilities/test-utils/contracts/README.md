@@ -11,7 +11,7 @@ Foundry consists of:
 
 ## Documentation
 
-https://book.getfoundry.sh/
+https://www.getfoundry.sh/
 
 ## Usage
 
