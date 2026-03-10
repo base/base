@@ -12,7 +12,6 @@ description = "Compression types for Base"
 workspace = true
 
 [dependencies]
-ambassador.workspace = true
 thiserror.workspace = true
 miniz_oxide.workspace = true
 base-protocol.workspace = true
@@ -20,6 +19,7 @@ base-consensus-genesis.workspace = true
 rand = { workspace = true, features = ["small_rng"] }
 
 brotli = { workspace = true, optional = true }
+ambassador = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -39,6 +39,7 @@ std = [
 	"base-consensus-genesis/std",
 	"base-protocol/std",
 	"brotli?/std",
+	"dep:ambassador",
 	"dep:brotli",
 	"miniz_oxide/std",
 	"rand/std",
