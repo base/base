@@ -4,7 +4,7 @@ use alloy_primitives::Address;
 use alloy_rpc_types_eth::TransactionReceipt;
 use tokio::sync::oneshot;
 
-use crate::{TxCandidate, TxManagerError, TxManagerResult};
+use crate::{TxCandidate, TxManagerResult};
 
 /// Result type returned by async send operations.
 pub type SendResponse = TxManagerResult<TransactionReceipt>;
@@ -18,10 +18,7 @@ pub type SendResponse = TxManagerResult<TransactionReceipt>;
 /// directly on [`SimpleTxManager`](crate::SimpleTxManager).
 pub trait TxManager: Send + Sync {
     /// Sends a transaction and waits for its receipt.
-    fn send(
-        &self,
-        candidate: TxCandidate,
-    ) -> impl Future<Output = Result<TransactionReceipt, TxManagerError>> + Send;
+    fn send(&self, candidate: TxCandidate) -> impl Future<Output = SendResponse> + Send;
 
     /// Sends a transaction asynchronously, returning a channel for the result.
     fn send_async(
