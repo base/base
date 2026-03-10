@@ -225,12 +225,21 @@ impl OpNode {
     where
         Node: FullNodeTypes<Types: OpNodeTypes>,
     {
-        let RollupArgs { disable_txpool_gossip, compute_pending_block, discovery_v4, .. } =
-            self.args;
+        let RollupArgs {
+            disable_txpool_gossip,
+            compute_pending_block,
+            discovery_v4,
+            txpool_ordering,
+            ..
+        } = self.args;
+        let ordering = match txpool_ordering {
+            crate::args::TxpoolOrdering::CoinbaseTip => BaseOrdering::coinbase_tip(),
+            crate::args::TxpoolOrdering::Timestamp => BaseOrdering::timestamp(),
+        };
         ComponentsBuilder::default()
             .node_types::<Node>()
             .executor(OpExecutorBuilder::default())
-            .pool(OpPoolBuilder::default())
+            .pool(OpPoolBuilder::default().with_ordering(ordering))
             .payload(BasicPayloadServiceBuilder::new(
                 OpPayloadBuilder::new(compute_pending_block)
                     .with_da_config(self.da_config.clone())

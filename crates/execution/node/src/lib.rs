@@ -12,6 +12,7 @@ use reth_db_api as _;
 
 /// CLI argument parsing for the optimism node.
 pub mod args;
+pub use args::TxpoolOrdering;
 
 /// Exports optimism-specific implementations of the [`EngineTypes`](reth_node_api::EngineTypes)
 /// trait.

@@ -4,7 +4,26 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use clap::builder::ArgPredicate;
+use clap::{ValueEnum, builder::ArgPredicate};
+
+/// Transaction ordering strategy for the mempool.
+///
+/// Determines how transactions are prioritized when building blocks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum TxpoolOrdering {
+    /// Order by coinbase tip (fee-based, higher tip = higher priority).
+    ///
+    /// This is the default ordering strategy that prioritizes transactions
+    /// based on the priority fee (tip) they offer to the block producer.
+    #[default]
+    CoinbaseTip,
+    /// Order by receive timestamp (FIFO, earlier = higher priority).
+    ///
+    /// Transactions are ordered by when they were received by the mempool,
+    /// regardless of the fees they offer.
+    Timestamp,
+}
 
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -40,6 +59,14 @@ pub struct RollupArgs {
     /// Minimum suggested priority fee (tip) in wei, default `1_000_000`
     #[arg(long, default_value_t = 1_000_000)]
     pub min_suggested_priority_fee: u64,
+
+    /// Transaction ordering strategy for the mempool.
+    ///
+    /// Determines how transactions are prioritized when building blocks.
+    /// - `coinbase-tip`: Order by priority fee (higher tip = higher priority). Default.
+    /// - `timestamp`: Order by receive time (FIFO, earlier = higher priority).
+    #[arg(long = "rollup.txpool-ordering", default_value = "coinbase-tip")]
+    pub txpool_ordering: TxpoolOrdering,
 
     /// If true, initialize external-proofs exex to save and serve trie nodes to provide proofs
     /// faster.
@@ -111,6 +138,7 @@ impl Default for RollupArgs {
             discovery_v4: false,
             sequencer_headers: Vec::new(),
             min_suggested_priority_fee: 1_000_000,
+            txpool_ordering: TxpoolOrdering::default(),
             proofs_history: false,
             proofs_history_storage_path: None,
             proofs_history_window: 1_296_000,
@@ -195,5 +223,33 @@ mod tests {
         ])
         .args;
         assert_eq!(args, expected_args);
+    }
+
+    #[test]
+    fn test_parse_txpool_ordering_default() {
+        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
+        assert_eq!(args.txpool_ordering, TxpoolOrdering::CoinbaseTip);
+    }
+
+    #[test]
+    fn test_parse_txpool_ordering_coinbase_tip() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--rollup.txpool-ordering",
+            "coinbase-tip",
+        ])
+        .args;
+        assert_eq!(args.txpool_ordering, TxpoolOrdering::CoinbaseTip);
+    }
+
+    #[test]
+    fn test_parse_txpool_ordering_timestamp() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--rollup.txpool-ordering",
+            "timestamp",
+        ])
+        .args;
+        assert_eq!(args.txpool_ordering, TxpoolOrdering::Timestamp);
     }
 }
