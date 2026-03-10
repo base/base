@@ -9,7 +9,7 @@ use std::{collections::HashSet, sync::Mutex, time::Instant};
 
 use alloy_primitives::B256;
 
-use crate::TxManagerError;
+use crate::{TxManagerError, TxManagerResult};
 
 /// Tracks the publication state of a single logical transaction through its
 /// lifecycle.
@@ -55,16 +55,18 @@ struct SendStateInner {
 impl SendState {
     /// Creates a new `SendState` with the given nonce-too-low abort threshold.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `safe_abort_nonce_too_low_count` is 0. A zero threshold is a
-    /// programming error / misconfiguration, not a runtime condition.
-    pub fn new(safe_abort_nonce_too_low_count: u64) -> Self {
-        assert!(
-            safe_abort_nonce_too_low_count > 0,
-            "safe_abort_nonce_too_low_count must be greater than 0"
-        );
-        Self {
+    /// Returns [`TxManagerError::InvalidSafeAbortNonceTooLowCount`] if
+    /// `safe_abort_nonce_too_low_count` is 0. A zero threshold would cause the
+    /// send loop to abort on the very first nonce-too-low error after a
+    /// successful publish, making fee bumps impossible.
+    #[must_use = "a constructed SendState should be used by the send loop"]
+    pub fn new(safe_abort_nonce_too_low_count: u64) -> TxManagerResult<Self> {
+        if safe_abort_nonce_too_low_count == 0 {
+            return Err(TxManagerError::InvalidSafeAbortNonceTooLowCount);
+        }
+        Ok(Self {
             inner: Mutex::new(SendStateInner {
                 mined_txs: HashSet::new(),
                 successful_publish_count: 0,
@@ -75,7 +77,7 @@ impl SendState {
                 mempool_deadline: None,
             }),
             safe_abort_nonce_too_low_count,
-        }
+        })
     }
 
     /// Processes a send error, updating internal state accordingly.
@@ -229,9 +231,11 @@ mod tests {
     // ── Constructor validation ──────────────────────────────────────────
 
     #[test]
-    #[should_panic(expected = "safe_abort_nonce_too_low_count must be greater than 0")]
-    fn constructor_panics_on_zero_threshold() {
-        SendState::new(0);
+    fn constructor_rejects_zero_threshold() {
+        assert_eq!(
+            SendState::new(0).unwrap_err(),
+            TxManagerError::InvalidSafeAbortNonceTooLowCount,
+        );
     }
 
     #[rstest]
@@ -239,7 +243,7 @@ mod tests {
     #[case::ten(10)]
     #[case::max(u64::MAX)]
     fn constructor_accepts_positive_threshold(#[case] count: u64) {
-        let state = SendState::new(count);
+        let state = SendState::new(count).unwrap();
         assert!(state.critical_error().is_none());
     }
 
@@ -247,25 +251,25 @@ mod tests {
 
     #[test]
     fn fresh_state_has_no_critical_error() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         assert!(state.critical_error().is_none());
     }
 
     #[test]
     fn fresh_state_is_not_waiting_for_confirmation() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         assert!(!state.is_waiting_for_confirmation());
     }
 
     #[test]
     fn fresh_state_should_not_bump_fees() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         assert!(!state.should_bump_fees());
     }
 
     #[test]
     fn fresh_state_bump_count_is_zero() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         assert_eq!(state.bump_count(), 0);
     }
 
@@ -273,7 +277,7 @@ mod tests {
 
     #[test]
     fn nonce_too_low_below_threshold_no_abort() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.record_successful_publish();
         state.process_send_error(&TxManagerError::NonceTooLow);
         state.process_send_error(&TxManagerError::NonceTooLow);
@@ -282,7 +286,7 @@ mod tests {
 
     #[test]
     fn nonce_too_low_at_threshold_aborts() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.record_successful_publish();
         for _ in 0..3 {
             state.process_send_error(&TxManagerError::NonceTooLow);
@@ -292,7 +296,7 @@ mod tests {
 
     #[test]
     fn nonce_too_low_above_threshold_aborts() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.record_successful_publish();
         for _ in 0..5 {
             state.process_send_error(&TxManagerError::NonceTooLow);
@@ -304,7 +308,7 @@ mod tests {
 
     #[test]
     fn mined_tx_suppresses_nonce_too_low_abort() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.record_successful_publish();
         // Accumulate errors past threshold.
         for _ in 0..5 {
@@ -319,7 +323,7 @@ mod tests {
 
     #[test]
     fn mined_tx_suppresses_already_reserved_abort() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::AlreadyReserved);
         assert_eq!(state.critical_error(), Some(TxManagerError::AlreadyReserved));
 
@@ -329,7 +333,7 @@ mod tests {
 
     #[test]
     fn mined_tx_suppresses_mempool_deadline_abort() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
         assert_eq!(state.critical_error(), Some(TxManagerError::MempoolDeadlineExpired));
 
@@ -341,7 +345,7 @@ mod tests {
 
     #[test]
     fn tx_not_mined_resets_nonce_count_when_empty() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.record_successful_publish();
 
         let tx = B256::with_last_byte(1);
@@ -369,7 +373,7 @@ mod tests {
 
     #[test]
     fn removing_one_of_multiple_mined_txs_does_not_reset() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.record_successful_publish();
 
         let tx1 = B256::with_last_byte(1);
@@ -389,7 +393,7 @@ mod tests {
 
     #[test]
     fn tx_not_mined_with_never_mined_hash_does_not_reset_counter() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.record_successful_publish();
 
         for _ in 0..5 {
@@ -405,7 +409,7 @@ mod tests {
 
     #[test]
     fn removing_last_mined_tx_resets_counter() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.record_successful_publish();
 
         let tx1 = B256::with_last_byte(1);
@@ -428,21 +432,21 @@ mod tests {
 
     #[test]
     fn expired_mempool_deadline_triggers_abort() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
         assert_eq!(state.critical_error(), Some(TxManagerError::MempoolDeadlineExpired));
     }
 
     #[test]
     fn future_mempool_deadline_does_not_abort() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.set_mempool_deadline(Instant::now() + Duration::from_secs(60));
         assert!(state.critical_error().is_none());
     }
 
     #[test]
     fn no_mempool_deadline_does_not_abort() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         assert!(state.critical_error().is_none());
     }
 
@@ -450,7 +454,7 @@ mod tests {
 
     #[test]
     fn pre_publish_nonce_too_low_triggers_immediate_abort() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         // No successful publish recorded.
         state.process_send_error(&TxManagerError::NonceTooLow);
         assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
@@ -460,7 +464,7 @@ mod tests {
 
     #[test]
     fn post_publish_nonce_too_low_requires_threshold() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.record_successful_publish();
 
         // Single nonce-too-low should NOT abort after a successful publish.
@@ -479,7 +483,7 @@ mod tests {
 
     #[test]
     fn already_reserved_triggers_abort() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::AlreadyReserved);
         assert_eq!(state.critical_error(), Some(TxManagerError::AlreadyReserved));
     }
@@ -488,7 +492,7 @@ mod tests {
 
     #[test]
     fn already_reserved_takes_priority_over_expired_deadline() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::AlreadyReserved);
         state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
 
@@ -499,7 +503,7 @@ mod tests {
 
     #[test]
     fn pre_publish_nonce_too_low_takes_priority_over_expired_deadline() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         // No successful publish.
         state.process_send_error(&TxManagerError::NonceTooLow);
         state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
@@ -513,7 +517,7 @@ mod tests {
 
     #[test]
     fn tx_mined_is_idempotent() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         let tx = B256::with_last_byte(1);
 
         // Mining the same hash twice should not double-count.
@@ -536,7 +540,7 @@ mod tests {
     #[case::already_known(TxManagerError::AlreadyKnown)]
     #[case::rpc(TxManagerError::Rpc("any rpc error".to_string()))]
     fn retryable_error_sets_bump_fees(#[case] err: TxManagerError) {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         assert!(!state.should_bump_fees());
         state.process_send_error(&err);
         assert!(state.should_bump_fees());
@@ -544,7 +548,7 @@ mod tests {
 
     #[test]
     fn record_fee_bump_clears_flag_and_increments_count() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::Underpriced);
         assert!(state.should_bump_fees());
         assert_eq!(state.bump_count(), 0);
@@ -556,14 +560,14 @@ mod tests {
 
     #[test]
     fn nonce_too_low_does_not_set_bump_fees() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::NonceTooLow);
         assert!(!state.should_bump_fees());
     }
 
     #[test]
     fn non_retryable_error_does_not_set_bump_fees() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::InsufficientFunds);
         assert!(!state.should_bump_fees());
     }
@@ -572,7 +576,7 @@ mod tests {
 
     #[test]
     fn is_waiting_for_confirmation_reflects_mined_txs() {
-        let state = SendState::new(3);
+        let state = SendState::new(3).unwrap();
         assert!(!state.is_waiting_for_confirmation());
 
         let tx = B256::with_last_byte(42);

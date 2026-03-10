@@ -31,9 +31,11 @@ Transaction lifecycle management for Base onchain components.
   bump fees, or abort. Tracks mined transaction hashes, nonce-too-low error counts, mempool
   deadline expiry, successful publish counts, and fee bump state. Uses `std::sync::Mutex`
   for thread-safe interior mutability (all critical sections are CPU-bound with no `.await`
-  points). The `critical_error()` method evaluates abort conditions in priority order: mined
-  tx suppression, already-reserved, pre-publish nonce-too-low, threshold nonce-too-low, and
-  mempool deadline expiry.
+  points). `SendState::new` returns `TxManagerResult<Self>` and rejects a zero
+  `safe_abort_nonce_too_low_count` threshold with
+  `TxManagerError::InvalidSafeAbortNonceTooLowCount`. The `critical_error()` method
+  evaluates abort conditions in priority order: mined tx suppression, already-reserved,
+  pre-publish nonce-too-low, threshold nonce-too-low, and mempool deadline expiry.
 - **`TxManagerConfig`**: Configuration for the transaction manager. Controls fee-limit
   enforcement via `fee_limit_multiplier` (ceiling as a multiple of the suggested fee) and
   `fee_limit_threshold` (minimum suggested fee at which the limit activates).
@@ -72,6 +74,11 @@ its sender before delivering a result (panic or cancellation). It is non-retryab
 `FeeLimitExceeded` is returned by `FeeCalculator::check_limits` when the proposed fee exceeds
 `fee_limit_multiplier × suggested_fee` and the suggested fee is at or above
 `fee_limit_threshold`. It is non-retryable.
+
+`InvalidSafeAbortNonceTooLowCount` is returned by `SendState::new` when the
+`safe_abort_nonce_too_low_count` threshold is zero. A zero threshold would abort on the very
+first nonce-too-low error after a successful publish, making fee bumps impossible. It is
+non-retryable.
 
 `RpcErrorClassifier::classify_rpc_error` lowercases the input and matches against known
 geth error substrings in a fixed order (e.g., `"replacement transaction underpriced"`
