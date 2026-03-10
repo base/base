@@ -16,7 +16,7 @@ async-trait.workspace = true
 alloy-primitives = { workspace = true }
 base-proof-preimage = { workspace = true }
 serde = { workspace = true, optional = true, features = ["derive"] }
-jsonrpsee = { workspace = true, optional = true, features = ["macros", "server", "http-client"] }
+jsonrpsee = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true, features = ["std"] }
@@ -25,4 +25,5 @@ serde_json = { workspace = true, features = ["std"] }
 default = []
 std = [ "alloy-primitives/std", "base-proof-preimage/std", "serde?/std" ]
 serde = [ "alloy-primitives/serde", "base-proof-preimage/serde", "dep:serde" ]
-rpc = [ "dep:jsonrpsee", "serde", "std" ]
+rpc-server = [ "dep:jsonrpsee", "jsonrpsee/macros", "jsonrpsee/server", "serde", "std" ]
+rpc-client = [ "dep:jsonrpsee", "jsonrpsee/macros", "jsonrpsee/http-client", "serde", "std" ]
