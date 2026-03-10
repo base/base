@@ -17,8 +17,10 @@ thiserror.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 async-trait.workspace = true
+alloy-signer.workspace = true
 alloy-primitives.workspace = true
 alloy-consensus = { workspace = true, features = ["std"] }
+alloy-signer-local.workspace = true
 base-protocol = { workspace = true, features = ["std"] }
 base-alloy-consensus = { workspace = true, features = ["std"] }
 base-consensus-genesis = { workspace = true, features = ["std"] }

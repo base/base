@@ -6,16 +6,21 @@ use base_protocol::{BlockInfo, L2BlockInfo};
 
 use crate::{
     ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, Batcher, BatcherConfig,
-    L1Miner, L1MinerConfig, L2Verifier, MockL2Block, MockL2Source, SharedL1Chain, block_info_from,
+    L1Miner, L1MinerConfig, L2BlockBuilder, L2BlockProvider, L2Verifier, SharedL1Chain,
+    block_info_from,
 };
 
 /// Top-level test harness that owns all actors for a single action test.
 ///
 /// `ActionTestHarness` is the entry point for writing action tests. It holds
-/// the [`L1Miner`], the [`MockL2Source`], and the [`RollupConfig`] that
-/// actors share. Convenience methods let tests drive the harness at a high
-/// level; the underlying actors are also exposed as public fields so tests
-/// can call actor methods directly when they need finer control.
+/// the [`L1Miner`] and the [`RollupConfig`] shared by all actors. Tests drive
+/// the harness step-by-step using the public actor APIs.
+///
+/// L2 blocks are produced by an [`L2BlockBuilder`] obtained via
+/// [`create_l2_builder`]. Blocks contain real L1-info deposit transactions and
+/// real signed EIP-1559 user transactions — no simplified mock types.
+///
+/// [`create_l2_builder`]: ActionTestHarness::create_l2_builder
 ///
 /// # Example
 ///
@@ -30,8 +35,6 @@ use crate::{
 pub struct ActionTestHarness {
     /// The simulated L1 chain.
     pub l1: L1Miner,
-    /// Pre-loaded L2 blocks available for a batcher to consume.
-    pub l2: MockL2Source,
     /// The rollup configuration shared by all actors.
     pub rollup_config: RollupConfig,
 }
@@ -39,7 +42,7 @@ pub struct ActionTestHarness {
 impl ActionTestHarness {
     /// Create a harness with the given configurations.
     pub fn new(l1_config: L1MinerConfig, rollup_config: RollupConfig) -> Self {
-        Self { l1: L1Miner::new(l1_config), l2: MockL2Source::new(), rollup_config }
+        Self { l1: L1Miner::new(l1_config), rollup_config }
     }
 
     /// Mine `n` L1 blocks and return the latest block number after mining.
@@ -50,23 +53,45 @@ impl ActionTestHarness {
         self.l1.latest_number()
     }
 
-    /// Generate `count` sequential mock L2 blocks and enqueue them in the
-    /// L2 source.
+    /// Create a [`Batcher`] backed by the supplied L2 block source.
     ///
-    /// Blocks are numbered starting from the current queue length. Timestamps
-    /// are computed assuming a uniform `block_time` from block 0: the first
-    /// generated block gets `start * block_time` where `start` is the current
-    /// queue length. Interleaving manual `push_l2_block` calls with
-    /// `generate_l2_blocks` may produce non-contiguous timestamps.
-    pub fn generate_l2_blocks(&mut self, count: u64) {
-        let start = self.l2.remaining() as u64;
-        let block_time = self.rollup_config.block_time;
-        self.l2.generate(start, start * block_time, block_time, count);
+    /// Unlike the previous `create_batcher` that consumed an internal
+    /// `MockL2Source`, this accepts any [`L2BlockProvider`] so tests can wire
+    /// an [`L2BlockBuilder`] or a hand-rolled source directly.
+    pub fn create_batcher<S: L2BlockProvider>(
+        &mut self,
+        source: S,
+        config: BatcherConfig,
+    ) -> Batcher<'_, S> {
+        Batcher::new(&mut self.l1, source, &self.rollup_config, config)
     }
 
-    /// Push a single hand-crafted L2 block into the source.
-    pub fn push_l2_block(&mut self, block: MockL2Block) {
-        self.l2.push(block);
+    /// Create an [`L2BlockBuilder`] starting from L2 genesis, wired to a
+    /// snapshot of the current L1 chain.
+    ///
+    /// The returned builder generates real [`OpBlock`]s with a proper L1-info
+    /// deposit transaction (first tx) and signed EIP-1559 user transactions.
+    /// Call `build_next_block()` once per L2 block to advance the builder.
+    ///
+    /// After mining new L1 blocks, push them to the [`SharedL1Chain`] returned
+    /// alongside the verifier so the builder sees the updated epochs.
+    pub fn create_l2_builder(&self, l1_chain: SharedL1Chain) -> L2BlockBuilder {
+        let l1_genesis_hash = l1_chain.get_block(0).map(|b| b.hash()).unwrap_or_default();
+
+        let genesis_head = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: self.rollup_config.genesis.l2.hash,
+                number: self.rollup_config.genesis.l2.number,
+                parent_hash: Default::default(),
+                timestamp: self.rollup_config.genesis.l2_time,
+            },
+            l1_origin: BlockNumHash { number: 0, hash: l1_genesis_hash },
+            seq_num: 0,
+        };
+
+        let system_config = self.rollup_config.genesis.system_config.unwrap_or_default();
+
+        L2BlockBuilder::new(genesis_head, l1_chain, self.rollup_config.clone(), system_config)
     }
 
     /// Create an [`L2Verifier`] wired to the harness's L1 chain.
@@ -76,9 +101,6 @@ impl ActionTestHarness {
     /// then call `chain.push(l1.tip().clone())` and
     /// `verifier.act_l1_head_signal(block_info).await` to feed them into the
     /// pipeline.
-    ///
-    /// The pipeline is seeded with the L1 genesis block as its origin and with
-    /// the L2 genesis state from `rollup_config`.
     pub fn create_verifier(&self) -> (L2Verifier, SharedL1Chain) {
         let l2_provider = ActionL2ChainProvider::from_genesis(&self.rollup_config);
         self.create_verifier_with_l2_provider(l2_provider)
@@ -86,9 +108,10 @@ impl ActionTestHarness {
 
     /// Create an [`L2Verifier`] using a caller-supplied [`ActionL2ChainProvider`].
     ///
-    /// Use this variant when the test needs to pre-populate the provider with
-    /// custom [`SystemConfig`] entries (e.g. a batcher-address rotation) before
-    /// derivation starts. For the common case, prefer [`create_verifier`].
+    /// Use this when the test needs to pre-populate the provider with custom
+    /// [`SystemConfig`] entries before derivation starts.
+    ///
+    /// [`SystemConfig`]: base_consensus_genesis::SystemConfig
     pub fn create_verifier_with_l2_provider(
         &self,
         l2_provider: ActionL2ChainProvider,
@@ -101,8 +124,6 @@ impl ActionTestHarness {
         let dap_source =
             ActionDataSource::new(chain.clone(), self.rollup_config.batch_inbox_address);
 
-        // Seed the pipeline origin from the actual genesis block so parent-hash
-        // chaining validates correctly when block 1 is provided.
         let genesis_l1_block = self.l1.chain().first().expect("genesis always present");
         let genesis_l1 = block_info_from(genesis_l1_block);
 
@@ -128,17 +149,6 @@ impl ActionTestHarness {
         );
 
         (verifier, chain)
-    }
-
-    /// Create a [`Batcher`] that drains the harness's L2 source.
-    ///
-    /// The L2 source is moved out of the harness into the batcher so the
-    /// batcher owns the block queue. After the batcher is dropped, the harness
-    /// L2 source will be empty; push new blocks before creating another
-    /// batcher if needed.
-    pub fn create_batcher(&mut self, config: BatcherConfig) -> Batcher<'_, MockL2Source> {
-        let l2_source = core::mem::take(&mut self.l2);
-        Batcher::new(&mut self.l1, l2_source, &self.rollup_config, config)
     }
 }
 

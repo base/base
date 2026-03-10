@@ -2282,6 +2282,8 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "alloy-rlp",
+ "alloy-signer",
+ "alloy-signer-local",
  "async-trait",
  "base-alloy-consensus",
  "base-batcher-driver",
