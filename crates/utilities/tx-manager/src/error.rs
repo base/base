@@ -44,6 +44,15 @@ pub enum TxManagerError {
     #[error("send response channel closed")]
     ChannelClosed,
 
+    /// Calculated fee exceeds the configured fee-limit ceiling.
+    ///
+    /// Returned by [`FeeCalculator::check_limits`] and
+    /// [`FeeCalculator::check_blob_fee_limits`] when the proposed fee
+    /// surpasses `fee_limit_multiplier × suggested_fee` and the suggested
+    /// fee is at or above `fee_limit_threshold`. Non-retryable.
+    #[error("fee limit exceeded")]
+    FeeLimitExceeded,
+
     // ── Fee / replacement errors (retryable) ─────────────────────────────
     /// Fee too low to enter the mempool.
     #[error("transaction underpriced")]
@@ -60,15 +69,6 @@ pub enum TxManagerError {
     /// `maxFeePerGas` below block base fee.
     #[error("max fee per gas less than block base fee")]
     MaxFeePerGasTooLow,
-
-    /// Calculated fee exceeds the configured fee-limit ceiling.
-    ///
-    /// Returned by [`FeeCalculator::check_limits`] and
-    /// [`FeeCalculator::check_blob_fee_limits`] when the proposed fee
-    /// surpasses `fee_limit_multiplier × suggested_fee` and the suggested
-    /// fee is at or above `fee_limit_threshold`.
-    #[error("fee limit exceeded")]
-    FeeLimitExceeded,
 
     // ── Infrastructure / transient errors (retryable) ────────────────────
     /// Transaction already present in the mempool (benign on resubmission).
