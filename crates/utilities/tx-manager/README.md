@@ -12,13 +12,22 @@ Transaction lifecycle management for Base onchain components.
 - **`RpcErrorClassifier`**: Maps raw RPC/geth error strings into structured `TxManagerError` variants
   using ordered substring matching.
 - **`TxManagerResult<T>`**: Result type alias for transaction manager operations.
-- **`TxCandidate`**: Represents a candidate transaction to be submitted.
+- **`TxCandidate`**: Input to the send pipeline. With empty `blobs` it produces a regular
+  EIP-1559 (type-2) transaction; with non-empty `blobs` it produces an EIP-4844 (type-3)
+  blob-carrying transaction. Carries calldata, optional recipient, gas limit, and value.
+- **`GasPriceCaps`**: Intermediate fee estimates (tip cap, base fee cap, optional blob fee cap)
+  passed between fee calculation and transaction construction.
 - **`FeeCalculator`**: Calculates and bumps transaction fees.
-- **`SendState`**: Tracks the state of a transaction through its lifecycle.
+- **`SendResponse`**: Type alias (`TxManagerResult<TransactionReceipt>`) returned by async
+  send operations.
+- **`SendState`**: Tracks mined transaction hashes, nonce-too-low and fee-bump counters, and
+  reservation flags behind a `Mutex`. Exposes methods to update counters on errors
+  (`process_send_error`), record mined/unmined hashes, and query critical-error thresholds.
 - **`TxManagerConfig`**: Configuration for the transaction manager.
-- **`TxManager`**: Trait defining the transaction manager public API.
+- **`TxManager`**: Trait defining the public API — `send` (blocking), `send_async` (returns
+  a `oneshot::Receiver<SendResponse>`), and `sender_address`. Requires `Send + Sync`.
 - **`NonceManager`**: Manages nonce allocation and tracking.
-- **`SimpleTxManager`**: Default transaction manager implementation.
+- **`SimpleTxManager`**: Default `TxManager` implementation.
 - **`TxQueue`**: Queue for ordering and batching transactions.
 - **`TxMetrics`**: Metrics collection for transaction operations.
 - **`BlobTxBuilder`**: Builder for EIP-4844 blob-carrying transactions.
@@ -63,12 +72,23 @@ base-tx-manager = { git = "https://github.com/base/base" }
 ```
 
 ```rust,ignore
-use base_tx_manager::{SimpleTxManager, TxCandidate, TxManagerConfig};
+use alloy_primitives::{bytes, Address, U256};
+use base_tx_manager::{SimpleTxManager, TxCandidate, TxManager};
 
-// Build a transaction candidate and submit it via the manager
-let config = TxManagerConfig;
-let manager = SimpleTxManager;
-let candidate = TxCandidate;
+// Build a regular (type-2) transaction candidate.
+let candidate = TxCandidate {
+    tx_data: bytes!("deadbeef"),
+    to: Some(Address::ZERO),
+    gas_limit: 21_000,
+    value: U256::from(1_000),
+    ..Default::default()
+};
+
+// Blob (type-3) candidates set the `blobs` field instead.
+// let blob_candidate = TxCandidate { blobs: vec![blob], ..Default::default() };
+
+// Submit through the manager trait.
+let receipt = manager.send(candidate).await?;
 ```
 
 ## License
