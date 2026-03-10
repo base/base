@@ -179,6 +179,37 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
     }
 }
 
+#[async_trait]
+impl<B> BlobProvider for OnlineBlobProvider<B>
+where
+    B: BeaconClient + Send + Sync,
+{
+    type Error = BlobProviderError;
+
+    /// Fetches blobs that were confirmed in the specified L1 block with the given versioned
+    /// hashes. The blobs are already validated by the beacon client by recomputing their
+    /// commitments and checking against the expected hashes.
+    async fn get_and_validate_blobs(
+        &mut self,
+        block_ref: &BlockInfo,
+        blob_hashes: &[B256],
+    ) -> Result<Vec<Box<Blob>>, Self::Error> {
+        if blob_hashes.is_empty() {
+            return Ok(Default::default());
+        }
+
+        // Calculate the slot for the given timestamp.
+        let slot = Self::slot(self.genesis_time, self.slot_interval, block_ref.timestamp)?;
+
+        // Fetch and validate blobs from the beacon client.
+        // The beacon client already validates each blob by recomputing its commitment
+        // and checking it against the expected hash.
+        let blobs = self.fetch_filtered_blobs(slot, blob_hashes).await?;
+
+        Ok(blobs.into_iter().map(|boxed_blob| boxed_blob.blob).collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -313,8 +344,7 @@ mod tests {
     async fn test_get_and_validate_blobs_slot_not_found() {
         let hash = versioned_hash_for(&FixedBytes::repeat_byte(1));
 
-        let mut mock = MockBeaconClient::default();
-        mock.fail_with_slot_not_found = true;
+        let mock = MockBeaconClient { fail_with_slot_not_found: true, ..Default::default() };
 
         let mut provider =
             OnlineBlobProvider { beacon_client: mock, genesis_time: 0, slot_interval: 12 };
@@ -358,36 +388,5 @@ mod tests {
             recomputed_hash, hash,
             "versioned hash derived from returned commitment must equal the requested hash"
         );
-    }
-}
-
-#[async_trait]
-impl<B> BlobProvider for OnlineBlobProvider<B>
-where
-    B: BeaconClient + Send + Sync,
-{
-    type Error = BlobProviderError;
-
-    /// Fetches blobs that were confirmed in the specified L1 block with the given versioned
-    /// hashes. The blobs are already validated by the beacon client by recomputing their
-    /// commitments and checking against the expected hashes.
-    async fn get_and_validate_blobs(
-        &mut self,
-        block_ref: &BlockInfo,
-        blob_hashes: &[B256],
-    ) -> Result<Vec<Box<Blob>>, Self::Error> {
-        if blob_hashes.is_empty() {
-            return Ok(Default::default());
-        }
-
-        // Calculate the slot for the given timestamp.
-        let slot = Self::slot(self.genesis_time, self.slot_interval, block_ref.timestamp)?;
-
-        // Fetch and validate blobs from the beacon client.
-        // The beacon client already validates each blob by recomputing its commitment
-        // and checking it against the expected hash.
-        let blobs = self.fetch_filtered_blobs(slot, blob_hashes).await?;
-
-        Ok(blobs.into_iter().map(|boxed_blob| boxed_blob.blob).collect())
     }
 }

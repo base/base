@@ -284,7 +284,6 @@ mod tests {
 
     use super::*;
 
-    const TEST_BLOB_DATA: Blob = FixedBytes::repeat_byte(1);
     const TEST_BLOB_HASH_HEX: &str =
         "0x016c357b8b3a6b3fd82386e7bebf77143d537cdb1c856509661c412602306a04";
 
