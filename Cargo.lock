@@ -2798,12 +2798,16 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
+ "alloy-provider",
  "alloy-rlp",
+ "alloy-rpc-client",
  "alloy-rpc-types-engine",
  "async-trait",
  "base-alloy-consensus",
+ "base-alloy-network",
  "base-alloy-rpc-types-engine",
  "base-consensus-genesis",
+ "base-consensus-providers",
  "base-consensus-registry",
  "base-consensus-upgrades",
  "base-macros",
@@ -2817,6 +2821,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.22",
+ "url",
 ]
 
 [[package]]
@@ -3339,13 +3344,20 @@ dependencies = [
  "alloy-evm",
  "alloy-genesis",
  "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-client",
+ "alloy-transport-http",
  "base-alloy-consensus",
  "base-alloy-evm",
+ "base-alloy-network",
  "base-alloy-rpc-types-engine",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-forks",
  "base-execution-primitives",
+ "base-proof-executor",
+ "base-proof-mpt",
  "base-revm",
  "reth-chainspec",
  "reth-evm",
@@ -3356,7 +3368,10 @@ dependencies = [
  "reth-rpc-eth-api",
  "reth-storage-errors",
  "revm",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
@@ -7060,6 +7075,18 @@ dependencies = [
  "portable-atomic",
  "rand 0.9.2",
  "web-time",
+]
+
+[[package]]
+name = "fetch-regression-fixture"
+version = "0.0.0"
+dependencies = [
+ "base-proof-executor",
+ "clap",
+ "eyre",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.22",
 ]
 
 [[package]]

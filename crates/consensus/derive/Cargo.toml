@@ -41,13 +41,27 @@ tracing-subscriber = { workspace = true, optional = true, features = ["fmt"] }
 # `metrics` feature
 metrics = { workspace = true, optional = true }
 
+[[test]]
+name = "block_43127820_regression"
+path = "tests/block_43127820_regression.rs"
+required-features = ["test-utils"]
+
+[[test]]
+name = "payload_attributes_block_43127820"
+path = "tests/payload_attributes_block_43127820.rs"
+
 [dev-dependencies]
 spin.workspace = true
+url.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
+alloy-rpc-client.workspace = true
+base-alloy-network.workspace = true
 base-consensus-registry.workspace = true
-tracing = { workspace = true, features = ["std"] }
+base-consensus-providers.workspace = true
 tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true, features = ["std"] }
+alloy-provider = { workspace = true, features = ["reqwest"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
 base-alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-primitives = { workspace = true, features = ["rlp", "k256", "map", "arbitrary"] }
