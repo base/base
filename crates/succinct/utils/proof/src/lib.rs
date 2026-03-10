@@ -11,6 +11,7 @@ use base_succinct_elfs::AGGREGATION_ELF;
 use base_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
 use serde::{Deserialize, Serialize};
 use sp1_cluster_artifact::{
+    gcs::GcsArtifactClient,
     redis::RedisArtifactClient,
     s3::{S3ArtifactClient, S3DownloadMode},
 };
@@ -143,6 +144,7 @@ pub async fn cluster_agg_proof(
 pub enum ClusterArtifactStore {
     Redis(RedisArtifactClient),
     S3(S3ArtifactClient),
+    Gcs(GcsArtifactClient),
 }
 
 impl ClusterArtifactStore {
@@ -155,6 +157,7 @@ impl ClusterArtifactStore {
         match self {
             Self::Redis(c) => create_request(c.clone(), elf, stdin, config).await,
             Self::S3(c) => create_request(c.clone(), elf, stdin, config).await,
+            Self::Gcs(c) => create_request(c.clone(), elf, stdin, config).await,
         }
         .map_err(|e| anyhow::anyhow!("cluster proof submit failed: {e}"))
     }
@@ -167,6 +170,7 @@ impl ClusterArtifactStore {
         match self {
             Self::Redis(c) => check_proof_status(c.clone(), proof_request, service_client).await,
             Self::S3(c) => check_proof_status(c.clone(), proof_request, service_client).await,
+            Self::Gcs(c) => check_proof_status(c.clone(), proof_request, service_client).await,
         }
         .map_err(|e| anyhow::anyhow!("cluster proof poll failed: {e}"))
     }
@@ -225,6 +229,14 @@ impl ClusterProofConfig {
                 .await;
                 ClusterArtifactStore::S3(s3_client)
             }
+            ArtifactStoreConfig::Gcs { bucket, concurrency } => {
+                tracing::info!("Cluster using GCS artifact store");
+                ClusterArtifactStore::Gcs(
+                    GcsArtifactClient::new(bucket.clone(), *concurrency)
+                        .await
+                        .expect("Failed to create GCS artifact client"),
+                )
+            }
         };
 
         let service_client = ClusterServiceClient::new(cluster_rpc.clone())
@@ -252,6 +264,9 @@ impl ClusterProofConfig {
                 }
                 ArtifactStoreConfig::S3 { bucket, region } => {
                     ArtifactStoreConfig::S3 { bucket: bucket.clone(), region: region.clone() }
+                }
+                ArtifactStoreConfig::Gcs { bucket, concurrency } => {
+                    ArtifactStoreConfig::Gcs { bucket: bucket.clone(), concurrency: *concurrency }
                 }
             },
         }

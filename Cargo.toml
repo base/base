@@ -284,9 +284,9 @@ sp1-hypercube = "=6.0.2"
 sp1-primitives = "=6.0.2"
 sp1-prover-types = "=6.0.2"
 sp1-core-executor = "=6.0.2"
-sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster.git", tag = "v2.0.3" }
-sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster.git", tag = "v2.0.3" }
-sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster.git", tag = "v2.0.3" }
+sp1-cluster-utils = { git = "https://github.com/mw2000/sp1-cluster", branch = "support-gcs" }
+sp1-cluster-common = { git = "https://github.com/mw2000/sp1-cluster", branch = "support-gcs" }
+sp1-cluster-artifact = { git = "https://github.com/mw2000/sp1-cluster", branch = "support-gcs" }
 
 # revm
 revm = { version = "34.0.0", default-features = false }
