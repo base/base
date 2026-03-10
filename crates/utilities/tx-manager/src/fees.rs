@@ -264,8 +264,10 @@ mod tests {
     #[case::tip_below_cap_above(100, 1000, 50, 5000, false, (110, 10110))]
     // Case 4: both below → both threshold values
     #[case::both_below(100, 1000, 50, 1, false, (110, 1100))]
-    // Blob cases
+    // Blob cases — all four arms with 100 % bump thresholds
     #[case::blob_both_above(100, 1000, 300, 1000, true, (300, 2300))]
+    #[case::blob_tip_above_cap_below(100, 1000, 300, 1, true, (300, 2000))]
+    #[case::blob_tip_below_cap_above(100, 1000, 50, 5000, true, (200, 10200))]
     #[case::blob_both_below(100, 1000, 50, 1, true, (200, 2000))]
     // Zero starting fees
     #[case::zero_old_fees(0, 0, 10, 100, false, (10, 210))]
@@ -332,6 +334,9 @@ mod tests {
         let result =
             FeeCalculator::check_blob_fee_limits(blob_fee, suggested, multiplier, threshold);
         assert_eq!(result.is_ok(), should_pass);
+        if !should_pass {
+            assert_eq!(result.unwrap_err(), TxManagerError::FeeLimitExceeded);
+        }
     }
 
     // ── Property tests ──────────────────────────────────────────────────
@@ -418,6 +423,43 @@ mod tests {
             let _ = FeeCalculator::update_fees(
                 old_tip, old_fee_cap, new_tip, new_base_fee, is_blob,
             );
+        }
+
+        #[test]
+        fn check_limits_below_threshold_always_ok(
+            fee: u128,
+            suggested in 0..1000u128,
+            multiplier in 1..u64::MAX,
+        ) {
+            // threshold is always above suggested → skip check → Ok
+            let threshold = suggested.saturating_add(1);
+            let result = FeeCalculator::check_limits(fee, suggested, multiplier, threshold);
+            prop_assert!(result.is_ok(), "expected Ok when suggested < threshold");
+        }
+
+        #[test]
+        fn check_limits_within_ceiling_ok(
+            suggested in 1..u32::MAX as u128,
+            multiplier in 1..100u64,
+        ) {
+            // fee exactly at ceiling → should be Ok
+            let ceiling = (multiplier as u128).saturating_mul(suggested);
+            let result = FeeCalculator::check_limits(ceiling, suggested, multiplier, 0);
+            prop_assert!(result.is_ok(), "expected Ok when fee == ceiling");
+        }
+
+        #[test]
+        fn check_limits_above_ceiling_err(
+            suggested in 1..u32::MAX as u128,
+            multiplier in 1..100u64,
+        ) {
+            // fee one above ceiling → should be Err
+            let ceiling = (multiplier as u128).saturating_mul(suggested);
+            let fee = ceiling.saturating_add(1);
+            // guard: only test when fee actually exceeded ceiling (no saturation)
+            prop_assume!(fee > ceiling);
+            let result = FeeCalculator::check_limits(fee, suggested, multiplier, 0);
+            prop_assert!(result.is_err(), "expected Err when fee > ceiling");
         }
     }
 }

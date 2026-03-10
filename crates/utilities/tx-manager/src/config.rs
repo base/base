@@ -26,3 +26,16 @@ impl Default for TxManagerConfig {
         Self { fee_limit_multiplier: 5, fee_limit_threshold: 0 }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_values() {
+        let config = TxManagerConfig::default();
+
+        assert_eq!(config.fee_limit_multiplier, 5);
+        assert_eq!(config.fee_limit_threshold, 0);
+    }
+}
