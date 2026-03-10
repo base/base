@@ -155,6 +155,9 @@ mod tests {
         let state = SendState::new();
         assert!(!state.is_waiting_for_confirmation());
         assert!(state.critical_error().is_none());
+        assert!(!state.should_bump_fees());
+        assert_eq!(state.successful_publish_count(), 0);
+        assert_eq!(state.bump_count(), 0);
     }
 
     // ── process_send_error ──────────────────────────────────────────────
@@ -198,6 +201,24 @@ mod tests {
         assert!(state.should_bump_fees());
     }
 
+    // ── process_send_error — wildcard no-ops ──────────────────────────────
+
+    #[rstest]
+    #[case::nonce_too_high(TxManagerError::NonceTooHigh)]
+    #[case::insufficient_funds(TxManagerError::InsufficientFunds)]
+    #[case::intrinsic_gas_too_low(TxManagerError::IntrinsicGasTooLow)]
+    #[case::execution_reverted(TxManagerError::ExecutionReverted)]
+    #[case::mempool_deadline(TxManagerError::MempoolDeadlineExpired)]
+    #[case::already_known(TxManagerError::AlreadyKnown)]
+    #[case::rpc(TxManagerError::Rpc("some error".to_string()))]
+    fn process_send_error_no_op_for_other_variants(#[case] err: TxManagerError) {
+        let state = SendState::new();
+        state.process_send_error(&err);
+
+        assert!(state.critical_error().is_none());
+        assert!(!state.should_bump_fees());
+    }
+
     // ── tx_mined / tx_not_mined ─────────────────────────────────────────
 
     #[test]
@@ -238,6 +259,29 @@ mod tests {
         state.process_send_error(&TxManagerError::NonceTooLow);
         state.process_send_error(&TxManagerError::NonceTooLow);
         assert!(state.critical_error().is_none());
+    }
+
+    #[test]
+    fn tx_not_mined_unknown_hash_is_no_op() {
+        let state = SendState::new();
+        let hash = B256::with_last_byte(42);
+
+        state.tx_not_mined(hash);
+        assert!(!state.is_waiting_for_confirmation());
+    }
+
+    #[test]
+    fn tx_mined_duplicate_is_idempotent() {
+        let state = SendState::new();
+        let hash = B256::with_last_byte(1);
+
+        state.tx_mined(hash);
+        state.tx_mined(hash);
+        assert!(state.is_waiting_for_confirmation());
+
+        // A single removal clears the duplicate.
+        state.tx_not_mined(hash);
+        assert!(!state.is_waiting_for_confirmation());
     }
 
     // ── is_waiting_for_confirmation ─────────────────────────────────────

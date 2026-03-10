@@ -53,7 +53,12 @@ mod tests {
     fn candidate_with_blobs_is_type3() {
         let candidate = TxCandidate { blobs: vec![Blob::default()], ..Default::default() };
 
-        assert!(!candidate.blobs.is_empty());
+        assert_eq!(candidate.blobs.len(), 1);
+        // Struct-update preserves remaining defaults.
+        assert!(candidate.tx_data.is_empty());
+        assert!(candidate.to.is_none());
+        assert_eq!(candidate.gas_limit, 0);
+        assert_eq!(candidate.value, U256::ZERO);
     }
 
     #[test]
