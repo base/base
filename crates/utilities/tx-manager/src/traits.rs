@@ -13,7 +13,7 @@ pub type SendResponse = TxManagerResult<TransactionReceipt>;
 ///
 /// Callers only need [`send`](TxManager::send),
 /// [`send_async`](TxManager::send_async), and
-/// [`from_address`](TxManager::from_address).
+/// [`sender_address`](TxManager::sender_address).
 /// Other accessors (chain ID, block number, etc.) are available
 /// directly on [`SimpleTxManager`](crate::SimpleTxManager).
 pub trait TxManager: Send + Sync {
@@ -30,6 +30,5 @@ pub trait TxManager: Send + Sync {
     ) -> impl Future<Output = oneshot::Receiver<SendResponse>> + Send;
 
     /// Returns the address transactions are sent from.
-    #[allow(clippy::wrong_self_convention)]
-    fn from_address(&self) -> Address;
+    fn sender_address(&self) -> Address;
 }

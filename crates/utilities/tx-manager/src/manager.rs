@@ -19,7 +19,7 @@ impl TxManager for SimpleTxManager {
         todo!("SimpleTxManager::send_async")
     }
 
-    fn from_address(&self) -> Address {
-        todo!("SimpleTxManager::from_address")
+    fn sender_address(&self) -> Address {
+        todo!("SimpleTxManager::sender_address")
     }
 }
