@@ -28,6 +28,7 @@ struct SendStateInner {
     /// Transaction hashes that have been mined.
     mined_txs: HashSet<B256>,
     /// Number of successfully published transactions.
+    // TODO: incremented by the send loop (not yet implemented)
     successful_publish_count: u64,
     /// Consecutive nonce-too-low errors observed.
     nonce_too_low_count: u64,
@@ -36,6 +37,7 @@ struct SendStateInner {
     /// Whether fees should be bumped on the next attempt.
     bump_fees: bool,
     /// Number of fee bumps performed.
+    // TODO: incremented by the send loop (not yet implemented)
     bump_count: u64,
 }
 
@@ -179,6 +181,21 @@ mod tests {
             state.process_send_error(err);
         }
         assert_eq!(state.critical_error(), expected);
+    }
+
+    // ── process_send_error — fee bumping ─────────────────────────────────
+
+    #[rstest]
+    #[case::underpriced(TxManagerError::Underpriced)]
+    #[case::replacement_underpriced(TxManagerError::ReplacementUnderpriced)]
+    #[case::fee_too_low(TxManagerError::FeeTooLow)]
+    #[case::max_fee_too_low(TxManagerError::MaxFeePerGasTooLow)]
+    fn process_send_error_sets_bump_fees(#[case] err: TxManagerError) {
+        let state = SendState::new();
+        assert!(!state.should_bump_fees());
+
+        state.process_send_error(&err);
+        assert!(state.should_bump_fees());
     }
 
     // ── tx_mined / tx_not_mined ─────────────────────────────────────────
