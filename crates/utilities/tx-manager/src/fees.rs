@@ -151,22 +151,6 @@ impl FeeCalculator {
         Ok(())
     }
 
-    /// Enforces a configurable fee ceiling for blob fees.
-    ///
-    /// Identical logic to [`check_limits`](Self::check_limits) applied to
-    /// blob-specific fee values.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TxManagerError::FeeLimitExceeded`] when the proposed blob
-    /// fee exceeds the configured ceiling.
-    pub const fn check_blob_fee_limits(
-        blob_fee: u128,
-        suggested_blob_fee: u128,
-        config: &TxManagerConfig,
-    ) -> Result<(), TxManagerError> {
-        Self::check_limits(blob_fee, suggested_blob_fee, config)
-    }
 }
 
 /// Intermediate fee estimates computed during gas price suggestion.
@@ -321,28 +305,6 @@ mod tests {
     ) {
         let config = TxManagerConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: threshold };
         let result = FeeCalculator::check_limits(fee, suggested, &config);
-        assert_eq!(result.is_ok(), should_pass);
-        if !should_pass {
-            assert_eq!(result.unwrap_err(), TxManagerError::FeeLimitExceeded);
-        }
-    }
-
-    // ── check_blob_fee_limits ───────────────────────────────────────────
-
-    #[rstest]
-    #[case::within_limit(400, 100, 5, 100, true)]
-    #[case::over_limit(501, 100, 5, 100, false)]
-    #[case::below_threshold(1000, 50, 5, 100, true)]
-    fn check_blob_fee_limits(
-        #[case] blob_fee: u128,
-        #[case] suggested: u128,
-        #[case] multiplier: u64,
-        #[case] threshold: u128,
-        #[case] should_pass: bool,
-    ) {
-        let config = TxManagerConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: threshold };
-        let result =
-            FeeCalculator::check_blob_fee_limits(blob_fee, suggested, &config);
         assert_eq!(result.is_ok(), should_pass);
         if !should_pass {
             assert_eq!(result.unwrap_err(), TxManagerError::FeeLimitExceeded);
