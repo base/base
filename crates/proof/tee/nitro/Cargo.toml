@@ -70,5 +70,8 @@ host = [
 	"tokio/net",
 ]
 
+[package.metadata.cargo-udeps.ignore]
+normal = ["aws-nitro-enclaves-nsm-api"]
+
 [lints]
 workspace = true
