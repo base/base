@@ -2,13 +2,12 @@
 use alloc::{collections::BTreeMap, string::String};
 use core::fmt::Display;
 
-use derive_more::{Deref, From};
-
 use alloy_chains::NamedChain;
 use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::EthashConfig;
 use alloy_primitives::{Address, U256, address, map::HashMap};
 use base_consensus_genesis::L1ChainConfig;
+use derive_more::{Deref, From};
 
 use crate::alloc::string::ToString;
 
