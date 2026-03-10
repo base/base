@@ -122,8 +122,11 @@ impl FeeCalculator {
             // Case 4: both below → both threshold values
             // Clamp fee_cap to at least threshold_tip to maintain fee_cap >= tip invariant.
             (false, false) => {
-                let fee_cap =
-                    if threshold_fee_cap > threshold_tip { threshold_fee_cap } else { threshold_tip };
+                let fee_cap = if threshold_fee_cap > threshold_tip {
+                    threshold_fee_cap
+                } else {
+                    threshold_tip
+                };
                 (threshold_tip, fee_cap)
             }
         }
