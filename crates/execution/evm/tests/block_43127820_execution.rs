@@ -16,7 +16,11 @@
 use std::{collections::HashMap, fmt, fs, sync::Arc};
 
 use alloy_consensus::{Block, BlockBody, Header};
-use alloy_eips::BlockId;
+use alloy_eips::{
+    BlockId,
+    eip2935::HISTORY_STORAGE_ADDRESS,
+    eip4788::{BEACON_ROOTS_ADDRESS, SYSTEM_ADDRESS},
+};
 use alloy_primitives::{map::HashMap as PrimitivesMap, Address, Bytes, Sealable, B256, U256,
     keccak256,
 };
@@ -246,7 +250,99 @@ async fn block_43127820_reth_execution() {
         }
     }
 
-    // 4. Populate StateProviderTest with the merged pre-block state.
+    // 4. Pre-seed system addresses that are modified by apply_pre_execution_changes
+    //    but are NOT captured by the prestate tracer (which only traces user transactions).
+    //    Without these, EIP-4788/EIP-2935 system calls are no-ops and the BundleState diverges.
+    let system_addrs = [
+        SYSTEM_ADDRESS,
+        BEACON_ROOTS_ADDRESS,
+        HISTORY_STORAGE_ADDRESS,
+        target_block.header.inner.beneficiary,
+    ];
+    let parent_block_id = BlockId::from(TARGET_BLOCK - 1);
+    eprintln!("Pre-seeding {} system addresses...", system_addrs.len());
+    for addr in &system_addrs {
+        if prestate.contains_key(addr) {
+            continue; // already in prestate from tracer
+        }
+
+        // Fetch account state at the parent block.
+        let balance = provider
+            .get_balance(*addr)
+            .block_id(parent_block_id)
+            .await
+            .unwrap_or_default();
+        let nonce = provider
+            .get_transaction_count(*addr)
+            .block_id(parent_block_id)
+            .await
+            .unwrap_or_default();
+        let code = provider
+            .get_code_at(*addr)
+            .block_id(parent_block_id)
+            .await
+            .unwrap_or_default();
+
+        let code_opt = if code.is_empty() { None } else { Some(code) };
+        prestate.insert(*addr, PrestateAccount {
+            balance,
+            nonce,
+            code: code_opt,
+            storage: None,
+        });
+        eprintln!("  pre-seeded {addr} (nonce={nonce}, balance={balance}, has_code={})",
+            prestate[addr].code.is_some());
+    }
+
+    // Also fetch storage for BEACON_ROOTS_ADDRESS at the slots the system call will read/write.
+    // EIP-4788: writes at slots (timestamp % 8191) and (timestamp % 8191 + 8191).
+    {
+        let block_ts = target_block.header.inner.timestamp;
+        const BEACON_ROOTS_HISTORY_BUFFER_LENGTH: u64 = 8191;
+        let ts_idx = block_ts % BEACON_ROOTS_HISTORY_BUFFER_LENGTH;
+        let root_idx = ts_idx + BEACON_ROOTS_HISTORY_BUFFER_LENGTH;
+        let beacon_slots = vec![B256::from(U256::from(ts_idx)), B256::from(U256::from(root_idx))];
+
+        let proof = provider
+            .get_proof(BEACON_ROOTS_ADDRESS, beacon_slots)
+            .block_id(parent_block_id)
+            .await;
+        if let Ok(proof) = proof {
+            let storage: HashMap<B256, U256> = proof
+                .storage_proof
+                .iter()
+                .map(|sp| (sp.key.as_b256(), sp.value))
+                .collect();
+            if let Some(acct) = prestate.get_mut(&BEACON_ROOTS_ADDRESS) {
+                acct.storage = Some(storage);
+            }
+        }
+    }
+
+    // Fetch storage for HISTORY_STORAGE_ADDRESS at the slot the system call will write.
+    // EIP-2935: writes parent hash at slot (parent_number % HISTORY_SERVE_WINDOW).
+    {
+        const HISTORY_SERVE_WINDOW: u64 = 8192;
+        let slot = (TARGET_BLOCK - 1) % HISTORY_SERVE_WINDOW;
+        let history_slots = vec![B256::from(U256::from(slot))];
+
+        let proof = provider
+            .get_proof(HISTORY_STORAGE_ADDRESS, history_slots)
+            .block_id(parent_block_id)
+            .await;
+        if let Ok(proof) = proof {
+            let storage: HashMap<B256, U256> = proof
+                .storage_proof
+                .iter()
+                .map(|sp| (sp.key.as_b256(), sp.value))
+                .collect();
+            if let Some(acct) = prestate.get_mut(&HISTORY_STORAGE_ADDRESS) {
+                acct.storage = Some(storage);
+            }
+        }
+    }
+
+    // 5. Populate StateProviderTest with the merged pre-block state.
     let mut db = StateProviderTest::default();
     for (addr, acct) in &prestate {
         let account = Account {
@@ -313,7 +409,6 @@ async fn block_43127820_reth_execution() {
     //     Pre-seed trie node cache with proof nodes for every account/slot in the BundleState.
     eprintln!("Fetching eth_getProof for {} accounts...", output.state.state().len());
 
-    let parent_block_id = BlockId::from(TARGET_BLOCK - 1);
     let mut trie_node_cache: HashMap<B256, Bytes> = HashMap::new();
     let mut proof_count = 0usize;
 
