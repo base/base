@@ -61,7 +61,6 @@ impl SendState {
     /// `safe_abort_nonce_too_low_count` is 0. A zero threshold would cause the
     /// send loop to abort on the very first nonce-too-low error after a
     /// successful publish, making fee bumps impossible.
-    #[must_use = "a constructed SendState should be used by the send loop"]
     pub fn new(safe_abort_nonce_too_low_count: u64) -> TxManagerResult<Self> {
         if safe_abort_nonce_too_low_count == 0 {
             return Err(TxManagerError::InvalidSafeAbortNonceTooLowCount);
