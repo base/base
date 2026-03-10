@@ -4,7 +4,7 @@ use alloc::{sync::Arc, vec};
 
 use alloy_chains::Chain;
 use alloy_primitives::{U256, b256};
-use base_execution_forks::{BASE_MAINNET_HARDFORKS, OpHardfork};
+use base_execution_forks::{BASE_MAINNET_HARDFORKS, BaseUpgrade};
 use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, ChainSpec};
 use reth_ethereum_forks::{EthereumHardfork, Hardfork};
 use reth_primitives_traits::{SealedHeader, sync::LazyLock};
@@ -29,7 +29,7 @@ pub static BASE_MAINNET: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
             base_fee_params: BaseFeeParamsKind::Variable(
                 vec![
                     (EthereumHardfork::London.boxed(), BaseFeeParams::optimism()),
-                    (OpHardfork::Canyon.boxed(), BaseFeeParams::optimism_canyon()),
+                    (BaseUpgrade::Canyon.boxed(), BaseFeeParams::optimism_canyon()),
                 ]
                 .into(),
             ),

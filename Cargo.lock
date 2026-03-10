@@ -2336,7 +2336,7 @@ dependencies = [
  "alloy-primitives",
  "auto_impl",
  "base-alloy-consensus",
- "base-alloy-hardforks",
+ "base-alloy-upgrades",
  "base-revm",
  "revm",
  "rstest",
@@ -2365,17 +2365,6 @@ version = "0.0.0"
 dependencies = [
  "hex-literal 1.1.0",
  "rstest",
-]
-
-[[package]]
-name = "base-alloy-hardforks"
-version = "0.0.0"
-dependencies = [
- "alloy-chains",
- "alloy-hardforks",
- "alloy-primitives",
- "auto_impl",
- "serde",
 ]
 
 [[package]]
@@ -2461,6 +2450,17 @@ dependencies = [
  "sha2 0.10.9",
  "snap",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "base-alloy-upgrades"
+version = "0.0.0"
+dependencies = [
+ "alloy-chains",
+ "alloy-hardforks",
+ "alloy-primitives",
+ "auto_impl",
+ "serde",
 ]
 
 [[package]]
@@ -2923,7 +2923,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "arbitrary",
- "base-alloy-hardforks",
+ "base-alloy-upgrades",
  "base-revm",
  "derive_more",
  "rand 0.9.2",
@@ -3102,7 +3102,7 @@ dependencies = [
  "alloy-genesis",
  "alloy-hardforks",
  "alloy-primitives",
- "base-alloy-hardforks",
+ "base-alloy-upgrades",
  "base-consensus-genesis",
  "derive_more",
  "spin 0.10.0",
@@ -3270,8 +3270,8 @@ dependencies = [
  "alloy-hardforks",
  "alloy-primitives",
  "base-alloy-consensus",
- "base-alloy-hardforks",
  "base-alloy-rpc-types",
+ "base-alloy-upgrades",
  "base-execution-forks",
  "base-protocol",
  "derive_more",
@@ -3404,7 +3404,7 @@ name = "base-execution-forks"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "base-alloy-hardforks",
+ "base-alloy-upgrades",
  "reth-ethereum-forks",
  "spin 0.10.0",
 ]
@@ -3495,11 +3495,11 @@ dependencies = [
  "alloy-transport-http",
  "async-trait",
  "base-alloy-consensus",
- "base-alloy-hardforks",
  "base-alloy-network",
  "base-alloy-rpc-jsonrpsee",
  "base-alloy-rpc-types",
  "base-alloy-rpc-types-engine",
+ "base-alloy-upgrades",
  "base-execution-chainspec",
  "base-execution-evm",
  "base-execution-forks",
@@ -3790,9 +3790,9 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
  "base-alloy-consensus",
- "base-alloy-hardforks",
  "base-alloy-network",
  "base-alloy-rpc-types-engine",
+ "base-alloy-upgrades",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",
@@ -16863,9 +16863,9 @@ dependencies = [
 
 [[package]]
 name = "tempfile"
-version = "3.26.0"
+version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82a72c767771b47409d2345987fda8628641887d5466101319899796367354a0"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
  "getrandom 0.4.2",
@@ -19454,9 +19454,9 @@ checksum = "cb8a0807f7c01457d0379ba880ba6322660448ddebc890ce29bb64da71fb40f9"
 
 [[package]]
 name = "zune-jpeg"
-version = "0.5.12"
+version = "0.5.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "410e9ecef634c709e3831c2cfdb8d9c32164fae1c67496d5b68fff728eec37fe"
+checksum = "ec5f41c76397b7da451efd19915684f727d7e1d516384ca6bd0ec43ec94de23c"
 dependencies = [
  "zune-core",
 ]

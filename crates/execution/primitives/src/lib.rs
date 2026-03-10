@@ -13,15 +13,15 @@ pub use transaction::*;
 
 mod receipt;
 
-/// Optimism-specific block type.
+/// Base-specific block type.
 pub use base_alloy_consensus::OpBlock;
 pub use base_alloy_consensus::OpReceipt;
 pub use receipt::DepositReceipt;
 
-/// Optimism-specific block body type.
+/// Base-specific block body type.
 pub type OpBlockBody = <OpBlock as reth_primitives_traits::Block>::Body;
 
-/// Primitive types for Optimism Node.
+/// Primitive types for Base Node.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OpPrimitives;

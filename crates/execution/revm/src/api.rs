@@ -1,4 +1,4 @@
-//! Optimism API types.
+//! Base API types.
 
 mod builder;
 pub use builder::{DefaultOpEvm, OpBuilder};

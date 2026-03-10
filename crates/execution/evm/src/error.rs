@@ -1,4 +1,4 @@
-//! Error types for the Optimism EVM module.
+//! Error types for the Base EVM module.
 
 use reth_evm::execute::BlockExecutionError;
 
@@ -41,12 +41,12 @@ pub enum L1BlockInfoError {
     /// DA foootprint gas scalar constant conversion error
     #[error("could not convert DA footprint gas scalar constant")]
     DaFootprintGasScalarConversion,
-    /// Optimism hardforks not active
-    #[error("Optimism hardforks are not active")]
+    /// Base hardforks not active
+    #[error("Base hardforks are not active")]
     HardforksNotActive,
 }
 
-/// Optimism Block Executor Errors
+/// Base Block Executor Errors
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OpBlockExecutionError {
     /// Error when trying to parse L1 block info

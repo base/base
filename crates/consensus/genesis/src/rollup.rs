@@ -3,7 +3,7 @@
 use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
-use base_alloy_hardforks::{OpHardfork, OpHardforks};
+use base_alloy_upgrades::{BaseUpgrade, BaseUpgrades};
 
 use crate::{BASE_MAINNET_BASE_FEE_CONFIG, BaseFeeConfig, ChainGenesis, HardForkConfig};
 
@@ -351,73 +351,73 @@ impl RollupConfig {
 impl EthereumHardforks for RollupConfig {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
         if fork <= EthereumHardfork::Berlin {
-            // We assume that OP chains were launched with all forks before Berlin activated.
+            // We assume that Base chains were launched with all forks before Berlin activated.
             ForkCondition::Block(0)
         } else if fork <= EthereumHardfork::Paris {
             // Bedrock activates all hardforks up to Paris.
-            self.op_fork_activation(OpHardfork::Bedrock)
+            self.upgrade_activation(BaseUpgrade::Bedrock)
         } else if fork <= EthereumHardfork::Shanghai {
             // Canyon activates Shanghai hardfork.
-            self.op_fork_activation(OpHardfork::Canyon)
+            self.upgrade_activation(BaseUpgrade::Canyon)
         } else if fork <= EthereumHardfork::Cancun {
             // Ecotone activates Cancun hardfork.
-            self.op_fork_activation(OpHardfork::Ecotone)
+            self.upgrade_activation(BaseUpgrade::Ecotone)
         } else if fork <= EthereumHardfork::Prague {
             // Isthmus activates Prague hardfork.
-            self.op_fork_activation(OpHardfork::Isthmus)
+            self.upgrade_activation(BaseUpgrade::Isthmus)
         } else {
             ForkCondition::Never
         }
     }
 }
 
-impl OpHardforks for RollupConfig {
-    fn op_fork_activation(&self, fork: OpHardfork) -> ForkCondition {
+impl BaseUpgrades for RollupConfig {
+    fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition {
         match fork {
-            OpHardfork::Bedrock => ForkCondition::Block(0),
-            OpHardfork::Regolith => self
+            BaseUpgrade::Bedrock => ForkCondition::Block(0),
+            BaseUpgrade::Regolith => self
                 .hardforks
                 .regolith_time
                 .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.op_fork_activation(OpHardfork::Canyon)),
-            OpHardfork::Canyon => self
+                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Canyon)),
+            BaseUpgrade::Canyon => self
                 .hardforks
                 .canyon_time
                 .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.op_fork_activation(OpHardfork::Ecotone)),
-            OpHardfork::Ecotone => self
+                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Ecotone)),
+            BaseUpgrade::Ecotone => self
                 .hardforks
                 .ecotone_time
                 .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.op_fork_activation(OpHardfork::Fjord)),
-            OpHardfork::Fjord => self
+                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Fjord)),
+            BaseUpgrade::Fjord => self
                 .hardforks
                 .fjord_time
                 .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.op_fork_activation(OpHardfork::Granite)),
-            OpHardfork::Granite => self
+                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Granite)),
+            BaseUpgrade::Granite => self
                 .hardforks
                 .granite_time
                 .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.op_fork_activation(OpHardfork::Holocene)),
-            OpHardfork::Holocene => self
+                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Holocene)),
+            BaseUpgrade::Holocene => self
                 .hardforks
                 .holocene_time
                 .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.op_fork_activation(OpHardfork::Isthmus)),
-            OpHardfork::Isthmus => self
+                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Isthmus)),
+            BaseUpgrade::Isthmus => self
                 .hardforks
                 .isthmus_time
                 .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.op_fork_activation(OpHardfork::Jovian)),
-            OpHardfork::Jovian => self
+                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Jovian)),
+            BaseUpgrade::Jovian => self
                 .hardforks
                 .jovian_time
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
-            // BaseV1 is standalone: not part of the OP-stack cascade chain. It only activates
+            // BaseV1 is standalone: not part of the Base upgrade cascade chain. It only activates
             // when explicitly configured and never implies (or is implied by) Jovian being active.
-            OpHardfork::BaseV1 => self
+            BaseUpgrade::BaseV1 => self
                 .hardforks
                 .base
                 .as_ref()

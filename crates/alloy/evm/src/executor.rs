@@ -14,7 +14,7 @@ use alloy_evm::{
 };
 use alloy_primitives::Address;
 use base_alloy_consensus::OpDepositReceipt;
-use base_alloy_hardforks::OpHardforks;
+use base_alloy_upgrades::BaseUpgrades;
 use base_revm::{
     DEPOSIT_TRANSACTION_TYPE, L1_BLOCK_CONTRACT, L1BlockInfo, estimate_tx_compressed_size,
 };
@@ -45,7 +45,7 @@ impl<H, T> TxResult for OpTxResult<H, T> {
     }
 }
 
-/// Block executor for Optimism.
+/// Block executor for Base.
 #[derive(Debug)]
 pub struct OpBlockExecutor<Evm, R: OpReceiptBuilder, Spec> {
     /// Spec.
@@ -75,7 +75,7 @@ impl<E, R, Spec> OpBlockExecutor<E, R, Spec>
 where
     E: Evm,
     R: OpReceiptBuilder,
-    Spec: OpHardforks + Clone,
+    Spec: BaseUpgrades + Clone,
 {
     /// Creates a new [`OpBlockExecutor`].
     pub fn new(evm: E, ctx: OpBlockExecutionCtx, spec: Spec, receipt_builder: R) -> Self {
@@ -101,7 +101,7 @@ where
             Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + OpTxEnv,
         >,
     R: OpReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
-    Spec: OpHardforks,
+    Spec: BaseUpgrades,
 {
     fn jovian_da_footprint_estimation(
         &mut self,
@@ -136,7 +136,7 @@ where
             Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + OpTxEnv,
         >,
     R: OpReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
-    Spec: OpHardforks,
+    Spec: BaseUpgrades,
 {
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
@@ -153,10 +153,10 @@ where
         self.system_caller
             .apply_beacon_root_contract_call(self.ctx.parent_beacon_block_root, &mut self.evm)?;
 
-        // Ensure that the create2deployer is force-deployed at the canyon transition. Optimism
+        // Ensure that the create2deployer is force-deployed at the canyon transition. Base
         // blocks will always have at least a single transaction in them (the L1 info transaction),
         // so we can safely assume that this will always be triggered upon the transition and that
-        // the above check for empty blocks will never be hit on OP chains.
+        // the above check for empty blocks will never be hit on Base chains.
         canyon::ensure_create2_deployer(
             &self.spec,
             self.evm.block().timestamp().saturating_to(),
@@ -358,7 +358,7 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Signature, U256, uint};
     use base_alloy_consensus::OpTxEnvelope;
-    use base_alloy_hardforks::{OpChainHardforks, OpHardfork};
+    use base_alloy_upgrades::{BaseChainUpgrades, BaseUpgrade};
     use base_revm::{
         BASE_FEE_SCALAR_OFFSET, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
         ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, L1BlockInfo,
@@ -380,7 +380,7 @@ mod tests {
     fn test_with_encoded() {
         let executor_factory = OpBlockExecutorFactory::new(
             OpAlloyReceiptBuilder::default(),
-            OpChainHardforks::base_mainnet(),
+            BaseChainUpgrades::base_mainnet(),
             OpEvmFactory::default(),
         );
         let mut db =
@@ -447,13 +447,13 @@ mod tests {
     fn build_executor<'a>(
         db: &'a mut revm::database::State<InMemoryDB>,
         receipt_builder: &'a OpAlloyReceiptBuilder,
-        op_chain_hardforks: &'a OpChainHardforks,
+        op_chain_hardforks: &'a BaseChainUpgrades,
         gas_limit: u64,
         jovian_timestamp: u64,
     ) -> OpBlockExecutor<
         OpEvm<&'a mut revm::database::State<InMemoryDB>, NoOpInspector>,
         &'a OpAlloyReceiptBuilder,
-        &'a OpChainHardforks,
+        &'a BaseChainUpgrades,
     > {
         let ctx = Context::op()
             .with_db(db)
@@ -486,10 +486,10 @@ mod tests {
         const JOVIAN_TIMESTAMP: u64 = 1746806402;
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
-        let op_chain_hardforks = OpChainHardforks::new(
-            OpHardfork::base_mainnet()
+        let op_chain_hardforks = BaseChainUpgrades::new(
+            BaseUpgrade::base_mainnet()
                 .into_iter()
-                .chain(vec![(OpHardfork::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
+                .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
 
         let receipt_builder = OpAlloyReceiptBuilder::default();
@@ -531,10 +531,10 @@ mod tests {
         const GAS_LIMIT: u64 = 100;
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
-        let op_chain_hardforks = OpChainHardforks::new(
-            OpHardfork::base_mainnet()
+        let op_chain_hardforks = BaseChainUpgrades::new(
+            BaseUpgrade::base_mainnet()
                 .into_iter()
-                .chain(vec![(OpHardfork::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
+                .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
 
         let receipt_builder = OpAlloyReceiptBuilder::default();
@@ -588,10 +588,10 @@ mod tests {
         const GAS_LIMIT: u64 = 200_000;
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
-        let op_chain_hardforks = OpChainHardforks::new(
-            OpHardfork::base_mainnet()
+        let op_chain_hardforks = BaseChainUpgrades::new(
+            BaseUpgrade::base_mainnet()
                 .into_iter()
-                .chain(vec![(OpHardfork::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
+                .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
 
         let receipt_builder = OpAlloyReceiptBuilder::default();

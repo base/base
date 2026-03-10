@@ -1,4 +1,4 @@
-//! Implements the Optimism engine API RPC methods.
+//! Implements the Base engine API RPC methods.
 
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::{B256, BlockHash, U64};
@@ -36,12 +36,12 @@ pub const OP_ENGINE_CAPABILITIES: &[&str] = &[
     "engine_getPayloadBodiesByRangeV1",
 ];
 
-/// Extension trait that gives access to Optimism engine API RPC methods.
+/// Extension trait that gives access to Base engine API RPC methods.
 ///
 /// Note:
 /// > The provider should use a JWT authentication layer.
 ///
-/// This follows the Optimism specs that can be found at:
+/// This follows the Base specs that can be found at:
 /// <https://specs.optimism.io/protocol/exec-engine.html#engine-api>
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "engine"), server_bounds(Engine::PayloadAttributes: jsonrpsee::core::DeserializeOwned))]
 #[cfg_attr(feature = "client", rpc(server, client, namespace = "engine", client_bounds(Engine::PayloadAttributes: jsonrpsee::core::Serialize + Clone), server_bounds(Engine::PayloadAttributes: jsonrpsee::core::DeserializeOwned)))]

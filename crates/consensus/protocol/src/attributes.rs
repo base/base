@@ -1,11 +1,11 @@
-//! Optimism Payload attributes that reference the parent L2 block.
+//! Base Payload attributes that reference the parent L2 block.
 
 use base_alloy_consensus::OpTxType;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 
 use crate::{BlockInfo, L2BlockInfo};
 
-/// Optimism Payload Attributes with parent block reference and the L1 origin block.
+/// Base Payload Attributes with parent block reference and the L1 origin block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OpAttributesWithParent {

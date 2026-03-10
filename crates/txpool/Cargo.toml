@@ -29,7 +29,6 @@ reth-transaction-pool.workspace = true
 # revm
 base-revm.workspace = true
 
-# optimism
 base-alloy-flz.workspace = true
 base-execution-evm.workspace = true
 base-execution-forks.workspace = true

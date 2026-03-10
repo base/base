@@ -1,6 +1,6 @@
 //! Additional Node command arguments.
 
-//! clap [Args](clap::Args) for optimism rollup configuration
+//! clap [Args](clap::Args) for Base rollup configuration
 
 use std::{path::PathBuf, time::Duration};
 
@@ -134,14 +134,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_optimism_default_args() {
+    fn test_parse_rollup_default_args() {
         let default_args = RollupArgs::default();
         let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
         assert_eq!(args, default_args);
     }
 
     #[test]
-    fn test_parse_optimism_compute_pending_block_args() {
+    fn test_parse_rollup_compute_pending_block_args() {
         let expected_args = RollupArgs { compute_pending_block: true, ..Default::default() };
         let args =
             CommandParser::<RollupArgs>::parse_from(["reth", "--rollup.compute-pending-block"])
@@ -150,14 +150,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_optimism_discovery_v4_args() {
+    fn test_parse_rollup_discovery_v4_args() {
         let expected_args = RollupArgs { discovery_v4: true, ..Default::default() };
         let args = CommandParser::<RollupArgs>::parse_from(["reth", "--rollup.discovery.v4"]).args;
         assert_eq!(args, expected_args);
     }
 
     #[test]
-    fn test_parse_optimism_sequencer_http_args() {
+    fn test_parse_rollup_sequencer_http_args() {
         let expected_args =
             RollupArgs { sequencer: Some("http://host:port".into()), ..Default::default() };
         let args = CommandParser::<RollupArgs>::parse_from([
@@ -170,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_optimism_disable_txpool_args() {
+    fn test_parse_rollup_disable_txpool_args() {
         let expected_args = RollupArgs { disable_txpool_gossip: true, ..Default::default() };
         let args =
             CommandParser::<RollupArgs>::parse_from(["reth", "--rollup.disable-tx-pool-gossip"])
@@ -179,7 +179,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_optimism_many_args() {
+    fn test_parse_rollup_many_args() {
         let expected_args = RollupArgs {
             disable_txpool_gossip: true,
             compute_pending_block: true,

@@ -1,7 +1,7 @@
 use alloy_chains::Chain;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
-use base_execution_forks::OpHardfork;
+use base_execution_forks::BaseUpgrade;
 use derive_more::From;
 use reth_chainspec::ChainSpecBuilder;
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
@@ -52,7 +52,7 @@ impl OpChainSpecBuilder {
     }
 
     /// Remove the given fork from the spec.
-    pub fn without_fork(mut self, fork: OpHardfork) -> Self {
+    pub fn without_fork(mut self, fork: BaseUpgrade) -> Self {
         self.inner = self.inner.without_fork(fork);
         self
     }
@@ -60,14 +60,14 @@ impl OpChainSpecBuilder {
     /// Enable Bedrock at genesis.
     pub fn bedrock_activated(mut self) -> Self {
         self.inner = self.inner.paris_activated();
-        self.inner = self.inner.with_fork(OpHardfork::Bedrock, ForkCondition::Block(0));
+        self.inner = self.inner.with_fork(BaseUpgrade::Bedrock, ForkCondition::Block(0));
         self
     }
 
     /// Enable Regolith at genesis.
     pub fn regolith_activated(mut self) -> Self {
         self = self.bedrock_activated();
-        self.inner = self.inner.with_fork(OpHardfork::Regolith, ForkCondition::Timestamp(0));
+        self.inner = self.inner.with_fork(BaseUpgrade::Regolith, ForkCondition::Timestamp(0));
         self
     }
 
@@ -75,7 +75,7 @@ impl OpChainSpecBuilder {
     pub fn canyon_activated(mut self) -> Self {
         self = self.regolith_activated();
         self.inner = self.inner.with_fork(EthereumHardfork::Shanghai, ForkCondition::Timestamp(0));
-        self.inner = self.inner.with_fork(OpHardfork::Canyon, ForkCondition::Timestamp(0));
+        self.inner = self.inner.with_fork(BaseUpgrade::Canyon, ForkCondition::Timestamp(0));
         self
     }
 
@@ -83,42 +83,42 @@ impl OpChainSpecBuilder {
     pub fn ecotone_activated(mut self) -> Self {
         self = self.canyon_activated();
         self.inner = self.inner.with_fork(EthereumHardfork::Cancun, ForkCondition::Timestamp(0));
-        self.inner = self.inner.with_fork(OpHardfork::Ecotone, ForkCondition::Timestamp(0));
+        self.inner = self.inner.with_fork(BaseUpgrade::Ecotone, ForkCondition::Timestamp(0));
         self
     }
 
     /// Enable Fjord at genesis.
     pub fn fjord_activated(mut self) -> Self {
         self = self.ecotone_activated();
-        self.inner = self.inner.with_fork(OpHardfork::Fjord, ForkCondition::Timestamp(0));
+        self.inner = self.inner.with_fork(BaseUpgrade::Fjord, ForkCondition::Timestamp(0));
         self
     }
 
     /// Enable Granite at genesis.
     pub fn granite_activated(mut self) -> Self {
         self = self.fjord_activated();
-        self.inner = self.inner.with_fork(OpHardfork::Granite, ForkCondition::Timestamp(0));
+        self.inner = self.inner.with_fork(BaseUpgrade::Granite, ForkCondition::Timestamp(0));
         self
     }
 
     /// Enable Holocene at genesis.
     pub fn holocene_activated(mut self) -> Self {
         self = self.granite_activated();
-        self.inner = self.inner.with_fork(OpHardfork::Holocene, ForkCondition::Timestamp(0));
+        self.inner = self.inner.with_fork(BaseUpgrade::Holocene, ForkCondition::Timestamp(0));
         self
     }
 
     /// Enable Isthmus at genesis.
     pub fn isthmus_activated(mut self) -> Self {
         self = self.holocene_activated();
-        self.inner = self.inner.with_fork(OpHardfork::Isthmus, ForkCondition::Timestamp(0));
+        self.inner = self.inner.with_fork(BaseUpgrade::Isthmus, ForkCondition::Timestamp(0));
         self
     }
 
     /// Enable Jovian at genesis.
     pub fn jovian_activated(mut self) -> Self {
         self = self.isthmus_activated();
-        self.inner = self.inner.with_fork(OpHardfork::Jovian, ForkCondition::Timestamp(0));
+        self.inner = self.inner.with_fork(BaseUpgrade::Jovian, ForkCondition::Timestamp(0));
         self
     }
 

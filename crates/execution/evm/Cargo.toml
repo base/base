@@ -30,7 +30,6 @@ base-alloy-evm = { workspace = true, features = ["std", "reth"] }
 base-alloy-consensus = { workspace = true, features = ["evm"] }
 base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
 
-# Optimism
 base-execution-forks.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true

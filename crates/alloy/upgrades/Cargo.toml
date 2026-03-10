@@ -1,6 +1,6 @@
 [package]
-name = "base-alloy-hardforks"
-description = "Named bindings for hardforks"
+name = "base-alloy-upgrades"
+description = "Named bindings for network upgrades"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

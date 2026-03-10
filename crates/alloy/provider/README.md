@@ -4,8 +4,8 @@ Base chain providers for the engine API, adopted from L1, and Base-unique engine
 
 ## Overview
 
-Extends the alloy provider with OP Stack engine API functionality. Provides the `OpEngineApi`
-trait with OP-specific engine methods for block building and forkchoice management, used
+Extends the alloy provider with Base engine API functionality. Provides the `OpEngineApi`
+trait with Base-specific engine methods for block building and forkchoice management, used
 internally by execution node implementations to communicate with the consensus layer via the
 Engine API.
 

@@ -1,4 +1,4 @@
-//! Contains the shadow compressor for Optimism.
+//! Contains the shadow compressor for Base.
 //!
 //! This is a port of the [ShadowCompressor][sc] from the op-batcher.
 //!

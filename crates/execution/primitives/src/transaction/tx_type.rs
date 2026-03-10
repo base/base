@@ -1,4 +1,4 @@
-//! Optimism transaction type.
+//! Base transaction type.
 
 #[cfg(test)]
 mod tests {

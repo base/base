@@ -80,7 +80,7 @@ pub struct ChainConfig {
     /// Hardfork Config. These values may override the superchain-wide defaults.
     #[cfg_attr(feature = "serde", serde(rename = "hardfork_configuration", alias = "hardforks"))]
     pub hardfork_config: HardForkConfig,
-    /// Optimism configuration
+    /// Base fee configuration
     #[cfg_attr(feature = "serde", serde(rename = "optimism"))]
     pub optimism: Option<BaseFeeConfig>,
     /// Chain-specific genesis information

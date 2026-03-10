@@ -1,4 +1,4 @@
-//! Payload attributes for OP chains.
+//! Payload attributes for Base chains.
 
 use alloc::vec::Vec;
 

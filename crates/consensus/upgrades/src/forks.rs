@@ -2,7 +2,7 @@
 
 use crate::{Ecotone, Fjord, Isthmus, Jovian};
 
-/// Optimism Hardforks
+/// Base Hardforks
 ///
 /// This type is used to encapsulate hardfork transactions.
 /// It exposes methods that return hardfork upgrade transactions

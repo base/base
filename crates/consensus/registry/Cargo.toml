@@ -22,7 +22,7 @@ alloy-eips.workspace = true
 alloy-genesis.workspace = true
 alloy-chains.workspace = true
 alloy-hardforks.workspace = true
-base-alloy-hardforks.workspace = true
+base-alloy-upgrades.workspace = true
 alloy-primitives = { workspace = true, features = ["map"] }
 
 # `serde`

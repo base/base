@@ -18,13 +18,13 @@ use reth_rpc_eth_types::{
 use reth_rpc_server_types::result::{internal_rpc_err, rpc_err};
 use revm::context_interface::result::{EVMError, InvalidTransaction};
 
-/// Optimism specific errors, that extend [`EthApiError`].
+/// Base-specific errors, that extend [`EthApiError`].
 #[derive(Debug, thiserror::Error)]
 pub enum OpEthApiError {
     /// L1 ethereum error.
     #[error(transparent)]
     Eth(#[from] EthApiError),
-    /// EVM error originating from invalid optimism data.
+    /// EVM error originating from invalid Base data.
     #[error(transparent)]
     Evm(#[from] OpBlockExecutionError),
     /// Thrown when calculating L1 gas fee.
@@ -63,7 +63,7 @@ impl From<OpEthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
     }
 }
 
-/// Optimism specific invalid transaction errors
+/// Base-specific invalid transaction errors
 #[derive(thiserror::Error, Debug)]
 pub enum OpInvalidTransactionError {
     /// A deposit transaction was submitted as a system transaction post-regolith.

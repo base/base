@@ -149,7 +149,7 @@ base-bundles = { path = "crates/alloy/bundles" }
 base-alloy-network = { path = "crates/alloy/network" }
 base-alloy-provider = { path = "crates/alloy/provider" }
 base-alloy-rpc-types = { path = "crates/alloy/rpc-types" }
-base-alloy-hardforks = { path = "crates/alloy/hardforks" }
+base-alloy-upgrades = { path = "crates/alloy/upgrades" }
 base-access-lists = { path = "crates/alloy/access-lists" }
 base-alloy-flashblocks = { path = "crates/alloy/flashblocks" }
 base-alloy-rpc-jsonrpsee = { path = "crates/alloy/rpc-jsonrpsee" }

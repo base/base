@@ -4,7 +4,7 @@ Named bindings for hardforks.
 
 ## Overview
 
-Defines the `OpHardfork` enum and `OpHardforks` trait for the OP Stack hardfork sequence
+Defines the `OpHardfork` enum and `OpHardforks` trait for the Base hardfork sequence
 (Bedrock, Canyon, Delta, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian). Provides concrete
 activation timestamps for Base Mainnet, Base Sepolia, and devnet chains as typed constants, and
 `OpChainHardforks` for per-chain configuration.

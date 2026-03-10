@@ -45,9 +45,9 @@ impl MinerApiExtServer for OpMinerExtApi {
     }
 }
 
-/// Optimism miner metrics
+/// Base miner metrics
 #[derive(Metrics, Clone)]
-#[metrics(scope = "optimism_rpc.miner")]
+#[metrics(scope = "base_rpc.miner")]
 pub struct OpMinerMetrics {
     /// Max DA tx size set on the miner
     max_da_tx_size: Gauge,

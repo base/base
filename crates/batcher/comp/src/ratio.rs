@@ -1,4 +1,4 @@
-//! Contains the ratio compressor for Optimism.
+//! Contains the ratio compressor for Base.
 //!
 //! This is a port of the [RatioCompressor][rc] from the op-batcher.
 //!

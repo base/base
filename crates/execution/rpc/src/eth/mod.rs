@@ -51,7 +51,7 @@ pub type EthApiNodeBackend<N, Rpc> = EthApiInner<N, Rpc>;
 /// This type provides the functionality for handling `eth_` related requests.
 ///
 /// This wraps a default `Eth` implementation, and provides additional functionality where the
-/// optimism spec deviates from the default (ethereum) spec, e.g. transaction forwarding to the
+/// Base spec deviates from the default (ethereum) spec, e.g. transaction forwarding to the
 /// sequencer, receipts, additional RPC fields for transaction receipts.
 ///
 /// This type implements the [`FullEthApi`](reth_rpc_eth_api::helpers::FullEthApi) by implemented
@@ -296,7 +296,7 @@ pub type OpRpcConvert<N, NetworkT> = RpcConverter<
     OpTxInfoMapper<<N as FullNodeTypes>::Provider>,
 >;
 
-/// Builds [`OpEthApi`] for Optimism.
+/// Builds [`OpEthApi`] for Base.
 #[derive(Debug)]
 pub struct OpEthApiBuilder<NetworkT = Base> {
     /// Sequencer client, configured to forward submitted transactions to sequencer of given OP

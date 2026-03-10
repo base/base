@@ -19,7 +19,7 @@ use base_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
 };
 use base_execution_evm::OpNextBlockEnvAttributes;
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_primitives::OpPrimitives;
 use reth_chainspec::EthChainSpec;
 use reth_payload_builder::{EthPayloadBuilderAttributes, PayloadBuilderError};
@@ -30,7 +30,7 @@ use reth_primitives_traits::{
     NodePrimitives, SealedBlock, SealedHeader, SignedTransaction, WithEncoded,
 };
 
-/// Optimism Payload Builder Attributes
+/// Base Payload Builder Attributes
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpPayloadBuilderAttributes<T> {
     /// Inner ethereum payload builder attributes
@@ -406,7 +406,7 @@ impl<H, T, ChainSpec> BuildNextEnv<OpPayloadBuilderAttributes<T>, H, ChainSpec>
 where
     H: BlockHeader,
     T: SignedTransaction,
-    ChainSpec: EthChainSpec + OpHardforks,
+    ChainSpec: EthChainSpec + BaseUpgrades,
 {
     fn build_next_env(
         attributes: &OpPayloadBuilderAttributes<T>,

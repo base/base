@@ -26,7 +26,7 @@ use crate::{BaseAddOns, BaseAddOnsBuilder};
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct BaseNode {
-    /// Additional Optimism args
+    /// Additional Base args
     pub args: RollupArgs,
     /// Data availability configuration for the OP builder.
     ///
@@ -42,7 +42,7 @@ pub struct BaseNode {
 }
 
 impl BaseNode {
-    /// Creates a new instance of the Optimism node type.
+    /// Creates a new instance of the Base node type.
     pub fn new(args: RollupArgs) -> Self {
         Self {
             args,

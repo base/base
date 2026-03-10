@@ -4,7 +4,7 @@ use alloy_evm::{
     Database, EvmFactory, FromRecoveredTx, FromTxWithEncoded,
     block::{BlockExecutorFactory, BlockExecutorFor},
 };
-use base_alloy_hardforks::{OpChainHardforks, OpHardforks};
+use base_alloy_upgrades::{BaseChainUpgrades, BaseUpgrades};
 use revm::{Inspector, database::State};
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
 #[derive(Debug, Clone, Default, Copy)]
 pub struct OpBlockExecutorFactory<
     R = OpAlloyReceiptBuilder,
-    Spec = OpChainHardforks,
+    Spec = BaseChainUpgrades,
     EvmFactory = OpEvmFactory,
 > {
     /// Receipt builder.
@@ -53,7 +53,7 @@ impl<R, Spec, EvmFactory> OpBlockExecutorFactory<R, Spec, EvmFactory> {
 impl<R, Spec, EvmF> BlockExecutorFactory for OpBlockExecutorFactory<R, Spec, EvmF>
 where
     R: OpReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
-    Spec: OpHardforks,
+    Spec: BaseUpgrades,
     EvmF: EvmFactory<
         Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + OpTxEnv,
     >,

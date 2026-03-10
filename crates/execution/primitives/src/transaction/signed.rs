@@ -87,7 +87,7 @@ impl OpTransactionSigned {
 
 impl SignerRecoverable for OpTransactionSigned {
     fn recover_signer(&self) -> Result<Address, RecoveryError> {
-        // Optimism's Deposit transaction does not have a signature. Directly return the
+        // Deposit transactions do not have a signature. Directly return the
         // `from` address.
         if let OpTypedTransaction::Deposit(TxDeposit { from, .. }) = self.transaction {
             return Ok(from);
@@ -99,7 +99,7 @@ impl SignerRecoverable for OpTransactionSigned {
     }
 
     fn recover_signer_unchecked(&self) -> Result<Address, RecoveryError> {
-        // Optimism's Deposit transaction does not have a signature. Directly return the
+        // Deposit transactions do not have a signature. Directly return the
         // `from` address.
         if let OpTypedTransaction::Deposit(TxDeposit { from, .. }) = &self.transaction {
             return Ok(*from);
@@ -112,7 +112,7 @@ impl SignerRecoverable for OpTransactionSigned {
 
     fn recover_unchecked_with_buf(&self, buf: &mut Vec<u8>) -> Result<Address, RecoveryError> {
         match &self.transaction {
-            // Optimism's Deposit transaction does not have a signature. Directly return the
+            // Deposit transactions do not have a signature. Directly return the
             // `from` address.
             OpTypedTransaction::Deposit(tx) => return Ok(tx.from),
             OpTypedTransaction::Legacy(tx) => tx.encode_for_signing(buf),

@@ -1,7 +1,7 @@
-//! Engine API version selection based on Optimism hardfork activations.
+//! Engine API version selection based on Base hardfork activations.
 //!
 //! Automatically selects the appropriate Engine API method versions based on
-//! the rollup configuration and block timestamps. Different Optimism hardforks
+//! the rollup configuration and block timestamps. Different Base hardforks
 //! require different Engine API versions to support new features.
 //!
 //! # Version Mapping

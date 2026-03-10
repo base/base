@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use crate::{ChannelCompressor, CompressorError, CompressorResult, CompressorWriter};
 
-/// The brotli encoding level used in Optimism.
+/// The brotli encoding level used in Base.
 ///
 /// See: <https://github.com/ethereum-optimism/optimism/blob/develop/op-node/rollup/derive/types.go#L50>
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +64,7 @@ impl From<BrotliLevel> for BrotliCompressor {
 /// Compresses the given bytes data using the Brotli compressor implemented
 /// in the [`brotli`](https://crates.io/crates/brotli) crate.
 ///
-/// Note: The level must be between 0 and 11. In Optimism, the levels 9, 10, and 11 are used.
+/// Note: The level must be between 0 and 11. In Base, the levels 9, 10, and 11 are used.
 ///       By default, [`BrotliLevel::Brotli10`] is used.
 #[allow(unused_variables)]
 #[allow(unused_mut)]

@@ -6,13 +6,13 @@
 extern crate alloc;
 
 mod hardfork;
-pub use hardfork::OpHardfork;
+pub use hardfork::BaseUpgrade;
 
 mod hardforks;
-pub use hardforks::OpHardforks;
+pub use hardforks::BaseUpgrades;
 
 mod chain;
-pub use chain::OpChainHardforks;
+pub use chain::BaseChainUpgrades;
 
 mod mainnet;
 pub use mainnet::{

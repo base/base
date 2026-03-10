@@ -14,7 +14,7 @@ use revm::{
 
 use crate::{OpSpecId, precompiles::OpPrecompiles};
 
-/// Optimism EVM extends the [`Evm`] type with Optimism specific types and logic.
+/// Base EVM extends the [`Evm`] type with Base-specific types and logic.
 #[derive(Debug, Clone)]
 pub struct OpEvm<
     CTX,
@@ -30,7 +30,7 @@ pub struct OpEvm<
 impl<CTX: ContextTr<Cfg: Cfg<Spec: Into<OpSpecId> + Clone>>, INSP>
     OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, OpPrecompiles>
 {
-    /// Create a new Optimism EVM.
+    /// Create a new Base EVM.
     pub fn new(ctx: CTX, inspector: INSP) -> Self {
         let spec: OpSpecId = ctx.cfg().spec().into();
         Self(Evm {

@@ -1,4 +1,4 @@
-//! Optimism transaction abstraction containing the `[OpTxTr]` trait and corresponding `[OpTransaction]` type.
+//! Base transaction abstraction containing the `[OpTxTr]` trait and corresponding `[OpTransaction]` type.
 use std::vec;
 
 use auto_impl::auto_impl;
@@ -14,7 +14,7 @@ use revm::{
 
 use super::deposit::{DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts};
 
-/// Optimism Transaction trait.
+/// Base Transaction trait.
 #[auto_impl(&, &mut, Box, Arc)]
 pub trait OpTxTr: Transaction {
     /// Enveloped transaction bytes.
@@ -35,7 +35,7 @@ pub trait OpTxTr: Transaction {
     }
 }
 
-/// Optimism transaction.
+/// Base transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OpTransaction<T: Transaction> {
@@ -58,14 +58,14 @@ impl<T: Transaction> AsRef<T> for OpTransaction<T> {
 }
 
 impl<T: Transaction> OpTransaction<T> {
-    /// Create a new Optimism transaction.
+    /// Create a new Base transaction.
     pub fn new(base: T) -> Self {
         Self { base, enveloped_tx: None, deposit: DepositTransactionParts::default() }
     }
 }
 
 impl OpTransaction<TxEnv> {
-    /// Create a new Optimism transaction.
+    /// Create a new Base transaction.
     pub fn builder() -> OpTransactionBuilder {
         OpTransactionBuilder::new()
     }

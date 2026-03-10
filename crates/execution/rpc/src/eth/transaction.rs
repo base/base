@@ -53,7 +53,7 @@ where
 
         let pool_transaction = <Self::Pool as TransactionPool>::Transaction::from_pooled(recovered);
 
-        // On optimism, transactions are forwarded directly to the sequencer to be included in
+        // On Base, transactions are forwarded directly to the sequencer to be included in
         // blocks that it builds.
         if let Some(client) = self.raw_tx_forwarder().as_ref() {
             debug!(target: "rpc::eth", hash = %pool_transaction.hash(), "forwarding raw transaction to sequencer");
@@ -192,7 +192,7 @@ where
     }
 }
 
-/// Optimism implementation of [`TxInfoMapper`].
+/// Base implementation of [`TxInfoMapper`].
 ///
 /// For deposits, receipt is fetched to extract `deposit_nonce` and `deposit_receipt_version`.
 /// Otherwise, it works like regular Ethereum implementation, i.e. uses [`TransactionInfo`].

@@ -101,7 +101,7 @@ impl L2ClientConfig {
 
 /// L2 RPC client implementation using Alloy.
 pub struct L2Client {
-    /// The underlying HTTP provider (Optimism network for deposit tx support).
+    /// The underlying HTTP provider (Base network for deposit tx support).
     provider: L2HttpProvider,
     /// Cache for blocks by hash.
     blocks_cache: MeteredCache<B256, OpBlock>,
