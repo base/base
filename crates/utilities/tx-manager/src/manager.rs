@@ -1,9 +1,8 @@
 //! Core transaction manager implementation.
 
 use alloy_primitives::Address;
-use tokio::sync::oneshot;
 
-use crate::{SendResponse, TxCandidate, TxManager};
+use crate::{SendHandle, SendResponse, TxCandidate, TxManager};
 
 /// Default transaction manager implementation.
 #[derive(Debug)]
@@ -14,7 +13,7 @@ impl TxManager for SimpleTxManager {
         todo!("SimpleTxManager::send")
     }
 
-    async fn send_async(&self, _candidate: TxCandidate) -> oneshot::Receiver<SendResponse> {
+    async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
         todo!("SimpleTxManager::send_async")
     }
 

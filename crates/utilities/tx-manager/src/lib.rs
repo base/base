@@ -19,7 +19,7 @@ mod config;
 pub use config::TxManagerConfig;
 
 mod traits;
-pub use traits::{SendResponse, TxManager};
+pub use traits::{SendHandle, SendResponse, TxManager};
 
 mod nonce;
 pub use nonce::NonceManager;

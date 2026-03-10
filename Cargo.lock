@@ -4399,6 +4399,7 @@ dependencies = [
 name = "base-tx-manager"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
  "alloy-rpc-types-eth",

@@ -20,10 +20,13 @@ Transaction lifecycle management for Base onchain components.
 - **`FeeCalculator`**: Calculates and bumps transaction fees.
 - **`SendResponse`**: Type alias (`TxManagerResult<TransactionReceipt>`) returned by async
   send operations.
+- **`SendHandle`**: Future returned by `send_async` that resolves directly to a
+  `SendResponse`, mapping a closed channel into `TxManagerError::ChannelClosed` so callers
+  avoid a two-layer `Result`.
 - **`SendState`**: Tracks the state of a transaction through its lifecycle.
 - **`TxManagerConfig`**: Configuration for the transaction manager.
 - **`TxManager`**: Trait defining the public API — `send` (blocking), `send_async` (returns
-  a `oneshot::Receiver<SendResponse>`), and `sender_address`. Requires `Send + Sync`.
+  a `SendHandle`), and `sender_address`. Requires `Send + Sync`.
 - **`NonceManager`**: Manages nonce allocation and tracking.
 - **`SimpleTxManager`**: Default `TxManager` implementation.
 - **`TxQueue`**: Queue for ordering and batching transactions.
@@ -50,6 +53,9 @@ fn handle_rpc_error(raw_msg: &str) {
     }
 }
 ```
+
+`ChannelClosed` is returned by [`SendHandle`] when the background send task drops
+its sender before delivering a result (panic or cancellation). It is non-retryable.
 
 `RpcErrorClassifier::classify_rpc_error` lowercases the input and matches against known
 geth error substrings in a fixed order (e.g., `"replacement transaction underpriced"`
