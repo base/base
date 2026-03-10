@@ -2,6 +2,7 @@
 
 use alloc::vec::Vec;
 
+#[cfg(feature = "std")]
 use ambassador::delegatable_trait;
 
 use crate::CompressorResult;
@@ -12,7 +13,7 @@ use crate::CompressorResult;
 /// compression-specific methods and return [`CompressorResult`] instead of
 /// standard library `Result`.
 #[allow(clippy::len_without_is_empty)]
-#[delegatable_trait]
+#[cfg_attr(feature = "std", delegatable_trait)]
 pub trait CompressorWriter {
     /// Writes the given data to the compressor.
     fn write(&mut self, data: &[u8]) -> CompressorResult<usize>;
@@ -37,7 +38,7 @@ pub trait CompressorWriter {
 /// Channel Compressor
 ///
 /// A compressor for channels.
-#[delegatable_trait]
+#[cfg_attr(feature = "std", delegatable_trait)]
 pub trait ChannelCompressor: CompressorWriter {
     /// Returns the compressed data buffer.
     fn get_compressed(&self) -> Vec<u8>;
