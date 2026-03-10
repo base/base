@@ -4,7 +4,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod error;
-pub use error::TxManagerError;
+pub use error::{RpcErrorClassifier, TxManagerError, TxManagerResult};
 
 mod candidate;
 pub use candidate::TxCandidate;

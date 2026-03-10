@@ -14,3 +14,8 @@ pub use enclave::{
     EnclaveConfig, NsmRng, NsmSession, SIGNATURE_LENGTH, SIGNING_DATA_BASE_LENGTH, Server, Signing,
     VerificationResult, get_default_ca_root, verify_attestation,
 };
+
+#[cfg(feature = "host")]
+mod host;
+#[cfg(feature = "host")]
+pub use host::{NitroBackend, NitroProverServer};
