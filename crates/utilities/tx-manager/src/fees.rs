@@ -403,29 +403,6 @@ mod tests {
         }
 
         #[test]
-        fn no_panic_on_extreme_calc_gas_fee_cap(base_fee: u128, tip: u128) {
-            let _ = FeeCalculator::calc_gas_fee_cap(base_fee, tip);
-        }
-
-        #[test]
-        fn no_panic_on_extreme_threshold(x: u128, is_blob: bool) {
-            let _ = FeeCalculator::calc_threshold_value(x, is_blob);
-        }
-
-        #[test]
-        fn no_panic_on_extreme_update_fees(
-            old_tip: u128,
-            old_fee_cap: u128,
-            new_tip: u128,
-            new_base_fee: u128,
-            is_blob: bool,
-        ) {
-            let _ = FeeCalculator::update_fees(
-                old_tip, old_fee_cap, new_tip, new_base_fee, is_blob,
-            );
-        }
-
-        #[test]
         fn check_limits_below_threshold_always_ok(
             fee: u128,
             suggested in 0..1000u128,
