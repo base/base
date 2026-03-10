@@ -132,7 +132,7 @@ impl SpanBatchBits {
     }
 
     /// Resizes an array from the right. Useful for big-endian zero extension.
-    fn resize_from_right<T: Default + Clone>(vec: &mut Vec<T>, new_size: usize) {
+    fn resize_from_right<T: Default + Copy>(vec: &mut Vec<T>, new_size: usize) {
         let current_size = vec.len();
         match new_size.cmp(&current_size) {
             Ordering::Less => {
@@ -144,8 +144,8 @@ impl SpanBatchBits {
                 // Calculate how many new elements to add.
                 let additional = new_size - current_size;
                 // Prepend new elements with default values.
-                let mut prepend_elements = vec![T::default(); additional];
-                prepend_elements.append(vec);
+                let mut prepend_elements = vec![T::default(); new_size];
+                prepend_elements[additional..].copy_from_slice(vec.as_ref());
                 *vec = prepend_elements;
             }
             Ordering::Equal => { /* If new_size == current_size, do nothing. */ }
