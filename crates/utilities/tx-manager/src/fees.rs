@@ -145,7 +145,7 @@ impl FeeCalculator {
 
         let ceiling = (config.fee_limit_multiplier as u128).saturating_mul(suggested);
         if fee > ceiling {
-            return Err(TxManagerError::FeeLimitExceeded);
+            return Err(TxManagerError::FeeLimitExceeded { fee, ceiling });
         }
 
         Ok(())
@@ -307,7 +307,7 @@ mod tests {
         let result = FeeCalculator::check_limits(fee, suggested, &config);
         assert_eq!(result.is_ok(), should_pass);
         if !should_pass {
-            assert_eq!(result.unwrap_err(), TxManagerError::FeeLimitExceeded);
+            assert!(matches!(result.unwrap_err(), TxManagerError::FeeLimitExceeded { .. }));
         }
     }
 

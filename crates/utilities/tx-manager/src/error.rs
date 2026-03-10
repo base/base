@@ -49,8 +49,13 @@ pub enum TxManagerError {
     /// Returned by [`FeeCalculator::check_limits`] when the proposed fee
     /// surpasses `fee_limit_multiplier × suggested_fee` and the suggested
     /// fee is at or above `fee_limit_threshold`. Non-retryable.
-    #[error("fee limit exceeded")]
-    FeeLimitExceeded,
+    #[error("fee limit exceeded: fee {fee} exceeds ceiling {ceiling}")]
+    FeeLimitExceeded {
+        /// The proposed fee that was rejected.
+        fee: u128,
+        /// The ceiling that was exceeded (`fee_limit_multiplier × suggested`).
+        ceiling: u128,
+    },
 
     // ── Fee / replacement errors (retryable) ─────────────────────────────
     /// Fee too low to enter the mempool.
@@ -257,7 +262,7 @@ mod tests {
     #[case::mempool_deadline(TxManagerError::MempoolDeadlineExpired, false)]
     #[case::already_reserved(TxManagerError::AlreadyReserved, false)]
     #[case::channel_closed(TxManagerError::ChannelClosed, false)]
-    #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded, false)]
+    #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 0, ceiling: 0 }, false)]
     #[case::underpriced(TxManagerError::Underpriced, true)]
     #[case::replacement_underpriced(TxManagerError::ReplacementUnderpriced, true)]
     #[case::fee_too_low(TxManagerError::FeeTooLow, true)]
@@ -302,7 +307,7 @@ mod tests {
     )]
     #[case::already_known(TxManagerError::AlreadyKnown, "transaction already known")]
     #[case::channel_closed(TxManagerError::ChannelClosed, "send response channel closed")]
-    #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded, "fee limit exceeded")]
+    #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 501, ceiling: 500 }, "fee limit exceeded: fee 501 exceeds ceiling 500")]
     #[case::rpc(TxManagerError::Rpc("test".to_string()), "rpc error: test")]
     fn display_output(#[case] error: TxManagerError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);
