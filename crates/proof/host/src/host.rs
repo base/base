@@ -111,7 +111,7 @@ impl Host {
         // Both the oracle and hint arms share the same RecordingOracle, ensuring all
         // fetched preimages are captured into the witness regardless of which channel
         // triggers them.
-        let client_task = Self::run_client(recording);
+        let client_task = Box::pin(Self::run_client(recording));
 
         tokio::select! {
             result = &mut server_task => {
