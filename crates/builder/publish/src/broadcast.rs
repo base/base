@@ -151,7 +151,12 @@ impl BroadcastLoop {
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Lagged(n)) => {
                         self.metrics.on_lagged(n);
-                        warn!(skipped = n, "Broadcast channel lagged during replay drain");
+                        warn!(
+                            peer_addr = %peer_addr,
+                            skipped = n,
+                            "Broadcast channel lagged during replay drain; \
+                             messages between replay snapshot and this point are lost"
+                        );
                         self.blocks = self.blocks.resubscribe();
                         break;
                     }

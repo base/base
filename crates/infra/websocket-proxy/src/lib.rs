@@ -24,7 +24,12 @@ pub use server::*;
 mod subscriber;
 pub use subscriber::*;
 
-/// Position of a flashblock entry in the stream.
+/// Position of a flashblock entry in the stream as `(block_number, flashblock_index)`.
+///
+/// An equivalent alias exists in `base-builder-publish` for the upstream publisher crate.
+/// Both are intentionally separate to avoid coupling a domain concept into the
+/// generic `base-ring-buffer` crate or introducing a shared crate for a single
+/// type alias that provides no additional type safety over the underlying tuple.
 pub type FlashblockPosition = (u64, u64);
 
 /// Convenience alias for the ring buffer used by the flashblocks proxy.

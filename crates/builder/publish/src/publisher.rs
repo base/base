@@ -12,7 +12,12 @@ use tokio_tungstenite::tungstenite::Utf8Bytes;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-/// Position of a flashblock entry in the stream.
+/// Position of a flashblock entry in the stream as `(block_number, flashblock_index)`.
+///
+/// An equivalent alias exists in `websocket-proxy` for the downstream proxy crate.
+/// Both are intentionally separate to avoid coupling a domain concept into the
+/// generic `base-ring-buffer` crate or introducing a shared crate for a single
+/// type alias that provides no additional type safety over the underlying tuple.
 pub type FlashblockPosition = (u64, u64);
 
 /// A broadcast entry carrying an optional position alongside its payload.
@@ -102,10 +107,10 @@ impl WebSocketPublisher {
         let position = Some((block_number, flashblock_index));
 
         // Broadcast first so that live subscribers never miss a message that
-        // exists in the ring buffer. `broadcast::Sender::send` only fails
-        // with `SendError` when there are zero receivers, which is expected
-        // when no clients are connected. There is no other failure mode.
-        let _ = self.pipe.send((position, utf8_bytes.clone()));
+        // exists in the ring buffer.
+        self.pipe
+            .send((position, utf8_bytes.clone()))
+            .map_err(|e| io::Error::new(io::ErrorKind::ConnectionAborted, e))?;
 
         self.ring_buffer.write().unwrap_or_else(|e| e.into_inner()).push(position, utf8_bytes);
 
@@ -193,12 +198,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn publish_with_zero_subscribers_succeeds() {
+    async fn publish_with_zero_subscribers_fails() {
         let publisher = WebSocketPublisher::new("127.0.0.1:0".parse().unwrap()).unwrap();
 
-        // No active receivers; broadcast is silently ignored, ring buffer is populated.
+        // No active receivers; broadcast returns ConnectionAborted.
         let result = publisher.publish(&serde_json::json!({"test": true}), 1, 0);
-        assert!(result.is_ok());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::ConnectionAborted);
     }
 
     #[tokio::test]
@@ -210,9 +215,12 @@ mod tests {
 
     #[tokio::test]
     async fn publish_stores_in_ring_buffer() {
-        let publisher = WebSocketPublisher::new("127.0.0.1:0".parse().unwrap()).unwrap();
-        let payload = serde_json::json!({"index": 1});
+        let addr = ephemeral_addr();
+        let publisher = WebSocketPublisher::new(addr).unwrap();
+        let (_client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
+        let payload = serde_json::json!({"index": 1});
         publisher.publish(&payload, 42, 1).unwrap();
 
         let buf = publisher.ring_buffer.read().unwrap();

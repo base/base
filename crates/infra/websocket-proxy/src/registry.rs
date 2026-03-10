@@ -65,20 +65,14 @@ impl Registry {
 
     /// Subscribes a client to the broadcast channel and forwards matching messages.
     ///
-    /// If the client has a `resume_position`, buffered entries after that position are sent
-    /// first. After replay the receiver is drained: entries whose position matches one
-    /// already sent are skipped (duplicates), while entries with a new position are
-    /// forwarded (gap-fill). This avoids both duplicate delivery and a gap in coverage.
+    /// If the client has a `resume_position`, buffered entries after that position are
+    /// replayed first. The broadcast receiver is created *after* replay completes so the
+    /// channel cannot lag during replay. A bridge re-snapshot of the ring buffer covers
+    /// entries published during replay that the fresh receiver cannot see, and
+    /// position-based deduplication prevents double delivery.
     pub async fn subscribe(&self, client: ClientConnection) {
         info!(message = "subscribing client", client = client.id());
 
-        // Subscribe to the live channel *before* snapshotting the ring buffer so that
-        // messages arriving between the snapshot and the start of the live loop are
-        // captured in the receiver. The drain phase deduplicates entries that appear in
-        // both the snapshot and the receiver. Tradeoff: if the broadcast channel capacity
-        // is exceeded during a long replay the receiver will lag, and the resubscribe
-        // fallback loses the messages between the lag point and the new subscription.
-        let mut receiver = self.sender.subscribe();
         let metrics = Arc::clone(&self.metrics);
         metrics.new_connections.increment(1);
 
@@ -91,8 +85,10 @@ impl Registry {
         let (pong_error_tx, mut pong_error_rx) = tokio::sync::oneshot::channel();
         let client_reader = self.start_reader(ws_receiver, client_id.clone(), pong_error_tx);
 
-        // Replay ring buffer entries before joining the live stream.
-        if let Some((bn, fi)) = resume_position {
+        // For resume clients: replay buffered entries, subscribe fresh, bridge,
+        // and drain. For new clients: subscribe immediately.
+        let mut receiver = if let Some((bn, fi)) = resume_position {
+            // Phase 1: Replay entries from a ring buffer snapshot.
             let entries: Vec<(Option<FlashblockPosition>, Bytes)> = self
                 .ring_buffer
                 .read()
@@ -107,8 +103,12 @@ impl Registry {
                 count = entries.len(),
                 "Replaying ring buffer entries to client"
             );
-            for (_, payload) in &entries {
+            let mut sent_positions: HashSet<FlashblockPosition> = HashSet::new();
+            for (pos, payload) in &entries {
                 if !filter.matches(payload, compressed) {
+                    if let Some(p) = *pos {
+                        sent_positions.insert(p);
+                    }
                     continue;
                 }
                 let msg = Message::Binary(payload.clone());
@@ -134,18 +134,76 @@ impl Registry {
                         return;
                     }
                 }
+                if let Some(p) = *pos {
+                    sent_positions.insert(p);
+                }
             }
 
-            // Drain messages that accumulated in the receiver during replay.
-            // Position-based deduplication is used instead of byte equality: it is
-            // cheaper (16 bytes per entry vs full payload clones) and semantically
-            // correct (identical content at different positions is not suppressed).
-            let replayed_positions: HashSet<FlashblockPosition> =
-                entries.into_iter().filter_map(|(pos, _)| pos).collect();
+            // Phase 2: Subscribe to the live channel, then re-snapshot the ring
+            // buffer to bridge entries published during replay. The receiver is
+            // created BEFORE the second snapshot so messages arriving between
+            // the snapshot and the live loop are captured. Unlike subscribing
+            // before replay, the receiver is fresh and has full channel capacity
+            // because no messages accumulated during the replay phase.
+            let mut receiver = self.sender.subscribe();
+
+            let bridge_entries: Vec<(Option<FlashblockPosition>, Bytes)> = self
+                .ring_buffer
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .positioned_entries_after(&(bn, fi))
+                .map(|(pos, payload)| (pos.copied(), payload.clone()))
+                .collect();
+            debug!(
+                client = %client_id,
+                bridge_count = bridge_entries.len(),
+                dedup_count = sent_positions.len(),
+                "Bridging ring buffer entries after replay"
+            );
+            for (pos, payload) in &bridge_entries {
+                if pos.is_some_and(|p| sent_positions.contains(&p)) {
+                    continue;
+                }
+                if !filter.matches(payload, compressed) {
+                    if let Some(p) = *pos {
+                        sent_positions.insert(p);
+                    }
+                    continue;
+                }
+                let msg = Message::Binary(payload.clone());
+                let send_result = timeout(self.send_timeout_ms, ws_sender.send(msg)).await;
+                match send_result {
+                    Ok(Ok(())) => {
+                        metrics.sent_messages.increment(1);
+                    }
+                    Ok(Err(e)) => {
+                        warn!(
+                            client = %client_id,
+                            error = %e,
+                            "Failed to send bridge entry to client"
+                        );
+                        client_reader.abort();
+                        metrics.closed_connections.increment(1);
+                        return;
+                    }
+                    Err(_) => {
+                        warn!(client = %client_id, "Send timeout during bridge replay");
+                        client_reader.abort();
+                        metrics.closed_connections.increment(1);
+                        return;
+                    }
+                }
+                if let Some(p) = *pos {
+                    sent_positions.insert(p);
+                }
+            }
+
+            // Phase 3: Drain messages accumulated in the receiver during the
+            // bridge phase. Position-based dedup prevents double delivery.
             loop {
                 match receiver.try_recv() {
                     Ok((pos, msg)) => {
-                        if pos.is_some_and(|p| replayed_positions.contains(&p)) {
+                        if pos.is_some_and(|p| sent_positions.contains(&p)) {
                             continue;
                         }
                         let msg_bytes: &[u8] = match &msg {
@@ -188,7 +246,11 @@ impl Registry {
                     Err(TryRecvError::Closed) => break,
                 }
             }
-        }
+
+            receiver
+        } else {
+            self.sender.subscribe()
+        };
 
         loop {
             tokio::select! {

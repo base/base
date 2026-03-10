@@ -216,7 +216,18 @@ async fn main() {
 
     let ring_buffer = Arc::new(RwLock::new(FlashblocksRingBuffer::new(args.ring_buffer_capacity)));
 
-    let (send, _rec) = broadcast::channel::<PositionedMessage>(args.message_buffer_size);
+    // Ensure the broadcast channel can hold at least as many entries as the ring
+    // buffer so that a full replay does not immediately lag the receiver.
+    let message_buffer_size = args.message_buffer_size.max(args.ring_buffer_capacity);
+    if message_buffer_size != args.message_buffer_size {
+        warn!(
+            original = args.message_buffer_size,
+            clamped = message_buffer_size,
+            ring_buffer_capacity = args.ring_buffer_capacity,
+            "Increased message_buffer_size to at least ring_buffer_capacity"
+        );
+    }
+    let (send, _rec) = broadcast::channel::<PositionedMessage>(message_buffer_size);
     let sender = send.clone();
 
     let ring_buffer_listener = Arc::clone(&ring_buffer);

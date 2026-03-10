@@ -1,8 +1,11 @@
 use core::fmt::{Debug, Formatter};
-use std::sync::{Arc, Mutex, RwLock};
+use std::{
+    sync::{Arc, Mutex, RwLock},
+    time::Duration,
+};
 
 use base_ring_buffer::RingBuffer;
-use tokio::{net::TcpListener, sync::broadcast};
+use tokio::{net::TcpListener, sync::broadcast, time::timeout};
 use tokio_tungstenite::{
     accept_hdr_async,
     tungstenite::{
@@ -14,6 +17,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{BroadcastLoop, FlashblockPosition, PositionedPayload, PublisherMetrics};
+
+/// Maximum time to wait for a WebSocket handshake to complete. Prevents a
+/// malicious client from holding a spawned task open indefinitely by opening
+/// a TCP connection and sending partial HTTP headers.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Parses `block_number` and `flashblock_index` from a URL query string.
 ///
@@ -103,6 +111,13 @@ impl Listener {
                     // malicious client that delays the HTTP upgrade would
                     // otherwise stall all incoming connections.
                     tokio::spawn(async move {
+                        // Skip the handshake entirely if shutdown is already
+                        // in progress; avoids spawning a BroadcastLoop that
+                        // would immediately discover cancellation.
+                        if cancel.is_cancelled() {
+                            return;
+                        }
+
                         // `accept_hdr_async` requires the callback to be `Send`,
                         // so we share the result via `Arc<Mutex<_>>`. After
                         // `.await` the closure has been dropped and `resume_pos`
@@ -111,15 +126,27 @@ impl Listener {
                         let resume_pos = Arc::new(Mutex::new(None::<(u64, u64)>));
                         let resume_pos_cb = Arc::clone(&resume_pos);
 
-                        let accept_result = accept_hdr_async(
-                            connection,
-                            move |req: &Request, response: Response| {
-                                *resume_pos_cb.lock().unwrap() =
-                                    parse_resume(req.uri().query());
-                                Ok(response)
-                            },
+                        let accept_result = timeout(
+                            HANDSHAKE_TIMEOUT,
+                            accept_hdr_async(
+                                connection,
+                                move |req: &Request, response: Response| {
+                                    *resume_pos_cb.lock().unwrap() =
+                                        parse_resume(req.uri().query());
+                                    Ok(response)
+                                },
+                            ),
                         )
                         .await;
+
+                        let accept_result = match accept_result {
+                            Ok(r) => r,
+                            Err(_) => {
+                                metrics.on_handshake_error();
+                                debug!(peer_addr = %peer_addr, "WebSocket handshake timed out");
+                                return;
+                            }
+                        };
 
                         match accept_result {
                             Ok(stream) => {
