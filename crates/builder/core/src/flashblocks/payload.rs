@@ -70,6 +70,45 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
     >,
 >;
 
+fn next_flashblock_extra(
+    extra: &FlashblocksExtraCtx,
+    mut target_da_for_batch: Option<u64>,
+    mut target_da_footprint_for_batch: Option<u64>,
+    mut target_state_root_time_for_batch_us: Option<u128>,
+) -> FlashblocksExtraCtx {
+    if let Some(da_limit) = extra.da_per_batch {
+        if let Some(da) = target_da_for_batch.as_mut() {
+            *da += da_limit;
+        } else {
+            error!(
+                "Builder end up in faulty invariant, if da_per_batch is set then total_da_per_batch must be set"
+            );
+        }
+    }
+
+    let target_gas_for_batch = extra.target_gas_for_batch + extra.gas_per_batch;
+
+    if let (Some(footprint), Some(da_footprint_limit)) =
+        (target_da_footprint_for_batch.as_mut(), extra.da_footprint_per_batch)
+    {
+        *footprint += da_footprint_limit;
+    }
+
+    if let (Some(time), Some(time_per_batch)) =
+        (target_state_root_time_for_batch_us.as_mut(), extra.state_root_time_per_batch_us)
+    {
+        *time += time_per_batch;
+    }
+
+    extra.clone().next(
+        target_gas_for_batch,
+        target_da_for_batch,
+        target_da_footprint_for_batch,
+        extra.execution_time_per_batch_us,
+        target_state_root_time_for_batch_us,
+    )
+}
+
 /// Execution information specific to flashblocks.
 ///
 /// Tracks the last consumed flashblock index and manages the
@@ -561,8 +600,10 @@ where
             block_state_root_time_limit_us,
             block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
         };
-        ctx.execute_best_transactions(info, state, best_txs, &limits)
-            .wrap_err("failed to execute best transactions")?;
+        let flashblock_cancelled = ctx
+            .execute_best_transactions(info, state, best_txs, &limits)
+            .wrap_err("failed to execute best transactions")?
+            .is_some();
         // Extract last transactions
         let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..]
             .iter()
@@ -587,8 +628,16 @@ where
                 .or_insert_with(|| tx.nonce());
         }
 
-        // We got block cancelled, we won't need anything from the block at this point
-        // Caution: this assume that block cancel token only cancelled when new FCU is received
+        let next_extra = next_flashblock_extra(
+            &ctx.extra,
+            target_da_for_batch,
+            target_da_footprint_for_batch,
+            target_state_root_time_for_batch_us,
+        );
+
+        // We got block cancelled, we won't need anything from the block at this point.
+        // Caution: this assumes that block cancel token is only cancelled when a new FCU is
+        // received.
         if block_cancel.is_cancelled() {
             self.record_flashblocks_metrics(
                 ctx,
@@ -598,6 +647,18 @@ where
                 "Payload building complete, channel closed or job cancelled",
             );
             return Ok(None);
+        }
+
+        if flashblock_cancelled || ctx.cancel.is_cancelled() {
+            info!(
+                target: "payload_builder",
+                message = "Flashblock cancelled before publish, advancing to next flashblock",
+                flashblock_index = flashblock_index,
+                current_gas = info.cumulative_gas_used,
+                current_da = info.cumulative_da_bytes_used,
+                target_flashblocks = ctx.target_flashblock_count(),
+            );
+            return Ok(Some(next_extra));
         }
 
         let payload_transaction_simulation_time = tx_execution_start_time.elapsed();
@@ -663,40 +724,6 @@ where
                 ctx.metrics
                     .flashblock_num_tx_histogram
                     .record(info.executed_transactions.len() as f64);
-
-                // Update bundle_state for next iteration
-                if let Some(da_limit) = ctx.extra.da_per_batch {
-                    if let Some(da) = target_da_for_batch.as_mut() {
-                        *da += da_limit;
-                    } else {
-                        error!(
-                            "Builder end up in faulty invariant, if da_per_batch is set then total_da_per_batch must be set"
-                        );
-                    }
-                }
-
-                let target_gas_for_batch = ctx.extra.target_gas_for_batch + ctx.extra.gas_per_batch;
-
-                if let (Some(footprint), Some(da_footprint_limit)) =
-                    (target_da_footprint_for_batch.as_mut(), ctx.extra.da_footprint_per_batch)
-                {
-                    *footprint += da_footprint_limit;
-                }
-
-                if let (Some(time), Some(time_per_batch)) = (
-                    target_state_root_time_for_batch_us.as_mut(),
-                    ctx.extra.state_root_time_per_batch_us,
-                ) {
-                    *time += time_per_batch;
-                }
-
-                let next_extra = ctx.extra.clone().next(
-                    target_gas_for_batch,
-                    target_da_for_batch,
-                    target_da_footprint_for_batch,
-                    ctx.extra.execution_time_per_batch_us,
-                    target_state_root_time_for_batch_us,
-                );
 
                 info!(
                     target: "payload_builder",
@@ -1135,7 +1162,8 @@ mod tests {
     use base_alloy_flashblocks::Metadata;
     use base_execution_primitives::OpReceipt;
 
-    use super::FlashblocksMetadata;
+    use super::{FlashblocksMetadata, next_flashblock_extra};
+    use crate::flashblocks::context::FlashblocksExtraCtx;
 
     /// Pin the JSON field names and structure of [`FlashblocksMetadata`].
     ///
@@ -1223,5 +1251,37 @@ mod tests {
         let json = serde_json::json!({"block_number": 123});
         let metadata: Metadata = serde_json::from_value(json).expect("v0.4.1 metadata must parse");
         assert_eq!(metadata.block_number, 123);
+    }
+
+    #[test]
+    fn next_flashblock_extra_advances_batch_targets() {
+        let extra = FlashblocksExtraCtx {
+            flashblock_index: 2,
+            target_flashblock_count: 5,
+            target_gas_for_batch: 300,
+            target_da_for_batch: Some(30),
+            target_da_footprint_for_batch: Some(60),
+            target_execution_time_for_batch_us: Some(90),
+            target_state_root_time_for_batch_us: Some(120),
+            gas_per_batch: 150,
+            da_per_batch: Some(10),
+            da_footprint_per_batch: Some(20),
+            execution_time_per_batch_us: Some(90),
+            state_root_time_per_batch_us: Some(40),
+        };
+
+        let next = next_flashblock_extra(
+            &extra,
+            extra.target_da_for_batch,
+            extra.target_da_footprint_for_batch,
+            extra.target_state_root_time_for_batch_us,
+        );
+
+        assert_eq!(next.flashblock_index, 3);
+        assert_eq!(next.target_gas_for_batch, 450);
+        assert_eq!(next.target_da_for_batch, Some(40));
+        assert_eq!(next.target_da_footprint_for_batch, Some(80));
+        assert_eq!(next.target_execution_time_for_batch_us, Some(90));
+        assert_eq!(next.target_state_root_time_for_batch_us, Some(160));
     }
 }
