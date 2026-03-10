@@ -36,9 +36,24 @@ Transaction lifecycle management for Base onchain components.
   `TxManagerError::InvalidSafeAbortNonceTooLowCount`. The `critical_error()` method
   evaluates abort conditions in priority order: mined tx suppression, already-reserved,
   pre-publish nonce-too-low, threshold nonce-too-low, and mempool deadline expiry.
-- **`TxManagerConfig`**: Configuration for the transaction manager. Controls fee-limit
-  enforcement via `fee_limit_multiplier` (ceiling as a multiple of the suggested fee) and
-  `fee_limit_threshold` (minimum suggested fee at which the limit activates).
+- **`TxManagerCli`**: Clap-based CLI argument struct with environment variable fallbacks
+  (prefix `BASE_TX_MANAGER_`). Captures all tunable tx-manager parameters and is designed
+  to be `#[command(flatten)]`-ed into parent CLI structs. Use `TxManagerCli::with_preset`
+  to get role-specific defaults (batcher or challenger).
+- **`TxManagerConfig`**: Validated runtime configuration constructed from `TxManagerCli`
+  via `TxManagerConfig::from_cli(cli, chain_id)`. Immutable fields (confirmations,
+  timeouts, chain ID) are set once; fee-related fields (`fee_limit_multiplier`,
+  `fee_limit_threshold`, `min_tip_cap`, `min_basefee`) are hot-reloadable via accessor
+  and mutator methods backed by `parking_lot::RwLock`.
+- **`FeeConfig`**: Lightweight snapshot of fee-limit parameters extracted from
+  `TxManagerConfig` for deterministic fee calculations in `FeeCalculator::check_limits`.
+- **`ConfigError`**: Validation error enum returned by `TxManagerConfig::from_cli` when
+  configuration values are out of range or gwei values are invalid (negative, `NaN`,
+  infinity).
+- **`TxManagerPreset`**: Enum for batcher/challenger role defaults. Batcher uses 10
+  confirmations; challenger uses 3.
+- **`GweiConversion`**: Unit struct with `gwei_to_wei` method for converting f64 gwei
+  values to u128 wei, with validation for negative, `NaN`, and infinite values.
 - **`TxManager`**: Trait defining the public API — `send` (blocking), `send_async` (returns
   a `SendHandle`), and `sender_address`. Requires `Send + Sync`.
 - **`NonceManager`**: Manages nonce allocation and tracking.
