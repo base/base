@@ -5,7 +5,6 @@ use base_alloy_evm::OpEvmFactory;
 use base_proof_client::{BootInfo, Prologue};
 use base_proof_preimage::PreimageKey;
 use base_proof_primitives::{ProofClaim, ProofEvidence, ProofResult, Proposal};
-use parking_lot::RwLock;
 use tracing::{info, warn};
 
 use crate::{
@@ -33,7 +32,7 @@ pub struct Server {
     /// PCR0 measurement (empty in local mode).
     pcr0: Vec<u8>,
     /// ECDSA signing key.
-    signer_key: RwLock<PrivateKeySigner>,
+    signer_key: PrivateKeySigner,
     /// The proposer address.
     proposer: Address,
     /// Per-chain config hash.
@@ -90,7 +89,7 @@ impl Server {
 
         Ok(Self {
             pcr0,
-            signer_key: RwLock::new(signer_key),
+            signer_key,
             proposer: config.proposer,
             config_hash: config.config_hash,
             tee_image_hash,
@@ -106,15 +105,13 @@ impl Server {
     /// Get the signer's public key as a 65-byte uncompressed EC point.
     #[must_use]
     pub fn signer_public_key(&self) -> Vec<u8> {
-        let signer = self.signer_key.read();
-        Ecdsa::public_key_bytes(&signer)
+        Ecdsa::public_key_bytes(&self.signer_key)
     }
 
     /// Get the signer's Ethereum address.
     #[must_use]
-    pub fn signer_address(&self) -> Address {
-        let signer = self.signer_key.read();
-        signer.address()
+    pub const fn signer_address(&self) -> Address {
+        self.signer_key.address()
     }
 
     /// Get an attestation document containing the signer's public key.
@@ -178,9 +175,7 @@ impl Server {
                 self.tee_image_hash,
             );
 
-            let signer = self.signer_key.read();
-            let signature = Signing::sign(&signer, &signing_data)?;
-            drop(signer);
+            let signature = Signing::sign(&self.signer_key, &signing_data)?;
 
             proposals.push(Proposal {
                 output_root: *output_root,
@@ -219,9 +214,7 @@ impl Server {
                 self.tee_image_hash,
             );
 
-            let signer = self.signer_key.read();
-            let signature = Signing::sign(&signer, &signing_data)?;
-            drop(signer);
+            let signature = Signing::sign(&self.signer_key, &signing_data)?;
 
             Proposal {
                 output_root: last.output_root,
@@ -235,9 +228,7 @@ impl Server {
         };
 
         let attestation_doc = self.try_get_attestation_bytes();
-        let signer = self.signer_key.read();
-        let evidence_signature = Signing::sign(&signer, &aggregate_proposal.signature)?;
-        drop(signer);
+        let evidence_signature = Signing::sign(&self.signer_key, &aggregate_proposal.signature)?;
 
         Ok(ProofResult {
             claim: ProofClaim { aggregate_proposal, proposals },
@@ -248,18 +239,13 @@ impl Server {
         })
     }
 
-    /// Get a read guard for the signer.
-    pub fn signer(&self) -> parking_lot::RwLockReadGuard<'_, PrivateKeySigner> {
-        self.signer_key.read()
-    }
-
     /// Create a server for testing (no NSM, no PCR0 verification).
     #[cfg(test)]
     pub fn new_for_testing(config: &EnclaveConfig) -> Result<Self> {
         let signer_key = Ecdsa::generate(&mut rand_08::rngs::OsRng)?;
         Ok(Self {
             pcr0: Vec::new(),
-            signer_key: RwLock::new(signer_key),
+            signer_key,
             proposer: config.proposer,
             config_hash: config.config_hash,
             tee_image_hash: config.tee_image_hash,

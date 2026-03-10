@@ -54,13 +54,6 @@ impl Ecdsa {
         encoded_point.as_bytes().to_vec()
     }
 
-    /// Get the 32-byte private key.
-    ///
-    /// Matches Go's `crypto.FromECDSA()` format.
-    pub fn private_key_bytes(signer: &PrivateKeySigner) -> Vec<u8> {
-        signer.credential().to_bytes().to_vec()
-    }
-
     /// Get the Ethereum address from a signer.
     pub const fn address(signer: &PrivateKeySigner) -> Address {
         signer.address()
@@ -187,25 +180,6 @@ mod tests {
         let public_key = Ecdsa::public_key_bytes(&signer);
         assert_eq!(public_key.len(), 65);
         assert_eq!(public_key[0], 0x04);
-    }
-
-    #[test]
-    fn test_private_key_length() {
-        let mut rng = OsRng;
-        let signer = Ecdsa::generate(&mut rng).expect("failed to generate signer");
-        let private_key = Ecdsa::private_key_bytes(&signer);
-        assert_eq!(private_key.len(), 32);
-    }
-
-    #[test]
-    fn test_signer_from_bytes_roundtrip() {
-        let mut rng = OsRng;
-        let signer1 = Ecdsa::generate(&mut rng).expect("failed to generate signer");
-        let private_key = Ecdsa::private_key_bytes(&signer1);
-
-        let signer2 = Ecdsa::from_bytes(&private_key).expect("failed to parse signer");
-        assert_eq!(Ecdsa::private_key_bytes(&signer1), Ecdsa::private_key_bytes(&signer2));
-        assert_eq!(Ecdsa::public_key_bytes(&signer1), Ecdsa::public_key_bytes(&signer2));
     }
 
     #[test]

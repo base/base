@@ -393,7 +393,6 @@ aws-sdk-s3 = { version = "1.106.0", default-features = false }
 aws-credential-types = { version = "1.1.7", default-features = false }
 
 # crypto
-spki = "0.7"
 sha3 = "0.10"
 k256 = "0.13"
 ciborium = "0.2"
@@ -402,7 +401,6 @@ rustls = "0.23.35"
 zeroize = "1"
 secp256k1 = "0.30"
 rustls-pki-types = "1.0"
-rsa = { version = "0.9.10", features = ["sha2"] }
 sha2 = { version = "0.10", default-features = false }
 c-kzg = { version = "2.1.5", default-features = false }
 

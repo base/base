@@ -18,9 +18,7 @@ use tracing::{debug, info, warn};
 mod attestation;
 pub use attestation::{
     AttestationDocument, AwsCaRoot, DEFAULT_CA_ROOTS, DEFAULT_CA_ROOTS_SHA256, VerificationResult,
-    VerifyOptions, extract_public_key, get_default_ca_root, verify_attestation,
-    verify_attestation_with_options, verify_attestation_with_pcr0,
-    verify_attestation_with_pcr0_and_options,
+    get_default_ca_root, verify_attestation,
 };
 
 mod crypto;

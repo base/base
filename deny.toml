@@ -71,6 +71,7 @@ skip = [
     "rand_core",
     "rand_chacha",
     "getrandom",
+    "r-efi",
     "secp256k1",
     "secp256k1-sys",
 

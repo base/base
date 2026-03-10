@@ -52,9 +52,6 @@ pub enum AttestationError {
     /// Failed to verify attestation.
     #[error("failed to verify attestation: {0}")]
     Verification(String),
-    /// PCR0 mismatch.
-    #[error("attestation PCR0 does not match expected value")]
-    Pcr0Mismatch,
     /// Failed to parse CBOR attestation document.
     #[error("failed to parse CBOR attestation: {0}")]
     CborParse(String),
@@ -64,9 +61,6 @@ pub enum AttestationError {
     /// Certificate chain verification failed.
     #[error("certificate chain verification failed: {0}")]
     CertificateChain(String),
-    /// Missing required field in attestation document.
-    #[error("missing required field in attestation: {0}")]
-    MissingField(String),
     /// Certificate has expired.
     #[error("certificate expired: not valid after {not_after}")]
     CertificateExpired {
@@ -90,9 +84,6 @@ pub enum AttestationError {
 /// Errors that can occur during cryptographic operations.
 #[derive(Debug, Clone, Error)]
 pub enum CryptoError {
-    /// Failed to generate ECDSA key.
-    #[error("failed to generate ECDSA key: {0}")]
-    EcdsaKeyGeneration(String),
     /// Failed to parse ECDSA private key.
     #[error("failed to parse ECDSA private key: {0}")]
     EcdsaKeyParse(String),
