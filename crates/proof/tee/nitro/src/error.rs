@@ -61,9 +61,6 @@ pub enum AttestationError {
     /// Certificate chain verification failed.
     #[error("certificate chain verification failed: {0}")]
     CertificateChain(String),
-    /// Missing required field in attestation document.
-    #[error("missing required field in attestation: {0}")]
-    MissingField(String),
     /// Certificate has expired.
     #[error("certificate expired: not valid after {not_after}")]
     CertificateExpired {
