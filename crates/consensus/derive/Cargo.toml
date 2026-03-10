@@ -42,11 +42,6 @@ tracing-subscriber = { workspace = true, optional = true, features = ["fmt"] }
 metrics = { workspace = true, optional = true }
 
 [[test]]
-name = "block_43127820_regression"
-path = "tests/block_43127820_regression.rs"
-required-features = ["test-utils"]
-
-[[test]]
 name = "payload_attributes_block_43127820"
 path = "tests/payload_attributes_block_43127820.rs"
 

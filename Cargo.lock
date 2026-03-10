@@ -7078,18 +7078,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fetch-regression-fixture"
-version = "0.0.0"
-dependencies = [
- "base-proof-executor",
- "clap",
- "eyre",
- "tokio",
- "tracing",
- "tracing-subscriber 0.3.22",
-]
-
-[[package]]
 name = "ff"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
