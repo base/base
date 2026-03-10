@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{collections::HashMap, ops::Range};
 
 use arboard::Clipboard;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -10,9 +10,17 @@ use tokio::sync::mpsc;
 
 use crate::{
     commands::common::{COLOR_ACTIVE_BORDER, COLOR_ROW_SELECTED},
-    rpc::TxSummary,
-    tui::Toast,
+    rpc::{TxReceiptFields, TxSummary},
+    tui::{Toast, ToastState},
 };
+
+pub(crate) const REVERTED_TX_TOAST_MESSAGE: &str = "\u{26A0} - tx reverted";
+
+#[derive(Debug)]
+enum TransactionPaneUpdate {
+    Transactions(Vec<TxSummary>),
+    ReceiptFields(Vec<(alloy_primitives::B256, TxReceiptFields)>),
+}
 
 /// Reusable transaction list pane that can be embedded in any block-listing view.
 ///
@@ -27,7 +35,7 @@ pub(crate) struct TransactionPane {
     transactions: Vec<TxSummary>,
     table_state: TableState,
     loading: bool,
-    rx: Option<mpsc::Receiver<Vec<TxSummary>>>,
+    rx: Option<mpsc::Receiver<TransactionPaneUpdate>>,
     /// Optional range to slice the fetched transactions (for flashblock-specific views).
     tx_range: Option<Range<usize>>,
     /// Block explorer base URL for opening transactions in a browser (e.g.
@@ -36,6 +44,27 @@ pub(crate) struct TransactionPane {
 }
 
 impl TransactionPane {
+    fn open_selected_transaction(&self, toast_tx: &mut impl FnMut(Toast)) {
+        if let Some(idx) = self.table_state.selected()
+            && let Some(tx_summary) = self.transactions.get(idx)
+            && let Some(ref base_url) = self.explorer_base_url
+        {
+            let url = format!("{base_url}/tx/{:#x}", tx_summary.hash);
+            let cmd = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+            match std::process::Command::new(cmd).arg(&url).spawn() {
+                Ok(mut child) => {
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                    });
+                    toast_tx(Toast::info(format!("Opening {url}")));
+                }
+                Err(e) => {
+                    toast_tx(Toast::warning(format!("Failed to open browser: {e}")));
+                }
+            }
+        }
+    }
+
     /// Creates a new pane that immediately begins fetching transactions for `block_number`.
     ///
     /// If `tx_range` is provided, only the specified slice of the block's transactions
@@ -49,7 +78,13 @@ impl TransactionPane {
     ) -> Self {
         let (tx, rx) = mpsc::channel(1);
         let rpc = l2_rpc.to_string();
-        tokio::spawn(crate::rpc::fetch_block_transactions(rpc, block_number, tx));
+        tokio::spawn(async move {
+            let (inner_tx, mut inner_rx) = mpsc::channel(1);
+            crate::rpc::fetch_block_transactions(rpc, block_number, inner_tx).await;
+            if let Some(txns) = inner_rx.recv().await {
+                let _ = tx.send(TransactionPaneUpdate::Transactions(txns)).await;
+            }
+        });
 
         let mut table_state = TableState::default();
         table_state.select(Some(0));
@@ -62,7 +97,6 @@ impl TransactionPane {
             loading: true,
             rx: Some(rx),
             tx_range,
-
             explorer_base_url: explorer_base_url.map(String::from),
         }
     }
@@ -72,10 +106,25 @@ impl TransactionPane {
         block_number: u64,
         title_prefix: String,
         transactions: Vec<TxSummary>,
+        l2_rpc: Option<&str>,
         explorer_base_url: Option<&str>,
     ) -> Self {
         let mut table_state = TableState::default();
         table_state.select(Some(0));
+
+        let rx = l2_rpc.map(|rpc| {
+            let (tx, rx) = mpsc::channel(1);
+            let rpc = rpc.to_string();
+            tokio::spawn(async move {
+                let (inner_tx, mut inner_rx) = mpsc::channel(1);
+                crate::rpc::fetch_block_transaction_gas(rpc, block_number, inner_tx).await;
+                if let Some(receipt_fields_by_hash) = inner_rx.recv().await {
+                    let _ =
+                        tx.send(TransactionPaneUpdate::ReceiptFields(receipt_fields_by_hash)).await;
+                }
+            });
+            rx
+        });
 
         Self {
             block_number,
@@ -83,9 +132,8 @@ impl TransactionPane {
             transactions,
             table_state,
             loading: false,
-            rx: None,
+            rx,
             tx_range: None,
-
             explorer_base_url: explorer_base_url.map(String::from),
         }
     }
@@ -107,14 +155,53 @@ impl TransactionPane {
     /// Polls background fetch channels for results.
     pub(crate) fn poll(&mut self) {
         if let Some(ref mut rx) = self.rx
-            && let Ok(txns) = rx.try_recv()
+            && let Ok(update) = rx.try_recv()
         {
-            self.transactions = match &self.tx_range {
-                Some(range) => txns.into_iter().skip(range.start).take(range.len()).collect(),
-                None => txns,
-            };
-            self.loading = false;
-            self.rx = None;
+            match update {
+                TransactionPaneUpdate::Transactions(txns) => {
+                    self.transactions = match &self.tx_range {
+                        Some(range) => {
+                            txns.into_iter().skip(range.start).take(range.len()).collect()
+                        }
+                        None => txns,
+                    };
+                    self.loading = false;
+                    self.rx = None;
+                }
+                TransactionPaneUpdate::ReceiptFields(receipt_fields_by_hash) => {
+                    let receipt_fields_by_hash: HashMap<_, _> =
+                        receipt_fields_by_hash.into_iter().collect();
+                    for tx in &mut self.transactions {
+                        if let Some(receipt) = receipt_fields_by_hash.get(&tx.hash) {
+                            tx.gas_used = Some(receipt.gas_used);
+                            tx.reverted = Some(!receipt.success);
+                            tx.effective_priority_fee_per_gas = tx
+                                .base_fee_per_gas
+                                .map(u128::from)
+                                .map(|base_fee| receipt.effective_gas_price.saturating_sub(base_fee))
+                                .or(Some(receipt.effective_gas_price));
+                        }
+                    }
+                    self.rx = None;
+                }
+            }
+        }
+    }
+
+    /// Keeps the reverted hover toast in sync with the current selection.
+    pub(crate) fn sync_hovered_revert_toast(&self, toasts: &mut ToastState) {
+        let selected_is_reverted = self
+            .table_state
+            .selected()
+            .and_then(|idx| self.transactions.get(idx))
+            .is_some_and(|tx| tx.reverted == Some(true));
+
+        if selected_is_reverted {
+            if !toasts.contains_message(REVERTED_TX_TOAST_MESSAGE) {
+                toasts.push(Toast::warning(REVERTED_TX_TOAST_MESSAGE));
+            }
+        } else {
+            toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
         }
     }
 
@@ -170,26 +257,7 @@ impl TransactionPane {
                 }
             }
 
-            KeyCode::Enter => {
-                if let Some(idx) = self.table_state.selected()
-                    && let Some(tx_summary) = self.transactions.get(idx)
-                    && let Some(ref base_url) = self.explorer_base_url
-                {
-                    let url = format!("{base_url}/tx/{:#x}", tx_summary.hash);
-                    let cmd = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-                    match std::process::Command::new(cmd).arg(&url).spawn() {
-                        Ok(mut child) => {
-                            std::thread::spawn(move || {
-                                let _ = child.wait();
-                            });
-                            toast_tx(Toast::info(format!("Opening {url}")));
-                        }
-                        Err(e) => {
-                            toast_tx(Toast::warning(format!("Failed to open browser: {e}")));
-                        }
-                    }
-                }
-            }
+            KeyCode::Enter | KeyCode::Char('o') => self.open_selected_transaction(toast_tx),
 
             KeyCode::Char('y') => {
                 if let Some(idx) = self.table_state.selected()
@@ -205,7 +273,6 @@ impl TransactionPane {
 
             _ => {}
         }
-
         false
     }
 
@@ -255,7 +322,8 @@ impl TransactionPane {
             Cell::from("Tx Hash").style(header_style),
             Cell::from("From").style(header_style),
             Cell::from("To").style(header_style),
-            Cell::from("Pri. Fee (Mwei)").style(header_style),
+            Cell::from("Tip (Mwei)").style(header_style),
+            Cell::from("Gas Used").style(header_style),
         ]);
 
         let selected_row = self.table_state.selected();
@@ -265,7 +333,8 @@ impl TransactionPane {
             Constraint::Fill(3),    // Tx Hash (widest)
             Constraint::Fill(2),    // From
             Constraint::Fill(2),    // To
-            Constraint::Length(15), // Pri. Fee (fixed, short values)
+            Constraint::Length(20), // Fee
+            Constraint::Length(10), // Gas used
         ];
 
         // Pre-compute actual column widths so we can truncate intelligently.
@@ -286,17 +355,21 @@ impl TransactionPane {
                 } else {
                     Style::default().fg(Color::White)
                 };
-
-                let to_str = tx_summary
-                    .to
-                    .map(|a| truncate_hex(&format!("{a:#x}"), to_w))
-                    .unwrap_or_else(|| "Create".to_string());
+                let from_addr = format!("{:#x}", tx_summary.from);
+                let from_style = style.fg(address_color(tx_summary.from));
 
                 Row::new(vec![
-                    Cell::from(truncate_hex(&format!("{:#x}", tx_summary.hash), hash_w)),
-                    Cell::from(truncate_hex(&format!("{:#x}", tx_summary.from), from_w)),
-                    Cell::from(to_str),
-                    Cell::from(format_mwei(tx_summary.max_priority_fee_per_gas)),
+                    render_tx_hash_cell(tx_summary, hash_w, style),
+                    Cell::from(Text::styled(truncate_hex(&from_addr, from_w), from_style)),
+                    match tx_summary.to {
+                        Some(a) => {
+                            let to_text = truncate_hex(&format!("{a:#x}"), to_w);
+                            Cell::from(Text::styled(to_text, style.fg(address_color(a))))
+                        }
+                        None => Cell::from("Create"),
+                    },
+                    Cell::from(format_mwei(tx_summary.effective_priority_fee_per_gas)),
+                    Cell::from(format_gas_used(tx_summary.gas_used)),
                 ])
                 .style(style)
             })
@@ -336,6 +409,31 @@ fn format_mwei(wei: Option<u128>) -> String {
             format!("{mwei_whole}.{mwei_frac:02}")
         }
     }
+}
+
+fn format_gas_used(gas_used: Option<u64>) -> String {
+    gas_used.map_or_else(|| "-".to_string(), |g| g.to_string())
+}
+
+fn render_tx_hash_cell(tx_summary: &TxSummary, max_width: usize, style: Style) -> Cell<'static> {
+    let hash = format!("{:#x}", tx_summary.hash);
+    if tx_summary.reverted == Some(true) && max_width >= 3 {
+        let hash_text = truncate_hex(&hash, max_width.saturating_sub(2));
+        Cell::from(Text::from(vec![
+            Line::from(vec![
+                Span::styled("\u{26A0} ", style.fg(Color::Red)),
+                Span::styled(hash_text, style),
+            ]),
+        ]))
+    } else {
+        Cell::from(Text::styled(truncate_hex(&hash, max_width), style))
+    }
+}
+
+fn address_color(address: alloy_primitives::Address) -> Color {
+    let bytes = address.as_slice();
+    let brighten = |c: u8| c.saturating_add(48).max(80);
+    Color::Rgb(brighten(bytes[17]), brighten(bytes[18]), brighten(bytes[19]))
 }
 
 #[cfg(test)]

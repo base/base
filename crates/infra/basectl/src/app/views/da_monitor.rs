@@ -8,14 +8,17 @@ use ratatui::{
 };
 
 use crate::{
-    app::{Action, Resources, View, views::TransactionPane},
+    app::{
+        Action, Resources, View,
+        views::{REVERTED_TX_TOAST_MESSAGE, TransactionPane},
+    },
     commands::common::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, L1_BLOCK_WINDOW, L1BlockFilter,
         L1BlocksTableParams, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S, format_duration,
         format_rate, render_da_backlog_bar, render_l1_blocks_table, target_usage_color,
         truncate_block_number,
     },
-    tui::Keybinding,
+    tui::{Keybinding, Toast},
 };
 
 const KEYBINDINGS: &[Keybinding] = &[
@@ -26,6 +29,7 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "←/h →/l", description: "Switch panel" },
     Keybinding { key: "Tab", description: "Next panel" },
     Keybinding { key: "f", description: "Filter L1 blocks" },
+    Keybinding { key: "o", description: "Open in explorer" },
     Keybinding { key: "Enter", description: "View transactions" },
 ];
 
@@ -110,6 +114,53 @@ impl DaMonitorView {
             Panel::Txns => 0,
         }
     }
+
+    fn open_selected_in_explorer(&self, resources: &mut Resources) {
+        let url = match self.selected_panel {
+            Panel::L2Blocks | Panel::Txns => {
+                resources.config.explorer_base_url().and_then(|base| {
+                    let block_number = match self.selected_panel {
+                        Panel::L2Blocks => self.l2_table_state.selected().and_then(|row| {
+                            resources
+                                .da
+                                .tracker
+                                .block_contributions
+                                .get(row)
+                                .map(|c| c.block_number)
+                        }),
+                        Panel::Txns => self.tx_pane.as_ref().map(|p| p.block_number),
+                        _ => None,
+                    }?;
+                    Some(format!("{base}/block/{block_number}"))
+                })
+            }
+            Panel::L1Blocks => resources.config.l1_explorer_base_url().and_then(|base| {
+                self.l1_table_state.selected().and_then(|row| {
+                    resources
+                        .da
+                        .tracker
+                        .filtered_l1_blocks(self.l1_filter)
+                        .nth(row)
+                        .map(|b| format!("{base}/block/{}", b.block_number))
+                })
+            }),
+        };
+
+        if let Some(url) = url {
+            let cmd = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+            match std::process::Command::new(cmd).arg(&url).spawn() {
+                Ok(mut child) => {
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                    });
+                    resources.toasts.push(Toast::info(format!("Opening {url}")));
+                }
+                Err(e) => {
+                    resources.toasts.push(Toast::warning(format!("Failed to open browser: {e}")));
+                }
+            }
+        }
+    }
 }
 
 impl View for DaMonitorView {
@@ -135,6 +186,9 @@ impl View for DaMonitorView {
                         resources.config.rpc.as_str(),
                         resources.config.explorer_base_url(),
                     ));
+                    if let Some(pane) = self.tx_pane.as_ref() {
+                        pane.sync_hovered_revert_toast(&mut resources.toasts);
+                    }
                     self.selected_panel = Panel::Txns;
                 }
                 Action::None
@@ -155,6 +209,9 @@ impl View for DaMonitorView {
                 if should_close {
                     self.tx_pane = None;
                     self.selected_panel = Panel::L2Blocks;
+                    resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
+                } else {
+                    pane.sync_hovered_revert_toast(&mut resources.toasts);
                 }
                 Action::None
             }
@@ -182,6 +239,10 @@ impl View for DaMonitorView {
                 self.l1_table_state.select(Some(0));
                 Action::None
             }
+            KeyCode::Char('o') => {
+                self.open_selected_in_explorer(resources);
+                Action::None
+            }
             KeyCode::Char('g') => {
                 self.active_table_state().select(Some(0));
                 Action::None
@@ -195,9 +256,16 @@ impl View for DaMonitorView {
         }
     }
 
-    fn tick(&mut self, _resources: &mut Resources) -> Action {
+    fn tick(&mut self, resources: &mut Resources) -> Action {
         if let Some(ref mut pane) = self.tx_pane {
             pane.poll();
+            if self.selected_panel == Panel::Txns {
+                pane.sync_hovered_revert_toast(&mut resources.toasts);
+            } else {
+                resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
+            }
+        } else {
+            resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
         }
         Action::None
     }

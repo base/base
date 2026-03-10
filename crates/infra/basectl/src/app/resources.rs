@@ -370,6 +370,8 @@ impl FlashState {
 
         let block_number = fb.metadata.block_number;
         let index = fb.index;
+        let is_same_block_as_previous =
+            self.last_flashblock.is_some_and(|(last_block, _)| block_number == last_block);
         if let Some((last_block, last_index)) = self.last_flashblock {
             if block_number == last_block && index > last_index + 1 {
                 self.missed_flashblocks += index - last_index - 1;
@@ -388,6 +390,12 @@ impl FlashState {
             self.current_base_fee = base_fee;
         }
 
+        let effective_base_fee = if is_same_block_as_previous {
+            base_fee.or(self.current_base_fee)
+        } else {
+            base_fee
+        };
+
         let time_diff_ms =
             self.entries.front().map(|prev| (received_at - prev.timestamp).num_milliseconds());
 
@@ -397,7 +405,7 @@ impl FlashState {
             tx_count: fb.diff.transactions.len(),
             gas_used: fb.diff.gas_used,
             gas_limit: self.current_gas_limit,
-            base_fee,
+            base_fee: effective_base_fee,
             prev_base_fee,
             timestamp: received_at,
             time_diff_ms,

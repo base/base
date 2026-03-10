@@ -7,7 +7,10 @@ use ratatui::{
 };
 
 use crate::{
-    app::{Action, Resources, View, views::TransactionPane},
+    app::{
+        Action, Resources, View,
+        views::{REVERTED_TX_TOAST_MESSAGE, TransactionPane},
+    },
     commands::common::{
         COLOR_ACTIVE_BORDER, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, block_color,
         block_color_bright, build_gas_bar, format_gas, format_gwei, render_gas_usage_bar,
@@ -23,10 +26,11 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "Esc", description: "Back to home" },
     Keybinding { key: "?", description: "Toggle help" },
     Keybinding { key: "Enter", description: "View transactions" },
+    Keybinding { key: "o", description: "Open in explorer" },
     Keybinding { key: "\u{2190}/h \u{2192}/l", description: "Switch panel" },
     Keybinding { key: "Space", description: "Pause/Resume" },
-    Keybinding { key: "Up/k", description: "Scroll up" },
-    Keybinding { key: "Down/j", description: "Scroll down" },
+    Keybinding { key: "↑/k", description: "Scroll up" },
+    Keybinding { key: "↓/j", description: "Scroll down" },
     Keybinding { key: "PgUp", description: "Page up" },
     Keybinding { key: "PgDn", description: "Page down" },
     Keybinding { key: "Home/g", description: "Top (auto-scroll)" },
@@ -54,6 +58,27 @@ impl FlashblocksView {
         table_state.select(Some(0));
         Self { table_state, auto_scroll: true, tx_pane: None, focused_on_txns: false }
     }
+
+    fn open_selected_block_in_explorer(&self, resources: &mut Resources) {
+        if let Some(base_url) = resources.config.explorer_base_url()
+            && let Some(idx) = self.table_state.selected()
+            && let Some(entry) = resources.flash.entries.get(idx)
+        {
+            let url = format!("{base_url}/block/{}", entry.block_number);
+            let cmd = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+            match std::process::Command::new(cmd).arg(&url).spawn() {
+                Ok(mut child) => {
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                    });
+                    resources.toasts.push(Toast::info(format!("Opening {url}")));
+                }
+                Err(e) => {
+                    resources.toasts.push(Toast::warning(format!("Failed to open browser: {e}")));
+                }
+            }
+        }
+    }
 }
 
 impl View for FlashblocksView {
@@ -73,6 +98,7 @@ impl View for FlashblocksView {
         match key.code {
             KeyCode::Left | KeyCode::Char('h') if self.tx_pane.is_some() => {
                 self.focused_on_txns = false;
+                resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
                 Action::None
             }
             KeyCode::Right | KeyCode::Char('l') if self.tx_pane.is_some() => {
@@ -87,6 +113,9 @@ impl View for FlashblocksView {
                 if should_close {
                     self.tx_pane = None;
                     self.focused_on_txns = false;
+                    resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
+                } else {
+                    pane.sync_hovered_revert_toast(&mut resources.toasts);
                 }
                 Action::None
             }
@@ -155,6 +184,10 @@ impl View for FlashblocksView {
                 }
                 Action::None
             }
+            KeyCode::Char('o') => {
+                self.open_selected_block_in_explorer(resources);
+                Action::None
+            }
             KeyCode::Enter => {
                 if let Some(idx) = self.table_state.selected()
                     && let Some(entry) = resources.flash.entries.get(idx)
@@ -163,8 +196,12 @@ impl View for FlashblocksView {
                         entry.block_number,
                         format!("Flashblock {}::{}", entry.block_number, entry.index),
                         entry.decode_txs(),
+                        Some(resources.config.rpc.as_str()),
                         resources.config.explorer_base_url(),
                     ));
+                    if let Some(pane) = self.tx_pane.as_ref() {
+                        pane.sync_hovered_revert_toast(&mut resources.toasts);
+                    }
                     self.focused_on_txns = true;
                 }
                 Action::None
@@ -176,6 +213,11 @@ impl View for FlashblocksView {
     fn tick(&mut self, resources: &mut Resources) -> Action {
         if let Some(ref mut pane) = self.tx_pane {
             pane.poll();
+            if self.focused_on_txns {
+                pane.sync_hovered_revert_toast(&mut resources.toasts);
+            }
+        } else {
+            resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
         }
         if self.auto_scroll && !resources.flash.entries.is_empty() {
             self.table_state.select(Some(0));

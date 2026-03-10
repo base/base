@@ -9,7 +9,10 @@ use ratatui::{
 };
 
 use crate::{
-    app::{Action, Resources, View, views::TransactionPane},
+    app::{
+        Action, Resources, View,
+        views::{REVERTED_TX_TOAST_MESSAGE, TransactionPane},
+    },
     commands::common::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED,
         L1_BLOCK_WINDOW, L1BlockFilter, L1BlocksTableParams, RATE_WINDOW_2M, backlog_size_color,
@@ -28,6 +31,7 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "g/G", description: "Top/Bottom" },
     Keybinding { key: "Space", description: "Pause flashblocks" },
     Keybinding { key: "y", description: "Copy block number" },
+    Keybinding { key: "o", description: "Open in explorer" },
     Keybinding { key: "f", description: "Filter L1 blocks" },
     Keybinding { key: "Enter", description: "View transactions" },
 ];
@@ -156,6 +160,52 @@ impl CommandCenterView {
                 .map(|b| b.block_number.to_string()),
         }
     }
+
+    fn open_selected_block_in_explorer(&self, resources: &mut Resources) {
+        let row = self.selected_row(self.focused_panel);
+        let url = match self.focused_panel {
+            Panel::Flashblocks => resources.config.explorer_base_url().and_then(|base_url| {
+                resources
+                    .flash
+                    .entries
+                    .get(row)
+                    .map(|e| format!("{base_url}/block/{}", e.block_number))
+            }),
+            Panel::Da | Panel::Txns => resources.config.explorer_base_url().and_then(|base_url| {
+                let block_number = match self.focused_panel {
+                    Panel::Da => {
+                        resources.da.tracker.block_contributions.get(row).map(|c| c.block_number)
+                    }
+                    Panel::Txns => self.tx_pane.as_ref().map(|p| p.block_number),
+                    _ => None,
+                }?;
+                Some(format!("{base_url}/block/{block_number}"))
+            }),
+            Panel::L1Blocks => resources.config.l1_explorer_base_url().and_then(|base_url| {
+                resources
+                    .da
+                    .tracker
+                    .filtered_l1_blocks(self.l1_filter)
+                    .nth(row)
+                    .map(|b| format!("{base_url}/block/{}", b.block_number))
+            }),
+        };
+
+        if let Some(url) = url {
+            let cmd = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+            match std::process::Command::new(cmd).arg(&url).spawn() {
+                Ok(mut child) => {
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                    });
+                    resources.toasts.push(Toast::info(format!("Opening {url}")));
+                }
+                Err(e) => {
+                    resources.toasts.push(Toast::warning(format!("Failed to open browser: {e}")));
+                }
+            }
+        }
+    }
 }
 
 impl View for CommandCenterView {
@@ -206,6 +256,9 @@ impl View for CommandCenterView {
                 if should_close {
                     self.tx_pane = None;
                     self.focused_panel = self.tx_origin_panel.take().unwrap_or(Panel::Da);
+                    resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
+                } else {
+                    pane.sync_hovered_revert_toast(&mut resources.toasts);
                 }
                 Action::None
             }
@@ -287,6 +340,10 @@ impl View for CommandCenterView {
                 }
                 Action::None
             }
+            KeyCode::Char('o') => {
+                self.open_selected_block_in_explorer(resources);
+                Action::None
+            }
             KeyCode::Enter => {
                 match self.focused_panel {
                     Panel::Flashblocks => {
@@ -296,8 +353,12 @@ impl View for CommandCenterView {
                                 entry.block_number,
                                 format!("Flashblock {}::{}", entry.block_number, entry.index),
                                 entry.decode_txs(),
+                                Some(resources.config.rpc.as_str()),
                                 resources.config.explorer_base_url(),
                             ));
+                            if let Some(pane) = self.tx_pane.as_ref() {
+                                pane.sync_hovered_revert_toast(&mut resources.toasts);
+                            }
                             self.tx_origin_panel = Some(Panel::Flashblocks);
                             self.focused_panel = Panel::Txns;
                         }
@@ -310,6 +371,9 @@ impl View for CommandCenterView {
                                 resources.config.rpc.as_str(),
                                 resources.config.explorer_base_url(),
                             ));
+                            if let Some(pane) = self.tx_pane.as_ref() {
+                                pane.sync_hovered_revert_toast(&mut resources.toasts);
+                            }
                             self.tx_origin_panel = Some(Panel::Da);
                             self.focused_panel = Panel::Txns;
                         }
@@ -325,6 +389,13 @@ impl View for CommandCenterView {
     fn tick(&mut self, resources: &mut Resources) -> Action {
         if let Some(ref mut pane) = self.tx_pane {
             pane.poll();
+            if self.focused_panel == Panel::Txns {
+                pane.sync_hovered_revert_toast(&mut resources.toasts);
+            } else {
+                resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
+            }
+        } else {
+            resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
         }
         let at_top = self.selected_row(self.focused_panel) == 0;
         if at_top {
