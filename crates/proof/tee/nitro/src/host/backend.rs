@@ -35,7 +35,7 @@ impl ProverBackend for NitroBackend {
     }
 
     async fn prove(&self, witness: Oracle) -> Result<ProofResult, NitroError> {
-        let preimages = witness.into_preimages();
+        let preimages = witness.into_preimages()?;
         self.transport.prove(&preimages).await.map_err(|e| NitroError::Transport(e.to_string()))
     }
 }
@@ -92,7 +92,7 @@ mod tests {
         let key = PreimageKey::new([2u8; 32], base_proof_preimage::PreimageKeyType::Local);
         oracle.insert_preimage(key, b"hello").unwrap();
 
-        let preimages = oracle.into_preimages();
+        let preimages = oracle.into_preimages().unwrap();
         assert_eq!(preimages.len(), 1);
         assert_eq!(preimages[0], (key, b"hello".to_vec()));
     }

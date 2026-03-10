@@ -7,6 +7,8 @@ use base_proof_preimage::{
 };
 use parking_lot::RwLock;
 
+use crate::NitroError;
+
 /// HashMap-backed preimage oracle for in-enclave stateless execution.
 ///
 /// Stores preimages in a shared, mutable map so the same oracle can serve
@@ -33,17 +35,13 @@ impl Oracle {
 
     /// Consume the oracle and return all captured preimages.
     ///
-    /// # Panics
-    ///
-    /// Panics if other references to the internal preimage map still exist.
-    /// This is only valid after [`Host::build_witness`] has returned the owned
-    /// oracle and all internal clones have been dropped.
-    pub fn into_preimages(self) -> Vec<(PreimageKey, Vec<u8>)> {
+    /// Returns an error if other references to the internal preimage map still
+    /// exist. This is only valid after [`Host::build_witness`] has returned the
+    /// owned oracle and all internal clones have been dropped.
+    pub fn into_preimages(self) -> crate::Result<Vec<(PreimageKey, Vec<u8>)>> {
         Arc::try_unwrap(self.preimages)
-            .expect("Oracle still has outstanding Arc references")
-            .into_inner()
-            .into_iter()
-            .collect()
+            .map(|lock| lock.into_inner().into_iter().collect())
+            .map_err(|_| NitroError::Internal("oracle still has outstanding references".into()))
     }
 }
 
