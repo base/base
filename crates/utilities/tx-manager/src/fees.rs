@@ -6,7 +6,7 @@
 
 use alloy_primitives::U256;
 
-use crate::TxManagerError;
+use crate::{TxManagerConfig, TxManagerError};
 
 /// Calculates and bumps transaction fees.
 ///
@@ -81,7 +81,7 @@ impl FeeCalculator {
     ///
     /// 1. **Both above threshold** — use the new tip and recalculated fee cap.
     /// 2. **Tip above, fee cap below** — use the new tip but keep the
-    ///    threshold fee cap (clamped to at least new_tip).
+    ///    threshold fee cap (clamped to at least `new_tip`).
     /// 3. **Fee cap above, tip below** — use the threshold tip and
     ///    recalculate the fee cap from the threshold tip.
     /// 4. **Both below** — use both threshold values (fee cap clamped to at least threshold tip).
@@ -137,14 +137,13 @@ impl FeeCalculator {
     pub const fn check_limits(
         fee: u128,
         suggested: u128,
-        fee_limit_multiplier: u64,
-        fee_limit_threshold: u128,
+        config: &TxManagerConfig,
     ) -> Result<(), TxManagerError> {
-        if suggested < fee_limit_threshold {
+        if suggested < config.fee_limit_threshold {
             return Ok(());
         }
 
-        let ceiling = (fee_limit_multiplier as u128).saturating_mul(suggested);
+        let ceiling = (config.fee_limit_multiplier as u128).saturating_mul(suggested);
         if fee > ceiling {
             return Err(TxManagerError::FeeLimitExceeded);
         }
@@ -164,10 +163,9 @@ impl FeeCalculator {
     pub const fn check_blob_fee_limits(
         blob_fee: u128,
         suggested_blob_fee: u128,
-        fee_limit_multiplier: u64,
-        fee_limit_threshold: u128,
+        config: &TxManagerConfig,
     ) -> Result<(), TxManagerError> {
-        Self::check_limits(blob_fee, suggested_blob_fee, fee_limit_multiplier, fee_limit_threshold)
+        Self::check_limits(blob_fee, suggested_blob_fee, config)
     }
 }
 
@@ -321,7 +319,8 @@ mod tests {
         #[case] threshold: u128,
         #[case] should_pass: bool,
     ) {
-        let result = FeeCalculator::check_limits(fee, suggested, multiplier, threshold);
+        let config = TxManagerConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: threshold };
+        let result = FeeCalculator::check_limits(fee, suggested, &config);
         assert_eq!(result.is_ok(), should_pass);
         if !should_pass {
             assert_eq!(result.unwrap_err(), TxManagerError::FeeLimitExceeded);
@@ -341,8 +340,9 @@ mod tests {
         #[case] threshold: u128,
         #[case] should_pass: bool,
     ) {
+        let config = TxManagerConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: threshold };
         let result =
-            FeeCalculator::check_blob_fee_limits(blob_fee, suggested, multiplier, threshold);
+            FeeCalculator::check_blob_fee_limits(blob_fee, suggested, &config);
         assert_eq!(result.is_ok(), should_pass);
         if !should_pass {
             assert_eq!(result.unwrap_err(), TxManagerError::FeeLimitExceeded);
@@ -460,7 +460,8 @@ mod tests {
         ) {
             // threshold is always above suggested → skip check → Ok
             let threshold = suggested.saturating_add(1);
-            let result = FeeCalculator::check_limits(fee, suggested, multiplier, threshold);
+            let config = TxManagerConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: threshold };
+            let result = FeeCalculator::check_limits(fee, suggested, &config);
             prop_assert!(result.is_ok(), "expected Ok when suggested < threshold");
         }
 
@@ -471,7 +472,8 @@ mod tests {
         ) {
             // fee exactly at ceiling → should be Ok
             let ceiling = (multiplier as u128).saturating_mul(suggested);
-            let result = FeeCalculator::check_limits(ceiling, suggested, multiplier, 0);
+            let config = TxManagerConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: 0 };
+            let result = FeeCalculator::check_limits(ceiling, suggested, &config);
             prop_assert!(result.is_ok(), "expected Ok when fee == ceiling");
         }
 
@@ -485,7 +487,8 @@ mod tests {
             let fee = ceiling.saturating_add(1);
             // guard: only test when fee actually exceeded ceiling (no saturation)
             prop_assume!(fee > ceiling);
-            let result = FeeCalculator::check_limits(fee, suggested, multiplier, 0);
+            let config = TxManagerConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: 0 };
+            let result = FeeCalculator::check_limits(fee, suggested, &config);
             prop_assert!(result.is_err(), "expected Err when fee > ceiling");
         }
     }
