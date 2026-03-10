@@ -199,7 +199,10 @@ mod tests {
     #[test]
     fn classify_replacement_underpriced() {
         let err = RpcErrorClassifier::classify_rpc_error("replacement transaction underpriced");
-        assert!(matches!(err, TxManagerError::ReplacementUnderpriced));
+        assert!(
+            matches!(err, TxManagerError::ReplacementUnderpriced),
+            "must return ReplacementUnderpriced, not Underpriced — ordering matters"
+        );
     }
 
     #[test]
@@ -261,17 +264,6 @@ mod tests {
     fn classify_transaction_already_in_pool() {
         let err = RpcErrorClassifier::classify_rpc_error("transaction already in pool");
         assert!(matches!(err, TxManagerError::AlreadyKnown));
-    }
-
-    // ── Ordering: replacement before underpriced ─────────────────────────
-
-    #[test]
-    fn classify_replacement_before_underpriced() {
-        let err = RpcErrorClassifier::classify_rpc_error("replacement transaction underpriced");
-        assert!(
-            matches!(err, TxManagerError::ReplacementUnderpriced),
-            "must return ReplacementUnderpriced, not Underpriced"
-        );
     }
 
     // ── Fallback to Rpc variant ──────────────────────────────────────────
@@ -389,22 +381,56 @@ mod tests {
         assert!(!TxManagerError::Rpc("already known".to_string()).is_already_known());
     }
 
-    // ── Variant construction ─────────────────────────────────────────────
+    // ── Display output ────────────────────────────────────────────────────
 
     #[test]
-    fn all_variants_constructable() {
-        let _ = TxManagerError::NonceTooLow;
-        let _ = TxManagerError::NonceTooHigh;
-        let _ = TxManagerError::InsufficientFunds;
-        let _ = TxManagerError::IntrinsicGasTooLow;
-        let _ = TxManagerError::ExecutionReverted;
-        let _ = TxManagerError::MempoolDeadlineExpired;
-        let _ = TxManagerError::AlreadyReserved;
-        let _ = TxManagerError::Underpriced;
-        let _ = TxManagerError::ReplacementUnderpriced;
-        let _ = TxManagerError::FeeTooLow;
-        let _ = TxManagerError::MaxFeePerGasTooLow;
-        let _ = TxManagerError::AlreadyKnown;
-        let _ = TxManagerError::Rpc("test".to_string());
+    fn display_output_all_variants() {
+        assert_eq!(TxManagerError::NonceTooLow.to_string(), "nonce too low");
+        assert_eq!(TxManagerError::NonceTooHigh.to_string(), "nonce too high");
+        assert_eq!(TxManagerError::InsufficientFunds.to_string(), "insufficient funds");
+        assert_eq!(TxManagerError::IntrinsicGasTooLow.to_string(), "intrinsic gas too low");
+        assert_eq!(TxManagerError::ExecutionReverted.to_string(), "execution reverted");
+        assert_eq!(TxManagerError::MempoolDeadlineExpired.to_string(), "mempool deadline expired");
+        assert_eq!(TxManagerError::AlreadyReserved.to_string(), "nonce already reserved");
+        assert_eq!(TxManagerError::Underpriced.to_string(), "transaction underpriced");
+        assert_eq!(
+            TxManagerError::ReplacementUnderpriced.to_string(),
+            "replacement transaction underpriced"
+        );
+        assert_eq!(TxManagerError::FeeTooLow.to_string(), "fee too low");
+        assert_eq!(
+            TxManagerError::MaxFeePerGasTooLow.to_string(),
+            "max fee per gas less than block base fee"
+        );
+        assert_eq!(TxManagerError::AlreadyKnown.to_string(), "transaction already known");
+        assert_eq!(TxManagerError::Rpc("test".to_string()).to_string(), "rpc error: test");
+    }
+
+    // ── Edge cases ──────────────────────────────────────────────────────
+
+    #[test]
+    fn classify_empty_string_returns_rpc_fallback() {
+        let err = RpcErrorClassifier::classify_rpc_error("");
+        assert!(matches!(err, TxManagerError::Rpc(ref s) if s.is_empty()));
+    }
+
+    // ── Negative classifier tests: internal-only variants ───────────────
+
+    #[test]
+    fn classify_mempool_deadline_not_recognized() {
+        let err = RpcErrorClassifier::classify_rpc_error("mempool deadline expired");
+        assert!(
+            matches!(err, TxManagerError::Rpc(_)),
+            "MempoolDeadlineExpired is internal-only, classifier must not produce it"
+        );
+    }
+
+    #[test]
+    fn classify_already_reserved_not_recognized() {
+        let err = RpcErrorClassifier::classify_rpc_error("nonce already reserved");
+        assert!(
+            matches!(err, TxManagerError::Rpc(_)),
+            "AlreadyReserved is internal-only, classifier must not produce it"
+        );
     }
 }
