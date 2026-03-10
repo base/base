@@ -321,6 +321,16 @@ mod tests {
         assert!(state.critical_error().is_none());
     }
 
+    #[test]
+    fn mined_tx_suppresses_mempool_deadline_abort() {
+        let state = SendState::new(3);
+        state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
+        assert_eq!(state.critical_error(), Some(TxManagerError::MempoolDeadlineExpired));
+
+        state.tx_mined(B256::with_last_byte(1));
+        assert!(state.critical_error().is_none());
+    }
+
     // ── tx_not_mined reset ──────────────────────────────────────────────
 
     #[test]
@@ -369,6 +379,25 @@ mod tests {
         state.tx_not_mined(tx1);
         assert!(state.critical_error().is_none());
         assert!(state.is_waiting_for_confirmation());
+    }
+
+    #[test]
+    fn tx_not_mined_with_never_mined_hash_resets_counter() {
+        let state = SendState::new(3);
+        state.record_successful_publish();
+
+        // Accumulate errors past threshold.
+        for _ in 0..5 {
+            state.process_send_error(&TxManagerError::NonceTooLow);
+        }
+        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
+
+        // Call tx_not_mined with a hash that was never mined. Since mined_txs
+        // is already empty, the nonce counter resets. This is benign: the
+        // caller should not be removing hashes it never added, but the
+        // defensive reset avoids stale aborts in degenerate scenarios.
+        state.tx_not_mined(B256::with_last_byte(99));
+        assert!(state.critical_error().is_none());
     }
 
     #[test]
@@ -450,6 +479,48 @@ mod tests {
         let state = SendState::new(3);
         state.process_send_error(&TxManagerError::AlreadyReserved);
         assert_eq!(state.critical_error(), Some(TxManagerError::AlreadyReserved));
+    }
+
+    // ── Priority ordering ────────────────────────────────────────────────
+
+    #[test]
+    fn already_reserved_takes_priority_over_expired_deadline() {
+        let state = SendState::new(3);
+        state.process_send_error(&TxManagerError::AlreadyReserved);
+        state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
+
+        // AlreadyReserved (priority 2) wins over MempoolDeadlineExpired
+        // (priority 5).
+        assert_eq!(state.critical_error(), Some(TxManagerError::AlreadyReserved));
+    }
+
+    #[test]
+    fn pre_publish_nonce_too_low_takes_priority_over_expired_deadline() {
+        let state = SendState::new(3);
+        // No successful publish.
+        state.process_send_error(&TxManagerError::NonceTooLow);
+        state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
+
+        // Pre-publish NonceTooLow (priority 3) wins over
+        // MempoolDeadlineExpired (priority 5).
+        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
+    }
+
+    // ── tx_mined idempotency ──────────────────────────────────────────────
+
+    #[test]
+    fn tx_mined_is_idempotent() {
+        let state = SendState::new(3);
+        let tx = B256::with_last_byte(1);
+
+        // Mining the same hash twice should not double-count.
+        state.tx_mined(tx);
+        state.tx_mined(tx);
+        assert!(state.is_waiting_for_confirmation());
+
+        // A single tx_not_mined clears it.
+        state.tx_not_mined(tx);
+        assert!(!state.is_waiting_for_confirmation());
     }
 
     // ── Fee bump flags ──────────────────────────────────────────────────
