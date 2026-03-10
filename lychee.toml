@@ -1,6 +1,9 @@
 verbose = "debug"
 no_progress = false
 exclude_all_private = false
+max_concurrency = 48
+max_retries = 3
+retry_wait_time = 5
 accept = [200, 403, 429] # 403 is often returned by private repos instead of 404; 429 is rate limiting
 exclude_path = [
     "crates/utilities/test-utils/contracts/",

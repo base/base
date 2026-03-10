@@ -1,6 +1,8 @@
-# base-proof-client
+# `base-proof-client`
 
 Oracle-backed derivation and execution orchestration for the Base ZK proof program.
+
+## Overview
 
 This crate defines the three phases of a fault proof (or ZK proof) run: prologue, execution,
 and epilogue. It is intentionally decoupled from any specific runtime or FPVM binary so that
@@ -77,4 +79,4 @@ translate into a non-zero exit code or a MIPS `halt` instruction depending on th
 
 ## License
 
-This project is licensed under the MIT License.
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 # Proof
+base-proof-preimage = { workspace = true }
 base-proof-primitives = { workspace = true, features = ["std"] }
 
 # Async
@@ -22,7 +23,7 @@ tokio = { workspace = true }
 thiserror = { workspace = true }
 
 # Vsock transport (optional, unix-only)
-vsock = { workspace = true, optional = true }
+tokio-vsock = { workspace = true, optional = true }
 bincode = { workspace = true, optional = true, features = ["serde"] }
 serde = { workspace = true, optional = true }
 
@@ -32,11 +33,11 @@ tokio = { workspace = true, features = ["full"] }
 
 [features]
 test-utils = []
-vsock = [
+frame = [
+	"base-proof-preimage/serde",
 	"base-proof-primitives/serde",
 	"dep:bincode",
 	"dep:serde",
-	"dep:vsock",
-	"tokio/rt",
-	"tokio/time",
+	"tokio/io-util",
 ]
+vsock = [ "dep:tokio-vsock", "frame", "tokio/rt", "tokio/time" ]

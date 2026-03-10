@@ -29,8 +29,8 @@ use crate::{
 };
 
 const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
-const HEAD_STREAM_POLL_INTERVAL: u64 = 4;
-const FINALIZED_STREAM_POLL_INTERVAL: u64 = 60;
+pub(crate) const HEAD_STREAM_POLL_INTERVAL: u64 = 4;
+pub(crate) const FINALIZED_STREAM_POLL_INTERVAL: u64 = 60;
 
 /// The configuration for the L1 chain.
 #[derive(Debug, Clone)]
@@ -326,7 +326,7 @@ impl RollupNode {
             l1_query_rx,
             l1_head_updates_tx.clone(),
             QueuedL1WatcherDerivationClient { derivation_actor_request_tx },
-            signer,
+            Some(signer),
             cancellation.clone(),
             head_stream,
             finalized_stream,
@@ -379,8 +379,8 @@ impl RollupNode {
                     r,
                     RpcContext {
                         cancellation: cancellation.clone(),
-                        p2p_network: network_rpc,
-                        network_admin: net_admin_rpc,
+                        p2p_network: Some(network_rpc),
+                        network_admin: Some(net_admin_rpc),
                         l1_watcher_queries: l1_query_tx,
                     }
                 )),

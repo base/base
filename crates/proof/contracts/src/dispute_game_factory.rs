@@ -16,8 +16,8 @@ sol! {
         /// Error returned when a game with the same UUID already exists.
         error GameAlreadyExists(bytes32 uuid);
 
-        /// Creates a new dispute game.
-        function create(
+        /// Creates a new dispute game with proof data passed to `initializeWithInitData`.
+        function createWithInitData(
             uint32 gameType,
             bytes32 rootClaim,
             bytes calldata extraData,
@@ -134,7 +134,7 @@ impl DisputeGameFactoryClient for DisputeGameFactoryContractClient {
     }
 }
 
-/// Encodes the `extraData` for `DisputeGameFactory.create()`.
+/// Encodes the `extraData` for `DisputeGameFactory.createWithInitData()`.
 ///
 /// Format: `l2BlockNumber(32) + parentIndex(4) + intermediateRoots(32 * N)`.
 pub fn encode_extra_data(
@@ -151,14 +151,14 @@ pub fn encode_extra_data(
     Bytes::from(data)
 }
 
-/// Encodes the calldata for `DisputeGameFactory.create()`.
+/// Encodes the calldata for `DisputeGameFactory.createWithInitData()`.
 pub fn encode_create_calldata(
     game_type: u32,
     root_claim: B256,
     extra_data: Bytes,
     init_data: Bytes,
 ) -> Bytes {
-    let call = IDisputeGameFactory::createCall {
+    let call = IDisputeGameFactory::createWithInitDataCall {
         gameType: game_type,
         rootClaim: root_claim,
         extraData: extra_data,
@@ -206,8 +206,7 @@ mod tests {
             Bytes::from(vec![0u8; 36]),
             Bytes::from(vec![0u8; 130]),
         );
-        // First 4 bytes should be the create function selector
-        assert_eq!(&calldata[..4], &IDisputeGameFactory::createCall::SELECTOR);
+        assert_eq!(&calldata[..4], &IDisputeGameFactory::createWithInitDataCall::SELECTOR);
     }
 
     #[test]

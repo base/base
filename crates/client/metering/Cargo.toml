@@ -42,6 +42,9 @@ alloy-consensus = { workspace = true, features = ["std"] }
 # rpc
 jsonrpsee.workspace = true
 
+# DA calculation
+base-alloy-flz.workspace = true
+
 # metrics
 metrics.workspace = true
 metrics-derive.workspace = true
@@ -50,6 +53,7 @@ metrics-derive.workspace = true
 eyre.workspace = true
 arc-swap.workspace = true
 derive_more.workspace = true
+thiserror.workspace = true
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 

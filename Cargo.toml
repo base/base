@@ -25,8 +25,10 @@ members = [
   "crates/proof/std-fpvm",
   "crates/proof/std-fpvm-proc",
   "crates/proof/tee/core",
+  "crates/proof/tee/nitro",
   "crates/proof/tee/client",
   "crates/proof/tee/server",
+  "crates/proof/zk/client",
   "crates/proof/transport",
   "crates/proof/contracts",
   "crates/proof/rpc",
@@ -223,9 +225,11 @@ base-proof-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-featur
 base-enclave = { path = "crates/proof/tee/core" }
 base-enclave-client = { path = "crates/proof/tee/client" }
 base-enclave-server = { path = "crates/proof/tee/server" }
+base-proof-tee-nitro = { path = "crates/proof/tee/nitro" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }
+base-zk-client = { path = "crates/proof/zk/client" }
 base-challenger = { path = "crates/proof/challenge" }
 base-proof-transport = { path = "crates/proof/transport" }
 
@@ -234,6 +238,7 @@ base-jwt = { path = "crates/utilities/jwt" }
 base-cli-utils = { path = "crates/utilities/cli" }
 base-test-utils = { path = "crates/utilities/test-utils" }
 base-proofs-extension = { path = "crates/client/proofs" }
+base-tx-manager = { path = "crates/utilities/tx-manager" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
 base-macros = { path = "crates/utilities/macros", default-features = false }
 
@@ -354,6 +359,12 @@ futures = "0.3.31"
 reqwest = "0.13.1"
 async-trait = "0.1.83"
 
+# grpc
+prost = "0.14"
+tonic = "0.14"
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+
 # rpc
 jsonrpsee = "0.26.0"
 jsonrpsee-core = "0.26.0"
@@ -448,6 +459,7 @@ lru = "0.16"
 moka = "0.12"
 rand = "0.9"
 vsock = "0.5"
+tokio-vsock = "0.7"
 uuid = "1.21"
 dirs = "6.0.0"
 anyhow = "1.0"

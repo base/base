@@ -46,7 +46,7 @@ where
             OpSpecId::FJORD => fjord(),
             OpSpecId::GRANITE | OpSpecId::HOLOCENE => granite(),
             OpSpecId::ISTHMUS => isthmus(),
-            OpSpecId::OSAKA | OpSpecId::JOVIAN => jovian(),
+            OpSpecId::OSAKA | OpSpecId::JOVIAN | OpSpecId::BASE_V1 => jovian(),
         };
 
         let accelerated_precompiles = match spec {
@@ -56,7 +56,7 @@ where
             OpSpecId::ECOTONE | OpSpecId::FJORD => accelerated_ecotone::<H, O>(),
             OpSpecId::GRANITE | OpSpecId::HOLOCENE => accelerated_granite::<H, O>(),
             OpSpecId::ISTHMUS => accelerated_isthmus::<H, O>(),
-            OpSpecId::OSAKA | OpSpecId::JOVIAN => accelerated_jovian::<H, O>(),
+            OpSpecId::OSAKA | OpSpecId::JOVIAN | OpSpecId::BASE_V1 => accelerated_jovian::<H, O>(),
         };
 
         Self {

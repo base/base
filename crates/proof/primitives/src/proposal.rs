@@ -1,5 +1,8 @@
 use alloy_primitives::{B256, Bytes, U256};
 
+/// ECDSA signature length (r + s + v).
+pub const SIGNATURE_LENGTH: usize = 65;
+
 /// A proposal containing an output root and signature.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

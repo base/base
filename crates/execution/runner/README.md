@@ -54,3 +54,7 @@ impl FromExtensionConfig for MyExtension {
     }
 }
 ```
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

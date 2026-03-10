@@ -2,6 +2,11 @@
 
 <a href="https://crates.io/crates/base-consensus-peers"><img src="https://img.shields.io/crates/v/base-consensus-peers.svg?label=base-consensus-peers&labelColor=2a2f35" alt="base-consensus-peers"></a>
 
+## Overview
+
+Networking peer types ported from reth. Provides `PeerId`, `NodeRecord`, and `AnyNode` for
+working with Ethereum network identities across discv4, discv5, and admin RPC contexts.
+
 Networking Utilities ported from reth.
 
 Much of this module is ported from
@@ -37,3 +42,16 @@ In short, the types are as follows:
   required.
 - `AnyNode`: An enum over `PeerId`, `NodeRecord`, and `discv5::Enr`, useful in
   deserialization when the type of the node record is not known.
+
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-consensus-peers = { workspace = true }
+```
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

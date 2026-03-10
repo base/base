@@ -1,0 +1,31 @@
+[package]
+name = "base-zk-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# gRPC
+url.workspace = true
+prost.workspace = true
+tonic-prost.workspace = true
+tonic = { workspace = true, features = ["transport"] }
+
+# Async
+async-trait.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Tracing
+tracing.workspace = true
+
+[build-dependencies]
+tonic-prost-build.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

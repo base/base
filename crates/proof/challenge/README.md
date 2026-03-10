@@ -15,6 +15,15 @@ ZK-proof dispute game challenger.
 - **Metrics**: Prometheus metric definitions and recording.
 - **CLI**: Command-line argument parsing and configuration validation.
 
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-challenger = { workspace = true }
+```
+
 ## License
 
 [MIT License](https://github.com/base/base/blob/main/LICENSE)

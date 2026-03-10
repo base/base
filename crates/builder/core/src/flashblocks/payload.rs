@@ -46,11 +46,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
-    BuilderConfig, ExecutionInfo, PayloadBuilder,
+    BuilderConfig, ExecutionInfo, PayloadBuilder, ResourceLimits,
     flashblocks::{
         FlashblocksExtraCtx,
         best_txs::BestFlashblocksTxs,
-        config::FlashBlocksConfigExt,
         context::OpPayloadBuilderCtx,
         generator::{BlockCell, BuildArguments},
     },
@@ -202,18 +201,9 @@ where
             evm_env,
             block_env_attributes,
             cancel,
-            da_config: self.config.da_config.clone(),
-            gas_limit_config: self.config.gas_limit_config.clone(),
             metrics: Default::default(),
             extra,
-            max_gas_per_txn: self.config.max_gas_per_txn,
-            max_execution_time_per_tx_us: self.config.max_execution_time_per_tx_us,
-            max_state_root_time_per_tx_us: self.config.max_state_root_time_per_tx_us,
-            flashblock_execution_time_budget_us: self.config.flashblock_execution_time_budget_us,
-            block_state_root_time_budget_us: self.config.block_state_root_time_budget_us,
-            max_uncompressed_block_size: self.config.max_uncompressed_block_size,
-            execution_metering_mode: self.config.execution_metering_mode,
-            metering_provider: Arc::clone(&self.config.metering_provider),
+            builder_config: self.config.clone(),
         })
     }
 
@@ -249,9 +239,9 @@ where
         span.record("payload_id", config.attributes.payload_attributes.id.to_string());
 
         let timestamp = config.attributes.timestamp();
-        let ctx = self
+        let mut ctx = self
             .get_op_payload_builder_ctx(
-                config.clone(),
+                config,
                 block_cancel.clone(),
                 FlashblocksExtraCtx {
                     target_flashblock_count: self.config.flashblocks_per_block(),
@@ -320,19 +310,23 @@ where
             message = "Performed flashblocks timing derivation",
             flashblocks_per_block,
             first_flashblock_offset = first_flashblock_offset.as_millis(),
-            flashblocks_interval = self.config.flashblocks.interval.as_millis(),
+            flashblocks_interval = self.config.flashblocks_interval.as_millis(),
         );
         ctx.metrics.reduced_flashblocks_number.record(
             self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block) as f64,
         );
         ctx.metrics.first_flashblock_time_offset.record(first_flashblock_offset.as_millis() as f64);
         let gas_per_batch = ctx.block_gas_limit() / flashblocks_per_block;
-        let da_per_batch =
-            ctx.da_config.max_da_block_size().map(|da_limit| da_limit / flashblocks_per_block);
+        let da_per_batch = ctx
+            .builder_config
+            .da_config
+            .max_da_block_size()
+            .map(|da_limit| da_limit / flashblocks_per_block);
         let da_footprint_per_batch =
             info.da_footprint_scalar.map(|_| ctx.block_gas_limit() / flashblocks_per_block);
-        let execution_time_per_batch_us = ctx.flashblock_execution_time_budget_us;
+        let execution_time_per_batch_us = ctx.builder_config.flashblock_execution_time_budget_us;
         let state_root_time_per_batch_us = ctx
+            .builder_config
             .block_state_root_time_budget_us
             .map(|budget| budget / flashblocks_per_block as u128);
 
@@ -352,15 +346,13 @@ where
         };
 
         let mut fb_cancel = block_cancel.child_token();
-        let mut ctx = self
-            .get_op_payload_builder_ctx(config, fb_cancel.clone(), extra)
-            .map_err(|e| PayloadBuilderError::Other(e.into()))?;
+        ctx = ctx.with_cancel(fb_cancel.clone()).with_extra_ctx(extra);
 
         // Create best_transaction iterator
         let mut best_txs = BestFlashblocksTxs::new(BestPayloadTransactions::new(
             self.pool.best_transactions_with_attributes(ctx.best_transaction_attributes()),
         ));
-        let interval = self.config.flashblocks.interval;
+        let interval = self.config.flashblocks_interval;
         let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
 
         tokio::spawn({
@@ -557,17 +549,20 @@ where
         ctx.metrics.transaction_pool_fetch_gauge.set(transaction_pool_fetch_time);
 
         let tx_execution_start_time = Instant::now();
-        ctx.execute_best_transactions(
-            info,
-            state,
-            best_txs,
-            target_gas_for_batch.min(ctx.block_gas_limit()),
-            target_da_for_batch,
-            target_da_footprint_for_batch,
+        let limits = ResourceLimits {
+            block_gas_limit: target_gas_for_batch.min(ctx.block_gas_limit()),
+            tx_data_limit: ctx.builder_config.da_config.max_da_tx_size(),
+            block_data_limit: target_da_for_batch,
+            da_footprint_gas_scalar: info.da_footprint_scalar,
+            block_da_footprint_limit: target_da_footprint_for_batch,
+            tx_execution_time_limit_us: ctx.builder_config.max_execution_time_per_tx_us,
             flashblock_execution_time_limit_us,
+            tx_state_root_time_limit_us: ctx.builder_config.max_state_root_time_per_tx_us,
             block_state_root_time_limit_us,
-        )
-        .wrap_err("failed to execute best transactions")?;
+            block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
+        };
+        ctx.execute_best_transactions(info, state, best_txs, &limits)
+            .wrap_err("failed to execute best transactions")?;
         // Extract last transactions
         let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..]
             .iter()
@@ -794,7 +789,7 @@ where
         // FCU(a) could arrive with `delay < fb_time` - in this case we will shrink first flashblock
         // FCU(a) could arrive with `fb_time < delay < block_time - fb_time` - in this case we will issue less flashblocks
         let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp)
-            - self.config.flashblocks.leeway_time;
+            - self.config.flashblocks_leeway_time;
         let now = std::time::SystemTime::now();
         let Some(time_drift) =
             target_time.duration_since(now).ok().filter(|duration| duration.as_millis() > 0)
@@ -805,7 +800,7 @@ where
                 ?target_time,
                 ?now,
             );
-            return (self.config.flashblocks_per_block(), self.config.flashblocks.interval);
+            return (self.config.flashblocks_per_block(), self.config.flashblocks_interval);
         };
         self.metrics.flashblocks_time_drift.record(
             self.config.block_time.as_millis().saturating_sub(time_drift.as_millis()) as f64,
@@ -819,7 +814,7 @@ where
         );
         // This is extra check to ensure that we would account at least for block time in case we have any timer discrepancies.
         let time_drift = time_drift.min(self.config.block_time);
-        let interval = self.config.flashblocks.interval.as_millis() as u64;
+        let interval = self.config.flashblocks_interval.as_millis() as u64;
         let time_drift = time_drift.as_millis() as u64;
         let first_flashblock_offset = time_drift.rem(interval);
         if first_flashblock_offset == 0 {

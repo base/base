@@ -37,5 +37,5 @@ if curl -sf "$INGRESS_HEALTH_URL" >/dev/null 2>&1; then
     sleep 3  # wait for the previous tx's nonce to be reflected on-chain
     cast send --private-key $PK --rpc-url $L2_INGRESS_RPC_URL $TO --value 0.001ether --json | jq -r '"TX: \(.transactionHash) block=\(.blockNumber)"'
 else
-    echo "Ingress not running (start with: just devnet-ingress)"
+    echo "Ingress not running (start with: just devnet ingress)"
 fi

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use base_proof_primitives::{ProofBundle, ProofResult};
+use base_proof_preimage::PreimageKey;
+use base_proof_primitives::ProofResult;
 
 use crate::{ProofTransport, TransportResult};
 
@@ -10,7 +11,7 @@ pub struct NativeTransport<F> {
 
 impl<F> NativeTransport<F>
 where
-    F: Fn(&ProofBundle) -> ProofResult + Send + Sync,
+    F: Fn(&[(PreimageKey, Vec<u8>)]) -> ProofResult + Send + Sync,
 {
     /// Create a new transport that delegates `prove` calls to `handler`.
     pub const fn new(handler: F) -> Self {
@@ -27,9 +28,9 @@ impl<F> std::fmt::Debug for NativeTransport<F> {
 #[async_trait]
 impl<F> ProofTransport for NativeTransport<F>
 where
-    F: Fn(&ProofBundle) -> ProofResult + Send + Sync,
+    F: Fn(&[(PreimageKey, Vec<u8>)]) -> ProofResult + Send + Sync,
 {
-    async fn prove(&self, bundle: &ProofBundle) -> TransportResult<ProofResult> {
-        Ok((self.handler)(bundle))
+    async fn prove(&self, preimages: &[(PreimageKey, Vec<u8>)]) -> TransportResult<ProofResult> {
+        Ok((self.handler)(preimages))
     }
 }

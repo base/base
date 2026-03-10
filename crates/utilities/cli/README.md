@@ -12,7 +12,7 @@ CLI utilities for the Base Reth node.
 - **`register_version_metrics!`**: Registers `base_info{version="..."}` Prometheus metric.
 - **`define_log_args!`**: Generates a `LogArgs` struct with env-var-prefixed logging flags.
 - **`define_metrics_args!`**: Generates a `MetricsArgs` struct with env-var-prefixed Prometheus flags.
-- **`RuntimeManager`**: Tokio runtime with Ctrl+C shutdown handling.
+- **`RuntimeManager`**: Tokio runtime creation and OS signal handling (SIGINT + SIGTERM) with `CancellationToken`-based cooperative shutdown.
 
 ## Usage
 

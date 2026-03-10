@@ -21,11 +21,11 @@ pub use output_proposer::{
 };
 
 mod driver;
-pub use driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl};
+pub use driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl, RecoveredGame};
 
 mod enclave;
 pub use enclave::{
-    EnclaveClient, EnclaveClientTrait, PerChainConfig, Proposal, create_enclave_client,
+    EnclaveClient, EnclaveClientTrait, PerChainConfig, create_enclave_client,
     rollup_config_to_per_chain_config,
 };
 
@@ -44,17 +44,11 @@ pub use metrics::{
 mod prover;
 pub use prover::{Prover, ProverProposal};
 
-mod recovery;
-pub use recovery::recover_parent_game_state_standalone;
-
 mod rpc;
 pub use rpc::{L2ClientKind, ProverL2Provider, RethExecutionWitness, RethL2Client};
 
 mod service;
 pub use service::run;
-
-mod signal;
-pub use signal::SignalHandler;
 
 /// Shared mock implementations for tests.
 #[cfg(test)]

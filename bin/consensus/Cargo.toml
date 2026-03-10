@@ -49,4 +49,5 @@ metrics.workspace = true
 # misc
 url.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 eyre.workspace = true
