@@ -90,7 +90,7 @@ impl FeeCalculator {
     /// The returned fee cap always reflects the tip that was selected so that
     /// the EIP-1559 relationship `fee_cap >= tip` is maintained.
     #[must_use]
-    pub fn update_fees(
+    pub const fn update_fees(
         old_tip: u128,
         old_fee_cap: u128,
         new_tip: u128,
@@ -110,7 +110,10 @@ impl FeeCalculator {
             (true, true) => (new_tip, new_fee_cap),
             // Case 2: tip above, fee cap below → new tip + threshold fee cap
             // Clamp fee_cap to at least new_tip to maintain fee_cap >= tip invariant.
-            (true, false) => (new_tip, threshold_fee_cap.max(new_tip)),
+            (true, false) => {
+                let fee_cap = if threshold_fee_cap > new_tip { threshold_fee_cap } else { new_tip };
+                (new_tip, fee_cap)
+            }
             // Case 3: fee cap above, tip below → threshold tip + recalculated fee cap
             (false, true) => {
                 let recalculated = Self::calc_gas_fee_cap(new_base_fee, threshold_tip);
@@ -118,7 +121,11 @@ impl FeeCalculator {
             }
             // Case 4: both below → both threshold values
             // Clamp fee_cap to at least threshold_tip to maintain fee_cap >= tip invariant.
-            (false, false) => (threshold_tip, threshold_fee_cap.max(threshold_tip)),
+            (false, false) => {
+                let fee_cap =
+                    if threshold_fee_cap > threshold_tip { threshold_fee_cap } else { threshold_tip };
+                (threshold_tip, fee_cap)
+            }
         }
     }
 
