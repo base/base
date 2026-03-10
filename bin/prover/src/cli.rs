@@ -5,15 +5,15 @@ use std::{net::SocketAddr, sync::Arc};
 use alloy_primitives::{Address, B256};
 use base_consensus_registry::Registry;
 use base_proof_host::ProverConfig;
+#[cfg(any(target_os = "linux", feature = "local"))]
+use base_proof_tee_nitro::EnclaveConfig;
 #[cfg(target_os = "linux")]
-use base_proof_tee_nitro::{NitroEnclave};
+use base_proof_tee_nitro::NitroEnclave;
 use base_proof_tee_nitro::NitroProverServer;
 #[cfg(feature = "local")]
 use base_proof_tee_nitro::Server;
-#[cfg(any(target_os = "linux", feature = "local"))]
-use base_proof_tee_nitro::EnclaveConfig;
 #[cfg(feature = "local")]
-use base_proof_transport::NativeTransport;
+use base_proof_transport::{NativeTransport, TransportError};
 use base_proof_transport::VsockTransport;
 use clap::{Parser, Subcommand};
 use eyre::eyre;
@@ -255,7 +255,7 @@ impl NitroLocalArgs {
                 tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current()
                         .block_on(server.prove(preimages))
-                        .expect("enclave prove failed")
+                        .map_err(|e| TransportError::Codec(e.to_string()))
                 })
             }
         }));

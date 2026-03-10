@@ -26,7 +26,7 @@ fn test_result() -> ProofResult {
 #[tokio::test]
 async fn roundtrip() {
     let expected = test_result();
-    let transport = NativeTransport::new(|_| test_result());
+    let transport = NativeTransport::new(|_| Ok(test_result()));
 
     let result = transport.prove(&[]).await.unwrap();
     assert_eq!(result, expected);
@@ -38,7 +38,7 @@ async fn handler_receives_preimages() {
     let transport = NativeTransport::new(move |preimages: &[(PreimageKey, Vec<u8>)]| {
         assert_eq!(preimages.len(), 1);
         assert_eq!(preimages[0].0, PreimageKey::new([1u8; 32], PreimageKeyType::Local));
-        test_result()
+        Ok(test_result())
     });
 
     transport.prove(&[(key, b"value".to_vec())]).await.unwrap();
@@ -46,7 +46,7 @@ async fn handler_receives_preimages() {
 
 #[tokio::test]
 async fn multiple_proves() {
-    let transport = NativeTransport::new(|_| test_result());
+    let transport = NativeTransport::new(|_| Ok(test_result()));
 
     for _ in 0..5 {
         let result = transport.prove(&[]).await.unwrap();

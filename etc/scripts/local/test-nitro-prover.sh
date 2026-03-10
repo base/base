@@ -23,6 +23,7 @@ set -euo pipefail
 OP_NODE_URL="${OP_NODE_URL:?must set OP_NODE_URL}"
 L1_ETH_URL="${L1_ETH_URL:?must set L1_ETH_URL}"
 PROVER_RPC_URL="${PROVER_RPC_URL:-http://localhost:7300}"
+BLOCK_RANGE="${BLOCK_RANGE:-10}"
 L1_HEAD_BUFFER=50
 
 # ---------------------------------------------------------------------------
@@ -47,9 +48,9 @@ hex() {
 sync_status=$(rpc "$OP_NODE_URL" "optimism_syncStatus" "[]")
 safe_l2_number=$(echo "$sync_status" | jq -r '.safe_l2.number')
 CLAIMED_L2_BLOCK_NUMBER=$((safe_l2_number))
-AGREED_L2_BLOCK_NUMBER=$((CLAIMED_L2_BLOCK_NUMBER - 10))
+AGREED_L2_BLOCK_NUMBER=$((CLAIMED_L2_BLOCK_NUMBER - BLOCK_RANGE))
 echo ""
-echo "=== Proving L2 blocks $AGREED_L2_BLOCK_NUMBER → $CLAIMED_L2_BLOCK_NUMBER (10 blocks) ==="
+echo "=== Proving L2 blocks $AGREED_L2_BLOCK_NUMBER → $CLAIMED_L2_BLOCK_NUMBER ($BLOCK_RANGE blocks) ==="
 echo "    Agreed L2 block: $AGREED_L2_BLOCK_NUMBER"
 echo "    Claimed L2 block (safe head): $CLAIMED_L2_BLOCK_NUMBER"
 
