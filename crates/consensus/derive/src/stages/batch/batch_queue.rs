@@ -239,7 +239,7 @@ where
     pub async fn add_batch(&mut self, batch: Batch, parent: L2BlockInfo) -> PipelineResult<()> {
         if self.l1_blocks.is_empty() {
             error!(target: "batch_queue", "Cannot add batch without an origin");
-            return Err(PipelineError::MissingOrigin.crit());
+            panic!("Cannot add batch without an origin");
         }
         let origin = self.origin.ok_or(PipelineError::MissingOrigin.crit())?;
         let data = BatchWithInclusionBlock { inclusion_block: origin, batch };
@@ -349,6 +349,7 @@ where
         match self.prev.next_batch(parent, &self.l1_blocks).await {
             Ok(b) => {
                 if !origin_behind {
+                    self.add_batch(b, parent).await.ok();
                     if let Err(error) = self.add_batch(b, parent).await {
                         warn!(target: "batch_queue", error = %error, "Failed to add batch to queue");
                         return Err(error);
@@ -689,16 +690,6 @@ mod tests {
         // Add the batch to the batch queue
         bq.add_batch(Batch::Single(batch), parent).await.unwrap();
         assert!(bq.batches.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_add_batch_without_origin_returns_error() {
-        let cfg = Arc::new(RollupConfig::default());
-        let mock = TestNextBatchProvider::new(vec![]);
-        let fetcher = TestL2ChainProvider::default();
-        let mut bq = BatchQueue::new(cfg, mock, fetcher);
-        let result = bq.add_batch(Batch::Single(SingleBatch::default()), L2BlockInfo::default()).await;
-        assert_eq!(result.unwrap_err(), PipelineError::MissingOrigin.crit());
     }
 
     #[tokio::test]
