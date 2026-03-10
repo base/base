@@ -40,22 +40,6 @@ impl EnclaveApiServer for RpcServerImpl {
         self.server.signer_attestation().map(Bytes::from).map_err(to_rpc_error)
     }
 
-    async fn decryption_public_key(&self) -> Result<Bytes, ErrorObjectOwned> {
-        self.server.decryption_public_key().map(Bytes::from).map_err(to_rpc_error)
-    }
-
-    async fn decryption_attestation(&self) -> Result<Bytes, ErrorObjectOwned> {
-        self.server.decryption_attestation().map(Bytes::from).map_err(to_rpc_error)
-    }
-
-    async fn encrypted_signer_key(&self, attestation: Bytes) -> Result<Bytes, ErrorObjectOwned> {
-        self.server.encrypted_signer_key(&attestation).map(Bytes::from).map_err(to_rpc_error)
-    }
-
-    async fn set_signer_key(&self, encrypted: Bytes) -> Result<(), ErrorObjectOwned> {
-        self.server.set_signer_key(&encrypted).map_err(to_rpc_error)
-    }
-
     async fn execute_stateless(
         &self,
         request: ExecuteStatelessRequest,

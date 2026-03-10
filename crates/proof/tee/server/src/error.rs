@@ -51,9 +51,6 @@ pub enum AttestationError {
     /// Failed to verify attestation.
     #[error("failed to verify attestation: {0}")]
     Verification(String),
-    /// PCR0 mismatch.
-    #[error("attestation PCR0 does not match expected value")]
-    Pcr0Mismatch,
     /// Failed to parse CBOR attestation document.
     #[error("failed to parse CBOR attestation: {0}")]
     CborParse(String),
@@ -89,33 +86,12 @@ pub enum AttestationError {
 /// Errors that can occur during cryptographic operations.
 #[derive(Debug, Clone, Error)]
 pub enum CryptoError {
-    /// Failed to generate RSA key.
-    #[error("failed to generate RSA key: {0}")]
-    RsaKeyGeneration(String),
-    /// Failed to serialize public key to PKIX format.
-    #[error("failed to serialize public key to PKIX: {0}")]
-    PkixSerialize(String),
-    /// Failed to parse PKIX public key.
-    #[error("failed to parse PKIX public key: {0}")]
-    PkixParse(String),
-    /// Failed to encrypt with RSA.
-    #[error("RSA encryption failed: {0}")]
-    RsaEncrypt(String),
-    /// Failed to decrypt with RSA.
-    #[error("RSA decryption failed: {0}")]
-    RsaDecrypt(String),
-    /// Failed to generate ECDSA key.
-    #[error("failed to generate ECDSA key: {0}")]
-    EcdsaKeyGeneration(String),
     /// Failed to parse ECDSA private key.
     #[error("failed to parse ECDSA private key: {0}")]
     EcdsaKeyParse(String),
     /// Failed to parse hex string.
     #[error("failed to parse hex string: {0}")]
     HexParse(String),
-    /// Invalid private key length.
-    #[error("invalid private key length: expected 32 bytes, got {0}")]
-    InvalidPrivateKeyLength(usize),
 }
 
 /// Errors that can occur during proposal operations.

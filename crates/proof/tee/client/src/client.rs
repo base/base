@@ -171,53 +171,6 @@ impl EnclaveClient {
         self.inner.request("enclave_signerAttestation", rpc_params![]).await.map_err(Into::into)
     }
 
-    /// Get the decryption public key in PKIX/DER format.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the RPC call fails.
-    pub async fn decryption_public_key(&self) -> Result<Bytes, ClientError> {
-        self.inner.request("enclave_decryptionPublicKey", rpc_params![]).await.map_err(Into::into)
-    }
-
-    /// Get an attestation document containing the decryption public key.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the RPC call fails or if running in local mode.
-    pub async fn decryption_attestation(&self) -> Result<Bytes, ClientError> {
-        self.inner.request("enclave_decryptionAttestation", rpc_params![]).await.map_err(Into::into)
-    }
-
-    /// Encrypt the signer key for a remote enclave.
-    ///
-    /// # Arguments
-    ///
-    /// * `attestation` - The attestation document from the remote enclave
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the RPC call fails.
-    pub async fn encrypted_signer_key(&self, attestation: Bytes) -> Result<Bytes, ClientError> {
-        self.inner
-            .request("enclave_encryptedSignerKey", rpc_params![attestation])
-            .await
-            .map_err(Into::into)
-    }
-
-    /// Set the signer key from an encrypted key.
-    ///
-    /// # Arguments
-    ///
-    /// * `encrypted` - The encrypted signer key
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the RPC call fails.
-    pub async fn set_signer_key(&self, encrypted: Bytes) -> Result<(), ClientError> {
-        self.inner.request("enclave_setSignerKey", rpc_params![encrypted]).await.map_err(Into::into)
-    }
-
     /// Execute stateless block validation and create a signed proposal.
     ///
     /// # Errors

@@ -11,21 +11,14 @@ use base_enclave::{
     AccountResult, ExecutionWitness, Proposal, ProposalParams,
     execute_stateless as core_execute_stateless, output_root_v0,
 };
-use parking_lot::RwLock;
-#[cfg(test)]
-use rand_08::rngs::OsRng;
-use rsa::RsaPrivateKey;
 use tracing::{info, warn};
 
 use crate::{
-    attestation::{extract_public_key, verify_attestation_with_pcr0},
     crypto::{
-        build_signing_data, decrypt_pkcs1v15, encrypt_pkcs1v15, generate_rsa_key, generate_signer,
-        pkix_to_public_key, private_key_bytes, private_to_public, public_key_bytes,
-        public_key_to_pkix, sign_proposal_data_sync, signer_from_bytes, signer_from_hex,
-        verify_proposal_signature,
+        build_signing_data, generate_signer, public_key_bytes, sign_proposal_data_sync,
+        signer_from_hex, verify_proposal_signature,
     },
-    error::{CryptoError, NsmError, ProposalError, ServerError},
+    error::{NsmError, ProposalError, ServerError},
     nsm::{NsmRng, NsmSession},
 };
 
@@ -40,10 +33,8 @@ const SIGNER_KEY_ENV_VAR: &str = "OP_ENCLAVE_SIGNER_KEY";
 pub struct Server {
     /// PCR0 measurement (empty in local mode).
     pcr0: Vec<u8>,
-    /// ECDSA signing key with interior mutability for `set_signer_key`.
-    signer_key: RwLock<PrivateKeySigner>,
-    /// RSA-4096 key for decrypting received signer keys.
-    decryption_key: RsaPrivateKey,
+    /// ECDSA signing key.
+    signer_key: PrivateKeySigner,
 }
 
 impl Server {
@@ -70,9 +61,6 @@ impl Server {
             }
         };
 
-        // Generate RSA decryption key
-        let decryption_key = generate_rsa_key(&mut rng)?;
-
         // Generate or load ECDSA signer key
         let signer_key = if let Some(hex_key) = signer_key_env {
             info!("using signer key from environment variable");
@@ -88,7 +76,7 @@ impl Server {
             "server initialized"
         );
 
-        Ok(Self { pcr0, signer_key: RwLock::new(signer_key), decryption_key })
+        Ok(Self { pcr0, signer_key })
     }
 
     /// Check if the server is running in local mode.
@@ -106,112 +94,26 @@ impl Server {
     }
 
     /// Get the signer's public key as a 65-byte uncompressed EC point.
-    ///
-    /// This matches Go's `crypto.FromECDSAPub()` format.
     #[must_use]
     pub fn signer_public_key(&self) -> Vec<u8> {
-        let signer = self.signer_key.read();
-        public_key_bytes(&signer)
+        public_key_bytes(&self.signer_key)
     }
 
     /// Get the signer's Ethereum address.
     #[must_use]
-    pub fn signer_address(&self) -> Address {
-        let signer = self.signer_key.read();
-        signer.address()
+    pub const fn signer_address(&self) -> Address {
+        self.signer_key.address()
     }
 
     /// Get an attestation document containing the signer's public key.
     ///
     /// Returns an error in local mode.
     pub fn signer_attestation(&self) -> Result<Vec<u8>, ServerError> {
-        self.public_key_attestation(|| Ok(self.signer_public_key()))
-    }
-
-    /// Get the decryption public key in PKIX/DER format.
-    ///
-    /// This matches Go's `x509.MarshalPKIXPublicKey()` format.
-    pub fn decryption_public_key(&self) -> Result<Vec<u8>, ServerError> {
-        let public_key = private_to_public(&self.decryption_key);
-        public_key_to_pkix(&public_key)
-    }
-
-    /// Get an attestation document containing the decryption public key.
-    ///
-    /// Returns an error in local mode.
-    pub fn decryption_attestation(&self) -> Result<Vec<u8>, ServerError> {
-        self.public_key_attestation(|| self.decryption_public_key())
-    }
-
-    /// Get an attestation document containing the given public key.
-    fn public_key_attestation<F>(&self, public_key_fn: F) -> Result<Vec<u8>, ServerError>
-    where
-        F: FnOnce() -> Result<Vec<u8>, ServerError>,
-    {
         let session = NsmSession::open()?
             .ok_or_else(|| NsmError::SessionOpen("NSM not available".to_string()))?;
 
-        let public_key = public_key_fn()?;
+        let public_key = self.signer_public_key();
         session.get_attestation(public_key)
-    }
-
-    /// Encrypt the signer key for a remote enclave.
-    ///
-    /// This verifies the provided attestation document, checks that PCR0 matches,
-    /// and encrypts the signer key using the public key from the attestation.
-    ///
-    /// # Arguments
-    /// * `attestation` - The attestation document from the remote enclave
-    ///
-    /// # Returns
-    /// The encrypted signer key (can be decrypted with `set_signer_key`)
-    pub fn encrypted_signer_key(&self, attestation: &[u8]) -> Result<Vec<u8>, ServerError> {
-        // Verify attestation and check PCR0
-        let result = verify_attestation_with_pcr0(attestation, &self.pcr0)?;
-
-        // Extract and parse the public key
-        let public_key_der = extract_public_key(&result.document)?;
-        let public_key = pkix_to_public_key(&public_key_der)?;
-
-        // Get the signer's private key
-        let signer = self.signer_key.read();
-        let signer_private_key = private_key_bytes(&signer);
-
-        // Encrypt with NSM RNG
-        let mut rng = NsmRng::default();
-        encrypt_pkcs1v15(&mut rng, &public_key, &signer_private_key)
-    }
-
-    /// Set the signer key from an encrypted key.
-    ///
-    /// This decrypts the provided ciphertext using the decryption key
-    /// and updates the signer key.
-    ///
-    /// # Arguments
-    /// * `encrypted` - The encrypted signer key (from `encrypted_signer_key`)
-    pub fn set_signer_key(&self, encrypted: &[u8]) -> Result<(), ServerError> {
-        let decrypted = decrypt_pkcs1v15(&self.decryption_key, encrypted)?;
-
-        if decrypted.len() != 32 {
-            return Err(CryptoError::InvalidPrivateKeyLength(decrypted.len()).into());
-        }
-
-        let new_signer = signer_from_bytes(&decrypted)?;
-
-        info!(
-            address = %new_signer.address(),
-            "updated signer key"
-        );
-
-        *self.signer_key.write() = new_signer;
-        Ok(())
-    }
-
-    /// Get a read guard for the signer.
-    ///
-    /// Use this for signing operations.
-    pub fn signer(&self) -> parking_lot::RwLockReadGuard<'_, PrivateKeySigner> {
-        self.signer_key.read()
     }
 
     /// Execute stateless block validation and create a signed proposal.
@@ -300,8 +202,7 @@ impl Server {
         );
 
         // Sign the proposal
-        let signer = self.signer_key.read();
-        let signature = sign_proposal_data_sync(&signer, &signing_data)?;
+        let signature = sign_proposal_data_sync(&self.signer_key, &signing_data)?;
 
         Ok(Proposal::new(ProposalParams {
             output_root,
@@ -312,33 +213,6 @@ impl Server {
             prev_output_root,
             config_hash,
         }))
-    }
-
-    /// Create a server for testing without RSA key generation.
-    ///
-    /// This is much faster than `new()` because RSA-4096 key generation takes ~7s
-    /// in debug mode. Tests that don't need RSA decryption should use this.
-    ///
-    /// # Warning
-    /// The decryption key is NOT usable - do not use for actual encryption/decryption tests.
-    #[cfg(test)]
-    pub fn new_for_testing() -> Result<Self, ServerError> {
-        let mut rng = OsRng;
-
-        // Generate ECDSA signer (fast, ~1ms)
-        let signer_key = generate_signer(&mut rng)?;
-
-        info!(
-            address = %signer_key.address(),
-            "test server initialized (no RSA key)"
-        );
-
-        // Use a minimal RSA key (smallest allowed: 64 bytes = 512 bits) for struct completeness.
-        // This key is NOT secure and MUST NOT be used for actual encryption.
-        let decryption_key = rsa::RsaPrivateKey::new(&mut rng, 512)
-            .map_err(|e| CryptoError::RsaKeyGeneration(e.to_string()))?;
-
-        Ok(Self { pcr0: Vec::new(), signer_key: RwLock::new(signer_key), decryption_key })
     }
 
     /// Aggregate multiple proposals into a single proposal.
@@ -484,8 +358,7 @@ impl Server {
             tee_image_hash,
         );
 
-        let signer = self.signer_key.read();
-        let signature = sign_proposal_data_sync(&signer, &signing_data)?;
+        let signature = sign_proposal_data_sync(&self.signer_key, &signing_data)?;
 
         Ok(Proposal::new(ProposalParams {
             output_root: final_output_root,
@@ -520,41 +393,6 @@ mod tests {
     }
 
     #[test]
-    fn test_decryption_public_key() {
-        let server = Server::new().expect("failed to create server");
-        let public_key = server.decryption_public_key().expect("failed to get key");
-        // PKIX-encoded RSA-4096 public key should be around 550 bytes
-        assert!(public_key.len() > 500);
-    }
-
-    #[test]
-    #[ignore = "slow: generates two RSA-4096 keys"]
-    fn test_key_exchange_between_servers() {
-        // Simulate key exchange between two local servers
-        let server1 = Server::new().expect("failed to create server1");
-        let server2 = Server::new().expect("failed to create server2");
-
-        // In local mode, we can't use attestation, but we can test the RSA path
-        let signer = server1.signer();
-        let private_key = private_key_bytes(&signer);
-        drop(signer);
-
-        // Encrypt the key with server2's decryption key
-        let public_key = server2.decryption_public_key().expect("failed to get key");
-        let parsed_key = pkix_to_public_key(&public_key).expect("failed to parse key");
-
-        let mut rng = rand_08::rngs::OsRng;
-        let encrypted =
-            encrypt_pkcs1v15(&mut rng, &parsed_key, &private_key).expect("failed to encrypt");
-
-        // Decrypt and set on server2
-        server2.set_signer_key(&encrypted).expect("failed to set key");
-
-        // Verify both servers now have the same signer address
-        assert_eq!(server1.signer_address(), server2.signer_address());
-    }
-
-    #[test]
     fn test_signer_address_consistency() {
         let server = Server::new().expect("failed to create server");
 
@@ -571,7 +409,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_empty_proposals() {
-        let server = Server::new_for_testing().expect("failed to create server");
+        let server = Server::new().expect("failed to create server");
 
         let result =
             server.aggregate(B256::ZERO, B256::ZERO, 99u64, &[], Address::ZERO, B256::ZERO, &[]);
@@ -581,7 +419,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_single_proposal() {
-        let server = Server::new_for_testing().expect("failed to create server");
+        let server = Server::new().expect("failed to create server");
 
         let config_hash = B256::repeat_byte(0x11);
         let l1_origin_hash = B256::repeat_byte(0x22);
@@ -605,9 +443,8 @@ mod tests {
             tee_image_hash,
         );
 
-        let signer = server.signer();
-        let signature = sign_proposal_data_sync(&signer, &signing_data).expect("signing failed");
-        drop(signer);
+        let signature =
+            sign_proposal_data_sync(&server.signer_key, &signing_data).expect("signing failed");
 
         let proposal = Proposal::new(ProposalParams {
             output_root,
@@ -636,7 +473,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_multiple_proposals() {
-        let server = Server::new_for_testing().expect("failed to create server");
+        let server = Server::new().expect("failed to create server");
 
         let config_hash = B256::repeat_byte(0x11);
         let l1_origin_hash_1 = B256::repeat_byte(0x22);
@@ -662,10 +499,8 @@ mod tests {
             tee_image_hash,
         );
 
-        let signer = server.signer();
         let signature_1 =
-            sign_proposal_data_sync(&signer, &signing_data_1).expect("signing failed");
-        drop(signer);
+            sign_proposal_data_sync(&server.signer_key, &signing_data_1).expect("signing failed");
 
         let proposal_1 = Proposal::new(ProposalParams {
             output_root: output_root_1,
@@ -690,10 +525,8 @@ mod tests {
             tee_image_hash,
         );
 
-        let signer = server.signer();
         let signature_2 =
-            sign_proposal_data_sync(&signer, &signing_data_2).expect("signing failed");
-        drop(signer);
+            sign_proposal_data_sync(&server.signer_key, &signing_data_2).expect("signing failed");
 
         let proposal_2 = Proposal::new(ProposalParams {
             output_root: output_root_2,
@@ -727,7 +560,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_invalid_signature_rejected() {
-        let server = Server::new_for_testing().expect("failed to create server");
+        let server = Server::new().expect("failed to create server");
 
         let config_hash = B256::repeat_byte(0x11);
         let l1_origin_hash_1 = B256::repeat_byte(0x22);
@@ -753,10 +586,8 @@ mod tests {
             tee_image_hash,
         );
 
-        let signer = server.signer();
         let signature_1 =
-            sign_proposal_data_sync(&signer, &signing_data_1).expect("signing failed");
-        drop(signer);
+            sign_proposal_data_sync(&server.signer_key, &signing_data_1).expect("signing failed");
 
         let proposal_1 = Proposal::new(ProposalParams {
             output_root: output_root_1,
@@ -826,9 +657,8 @@ mod tests {
             config_hash,
             tee_image_hash,
         );
-        let signer = server.signer();
-        let signature = sign_proposal_data_sync(&signer, &signing_data).expect("signing failed");
-        drop(signer);
+        let signature =
+            sign_proposal_data_sync(&server.signer_key, &signing_data).expect("signing failed");
 
         Proposal::new(ProposalParams {
             output_root,
@@ -843,7 +673,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_validates_intermediate_roots() {
-        let server = Server::new_for_testing().expect("failed to create server");
+        let server = Server::new().expect("failed to create server");
 
         let proposer = Address::ZERO;
         let tee_image_hash = B256::ZERO;
@@ -910,7 +740,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_rejects_wrong_intermediate_roots() {
-        let server = Server::new_for_testing().expect("failed to create server");
+        let server = Server::new().expect("failed to create server");
 
         let proposer = Address::ZERO;
         let tee_image_hash = B256::ZERO;
@@ -982,7 +812,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_rejects_intermediate_roots_with_single_proposal() {
-        let server = Server::new_for_testing().expect("failed to create server");
+        let server = Server::new().expect("failed to create server");
 
         let proposer = Address::ZERO;
         let tee_image_hash = B256::ZERO;

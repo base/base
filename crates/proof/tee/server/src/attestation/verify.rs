@@ -3,7 +3,7 @@
 //! This module provides verification of AWS Nitro Enclave attestation documents,
 //! similar to the `nitrite` Go library.
 
-use std::{collections::BTreeMap, time::SystemTime};
+use std::collections::BTreeMap;
 
 use aws_nitro_enclaves_cose::CoseSign1;
 use openssl::{
@@ -53,27 +53,6 @@ pub struct VerificationResult {
     pub document: AttestationDocument,
     /// The certificate chain used for verification.
     pub certificate_chain: Vec<Certificate>,
-}
-
-/// Options for attestation verification.
-#[derive(Debug, Clone, Default)]
-pub struct VerifyOptions {
-    /// The time to use for certificate validity checking.
-    /// If None, the current system time is used.
-    pub current_time: Option<SystemTime>,
-}
-
-impl VerifyOptions {
-    /// Create new verify options with default settings.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Set the time to use for certificate validity checking.
-    pub const fn with_time(mut self, time: SystemTime) -> Self {
-        self.current_time = Some(time);
-        self
-    }
 }
 
 /// Verify that a certificate is valid at the given time.
@@ -157,18 +136,6 @@ fn verify_certificate_chain(
 /// This verifies the COSE signature and certificate chain against the AWS CA roots.
 /// Uses the current system time for certificate validity checking.
 pub fn verify_attestation(attestation_bytes: &[u8]) -> Result<VerificationResult, ServerError> {
-    verify_attestation_with_options(attestation_bytes, &VerifyOptions::default())
-}
-
-/// Verify an attestation document with custom options.
-///
-/// This verifies the COSE signature and certificate chain against the AWS CA roots.
-/// The `options` parameter allows specifying a custom time for certificate validity checking,
-/// which is useful for testing with recorded attestation documents.
-pub fn verify_attestation_with_options(
-    attestation_bytes: &[u8],
-    options: &VerifyOptions,
-) -> Result<VerificationResult, ServerError> {
     // Parse the COSE_Sign1 structure
     let cose_sign1 = CoseSign1::from_bytes(attestation_bytes)
         .map_err(|e| AttestationError::CoseVerify(format!("failed to parse COSE: {e:?}")))?;
@@ -222,20 +189,8 @@ pub fn verify_attestation_with_options(
     // Get the CA root for chain verification
     let ca_root = get_default_ca_root()?;
 
-    // Determine the time to use for validity checking
-    let check_time = match options.current_time {
-        Some(time) => {
-            let duration = time
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map_err(|e| AttestationError::Verification(format!("invalid time: {e}")))?;
-            Asn1Time::from_unix(duration.as_secs() as i64).map_err(|e| {
-                AttestationError::Verification(format!("failed to create ASN1 time: {e}"))
-            })?
-        }
-        None => Asn1Time::days_from_now(0).map_err(|e| {
-            AttestationError::Verification(format!("failed to get current time: {e}"))
-        })?,
-    };
+    let check_time = Asn1Time::days_from_now(0)
+        .map_err(|e| AttestationError::Verification(format!("failed to get current time: {e}")))?;
 
     // Check certificate validity times
     check_certificate_validity(&openssl_leaf, &check_time)?;
@@ -255,52 +210,9 @@ pub fn verify_attestation_with_options(
     Ok(VerificationResult { document, certificate_chain })
 }
 
-/// Verify an attestation document and check that PCR0 matches the expected value.
-pub fn verify_attestation_with_pcr0(
-    attestation_bytes: &[u8],
-    expected_pcr0: &[u8],
-) -> Result<VerificationResult, ServerError> {
-    verify_attestation_with_pcr0_and_options(
-        attestation_bytes,
-        expected_pcr0,
-        &VerifyOptions::default(),
-    )
-}
-
-/// Verify an attestation document with custom options and check that PCR0 matches.
-pub fn verify_attestation_with_pcr0_and_options(
-    attestation_bytes: &[u8],
-    expected_pcr0: &[u8],
-    options: &VerifyOptions,
-) -> Result<VerificationResult, ServerError> {
-    let result = verify_attestation_with_options(attestation_bytes, options)?;
-
-    // Check PCR0
-    let pcr0 = result
-        .document
-        .pcrs
-        .get(&0)
-        .ok_or_else(|| AttestationError::MissingField("PCR0".to_string()))?;
-
-    if pcr0.as_ref() != expected_pcr0 {
-        return Err(AttestationError::Pcr0Mismatch.into());
-    }
-
-    Ok(result)
-}
-
-/// Extract the public key from an attestation document.
-pub fn extract_public_key(document: &AttestationDocument) -> Result<Vec<u8>, ServerError> {
-    document
-        .public_key
-        .as_ref()
-        .map(|pk| pk.to_vec())
-        .ok_or_else(|| AttestationError::MissingField("public_key".to_string()).into())
-}
-
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::time::SystemTime;
 
     use openssl::{
         bn::BigNum,
@@ -416,20 +328,6 @@ mod tests {
             ),
             "Expected CertificateNotYetValid, got: {err:?}"
         );
-    }
-
-    #[test]
-    fn test_verify_options_with_time() {
-        let future_time = SystemTime::now() + Duration::from_secs(86400 * 30); // 30 days in future
-        let options = VerifyOptions::new().with_time(future_time);
-
-        assert!(options.current_time.is_some());
-    }
-
-    #[test]
-    fn test_verify_options_default() {
-        let options = VerifyOptions::default();
-        assert!(options.current_time.is_none());
     }
 
     // Note: Full attestation verification tests require actual attestation documents

@@ -8,7 +8,6 @@ rust-version.workspace = true
 base-enclave.workspace = true
 
 # Cryptography
-rsa.workspace = true
 sha2.workspace = true
 hex.workspace = true
 rand_08.workspace = true
@@ -23,8 +22,7 @@ k256 = { workspace = true, features = ["ecdsa", "arithmetic"] }
 aws-nitro-enclaves-cose.workspace = true
 aws-nitro-enclaves-nsm-api.workspace = true
 
-# X.509 and PKIX
-spki.workspace = true
+# X.509
 openssl.workspace = true
 x509-cert.workspace = true
 
