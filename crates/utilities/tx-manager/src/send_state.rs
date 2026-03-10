@@ -114,13 +114,14 @@ impl SendState {
     /// Records that a previously-mined transaction is no longer onchain
     /// (e.g., after a reorg).
     ///
-    /// If `mined_txs` becomes empty after removal, the nonce-too-low counter
-    /// is reset to 0. This prevents false aborts after a reorg removes all
-    /// confirmations.
+    /// If the hash was actually present and `mined_txs` becomes empty after
+    /// removal, the nonce-too-low counter is reset to 0. This prevents false
+    /// aborts after a reorg removes all confirmations while ignoring no-op
+    /// removals of hashes that were never tracked.
     pub fn tx_not_mined(&self, tx_hash: B256) {
         let mut inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.mined_txs.remove(&tx_hash);
-        if inner.mined_txs.is_empty() {
+        let was_present = inner.mined_txs.remove(&tx_hash);
+        if was_present && inner.mined_txs.is_empty() {
             inner.nonce_too_low_count = 0;
         }
     }
@@ -387,22 +388,19 @@ mod tests {
     }
 
     #[test]
-    fn tx_not_mined_with_never_mined_hash_resets_counter() {
+    fn tx_not_mined_with_never_mined_hash_does_not_reset_counter() {
         let state = SendState::new(3);
         state.record_successful_publish();
 
-        // Accumulate errors past threshold.
         for _ in 0..5 {
             state.process_send_error(&TxManagerError::NonceTooLow);
         }
         assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
 
-        // Call tx_not_mined with a hash that was never mined. Since mined_txs
-        // is already empty, the nonce counter resets. This is benign: the
-        // caller should not be removing hashes it never added, but the
-        // defensive reset avoids stale aborts in degenerate scenarios.
+        // Removing a hash that was never mined is a no-op — the counter
+        // is preserved and the abort remains valid.
         state.tx_not_mined(B256::with_last_byte(99));
-        assert!(state.critical_error().is_none());
+        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
     }
 
     #[test]
