@@ -60,6 +60,11 @@ pub enum TxManagerError {
     AlreadyKnown,
 
     /// Unclassified RPC error preserving the original error string.
+    ///
+    /// This variant is treated as retryable by [`TxManagerError::is_retryable`]
+    /// because unknown errors may be transient. Callers **must** enforce bounded
+    /// retry counts and exponential backoff to prevent retry storms from
+    /// persistent, non-transient errors that happen to be unclassified.
     #[error("rpc error: {0}")]
     Rpc(String),
 }
@@ -71,6 +76,13 @@ impl TxManagerError {
     /// Fee/replacement errors and infrastructure errors are retryable.
     /// Critical errors (nonce conflicts, insufficient funds, reverts,
     /// deadline expiry, reservation conflicts) are not.
+    ///
+    /// # Caller requirements
+    ///
+    /// The [`Rpc`](Self::Rpc) fallback is conservatively treated as retryable.
+    /// Callers **must** enforce a maximum retry count with exponential backoff
+    /// to avoid unbounded retries on persistent, non-transient errors that are
+    /// unrecognized by [`RpcErrorClassifier::classify_rpc_error`].
     #[must_use]
     pub const fn is_retryable(&self) -> bool {
         matches!(
@@ -101,6 +113,15 @@ pub type TxManagerResult<T> = Result<T, TxManagerError>;
 ///
 /// This mirrors the Go `op-service/txmgr` `errStringMatch` approach, enabling
 /// the send loop to make retry/abort decisions based on error type.
+///
+/// # Limitations
+///
+/// Classification relies on substring matching against known geth error
+/// messages. Other Ethereum clients (Erigon, Besu, Nethermind) may use
+/// different wording for equivalent errors, causing them to fall through to
+/// the [`TxManagerError::Rpc`] fallback. Future improvements could augment
+/// string matching with JSON-RPC error codes (e.g., `-32000`) for more
+/// robust cross-client classification.
 #[derive(Debug)]
 pub struct RpcErrorClassifier;
 
