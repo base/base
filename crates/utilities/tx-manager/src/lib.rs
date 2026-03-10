@@ -10,7 +10,7 @@ mod candidate;
 pub use candidate::TxCandidate;
 
 mod fees;
-pub use fees::FeeCalculator;
+pub use fees::{FeeCalculator, GasPriceCaps};
 
 mod send_state;
 pub use send_state::SendState;
@@ -19,7 +19,7 @@ mod config;
 pub use config::TxManagerConfig;
 
 mod traits;
-pub use traits::TxManager;
+pub use traits::{SendHandle, SendResponse, TxManager};
 
 mod nonce;
 pub use nonce::NonceManager;

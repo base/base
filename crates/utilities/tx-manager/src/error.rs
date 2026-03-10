@@ -37,6 +37,13 @@ pub enum TxManagerError {
     #[error("nonce already reserved")]
     AlreadyReserved,
 
+    /// Send response channel closed before a result was delivered.
+    ///
+    /// The background send task exited (panicked or was cancelled)
+    /// before completing. Non-retryable.
+    #[error("send response channel closed")]
+    ChannelClosed,
+
     // ── Fee / replacement errors (retryable) ─────────────────────────────
     /// Fee too low to enter the mempool.
     #[error("transaction underpriced")]
@@ -241,6 +248,7 @@ mod tests {
     #[case::execution_reverted(TxManagerError::ExecutionReverted, false)]
     #[case::mempool_deadline(TxManagerError::MempoolDeadlineExpired, false)]
     #[case::already_reserved(TxManagerError::AlreadyReserved, false)]
+    #[case::channel_closed(TxManagerError::ChannelClosed, false)]
     #[case::underpriced(TxManagerError::Underpriced, true)]
     #[case::replacement_underpriced(TxManagerError::ReplacementUnderpriced, true)]
     #[case::fee_too_low(TxManagerError::FeeTooLow, true)]
@@ -258,6 +266,7 @@ mod tests {
     #[case::nonce_too_low(TxManagerError::NonceTooLow, false)]
     #[case::underpriced(TxManagerError::Underpriced, false)]
     #[case::rpc_with_already_known_text(TxManagerError::Rpc("already known".to_string()), false)]
+    #[case::channel_closed(TxManagerError::ChannelClosed, false)]
     fn is_already_known(#[case] error: TxManagerError, #[case] expected: bool) {
         assert_eq!(error.is_already_known(), expected);
     }
@@ -283,6 +292,7 @@ mod tests {
         "max fee per gas less than block base fee"
     )]
     #[case::already_known(TxManagerError::AlreadyKnown, "transaction already known")]
+    #[case::channel_closed(TxManagerError::ChannelClosed, "send response channel closed")]
     #[case::rpc(TxManagerError::Rpc("test".to_string()), "rpc error: test")]
     fn display_output(#[case] error: TxManagerError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);
