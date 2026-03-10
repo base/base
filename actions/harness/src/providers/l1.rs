@@ -40,9 +40,19 @@ impl SharedL1Chain {
         self.0.lock().expect("chain lock poisoned").truncate((number + 1) as usize);
     }
 
-    /// Look up a block by number, returning a clone if it exists.
+    /// Return the block at `number`, or `None` if not present.
     pub fn get_block(&self, number: u64) -> Option<L1Block> {
-        self.0.lock().expect("chain lock poisoned").get(number as usize).cloned()
+        self.with(|blocks| blocks.get(number as usize).cloned())
+    }
+
+    /// Return the number of blocks in the shared chain.
+    pub fn len(&self) -> usize {
+        self.with(|blocks| blocks.len())
+    }
+
+    /// Return `true` if the chain contains no blocks.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     fn with<R>(&self, f: impl FnOnce(&[L1Block]) -> R) -> R {

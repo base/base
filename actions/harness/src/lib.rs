@@ -26,5 +26,8 @@ pub use providers::{
     L2ProviderError, SharedL1Chain,
 };
 
+mod sequencer;
+pub use sequencer::{L2Sequencer, SequencerError};
+
 mod verifier;
 pub use verifier::{L2Verifier, VerifierError, VerifierPipeline};

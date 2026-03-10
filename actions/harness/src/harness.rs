@@ -6,8 +6,8 @@ use base_protocol::{BlockInfo, L2BlockInfo};
 
 use crate::{
     ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, Batcher, BatcherConfig,
-    L1Miner, L1MinerConfig, L2BlockBuilder, L2BlockProvider, L2Verifier, SharedL1Chain,
-    block_info_from,
+    L1Miner, L1MinerConfig, L2BlockBuilder, L2BlockProvider, L2Sequencer, L2Verifier,
+    SharedL1Chain, block_info_from,
 };
 
 /// Top-level test harness that owns all actors for a single action test.
@@ -149,6 +149,37 @@ impl ActionTestHarness {
         );
 
         (verifier, chain)
+    }
+
+    /// Create an [`L2Sequencer`] starting from L2 genesis, wired to the given
+    /// [`SharedL1Chain`].
+    ///
+    /// Call this after [`create_verifier`] to obtain a sequencer that shares
+    /// the same L1 view as the verifier's providers. The sequencer reads the
+    /// actual L1 genesis hash from the chain so that batch epoch-hash
+    /// validation passes when the sequencer's blocks are batched and derived.
+    ///
+    /// ```rust,ignore
+    /// let (mut verifier, chain) = h.create_verifier();
+    /// let mut sequencer = h.create_sequencer(chain.clone());
+    /// ```
+    ///
+    /// [`create_verifier`]: ActionTestHarness::create_verifier
+    pub fn create_sequencer(&self, l1_chain: SharedL1Chain) -> L2Sequencer {
+        let l1_genesis_hash = l1_chain.get_block(0).map(|b| b.hash()).unwrap_or_default();
+
+        let unsafe_head = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: self.rollup_config.genesis.l2.hash,
+                number: self.rollup_config.genesis.l2.number,
+                parent_hash: Default::default(),
+                timestamp: self.rollup_config.genesis.l2_time,
+            },
+            l1_origin: BlockNumHash { number: 0, hash: l1_genesis_hash },
+            seq_num: 0,
+        };
+
+        L2Sequencer::new(unsafe_head, l1_chain, self.rollup_config.clone())
     }
 }
 
