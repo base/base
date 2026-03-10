@@ -20,7 +20,7 @@ Upgrade activation flows through three layers:
 
 ### 1. Add the variant to the `BaseUpgrade` enum
 
-**File:** [`crates/alloy/upgrades/src/hardfork.rs`](https://github.com/base/base/blob/main/crates/alloy/upgrades/src/hardfork.rs)
+**File:** [`crates/alloy/upgrades/src/hardfork.rs`](../../crates/alloy/upgrades/src/hardfork.rs)
 
 Inside the `hardfork!` macro, append the new variant after the current last entry:
 
@@ -74,7 +74,7 @@ Update `check_base_upgrade_from_str` in the test module to include the new upgra
 
 ### 2. Add the `BaseChainUpgrades` index arm
 
-**File:** [`crates/alloy/upgrades/src/chain.rs`](https://github.com/base/base/blob/main/crates/alloy/upgrades/src/chain.rs)
+**File:** [`crates/alloy/upgrades/src/chain.rs`](../../crates/alloy/upgrades/src/chain.rs)
 
 Add `BaseV1` to the `use BaseUpgrade::{...}` import and add a match arm to `Index<BaseUpgrade>`:
 
@@ -196,7 +196,7 @@ For **cascading** upgrades, replace the previous arm's `unwrap_or(ForkCondition:
 
 ### 5. Add the trait method
 
-**File:** [`crates/alloy/upgrades/src/hardforks.rs`](https://github.com/base/base/blob/main/crates/alloy/upgrades/src/hardforks.rs)
+**File:** [`crates/alloy/upgrades/src/hardforks.rs`](../../crates/alloy/upgrades/src/hardforks.rs)
 
 ```rust
 /// Returns `true` if [`BaseV1`](BaseUpgrade::BaseV1) is active at given block timestamp.
@@ -210,10 +210,10 @@ fn is_base_v1_active_at_timestamp(&self, timestamp: u64) -> bool {
 ### 6. Update timestamp constants and test fixtures
 
 **Files:**
-- [`crates/alloy/upgrades/src/mainnet.rs`](https://github.com/base/base/blob/main/crates/alloy/upgrades/src/mainnet.rs)
-- [`crates/alloy/upgrades/src/sepolia.rs`](https://github.com/base/base/blob/main/crates/alloy/upgrades/src/sepolia.rs)
-- [`crates/alloy/upgrades/src/devnet_0_sepolia_dev_0.rs`](https://github.com/base/base/blob/main/crates/alloy/upgrades/src/devnet_0_sepolia_dev_0.rs)
-- [`crates/alloy/upgrades/src/lib.rs`](https://github.com/base/base/blob/main/crates/alloy/upgrades/src/lib.rs)
+- [`crates/alloy/upgrades/src/mainnet.rs`](../../crates/alloy/upgrades/src/mainnet.rs)
+- [`crates/alloy/upgrades/src/sepolia.rs`](../../crates/alloy/upgrades/src/sepolia.rs)
+- [`crates/alloy/upgrades/src/devnet_0_sepolia_dev_0.rs`](../../crates/alloy/upgrades/src/devnet_0_sepolia_dev_0.rs)
+- [`crates/alloy/upgrades/src/lib.rs`](../../crates/alloy/upgrades/src/lib.rs)
 - [`crates/consensus/registry/src/test_utils/base_mainnet.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/base_mainnet.rs)
 - [`crates/consensus/registry/src/test_utils/base_sepolia.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/base_sepolia.rs)
 
