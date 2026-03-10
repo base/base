@@ -520,4 +520,36 @@ pub(crate) mod tests {
             "expected Reset kind to be preserved, got {err:?}"
         );
     }
+
+    /// Verifies that EIP-4844 blobs from non-batcher transactions are excluded from the pipeline.
+    ///
+    /// When `source.batcher_address` does not match the transaction's `to` field, the entire
+    /// transaction is skipped — no blob hashes are collected and `data` remains empty. This tests
+    /// the exclusion path that previously incremented an index counter regardless of the sender.
+    ///
+    /// Two cases are exercised back-to-back to make the contrast explicit:
+    /// 1. Wrong batcher address → no blobs captured.
+    /// 2. Correct batcher address → all 5 blobs from the batcher transaction are captured.
+    #[test]
+    fn test_extract_blob_data_non_batcher_blobs_excluded() {
+        // Case 1: source.batcher_address = Address::ZERO does not match the tx's `to` field
+        // (0x11E9CA82...), so the transaction is skipped and no blobs are captured.
+        let source = default_test_blob_source(); // batcher_address = Address::ZERO
+        let (data, hashes) = source.extract_blob_data(
+            valid_blob_txs(),
+            alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2"),
+        );
+        assert!(data.is_empty(), "non-batcher blobs must not be captured (data)");
+        assert!(hashes.is_empty(), "non-batcher blob hashes must not be captured");
+
+        // Case 2: correct batcher address → all 5 blobs from the batcher transaction captured.
+        let mut source2 = default_test_blob_source();
+        source2.batcher_address =
+            alloy_primitives::address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064");
+        let batcher_address =
+            alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
+        let (data, hashes) = source2.extract_blob_data(valid_blob_txs(), batcher_address);
+        assert_eq!(data.len(), 5, "all 5 batcher blobs must be captured");
+        assert_eq!(hashes.len(), 5, "all 5 batcher blob hashes must be captured");
+    }
 }
