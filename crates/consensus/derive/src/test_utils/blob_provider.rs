@@ -2,7 +2,7 @@
 
 use alloc::{boxed::Box, vec::Vec};
 
-use alloy_eips::eip4844::{Blob, IndexedBlobHash};
+use alloy_eips::eip4844::Blob;
 use alloy_primitives::{B256, map::HashMap};
 use async_trait::async_trait;
 use base_protocol::BlockInfo;
@@ -42,7 +42,7 @@ impl BlobProvider for TestBlobProvider {
     async fn get_and_validate_blobs(
         &mut self,
         _block_ref: &BlockInfo,
-        blob_hashes: &[IndexedBlobHash],
+        blob_hashes: &[B256],
     ) -> Result<Vec<Box<Blob>>, Self::Error> {
         if self.should_error {
             return Err(BlobProviderError::SlotDerivation);
@@ -55,7 +55,7 @@ impl BlobProvider for TestBlobProvider {
         }
         let mut blobs = Vec::new();
         for blob_hash in blob_hashes {
-            if let Some(data) = self.blobs.get(&blob_hash.hash) {
+            if let Some(data) = self.blobs.get(blob_hash) {
                 blobs.push(Box::new(*data));
             }
         }
