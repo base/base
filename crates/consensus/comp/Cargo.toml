@@ -12,7 +12,7 @@ description = "Compression types for Base"
 workspace = true
 
 [dependencies]
-ambassador = "0.4.2"
+ambassador.workspace = true
 thiserror.workspace = true
 miniz_oxide.workspace = true
 base-protocol.workspace = true
