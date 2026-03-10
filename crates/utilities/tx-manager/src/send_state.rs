@@ -161,9 +161,10 @@ impl SendState {
 
         // 5. Mempool deadline expired.
         if let Some(deadline) = inner.mempool_deadline
-            && Instant::now() >= deadline {
-                return Some(TxManagerError::MempoolDeadlineExpired);
-            }
+            && Instant::now() >= deadline
+        {
+            return Some(TxManagerError::MempoolDeadlineExpired);
+        }
 
         // 6. No critical error — continue sending.
         None
