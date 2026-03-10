@@ -17,14 +17,20 @@ Transaction lifecycle management for Base onchain components.
   blob-carrying transaction. Carries calldata, optional recipient, gas limit, and value.
 - **`GasPriceCaps`**: Intermediate fee estimates (tip cap, base fee cap, optional blob fee cap)
   passed between fee calculation and transaction construction.
-- **`FeeCalculator`**: Calculates and bumps transaction fees.
+- **`FeeCalculator`**: Pure, deterministic fee arithmetic engine operating on `u128` values
+  with saturating math. Provides EIP-1559 fee cap calculation (`calc_gas_fee_cap`), blob fee
+  cap calculation (`calc_blob_fee_cap`), geth-compatible replacement thresholds
+  (`calc_threshold_value`), four-case fee update logic (`update_fees`), and configurable fee
+  ceiling enforcement (`check_limits`, `check_blob_fee_limits`).
 - **`SendResponse`**: Type alias (`TxManagerResult<TransactionReceipt>`) returned by async
   send operations.
 - **`SendHandle`**: Future returned by `send_async` that resolves directly to a
   `SendResponse`, mapping a closed channel into `TxManagerError::ChannelClosed` so callers
   avoid a two-layer `Result`.
 - **`SendState`**: Tracks the state of a transaction through its lifecycle.
-- **`TxManagerConfig`**: Configuration for the transaction manager.
+- **`TxManagerConfig`**: Configuration for the transaction manager. Controls fee-limit
+  enforcement via `fee_limit_multiplier` (ceiling as a multiple of the suggested fee) and
+  `fee_limit_threshold` (minimum suggested fee at which the limit activates).
 - **`TxManager`**: Trait defining the public API — `send` (blocking), `send_async` (returns
   a `SendHandle`), and `sender_address`. Requires `Send + Sync`.
 - **`NonceManager`**: Manages nonce allocation and tracking.
@@ -56,6 +62,11 @@ fn handle_rpc_error(raw_msg: &str) {
 
 `ChannelClosed` is returned by [`SendHandle`] when the background send task drops
 its sender before delivering a result (panic or cancellation). It is non-retryable.
+
+`FeeLimitExceeded` is returned by `FeeCalculator::check_limits` and
+`FeeCalculator::check_blob_fee_limits` when the proposed fee exceeds
+`fee_limit_multiplier × suggested_fee` and the suggested fee is at or above
+`fee_limit_threshold`. It is non-retryable.
 
 `RpcErrorClassifier::classify_rpc_error` lowercases the input and matches against known
 geth error substrings in a fixed order (e.g., `"replacement transaction underpriced"`

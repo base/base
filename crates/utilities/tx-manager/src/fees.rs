@@ -1,4 +1,8 @@
-//! Fee calculation and bumping logic.
+//! Fee calculation and bumping logic for EIP-1559 and EIP-4844 transactions.
+//!
+//! All arithmetic uses `u128` with saturating operations to avoid overflow
+//! panics. Geth's tx-replacement rules (10 % bump for regular, 100 % for blob)
+//! are encoded in [`FeeCalculator::calc_threshold_value`].
 
 use alloy_primitives::U256;
 
