@@ -166,6 +166,9 @@ pub enum NitroError {
     /// Proof pipeline error.
     #[error("proof pipeline error: {0}")]
     ProofPipeline(String),
+    /// Internal error.
+    #[error("internal error: {0}")]
+    Internal(String),
     /// PCR0 mismatch between config and NSM.
     #[error("PCR0 mismatch: expected {expected}, actual {actual}")]
     Pcr0Mismatch {
@@ -174,6 +177,10 @@ pub enum NitroError {
         /// Actual PCR0 hash from NSM.
         actual: B256,
     },
+    /// Proof transport failed.
+    #[cfg(feature = "host")]
+    #[error("transport error: {0}")]
+    Transport(String),
 }
 
 /// A specialized Result type for nitro enclave operations.
