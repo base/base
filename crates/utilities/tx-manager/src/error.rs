@@ -46,8 +46,7 @@ pub enum TxManagerError {
 
     /// Calculated fee exceeds the configured fee-limit ceiling.
     ///
-    /// Returned by [`FeeCalculator::check_limits`] and
-    /// [`FeeCalculator::check_blob_fee_limits`] when the proposed fee
+    /// Returned by [`FeeCalculator::check_limits`] when the proposed fee
     /// surpasses `fee_limit_multiplier × suggested_fee` and the suggested
     /// fee is at or above `fee_limit_threshold`. Non-retryable.
     #[error("fee limit exceeded")]

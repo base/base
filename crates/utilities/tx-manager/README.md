@@ -21,7 +21,7 @@ Transaction lifecycle management for Base onchain components.
   with saturating math. Provides EIP-1559 fee cap calculation (`calc_gas_fee_cap`), blob fee
   cap calculation (`calc_blob_fee_cap`), geth-compatible replacement thresholds
   (`calc_threshold_value`), four-case fee update logic (`update_fees`), and configurable fee
-  ceiling enforcement (`check_limits`, `check_blob_fee_limits`).
+  ceiling enforcement (`check_limits`).
 - **`SendResponse`**: Type alias (`TxManagerResult<TransactionReceipt>`) returned by async
   send operations.
 - **`SendHandle`**: Future returned by `send_async` that resolves directly to a
@@ -63,8 +63,7 @@ fn handle_rpc_error(raw_msg: &str) {
 `ChannelClosed` is returned by [`SendHandle`] when the background send task drops
 its sender before delivering a result (panic or cancellation). It is non-retryable.
 
-`FeeLimitExceeded` is returned by `FeeCalculator::check_limits` and
-`FeeCalculator::check_blob_fee_limits` when the proposed fee exceeds
+`FeeLimitExceeded` is returned by `FeeCalculator::check_limits` when the proposed fee exceeds
 `fee_limit_multiplier × suggested_fee` and the suggested fee is at or above
 `fee_limit_threshold`. It is non-retryable.
 

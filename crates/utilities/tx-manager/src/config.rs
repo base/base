@@ -3,8 +3,7 @@
 /// Configuration for the transaction manager.
 ///
 /// Controls fee-limit enforcement behaviour used by
-/// [`FeeCalculator::check_limits`](crate::FeeCalculator::check_limits) and
-/// [`FeeCalculator::check_blob_fee_limits`](crate::FeeCalculator::check_blob_fee_limits).
+/// [`FeeCalculator::check_limits`](crate::FeeCalculator::check_limits).
 #[derive(Debug, Clone)]
 pub struct TxManagerConfig {
     /// Maximum allowed multiplier applied to the suggested fee.
