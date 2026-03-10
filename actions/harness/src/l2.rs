@@ -1,13 +1,24 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, sync::Arc};
 
 use alloy_consensus::{Header, SignableTransaction};
 use alloy_eips::BlockNumHash;
-use alloy_primitives::{Address, B256, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_trie::{EMPTY_ROOT_HASH, TrieAccount, root::state_root_unhashed};
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
+use base_execution_chainspec::OpChainSpecBuilder;
+use base_execution_evm::OpEvmConfig;
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
+use base_revm::OpTransaction;
+use reth_evm::{ConfigureEvm, Evm as _, FromRecoveredTx};
+use revm::{
+    DatabaseCommit,
+    context::{TxEnv, result::ResultAndState},
+    database::InMemoryDB,
+    state::AccountInfo,
+};
 
 use crate::{L2BlockProvider, SharedL1Chain};
 
@@ -24,7 +35,10 @@ pub const TEST_ACCOUNT_KEY: B256 = B256::new([0x01u8; 32]);
 /// Pre-computed so callers can reference it without constructing a signer.
 // Address derived from the secp256k1 public key of [0x01; 32].
 pub const TEST_ACCOUNT_ADDRESS: Address =
-    alloy_primitives::address!("1563915e194d8cfba1943570603f7606a3115508");
+    alloy_primitives::address!("1a642f0E3c3aF545E7AcBD38b07251B3990914F1");
+
+/// Initial balance for the test account (1 ETH).
+const TEST_ACCOUNT_BALANCE: U256 = U256::from_limbs([1_000_000_000_000_000_000u64, 0, 0, 0]);
 
 /// Error type returned by [`L2BlockBuilder`].
 #[derive(Debug, thiserror::Error)]
@@ -38,6 +52,9 @@ pub enum L2BuilderError {
     /// Transaction signing failed.
     #[error("signing failed: {0}")]
     Signing(#[from] alloy_signer::Error),
+    /// EVM execution failed.
+    #[error("EVM execution failed: {0}")]
+    Evm(String),
 }
 
 /// A pre-built queue of [`OpBlock`]s for the batcher to drain.
@@ -88,14 +105,12 @@ impl L2BlockProvider for ActionL2Source {
 /// Epoch selection mirrors the real sequencer: the epoch advances to the next
 /// L1 block once that block's timestamp is ≤ the new L2 block's timestamp.
 ///
-/// # State root
+/// # EVM Execution & State Root
 ///
-/// `Header::state_root` is set to `B256::ZERO`. Real state-root computation
-/// (via `PendingStateBuilder`) is not yet wired in.
-///
-/// TODO: integrate `PendingStateBuilder` (crates/execution/flashblocks) so
-/// that each block is executed against an `InMemoryDB` seeded with the test
-/// account balance and the `L1Block` precompile state.
+/// Transactions are executed against an in-memory EVM database seeded with the
+/// test account balance (1 ETH). The state root in the header is computed from
+/// the post-execution state using a Merkle Patricia Trie. The header is sealed
+/// to produce a real block hash, which is used for correct parent-hash chaining.
 #[derive(Debug)]
 pub struct L2BlockBuilder {
     /// Current unsafe L2 head.
@@ -114,6 +129,8 @@ pub struct L2BlockBuilder {
     user_txs_per_block: usize,
     /// Per-account nonce for the test signer.
     nonce: u64,
+    /// In-memory EVM database carrying state across blocks.
+    db: InMemoryDB,
 }
 
 impl L2BlockBuilder {
@@ -126,6 +143,13 @@ impl L2BlockBuilder {
     ) -> Self {
         let signer = PrivateKeySigner::from_bytes(&TEST_ACCOUNT_KEY)
             .expect("TEST_ACCOUNT_KEY is a valid secp256k1 scalar");
+
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            TEST_ACCOUNT_ADDRESS,
+            AccountInfo { balance: TEST_ACCOUNT_BALANCE, ..Default::default() },
+        );
+
         Self {
             head,
             l1_chain,
@@ -135,6 +159,7 @@ impl L2BlockBuilder {
             signer,
             user_txs_per_block: 1,
             nonce: 0,
+            db,
         }
     }
 
@@ -152,7 +177,7 @@ impl L2BlockBuilder {
     /// Build the next L2 block and advance the internal head.
     ///
     /// Returns a fully-formed [`OpBlock`] containing the L1-info deposit and
-    /// any configured user transactions.
+    /// any configured user transactions, with a real state root and block hash.
     pub fn build_next_block(&mut self) -> Result<OpBlock, L2BuilderError> {
         let next_number = self.head.block_info.number + 1;
         let next_timestamp = self.head.block_info.timestamp + self.rollup_config.block_time;
@@ -208,7 +233,7 @@ impl L2BlockBuilder {
                 gas_limit: 21_000,
                 to: TxKind::Call(Address::ZERO),
                 value: U256::from(1u64),
-                input: alloy_primitives::Bytes::new(),
+                input: Bytes::new(),
                 access_list: Default::default(),
             };
             let sig = self.signer.sign_hash_sync(&tx.signature_hash())?;
@@ -216,16 +241,23 @@ impl L2BlockBuilder {
             transactions.push(OpTxEnvelope::Eip1559(tx.into_signed(sig)));
         }
 
+        // Execute transactions against the in-memory EVM.
+        let (state_root, gas_used) =
+            self.execute_transactions(&transactions, next_number, next_timestamp, parent_hash)?;
+
         let epoch_hash = l1_header.hash_slow();
         let header = Header {
             number: next_number,
             timestamp: next_timestamp,
             parent_hash,
             gas_limit: 30_000_000,
-            // State root is not computed (no EVM execution yet).
-            // TODO: integrate PendingStateBuilder for real state root computation.
+            gas_used,
+            state_root,
+            base_fee_per_gas: Some(1_000_000_000),
             ..Default::default()
         };
+
+        let block_hash = header.hash_slow();
 
         let block = OpBlock {
             header,
@@ -237,9 +269,7 @@ impl L2BlockBuilder {
                 number: next_number,
                 timestamp: next_timestamp,
                 parent_hash,
-                // Hash is left as zero — the block hash would require sealing.
-                // TODO: seal the header and use the real hash.
-                hash: B256::ZERO,
+                hash: block_hash,
             },
             l1_origin: BlockNumHash { number: epoch_number, hash: epoch_hash },
             seq_num,
@@ -247,6 +277,101 @@ impl L2BlockBuilder {
 
         Ok(block)
     }
+
+    /// Execute all transactions in the block against the in-memory EVM and
+    /// return the resulting (`state_root`, `cumulative_gas_used`).
+    fn execute_transactions(
+        &mut self,
+        transactions: &[OpTxEnvelope],
+        block_number: u64,
+        timestamp: u64,
+        parent_hash: B256,
+    ) -> Result<(B256, u64), L2BuilderError> {
+        let chain_spec = Arc::new(
+            OpChainSpecBuilder::base_mainnet().chain(self.rollup_config.l2_chain_id).build(),
+        );
+        let evm_config = OpEvmConfig::optimism(chain_spec);
+
+        let header = Header {
+            number: block_number,
+            timestamp,
+            parent_hash,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(1_000_000_000),
+            ..Default::default()
+        };
+
+        let mut cumulative_gas_used = 0u64;
+
+        for tx in transactions {
+            let sender = tx_sender(tx, &self.signer);
+            let op_tx: OpTransaction<TxEnv> = OpTransaction::from_recovered_tx(tx, sender);
+
+            let evm_env =
+                evm_config.evm_env(&header).map_err(|e| L2BuilderError::Evm(e.to_string()))?;
+            let mut evm = evm_config.evm_with_env(&mut self.db, evm_env);
+            match evm.transact(op_tx) {
+                Ok(ResultAndState { state, result }) => {
+                    cumulative_gas_used = cumulative_gas_used.saturating_add(result.gas_used());
+                    self.db.commit(state);
+                }
+                Err(e) => {
+                    return Err(L2BuilderError::Evm(format!("{e:?}")));
+                }
+            }
+        }
+
+        let state_root = compute_state_root(&self.db);
+        Ok((state_root, cumulative_gas_used))
+    }
+}
+
+/// Determine the sender address for a transaction.
+///
+/// Deposit transactions carry an explicit `from` field. Signed user
+/// transactions are always from [`TEST_ACCOUNT_ADDRESS`] in this test harness.
+const fn tx_sender(tx: &OpTxEnvelope, signer: &PrivateKeySigner) -> Address {
+    match tx {
+        OpTxEnvelope::Deposit(sealed) => sealed.inner().from,
+        _ => signer.address(),
+    }
+}
+
+/// Compute a Merkle Patricia Trie state root from the in-memory database.
+///
+/// Iterates over all accounts in the DB cache and builds a proper MPT root,
+/// giving each account the correct storage root and code hash.
+fn compute_state_root(db: &InMemoryDB) -> B256 {
+    let accounts = db
+        .cache
+        .accounts
+        .iter()
+        .filter(|(_, db_account)| {
+            !matches!(db_account.account_state, revm::database::AccountState::NotExisting)
+        })
+        .map(|(address, db_account)| {
+            let storage_root = if db_account.storage.is_empty() {
+                EMPTY_ROOT_HASH
+            } else {
+                alloy_trie::root::storage_root_unhashed(
+                    db_account.storage.iter().map(|(slot, value)| (B256::from(*slot), *value)),
+                )
+            };
+
+            let code_hash = db_account.info.code_hash;
+
+            (
+                *address,
+                TrieAccount {
+                    nonce: db_account.info.nonce,
+                    balance: db_account.info.balance,
+                    storage_root,
+                    code_hash,
+                },
+            )
+        });
+
+    state_root_unhashed(accounts)
 }
 
 impl L2BlockProvider for L2BlockBuilder {

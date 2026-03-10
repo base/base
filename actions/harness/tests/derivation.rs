@@ -124,9 +124,14 @@ async fn multiple_l1_blocks_each_derive_one_l2_block() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_builder(l1_chain);
 
+    // Track block hashes so the verifier's safe-head hash stays consistent
+    // with the builder's real sealed headers.
+    let mut block_hashes = Vec::new();
     for _ in 1..=L2_BLOCK_COUNT {
         let mut source = ActionL2Source::new();
         source.push(builder.build_next_block().expect("build block"));
+        let head = builder.head();
+        block_hashes.push((head.block_info.number, head.block_info.hash));
 
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("batcher advance");
@@ -135,6 +140,9 @@ async fn multiple_l1_blocks_each_derive_one_l2_block() {
     }
 
     let (mut verifier, _chain) = h.create_verifier();
+    for (number, hash) in &block_hashes {
+        verifier.register_block_hash(*number, *hash);
+    }
     verifier.initialize().await.expect("initialize should succeed");
 
     // Drive derivation one L1 block at a time.
@@ -543,8 +551,11 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_builder(l1_chain);
     let block1 = builder.build_next_block().expect("build block 1");
+    let hash1 = builder.head().block_info.hash;
     let block2 = builder.build_next_block().expect("build block 2");
+    let hash2 = builder.head().block_info.hash;
     let block3 = builder.build_next_block().expect("build block 3");
+    let hash3 = builder.head().block_info.hash;
 
     // --- L1 blocks 1-2: batcher A submits → L2 blocks 1-2 derived. ---
     for block in [block1, block2] {
@@ -563,6 +574,9 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     h.l1.mine_block(); // block 3: rotation receipt, no batcher tx
 
     let (mut verifier, chain) = h.create_verifier();
+    verifier.register_block_hash(1, hash1);
+    verifier.register_block_hash(2, hash2);
+    verifier.register_block_hash(3, hash3);
     verifier.initialize().await.expect("initialize");
 
     // Drive derivation through blocks 1-2 (batcher A frames derived).
