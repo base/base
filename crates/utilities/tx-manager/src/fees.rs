@@ -344,7 +344,7 @@ mod tests {
         }
 
         #[test]
-        fn threshold_forward_progress(x in 1..=u128::MAX, is_blob: bool) {
+        fn threshold_forward_progress(x in 1..u128::MAX, is_blob: bool) {
             let result = FeeCalculator::calc_threshold_value(x, is_blob);
             prop_assert!(result > x, "threshold {result} did not advance past {x}");
         }
