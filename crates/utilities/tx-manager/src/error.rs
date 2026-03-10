@@ -192,245 +192,115 @@ impl RpcErrorClassifier {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
-    // ── classify_rpc_error: known geth error strings ─────────────────────
+    // ── classify_rpc_error ───────────────────────────────────────────────
 
-    #[test]
-    fn classify_replacement_underpriced() {
-        let err = RpcErrorClassifier::classify_rpc_error("replacement transaction underpriced");
-        assert!(
-            matches!(err, TxManagerError::ReplacementUnderpriced),
-            "must return ReplacementUnderpriced, not Underpriced — ordering matters"
-        );
+    #[rstest]
+    #[case::replacement_underpriced(
+        "replacement transaction underpriced",
+        TxManagerError::ReplacementUnderpriced
+    )]
+    #[case::underpriced("transaction underpriced", TxManagerError::Underpriced)]
+    #[case::nonce_too_low("nonce too low", TxManagerError::NonceTooLow)]
+    #[case::nonce_too_high("nonce too high", TxManagerError::NonceTooHigh)]
+    #[case::insufficient_funds("insufficient funds", TxManagerError::InsufficientFunds)]
+    #[case::intrinsic_gas_too_low("intrinsic gas too low", TxManagerError::IntrinsicGasTooLow)]
+    #[case::execution_reverted("execution reverted", TxManagerError::ExecutionReverted)]
+    #[case::fee_too_low("fee too low", TxManagerError::FeeTooLow)]
+    #[case::max_fee_too_low(
+        "max fee per gas less than block base fee",
+        TxManagerError::MaxFeePerGasTooLow
+    )]
+    #[case::already_known("already known", TxManagerError::AlreadyKnown)]
+    #[case::already_in_pool("transaction already in pool", TxManagerError::AlreadyKnown)]
+    #[case::case_insensitive_upper("NONCE TOO LOW", TxManagerError::NonceTooLow)]
+    #[case::case_insensitive_mixed("Nonce Too Low", TxManagerError::NonceTooLow)]
+    #[case::substring_in_context(
+        "some context: nonce too low for account",
+        TxManagerError::NonceTooLow
+    )]
+    #[case::unknown_fallback("something unexpected", TxManagerError::Rpc("something unexpected".to_string()))]
+    #[case::preserves_casing("Some Unknown ERROR", TxManagerError::Rpc("Some Unknown ERROR".to_string()))]
+    #[case::empty_string("", TxManagerError::Rpc(String::new()))]
+    #[case::mempool_deadline_not_classified("mempool deadline expired", TxManagerError::Rpc("mempool deadline expired".to_string()))]
+    #[case::already_reserved_not_classified("nonce already reserved", TxManagerError::Rpc("nonce already reserved".to_string()))]
+    fn classify_rpc_error(#[case] input: &str, #[case] expected: TxManagerError) {
+        assert_eq!(RpcErrorClassifier::classify_rpc_error(input), expected);
     }
 
-    #[test]
-    fn classify_underpriced() {
-        let err = RpcErrorClassifier::classify_rpc_error("transaction underpriced");
-        assert!(matches!(err, TxManagerError::Underpriced));
+    // ── is_retryable ────────────────────────────────────────────────────
+
+    #[rstest]
+    #[case::nonce_too_low(TxManagerError::NonceTooLow, false)]
+    #[case::nonce_too_high(TxManagerError::NonceTooHigh, false)]
+    #[case::insufficient_funds(TxManagerError::InsufficientFunds, false)]
+    #[case::intrinsic_gas_too_low(TxManagerError::IntrinsicGasTooLow, false)]
+    #[case::execution_reverted(TxManagerError::ExecutionReverted, false)]
+    #[case::mempool_deadline(TxManagerError::MempoolDeadlineExpired, false)]
+    #[case::already_reserved(TxManagerError::AlreadyReserved, false)]
+    #[case::underpriced(TxManagerError::Underpriced, true)]
+    #[case::replacement_underpriced(TxManagerError::ReplacementUnderpriced, true)]
+    #[case::fee_too_low(TxManagerError::FeeTooLow, true)]
+    #[case::max_fee_too_low(TxManagerError::MaxFeePerGasTooLow, true)]
+    #[case::already_known(TxManagerError::AlreadyKnown, true)]
+    #[case::rpc(TxManagerError::Rpc("any error".to_string()), true)]
+    fn is_retryable(#[case] error: TxManagerError, #[case] expected: bool) {
+        assert_eq!(error.is_retryable(), expected);
     }
 
-    #[test]
-    fn classify_nonce_too_low() {
-        let err = RpcErrorClassifier::classify_rpc_error("nonce too low");
-        assert!(matches!(err, TxManagerError::NonceTooLow));
+    // ── is_already_known ────────────────────────────────────────────────
+
+    #[rstest]
+    #[case::already_known(TxManagerError::AlreadyKnown, true)]
+    #[case::nonce_too_low(TxManagerError::NonceTooLow, false)]
+    #[case::underpriced(TxManagerError::Underpriced, false)]
+    #[case::rpc_with_already_known_text(TxManagerError::Rpc("already known".to_string()), false)]
+    fn is_already_known(#[case] error: TxManagerError, #[case] expected: bool) {
+        assert_eq!(error.is_already_known(), expected);
     }
 
-    #[test]
-    fn classify_nonce_too_high() {
-        let err = RpcErrorClassifier::classify_rpc_error("nonce too high");
-        assert!(matches!(err, TxManagerError::NonceTooHigh));
+    // ── Display output ──────────────────────────────────────────────────
+
+    #[rstest]
+    #[case::nonce_too_low(TxManagerError::NonceTooLow, "nonce too low")]
+    #[case::nonce_too_high(TxManagerError::NonceTooHigh, "nonce too high")]
+    #[case::insufficient_funds(TxManagerError::InsufficientFunds, "insufficient funds")]
+    #[case::intrinsic_gas_too_low(TxManagerError::IntrinsicGasTooLow, "intrinsic gas too low")]
+    #[case::execution_reverted(TxManagerError::ExecutionReverted, "execution reverted")]
+    #[case::mempool_deadline(TxManagerError::MempoolDeadlineExpired, "mempool deadline expired")]
+    #[case::already_reserved(TxManagerError::AlreadyReserved, "nonce already reserved")]
+    #[case::underpriced(TxManagerError::Underpriced, "transaction underpriced")]
+    #[case::replacement_underpriced(
+        TxManagerError::ReplacementUnderpriced,
+        "replacement transaction underpriced"
+    )]
+    #[case::fee_too_low(TxManagerError::FeeTooLow, "fee too low")]
+    #[case::max_fee_too_low(
+        TxManagerError::MaxFeePerGasTooLow,
+        "max fee per gas less than block base fee"
+    )]
+    #[case::already_known(TxManagerError::AlreadyKnown, "transaction already known")]
+    #[case::rpc(TxManagerError::Rpc("test".to_string()), "rpc error: test")]
+    fn display_output(#[case] error: TxManagerError, #[case] expected: &str) {
+        assert_eq!(error.to_string(), expected);
     }
 
-    #[test]
-    fn classify_insufficient_funds() {
-        let err = RpcErrorClassifier::classify_rpc_error("insufficient funds");
-        assert!(matches!(err, TxManagerError::InsufficientFunds));
-    }
+    // ── err_string_contains_any ─────────────────────────────────────────
 
-    #[test]
-    fn classify_intrinsic_gas_too_low() {
-        let err = RpcErrorClassifier::classify_rpc_error("intrinsic gas too low");
-        assert!(matches!(err, TxManagerError::IntrinsicGasTooLow));
-    }
-
-    #[test]
-    fn classify_execution_reverted() {
-        let err = RpcErrorClassifier::classify_rpc_error("execution reverted");
-        assert!(matches!(err, TxManagerError::ExecutionReverted));
-    }
-
-    #[test]
-    fn classify_fee_too_low() {
-        let err = RpcErrorClassifier::classify_rpc_error("fee too low");
-        assert!(matches!(err, TxManagerError::FeeTooLow));
-    }
-
-    #[test]
-    fn classify_max_fee_per_gas_too_low() {
-        let err =
-            RpcErrorClassifier::classify_rpc_error("max fee per gas less than block base fee");
-        assert!(matches!(err, TxManagerError::MaxFeePerGasTooLow));
-    }
-
-    #[test]
-    fn classify_already_known() {
-        let err = RpcErrorClassifier::classify_rpc_error("already known");
-        assert!(matches!(err, TxManagerError::AlreadyKnown));
-    }
-
-    #[test]
-    fn classify_transaction_already_in_pool() {
-        let err = RpcErrorClassifier::classify_rpc_error("transaction already in pool");
-        assert!(matches!(err, TxManagerError::AlreadyKnown));
-    }
-
-    // ── Fallback to Rpc variant ──────────────────────────────────────────
-
-    #[test]
-    fn classify_unknown_returns_rpc_fallback() {
-        let msg = "something unexpected";
-        let err = RpcErrorClassifier::classify_rpc_error(msg);
-        assert!(matches!(err, TxManagerError::Rpc(ref s) if s == msg));
-    }
-
-    #[test]
-    fn classify_rpc_preserves_original_casing() {
-        let msg = "Some Unknown ERROR Message";
-        let err = RpcErrorClassifier::classify_rpc_error(msg);
-        assert!(matches!(err, TxManagerError::Rpc(ref s) if s == msg));
-    }
-
-    // ── Case-insensitivity ───────────────────────────────────────────────
-
-    #[test]
-    fn classify_case_insensitive_upper() {
-        let err = RpcErrorClassifier::classify_rpc_error("NONCE TOO LOW");
-        assert!(matches!(err, TxManagerError::NonceTooLow));
-    }
-
-    #[test]
-    fn classify_case_insensitive_mixed() {
-        let err = RpcErrorClassifier::classify_rpc_error("Nonce Too Low");
-        assert!(matches!(err, TxManagerError::NonceTooLow));
-    }
-
-    // ── Substring containment in context ─────────────────────────────────
-
-    #[test]
-    fn classify_substring_in_longer_message() {
-        let err = RpcErrorClassifier::classify_rpc_error("some context: nonce too low for account");
-        assert!(matches!(err, TxManagerError::NonceTooLow));
-    }
-
-    // ── err_string_contains_any ──────────────────────────────────────────
-
-    #[test]
-    fn err_string_contains_any_positive_match() {
-        assert!(RpcErrorClassifier::err_string_contains_any(
-            "nonce too low",
-            &["nonce too low", "insufficient funds"]
-        ));
-    }
-
-    #[test]
-    fn err_string_contains_any_no_match() {
-        assert!(!RpcErrorClassifier::err_string_contains_any(
-            "something else",
-            &["nonce too low", "insufficient funds"]
-        ));
-    }
-
-    #[test]
-    fn err_string_contains_any_empty_slice() {
-        assert!(!RpcErrorClassifier::err_string_contains_any("nonce too low", &[]));
-    }
-
-    #[test]
-    fn err_string_contains_any_partial_substring() {
-        assert!(RpcErrorClassifier::err_string_contains_any(
-            "error: nonce too low for account 0x123",
-            &["nonce too low"]
-        ));
-    }
-
-    #[test]
-    fn err_string_contains_any_case_insensitive() {
-        assert!(RpcErrorClassifier::err_string_contains_any("NONCE TOO LOW", &["nonce too low"]));
-    }
-
-    // ── is_retryable ─────────────────────────────────────────────────────
-
-    #[test]
-    fn is_retryable_critical_errors() {
-        assert!(!TxManagerError::NonceTooLow.is_retryable());
-        assert!(!TxManagerError::NonceTooHigh.is_retryable());
-        assert!(!TxManagerError::InsufficientFunds.is_retryable());
-        assert!(!TxManagerError::IntrinsicGasTooLow.is_retryable());
-        assert!(!TxManagerError::ExecutionReverted.is_retryable());
-        assert!(!TxManagerError::MempoolDeadlineExpired.is_retryable());
-        assert!(!TxManagerError::AlreadyReserved.is_retryable());
-    }
-
-    #[test]
-    fn is_retryable_fee_errors() {
-        assert!(TxManagerError::Underpriced.is_retryable());
-        assert!(TxManagerError::ReplacementUnderpriced.is_retryable());
-        assert!(TxManagerError::FeeTooLow.is_retryable());
-        assert!(TxManagerError::MaxFeePerGasTooLow.is_retryable());
-    }
-
-    #[test]
-    fn is_retryable_infra_errors() {
-        assert!(TxManagerError::AlreadyKnown.is_retryable());
-        assert!(TxManagerError::Rpc("any error".to_string()).is_retryable());
-    }
-
-    // ── is_already_known ─────────────────────────────────────────────────
-
-    #[test]
-    fn is_already_known_true() {
-        assert!(TxManagerError::AlreadyKnown.is_already_known());
-    }
-
-    #[test]
-    fn is_already_known_false_for_other_variants() {
-        assert!(!TxManagerError::NonceTooLow.is_already_known());
-        assert!(!TxManagerError::Underpriced.is_already_known());
-        assert!(!TxManagerError::Rpc("already known".to_string()).is_already_known());
-    }
-
-    // ── Display output ────────────────────────────────────────────────────
-
-    #[test]
-    fn display_output_all_variants() {
-        assert_eq!(TxManagerError::NonceTooLow.to_string(), "nonce too low");
-        assert_eq!(TxManagerError::NonceTooHigh.to_string(), "nonce too high");
-        assert_eq!(TxManagerError::InsufficientFunds.to_string(), "insufficient funds");
-        assert_eq!(TxManagerError::IntrinsicGasTooLow.to_string(), "intrinsic gas too low");
-        assert_eq!(TxManagerError::ExecutionReverted.to_string(), "execution reverted");
-        assert_eq!(TxManagerError::MempoolDeadlineExpired.to_string(), "mempool deadline expired");
-        assert_eq!(TxManagerError::AlreadyReserved.to_string(), "nonce already reserved");
-        assert_eq!(TxManagerError::Underpriced.to_string(), "transaction underpriced");
-        assert_eq!(
-            TxManagerError::ReplacementUnderpriced.to_string(),
-            "replacement transaction underpriced"
-        );
-        assert_eq!(TxManagerError::FeeTooLow.to_string(), "fee too low");
-        assert_eq!(
-            TxManagerError::MaxFeePerGasTooLow.to_string(),
-            "max fee per gas less than block base fee"
-        );
-        assert_eq!(TxManagerError::AlreadyKnown.to_string(), "transaction already known");
-        assert_eq!(TxManagerError::Rpc("test".to_string()).to_string(), "rpc error: test");
-    }
-
-    // ── Edge cases ──────────────────────────────────────────────────────
-
-    #[test]
-    fn classify_empty_string_returns_rpc_fallback() {
-        let err = RpcErrorClassifier::classify_rpc_error("");
-        assert!(matches!(err, TxManagerError::Rpc(ref s) if s.is_empty()));
-    }
-
-    // ── Negative classifier tests: internal-only variants ───────────────
-
-    #[test]
-    fn classify_mempool_deadline_not_recognized() {
-        let err = RpcErrorClassifier::classify_rpc_error("mempool deadline expired");
-        assert!(
-            matches!(err, TxManagerError::Rpc(_)),
-            "MempoolDeadlineExpired is internal-only, classifier must not produce it"
-        );
-    }
-
-    #[test]
-    fn classify_already_reserved_not_recognized() {
-        let err = RpcErrorClassifier::classify_rpc_error("nonce already reserved");
-        assert!(
-            matches!(err, TxManagerError::Rpc(_)),
-            "AlreadyReserved is internal-only, classifier must not produce it"
-        );
+    #[rstest]
+    #[case::positive_match("nonce too low", &["nonce too low", "insufficient funds"], true)]
+    #[case::no_match("something else", &["nonce too low", "insufficient funds"], false)]
+    #[case::empty_slice("nonce too low", &[], false)]
+    #[case::partial_substring("error: nonce too low for account 0x123", &["nonce too low"], true)]
+    #[case::case_insensitive("NONCE TOO LOW", &["nonce too low"], true)]
+    fn err_string_contains_any(
+        #[case] input: &str,
+        #[case] substrings: &[&str],
+        #[case] expected: bool,
+    ) {
+        assert_eq!(RpcErrorClassifier::err_string_contains_any(input, substrings), expected);
     }
 }
