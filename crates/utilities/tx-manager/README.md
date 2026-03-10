@@ -20,9 +20,7 @@ Transaction lifecycle management for Base onchain components.
 - **`FeeCalculator`**: Calculates and bumps transaction fees.
 - **`SendResponse`**: Type alias (`TxManagerResult<TransactionReceipt>`) returned by async
   send operations.
-- **`SendState`**: Tracks mined transaction hashes, nonce-too-low and fee-bump counters, and
-  reservation flags behind a `Mutex`. Exposes methods to update counters on errors
-  (`process_send_error`), record mined/unmined hashes, and query critical-error thresholds.
+- **`SendState`**: Tracks the state of a transaction through its lifecycle.
 - **`TxManagerConfig`**: Configuration for the transaction manager.
 - **`TxManager`**: Trait defining the public API — `send` (blocking), `send_async` (returns
   a `oneshot::Receiver<SendResponse>`), and `sender_address`. Requires `Send + Sync`.
