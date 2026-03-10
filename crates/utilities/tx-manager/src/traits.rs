@@ -1,5 +1,7 @@
 //! Transaction manager trait definitions.
 
+use std::fmt::Debug;
+
 use alloy_primitives::Address;
 use alloy_rpc_types_eth::TransactionReceipt;
 use tokio::sync::oneshot;
@@ -16,7 +18,7 @@ pub type SendResponse = TxManagerResult<TransactionReceipt>;
 /// [`sender_address`](TxManager::sender_address).
 /// Other accessors (chain ID, block number, etc.) are available
 /// directly on [`SimpleTxManager`](crate::SimpleTxManager).
-pub trait TxManager: Send + Sync {
+pub trait TxManager: Send + Sync + Debug {
     /// Sends a transaction and waits for its receipt.
     fn send(&self, candidate: TxCandidate) -> impl Future<Output = SendResponse> + Send;
 
