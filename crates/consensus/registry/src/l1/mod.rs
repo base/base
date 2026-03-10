@@ -1,6 +1,8 @@
 //! L1 genesis configurations.
 use alloc::{collections::BTreeMap, string::String};
-use core::{fmt::Display, ops::Deref};
+use core::fmt::Display;
+
+use derive_more::{Deref, From};
 
 use alloy_chains::NamedChain;
 use alloy_eips::eip7840::BlobParams;
@@ -12,22 +14,8 @@ use crate::alloc::string::ToString;
 
 /// L1 chain configuration.
 /// Simple wrapper around the [`L1ChainConfig`] type from the `alloy-genesis` crate.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, From, Deref)]
 pub struct L1Config(L1ChainConfig);
-
-impl Deref for L1Config {
-    type Target = L1ChainConfig;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<L1ChainConfig> for L1Config {
-    fn from(spec: L1ChainConfig) -> Self {
-        Self(spec)
-    }
-}
 
 impl From<L1Config> for L1ChainConfig {
     fn from(val: L1Config) -> Self {

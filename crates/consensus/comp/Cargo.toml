@@ -12,10 +12,11 @@ description = "Compression types for Base"
 workspace = true
 
 [dependencies]
+ambassador = "0.4.2"
 thiserror.workspace = true
-base-consensus-genesis.workspace = true
-base-protocol.workspace = true
 miniz_oxide.workspace = true
+base-protocol.workspace = true
+base-consensus-genesis.workspace = true
 rand = { workspace = true, features = ["small_rng"] }
 
 brotli = { workspace = true, optional = true }
