@@ -6,7 +6,7 @@ use thiserror::Error;
 ///
 /// Variants are grouped into critical (non-retryable), fee/replacement
 /// (retryable via fee bumps), and infrastructure (retryable/transient) errors.
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum TxManagerError {
     // ── Critical errors (non-retryable) ──────────────────────────────────
     /// Nonce already consumed onchain.
