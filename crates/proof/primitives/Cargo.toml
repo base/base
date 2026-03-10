@@ -25,5 +25,17 @@ serde_json = { workspace = true, features = ["std"] }
 default = []
 std = [ "alloy-primitives/std", "base-proof-preimage/std", "serde?/std" ]
 serde = [ "alloy-primitives/serde", "base-proof-preimage/serde", "dep:serde" ]
-rpc-server = [ "dep:jsonrpsee", "jsonrpsee/macros", "jsonrpsee/server", "serde", "std" ]
-rpc-client = [ "dep:jsonrpsee", "jsonrpsee/macros", "jsonrpsee/http-client", "serde", "std" ]
+rpc-server = [
+	"dep:jsonrpsee",
+	"jsonrpsee/macros",
+	"jsonrpsee/server",
+	"serde",
+	"std",
+]
+rpc-client = [
+	"dep:jsonrpsee",
+	"jsonrpsee/http-client",
+	"jsonrpsee/macros",
+	"serde",
+	"std",
+]
