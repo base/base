@@ -3,7 +3,7 @@
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{Address, B256, LogData};
 use base_action_harness::{
-    ActionTestHarness, BatcherConfig, L1MinerConfig, MockL2Block, block_info_from,
+    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain, block_info_from,
 };
 use base_consensus_genesis::{
     CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, ChainGenesis, HardForkConfig, RollupConfig,
@@ -69,26 +69,15 @@ async fn single_l2_block_derived_from_batcher_frame() {
     let rollup_cfg = rollup_config_for(&batcher_cfg);
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
-    // The epoch hash for the mock L2 block must match the actual L1 genesis hash
-    // so that the batch epoch-hash validation passes.
-    let l1_genesis_hash = h.l1.chain()[0].hash();
-
-    // Push L2 block 1: first block after genesis, building on L1 genesis (epoch 0).
-    //
-    // - parent_hash = B256::ZERO (L2 genesis hash; default ChainGenesis.l2.hash)
-    // - timestamp   = 2         (genesis l2_time=0 + block_time=2)
-    // - epoch_num   = 0         (L1 genesis epoch)
-    // - epoch_hash  = actual L1 genesis hash (validated by pipeline)
-    h.push_l2_block(MockL2Block {
-        number: 1,
-        timestamp: 2,
-        l1_origin_number: 0,
-        l1_origin_hash: l1_genesis_hash,
-        ..Default::default()
-    });
+    // Build L2 block 1 using the L2BlockBuilder, which automatically computes
+    // epoch_num=0 and epoch_hash from the L1 genesis block.
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_builder(l1_chain);
+    let mut source = ActionL2Source::new();
+    source.push(builder.build_next_block().expect("build L2 block 1"));
 
     // Encode the L2 block into a batcher frame and submit to the L1 pending pool.
-    let mut batcher = h.create_batcher(batcher_cfg);
+    let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("batcher should encode the block");
     drop(batcher);
 
@@ -130,20 +119,16 @@ async fn multiple_l1_blocks_each_derive_one_l2_block() {
     let rollup_cfg = rollup_config_for(&batcher_cfg);
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
-    // All L2 blocks reference L1 genesis (epoch 0, ts=0) as their origin.
-    // Their timestamps (2, 4, 6 s) satisfy `batch.ts >= epoch.ts` (0 s).
-    let l1_genesis_hash = h.l1.chain()[0].hash();
+    // Build L2 blocks 1-3 from genesis. With block_time=2 and L1 block_time=12,
+    // all three blocks (timestamps 2, 4, 6 s) stay in epoch 0 (genesis, ts=0).
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_builder(l1_chain);
 
-    for i in 1..=L2_BLOCK_COUNT {
-        h.push_l2_block(MockL2Block {
-            number: i,
-            timestamp: i * 2,
-            l1_origin_number: 0,
-            l1_origin_hash: l1_genesis_hash,
-            ..Default::default()
-        });
+    for _ in 1..=L2_BLOCK_COUNT {
+        let mut source = ActionL2Source::new();
+        source.push(builder.build_next_block().expect("build block"));
 
-        let mut batcher = h.create_batcher(batcher_cfg.clone());
+        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("batcher advance");
         drop(batcher);
         h.l1.mine_block();
@@ -173,17 +158,13 @@ async fn batch_in_orphaned_l1_block_is_not_derived() {
     let rollup_cfg = rollup_config_for(&batcher_cfg);
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
-    let l1_genesis_hash = h.l1.chain()[0].hash();
-
     // Encode L2 block 1 and mine L1 block 1 containing the batcher frame.
-    h.push_l2_block(MockL2Block {
-        number: 1,
-        timestamp: 2,
-        l1_origin_number: 0,
-        l1_origin_hash: l1_genesis_hash,
-        ..Default::default()
-    });
-    let mut batcher = h.create_batcher(batcher_cfg);
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_builder(l1_chain);
+    let mut source = ActionL2Source::new();
+    source.push(builder.build_next_block().expect("build block 1"));
+
+    let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("batcher encode");
     drop(batcher);
     h.l1.mine_block();
@@ -215,17 +196,13 @@ async fn reorg_reverts_derived_safe_head() {
     let rollup_cfg = rollup_config_for(&batcher_cfg);
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
-    let l1_genesis_hash = h.l1.chain()[0].hash();
-
     // Batch and mine L1 block 1.
-    h.push_l2_block(MockL2Block {
-        number: 1,
-        timestamp: 2,
-        l1_origin_number: 0,
-        l1_origin_hash: l1_genesis_hash,
-        ..Default::default()
-    });
-    let mut batcher = h.create_batcher(batcher_cfg);
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_builder(l1_chain);
+    let mut source = ActionL2Source::new();
+    source.push(builder.build_next_block().expect("build block 1"));
+
+    let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("batcher encode");
     drop(batcher);
     h.l1.mine_block();
@@ -275,17 +252,14 @@ async fn reorg_and_resubmit_rederives_l2_block() {
     let rollup_cfg = rollup_config_for(&batcher_cfg);
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
-    let l1_genesis_hash = h.l1.chain()[0].hash();
-
     // --- Pre-reorg: derive L2 block 1 from L1 block 1. ---
-    h.push_l2_block(MockL2Block {
-        number: 1,
-        timestamp: 2,
-        l1_origin_number: 0,
-        l1_origin_hash: l1_genesis_hash,
-        ..Default::default()
-    });
-    let mut batcher = h.create_batcher(batcher_cfg.clone());
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_builder(l1_chain);
+    let block1 = builder.build_next_block().expect("build block 1");
+
+    let mut source = ActionL2Source::new();
+    source.push(block1.clone());
+    let mut batcher = h.create_batcher(source, batcher_cfg.clone());
     batcher.advance().expect("batcher encode");
     drop(batcher);
     h.l1.mine_block();
@@ -318,15 +292,12 @@ async fn reorg_and_resubmit_rederives_l2_block() {
     assert_eq!(empty, 0, "block 1' has no batch; nothing derived");
     assert_eq!(verifier.l2_safe().block_info.number, 0);
 
-    // --- Resubmit: encode L2 block 1 again; mine L1 block 2'. ---
-    h.push_l2_block(MockL2Block {
-        number: 1,
-        timestamp: 2,
-        l1_origin_number: 0,
-        l1_origin_hash: l1_genesis_hash,
-        ..Default::default()
-    });
-    let mut batcher = h.create_batcher(batcher_cfg);
+    // --- Resubmit: re-encode block 1 in L1 block 2'. ---
+    // The same block 1 (cloned) re-submitted with the same epoch info will be
+    // accepted by the pipeline on the new fork.
+    let mut source2 = ActionL2Source::new();
+    source2.push(block1);
+    let mut batcher = h.create_batcher(source2, batcher_cfg);
     batcher.advance().expect("batcher re-encode on new fork");
     drop(batcher);
     h.l1.mine_block(); // block 2'
@@ -352,14 +323,10 @@ async fn reorg_flip_flop() {
     let rollup_cfg = rollup_config_for(&batcher_cfg);
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
-    let l1_genesis_hash = h.l1.chain()[0].hash();
-    let l2_block_1 = MockL2Block {
-        number: 1,
-        timestamp: 2,
-        l1_origin_number: 0,
-        l1_origin_hash: l1_genesis_hash,
-        ..Default::default()
-    };
+    // Build L2 block 1 once; we re-use (clone) it across all forks since the
+    // epoch info is the same (all forks reference L1 genesis as epoch 0).
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let block1 = h.create_l2_builder(l1_chain).build_next_block().expect("build block 1");
 
     // Shared reset helpers — computed once, valid across all forks because
     // genesis is immutable.
@@ -368,8 +335,9 @@ async fn reorg_flip_flop() {
     let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
 
     // --- Phase 1: Fork A canonical (genesis → A1 with batch). ---
-    h.push_l2_block(l2_block_1.clone());
-    let mut batcher = h.create_batcher(batcher_cfg.clone());
+    let mut source = ActionL2Source::new();
+    source.push(block1.clone());
+    let mut batcher = h.create_batcher(source, batcher_cfg.clone());
     batcher.advance().expect("A1 batcher encode");
     drop(batcher);
     h.l1.mine_block(); // A1
@@ -383,8 +351,9 @@ async fn reorg_flip_flop() {
 
     // --- Phase 2: Fork B canonical (reorg A; mine B1 with the same batch). ---
     h.l1.reorg_to(0).expect("reorg to fork B");
-    h.push_l2_block(l2_block_1.clone());
-    let mut batcher = h.create_batcher(batcher_cfg.clone());
+    let mut source = ActionL2Source::new();
+    source.push(block1.clone());
+    let mut batcher = h.create_batcher(source, batcher_cfg.clone());
     batcher.advance().expect("B1 batcher encode");
     drop(batcher);
     h.l1.mine_block(); // B1
@@ -402,8 +371,9 @@ async fn reorg_flip_flop() {
 
     // --- Phase 3: Fork A' canonical (reorg B; mine A1' — same batch, new fork). ---
     h.l1.reorg_to(0).expect("reorg to fork A'");
-    h.push_l2_block(l2_block_1);
-    let mut batcher = h.create_batcher(batcher_cfg);
+    let mut source = ActionL2Source::new();
+    source.push(block1);
+    let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("A1' batcher encode");
     drop(batcher);
     h.l1.mine_block(); // A1'
@@ -452,23 +422,18 @@ async fn batch_accepted_at_last_seq_window_block() {
     };
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
-    let l1_genesis_hash = h.l1.chain()[0].hash();
-
-    // L2 block 1 references L1 genesis (epoch 0).
-    h.push_l2_block(MockL2Block {
-        number: 1,
-        timestamp: 2,
-        l1_origin_number: 0,
-        l1_origin_hash: l1_genesis_hash,
-        ..Default::default()
-    });
+    // Build L2 block 1 referencing L1 genesis (epoch 0).
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_builder(l1_chain);
+    let mut source = ActionL2Source::new();
+    source.push(builder.build_next_block().expect("build block 1"));
 
     // Mine 2 empty L1 blocks (no batch yet).
     h.mine_l1_blocks(2); // blocks 1 and 2
 
     // Submit batch and mine L1 block 3 — the last valid inclusion block for
     // epoch 0 with seq_window_size = 4 (valid iff inclusion_block < 4).
-    let mut batcher = h.create_batcher(batcher_cfg);
+    let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("batcher encode");
     drop(batcher);
     h.l1.mine_block(); // block 3
@@ -572,18 +537,20 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     };
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
-    let l1_genesis_hash = h.l1.chain()[0].hash();
+    // Build all L2 blocks (1, 2, and 3) upfront from the L1 genesis state.
+    // With block_time=2 and L1 block_time=12, all three (timestamps 2,4,6s)
+    // stay in epoch 0 (genesis ts=0), so the builder picks the same L1 origin.
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_builder(l1_chain);
+    let block1 = builder.build_next_block().expect("build block 1");
+    let block2 = builder.build_next_block().expect("build block 2");
+    let block3 = builder.build_next_block().expect("build block 3");
 
     // --- L1 blocks 1-2: batcher A submits → L2 blocks 1-2 derived. ---
-    for i in 1u64..=2 {
-        h.push_l2_block(MockL2Block {
-            number: i,
-            timestamp: i * 2,
-            l1_origin_number: 0,
-            l1_origin_hash: l1_genesis_hash,
-            ..Default::default()
-        });
-        let mut batcher = h.create_batcher(batcher_a.clone());
+    for block in [block1, block2] {
+        let mut source = ActionL2Source::new();
+        source.push(block);
+        let mut batcher = h.create_batcher(source, batcher_a.clone());
         batcher.advance().expect("batcher A encode");
         drop(batcher);
         h.l1.mine_block();
@@ -613,14 +580,9 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     assert_eq!(rotation_derived, 0, "rotation block contains no batch");
 
     // --- L1 block 4: batcher A submits for L2 block 3 — must be ignored. ---
-    h.push_l2_block(MockL2Block {
-        number: 3,
-        timestamp: 6,
-        l1_origin_number: 0,
-        l1_origin_hash: l1_genesis_hash,
-        ..Default::default()
-    });
-    let mut batcher = h.create_batcher(batcher_a.clone());
+    let mut source_a = ActionL2Source::new();
+    source_a.push(block3.clone());
+    let mut batcher = h.create_batcher(source_a, batcher_a.clone());
     batcher.advance().expect("batcher A encode block 3");
     drop(batcher);
     h.l1.mine_block(); // block 4 — A's frame
@@ -632,14 +594,9 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     assert_eq!(verifier.l2_safe().block_info.number, 2, "safe head must not advance");
 
     // --- L1 block 5: batcher B submits for L2 block 3 — must be derived. ---
-    h.push_l2_block(MockL2Block {
-        number: 3,
-        timestamp: 6,
-        l1_origin_number: 0,
-        l1_origin_hash: l1_genesis_hash,
-        ..Default::default()
-    });
-    let mut batcher = h.create_batcher(batcher_b);
+    let mut source_b = ActionL2Source::new();
+    source_b.push(block3);
+    let mut batcher = h.create_batcher(source_b, batcher_b);
     batcher.advance().expect("batcher B encode block 3");
     drop(batcher);
     h.l1.mine_block(); // block 5 — B's frame
