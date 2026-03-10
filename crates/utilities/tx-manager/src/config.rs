@@ -88,7 +88,7 @@ pub struct FeeConfig {
     /// Maximum allowed multiplier applied to the suggested fee.
     ///
     /// When the suggested fee is at or above [`fee_limit_threshold`](Self::fee_limit_threshold),
-    /// a proposed fee that exceeds `fee_limit_multiplier x suggested` is rejected
+    /// a proposed fee that exceeds `fee_limit_multiplier × suggested` is rejected
     /// with [`TxManagerError::FeeLimitExceeded`](crate::TxManagerError::FeeLimitExceeded).
     pub fee_limit_multiplier: u64,
 
