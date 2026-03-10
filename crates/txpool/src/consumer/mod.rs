@@ -49,15 +49,6 @@ where
         Self { sender, cancel }
     }
 
-    /// Detaches the consumer, allowing it to run for the process lifetime.
-    ///
-    /// The background thread will continue running without a way to cancel it.
-    /// This is useful when the consumer should live as long as the process.
-    pub const fn detach(self) {
-        // Prevent Drop from cancelling the background thread.
-        std::mem::forget(self);
-    }
-
     /// Cancels the consumer loop.
     /// The consumer is checking for cancellation extremely often, so we don't need to have
     /// a "long" timeout for it as it will shutdown within a few milliseconds anyway
