@@ -179,6 +179,104 @@ async fn test_payload_attributes_block_43127820() {
         min_base_fee: expected_min_base_fee,
     };
 
+    // ── Compare L1BlockInfo fields ──────────────────────────────────────────────────────────
+    let mut all_match = true;
+    let mut check = |name: &str, produced: &dyn std::fmt::Debug, expected: &dyn std::fmt::Debug, eq: bool| {
+        if eq {
+            eprintln!("  OK  {name}: {produced:?}");
+        } else {
+            eprintln!("  FAIL {name}: produced={produced:?}  expected={expected:?}");
+            all_match = false;
+        }
+    };
+
+    eprintln!("\n=== L1BlockInfo field comparison ===");
+    check("sequence_number",
+        &produced_info.sequence_number(), &expected_info.sequence_number(),
+        produced_info.sequence_number() == expected_info.sequence_number());
+    check("l1_base_fee",
+        &produced_info.l1_base_fee(), &expected_info.l1_base_fee(),
+        produced_info.l1_base_fee() == expected_info.l1_base_fee());
+    check("blob_base_fee",
+        &produced_info.blob_base_fee(), &expected_info.blob_base_fee(),
+        produced_info.blob_base_fee() == expected_info.blob_base_fee());
+    check("base_fee_scalar",
+        &produced_info.l1_fee_scalar(), &expected_info.l1_fee_scalar(),
+        produced_info.l1_fee_scalar() == expected_info.l1_fee_scalar());
+    check("blob_base_fee_scalar",
+        &produced_info.blob_base_fee_scalar(), &expected_info.blob_base_fee_scalar(),
+        produced_info.blob_base_fee_scalar() == expected_info.blob_base_fee_scalar());
+    check("batcher_address",
+        &produced_info.batcher_address(), &expected_info.batcher_address(),
+        produced_info.batcher_address() == expected_info.batcher_address());
+    check("operator_fee_scalar",
+        &produced_info.operator_fee_scalar(), &expected_info.operator_fee_scalar(),
+        produced_info.operator_fee_scalar() == expected_info.operator_fee_scalar());
+    check("operator_fee_constant",
+        &produced_info.operator_fee_constant(), &expected_info.operator_fee_constant(),
+        produced_info.operator_fee_constant() == expected_info.operator_fee_constant());
+    check("da_footprint_gas_scalar",
+        &produced_info.da_footprint(), &expected_info.da_footprint(),
+        produced_info.da_footprint() == expected_info.da_footprint());
+
+    // ── Compare full payload attributes ──────────────────────────────────────────────────────
+    eprintln!("\n=== Payload attributes comparison ===");
+    let pa = &produced.attributes;
+    let ea = &expected_attributes;
+
+    check("timestamp",
+        &pa.payload_attributes.timestamp, &ea.payload_attributes.timestamp,
+        pa.payload_attributes.timestamp == ea.payload_attributes.timestamp);
+    check("prev_randao",
+        &pa.payload_attributes.prev_randao, &ea.payload_attributes.prev_randao,
+        pa.payload_attributes.prev_randao == ea.payload_attributes.prev_randao);
+    check("suggested_fee_recipient",
+        &pa.payload_attributes.suggested_fee_recipient, &ea.payload_attributes.suggested_fee_recipient,
+        pa.payload_attributes.suggested_fee_recipient == ea.payload_attributes.suggested_fee_recipient);
+    check("gas_limit",
+        &pa.gas_limit, &ea.gas_limit,
+        pa.gas_limit == ea.gas_limit);
+    check("eip_1559_params",
+        &pa.eip_1559_params, &ea.eip_1559_params,
+        pa.eip_1559_params == ea.eip_1559_params);
+    check("min_base_fee",
+        &pa.min_base_fee, &ea.min_base_fee,
+        pa.min_base_fee == ea.min_base_fee);
+    check("no_tx_pool",
+        &pa.no_tx_pool, &ea.no_tx_pool,
+        pa.no_tx_pool == ea.no_tx_pool);
+    check("withdrawals",
+        &pa.payload_attributes.withdrawals, &ea.payload_attributes.withdrawals,
+        pa.payload_attributes.withdrawals == ea.payload_attributes.withdrawals);
+    check("parent_beacon_block_root",
+        &pa.payload_attributes.parent_beacon_block_root, &ea.payload_attributes.parent_beacon_block_root,
+        pa.payload_attributes.parent_beacon_block_root == ea.payload_attributes.parent_beacon_block_root);
+
+    // Compare transaction count and each transaction.
+    let produced_txs_ref = pa.transactions.as_ref().expect("produced txs");
+    let expected_txs_ref = ea.transactions.as_ref().expect("expected txs");
+    check("transaction_count",
+        &produced_txs_ref.len(), &expected_txs_ref.len(),
+        produced_txs_ref.len() == expected_txs_ref.len());
+
+    let tx_count = std::cmp::min(produced_txs_ref.len(), expected_txs_ref.len());
+    let mut tx_mismatches = 0;
+    for i in 0..tx_count {
+        if produced_txs_ref[i] != expected_txs_ref[i] {
+            tx_mismatches += 1;
+            if tx_mismatches <= 5 {
+                eprintln!("  FAIL transaction[{i}]: produced != expected (first differing byte shown)");
+            }
+        }
+    }
+    if tx_mismatches > 0 {
+        eprintln!("  FAIL {tx_mismatches}/{tx_count} transactions differ");
+        all_match = false;
+    } else {
+        eprintln!("  OK  all {tx_count} transactions match byte-for-byte");
+    }
+
+    // Write output files.
     let outdir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata");
     std::fs::create_dir_all(&outdir).expect("create testdata dir");
     std::fs::write(
@@ -192,50 +290,12 @@ async fn test_payload_attributes_block_43127820() {
     )
     .expect("write expected payload attributes");
 
-    // Compare every field.
-    assert_eq!(
-        produced_info.sequence_number(),
-        expected_info.sequence_number(),
-        "sequence_number",
-    );
-    assert_eq!(
-        produced_info.l1_base_fee(),
-        expected_info.l1_base_fee(),
-        "l1_base_fee",
-    );
-    assert_eq!(
-        produced_info.blob_base_fee(),
-        expected_info.blob_base_fee(),
-        "blob_base_fee",
-    );
-    assert_eq!(
-        produced_info.l1_fee_scalar(),
-        expected_info.l1_fee_scalar(),
-        "base_fee_scalar",
-    );
-    assert_eq!(
-        produced_info.blob_base_fee_scalar(),
-        expected_info.blob_base_fee_scalar(),
-        "blob_base_fee_scalar",
-    );
-    assert_eq!(
-        produced_info.batcher_address(),
-        expected_info.batcher_address(),
-        "batcher_address",
-    );
-    assert_eq!(
-        produced_info.operator_fee_scalar(),
-        expected_info.operator_fee_scalar(),
-        "operator_fee_scalar",
-    );
-    assert_eq!(
-        produced_info.operator_fee_constant(),
-        expected_info.operator_fee_constant(),
-        "operator_fee_constant",
-    );
-    assert_eq!(
-        produced_info.da_footprint(),
-        expected_info.da_footprint(),
-        "da_footprint_gas_scalar",
-    );
+    if all_match {
+        eprintln!("\n=== RESULT: ALL FIELDS MATCH ===");
+    } else {
+        eprintln!("\n=== RESULT: MISMATCH DETECTED ===");
+    }
+
+    // Final assertion: all payload attributes must match on-chain values.
+    assert!(all_match, "payload attributes do not match on-chain values (see field comparison above)");
 }
