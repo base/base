@@ -1,5 +1,6 @@
 //! Error types for enclave server operations.
 
+use alloy_primitives::B256;
 use thiserror::Error;
 
 /// Errors that can occur during NSM operations.
@@ -101,10 +102,12 @@ pub enum ProposalError {
     #[error("no proposals provided for aggregation")]
     EmptyProposals,
     /// Signature verification failed at the given index.
-    #[error("invalid signature at proposal index {index}")]
+    #[error("invalid signature at proposal index {index}: {reason}")]
     InvalidSignature {
         /// Index of the proposal with invalid signature.
         index: usize,
+        /// Reason for the failure.
+        reason: String,
     },
     /// Signature is not the expected 65 bytes.
     #[error("invalid signature length: expected 65 bytes, got {0}")]
@@ -136,9 +139,9 @@ pub enum ProposalError {
     ExecutionFailed(String),
 }
 
-/// Top-level error type for server operations.
+/// Top-level error type for nitro enclave operations.
 #[derive(Debug, Clone, Error)]
-pub enum ServerError {
+pub enum NitroError {
     /// NSM error.
     #[error(transparent)]
     Nsm(#[from] NsmError),
@@ -154,10 +157,21 @@ pub enum ServerError {
     /// Environment variable error.
     #[error("environment variable error: {0}")]
     EnvVar(String),
+    /// Proof pipeline error.
+    #[error("proof pipeline error: {0}")]
+    ProofPipeline(String),
+    /// PCR0 mismatch between config and NSM.
+    #[error("PCR0 mismatch: expected {expected}, actual {actual}")]
+    Pcr0Mismatch {
+        /// Expected PCR0 hash from config.
+        expected: B256,
+        /// Actual PCR0 hash from NSM.
+        actual: B256,
+    },
 }
 
-/// A specialized Result type for server operations.
-pub type Result<T> = std::result::Result<T, ServerError>;
+/// A specialized Result type for nitro enclave operations.
+pub type Result<T> = std::result::Result<T, NitroError>;
 
 #[cfg(test)]
 mod tests {
@@ -171,7 +185,7 @@ mod tests {
         assert_send_sync::<AttestationError>();
         assert_send_sync::<CryptoError>();
         assert_send_sync::<ProposalError>();
-        assert_send_sync::<ServerError>();
+        assert_send_sync::<NitroError>();
     }
 
     #[test]
@@ -182,6 +196,6 @@ mod tests {
         assert_clone::<AttestationError>();
         assert_clone::<CryptoError>();
         assert_clone::<ProposalError>();
-        assert_clone::<ServerError>();
+        assert_clone::<NitroError>();
     }
 }

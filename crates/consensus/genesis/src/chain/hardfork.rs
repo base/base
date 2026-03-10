@@ -3,6 +3,18 @@
 use alloc::string::{String, ToString};
 use core::fmt::Display;
 
+/// Hardfork configuration for Base-specific upgrades.
+#[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
+pub struct BaseHardforkConfig {
+    /// `v1` sets the activation time for the Base V1 network upgrade.
+    /// Active if `v1` != None && L2 block timestamp >= `Some(v1)`, inactive otherwise.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub v1: Option<u64>,
+}
+
 /// Hardfork configuration.
 ///
 /// See: <https://github.com/ethereum-optimism/superchain-registry/blob/8ff62ada16e14dd59d0fb94ffb47761c7fa96e01/ops/internal/config/chain.go#L102-L110>
@@ -67,6 +79,9 @@ pub struct HardForkConfig {
     /// otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub jovian_time: Option<u64>,
+    /// `base` contains Base-specific hardfork activation times.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub base: Option<BaseHardforkConfig>,
 }
 
 impl Display for HardForkConfig {
@@ -98,6 +113,7 @@ impl HardForkConfig {
             ("Pectra Blob Schedule", self.pectra_blob_schedule_time),
             ("Isthmus", self.isthmus_time),
             ("Jovian", self.jovian_time),
+            ("Base V1", self.base.and_then(|b| b.v1)),
         ]
         .into_iter()
     }
@@ -132,6 +148,7 @@ mod tests {
             pectra_blob_schedule_time: None,
             isthmus_time: None,
             jovian_time: None,
+            base: None,
         };
 
         let deserialized: HardForkConfig = serde_json::from_str(raw).unwrap();
@@ -178,6 +195,7 @@ mod tests {
             pectra_blob_schedule_time: None,
             isthmus_time: None,
             jovian_time: None,
+            base: None,
         };
 
         let deserialized: HardForkConfig = toml::from_str(raw).unwrap();
@@ -211,6 +229,7 @@ mod tests {
             pectra_blob_schedule_time: Some(8),
             isthmus_time: Some(9),
             jovian_time: Some(10),
+            base: Some(BaseHardforkConfig { v1: Some(11) }),
         };
 
         let mut iter = hardforks.iter();
@@ -224,6 +243,7 @@ mod tests {
         assert_eq!(iter.next(), Some(("Pectra Blob Schedule", Some(8))));
         assert_eq!(iter.next(), Some(("Isthmus", Some(9))));
         assert_eq!(iter.next(), Some(("Jovian", Some(10))));
+        assert_eq!(iter.next(), Some(("Base V1", Some(11))));
         assert_eq!(iter.next(), None);
     }
 }

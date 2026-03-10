@@ -26,10 +26,10 @@ All services read configuration from `devnet-env` in this directory. The devnet 
 The easiest way to interact with Docker is through the Justfile recipes:
 
 ```bash
-just devnet        # Start fresh devnet (stops existing, clears data, rebuilds)
-just devnet-down   # Stop devnet and remove data
-just devnet-logs   # Stream logs from all containers
-just devnet-status # Check block numbers and sync status
+just devnet up     # Start fresh devnet (stops existing, clears data, rebuilds)
+just devnet down   # Stop devnet and remove data
+just devnet logs   # Stream logs from all containers
+just devnet status # Check block numbers and sync status
 ```
 
 To build the client image directly:

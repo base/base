@@ -5,66 +5,28 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-base-enclave.workspace = true
-
-# Cryptography
-sha2.workspace = true
-hex.workspace = true
-rand_08.workspace = true
-alloy-signer.workspace = true
-alloy-signer-local.workspace = true
-base-consensus-genesis.workspace = true
-alloy-consensus = { workspace = true, features = ["serde"] }
-alloy-primitives = { workspace = true, features = ["serde"] }
-k256 = { workspace = true, features = ["ecdsa", "arithmetic"] }
-
-# NSM and Attestation
-aws-nitro-enclaves-cose.workspace = true
-aws-nitro-enclaves-nsm-api.workspace = true
-
-# X.509
-openssl.workspace = true
-x509-cert.workspace = true
-
-# Encoding
-base64.workspace = true
-ciborium.workspace = true
-serde_bytes.workspace = true
-serde_json.workspace = true
-serde = { workspace = true, features = ["derive"] }
-zip = { workspace = true, features = ["deflate"] }
-
-# Logging
-tracing.workspace = true
-
-# Error handling
-eyre.workspace = true
-thiserror.workspace = true
-
-# Sync primitives
-parking_lot.workspace = true
-
-# Async runtime
-tokio.workspace = true
-
-# HTTP
+# HTTP proxy
 http-body-util.workspace = true
 hyper = { workspace = true, features = ["server", "http1"] }
 hyper-util = { workspace = true, features = ["tokio", "server", "http1"] }
 
-# RPC
-async-trait.workspace = true
-jsonrpsee = { workspace = true, features = ["server", "http-client", "macros"] }
+# Async
+tokio = { workspace = true, features = ["net", "rt"] }
 
-# Vsock (Unix only)
+# Sync
+parking_lot.workspace = true
+
+# Encoding
+serde_json = { workspace = true, features = ["std"] }
+
+# Error
+eyre.workspace = true
+
+# Logging
+tracing.workspace = true
+
 [target.'cfg(unix)'.dependencies]
 vsock.workspace = true
-
-[dev-dependencies]
-reqwest = { workspace = true, features = ["json", "blocking"] }
-
-[package.metadata.cargo-udeps.ignore]
-normal = ["aws-nitro-enclaves-nsm-api"]
 
 [lints]
 workspace = true

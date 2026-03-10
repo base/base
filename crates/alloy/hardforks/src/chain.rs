@@ -7,7 +7,9 @@ use EthereumHardfork::{
     Constantinople, Dao, Frontier, GrayGlacier, Homestead, Istanbul, London, MuirGlacier, Osaka,
     Paris, Petersburg, Prague, Shanghai, SpuriousDragon, Tangerine,
 };
-use OpHardfork::{Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith};
+use OpHardfork::{
+    BaseV1, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
+};
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::U256;
 
@@ -101,6 +103,7 @@ impl Index<OpHardfork> for OpChainHardforks {
             Holocene => &self.forks[Holocene.idx()].1,
             Isthmus => &self.forks[Isthmus.idx()].1,
             Jovian => &self.forks[Jovian.idx()].1,
+            BaseV1 => &self.forks[BaseV1.idx()].1,
         }
     }
 }
@@ -131,13 +134,14 @@ impl Index<EthereumHardfork> for OpChainHardforks {
 #[cfg(test)]
 mod tests {
     use OpHardfork::{
-        Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
+        BaseV1, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
     };
     use alloy_hardforks::EthereumHardfork;
 
     use super::*;
     use crate::{
-        BASE_MAINNET_BEDROCK_BLOCK, BASE_MAINNET_CANYON_TIMESTAMP, BASE_MAINNET_ECOTONE_TIMESTAMP,
+        BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP, BASE_MAINNET_BEDROCK_BLOCK,
+        BASE_MAINNET_CANYON_TIMESTAMP, BASE_MAINNET_ECOTONE_TIMESTAMP,
         BASE_MAINNET_FJORD_TIMESTAMP, BASE_MAINNET_GRANITE_TIMESTAMP,
         BASE_MAINNET_HOLOCENE_TIMESTAMP, BASE_MAINNET_ISTHMUS_TIMESTAMP,
         BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_MAINNET_REGOLITH_TIMESTAMP, BASE_SEPOLIA_BEDROCK_BLOCK,
@@ -183,6 +187,7 @@ mod tests {
             base_mainnet_forks[Jovian],
             ForkCondition::Timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP)
         );
+        assert_eq!(base_mainnet_forks[BaseV1], ForkCondition::Never);
     }
 
     #[test]
@@ -221,6 +226,7 @@ mod tests {
             base_sepolia_forks.op_fork_activation(Jovian),
             ForkCondition::Timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP)
         );
+        assert_eq!(base_sepolia_forks[BaseV1], ForkCondition::Never);
     }
 
     #[test]
@@ -241,6 +247,33 @@ mod tests {
         );
         assert!(
             base_sepolia_forks.is_jovian_active_at_timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP + 1000)
+        );
+    }
+
+    #[test]
+    fn is_base_v1_active_at_timestamp() {
+        // BaseV1 is not scheduled on mainnet or sepolia yet (ForkCondition::Never)
+        let base_mainnet_forks = OpChainHardforks::base_mainnet();
+        assert!(!base_mainnet_forks.is_base_v1_active_at_timestamp(0));
+        assert!(!base_mainnet_forks.is_base_v1_active_at_timestamp(u64::MAX));
+
+        let base_sepolia_forks = OpChainHardforks::base_sepolia();
+        assert!(!base_sepolia_forks.is_base_v1_active_at_timestamp(0));
+        assert!(!base_sepolia_forks.is_base_v1_active_at_timestamp(u64::MAX));
+
+        // BaseV1 is active at genesis on devnet (ForkCondition::ZERO_TIMESTAMP)
+        let devnet_forks = OpChainHardforks::devnet();
+        assert!(devnet_forks.is_base_v1_active_at_timestamp(0));
+
+        // BaseV1 activates alongside Jovian on devnet-0-sepolia-dev-0
+        let devnet0_forks = OpChainHardforks::base_devnet_0_sepolia_dev_0();
+        assert!(
+            !devnet0_forks
+                .is_base_v1_active_at_timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP - 1)
+        );
+        assert!(
+            devnet0_forks
+                .is_base_v1_active_at_timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)
         );
     }
 

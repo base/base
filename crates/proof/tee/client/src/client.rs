@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_enclave::{AggregateRequest, ExecuteStatelessRequest, Proposal};
-use base_proof_primitives::{ProofRequest, ProofResult};
+use base_enclave::{AggregateRequest, ExecuteStatelessRequest};
+use base_proof_primitives::{ProofRequest, ProofResult, Proposal};
 use jsonrpsee::{
     core::client::ClientT,
     http_client::{HttpClient, HttpClientBuilder},

@@ -6,6 +6,11 @@ pub use errors::TransportError;
 mod transport;
 pub use transport::{ProofTransport, TransportResult};
 
+#[cfg(feature = "frame")]
+mod frame;
+#[cfg(feature = "frame")]
+pub use frame::Frame;
+
 #[cfg(feature = "vsock")]
 mod vsock;
 #[cfg(feature = "vsock")]

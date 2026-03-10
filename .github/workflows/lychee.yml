@@ -6,6 +6,12 @@ on:
   merge_group:
   workflow_dispatch:
 
+# Prevent concurrent link-check runs from hitting GitHub rate limits.
+# New runs cancel any in-progress run for the same ref.
+concurrency:
+  group: lychee-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

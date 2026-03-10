@@ -1,10 +1,11 @@
 # `base-execution-chainspec`
 
-Chainspec types for Base execution.
+## Overview
 
-This crate provides `OpChainSpec`, the chain specification type used by Base nodes, along with
-pre-built specs for Base Mainnet, Base Sepolia, and a local dev chain. It also includes base fee
-computation helpers for Holocene and Jovian hardforks.
+Provides `OpChainSpec`, the chain specification type for Base nodes, along with pre-built specs
+for Base Mainnet (8453), Base Sepolia (84532), and a local dev chain. Includes hardfork-specific
+base fee computation helpers for Holocene and Jovian, and a `parse_op_chain_spec` helper for
+resolving chain specs from CLI strings.
 
 ## How it works
 
@@ -67,4 +68,4 @@ Compute the next base fee under Holocene rules:
 
 ## License
 
-MIT
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

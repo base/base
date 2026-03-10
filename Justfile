@@ -1,7 +1,8 @@
 set positional-arguments := true
-set dotenv-filename := "etc/docker/devnet-env"
 
 mod tee 'crates/proof/tee'
+# Docker-based local devnet management
+mod devnet 'etc/docker'
 
 alias t := test
 alias f := fix
@@ -15,7 +16,7 @@ alias wc := watch-check
 
 # Default to display help menu
 default:
-    @just --list
+    @just --list --list-submodules
 
 # Runs the specs docs locally
 specs:
@@ -65,7 +66,7 @@ setup:
 ci: fix check lychee zepter check-no-std check-no-std-proof
 
 # Runs ci checks with tests scoped to crates affected by changes
-pr: fix check-format check-udeps check-clippy test-affected check-deny lychee zepter check-no-std check-no-std-proof
+pr: fix check-format check-udeps check-clippy check-deny lychee zepter check-no-std check-no-std-proof test-affected
 
 # Performs lychee checks, installing the lychee command if necessary
 lychee:
@@ -145,21 +146,6 @@ test-affected-ci base="main": install-nextest build-contracts
         fi
         exit $code
     }
-
-# Runs devnet tests (requires Docker)
-devnet-tests: install-nextest build-contracts
-    cargo nextest run -p devnet
-
-# Runs devnet tests with ci profile for minimal disk usage
-devnet-tests-ci: install-nextest build-contracts
-    cargo nextest run --locked -p devnet --cargo-profile ci
-
-# Pre-pulls Docker images needed for devnet tests
-devnet-pull-images:
-    docker build -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
-    docker pull ghcr.io/paradigmxyz/reth:v1.10.2
-    docker pull sigp/lighthouse:v8.0.1
-    docker pull us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.3
 
 # Checks that no_std crates compile without std
 check-no-std:
@@ -253,64 +239,6 @@ bench-flashblocks:
 # Runs MPT trie node benchmarks
 bench-proof-mpt:
     cargo bench -p base-proof-mpt --bench trie_node
-
-# Stops devnet, deletes data, and starts fresh
-devnet: devnet-down
-    docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml up -d --build --scale contender=0
-
-# Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
-devnet-profiling: devnet-down
-    CARGO_PROFILE=profiling docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml --profile profiling up -d --build --scale contender=0
-
-# Stops devnet and deletes all data
-devnet-down:
-    -docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml --profile profiling down
-    rm -rf .devnet
-
-# Shows devnet block numbers and sync status
-devnet-status:
-    ./etc/scripts/devnet/status.sh
-
-# Shows funded test accounts with live balances and nonces
-devnet-accounts:
-    ./etc/scripts/devnet/accounts.sh
-
-# Sends test transactions to L1 and L2
-devnet-smoke:
-    ./etc/scripts/devnet/smoke.sh
-
-# Runs full devnet checks (status + smoke tests)
-devnet-checks: devnet-status devnet-smoke
-
-# Starts the contender load generator
-devnet-load:
-    docker compose -f etc/docker/docker-compose.yml up -d --no-deps contender
-
-# Stops the contender load generator
-devnet-load-down:
-    docker compose -f etc/docker/docker-compose.yml down contender
-
-# Stream FB's from the builder via websocket
-devnet-flashblocks:
-    @command -v flashblocks-websocket-client >/dev/null 2>&1 || go install github.com/danyalprout/flashblocks-websocket-client@latest
-    flashblocks-websocket-client ws://localhost:${L2_BUILDER_FLASHBLOCKS_PORT}
-
-# Stream logs from devnet containers (optionally specify container names)
-devnet-logs *containers:
-    docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml logs -f {{ containers }}
-
-# Stops devnet+ingress, deletes data, and starts fresh with full ingress stack
-devnet-ingress: devnet-ingress-down
-    docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ingress.yml up -d --build --scale contender=0
-
-# Stops devnet+ingress and deletes all data
-devnet-ingress-down:
-    -docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ingress.yml down
-    rm -rf .devnet
-
-# Stream logs from devnet+ingress containers (optionally specify container names)
-devnet-ingress-logs *containers:
-    docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ingress.yml logs -f {{ containers }}
 
 # Run basectl with specified config (mainnet, sepolia, devnet, or path)
 basectl config="mainnet":

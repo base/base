@@ -28,6 +28,8 @@ pub enum OpSpecId {
     ISTHMUS,
     /// Jovian spec id.
     JOVIAN,
+    /// Base V1 spec id.
+    BASE_V1,
     /// Osaka spec id.
     OSAKA,
 }
@@ -39,7 +41,7 @@ impl OpSpecId {
             Self::BEDROCK | Self::REGOLITH => SpecId::MERGE,
             Self::CANYON => SpecId::SHANGHAI,
             Self::ECOTONE | Self::FJORD | Self::GRANITE | Self::HOLOCENE => SpecId::CANCUN,
-            Self::ISTHMUS | Self::JOVIAN => SpecId::PRAGUE,
+            Self::ISTHMUS | Self::JOVIAN | Self::BASE_V1 => SpecId::PRAGUE,
             Self::OSAKA => SpecId::OSAKA,
         }
     }
@@ -70,6 +72,7 @@ impl FromStr for OpSpecId {
             name::HOLOCENE => Ok(Self::HOLOCENE),
             name::ISTHMUS => Ok(Self::ISTHMUS),
             name::JOVIAN => Ok(Self::JOVIAN),
+            name::BASE_V1 => Ok(Self::BASE_V1),
             eth_name::OSAKA => Ok(Self::OSAKA),
             _ => Err(UnknownHardfork),
         }
@@ -88,6 +91,7 @@ impl From<OpSpecId> for &'static str {
             OpSpecId::HOLOCENE => name::HOLOCENE,
             OpSpecId::ISTHMUS => name::ISTHMUS,
             OpSpecId::JOVIAN => name::JOVIAN,
+            OpSpecId::BASE_V1 => name::BASE_V1,
             OpSpecId::OSAKA => eth_name::OSAKA,
         }
     }
@@ -113,6 +117,8 @@ pub mod name {
     pub const ISTHMUS: &str = "Isthmus";
     /// Jovian spec name.
     pub const JOVIAN: &str = "Jovian";
+    /// Base V1 spec name.
+    pub const BASE_V1: &str = "BaseV1";
 }
 
 #[cfg(test)]
@@ -206,6 +212,25 @@ mod tests {
                     (OpSpecId::FJORD, true),
                     (OpSpecId::HOLOCENE, true),
                     (OpSpecId::ISTHMUS, true),
+                ],
+            ),
+            (
+                OpSpecId::BASE_V1,
+                vec![
+                    (SpecId::PRAGUE, true),
+                    (SpecId::SHANGHAI, true),
+                    (SpecId::CANCUN, true),
+                    (SpecId::MERGE, true),
+                ],
+                vec![
+                    (OpSpecId::BEDROCK, true),
+                    (OpSpecId::REGOLITH, true),
+                    (OpSpecId::CANYON, true),
+                    (OpSpecId::ECOTONE, true),
+                    (OpSpecId::FJORD, true),
+                    (OpSpecId::HOLOCENE, true),
+                    (OpSpecId::ISTHMUS, true),
+                    (OpSpecId::JOVIAN, true),
                 ],
             ),
         ];

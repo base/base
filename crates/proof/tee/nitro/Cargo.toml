@@ -1,0 +1,62 @@
+[package]
+name = "base-proof-tee-nitro"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Core
+base-alloy-evm.workspace = true
+base-proof-client.workspace = true
+base-proof-preimage.workspace = true
+base-proof-primitives.workspace = true
+base-proof-transport = { workspace = true, features = ["frame"] }
+
+# Alloy
+alloy-signer.workspace = true
+alloy-primitives.workspace = true
+alloy-signer-local.workspace = true
+
+# Crypto
+sha2.workspace = true
+k256 = { workspace = true, features = ["ecdsa", "arithmetic"] }
+
+# NSM / Attestation
+openssl.workspace = true
+x509-cert.workspace = true
+aws-nitro-enclaves-cose.workspace = true
+aws-nitro-enclaves-nsm-api.workspace = true
+
+# Encoding
+base64.workspace = true
+ciborium.workspace = true
+serde_bytes.workspace = true
+serde = { workspace = true, features = ["derive"] }
+zip = { workspace = true, features = ["deflate"] }
+
+# Async
+tokio = { workspace = true, features = ["rt", "time"] }
+async-trait.workspace = true
+
+# Error
+eyre.workspace = true
+thiserror.workspace = true
+
+# Sync
+parking_lot.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Crypto RNG
+rand_08.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio-vsock.workspace = true
+
+[dev-dependencies]
+rand_08.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

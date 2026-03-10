@@ -2,6 +2,22 @@
 
 Compression types for Base.
 
+## Overview
+
+Provides channel encoding and compression utilities for the Base derivation pipeline. `ChannelOut`
+encodes batches into compressed frames using a pluggable `VariantCompressor` (Brotli or zlib).
+Supports multiple compression algorithms selectable via `CompressionAlgo`. The `MockCompressor`
+is available under the `test-utils` feature for deterministic testing.
+
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-comp = { workspace = true }
+```
+
 ## Batch to Frames Example
 
 The following example demonstrates encoding a [`SingleBatch`] through a
@@ -53,3 +69,7 @@ assert!(channel_out.closed);
 | `serde` | Enables serialization support |
 | `test-utils` | Exports [`MockCompressor`] for testing |
 | `arbitrary` | Enables property-based testing support |
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

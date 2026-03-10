@@ -72,6 +72,15 @@ flowchart TD
 | Anchor state | L1 contracts | `AnchorStateRegistry` for starting root when no parent game exists |
 | Game discovery | L1 contracts | `DisputeGameFactory` for finding existing games to chain off |
 
+## Usage
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+base-proposer = { workspace = true }
+```
+
 ## License
 
 [MIT License](https://github.com/base/base/blob/main/LICENSE)
