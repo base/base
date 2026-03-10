@@ -8,7 +8,7 @@ use alloy_primitives::{Address, Bytes, U256};
 /// When `blobs` is empty, the candidate produces a regular EIP-1559 (type-2)
 /// transaction. When `blobs` is non-empty, it produces an EIP-4844 (type-3)
 /// blob-carrying transaction.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TxCandidate {
     /// Transaction calldata.
     pub tx_data: Bytes,
@@ -21,19 +21,6 @@ pub struct TxCandidate {
     /// ETH value to send.
     pub value: U256,
 }
-
-impl Default for TxCandidate {
-    fn default() -> Self {
-        Self {
-            tx_data: Bytes::default(),
-            blobs: Vec::new(),
-            to: None,
-            gas_limit: 0,
-            value: U256::ZERO,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
