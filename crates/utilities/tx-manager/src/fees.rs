@@ -89,6 +89,13 @@ impl FeeCalculator {
     ///
     /// The returned fee cap always reflects the tip that was selected so that
     /// the EIP-1559 relationship `fee_cap >= tip` is maintained.
+    ///
+    /// # Note
+    ///
+    /// This function only updates `tip` and `fee_cap`. For blob transactions,
+    /// callers must separately bump `blob_fee_cap` (e.g. via
+    /// [`calc_blob_fee_cap`](Self::calc_blob_fee_cap) or
+    /// [`calc_threshold_value`](Self::calc_threshold_value)).
     #[must_use]
     pub const fn update_fees(
         old_tip: u128,
