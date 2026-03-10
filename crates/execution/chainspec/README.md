@@ -10,7 +10,7 @@ resolving chain specs from CLI strings.
 ## How it works
 
 `OpChainSpec` wraps reth's `ChainSpec` and adds Base-specific hardfork awareness via the
-`OpHardforks` trait. Each network spec is constructed from a bundled genesis JSON file and a
+`BaseUpgrades` trait. Each network spec is constructed from a bundled genesis JSON file and a
 hardfork schedule:
 
 - `BASE_MAINNET` - Base Mainnet (chain ID 8453), with London and Canyon variable base fee params.

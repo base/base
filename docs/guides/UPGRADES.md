@@ -11,18 +11,16 @@ The BaseV1 upgrade is used as the running example throughout. Replace `BaseV1` /
 Upgrade activation flows through three layers:
 
 1. **Config layer** — `HardForkConfig` stores an optional activation timestamp per upgrade. `RollupConfig` embeds it and exposes `is_X_active(timestamp)` helpers.
-2. **Trait layer** — `OpHardfork` (enum) and `OpHardforks` (trait) provide typed, generic activation checks used by both the consensus and execution layers.
+2. **Trait layer** — `BaseUpgrade` (enum) and `BaseUpgrades` (trait) provide typed, generic activation checks used by both the consensus and execution layers.
 3. **Execution layer** — `OpSpecId` maps the active upgrade to an EVM spec. `spec_by_timestamp_after_bedrock` and `RollupConfig::spec_id` resolve which spec to use. `OpPrecompiles` routes to the correct precompile set.
 
 ---
 
 ## Part 1 — Required for every upgrade
 
-### 1. Add the variant to the `OpHardfork` enum
+### 1. Add the variant to the `BaseUpgrade` enum
 
-> The enum is named `OpHardfork` for historical reasons; new entries still represent upgrades.
-
-**File:** [`crates/alloy/hardforks/src/hardfork.rs`](https://github.com/base/base/blob/main/crates/alloy/hardforks/src/hardfork.rs)
+**File:** [`crates/alloy/upgrades/src/hardfork.rs`](https://github.com/base/base/blob/main/crates/alloy/upgrades/src/hardfork.rs)
 
 Inside the `hardfork!` macro, append the new variant after the current last entry:
 
@@ -30,7 +28,7 @@ Inside the `hardfork!` macro, append the new variant after the current last entr
 hardfork!(
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     #[derive(Default)]
-    OpHardfork {
+    BaseUpgrade {
         // ... existing variants ...
         /// Jovian: <https://github.com/ethereum-optimism/specs/tree/main/specs/protocol/jovian>
         Jovian,
@@ -70,23 +68,23 @@ pub const fn base_devnet_0_sepolia_dev_0() -> [(Self, ForkCondition); 10] {
 }
 ```
 
-Update `check_op_hardfork_from_str` in the test module to include the new upgrade variant.
+Update `check_base_upgrade_from_str` in the test module to include the new upgrade variant.
 
 ---
 
-### 2. Add the `OpChainHardforks` index arm
+### 2. Add the `BaseChainUpgrades` index arm
 
-**File:** [`crates/alloy/hardforks/src/chain.rs`](https://github.com/base/base/blob/main/crates/alloy/hardforks/src/chain.rs)
+**File:** [`crates/alloy/upgrades/src/chain.rs`](https://github.com/base/base/blob/main/crates/alloy/upgrades/src/chain.rs)
 
-Add `BaseV1` to the `use OpHardfork::{...}` import and add a match arm to `Index<OpHardfork>`:
+Add `BaseV1` to the `use BaseUpgrade::{...}` import and add a match arm to `Index<BaseUpgrade>`:
 
 ```rust
-use OpHardfork::{
+use BaseUpgrade::{
     BaseV1, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
 };
 
-impl Index<OpHardfork> for OpChainHardforks {
-    fn index(&self, hf: OpHardfork) -> &Self::Output {
+impl Index<BaseUpgrade> for BaseChainUpgrades {
+    fn index(&self, hf: BaseUpgrade) -> &Self::Output {
         match hf {
             // ... existing arms ...
             Jovian  => &self.forks[Jovian.idx()].1,
@@ -174,36 +172,36 @@ pub fn is_next_active(&self, timestamp: u64) -> bool {
 }
 ```
 
-Also update `op_fork_activation` in `impl OpHardforks for RollupConfig` to add the new arm. For **standalone** upgrades, the previous arm keeps `unwrap_or(ForkCondition::Never)`:
+Also update `upgrade_activation` in `impl BaseUpgrades for RollupConfig` to add the new arm. For **standalone** upgrades, the previous arm keeps `unwrap_or(ForkCondition::Never)`:
 
 ```rust
-OpHardfork::Jovian => self
+BaseUpgrade::Jovian => self
     .hardforks
     .jovian_time
     .map(ForkCondition::Timestamp)
     .unwrap_or(ForkCondition::Never),  // standalone: no cascade
-OpHardfork::BaseV1 => self
+BaseUpgrade::BaseV1 => self
     .hardforks
     .base
     .as_ref()
     .and_then(|b| b.v1)
     .map(ForkCondition::Timestamp)
     .unwrap_or(ForkCondition::Never),
-_ => ForkCondition::Never,  // required: OpHardfork is #[non_exhaustive]
+_ => ForkCondition::Never,  // required: BaseUpgrade is #[non_exhaustive]
 ```
 
-For **cascading** upgrades, replace the previous arm's `unwrap_or(ForkCondition::Never)` with `.unwrap_or_else(|| self.op_fork_activation(OpHardfork::Next))`.
+For **cascading** upgrades, replace the previous arm's `unwrap_or(ForkCondition::Never)` with `.unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Next))`.
 
 ---
 
 ### 5. Add the trait method
 
-**File:** [`crates/alloy/hardforks/src/hardforks.rs`](https://github.com/base/base/blob/main/crates/alloy/hardforks/src/hardforks.rs)
+**File:** [`crates/alloy/upgrades/src/hardforks.rs`](https://github.com/base/base/blob/main/crates/alloy/upgrades/src/hardforks.rs)
 
 ```rust
-/// Returns `true` if [`BaseV1`](OpHardfork::BaseV1) is active at given block timestamp.
+/// Returns `true` if [`BaseV1`](BaseUpgrade::BaseV1) is active at given block timestamp.
 fn is_base_v1_active_at_timestamp(&self, timestamp: u64) -> bool {
-    self.op_fork_activation(OpHardfork::BaseV1).active_at_timestamp(timestamp)
+    self.upgrade_activation(BaseUpgrade::BaseV1).active_at_timestamp(timestamp)
 }
 ```
 
@@ -212,10 +210,10 @@ fn is_base_v1_active_at_timestamp(&self, timestamp: u64) -> bool {
 ### 6. Update timestamp constants and test fixtures
 
 **Files:**
-- [`crates/alloy/hardforks/src/mainnet.rs`](https://github.com/base/base/blob/main/crates/alloy/hardforks/src/mainnet.rs)
-- [`crates/alloy/hardforks/src/sepolia.rs`](https://github.com/base/base/blob/main/crates/alloy/hardforks/src/sepolia.rs)
-- [`crates/alloy/hardforks/src/devnet_0_sepolia_dev_0.rs`](https://github.com/base/base/blob/main/crates/alloy/hardforks/src/devnet_0_sepolia_dev_0.rs)
-- [`crates/alloy/hardforks/src/lib.rs`](https://github.com/base/base/blob/main/crates/alloy/hardforks/src/lib.rs)
+- [`crates/alloy/upgrades/src/mainnet.rs`](https://github.com/base/base/blob/main/crates/alloy/upgrades/src/mainnet.rs)
+- [`crates/alloy/upgrades/src/sepolia.rs`](https://github.com/base/base/blob/main/crates/alloy/upgrades/src/sepolia.rs)
+- [`crates/alloy/upgrades/src/devnet_0_sepolia_dev_0.rs`](https://github.com/base/base/blob/main/crates/alloy/upgrades/src/devnet_0_sepolia_dev_0.rs)
+- [`crates/alloy/upgrades/src/lib.rs`](https://github.com/base/base/blob/main/crates/alloy/upgrades/src/lib.rs)
 - [`crates/consensus/registry/src/test_utils/base_mainnet.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/base_mainnet.rs)
 - [`crates/consensus/registry/src/test_utils/base_sepolia.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/base_sepolia.rs)
 
@@ -267,12 +265,12 @@ hardforks: HardForkConfig {
 
 **File:** [`crates/consensus/registry/tests/hardfork_consistency.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/tests/hardfork_consistency.rs)
 
-These tests assert that `BASE_MAINNET_CONFIG.op_fork_activation(fork)` matches `OpChainHardforks::base_mainnet().op_fork_activation(fork)` for every `OpHardfork` variant. They should pass without changes as long as both sides consistently return `ForkCondition::Never` for an unscheduled upgrade or the same timestamp once scheduled.
+These tests assert that `BASE_MAINNET_CONFIG.upgrade_activation(fork)` matches `BaseChainUpgrades::base_mainnet().upgrade_activation(fork)` for every `BaseUpgrade` variant. They should pass without changes as long as both sides consistently return `ForkCondition::Never` for an unscheduled upgrade or the same timestamp once scheduled.
 
 If there is a known discrepancy (e.g. the cascade causes a mismatch for an unset upgrade), add a skip with an explanatory comment as done for `Regolith`:
 
 ```rust
-if *fork == OpHardfork::BaseV1 {
+if *fork == BaseUpgrade::BaseV1 {
     continue; // explanation of why the two sides differ
 }
 ```
@@ -342,7 +340,7 @@ Export any new precompile module from `lib.rs`.
 Add the new upgrade as the first check (newest upgrade wins):
 
 ```rust
-pub fn spec_by_timestamp_after_bedrock(chain_spec: impl OpHardforks, timestamp: u64) -> OpSpecId {
+pub fn spec_by_timestamp_after_bedrock(chain_spec: impl BaseUpgrades, timestamp: u64) -> OpSpecId {
     if chain_spec.is_base_v1_active_at_timestamp(timestamp) {
         OpSpecId::BASE_V1
     } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
@@ -371,12 +369,12 @@ pub fn spec_id(&self, timestamp: u64) -> base_revm::OpSpecId {
 
 **File:** [`crates/execution/hardforks/src/chain.rs`](https://github.com/base/base/blob/main/crates/execution/hardforks/src/chain.rs)
 
-Append the new upgrade in `to_chain_hardforks()`. If it pairs with a new Ethereum upgrade (like Canyon→Shanghai), push both; if not, push only the OP upgrade entry:
+Append the new upgrade in `to_chain_hardforks()`. If it pairs with a new Ethereum upgrade (like Canyon→Shanghai), push both; if not, push only the Base upgrade entry:
 
 ```rust
 // No paired Ethereum hardfork
-forks.push((OpHardfork::Jovian.boxed(), self[OpHardfork::Jovian]));
-forks.push((OpHardfork::BaseV1.boxed(), self[OpHardfork::BaseV1]));  // <-- add
+forks.push((BaseUpgrade::Jovian.boxed(), self[BaseUpgrade::Jovian]));
+forks.push((BaseUpgrade::BaseV1.boxed(), self[BaseUpgrade::BaseV1]));  // <-- add
 ```
 
 ---
@@ -385,11 +383,11 @@ forks.push((OpHardfork::BaseV1.boxed(), self[OpHardfork::BaseV1]));  // <-- add
 
 ### Always required
 
-- [ ] `OpHardfork` variant added in `hardfork.rs`; all four chain arrays updated
-- [ ] `Index<OpHardfork>` arm added in `chain.rs`
+- [ ] `BaseUpgrade` variant added in `hardfork.rs`; all four chain arrays updated
+- [ ] `Index<BaseUpgrade>` arm added in `chain.rs`
 - [ ] Config field (flat or nested struct) added to `HardForkConfig` in `hardfork.rs`; `iter()` updated; new types re-exported
-- [ ] `is_X_active` + `is_first_X_block` added to `RollupConfig`; `op_fork_activation` arm added; previous terminal upgrade cascades to new one (unless standalone)
-- [ ] `is_X_active_at_timestamp` added to `OpHardforks` trait
+- [ ] `is_X_active` + `is_first_X_block` added to `RollupConfig`; `upgrade_activation` arm added; previous terminal upgrade cascades to new one (unless standalone)
+- [ ] `is_X_active_at_timestamp` added to `BaseUpgrades` trait
 - [ ] Timestamp constants added to `mainnet.rs`, `sepolia.rs`, `devnet_0_sepolia_dev_0.rs`; re-exported from `lib.rs`
 - [ ] Registry fixtures (`base_mainnet.rs`, `base_sepolia.rs`) updated
 - [ ] Default rollup config updated (`defaults.rs`)
