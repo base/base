@@ -49,15 +49,7 @@ impl BaseNodeExtension for TxForwardingExtension {
             // This forwarder handle will spawn one forwarder async task per builder URL. Each subscribes to
             // the consumer's broadcast channel and forwards transactions via RPC.
             let forwarder_config = config.to_forwarder_config();
-            let forwarder_handle =
-                ForwarderHandle::spawn(&consumer_handle.sender, forwarder_config);
-
-            // Detach handles so the consumer and forwarder tasks run for the
-            // process lifetime. Both handles cancel their tasks on Drop, but this
-            // closure's scope is too short — detach() prevents Drop from firing
-            // while keeping the Drop impl available for callers who want clean shutdown.
-            consumer_handle.detach();
-            forwarder_handle.detach();
+            let _ = ForwarderHandle::spawn(&consumer_handle.sender, forwarder_config);
 
             Ok(())
         })

@@ -49,15 +49,6 @@ impl<T: PoolTransaction> ConsumerHandle<T> {
 
         Self { sender, cancel, handle: Some(handle) }
     }
-
-    /// Detaches the consumer, allowing it to run for the process lifetime.
-    ///
-    /// The background thread will continue running without a way to cancel it.
-    /// This is useful when the consumer should live as long as the process.
-    pub const fn detach(self) {
-        // Prevent Drop from cancelling the background thread.
-        std::mem::forget(self);
-    }
 }
 
 impl<T: PoolTransaction> Drop for ConsumerHandle<T> {
