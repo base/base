@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 #![allow(missing_docs)]
 use std::{
     sync::Arc,
