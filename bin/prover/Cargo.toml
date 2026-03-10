@@ -16,7 +16,7 @@ path = "src/main.rs"
 workspace = true
 
 [features]
-local = ["base-proof-transport/test-utils"]
+local = [ "base-proof-transport/test-utils" ]
 
 [dependencies]
 # workspace

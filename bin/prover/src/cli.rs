@@ -5,12 +5,13 @@ use std::{net::SocketAddr, sync::Arc};
 use alloy_primitives::{Address, B256};
 use base_consensus_registry::Registry;
 use base_proof_host::ProverConfig;
-use base_proof_tee_nitro::{EnclaveConfig, NitroProverServer};
 #[cfg(target_os = "linux")]
-use base_proof_tee_nitro::NitroEnclave;
+use base_proof_tee_nitro::{NitroEnclave, EnclaveConfig};
+use base_proof_tee_nitro::NitroProverServer;
 #[cfg(feature = "local")]
 use base_proof_tee_nitro::Server;
 #[cfg(feature = "local")]
+use base_proof_tee_nitro::EnclaveConfig;
 use base_proof_transport::NativeTransport;
 use base_proof_transport::VsockTransport;
 use clap::{Parser, Subcommand};
