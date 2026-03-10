@@ -177,8 +177,13 @@ where
             let account_path = Nibbles::unpack(hashed_address.as_slice());
 
             // If the account was destroyed, delete it from the trie.
+            // If the account doesn't exist in the trie (e.g. precompile at 0x100),
+            // treat the deletion as a no-op.
             if bundle_account.was_destroyed() {
-                self.root_node.delete(&account_path, &self.fetcher, &self.hinter)?;
+                match self.root_node.delete(&account_path, &self.fetcher, &self.hinter) {
+                    Ok(()) | Err(TrieNodeError::KeyNotFound) => {}
+                    Err(e) => return Err(e.into()),
+                }
                 self.storage_roots.remove(address);
                 continue;
             }
@@ -248,7 +253,11 @@ where
         let hashed_slot_key = Nibbles::unpack(hashed_key.as_slice());
         if value.present_value.is_zero() {
             // If the storage slot is being set to zero, prune it from the trie.
-            storage_root.delete(&hashed_slot_key, fetcher, hinter)?;
+            // If it doesn't exist (already absent), treat as a no-op.
+            match storage_root.delete(&hashed_slot_key, fetcher, hinter) {
+                Ok(()) | Err(TrieNodeError::KeyNotFound) => {}
+                Err(e) => return Err(e.into()),
+            }
         } else {
             // RLP encode the storage slot value and update the trie.
             let mut rlp_buf = Vec::with_capacity(value.present_value.length());

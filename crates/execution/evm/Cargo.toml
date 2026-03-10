@@ -68,6 +68,10 @@ base-execution-primitives = { workspace = true, features = ["arbitrary"] }
 name = "block_43127820_execution"
 path = "tests/block_43127820_execution.rs"
 
+[[test]]
+name = "rpc_backed_block_43127820"
+path = "tests/rpc_backed_block_43127820.rs"
+
 [features]
 default = [ "std" ]
 std = [
