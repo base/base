@@ -20,5 +20,6 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 rstest.workspace = true
+proptest.workspace = true
 alloy-consensus.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

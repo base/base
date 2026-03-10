@@ -61,6 +61,15 @@ pub enum TxManagerError {
     #[error("max fee per gas less than block base fee")]
     MaxFeePerGasTooLow,
 
+    /// Calculated fee exceeds the configured fee-limit ceiling.
+    ///
+    /// Returned by [`FeeCalculator::check_limits`] and
+    /// [`FeeCalculator::check_blob_fee_limits`] when the proposed fee
+    /// surpasses `fee_limit_multiplier × suggested_fee` and the suggested
+    /// fee is at or above `fee_limit_threshold`.
+    #[error("fee limit exceeded")]
+    FeeLimitExceeded,
+
     // ── Infrastructure / transient errors (retryable) ────────────────────
     /// Transaction already present in the mempool (benign on resubmission).
     #[error("transaction already known")]
@@ -249,6 +258,7 @@ mod tests {
     #[case::mempool_deadline(TxManagerError::MempoolDeadlineExpired, false)]
     #[case::already_reserved(TxManagerError::AlreadyReserved, false)]
     #[case::channel_closed(TxManagerError::ChannelClosed, false)]
+    #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded, false)]
     #[case::underpriced(TxManagerError::Underpriced, true)]
     #[case::replacement_underpriced(TxManagerError::ReplacementUnderpriced, true)]
     #[case::fee_too_low(TxManagerError::FeeTooLow, true)]
@@ -293,6 +303,7 @@ mod tests {
     )]
     #[case::already_known(TxManagerError::AlreadyKnown, "transaction already known")]
     #[case::channel_closed(TxManagerError::ChannelClosed, "send response channel closed")]
+    #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded, "fee limit exceeded")]
     #[case::rpc(TxManagerError::Rpc("test".to_string()), "rpc error: test")]
     fn display_output(#[case] error: TxManagerError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);
