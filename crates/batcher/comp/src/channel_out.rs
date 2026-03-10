@@ -1,6 +1,6 @@
 //! Contains the `ChannelOut` primitive for Optimism.
 
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 
 use alloy_rlp::Encodable;
 use base_consensus_genesis::RollupConfig;
@@ -130,14 +130,16 @@ where
     }
 
     /// Outputs a [Frame] from the [`ChannelOut`].
+    ///
+    /// Call this repeatedly until [`ready_bytes`] returns 0 to drain all
+    /// compressed data into frames. Only the final frame (when no data
+    /// remains and the channel is closed) will have `is_last = true`.
+    ///
+    /// [`ready_bytes`]: ChannelOut::ready_bytes
     pub fn output_frame(&mut self, max_size: usize) -> Result<Frame, ChannelOutError> {
         if max_size < FRAME_V0_OVERHEAD {
             return Err(ChannelOutError::MaxFrameSizeTooSmall);
         }
-
-        // Construct an empty frame.
-        let mut frame =
-            Frame { id: self.id, number: self.frame_number, is_last: self.closed, data: vec![] };
 
         // The first frame carries the channel version prefix (if any) so that
         // the reader can identify the compression format.  For brotli this is
@@ -151,16 +153,22 @@ where
             max_size = self.ready_bytes();
         }
 
+        let mut data = Vec::with_capacity(prefix_len + max_size);
         if let Some(v) = version_byte {
-            frame.data.push(v);
+            data.push(v);
         }
 
         // Read `max_size` bytes from the compressed data.
-        let mut data = vec![0u8; max_size];
-        self.compressor.read(&mut data).map_err(ChannelOutError::Compression)?;
-        frame.data.extend_from_slice(data.as_slice());
+        let mut buf = vec![0u8; max_size];
+        self.compressor.read(&mut buf).map_err(ChannelOutError::Compression)?;
+        data.extend_from_slice(&buf);
 
-        // Update the compressed data.
+        // `is_last` is only true when the channel is closed AND all
+        // compressed data has been consumed (ready_bytes == 0 after read).
+        let is_last = self.closed && self.ready_bytes() == 0;
+
+        let frame = Frame { id: self.id, number: self.frame_number, is_last, data };
+
         self.frame_number += 1;
         Ok(frame)
     }

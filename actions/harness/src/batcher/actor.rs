@@ -86,18 +86,21 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
         Self { l1_miner, l2_source, driver, config }
     }
 
-    /// Drain all available L2 blocks, encode them, and submit the resulting
-    /// frames to the L1 miner as pending transactions.
+    /// Drain all available L2 blocks and encode them into frames without
+    /// submitting to L1.
     ///
-    /// Returns the [`Frame`]s produced so callers can inspect the encoded
-    /// output without mining a block first.
+    /// Returns the encoded frames so callers can inspect or submit them
+    /// selectively. Use [`submit_frames`] to submit a subset of frames to
+    /// the L1 miner.
+    ///
+    /// [`submit_frames`]: Batcher::submit_frames
     ///
     /// # Errors
     ///
     /// Returns [`BatcherError::NoBlocks`] if the L2 source is empty.
     /// Returns [`BatcherError::MissingL1Info`] if the first tx is not a valid deposit.
     /// Returns [`BatcherError::Driver`] if channel encoding fails.
-    pub fn advance(&mut self) -> Result<Vec<Frame>, BatcherError> {
+    pub fn encode_frames(&mut self) -> Result<Vec<Frame>, BatcherError> {
         let mut batch_count = 0u64;
 
         while let Some(block) = self.l2_source.next_block() {
@@ -133,9 +136,15 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
         }
 
         let frames = self.driver.flush()?;
+        info!(batches = batch_count, frames = frames.len(), "batcher encoded frames");
+        Ok(frames)
+    }
 
-        for frame in &frames {
-            // L1 tx payload: DERIVATION_VERSION_0 ++ encoded frame
+    /// Submit the given frames to the L1 miner as pending transactions.
+    ///
+    /// Each frame is submitted as a separate [`PendingTx`].
+    pub fn submit_frames(&mut self, frames: &[Frame]) {
+        for frame in frames {
             let encoded = frame.encode();
             let mut input = Vec::with_capacity(1 + encoded.len());
             input.push(DERIVATION_VERSION_0);
@@ -147,9 +156,19 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
                 input: Bytes::from(input),
             });
         }
+        info!(frames = frames.len(), "batcher submitted frames to L1");
+    }
 
-        info!(batches = batch_count, frames = frames.len(), "batcher submitted frames to L1");
-
+    /// Encode and submit all frames in one step (convenience wrapper).
+    ///
+    /// Equivalent to calling [`encode_frames`] followed by [`submit_frames`]
+    /// with all produced frames.
+    ///
+    /// [`encode_frames`]: Batcher::encode_frames
+    /// [`submit_frames`]: Batcher::submit_frames
+    pub fn advance(&mut self) -> Result<Vec<Frame>, BatcherError> {
+        let frames = self.encode_frames()?;
+        self.submit_frames(&frames);
         Ok(frames)
     }
 }
