@@ -150,7 +150,6 @@ impl FeeCalculator {
 
         Ok(())
     }
-
 }
 
 /// Intermediate fee estimates computed during gas price suggestion.
@@ -303,7 +302,8 @@ mod tests {
         #[case] threshold: u128,
         #[case] should_pass: bool,
     ) {
-        let config = TxManagerConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: threshold };
+        let config =
+            TxManagerConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: threshold };
         let result = FeeCalculator::check_limits(fee, suggested, &config);
         assert_eq!(result.is_ok(), should_pass);
         if !should_pass {
