@@ -23,7 +23,7 @@ hardfork!(
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     #[derive(Default)]
     BaseUpgrade {
-        /// Bedrock: <https://blog.oplabs.co/introducing-optimism-bedrock>.
+        /// Bedrock: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#bedrock>.
         Bedrock,
         /// Regolith: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#regolith>.
         Regolith,

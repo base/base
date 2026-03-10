@@ -5,7 +5,7 @@ Named bindings for network upgrades.
 ## Overview
 
 Defines the `BaseUpgrade` enum and `BaseUpgrades` trait for the Base upgrade sequence
-(Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, BaseV1). Provides concrete
+(Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, `BaseV1`). Provides concrete
 activation timestamps for Base Mainnet, Base Sepolia, and devnet chains as typed constants, and
 `BaseChainUpgrades` for per-chain configuration.
 
