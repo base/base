@@ -27,7 +27,13 @@ Transaction lifecycle management for Base onchain components.
 - **`SendHandle`**: Future returned by `send_async` that resolves directly to a
   `SendResponse`, mapping a closed channel into `TxManagerError::ChannelClosed` so callers
   avoid a two-layer `Result`.
-- **`SendState`**: Tracks the state of a transaction through its lifecycle.
+- **`SendState`**: State machine the send loop uses to decide whether to continue retrying,
+  bump fees, or abort. Tracks mined transaction hashes, nonce-too-low error counts, mempool
+  deadline expiry, successful publish counts, and fee bump state. Uses `std::sync::Mutex`
+  for thread-safe interior mutability (all critical sections are CPU-bound with no `.await`
+  points). The `critical_error()` method evaluates abort conditions in priority order: mined
+  tx suppression, already-reserved, pre-publish nonce-too-low, threshold nonce-too-low, and
+  mempool deadline expiry.
 - **`TxManagerConfig`**: Configuration for the transaction manager. Controls fee-limit
   enforcement via `fee_limit_multiplier` (ceiling as a multiple of the suggested fee) and
   `fee_limit_threshold` (minimum suggested fee at which the limit activates).

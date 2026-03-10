@@ -1,4 +1,9 @@
 //! Transaction send state tracking.
+//!
+//! [`SendState`] is the state machine the send loop uses to decide whether to
+//! continue retrying, bump fees, or abort. All mutable fields are behind a
+//! [`std::sync::Mutex`] (not `tokio`) since critical sections are CPU-bound
+//! with no `.await` points.
 
 use std::{collections::HashSet, sync::Mutex, time::Instant};
 
