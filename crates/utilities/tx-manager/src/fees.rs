@@ -69,7 +69,7 @@ impl FeeCalculator {
         } else {
             // 10 % bump: x / 10, but at least 1
             let v = x / 10;
-            if v > 1 { v } else { 1 }
+            if v > 0 { v } else { 1 }
         };
 
         x.saturating_add(bump)
