@@ -58,7 +58,7 @@ impl FeeCalculator {
     /// Uses saturating arithmetic — the result is capped at [`u128::MAX`]
     /// rather than panicking on overflow.
     #[must_use]
-    pub fn calc_threshold_value(x: u128, is_blob: bool) -> u128 {
+    pub const fn calc_threshold_value(x: u128, is_blob: bool) -> u128 {
         if x == 0 {
             return 0;
         }
@@ -68,7 +68,8 @@ impl FeeCalculator {
             x
         } else {
             // 10 % bump: x / 10, but at least 1
-            (x / 10).max(1)
+            let v = x / 10;
+            if v > 1 { v } else { 1 }
         };
 
         x.saturating_add(bump)
