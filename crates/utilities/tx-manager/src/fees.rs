@@ -81,10 +81,10 @@ impl FeeCalculator {
     ///
     /// 1. **Both above threshold** — use the new tip and recalculated fee cap.
     /// 2. **Tip above, fee cap below** — use the new tip but keep the
-    ///    threshold fee cap.
+    ///    threshold fee cap (clamped to at least new_tip).
     /// 3. **Fee cap above, tip below** — use the threshold tip and
     ///    recalculate the fee cap from the threshold tip.
-    /// 4. **Both below** — use both threshold values.
+    /// 4. **Both below** — use both threshold values (fee cap clamped to at least threshold tip).
     ///
     /// The returned fee cap always reflects the tip that was selected so that
     /// the EIP-1559 relationship `fee_cap >= tip` is maintained.
@@ -108,14 +108,16 @@ impl FeeCalculator {
             // Case 1: both above threshold → use new values
             (true, true) => (new_tip, new_fee_cap),
             // Case 2: tip above, fee cap below → new tip + threshold fee cap
-            (true, false) => (new_tip, threshold_fee_cap),
+            // Clamp fee_cap to at least new_tip to maintain fee_cap >= tip invariant.
+            (true, false) => (new_tip, threshold_fee_cap.max(new_tip)),
             // Case 3: fee cap above, tip below → threshold tip + recalculated fee cap
             (false, true) => {
                 let recalculated = Self::calc_gas_fee_cap(new_base_fee, threshold_tip);
                 (threshold_tip, recalculated)
             }
             // Case 4: both below → both threshold values
-            (false, false) => (threshold_tip, threshold_fee_cap),
+            // Clamp fee_cap to at least threshold_tip to maintain fee_cap >= tip invariant.
+            (false, false) => (threshold_tip, threshold_fee_cap.max(threshold_tip)),
         }
     }
 
@@ -273,6 +275,10 @@ mod tests {
     #[case::blob_tip_above_cap_below(100, 1000, 300, 1, true, (300, 2000))]
     #[case::blob_tip_below_cap_above(100, 1000, 50, 5000, true, (200, 10200))]
     #[case::blob_both_below(100, 1000, 50, 1, true, (200, 2000))]
+    // Case 2: large old_fee_cap keeps threshold_fee_cap well above new_tip (clamp is no-op)
+    #[case::tip_above_cap_below_large_old_fee_cap(100, 10_000, 150, 1, false, (150, 11_000))]
+    // Case 4: old_tip > old_fee_cap → threshold_tip > threshold_fee_cap, clamp applies
+    #[case::both_below_tip_dominates(1_000, 100, 50, 1, false, (1_100, 1_100))]
     // Zero starting fees
     #[case::zero_old_fees(0, 0, 10, 100, false, (10, 210))]
     fn update_fees(
@@ -403,6 +409,23 @@ mod tests {
             prop_assert!(
                 final_fee_cap >= threshold_fee_cap,
                 "final fee cap {final_fee_cap} < threshold fee cap {threshold_fee_cap}",
+            );
+        }
+
+        #[test]
+        fn update_fees_fee_cap_gte_tip(
+            old_tip in 0..u64::MAX as u128,
+            old_fee_cap in 0..u64::MAX as u128,
+            new_tip in 0..u64::MAX as u128,
+            new_base_fee in 0..u64::MAX as u128,
+            is_blob: bool,
+        ) {
+            let (final_tip, final_fee_cap) = FeeCalculator::update_fees(
+                old_tip, old_fee_cap, new_tip, new_base_fee, is_blob,
+            );
+            prop_assert!(
+                final_fee_cap >= final_tip,
+                "EIP-1559 invariant violated: fee_cap {final_fee_cap} < tip {final_tip}",
             );
         }
 
