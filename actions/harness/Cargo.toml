@@ -12,6 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+revm.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 alloy-rlp.workspace = true
@@ -19,10 +20,15 @@ alloy-eips.workspace = true
 async-trait.workspace = true
 alloy-signer.workspace = true
 alloy-primitives.workspace = true
+alloy-trie = { workspace = true, features = ["ethereum"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-signer-local.workspace = true
+reth-evm = { workspace = true, features = ["std"] }
+base-revm = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }
-base-alloy-consensus = { workspace = true, features = ["std"] }
+base-execution-evm.workspace = true
+base-alloy-consensus = { workspace = true, features = ["std", "evm"] }
+base-execution-chainspec.workspace = true
 base-consensus-genesis = { workspace = true, features = ["std"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-batcher-driver.workspace = true
