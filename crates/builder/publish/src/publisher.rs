@@ -87,12 +87,12 @@ impl WebSocketPublisher {
         Ok(Self { cancel, pipe, metrics, ring_buffer })
     }
 
-    /// Serializes the payload to JSON, broadcasts to all connected subscribers,
-    /// then stores it in the ring buffer keyed by `(block_number, flashblock_index)`.
+    /// Serializes the payload to JSON, stores it in the ring buffer, and
+    /// broadcasts to all connected subscribers.
     ///
-    /// Reconnecting subscribers that supply `?block_number=N&flashblock_index=M` on
-    /// their upgrade request will receive all buffered entries after that position
-    /// before joining the live stream.
+    /// The ring buffer is always populated so reconnecting clients that supply
+    /// `?block_number=N&flashblock_index=M` on their upgrade request can replay
+    /// missed entries, even during periods with no live subscribers.
     ///
     /// Returns the byte size of the serialized payload on success.
     pub fn publish(
@@ -106,13 +106,16 @@ impl WebSocketPublisher {
         let size = utf8_bytes.len();
         let position = Some((block_number, flashblock_index));
 
-        // Broadcast first so that live subscribers never miss a message that
-        // exists in the ring buffer.
-        self.pipe
-            .send((position, utf8_bytes.clone()))
-            .map_err(|e| io::Error::new(io::ErrorKind::ConnectionAborted, e))?;
+        // Always store in the ring buffer for reconnecting clients.
+        self.ring_buffer
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(position, utf8_bytes.clone());
 
-        self.ring_buffer.write().unwrap_or_else(|e| e.into_inner()).push(position, utf8_bytes);
+        // Broadcast to live subscribers. The send only fails when there are
+        // zero receivers, which is expected during periods without connected
+        // clients — the ring buffer still captures the entry above.
+        let _ = self.pipe.send((position, utf8_bytes));
 
         self.metrics.on_payload_size(size);
         Ok(size)
@@ -198,12 +201,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn publish_with_zero_subscribers_fails() {
+    async fn publish_with_zero_subscribers_populates_ring_buffer() {
         let publisher = WebSocketPublisher::new("127.0.0.1:0".parse().unwrap()).unwrap();
 
-        // No active receivers; broadcast returns ConnectionAborted.
-        let result = publisher.publish(&serde_json::json!({"test": true}), 1, 0);
-        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::ConnectionAborted);
+        // No active receivers, but publish still succeeds and populates the
+        // ring buffer for future reconnecting clients.
+        let size = publisher.publish(&serde_json::json!({"test": true}), 1, 0).unwrap();
+        assert!(size > 0);
+
+        let buf = publisher.ring_buffer.read().unwrap();
+        assert_eq!(buf.entries_after(&(0, 0)).count(), 1);
     }
 
     #[tokio::test]
@@ -215,13 +222,9 @@ mod tests {
 
     #[tokio::test]
     async fn publish_stores_in_ring_buffer() {
-        let addr = ephemeral_addr();
-        let publisher = WebSocketPublisher::new(addr).unwrap();
-        let (_client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let publisher = WebSocketPublisher::new("127.0.0.1:0".parse().unwrap()).unwrap();
 
-        let payload = serde_json::json!({"index": 1});
-        publisher.publish(&payload, 42, 1).unwrap();
+        publisher.publish(&serde_json::json!({"index": 1}), 42, 1).unwrap();
 
         let buf = publisher.ring_buffer.read().unwrap();
         assert_eq!(buf.entries_after(&(42, 0)).count(), 1);

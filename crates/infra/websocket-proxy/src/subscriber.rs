@@ -121,7 +121,10 @@ fn uri_with_resume(base: &Uri, pos: Option<(u64, u64)>) -> Uri {
     let path = if path.is_empty() { "/" } else { path };
     let mut parts = base.clone().into_parts();
     parts.path_and_query = format!("{path}?{query}").parse().ok();
-    Uri::from_parts(parts).unwrap_or_else(|_| base.clone())
+    Uri::from_parts(parts).unwrap_or_else(|e| {
+        warn!(error = %e, base = %base, "Failed to build resume URI, falling back to base");
+        base.clone()
+    })
 }
 
 /// Maintains a persistent websocket connection to an upstream server, automatically

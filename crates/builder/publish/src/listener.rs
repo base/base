@@ -152,11 +152,6 @@ impl Listener {
                             Ok(stream) => {
                                 let resume_from = resume_pos.lock().unwrap().take();
 
-                                // Subscribe after the handshake so the receiver
-                                // does not accumulate messages during the upgrade.
-                                // The ring buffer replay covers any gap.
-                                let receiver = sender.subscribe();
-
                                 let metrics_clone = Arc::clone(&metrics);
                                 tokio::spawn(async move {
                                     metrics_clone.on_connection_opened();
@@ -167,7 +162,7 @@ impl Listener {
                                         stream,
                                         Arc::clone(&metrics_clone),
                                         cancel,
-                                        receiver,
+                                        sender,
                                         ring_buffer,
                                         resume_from,
                                     )
