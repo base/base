@@ -227,6 +227,12 @@ impl Server {
             }
         };
 
+        // nsm_init() / nsm_process_request() are blocking FFI; use block_in_place so
+        // they do not stall the async executor. Gated to Linux where the multi-thread
+        // runtime (required by block_in_place) is always in use.
+        #[cfg(target_os = "linux")]
+        let attestation_doc = tokio::task::block_in_place(|| self.try_get_attestation_bytes());
+        #[cfg(not(target_os = "linux"))]
         let attestation_doc = self.try_get_attestation_bytes();
         let evidence_signature = Signing::sign(&self.signer_key, &aggregate_proposal.signature)?;
 
