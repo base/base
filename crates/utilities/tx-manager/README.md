@@ -104,6 +104,58 @@ must enforce bounded retry counts.
 For custom error matching beyond the built-in classification, use
 `RpcErrorClassifier::err_string_contains_any`.
 
+## Configuration
+
+The crate uses a two-layer configuration system: `TxManagerCli` captures CLI
+and environment variable arguments at startup, and `TxManagerConfig` is the
+validated runtime configuration constructed from it.
+
+### CLI parsing and validation
+
+`TxManagerCli` is a `clap::Parser` struct designed to be `#[command(flatten)]`-ed
+into parent CLI structs. All fields use `BASE_TX_MANAGER_` environment variable
+fallbacks:
+
+```rust,ignore
+use base_tx_manager::{TxManagerCli, TxManagerConfig};
+
+// Parse from CLI args (typically done by the parent binary).
+let cli = TxManagerCli::try_parse().unwrap();
+
+// Validate and build the runtime config. Returns ConfigError on invalid
+// values (zero confirmations, zero timeouts, negative gwei, etc.).
+let config = TxManagerConfig::from_cli(cli, chain_id)?;
+```
+
+### Presets
+
+Role-specific defaults are available via `TxManagerPreset`. Batcher uses 10
+confirmations; challenger uses 3:
+
+```rust,ignore
+use base_tx_manager::{TxManagerCli, TxManagerConfig, TxManagerPreset};
+
+let cli = TxManagerCli::with_preset(TxManagerPreset::Challenger);
+let config = TxManagerConfig::from_cli(cli, chain_id)?;
+assert_eq!(config.num_confirmations(), 3);
+```
+
+### Hot-reloadable fields
+
+Fee-related parameters (`fee_limit_multiplier`, `fee_limit_threshold`,
+`min_tip_cap`, `min_basefee`) are backed by a `parking_lot::RwLock` and can be
+updated at runtime without restarting the process:
+
+```rust,ignore
+// Update fee parameters at runtime.
+config.set_fee_limit_multiplier(10)?;
+config.set_min_basefee(GweiConversion::gwei_to_wei(1.5, "min_basefee")?);
+
+// Take a point-in-time snapshot for deterministic fee calculations.
+let fee_cfg = config.fee_config();
+FeeCalculator::check_limits(proposed_fee, suggested_fee, &fee_cfg)?;
+```
+
 ## Usage
 
 Add the dependency to your `Cargo.toml`:
