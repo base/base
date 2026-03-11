@@ -55,7 +55,7 @@ impl GweiConversion {
     /// # Errors
     ///
     /// Returns [`ConfigError::InvalidGwei`] if the value is negative, `NaN`,
-    /// or infinite.
+    /// infinite, or so large that the wei result would overflow `u128`.
     pub fn gwei_to_wei(gwei: f64, field: &'static str) -> Result<u128, ConfigError> {
         if gwei.is_nan() {
             return Err(ConfigError::InvalidGwei { field, reason: "value is NaN".to_string() });
@@ -72,7 +72,16 @@ impl GweiConversion {
                 reason: format!("value is negative ({gwei})"),
             });
         }
-        Ok((gwei * Self::WEI_PER_GWEI) as u128)
+        let wei = gwei * Self::WEI_PER_GWEI;
+        // Guard against silent saturation: f64 values >= 2^128 would
+        // saturate to u128::MAX when cast with `as u128`.
+        if wei >= u128::MAX as f64 {
+            return Err(ConfigError::InvalidGwei {
+                field,
+                reason: format!("value too large ({gwei} gwei overflows u128 wei)"),
+            });
+        }
+        Ok(wei as u128)
     }
 }
 
@@ -516,21 +525,50 @@ impl TxManagerConfig {
     // ── Hot-reloadable field mutators ───────────────────────────────
 
     /// Updates the fee-limit multiplier at runtime.
-    pub fn set_fee_limit_multiplier(&self, val: u64) {
+    ///
+    /// Applies the same validation as [`from_cli`](Self::from_cli): the
+    /// multiplier must be >= 1. A zero multiplier would compute a ceiling
+    /// of zero in [`FeeCalculator::check_limits`](crate::FeeCalculator::check_limits),
+    /// rejecting every transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::OutOfRange`] if `val` is zero.
+    pub fn set_fee_limit_multiplier(&self, val: u64) -> Result<(), ConfigError> {
+        if val == 0 {
+            return Err(ConfigError::OutOfRange {
+                field: "fee_limit_multiplier",
+                constraint: ">= 1",
+                value: "0".to_string(),
+            });
+        }
         self.hot.write().fee_limit_multiplier = val;
+        Ok(())
     }
 
     /// Updates the fee-limit threshold (in wei) at runtime.
+    ///
+    /// Callers are responsible for providing a sensible value. Use
+    /// [`GweiConversion::gwei_to_wei`] for gwei-to-wei conversion with
+    /// validation.
     pub fn set_fee_limit_threshold(&self, val: u128) {
         self.hot.write().fee_limit_threshold = val;
     }
 
     /// Updates the minimum tip cap (in wei) at runtime.
+    ///
+    /// Callers are responsible for providing a sensible value. Use
+    /// [`GweiConversion::gwei_to_wei`] for gwei-to-wei conversion with
+    /// validation.
     pub fn set_min_tip_cap(&self, val: u128) {
         self.hot.write().min_tip_cap = val;
     }
 
     /// Updates the minimum basefee (in wei) at runtime.
+    ///
+    /// Callers are responsible for providing a sensible value. Use
+    /// [`GweiConversion::gwei_to_wei`] for gwei-to-wei conversion with
+    /// validation.
     pub fn set_min_basefee(&self, val: u128) {
         self.hot.write().min_basefee = val;
     }
@@ -673,6 +711,23 @@ mod tests {
         assert!(matches!(result, Err(ConfigError::InvalidGwei { field: "test_field", .. })));
     }
 
+    #[test]
+    fn gwei_to_wei_very_large_finite_rejected() {
+        // f64::MAX is finite but overflows u128 when converted to wei.
+        let result = GweiConversion::gwei_to_wei(f64::MAX, "test_field");
+        assert!(matches!(result, Err(ConfigError::InvalidGwei { field: "test_field", .. })));
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("too large"), "error should mention overflow: {err}");
+    }
+
+    #[test]
+    fn gwei_to_wei_borderline_large_rejected() {
+        // A value that is finite but whose wei representation exceeds u128.
+        let gwei = 1e30;
+        let result = GweiConversion::gwei_to_wei(gwei, "test_field");
+        assert!(matches!(result, Err(ConfigError::InvalidGwei { .. })));
+    }
+
     // ── Negative gwei in config construction ────────────────────────
 
     #[test]
@@ -753,7 +808,7 @@ mod tests {
     fn hot_reload_fee_limit_multiplier() {
         let config = TxManagerConfig::from_cli(default_cli(), 1).unwrap();
         assert_eq!(config.fee_limit_multiplier(), 5);
-        config.set_fee_limit_multiplier(10);
+        config.set_fee_limit_multiplier(10).unwrap();
         assert_eq!(config.fee_limit_multiplier(), 10);
     }
 
@@ -778,6 +833,20 @@ mod tests {
         assert_eq!(config.min_basefee(), 123);
     }
 
+    // ── Hot-reload setter validation ────────────────────────────────
+
+    #[test]
+    fn set_fee_limit_multiplier_rejects_zero() {
+        let config = TxManagerConfig::from_cli(default_cli(), 1).unwrap();
+        let result = config.set_fee_limit_multiplier(0);
+        assert!(matches!(
+            result,
+            Err(ConfigError::OutOfRange { field: "fee_limit_multiplier", .. })
+        ));
+        // Original value is preserved on error.
+        assert_eq!(config.fee_limit_multiplier(), 5);
+    }
+
     // ── FeeConfig snapshot ──────────────────────────────────────────
 
     #[test]
@@ -788,7 +857,7 @@ mod tests {
         assert_eq!(snapshot.fee_limit_threshold, 100_000_000_000);
 
         // Mutate hot config — snapshot should be independent
-        config.set_fee_limit_multiplier(99);
+        config.set_fee_limit_multiplier(99).unwrap();
         assert_eq!(snapshot.fee_limit_multiplier, 5);
         assert_eq!(config.fee_limit_multiplier(), 99);
     }
@@ -798,12 +867,12 @@ mod tests {
     #[test]
     fn clone_captures_hot_state() {
         let config = TxManagerConfig::from_cli(default_cli(), 1).unwrap();
-        config.set_fee_limit_multiplier(42);
+        config.set_fee_limit_multiplier(42).unwrap();
         let cloned = config.clone();
         assert_eq!(cloned.fee_limit_multiplier(), 42);
 
         // Mutations are independent after clone
-        config.set_fee_limit_multiplier(100);
+        config.set_fee_limit_multiplier(100).unwrap();
         assert_eq!(cloned.fee_limit_multiplier(), 42);
         assert_eq!(config.fee_limit_multiplier(), 100);
     }
