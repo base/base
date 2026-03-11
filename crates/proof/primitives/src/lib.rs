@@ -4,7 +4,7 @@
 extern crate alloc;
 
 mod proof;
-pub use proof::{ProofBundle, ProofClaim, ProofEvidence, ProofRequest, ProofResult};
+pub use proof::{ProofBundle, ProofRequest, ProofResult};
 
 mod proposal;
 pub use proposal::{ECDSA_SIGNATURE_LENGTH, Proposal};
