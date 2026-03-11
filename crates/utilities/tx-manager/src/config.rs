@@ -255,15 +255,14 @@ mod tests {
     }
 
     #[rstest]
-    #[case::abc("abc", "test_field")]
-    #[case::spaces("  ", "test_field")]
-    fn gwei_parse_invalid(#[case] gwei: &str, #[case] expected_substr: &str) {
+    #[case::abc("abc")]
+    #[case::spaces("  ")]
+    fn gwei_parse_invalid(#[case] gwei: &str) {
         let result = GweiParser::parse(gwei, "test_field");
-        assert!(matches!(result, Err(ConfigError::InvalidGwei { field: "test_field", .. })));
         let err = result.unwrap_err();
         assert!(
-            err.to_string().contains(expected_substr),
-            "error should mention {expected_substr}: {err}"
+            matches!(err, ConfigError::InvalidGwei { field: "test_field", ref reason } if !reason.is_empty()),
+            "expected InvalidGwei with non-empty reason, got: {err}"
         );
     }
 
