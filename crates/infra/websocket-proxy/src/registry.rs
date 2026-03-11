@@ -1,14 +1,25 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    collections::HashSet,
+    sync::{Arc, RwLock},
+    time::Instant,
+};
 
 use axum::extract::ws::Message;
+use bytes::Bytes;
 use futures::{SinkExt, stream::StreamExt};
 use tokio::{
-    sync::broadcast::{Sender, error::RecvError},
+    sync::broadcast::{
+        Sender,
+        error::{RecvError, TryRecvError},
+    },
     time::{Duration, interval, timeout},
 };
 use tracing::{debug, info, trace, warn};
 
-use crate::{client::ClientConnection, metrics::Metrics};
+use crate::{
+    FlashblockPosition, FlashblocksRingBuffer, PositionedMessage, client::ClientConnection,
+    metrics::Metrics,
+};
 
 fn get_message_size(msg: &Message) -> u64 {
     match msg {
@@ -21,48 +32,260 @@ fn get_message_size(msg: &Message) -> u64 {
 /// Manages broadcast subscriptions for connected WebSocket clients.
 #[derive(Clone, Debug)]
 pub struct Registry {
-    sender: Sender<Message>,
+    sender: Sender<PositionedMessage>,
     metrics: Arc<Metrics>,
     compressed: bool,
     ping_enabled: bool,
     pong_timeout_ms: u64,
     send_timeout_ms: Duration,
+    ring_buffer: Arc<RwLock<FlashblocksRingBuffer>>,
 }
 
 impl Registry {
-    /// Creates a new registry with the given broadcast sender and configuration.
+    /// Creates a new registry with the given broadcast sender, configuration, and ring buffer.
     pub const fn new(
-        sender: Sender<Message>,
+        sender: Sender<PositionedMessage>,
         metrics: Arc<Metrics>,
         compressed: bool,
         ping_enabled: bool,
         pong_timeout_ms: u64,
         send_timeout_ms: Duration,
+        ring_buffer: Arc<RwLock<FlashblocksRingBuffer>>,
     ) -> Self {
-        Self { sender, metrics, compressed, ping_enabled, pong_timeout_ms, send_timeout_ms }
+        Self {
+            sender,
+            metrics,
+            compressed,
+            ping_enabled,
+            pong_timeout_ms,
+            send_timeout_ms,
+            ring_buffer,
+        }
     }
 
     /// Subscribes a client to the broadcast channel and forwards matching messages.
+    ///
+    /// If the client has a `resume_position`, buffered entries after that position are
+    /// replayed first. The broadcast receiver is created *after* replay completes so the
+    /// channel cannot lag during replay. A bridge re-snapshot of the ring buffer covers
+    /// entries published during replay that the fresh receiver cannot see, and
+    /// position-based deduplication prevents double delivery.
     pub async fn subscribe(&self, client: ClientConnection) {
         info!(message = "subscribing client", client = client.id());
 
-        let mut receiver = self.sender.subscribe();
         let metrics = Arc::clone(&self.metrics);
         metrics.new_connections.increment(1);
 
         let filter = client.filter.clone();
         let compressed = self.compressed;
         let client_id = client.id();
+        let resume_position = client.resume_position;
         let (mut ws_sender, ws_receiver) = client.websocket.split();
 
         let (pong_error_tx, mut pong_error_rx) = tokio::sync::oneshot::channel();
         let client_reader = self.start_reader(ws_receiver, client_id.clone(), pong_error_tx);
 
+        // For resume clients: replay buffered entries, subscribe fresh, bridge,
+        // and drain. For new clients: subscribe immediately.
+        let mut receiver = if let Some((bn, fi)) = resume_position {
+            // Phase 1: Replay entries from a ring buffer snapshot.
+            let entries: Vec<(Option<FlashblockPosition>, Bytes)> = self
+                .ring_buffer
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .positioned_entries_after(&(bn, fi))
+                .map(|(pos, payload)| (pos.copied(), payload.clone()))
+                .collect();
+            debug!(
+                client = %client_id,
+                block_number = %bn,
+                flashblock_index = %fi,
+                count = entries.len(),
+                "Replaying ring buffer entries to client"
+            );
+            let mut sent_positions: HashSet<FlashblockPosition> =
+                HashSet::with_capacity(entries.len());
+            let mut none_sent: usize = 0;
+            for (pos, payload) in &entries {
+                if !filter.matches(payload, compressed) {
+                    match *pos {
+                        Some(p) => {
+                            sent_positions.insert(p);
+                        }
+                        None => {
+                            none_sent += 1;
+                        }
+                    }
+                    continue;
+                }
+                let msg = Message::Binary(payload.clone());
+                let send_result = timeout(self.send_timeout_ms, ws_sender.send(msg)).await;
+                match send_result {
+                    Ok(Ok(())) => {
+                        metrics.sent_messages.increment(1);
+                    }
+                    Ok(Err(e)) => {
+                        warn!(
+                            client = %client_id,
+                            error = %e,
+                            "Failed to send ring buffer entry to client"
+                        );
+                        client_reader.abort();
+                        metrics.closed_connections.increment(1);
+                        return;
+                    }
+                    Err(_) => {
+                        warn!(client = %client_id, "Send timeout during ring buffer replay");
+                        client_reader.abort();
+                        metrics.closed_connections.increment(1);
+                        return;
+                    }
+                }
+                match *pos {
+                    Some(p) => {
+                        sent_positions.insert(p);
+                    }
+                    None => {
+                        none_sent += 1;
+                    }
+                }
+            }
+
+            // Phase 2: Subscribe to the live channel, then re-snapshot the ring
+            // buffer to bridge entries published during replay. The receiver is
+            // created BEFORE the second snapshot so messages arriving between
+            // the snapshot and the live loop are captured. Unlike subscribing
+            // before replay, the receiver is fresh and has full channel capacity
+            // because no messages accumulated during the replay phase.
+            let mut receiver = self.sender.subscribe();
+
+            let bridge_entries: Vec<(Option<FlashblockPosition>, Bytes)> = self
+                .ring_buffer
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .positioned_entries_after(&(bn, fi))
+                .map(|(pos, payload)| (pos.copied(), payload.clone()))
+                .collect();
+            debug!(
+                client = %client_id,
+                bridge_count = bridge_entries.len(),
+                dedup_count = sent_positions.len(),
+                "Bridging ring buffer entries after replay"
+            );
+            // Dedup bridge entries against phase 1. Positioned entries use
+            // hash lookup; sentinel entries (position = None) use a count
+            // since they share the same `None` key. The ring buffer preserves
+            // insertion order, so the first `none_sent` sentinels in the
+            // bridge correspond to the ones already delivered in phase 1.
+            let mut none_skipped: usize = 0;
+            for (pos, payload) in &bridge_entries {
+                let already_sent = match *pos {
+                    Some(p) => sent_positions.contains(&p),
+                    None => {
+                        if none_skipped < none_sent {
+                            none_skipped += 1;
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                };
+                if already_sent {
+                    continue;
+                }
+                if !filter.matches(payload, compressed) {
+                    if let Some(p) = *pos {
+                        sent_positions.insert(p);
+                    }
+                    continue;
+                }
+                let msg = Message::Binary(payload.clone());
+                let send_result = timeout(self.send_timeout_ms, ws_sender.send(msg)).await;
+                match send_result {
+                    Ok(Ok(())) => {
+                        metrics.sent_messages.increment(1);
+                    }
+                    Ok(Err(e)) => {
+                        warn!(
+                            client = %client_id,
+                            error = %e,
+                            "Failed to send bridge entry to client"
+                        );
+                        client_reader.abort();
+                        metrics.closed_connections.increment(1);
+                        return;
+                    }
+                    Err(_) => {
+                        warn!(client = %client_id, "Send timeout during bridge replay");
+                        client_reader.abort();
+                        metrics.closed_connections.increment(1);
+                        return;
+                    }
+                }
+                if let Some(p) = *pos {
+                    sent_positions.insert(p);
+                }
+            }
+
+            // Phase 3: Drain messages accumulated in the receiver during the
+            // bridge phase. Position-based dedup prevents double delivery.
+            loop {
+                match receiver.try_recv() {
+                    Ok((pos, msg)) => {
+                        if pos.is_some_and(|p| sent_positions.contains(&p)) {
+                            continue;
+                        }
+                        let msg_bytes: &[u8] = match &msg {
+                            Message::Binary(data) => data.as_ref(),
+                            _ => &[],
+                        };
+                        if filter.matches(msg_bytes, compressed) {
+                            let send_result =
+                                timeout(self.send_timeout_ms, ws_sender.send(msg)).await;
+                            match send_result {
+                                Ok(Ok(())) => metrics.sent_messages.increment(1),
+                                Ok(Err(e)) => {
+                                    warn!(
+                                        client = %client_id,
+                                        error = %e,
+                                        "Failed to send gap-fill entry to client"
+                                    );
+                                    client_reader.abort();
+                                    metrics.closed_connections.increment(1);
+                                    return;
+                                }
+                                Err(_) => {
+                                    warn!(
+                                        client = %client_id,
+                                        "Send timeout during replay drain"
+                                    );
+                                    client_reader.abort();
+                                    metrics.closed_connections.increment(1);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Lagged(_)) => {
+                        metrics.lagged_connections.increment(1);
+                        receiver = self.sender.subscribe();
+                        break;
+                    }
+                    Err(TryRecvError::Closed) => break,
+                }
+            }
+
+            receiver
+        } else {
+            self.sender.subscribe()
+        };
+
         loop {
             tokio::select! {
                 broadcast_result = receiver.recv() => {
                     match broadcast_result {
-                        Ok(msg) => {
+                        Ok((_, msg)) => {
                             let msg_bytes = match &msg {
                                 Message::Binary(data) => data.as_ref(),
                                 _ => &[],

@@ -12,12 +12,13 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+base-ring-buffer.workspace = true
 serde.workspace = true
 futures.workspace = true
 metrics.workspace = true
 tracing.workspace = true
 tokio-util.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["std"] }
 tokio-tungstenite.workspace = true
 tokio = { workspace = true, features = ["net", "sync", "macros", "rt"] }
 
