@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 # EVM
 revm = { workspace = true, features = ["std"] }
@@ -26,8 +29,8 @@ base-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
 
 # Proof
 base-proof-mpt = { workspace = true, features = ["std"] }
-base-proof-primitives = { workspace = true, features = ["serde"] }
 base-proof-executor = { workspace = true, features = ["std"] }
+base-proof-primitives = { workspace = true, features = ["serde"] }
 base-consensus-genesis = { workspace = true, features = ["serde"] }
 
 # Consensus
@@ -36,16 +39,13 @@ base-protocol = { workspace = true, features = ["serde"] }
 # Misc
 tracing.workspace = true
 thiserror.workspace = true
+serde_json.workspace = true
 async-trait.workspace = true
 hex-literal.workspace = true
 parking_lot.workspace = true
-serde_json.workspace = true
 hex = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 hex.workspace = true
 rstest.workspace = true
-
-[lints]
-workspace = true
