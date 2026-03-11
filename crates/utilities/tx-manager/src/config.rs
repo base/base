@@ -573,32 +573,6 @@ impl TxManagerConfig {
         self.chain_id
     }
 
-    // ── Hot-reloadable field accessors ──────────────────────────────
-
-    /// Returns the current fee-limit multiplier.
-    #[must_use]
-    pub fn fee_limit_multiplier(&self) -> u64 {
-        self.hot.read().fee_limit_multiplier
-    }
-
-    /// Returns the current fee-limit threshold (in wei).
-    #[must_use]
-    pub fn fee_limit_threshold(&self) -> u128 {
-        self.hot.read().fee_limit_threshold
-    }
-
-    /// Returns the current minimum tip cap (in wei).
-    #[must_use]
-    pub fn min_tip_cap(&self) -> u128 {
-        self.hot.read().min_tip_cap
-    }
-
-    /// Returns the current minimum basefee (in wei).
-    #[must_use]
-    pub fn min_basefee(&self) -> u128 {
-        self.hot.read().min_basefee
-    }
-
     // ── Hot-reloadable field mutators ───────────────────────────────
 
     /// Updates the fee-limit multiplier at runtime.
@@ -763,10 +737,10 @@ mod tests {
         assert_eq!(config.num_confirmations(), 10);
         assert_eq!(config.safe_abort_nonce_too_low_count(), 3);
         assert_eq!(config.chain_id(), 42);
-        assert_eq!(config.fee_limit_multiplier(), 5);
-        assert_eq!(config.fee_limit_threshold(), 100_000_000_000);
-        assert_eq!(config.min_tip_cap(), 0);
-        assert_eq!(config.min_basefee(), 0);
+        assert_eq!(config.fee_config().fee_limit_multiplier, 5);
+        assert_eq!(config.fee_config().fee_limit_threshold, 100_000_000_000);
+        assert_eq!(config.fee_config().min_tip_cap, 0);
+        assert_eq!(config.fee_config().min_basefee, 0);
         assert_eq!(config.network_timeout(), Duration::from_secs(10));
         assert_eq!(config.resubmission_timeout(), Duration::from_secs(48));
         assert_eq!(config.receipt_query_interval(), Duration::from_secs(12));
@@ -904,30 +878,30 @@ mod tests {
     #[test]
     fn hot_reload_fee_limit_multiplier() {
         let config = test_config(1);
-        assert_eq!(config.fee_limit_multiplier(), 5);
+        assert_eq!(config.fee_config().fee_limit_multiplier, 5);
         config.set_fee_limit_multiplier(10).unwrap();
-        assert_eq!(config.fee_limit_multiplier(), 10);
+        assert_eq!(config.fee_config().fee_limit_multiplier, 10);
     }
 
     #[test]
     fn hot_reload_fee_limit_threshold() {
         let config = test_config(1);
         config.set_fee_limit_threshold(999);
-        assert_eq!(config.fee_limit_threshold(), 999);
+        assert_eq!(config.fee_config().fee_limit_threshold, 999);
     }
 
     #[test]
     fn hot_reload_min_tip_cap() {
         let config = test_config(1);
         config.set_min_tip_cap(42);
-        assert_eq!(config.min_tip_cap(), 42);
+        assert_eq!(config.fee_config().min_tip_cap, 42);
     }
 
     #[test]
     fn hot_reload_min_basefee() {
         let config = test_config(1);
         config.set_min_basefee(123);
-        assert_eq!(config.min_basefee(), 123);
+        assert_eq!(config.fee_config().min_basefee, 123);
     }
 
     // ── Hot-reload setter validation ────────────────────────────────
@@ -941,14 +915,14 @@ mod tests {
             Err(ConfigError::OutOfRange { field: "fee_limit_multiplier", .. })
         ));
         // Original value is preserved on error.
-        assert_eq!(config.fee_limit_multiplier(), 5);
+        assert_eq!(config.fee_config().fee_limit_multiplier, 5);
     }
 
     #[test]
     fn set_fee_limit_multiplier_accepts_boundary_one() {
         let config = test_config(1);
         config.set_fee_limit_multiplier(1).unwrap();
-        assert_eq!(config.fee_limit_multiplier(), 1);
+        assert_eq!(config.fee_config().fee_limit_multiplier, 1);
     }
 
     // ── Debug impl ─────────────────────────────────────────────────
@@ -967,12 +941,12 @@ mod tests {
         let config = test_config(1);
         config.set_fee_limit_multiplier(42).unwrap();
         let cloned = config.clone();
-        assert_eq!(cloned.fee_limit_multiplier(), 42);
+        assert_eq!(cloned.fee_config().fee_limit_multiplier, 42);
 
         // Mutations are independent after clone
         config.set_fee_limit_multiplier(100).unwrap();
-        assert_eq!(cloned.fee_limit_multiplier(), 42);
-        assert_eq!(config.fee_limit_multiplier(), 100);
+        assert_eq!(cloned.fee_config().fee_limit_multiplier, 42);
+        assert_eq!(config.fee_config().fee_limit_multiplier, 100);
     }
 
     // ── FeeConfig snapshot ──────────────────────────────────────────
@@ -991,8 +965,8 @@ mod tests {
         config.set_min_tip_cap(42);
         assert_eq!(snapshot.fee_limit_multiplier, 5);
         assert_eq!(snapshot.min_tip_cap, 0);
-        assert_eq!(config.fee_limit_multiplier(), 99);
-        assert_eq!(config.min_tip_cap(), 42);
+        assert_eq!(config.fee_config().fee_limit_multiplier, 99);
+        assert_eq!(config.fee_config().min_tip_cap, 42);
     }
 
     // ── Property tests ──────────────────────────────────────────────
@@ -1138,10 +1112,10 @@ mod tests {
             assert_eq!(config.num_confirmations(), 10);
             assert_eq!(config.safe_abort_nonce_too_low_count(), 3);
             assert_eq!(config.chain_id(), 42);
-            assert_eq!(config.fee_limit_multiplier(), 5);
-            assert_eq!(config.fee_limit_threshold(), 100_000_000_000); // 100 gwei
-            assert_eq!(config.min_tip_cap(), 0);
-            assert_eq!(config.min_basefee(), 0);
+            assert_eq!(config.fee_config().fee_limit_multiplier, 5);
+            assert_eq!(config.fee_config().fee_limit_threshold, 100_000_000_000); // 100 gwei
+            assert_eq!(config.fee_config().min_tip_cap, 0);
+            assert_eq!(config.fee_config().min_basefee, 0);
             assert_eq!(config.network_timeout(), Duration::from_secs(10));
             assert_eq!(config.resubmission_timeout(), Duration::from_secs(48));
             assert_eq!(config.receipt_query_interval(), Duration::from_secs(12));
@@ -1184,7 +1158,7 @@ mod tests {
             let config = TxManagerConfig::from_cli(cli, 8453).unwrap();
             assert_eq!(config.num_confirmations(), 3);
             assert_eq!(config.chain_id(), 8453);
-            assert_eq!(config.fee_limit_multiplier(), 5);
+            assert_eq!(config.fee_config().fee_limit_multiplier, 5);
             assert_eq!(config.network_timeout(), Duration::from_secs(10));
             assert_eq!(config.resubmission_timeout(), Duration::from_secs(48));
         }
