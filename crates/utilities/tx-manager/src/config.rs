@@ -277,13 +277,13 @@ mod tests {
 
     // ── CLI-dependent tests ─────────────────────────────────────────
 
-    #[cfg(feature = "cli")]
     mod cli_tests {
         use clap::Parser;
         use rstest::rstest;
 
         use super::super::*;
-        use crate::TxManagerCli;
+
+        define_tx_manager_cli!("BASE_TX_MANAGER");
 
         // ── CLI defaults ────────────────────────────────────────────
 

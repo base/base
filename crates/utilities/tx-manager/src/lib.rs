@@ -19,12 +19,8 @@ pub use fees::{FeeCalculator, GasPriceCaps};
 mod send_state;
 pub use send_state::SendState;
 
-#[cfg(feature = "cli")]
 #[macro_use]
 mod macros;
-// Generates `TxManagerCli` at crate root.
-#[cfg(feature = "cli")]
-define_tx_manager_cli!("BASE_TX_MANAGER");
 
 mod config;
 pub use config::{ConfigError, GweiParser, TxManagerConfig};
