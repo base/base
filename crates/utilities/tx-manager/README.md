@@ -109,28 +109,28 @@ arguments via `TxManagerConfig::from_cli` (requires the `cli` feature).
 
 ### Programmatic construction
 
-`TxManagerConfig::new` takes all parameters directly (fees in wei,
+`TxManagerConfig::new` takes a `TxManagerParams` struct (fees in wei,
 durations as `Duration`). This path has no dependency on `clap` or
 `humantime`:
 
 ```rust,ignore
 use std::time::Duration;
-use base_tx_manager::TxManagerConfig;
+use base_tx_manager::{TxManagerConfig, TxManagerParams};
 
-let config = TxManagerConfig::new(
-    10,                          // num_confirmations
-    3,                           // safe_abort_nonce_too_low_count
-    5,                           // fee_limit_multiplier
-    100_000_000_000,             // fee_limit_threshold (100 gwei in wei)
-    0,                           // min_tip_cap
-    0,                           // min_basefee
-    Duration::from_secs(10),     // network_timeout
-    Duration::from_secs(48),     // resubmission_timeout
-    Duration::from_secs(12),     // receipt_query_interval
-    Duration::ZERO,              // tx_send_timeout (0 = disabled)
-    Duration::from_secs(120),    // tx_not_in_mempool_timeout
+let config = TxManagerConfig::new(TxManagerParams {
+    num_confirmations: 10,
+    safe_abort_nonce_too_low_count: 3,
+    fee_limit_multiplier: 5,
+    fee_limit_threshold: 100_000_000_000, // 100 gwei in wei
+    min_tip_cap: 0,
+    min_basefee: 0,
+    network_timeout: Duration::from_secs(10),
+    resubmission_timeout: Duration::from_secs(48),
+    receipt_query_interval: Duration::from_secs(12),
+    tx_send_timeout: Duration::ZERO,      // 0 = disabled
+    tx_not_in_mempool_timeout: Duration::from_secs(120),
     chain_id,
-)?;
+})?;
 ```
 
 ### CLI parsing and validation
