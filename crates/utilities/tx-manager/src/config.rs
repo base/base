@@ -665,58 +665,32 @@ mod tests {
         TxManagerCli::try_parse_from(["test"]).unwrap()
     }
 
-    #[test]
-    fn zero_num_confirmations_rejected() {
-        let cli = TxManagerCli { num_confirmations: 0, ..default_cli() };
+    #[rstest]
+    #[case::num_confirmations(
+        TxManagerCli { num_confirmations: 0, ..default_cli() }, "num_confirmations"
+    )]
+    #[case::safe_abort_nonce_too_low_count(
+        TxManagerCli { safe_abort_nonce_too_low_count: 0, ..default_cli() }, "safe_abort_nonce_too_low_count"
+    )]
+    #[case::fee_limit_multiplier(
+        TxManagerCli { fee_limit_multiplier: 0, ..default_cli() }, "fee_limit_multiplier"
+    )]
+    #[case::network_timeout(
+        TxManagerCli { network_timeout: Duration::ZERO, ..default_cli() }, "network_timeout"
+    )]
+    #[case::resubmission_timeout(
+        TxManagerCli { resubmission_timeout: Duration::ZERO, ..default_cli() }, "resubmission_timeout"
+    )]
+    #[case::receipt_query_interval(
+        TxManagerCli { receipt_query_interval: Duration::ZERO, ..default_cli() }, "receipt_query_interval"
+    )]
+    fn zero_value_rejected(#[case] cli: TxManagerCli, #[case] expected_field: &str) {
         let result = TxManagerConfig::from_cli(cli, 1);
-        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "num_confirmations", .. })));
-    }
-
-    #[test]
-    fn zero_safe_abort_nonce_too_low_count_rejected() {
-        let cli = TxManagerCli { safe_abort_nonce_too_low_count: 0, ..default_cli() };
-        let result = TxManagerConfig::from_cli(cli, 1);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange { field: "safe_abort_nonce_too_low_count", .. })
-        ));
-    }
-
-    #[test]
-    fn zero_fee_limit_multiplier_rejected() {
-        let cli = TxManagerCli { fee_limit_multiplier: 0, ..default_cli() };
-        let result = TxManagerConfig::from_cli(cli, 1);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange { field: "fee_limit_multiplier", .. })
-        ));
-    }
-
-    #[test]
-    fn zero_network_timeout_rejected() {
-        let cli = TxManagerCli { network_timeout: Duration::ZERO, ..default_cli() };
-        let result = TxManagerConfig::from_cli(cli, 1);
-        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "network_timeout", .. })));
-    }
-
-    #[test]
-    fn zero_resubmission_timeout_rejected() {
-        let cli = TxManagerCli { resubmission_timeout: Duration::ZERO, ..default_cli() };
-        let result = TxManagerConfig::from_cli(cli, 1);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange { field: "resubmission_timeout", .. })
-        ));
-    }
-
-    #[test]
-    fn zero_receipt_query_interval_rejected() {
-        let cli = TxManagerCli { receipt_query_interval: Duration::ZERO, ..default_cli() };
-        let result = TxManagerConfig::from_cli(cli, 1);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange { field: "receipt_query_interval", .. })
-        ));
+        let err = result.expect_err("expected OutOfRange error");
+        assert!(
+            matches!(&err, ConfigError::OutOfRange { field, .. } if *field == expected_field),
+            "expected OutOfRange for {expected_field}, got: {err}"
+        );
     }
 
     // ── Gwei conversion tests ───────────────────────────────────────
@@ -732,75 +706,41 @@ mod tests {
         assert_eq!(result, expected_wei);
     }
 
-    #[test]
-    fn gwei_to_wei_negative_rejected() {
-        let result = GweiConversion::gwei_to_wei(-1.0, "test_field");
-        assert!(matches!(result, Err(ConfigError::InvalidGwei { field: "test_field", .. })));
-    }
-
-    #[test]
-    fn gwei_to_wei_nan_rejected() {
-        let result = GweiConversion::gwei_to_wei(f64::NAN, "test_field");
-        assert!(matches!(result, Err(ConfigError::InvalidGwei { field: "test_field", .. })));
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("NaN"), "error should mention NaN: {err}");
-    }
-
-    #[test]
-    fn gwei_to_wei_infinity_rejected() {
-        let result = GweiConversion::gwei_to_wei(f64::INFINITY, "test_field");
-        assert!(matches!(result, Err(ConfigError::InvalidGwei { field: "test_field", .. })));
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("infinite"), "error should mention infinite: {err}");
-    }
-
-    #[test]
-    fn gwei_to_wei_neg_infinity_rejected() {
-        let result = GweiConversion::gwei_to_wei(f64::NEG_INFINITY, "test_field");
-        assert!(matches!(result, Err(ConfigError::InvalidGwei { field: "test_field", .. })));
-    }
-
-    #[test]
-    fn gwei_to_wei_very_large_finite_rejected() {
-        // f64::MAX is finite but overflows u128 when converted to wei.
-        let result = GweiConversion::gwei_to_wei(f64::MAX, "test_field");
-        assert!(matches!(result, Err(ConfigError::InvalidGwei { field: "test_field", .. })));
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("too large"), "error should mention overflow: {err}");
-    }
-
-    #[test]
-    fn gwei_to_wei_borderline_large_rejected() {
-        // A value that is finite but whose wei representation exceeds u128.
-        let gwei = 1e30;
+    #[rstest]
+    #[case::negative(-1.0, None)]
+    #[case::nan(f64::NAN, Some("NaN"))]
+    #[case::infinity(f64::INFINITY, Some("infinite"))]
+    #[case::neg_infinity(f64::NEG_INFINITY, None)]
+    #[case::very_large_finite(f64::MAX, Some("too large"))]
+    #[case::borderline_large(1e30, None)]
+    fn gwei_to_wei_invalid(#[case] gwei: f64, #[case] expected_substr: Option<&str>) {
         let result = GweiConversion::gwei_to_wei(gwei, "test_field");
-        assert!(matches!(result, Err(ConfigError::InvalidGwei { .. })));
+        assert!(matches!(result, Err(ConfigError::InvalidGwei { field: "test_field", .. })));
+        if let Some(substr) = expected_substr {
+            let err = result.unwrap_err();
+            assert!(err.to_string().contains(substr), "error should mention {substr}: {err}");
+        }
     }
 
-    // ── Negative gwei in config construction ────────────────────────
+    // ── Invalid gwei in config construction ─────────────────────────
 
-    #[test]
-    fn negative_fee_threshold_gwei_rejected() {
-        let cli = TxManagerCli { fee_limit_threshold_gwei: -1.0, ..default_cli() };
+    #[rstest]
+    #[case::negative_fee_threshold(
+        TxManagerCli { fee_limit_threshold_gwei: -1.0, ..default_cli() }, "fee_limit_threshold"
+    )]
+    #[case::nan_min_tip_cap(
+        TxManagerCli { min_tip_cap_gwei: f64::NAN, ..default_cli() }, "min_tip_cap"
+    )]
+    #[case::infinite_min_basefee(
+        TxManagerCli { min_basefee_gwei: f64::INFINITY, ..default_cli() }, "min_basefee"
+    )]
+    fn invalid_gwei_in_config_rejected(#[case] cli: TxManagerCli, #[case] expected_field: &str) {
         let result = TxManagerConfig::from_cli(cli, 1);
-        assert!(matches!(
-            result,
-            Err(ConfigError::InvalidGwei { field: "fee_limit_threshold", .. })
-        ));
-    }
-
-    #[test]
-    fn nan_min_tip_cap_gwei_rejected() {
-        let cli = TxManagerCli { min_tip_cap_gwei: f64::NAN, ..default_cli() };
-        let result = TxManagerConfig::from_cli(cli, 1);
-        assert!(matches!(result, Err(ConfigError::InvalidGwei { field: "min_tip_cap", .. })));
-    }
-
-    #[test]
-    fn infinite_min_basefee_gwei_rejected() {
-        let cli = TxManagerCli { min_basefee_gwei: f64::INFINITY, ..default_cli() };
-        let result = TxManagerConfig::from_cli(cli, 1);
-        assert!(matches!(result, Err(ConfigError::InvalidGwei { field: "min_basefee", .. })));
+        let err = result.expect_err("expected InvalidGwei error");
+        assert!(
+            matches!(&err, ConfigError::InvalidGwei { field, .. } if *field == expected_field),
+            "expected InvalidGwei for {expected_field}, got: {err}"
+        );
     }
 
     // ── Preset tests ────────────────────────────────────────────────
@@ -964,18 +904,11 @@ mod tests {
 
     // ── Zero tx_send_timeout and tx_not_in_mempool_timeout allowed ──
 
-    #[test]
-    fn zero_tx_send_timeout_allowed() {
-        let cli = TxManagerCli { tx_send_timeout: Duration::ZERO, ..default_cli() };
-        let result = TxManagerConfig::from_cli(cli, 1);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn zero_tx_not_in_mempool_timeout_allowed() {
-        let cli = TxManagerCli { tx_not_in_mempool_timeout: Duration::ZERO, ..default_cli() };
-        let result = TxManagerConfig::from_cli(cli, 1);
-        assert!(result.is_ok());
+    #[rstest]
+    #[case::tx_send_timeout(TxManagerCli { tx_send_timeout: Duration::ZERO, ..default_cli() })]
+    #[case::tx_not_in_mempool_timeout(TxManagerCli { tx_not_in_mempool_timeout: Duration::ZERO, ..default_cli() })]
+    fn zero_optional_timeout_allowed(#[case] cli: TxManagerCli) {
+        assert!(TxManagerConfig::from_cli(cli, 1).is_ok());
     }
 
     // ── ConfigError display ─────────────────────────────────────────
