@@ -8,28 +8,18 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-# EVM
-revm = { workspace = true, features = ["std"] }
-base-revm = { workspace = true, features = ["std"] }
-
 # Alloy
 alloy-rlp.workspace = true
 alloy-chains.workspace = true
-alloy-rpc-types-engine.workspace = true
-alloy-evm = { workspace = true, features = ["op"] }
 alloy-trie = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 
 # Base Alloy
-base-alloy-evm = { workspace = true, features = ["std"] }
 base-alloy-consensus = { workspace = true, features = ["serde"] }
-base-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
 
 # Proof
-base-proof-mpt = { workspace = true, features = ["std"] }
-base-proof-executor = { workspace = true, features = ["std"] }
 base-proof-primitives = { workspace = true, features = ["serde"] }
 base-consensus-genesis = { workspace = true, features = ["serde"] }
 
@@ -37,15 +27,10 @@ base-consensus-genesis = { workspace = true, features = ["serde"] }
 base-protocol = { workspace = true, features = ["serde"] }
 
 # Misc
-tracing.workspace = true
 thiserror.workspace = true
-serde_json.workspace = true
-async-trait.workspace = true
-hex-literal.workspace = true
-parking_lot.workspace = true
-hex = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 hex.workspace = true
 rstest.workspace = true
+serde_json.workspace = true

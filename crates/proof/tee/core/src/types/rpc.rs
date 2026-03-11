@@ -6,7 +6,7 @@ use base_consensus_genesis::ChainConfig;
 use base_proof_primitives::Proposal;
 use serde::{Deserialize, Serialize};
 
-use crate::{executor::ExecutionWitness, types::account::AccountResult};
+use crate::types::{account::AccountResult, witness::ExecutionWitness};
 
 /// Request for the `executeStateless` RPC method.
 ///
