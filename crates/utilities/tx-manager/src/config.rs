@@ -235,39 +235,37 @@ pub struct TxManagerCli {
 }
 
 impl TxManagerCli {
+    /// Shared defaults used by all presets. Individual presets override
+    /// only the fields that differ (e.g. `num_confirmations`).
+    const fn base_defaults() -> Self {
+        Self {
+            num_confirmations: 10,
+            safe_abort_nonce_too_low_count: 3,
+            fee_limit_multiplier: 5,
+            fee_limit_threshold_gwei: 100.0,
+            min_tip_cap_gwei: 0.0,
+            min_basefee_gwei: 0.0,
+            network_timeout: Duration::from_secs(10),
+            resubmission_timeout: Duration::from_secs(48),
+            receipt_query_interval: Duration::from_secs(12),
+            tx_send_timeout: Duration::ZERO,
+            tx_not_in_mempool_timeout: Duration::from_secs(120),
+        }
+    }
+
     /// Returns a [`TxManagerCli`] populated with preset-appropriate defaults.
     ///
     /// The returned struct can be overridden by actual CLI arguments or
     /// environment variables when flattened into a parent parser.
     #[must_use]
     pub const fn with_preset(preset: TxManagerPreset) -> Self {
+        let mut cli = Self::base_defaults();
         match preset {
-            TxManagerPreset::Batcher => Self {
-                num_confirmations: 10,
-                safe_abort_nonce_too_low_count: 3,
-                fee_limit_multiplier: 5,
-                fee_limit_threshold_gwei: 100.0,
-                min_tip_cap_gwei: 0.0,
-                min_basefee_gwei: 0.0,
-                network_timeout: Duration::from_secs(10),
-                resubmission_timeout: Duration::from_secs(48),
-                receipt_query_interval: Duration::from_secs(12),
-                tx_send_timeout: Duration::ZERO,
-                tx_not_in_mempool_timeout: Duration::from_secs(120),
-            },
-            TxManagerPreset::Challenger => Self {
-                num_confirmations: 3,
-                safe_abort_nonce_too_low_count: 3,
-                fee_limit_multiplier: 5,
-                fee_limit_threshold_gwei: 100.0,
-                min_tip_cap_gwei: 0.0,
-                min_basefee_gwei: 0.0,
-                network_timeout: Duration::from_secs(10),
-                resubmission_timeout: Duration::from_secs(48),
-                receipt_query_interval: Duration::from_secs(12),
-                tx_send_timeout: Duration::ZERO,
-                tx_not_in_mempool_timeout: Duration::from_secs(120),
-            },
+            TxManagerPreset::Batcher => cli,
+            TxManagerPreset::Challenger => {
+                cli.num_confirmations = 3;
+                cli
+            }
         }
     }
 }
@@ -279,6 +277,12 @@ impl TxManagerCli {
 /// Wrapped in a single [`RwLock`] inside [`TxManagerConfig`] because
 /// config updates are infrequent and per-field lock granularity is
 /// unnecessary.
+///
+/// This is intentionally kept private (not re-exported) despite the
+/// workspace convention that module types should be `pub`. Exposing
+/// this grouping struct would leak an internal implementation detail
+/// into the crate's public API. Callers interact with the hot fields
+/// through [`TxManagerConfig`] accessor/mutator methods instead.
 #[derive(Debug, Clone)]
 struct HotConfig {
     /// Maximum fee multiplier applied to the suggested gas price.
