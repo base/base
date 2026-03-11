@@ -50,6 +50,8 @@ where
     }
 
     /// Cancels the consumer loop.
+    /// The consumer is checking for cancellation extremely often, so we don't need to have
+    /// a "long" timeout for it as it will shutdown within a few milliseconds anyway
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
