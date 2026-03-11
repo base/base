@@ -13,6 +13,19 @@
 /// `concat!($prefix, "FIELD_NAME")` — e.g., with prefix
 /// `"BASE_CHALLENGER_TX_MANAGER_"` the num-confirmations field reads from
 /// `BASE_CHALLENGER_TX_MANAGER_NUM_CONFIRMATIONS`.
+///
+/// # Required downstream dependencies
+///
+/// The macro expands to code that references `::clap::Parser` and
+/// `::humantime::parse_duration` via absolute paths. Consumer crates that
+/// invoke `define_tx_manager_cli!` must add these dependencies to their own
+/// `Cargo.toml`:
+///
+/// ```toml
+/// [dependencies]
+/// clap = { version = "...", features = ["derive", "env"] }
+/// humantime = "..."
+/// ```
 #[rustfmt::skip]
 #[macro_export]
 macro_rules! define_tx_manager_cli {

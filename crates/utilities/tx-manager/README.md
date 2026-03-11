@@ -142,6 +142,11 @@ struct Cli {
 let config = TxManagerConfig::from_cli(cli.tx, chain_id)?;
 ```
 
+> **Note:** The macro expands to absolute paths (`::clap::Parser`,
+> `::humantime::parse_duration`), so consumer crates must add `clap`
+> (with `derive` + `env` features) and `humantime` to their own
+> `Cargo.toml`.
+
 ### Fee limit checks
 
 Use `FeeCalculator::check_limits` with the multiplier and threshold from
