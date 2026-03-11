@@ -50,7 +50,6 @@ test-utils = [
 # workspace
 base-cli-utils.workspace = true
 base-test-utils = { workspace = true, optional = true }
-base-engine-tree.workspace = true
 
 # reth
 reth-evm.workspace = true
