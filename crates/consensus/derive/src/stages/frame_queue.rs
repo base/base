@@ -198,6 +198,11 @@ where
     async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
         self.prev.signal(signal).await?;
         self.queue = VecDeque::default();
+        base_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_FRAME_QUEUE_BUFFER, 0.0);
+        #[cfg(feature = "metrics")]
+        {
+            base_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_FRAME_QUEUE_MEM, 0.0);
+        }
         Ok(())
     }
 }
