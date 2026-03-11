@@ -7,14 +7,10 @@
 //! - **CLI** *(requires the `cli` feature)*: [`TxManagerCli`] captures
 //!   CLI/env arguments at startup, and [`TxManagerConfig::from_cli`]
 //!   validates and converts them into the runtime configuration.
-//!
-//! Fee-related fields are hot-reloadable behind a
-//! [`parking_lot::RwLock`].
 
 use std::time::Duration;
 
 use alloy_primitives::utils::{UnitsError, parse_units};
-use parking_lot::RwLock;
 use thiserror::Error;
 
 #[cfg(feature = "cli")]
@@ -84,8 +80,7 @@ impl GweiParser {
 
 /// Snapshot of fee-limit parameters for deterministic fee calculations.
 ///
-/// Extracted from [`TxManagerConfig`] hot-reloadable fields to provide a
-/// consistent point-in-time view for
+/// Extracted from [`TxManagerConfig`] for use with
 /// [`FeeCalculator::check_limits`](crate::FeeCalculator::check_limits).
 #[derive(Debug, Clone)]
 pub struct FeeConfig {
@@ -125,31 +120,6 @@ impl Default for FeeConfig {
     }
 }
 
-// ── HotConfig ───────────────────────────────────────────────────────────
-
-/// Hot-reloadable fee configuration fields.
-///
-/// Wrapped in a single [`RwLock`] inside [`TxManagerConfig`] because
-/// config updates are infrequent and per-field lock granularity is
-/// unnecessary.
-///
-/// This is intentionally kept private (not re-exported) despite the
-/// workspace convention that module types should be `pub`. Exposing
-/// this grouping struct would leak an internal implementation detail
-/// into the crate's public API. Callers interact with the hot fields
-/// through [`TxManagerConfig`] accessor/mutator methods instead.
-#[derive(Debug, Clone)]
-struct HotConfig {
-    /// Maximum fee multiplier applied to the suggested gas price.
-    fee_limit_multiplier: u64,
-    /// Minimum suggested fee (in wei) at which the fee-limit check activates.
-    fee_limit_threshold: u128,
-    /// Minimum tip cap (in wei) to use for transactions.
-    min_tip_cap: u128,
-    /// Minimum basefee (in wei) to use for transactions.
-    min_basefee: u128,
-}
-
 // ── TxManagerParams ─────────────────────────────────────────────────────
 
 /// Parameters for constructing a [`TxManagerConfig`].
@@ -187,18 +157,22 @@ pub struct TxManagerParams {
 
 /// Validated runtime configuration for the transaction manager.
 ///
-/// Immutable fields are set once at construction. Fee-related fields are
-/// hot-reloadable via accessor/mutator methods backed by a
-/// [`parking_lot::RwLock`] for concurrent access.
-///
 /// Construct via [`TxManagerConfig::new`] (always available) or
 /// [`TxManagerConfig::from_cli`] (requires the `cli` feature).
+#[derive(Debug, Clone)]
 pub struct TxManagerConfig {
-    // ── Immutable fields ────────────────────────────────────────────
     /// Number of block confirmations to wait.
     num_confirmations: u64,
     /// Nonce-too-low abort threshold.
     safe_abort_nonce_too_low_count: u64,
+    /// Maximum fee multiplier applied to the suggested gas price.
+    fee_limit_multiplier: u64,
+    /// Minimum suggested fee (in wei) at which the fee-limit check activates.
+    fee_limit_threshold: u128,
+    /// Minimum tip cap (in wei) to use for transactions.
+    min_tip_cap: u128,
+    /// Minimum basefee (in wei) to use for transactions.
+    min_basefee: u128,
     /// Network request timeout.
     network_timeout: Duration,
     /// Fee-bump resubmission timeout.
@@ -211,53 +185,6 @@ pub struct TxManagerConfig {
     tx_not_in_mempool_timeout: Duration,
     /// Chain ID for the target network.
     chain_id: u64,
-
-    // ── Hot-reloadable fields ───────────────────────────────────────
-    /// Fee parameters that can be updated at runtime.
-    hot: RwLock<HotConfig>,
-}
-
-impl std::fmt::Debug for TxManagerConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut s = f.debug_struct("TxManagerConfig");
-        s.field("num_confirmations", &self.num_confirmations)
-            .field("safe_abort_nonce_too_low_count", &self.safe_abort_nonce_too_low_count)
-            .field("network_timeout", &self.network_timeout)
-            .field("resubmission_timeout", &self.resubmission_timeout)
-            .field("receipt_query_interval", &self.receipt_query_interval)
-            .field("tx_send_timeout", &self.tx_send_timeout)
-            .field("tx_not_in_mempool_timeout", &self.tx_not_in_mempool_timeout)
-            .field("chain_id", &self.chain_id);
-        match self.hot.try_read() {
-            Some(hot) => {
-                s.field("fee_limit_multiplier", &hot.fee_limit_multiplier)
-                    .field("fee_limit_threshold", &hot.fee_limit_threshold)
-                    .field("min_tip_cap", &hot.min_tip_cap)
-                    .field("min_basefee", &hot.min_basefee);
-            }
-            None => {
-                s.field("hot", &"<locked>");
-            }
-        }
-        s.finish()
-    }
-}
-
-impl Clone for TxManagerConfig {
-    fn clone(&self) -> Self {
-        let hot = self.hot.read().clone();
-        Self {
-            num_confirmations: self.num_confirmations,
-            safe_abort_nonce_too_low_count: self.safe_abort_nonce_too_low_count,
-            network_timeout: self.network_timeout,
-            resubmission_timeout: self.resubmission_timeout,
-            receipt_query_interval: self.receipt_query_interval,
-            tx_send_timeout: self.tx_send_timeout,
-            tx_not_in_mempool_timeout: self.tx_not_in_mempool_timeout,
-            chain_id: self.chain_id,
-            hot: RwLock::new(hot),
-        }
-    }
 }
 
 impl TxManagerConfig {
@@ -340,18 +267,16 @@ impl TxManagerConfig {
         Ok(Self {
             num_confirmations,
             safe_abort_nonce_too_low_count,
+            fee_limit_multiplier,
+            fee_limit_threshold,
+            min_tip_cap,
+            min_basefee,
             network_timeout,
             resubmission_timeout,
             receipt_query_interval,
             tx_send_timeout,
             tx_not_in_mempool_timeout,
             chain_id,
-            hot: RwLock::new(HotConfig {
-                fee_limit_multiplier,
-                fee_limit_threshold,
-                min_tip_cap,
-                min_basefee,
-            }),
         })
     }
 
@@ -376,7 +301,7 @@ impl TxManagerConfig {
         Self::new(cli.into_params(chain_id)?)
     }
 
-    // ── Immutable field accessors ───────────────────────────────────
+    // ── Field accessors ────────────────────────────────────────────
 
     /// Returns the number of block confirmations required.
     #[must_use]
@@ -426,67 +351,41 @@ impl TxManagerConfig {
         self.chain_id
     }
 
-    // ── Hot-reloadable field mutators ───────────────────────────────
+    // ── Fee field accessors ─────────────────────────────────────────
 
-    /// Updates the fee-limit multiplier at runtime.
-    ///
-    /// Applies the same validation as [`new`](Self::new): the
-    /// multiplier must be >= 1. A zero multiplier would compute a ceiling
-    /// of zero in [`FeeCalculator::check_limits`](crate::FeeCalculator::check_limits),
-    /// rejecting every transaction.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError::OutOfRange`] if `val` is zero.
-    pub fn set_fee_limit_multiplier(&self, val: u64) -> Result<(), ConfigError> {
-        if val == 0 {
-            return Err(ConfigError::OutOfRange {
-                field: "fee_limit_multiplier",
-                constraint: ">= 1",
-                value: "0".to_string(),
-            });
-        }
-        self.hot.write().fee_limit_multiplier = val;
-        Ok(())
+    /// Returns the fee-limit multiplier.
+    #[must_use]
+    pub const fn fee_limit_multiplier(&self) -> u64 {
+        self.fee_limit_multiplier
     }
 
-    /// Updates the fee-limit threshold (in wei) at runtime.
-    ///
-    /// Callers are responsible for providing a sensible value. Use
-    /// [`GweiParser::parse`] for gwei-to-wei conversion with
-    /// validation.
-    pub fn set_fee_limit_threshold(&self, val: u128) {
-        self.hot.write().fee_limit_threshold = val;
+    /// Returns the fee-limit threshold (in wei).
+    #[must_use]
+    pub const fn fee_limit_threshold(&self) -> u128 {
+        self.fee_limit_threshold
     }
 
-    /// Updates the minimum tip cap (in wei) at runtime.
-    ///
-    /// Callers are responsible for providing a sensible value. Use
-    /// [`GweiParser::parse`] for gwei-to-wei conversion with
-    /// validation.
-    pub fn set_min_tip_cap(&self, val: u128) {
-        self.hot.write().min_tip_cap = val;
+    /// Returns the minimum tip cap (in wei).
+    #[must_use]
+    pub const fn min_tip_cap(&self) -> u128 {
+        self.min_tip_cap
     }
 
-    /// Updates the minimum basefee (in wei) at runtime.
-    ///
-    /// Callers are responsible for providing a sensible value. Use
-    /// [`GweiParser::parse`] for gwei-to-wei conversion with
-    /// validation.
-    pub fn set_min_basefee(&self, val: u128) {
-        self.hot.write().min_basefee = val;
+    /// Returns the minimum basefee (in wei).
+    #[must_use]
+    pub const fn min_basefee(&self) -> u128 {
+        self.min_basefee
     }
 
-    /// Returns a snapshot of the current fee configuration for use with
+    /// Returns a [`FeeConfig`] snapshot for use with
     /// [`FeeCalculator::check_limits`](crate::FeeCalculator::check_limits).
     #[must_use]
-    pub fn fee_config(&self) -> FeeConfig {
-        let hot = self.hot.read();
+    pub const fn fee_config(&self) -> FeeConfig {
         FeeConfig {
-            fee_limit_multiplier: hot.fee_limit_multiplier,
-            fee_limit_threshold: hot.fee_limit_threshold,
-            min_tip_cap: hot.min_tip_cap,
-            min_basefee: hot.min_basefee,
+            fee_limit_multiplier: self.fee_limit_multiplier,
+            fee_limit_threshold: self.fee_limit_threshold,
+            min_tip_cap: self.min_tip_cap,
+            min_basefee: self.min_basefee,
         }
     }
 }
@@ -659,82 +558,6 @@ mod tests {
         assert!(matches!(err, ConfigError::OutOfRange { field: "receipt_query_interval", .. }));
     }
 
-    // ── Hot-reload tests ────────────────────────────────────────────
-
-    #[test]
-    fn hot_reload_fee_limit_multiplier() {
-        let config = test_config(1);
-        assert_eq!(config.fee_config().fee_limit_multiplier, 5);
-        config.set_fee_limit_multiplier(10).unwrap();
-        assert_eq!(config.fee_config().fee_limit_multiplier, 10);
-    }
-
-    #[test]
-    fn hot_reload_fee_limit_threshold() {
-        let config = test_config(1);
-        config.set_fee_limit_threshold(999);
-        assert_eq!(config.fee_config().fee_limit_threshold, 999);
-    }
-
-    #[test]
-    fn hot_reload_min_tip_cap() {
-        let config = test_config(1);
-        config.set_min_tip_cap(42);
-        assert_eq!(config.fee_config().min_tip_cap, 42);
-    }
-
-    #[test]
-    fn hot_reload_min_basefee() {
-        let config = test_config(1);
-        config.set_min_basefee(123);
-        assert_eq!(config.fee_config().min_basefee, 123);
-    }
-
-    // ── Hot-reload setter validation ────────────────────────────────
-
-    #[test]
-    fn set_fee_limit_multiplier_rejects_zero() {
-        let config = test_config(1);
-        let result = config.set_fee_limit_multiplier(0);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange { field: "fee_limit_multiplier", .. })
-        ));
-        // Original value is preserved on error.
-        assert_eq!(config.fee_config().fee_limit_multiplier, 5);
-    }
-
-    #[test]
-    fn set_fee_limit_multiplier_accepts_boundary_one() {
-        let config = test_config(1);
-        config.set_fee_limit_multiplier(1).unwrap();
-        assert_eq!(config.fee_config().fee_limit_multiplier, 1);
-    }
-
-    // ── Debug impl ─────────────────────────────────────────────────
-
-    #[test]
-    fn debug_impl_does_not_panic() {
-        let config = test_config(1);
-        let debug_str = format!("{config:?}");
-        assert!(debug_str.contains("TxManagerConfig"));
-    }
-
-    // ── Clone captures hot state ────────────────────────────────────
-
-    #[test]
-    fn clone_captures_hot_state() {
-        let config = test_config(1);
-        config.set_fee_limit_multiplier(42).unwrap();
-        let cloned = config.clone();
-        assert_eq!(cloned.fee_config().fee_limit_multiplier, 42);
-
-        // Mutations are independent after clone
-        config.set_fee_limit_multiplier(100).unwrap();
-        assert_eq!(cloned.fee_config().fee_limit_multiplier, 42);
-        assert_eq!(config.fee_config().fee_limit_multiplier, 100);
-    }
-
     // ── FeeConfig snapshot ──────────────────────────────────────────
 
     #[test]
@@ -745,14 +568,6 @@ mod tests {
         assert_eq!(snapshot.fee_limit_threshold, 100_000_000_000);
         assert_eq!(snapshot.min_tip_cap, 0);
         assert_eq!(snapshot.min_basefee, 0);
-
-        // Mutate hot config — snapshot should be independent
-        config.set_fee_limit_multiplier(99).unwrap();
-        config.set_min_tip_cap(42);
-        assert_eq!(snapshot.fee_limit_multiplier, 5);
-        assert_eq!(snapshot.min_tip_cap, 0);
-        assert_eq!(config.fee_config().fee_limit_multiplier, 99);
-        assert_eq!(config.fee_config().min_tip_cap, 42);
     }
 
     // ── Property tests ──────────────────────────────────────────────

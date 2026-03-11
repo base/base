@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 thiserror.workspace = true
-parking_lot.workspace = true
 alloy-primitives.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 humantime = { workspace = true, optional = true }

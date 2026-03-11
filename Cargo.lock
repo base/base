@@ -4402,7 +4402,6 @@ dependencies = [
  "alloy-rpc-types-eth",
  "clap",
  "humantime",
- "parking_lot",
  "proptest",
  "rstest",
  "thiserror 2.0.18",
