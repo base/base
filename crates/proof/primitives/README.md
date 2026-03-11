@@ -10,10 +10,9 @@ on-chain verifiers:
 
 - **`Proposal`** — An output root proposal with its ECDSA signature and L1/L2 context.
 - **`ProofBundle`** — Request plus preimage key-value pairs sent to a prover.
-- **`ProofClaim`** — The claim being proven: an aggregated `Proposal` covering the
-  entire block range and the individual per-block `Proposal`s that were aggregated.
-- **`ProofEvidence`** — Backend-specific evidence (TEE attestation or ZK proof).
-- **`ProofResult`** — A claim paired with its evidence.
+- **`ProofResult`** — The output of a proof computation, with one variant per backend:
+  - `Tee` — aggregated and per-block `Proposal`s.
+  - `Zk` — opaque proof bytes.
 
 ## Usage
 
