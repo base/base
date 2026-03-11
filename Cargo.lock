@@ -4349,6 +4349,7 @@ dependencies = [
  "clap",
  "eyre",
  "tokio",
+ "tracing",
  "tracing-subscriber 0.3.22",
 ]
 
