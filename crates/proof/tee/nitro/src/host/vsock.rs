@@ -47,11 +47,11 @@ impl VsockTransport {
     /// Send preimages to the enclave and return the proof result.
     pub async fn prove(
         &self,
-        preimages: &[(PreimageKey, Vec<u8>)],
+        preimages: Vec<(PreimageKey, Vec<u8>)>,
     ) -> Result<ProofResult, NitroError> {
         let mut stream = self.connect().await?;
 
-        Frame::write(&mut stream, &EnclaveRequest::Prove(preimages.to_vec()))
+        Frame::write(&mut stream, &EnclaveRequest::Prove(preimages))
             .await
             .map_err(|e| NitroError::Transport(e.to_string()))?;
 
