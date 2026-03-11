@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
+use base_proof_preimage::PreimageKey;
+use base_proof_primitives::ProofResult;
+
 #[cfg(target_os = "linux")]
 use super::vsock::VsockTransport;
 use crate::{NitroError, enclave::Server};
-use base_proof_preimage::PreimageKey;
-use base_proof_primitives::ProofResult;
 
 /// Nitro prover transport.
 ///
@@ -21,7 +22,7 @@ pub enum NitroTransport {
 impl NitroTransport {
     /// Create a vsock transport targeting the given enclave endpoint.
     #[cfg(target_os = "linux")]
-    pub fn vsock(cid: u32, port: u32) -> Self {
+    pub const fn vsock(cid: u32, port: u32) -> Self {
         Self::Vsock(VsockTransport::new(cid, port))
     }
 

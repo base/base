@@ -20,8 +20,4 @@ serde = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
 [features]
-frame = [
-	"dep:bincode",
-	"dep:serde",
-	"tokio/io-util",
-]
+frame = [ "dep:bincode", "dep:serde", "tokio/io-util" ]
