@@ -160,24 +160,164 @@ impl BuilderConnector {
 
         tokio::spawn(async move {
             let mut event_rx = metering_rx;
-            while let Ok(event) = event_rx.recv().await {
-                if event.results.is_empty() {
-                    warn!(message = "received metering information with no transactions", hash=%event.bundle_hash);
-                    continue;
-                }
+            loop {
+                match event_rx.recv().await {
+                    Ok(event) => {
+                        if event.results.is_empty() {
+                            warn!(message = "received metering information with no transactions", hash=%event.bundle_hash);
+                            continue;
+                        }
 
-                let tx_hash = event.results[0].tx_hash;
-                if let Err(e) = builder
-                    .client()
-                    .request::<(TxHash, MeterBundleResponse), ()>(
-                        "base_setMeteringInformation",
-                        (tx_hash, event),
-                    )
-                    .await
-                {
-                    error!(error = %e, "Failed to set metering information for tx hash: {tx_hash}");
+                        let tx_hash = event.results[0].tx_hash;
+                        if let Err(e) = builder
+                            .client()
+                            .request::<(TxHash, MeterBundleResponse), ()>(
+                                "base_setMeteringInformation",
+                                (tx_hash, event),
+                            )
+                            .await
+                        {
+                            error!(error = %e, "Failed to set metering information for tx hash: {tx_hash}");
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(skipped = n, "BuilderConnector lagged, skipped messages");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        warn!("BuilderConnector channel closed, shutting down");
+                        break;
+                    }
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use alloy_primitives::{Address, TxHash, U256};
+    use base_bundles::{MeterBundleResponse, TransactionResult};
+    use tokio::sync::broadcast;
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    use super::BuilderConnector;
+
+    fn response_with_results() -> MeterBundleResponse {
+        MeterBundleResponse {
+            results: vec![TransactionResult {
+                coinbase_diff: U256::ZERO,
+                eth_sent_to_coinbase: U256::ZERO,
+                from_address: Address::ZERO,
+                gas_fees: U256::ZERO,
+                gas_price: U256::ZERO,
+                gas_used: 21000,
+                to_address: Some(Address::ZERO),
+                tx_hash: TxHash::ZERO,
+                value: U256::ZERO,
+                execution_time_us: 500,
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn jsonrpc_ok() -> ResponseTemplate {
+        ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": null
+        }))
+    }
+
+    #[tokio::test]
+    async fn test_builder_connector_survives_lagged_receiver() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .respond_with(jsonrpc_ok())
+            .expect(1..)
+            .mount(&mock_server)
+            .await;
+
+        // Create a tiny broadcast channel so it's easy to overflow.
+        let (tx, rx) = broadcast::channel::<MeterBundleResponse>(2);
+
+        // Overflow the buffer before the connector starts reading.
+        // The receiver will get RecvError::Lagged on its first recv().
+        let event = response_with_results();
+        for _ in 0..5 {
+            tx.send(event.clone()).unwrap();
+        }
+
+        // Start the connector with the already-lagged receiver.
+        BuilderConnector::connect(rx, mock_server.uri().parse().unwrap());
+
+        // Give the connector time to hit Lagged and recover.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Send a new message after recovery — this must be forwarded.
+        // send() fails with SendError when there are zero receivers,
+        // which is exactly what happened with the old buggy code: the
+        // connector task exited on Lagged, dropping the only receiver.
+        assert!(
+            tx.send(event).is_ok(),
+            "connector task died — receiver was dropped after Lagged error"
+        );
+
+        // Wait for the RPC call to complete.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // wiremock verifies expect(1..) — at least one call was made,
+        // proving the connector survived the Lagged error.
+    }
+
+    #[tokio::test]
+    async fn test_builder_connector_forwards_metering_data() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST")).respond_with(jsonrpc_ok()).expect(1).mount(&mock_server).await;
+
+        let (tx, rx) = broadcast::channel::<MeterBundleResponse>(16);
+        BuilderConnector::connect(rx, mock_server.uri().parse().unwrap());
+
+        tx.send(response_with_results()).unwrap();
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        // wiremock verifies exactly 1 call was made.
+    }
+
+    #[tokio::test]
+    async fn test_builder_connector_skips_empty_results() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST")).respond_with(jsonrpc_ok()).expect(0).mount(&mock_server).await;
+
+        let (tx, rx) = broadcast::channel::<MeterBundleResponse>(16);
+        BuilderConnector::connect(rx, mock_server.uri().parse().unwrap());
+
+        // Default response has empty results — should be skipped.
+        tx.send(MeterBundleResponse::default()).unwrap();
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        // wiremock verifies 0 calls were made.
+    }
+
+    #[tokio::test]
+    async fn test_builder_connector_shuts_down_on_channel_close() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST")).respond_with(jsonrpc_ok()).expect(1).mount(&mock_server).await;
+
+        let (tx, rx) = broadcast::channel::<MeterBundleResponse>(16);
+        BuilderConnector::connect(rx, mock_server.uri().parse().unwrap());
+
+        // Send one message, then close the channel.
+        tx.send(response_with_results()).unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        drop(tx);
+
+        // The task should exit gracefully without panic.
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
