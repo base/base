@@ -15,13 +15,15 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
+[features]
+local = []
+
 [dependencies]
 # Workspace
 base-proof-host.workspace = true
 alloy-primitives.workspace = true
 base-consensus-registry.workspace = true
 base-proof-tee-nitro = { workspace = true, features = ["host"] }
-base-proof-transport = { workspace = true, features = ["vsock"] }
 
 # CLI
 eyre.workspace = true
@@ -33,6 +35,3 @@ tokio = { workspace = true, features = ["full"] }
 # Tracing
 tracing.workspace = true
 tracing-subscriber.workspace = true
-
-[features]
-local = [ "base-proof-transport/test-utils" ]

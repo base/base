@@ -3,10 +3,6 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256};
 #[cfg(target_os = "linux")]
-use base_proof_preimage::PreimageKey;
-#[cfg(target_os = "linux")]
-use base_proof_primitives::ProofResult;
-#[cfg(target_os = "linux")]
 use base_proof_transport::Frame;
 #[cfg(target_os = "linux")]
 use tokio::time::{Duration, timeout};
@@ -26,6 +22,9 @@ pub use crypto::{Ecdsa, SIGNING_DATA_BASE_LENGTH, Signing};
 
 mod nsm;
 pub use nsm::{NsmRng, NsmSession};
+
+mod protocol;
+pub use protocol::{EnclaveRequest, EnclaveResponse};
 
 mod server;
 pub use server::Server;
@@ -89,11 +88,28 @@ async fn handle_connection(
     mut stream: tokio_vsock::VsockStream,
     server: &Server,
 ) -> eyre::Result<()> {
-    const READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+    /// Deadline for receiving the request frame.
+    ///
+    /// The `Prove` variant includes the full witness preimage bundle which can be
+    /// many megabytes, so this timeout must be long enough for any realistic
+    /// payload to arrive over vsock.
+    const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-    let preimages: Vec<(PreimageKey, Vec<u8>)> =
-        timeout(READ_TIMEOUT, Frame::read(&mut stream)).await??;
-    let result: ProofResult = server.prove(preimages).await?;
-    Frame::write(&mut stream, &result).await?;
+    let request: EnclaveRequest = timeout(REQUEST_READ_TIMEOUT, Frame::read(&mut stream)).await??;
+
+    match request {
+        EnclaveRequest::Prove(preimages) => {
+            let response = match server.prove(preimages).await {
+                Ok(result) => EnclaveResponse::Prove(Box::new(result)),
+                Err(e) => EnclaveResponse::Error(e.to_string()),
+            };
+            Frame::write(&mut stream, &response).await?;
+        }
+        EnclaveRequest::SignerPublicKey => {
+            let key = server.signer_public_key();
+            Frame::write(&mut stream, &EnclaveResponse::SignerPublicKey(key)).await?;
+        }
+    }
+
     Ok(())
 }

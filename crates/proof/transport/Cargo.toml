@@ -1,6 +1,6 @@
 [package]
 name = "base-proof-transport"
-description = "Proof transport abstraction for proof backends"
+description = "Length-prefixed bincode frame codec for proof transport"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,33 +11,13 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
-# Proof
-base-proof-preimage = { workspace = true }
-base-proof-primitives = { workspace = true, features = ["std"] }
-
-# Async
-async-trait = { workspace = true }
-tokio = { workspace = true }
-
 # Error handling
 thiserror = { workspace = true }
 
-# Vsock transport (optional, unix-only)
-tokio-vsock = { workspace = true, optional = true }
+# Frame codec (optional)
 bincode = { workspace = true, optional = true, features = ["serde"] }
 serde = { workspace = true, optional = true }
-
-[dev-dependencies]
-alloy-primitives = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
+tokio = { workspace = true, optional = true }
 
 [features]
-test-utils = []
-frame = [
-	"base-proof-preimage/serde",
-	"base-proof-primitives/serde",
-	"dep:bincode",
-	"dep:serde",
-	"tokio/io-util",
-]
-vsock = [ "dep:tokio-vsock", "frame", "tokio/rt", "tokio/time" ]
+frame = [ "dep:bincode", "dep:serde", "tokio/io-util" ]
