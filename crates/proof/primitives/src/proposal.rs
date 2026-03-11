@@ -1,7 +1,7 @@
 use alloy_primitives::{B256, Bytes, U256};
 
-/// ECDSA signature length (r + s + v).
-pub const SIGNATURE_LENGTH: usize = 65;
+/// ECDSA signature length in bytes (r: 32 + s: 32 + v: 1).
+pub const ECDSA_SIGNATURE_LENGTH: usize = 65;
 
 /// A proposal containing an output root and signature.
 #[derive(Debug, Clone, PartialEq, Eq)]
