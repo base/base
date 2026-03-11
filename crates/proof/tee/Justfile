@@ -25,7 +25,6 @@ nitro-local *args:
         --l2-eth-url "${L2_ETH_URL:-http://localhost:9545}" \
         --l1-beacon-url "${L1_BEACON_URL:-http://localhost:5052}" \
         --l2-chain-id "${L2_CHAIN_ID:-8453}" \
-        --proposer "${PROPOSER:-0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266}" \
         --config-hash "${CONFIG_HASH:-0x0000000000000000000000000000000000000000000000000000000000000000}" \
         --tee-image-hash "${TEE_IMAGE_HASH:-0x0000000000000000000000000000000000000000000000000000000000000000}" \
         --enable-experimental-witness-endpoint \

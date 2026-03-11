@@ -1,5 +1,5 @@
 /// Enclave server — manages keys, attestation, signing, and proof execution.
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_signer_local::PrivateKeySigner;
 use base_alloy_evm::OpEvmFactory;
 use base_proof_client::{BootInfo, Prologue};
@@ -20,8 +20,8 @@ use crate::{
 /// Environment variable for setting the signer key in local mode.
 const SIGNER_KEY_ENV_VAR: &str = "OP_ENCLAVE_SIGNER_KEY";
 
-/// PCR0 length
-const PCR0_LENGTH: usize = 32;
+/// PCR0 is a SHA-384 hash (48 bytes) per the AWS Nitro Enclaves specification.
+const PCR0_LENGTH: usize = 48;
 
 /// The enclave server.
 ///
@@ -33,66 +33,69 @@ pub struct Server {
     pcr0: Vec<u8>,
     /// ECDSA signing key.
     signer_key: PrivateKeySigner,
-    /// The proposer address.
-    proposer: Address,
     /// Per-chain config hash.
     config_hash: B256,
-    /// TEE image hash (from PCR0 or config in local mode).
+    /// TEE image hash (keccak256 of PCR0 in enclave mode, from config in local mode).
     tee_image_hash: B256,
 }
 
 impl Server {
     /// Create a new server instance.
     ///
-    /// Attempts to open an NSM session and verify PCR0 against `config.tee_image_hash`.
-    /// Falls back to local mode if NSM is unavailable.
+    /// In enclave mode (NSM available): reads PCR0, keccak256-hashes it to derive
+    /// `tee_image_hash`, verifies against the configured expected hash, and uses the
+    /// hardware RNG for key generation.
+    ///
+    /// In local mode (no NSM): uses the OS RNG and accepts `config.tee_image_hash` as-is.
     pub fn new(config: &EnclaveConfig) -> Result<Self> {
-        let (mut rng, pcr0) = match NsmSession::open()? {
-            Some(session) => {
-                let pcr0 = session.describe_pcr0()?;
-
-                if pcr0.len() != PCR0_LENGTH {
-                    return Err(NsmError::DescribePcr(format!(
-                        "unexpected PCR0 length {}, expected 32.",
-                        pcr0.len()
-                    ))
-                    .into());
-                }
-                let actual_hash = B256::from_slice(&pcr0);
-                if actual_hash != config.tee_image_hash {
-                    return Err(NitroError::Pcr0Mismatch {
-                        expected: config.tee_image_hash,
-                        actual: actual_hash,
-                    });
-                }
-
-                let rng = NsmRng::new()
-                    .ok_or_else(|| NsmError::SessionOpen("failed to initialize NSM RNG".into()))?;
-                (rng, pcr0)
-            }
-            None => {
+        NsmSession::open()?.map_or_else(
+            || {
                 warn!("running in local mode without NSM");
-                (NsmRng::default(), Vec::new())
-            }
-        };
+                Self::new_local(config)
+            },
+            |session| Self::new_enclave(config, &session),
+        )
+    }
 
+    fn new_enclave(config: &EnclaveConfig, session: &NsmSession) -> Result<Self> {
+        let pcr0 = session.describe_pcr0()?;
+        if pcr0.len() != PCR0_LENGTH {
+            return Err(NsmError::DescribePcr(format!(
+                "unexpected PCR0 length {}, expected {PCR0_LENGTH}",
+                pcr0.len()
+            ))
+            .into());
+        }
+
+        let tee_image_hash = keccak256(&pcr0);
+        if tee_image_hash != config.tee_image_hash {
+            return Err(NitroError::Pcr0Mismatch {
+                expected: config.tee_image_hash,
+                actual: tee_image_hash,
+            });
+        }
+
+        let mut rng = NsmRng::new()
+            .ok_or_else(|| NsmError::SessionOpen("failed to initialize NSM RNG".into()))?;
+        let signer_key = Ecdsa::generate(&mut rng)?;
+
+        Ok(Self { pcr0, signer_key, config_hash: config.config_hash, tee_image_hash })
+    }
+
+    fn new_local(config: &EnclaveConfig) -> Result<Self> {
         let signer_key = match std::env::var(SIGNER_KEY_ENV_VAR) {
             Ok(hex_key) => {
                 info!("using signer key from environment variable");
                 Ecdsa::from_hex(&hex_key)?
             }
-            Err(_) => Ecdsa::generate(&mut rng)?,
+            Err(_) => Ecdsa::generate(&mut NsmRng::default())?,
         };
 
-        let tee_image_hash =
-            if pcr0.is_empty() { config.tee_image_hash } else { B256::from_slice(&pcr0) };
-
         Ok(Self {
-            pcr0,
+            pcr0: Vec::new(),
             signer_key,
-            proposer: config.proposer,
             config_hash: config.config_hash,
-            tee_image_hash,
+            tee_image_hash: config.tee_image_hash,
         })
     }
 
@@ -162,7 +165,7 @@ impl Server {
             let l1_origin_number = U256::from(l2_info.l1_origin.number);
 
             let signing_data = Signing::build_data(
-                self.proposer,
+                self.signer_key.address(),
                 l1_origin_hash,
                 prev_output_root,
                 l2_block_number
@@ -200,7 +203,7 @@ impl Server {
                 proposals[..proposals.len() - 1].iter().map(|p| p.output_root).collect();
 
             let signing_data = Signing::build_data(
-                self.proposer,
+                self.signer_key.address(),
                 last.l1_origin_hash,
                 agreed_l2_output_root,
                 first
@@ -246,7 +249,6 @@ impl Server {
         Ok(Self {
             pcr0: Vec::new(),
             signer_key,
-            proposer: config.proposer,
             config_hash: config.config_hash,
             tee_image_hash: config.tee_image_hash,
         })
@@ -258,12 +260,7 @@ mod tests {
     use super::*;
 
     fn test_config() -> EnclaveConfig {
-        EnclaveConfig {
-            vsock_port: 1234,
-            proposer: Address::ZERO,
-            config_hash: B256::ZERO,
-            tee_image_hash: B256::ZERO,
-        }
+        EnclaveConfig { vsock_port: 1234, config_hash: B256::ZERO, tee_image_hash: B256::ZERO }
     }
 
     #[test]

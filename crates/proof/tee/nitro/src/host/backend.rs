@@ -42,7 +42,7 @@ impl ProverBackend for NitroBackend {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256};
+    use alloy_primitives::B256;
     use base_proof_preimage::{PreimageKey, WitnessOracle};
     use base_proof_primitives::ProverBackend;
 
@@ -50,12 +50,7 @@ mod tests {
     use crate::enclave::{EnclaveConfig, Server};
 
     fn test_config() -> EnclaveConfig {
-        EnclaveConfig {
-            vsock_port: 0,
-            proposer: Address::ZERO,
-            config_hash: B256::ZERO,
-            tee_image_hash: B256::ZERO,
-        }
+        EnclaveConfig { vsock_port: 0, config_hash: B256::ZERO, tee_image_hash: B256::ZERO }
     }
 
     #[tokio::test]
