@@ -20,9 +20,9 @@ mod send_state;
 pub use send_state::SendState;
 
 mod config;
-pub use config::{
-    ConfigError, FeeConfig, GweiParser, TxManagerCli, TxManagerConfig, TxManagerPreset,
-};
+pub use config::{ConfigError, FeeConfig, GweiParser, TxManagerConfig};
+#[cfg(feature = "cli")]
+pub use config::{TxManagerCli, TxManagerPreset};
 
 mod traits;
 pub use traits::{SendHandle, SendResponse, TxManager};

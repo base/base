@@ -105,11 +105,40 @@ For custom error matching beyond the built-in classification, use
 
 ## Configuration
 
-The crate uses a two-layer configuration system: `TxManagerCli` captures CLI
-and environment variable arguments at startup, and `TxManagerConfig` is the
-validated runtime configuration constructed from it.
+The crate uses a two-layer configuration system: `TxManagerConfig` is the
+validated runtime configuration that can be constructed either
+programmatically via `TxManagerConfig::new` (always available) or from CLI
+arguments via `TxManagerConfig::from_cli` (requires the `cli` feature).
+
+### Programmatic construction
+
+`TxManagerConfig::new` takes all parameters directly (fees in wei,
+durations as `Duration`). This path has no dependency on `clap` or
+`humantime`:
+
+```rust,ignore
+use std::time::Duration;
+use base_tx_manager::TxManagerConfig;
+
+let config = TxManagerConfig::new(
+    10,                          // num_confirmations
+    3,                           // safe_abort_nonce_too_low_count
+    5,                           // fee_limit_multiplier
+    100_000_000_000,             // fee_limit_threshold (100 gwei in wei)
+    0,                           // min_tip_cap
+    0,                           // min_basefee
+    Duration::from_secs(10),     // network_timeout
+    Duration::from_secs(48),     // resubmission_timeout
+    Duration::from_secs(12),     // receipt_query_interval
+    Duration::ZERO,              // tx_send_timeout (0 = disabled)
+    Duration::from_secs(120),    // tx_not_in_mempool_timeout
+    chain_id,
+)?;
+```
 
 ### CLI parsing and validation
+
+*Requires the `cli` feature (enabled by default).*
 
 `TxManagerCli` is a `clap::Parser` struct designed to be `#[command(flatten)]`-ed
 into parent CLI structs. All fields use `BASE_TX_MANAGER_` environment variable
@@ -127,6 +156,8 @@ let config = TxManagerConfig::from_cli(cli, chain_id)?;
 ```
 
 ### Presets
+
+*Requires the `cli` feature (enabled by default).*
 
 Role-specific defaults are available via `TxManagerPreset`. Batcher uses 10
 confirmations; challenger uses 3:
@@ -162,6 +193,14 @@ Add the dependency to your `Cargo.toml`:
 ```toml
 [dependencies]
 base-tx-manager = { git = "https://github.com/base/base" }
+```
+
+For consumers that only need `TxManagerConfig` constructed programmatically
+(without `clap`/`humantime`):
+
+```toml
+[dependencies]
+base-tx-manager = { git = "https://github.com/base/base", default-features = false }
 ```
 
 ```rust,ignore

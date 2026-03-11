@@ -12,17 +12,21 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-humantime.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 alloy-primitives.workspace = true
 tokio = { workspace = true, features = ["sync"] }
+humantime = { workspace = true, optional = true }
 alloy-eips = { workspace = true, features = ["std"] }
-clap = { workspace = true, features = ["derive", "env"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+clap = { workspace = true, optional = true, features = ["derive", "env"] }
 
 [dev-dependencies]
 rstest.workspace = true
 proptest.workspace = true
 alloy-consensus.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
+
+[features]
+default = [ "cli" ]
+cli = [ "dep:clap", "dep:humantime" ]

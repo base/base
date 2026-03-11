@@ -322,8 +322,11 @@ mod tests {
         #[case] threshold: u128,
         #[case] should_pass: bool,
     ) {
-        let config =
-            FeeConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: threshold, ..Default::default() };
+        let config = FeeConfig {
+            fee_limit_multiplier: multiplier,
+            fee_limit_threshold: threshold,
+            ..Default::default()
+        };
         let result = FeeCalculator::check_limits(fee, suggested, &config);
         assert_eq!(result.is_ok(), should_pass);
         if !should_pass {
