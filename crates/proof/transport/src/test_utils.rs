@@ -11,7 +11,7 @@ pub struct NativeTransport<F> {
 
 impl<F> NativeTransport<F>
 where
-    F: Fn(&[(PreimageKey, Vec<u8>)]) -> ProofResult + Send + Sync,
+    F: Fn(&[(PreimageKey, Vec<u8>)]) -> TransportResult<ProofResult> + Send + Sync,
 {
     /// Create a new transport that delegates `prove` calls to `handler`.
     pub const fn new(handler: F) -> Self {
@@ -28,9 +28,9 @@ impl<F> std::fmt::Debug for NativeTransport<F> {
 #[async_trait]
 impl<F> ProofTransport for NativeTransport<F>
 where
-    F: Fn(&[(PreimageKey, Vec<u8>)]) -> ProofResult + Send + Sync,
+    F: Fn(&[(PreimageKey, Vec<u8>)]) -> TransportResult<ProofResult> + Send + Sync,
 {
     async fn prove(&self, preimages: &[(PreimageKey, Vec<u8>)]) -> TransportResult<ProofResult> {
-        Ok((self.handler)(preimages))
+        (self.handler)(preimages)
     }
 }

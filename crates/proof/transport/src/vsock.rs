@@ -24,7 +24,7 @@ pub struct VsockTransport {
 
 impl VsockTransport {
     /// Create a transport targeting the given vsock endpoint.
-    pub fn new(cid: u32, port: u32) -> Self {
+    pub const fn new(cid: u32, port: u32) -> Self {
         Self { cid, port }
     }
 }

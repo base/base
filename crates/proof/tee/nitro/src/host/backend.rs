@@ -73,7 +73,7 @@ mod tests {
         let expected = test_result();
         let expected_clone = expected.clone();
 
-        let transport = NativeTransport::new(move |_preimages| expected_clone.clone());
+        let transport = NativeTransport::new(move |_preimages| Ok(expected_clone.clone()));
         let backend = NitroBackend::new(Arc::new(transport));
 
         let oracle = backend.create_oracle();
