@@ -18,7 +18,7 @@ pub const PROOF_JOURNAL_BASE_LENGTH: usize = 244;
 ///   || startingL2Block(32) || outputRoot(32) || endingL2Block(32)
 ///   || intermediateRoots(32*N) || configHash(32) || imageHash(32)
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProofJournal {
     /// The proposer address.
     pub proposer: Address,
