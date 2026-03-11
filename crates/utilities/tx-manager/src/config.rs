@@ -124,6 +124,7 @@ impl TxManagerConfig {
     /// # Errors
     ///
     /// Returns [`ConfigError::OutOfRange`] if any required field is zero:
+    /// - `chain_id` must be >= 1
     /// - `num_confirmations` must be >= 1
     /// - `safe_abort_nonce_too_low_count` must be >= 1
     /// - `fee_limit_multiplier` must be >= 1
@@ -131,6 +132,13 @@ impl TxManagerConfig {
     /// - `resubmission_timeout` must be > 0
     /// - `receipt_query_interval` must be > 0
     pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.chain_id == 0 {
+            return Err(ConfigError::OutOfRange {
+                field: "chain_id",
+                constraint: ">= 1",
+                value: "0".to_string(),
+            });
+        }
         if self.num_confirmations == 0 {
             return Err(ConfigError::OutOfRange {
                 field: "num_confirmations",
@@ -184,6 +192,7 @@ impl TxManagerConfig {
     /// # Errors
     ///
     /// Returns [`ConfigError`] if any validation check fails:
+    /// - `chain_id` must be >= 1
     /// - `num_confirmations` must be >= 1
     /// - `safe_abort_nonce_too_low_count` must be >= 1
     /// - `fee_limit_multiplier` must be >= 1
@@ -407,6 +416,17 @@ mod tests {
             assert!(
                 matches!(&err, ConfigError::OutOfRange { field, .. } if *field == expected_field),
                 "expected OutOfRange for {expected_field}, got: {err}"
+            );
+        }
+
+        #[test]
+        fn zero_chain_id_rejected() {
+            let cli = default_cli();
+            let result = TxManagerConfig::from_cli(cli, 0);
+            let err = result.expect_err("expected OutOfRange error");
+            assert!(
+                matches!(&err, ConfigError::OutOfRange { field: "chain_id", .. }),
+                "expected OutOfRange for chain_id, got: {err}"
             );
         }
 
