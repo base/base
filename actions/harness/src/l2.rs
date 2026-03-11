@@ -376,6 +376,9 @@ fn compute_state_root(db: &InMemoryDB) -> B256 {
 
 impl L2BlockProvider for L2BlockBuilder {
     fn next_block(&mut self) -> Option<OpBlock> {
-        self.build_next_block().ok()
+        Some(
+            self.build_next_block()
+                .unwrap_or_else(|e| panic!("L2BlockBuilder::next_block failed: {e}")),
+        )
     }
 }

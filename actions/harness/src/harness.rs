@@ -53,6 +53,35 @@ impl ActionTestHarness {
         self.l1.latest_number()
     }
 
+    /// Mine one L1 block and immediately push it to the given shared chain.
+    ///
+    /// Equivalent to calling `self.l1.mine_block()` followed by
+    /// `chain.push(self.l1.tip().clone())`. Returns the [`BlockInfo`] of the
+    /// newly mined block for use in pipeline signals.
+    pub fn mine_and_push(&mut self, chain: &SharedL1Chain) -> BlockInfo {
+        self.l1.mine_block();
+        chain.push(self.l1.tip().clone());
+        block_info_from(self.l1.tip())
+    }
+
+    /// Return the L2 genesis [`L2BlockInfo`] anchored to the L1 genesis block.
+    ///
+    /// Convenience method eliminating the repeated 10-line construction used in
+    /// reorg reset tests.
+    pub fn l2_genesis(&self) -> L2BlockInfo {
+        let genesis_l1 = block_info_from(self.l1.chain().first().expect("genesis always present"));
+        L2BlockInfo {
+            block_info: BlockInfo {
+                hash: self.rollup_config.genesis.l2.hash,
+                number: self.rollup_config.genesis.l2.number,
+                parent_hash: Default::default(),
+                timestamp: self.rollup_config.genesis.l2_time,
+            },
+            l1_origin: BlockNumHash { number: genesis_l1.number, hash: genesis_l1.hash },
+            seq_num: 0,
+        }
+    }
+
     /// Create a [`Batcher`] backed by the supplied L2 block source.
     ///
     /// Unlike the previous `create_batcher` that consumed an internal

@@ -66,8 +66,10 @@ impl ChannelDriver {
     ///
     /// A fresh [`ChannelOut`] is created for each flush so channels do not
     /// span across calls. All pending batches are drained, compressed together
-    /// into a single channel, and returned as a `Vec<Frame>`. After a
-    /// successful flush the driver is empty and ready for the next round.
+    /// into a single channel, and returned as a `Vec<Frame>`. When
+    /// `max_frame_size` is smaller than the compressed output, the channel is
+    /// split across multiple frames. After a successful flush the driver is
+    /// empty and ready for the next round.
     ///
     /// # Errors
     ///
@@ -92,21 +94,24 @@ impl ChannelDriver {
         channel_out.flush()?;
         channel_out.close();
 
-        let frame = channel_out.output_frame(self.config.max_frame_size)?;
+        let mut frames = Vec::new();
+        while channel_out.ready_bytes() > 0 {
+            let frame = channel_out.output_frame(self.config.max_frame_size)?;
+            debug!(
+                channel_id = ?frame.id,
+                frame_number = frame.number,
+                is_last = frame.is_last,
+                data_len = frame.data.len(),
+                "flushed channel frame"
+            );
+            frames.push(frame);
+        }
 
         // Clear pending only after all operations succeed so a failed flush
         // leaves the queue intact for retry or inspection.
         self.pending.clear();
 
-        debug!(
-            channel_id = ?frame.id,
-            frame_number = frame.number,
-            is_last = frame.is_last,
-            data_len = frame.data.len(),
-            "flushed channel to frame"
-        );
-
-        Ok(vec![frame])
+        Ok(frames)
     }
 }
 

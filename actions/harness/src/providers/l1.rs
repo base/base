@@ -122,6 +122,9 @@ impl ChainProvider for ActionL1ChainProvider {
         &mut self,
         hash: B256,
     ) -> Result<(BlockInfo, Vec<alloy_consensus::TxEnvelope>), Self::Error> {
+        // The derivation pipeline reads batcher data via `DataAvailabilityProvider::next`,
+        // not via this method. Returning an empty transaction list is correct for the
+        // current action-test use case; returning real batcher txs here is not needed.
         self.chain.with(|blocks| {
             blocks
                 .iter()
