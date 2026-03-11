@@ -15,7 +15,7 @@
 /// `BASE_CHALLENGER_TX_MANAGER_NUM_CONFIRMATIONS`.
 ///
 /// The macro also generates:
-/// - `impl Default for TxManagerCli` with values matching the clap defaults
+/// - `impl Default for TxManagerCli` derived from clap's default values
 /// - `impl TryFrom<TxManagerCli> for TxManagerConfig` that parses gwei fields
 ///   and validates the result
 ///
@@ -149,19 +149,7 @@ macro_rules! define_tx_manager_cli {
 
         impl Default for TxManagerCli {
             fn default() -> Self {
-                Self {
-                    num_confirmations: 10,
-                    safe_abort_nonce_too_low_count: 3,
-                    fee_limit_multiplier: 5,
-                    fee_limit_threshold_gwei: "100".to_string(),
-                    min_tip_cap_gwei: "0".to_string(),
-                    min_basefee_gwei: "0".to_string(),
-                    network_timeout: ::std::time::Duration::from_secs(10),
-                    resubmission_timeout: ::std::time::Duration::from_secs(48),
-                    receipt_query_interval: ::std::time::Duration::from_secs(12),
-                    tx_send_timeout: ::std::time::Duration::ZERO,
-                    tx_not_in_mempool_timeout: ::std::time::Duration::from_secs(120),
-                }
+                Self::try_parse_from(["default"]).expect("clap default values are valid")
             }
         }
 
