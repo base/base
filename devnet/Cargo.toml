@@ -11,6 +11,9 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+host-port-exposure = []
+
 [dependencies]
 # workspace
 base-txpool-rpc.workspace = true
@@ -75,7 +78,7 @@ tempfile.workspace = true
 tracing = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
-testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
+testcontainers = { workspace = true, features = ["blocking"] }
 
 [dev-dependencies]
 # alloy

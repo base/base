@@ -23,7 +23,10 @@
 
 #[cfg(target_os = "macos")]
 use testcontainers::core::Host;
-use testcontainers::{ContainerRequest, Image, ImageExt};
+#[cfg(all(not(target_os = "macos"), not(feature = "host-port-exposure")))]
+use testcontainers::{ContainerRequest, Image};
+#[cfg(any(target_os = "macos", feature = "host-port-exposure"))]
+use testcontainers::{ContainerRequest, Image, ImageExt as _};
 
 /// Returns the address containers should use to reach the host machine.
 ///
@@ -58,11 +61,21 @@ pub fn with_host_port_if_needed<I: Image>(
 /// Configures container for host connectivity.
 ///
 /// - On macOS: Adds `host.docker.internal` -> `host-gateway` mapping
-/// - On Linux: Calls `with_exposed_host_port()` to enable SSHD tunnel
+/// - On Linux with `host-port-exposure`: Calls `with_exposed_host_port()` to enable SSHD tunnel
+/// - On Linux without the feature: no-op (enable `devnet/host-port-exposure` for CI)
 #[cfg(not(target_os = "macos"))]
+#[allow(clippy::missing_const_for_fn)] // Cannot be const when `host-port-exposure` feature is enabled
 pub fn with_host_port_if_needed<I: Image>(
     container: ContainerRequest<I>,
     port: u16,
 ) -> ContainerRequest<I> {
-    container.with_exposed_host_port(port)
+    #[cfg(feature = "host-port-exposure")]
+    {
+        container.with_exposed_host_port(port)
+    }
+    #[cfg(not(feature = "host-port-exposure"))]
+    {
+        let _ = port;
+        container
+    }
 }
