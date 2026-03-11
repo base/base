@@ -1,0 +1,37 @@
+[package]
+name = "base-proof-tee-registrar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Alloy
+alloy-signer.workspace = true
+alloy-primitives.workspace = true
+alloy-signer-local.workspace = true
+
+# Async
+tokio.workspace = true
+async-trait.workspace = true
+
+# CLI / Config
+url.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+
+# Error
+eyre.workspace = true
+thiserror.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Misc
+hex.workspace = true
+bytes.workspace = true
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
