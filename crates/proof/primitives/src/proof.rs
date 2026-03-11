@@ -16,6 +16,7 @@ use crate::Proposal;
 ///
 /// - **`Zk`**: The ZK prover produces an opaque proof blob that the on-chain
 ///   verifier checks against a committed image ID.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ProofResult {
