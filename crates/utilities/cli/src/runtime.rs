@@ -29,33 +29,17 @@ impl RuntimeManager {
     /// to begin cooperative shutdown.
     pub fn install_signal_handler(cancel: CancellationToken) -> JoinHandle<()> {
         tokio::spawn(async move {
-            #[cfg(unix)]
-            {
-                use tokio::signal::unix::{SignalKind, signal};
-                let mut sigterm =
-                    signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
-                tokio::select! {
-                    result = tokio::signal::ctrl_c() => {
-                        result.expect("failed to listen for SIGINT");
-                        info!(signal = "SIGINT", "received shutdown signal");
-                    }
-                    _ = sigterm.recv() => {
-                        info!(signal = "SIGTERM", "received shutdown signal");
-                    }
-                }
-            }
-
-            #[cfg(not(unix))]
-            {
-                tokio::signal::ctrl_c().await.expect("failed to listen for SIGINT");
-                info!(signal = "SIGINT", "received shutdown signal");
-            }
+            let signal = Self::wait_for_shutdown_signal().await;
+            info!(signal, "received shutdown signal");
 
             cancel.cancel();
         })
     }
 
-    /// Run a fallible future until ctrl-c is pressed.
+    /// Run a fallible future until a shutdown signal is received.
+    ///
+    /// On unix, this listens for both SIGINT and SIGTERM. On other platforms,
+    /// only SIGINT (Ctrl-C) is handled.
     pub fn run_until_ctrl_c<F>(fut: F) -> eyre::Result<()>
     where
         F: Future<Output = eyre::Result<()>>,
@@ -64,12 +48,36 @@ impl RuntimeManager {
         rt.block_on(async move {
             tokio::select! {
                 biased;
-                _ = tokio::signal::ctrl_c() => {
-                    info!(target: "cli", "Received Ctrl-C, shutting down...");
+                signal = Self::wait_for_shutdown_signal() => {
+                    info!(target: "cli", signal, "Received shutdown signal, shutting down...");
                     Ok(())
                 }
                 res = fut => res,
             }
         })
+    }
+
+    async fn wait_for_shutdown_signal() -> &'static str {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+
+            tokio::select! {
+                result = tokio::signal::ctrl_c() => {
+                    result.expect("failed to listen for SIGINT");
+                    "SIGINT"
+                }
+                _ = sigterm.recv() => "SIGTERM",
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            tokio::signal::ctrl_c().await.expect("failed to listen for SIGINT");
+            "SIGINT"
+        }
     }
 }
