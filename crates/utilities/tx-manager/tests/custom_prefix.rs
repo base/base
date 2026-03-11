@@ -48,6 +48,9 @@ fn env_vars_use_custom_prefix() {
     }
 }
 
+/// NOTE: This test exercises clap's `default_value` + `env` integration.
+/// It will fail if any `CUSTOM_PREFIX_*` env vars are set in the process
+/// environment, since clap reads env vars even with `parse_from`.
 #[test]
 fn defaults_are_unchanged() {
     let cli = TestCli::parse_from(["test"]);
