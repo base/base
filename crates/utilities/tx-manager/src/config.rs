@@ -3,8 +3,7 @@
 //! [`TxManagerConfig`] is the validated runtime configuration for the
 //! transaction manager. All fields are `pub` for direct construction.
 //! Use [`TxManagerConfig::validate`] to check invariants, or convert
-//! from `TxManagerCli` via `TryFrom` (requires the `cli` feature)
-//! which parses CLI/env arguments and validates automatically.
+//! from `TxManagerCli` via `TryFrom` which validates automatically.
 
 use std::time::Duration;
 
@@ -87,7 +86,7 @@ impl GweiParser {
 ///
 /// All fields are public for direct construction. Use [`Self::validate`]
 /// to check invariants, or convert from `TxManagerCli` via `TryFrom`
-/// (requires the `cli` feature) which validates automatically.
+/// which validates automatically.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TxManagerConfig {
     /// Number of block confirmations to wait.

@@ -42,7 +42,7 @@ Transaction lifecycle management for Base onchain components.
   and generates `Default` and `TryFrom<TxManagerCli> for TxManagerConfig` impls.
 - **`TxManagerConfig`**: Validated runtime configuration with public fields. Can be
   constructed directly and validated via `validate()`, or converted from `TxManagerCli`
-  via `TryFrom` (requires the `cli` feature).
+  via `TryFrom`.
 - **`ConfigError`**: Validation error enum returned by the `TryFrom<TxManagerCli>`
   conversion when configuration values are out of range or gwei strings are invalid.
 - **`GweiParser`**: Unit struct with `parse` method for converting decimal gwei strings
@@ -102,12 +102,9 @@ For custom error matching beyond the built-in classification, use
 `TxManagerConfig` is the validated runtime configuration. All fields are
 public, so you can construct it directly and call `validate()` to check
 invariants. Alternatively, convert from `TxManagerCli` via `TryFrom`
-(requires the `cli` feature, enabled by default) which parses CLI/env
-arguments and validates automatically.
+which parses CLI/env arguments and validates automatically.
 
 ### CLI parsing and validation
-
-*Requires the `cli` feature (enabled by default).*
 
 `TxManagerCli` is a `clap::Parser` struct designed to be `#[command(flatten)]`-ed
 into parent CLI structs. All fields use `BASE_TX_MANAGER_` environment variable
@@ -171,14 +168,6 @@ Add the dependency to your `Cargo.toml`:
 ```toml
 [dependencies]
 base-tx-manager = { git = "https://github.com/base/base" }
-```
-
-For consumers that only need the core types without the CLI constructor
-(disables `clap`/`humantime` dependencies):
-
-```toml
-[dependencies]
-base-tx-manager = { git = "https://github.com/base/base", default-features = false }
 ```
 
 ```rust,ignore

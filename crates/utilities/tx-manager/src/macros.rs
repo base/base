@@ -41,8 +41,6 @@ macro_rules! define_tx_manager_cli {
         /// Designed to be `#[command(flatten)]`-ed into parent CLI structs
         /// (proposer, challenger, batcher binaries). All fields use environment
         /// variable fallbacks with the configured prefix.
-        ///
-        /// Requires the `cli` feature.
         #[derive(Debug, Clone, ::clap::Parser, ::serde::Serialize, ::serde::Deserialize)]
         #[command(next_help_heading = "Tx Manager")]
         pub struct TxManagerCli {
