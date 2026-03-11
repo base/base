@@ -84,19 +84,14 @@ impl EnclaveApiServer for NitroSignerRpc {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, B256};
+    use alloy_primitives::B256;
     use base_proof_primitives::EnclaveApiServer;
 
     use super::*;
     use crate::enclave::{EnclaveConfig, Server as EnclaveServer};
 
     fn test_config() -> EnclaveConfig {
-        EnclaveConfig {
-            vsock_port: 0,
-            proposer: Address::ZERO,
-            config_hash: B256::ZERO,
-            tee_image_hash: B256::ZERO,
-        }
+        EnclaveConfig { vsock_port: 0, config_hash: B256::ZERO, tee_image_hash: B256::ZERO }
     }
 
     #[tokio::test]

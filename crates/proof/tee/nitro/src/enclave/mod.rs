@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::B256;
 #[cfg(target_os = "linux")]
 use base_proof_transport::Frame;
 #[cfg(target_os = "linux")]
@@ -34,11 +34,9 @@ pub use server::Server;
 pub struct EnclaveConfig {
     /// Vsock port to listen on.
     pub vsock_port: u32,
-    /// The proposer address (set at deploy time).
-    pub proposer: Address,
     /// Per-chain configuration hash.
     pub config_hash: B256,
-    /// Expected PCR0 measurement. Verified against NSM at startup.
+    /// Expected TEE image hash. In enclave mode, verified as keccak256(PCR0) against NSM at startup.
     pub tee_image_hash: B256,
 }
 
