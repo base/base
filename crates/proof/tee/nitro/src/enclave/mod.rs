@@ -3,11 +3,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256};
 #[cfg(target_os = "linux")]
-use base_proof_preimage::PreimageKey;
-#[cfg(target_os = "linux")]
-use base_proof_primitives::ProofResult;
-#[cfg(target_os = "linux")]
-use base_proof_transport::Frame;
+use base_proof_transport::{EnclaveRequest, EnclaveResponse, Frame};
 #[cfg(target_os = "linux")]
 use tokio::time::{Duration, timeout};
 #[cfg(target_os = "linux")]
@@ -91,9 +87,19 @@ async fn handle_connection(
 ) -> eyre::Result<()> {
     const READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-    let preimages: Vec<(PreimageKey, Vec<u8>)> =
+    let request: EnclaveRequest =
         timeout(READ_TIMEOUT, Frame::read(&mut stream)).await??;
-    let result: ProofResult = server.prove(preimages).await?;
-    Frame::write(&mut stream, &result).await?;
+
+    match request {
+        EnclaveRequest::Prove(preimages) => {
+            let result = server.prove(preimages).await?;
+            Frame::write(&mut stream, &EnclaveResponse::Prove(Box::new(result))).await?;
+        }
+        EnclaveRequest::SignerPublicKey => {
+            let key = server.signer_public_key();
+            Frame::write(&mut stream, &EnclaveResponse::SignerPublicKey(key)).await?;
+        }
+    }
+
     Ok(())
 }

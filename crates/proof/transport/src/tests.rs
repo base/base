@@ -2,7 +2,7 @@ use alloy_primitives::{Bytes, U256};
 use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_proof_primitives::{ProofClaim, ProofEvidence, ProofResult, Proposal};
 
-use crate::{ProofTransport, test_utils::NativeTransport};
+use crate::{ProofTransport, TransportError, test_utils::NativeTransport};
 
 fn test_proposal() -> Proposal {
     Proposal {
@@ -52,4 +52,11 @@ async fn multiple_proves() {
         let result = transport.prove(&[]).await.unwrap();
         assert_eq!(result.claim.aggregate_proposal.l2_block_number, U256::from(42));
     }
+}
+
+#[tokio::test]
+async fn signer_public_key_unsupported_by_default() {
+    let transport = NativeTransport::new(|_| Ok(test_result()));
+    let result = transport.signer_public_key().await;
+    assert!(matches!(result, Err(TransportError::Unsupported(_))));
 }

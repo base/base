@@ -18,4 +18,12 @@ pub type TransportResult<T> = Result<T, TransportError>;
 pub trait ProofTransport: Send + Sync {
     /// Send preimages to the prover and return the proof result.
     async fn prove(&self, preimages: &[(PreimageKey, Vec<u8>)]) -> TransportResult<ProofResult>;
+
+    /// Return the 65-byte uncompressed ECDSA public key of the enclave signer.
+    ///
+    /// Returns [`TransportError::Unsupported`] by default. Override in transports
+    /// that support out-of-band signer queries (e.g. [`VsockTransport`]).
+    async fn signer_public_key(&self) -> TransportResult<Vec<u8>> {
+        Err(TransportError::Unsupported("signer_public_key".into()))
+    }
 }

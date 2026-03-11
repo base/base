@@ -11,6 +11,11 @@ mod frame;
 #[cfg(feature = "frame")]
 pub use frame::Frame;
 
+#[cfg(feature = "frame")]
+mod message;
+#[cfg(feature = "frame")]
+pub use message::{EnclaveRequest, EnclaveResponse};
+
 #[cfg(feature = "vsock")]
 mod vsock;
 #[cfg(feature = "vsock")]
