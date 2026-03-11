@@ -125,18 +125,6 @@ impl Default for FeeConfig {
     }
 }
 
-// ── TxManagerPreset ─────────────────────────────────────────────────────
-
-/// Preset default profiles for different transaction manager roles.
-#[cfg(feature = "cli")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TxManagerPreset {
-    /// Batcher role: higher confirmation count for finality.
-    Batcher,
-    /// Challenger role: lower confirmation count for faster response.
-    Challenger,
-}
-
 // ── HotConfig ───────────────────────────────────────────────────────────
 
 /// Hot-reloadable fee configuration fields.
@@ -930,37 +918,6 @@ mod tests {
         #[case::tx_not_in_mempool_timeout(TxManagerCli { tx_not_in_mempool_timeout: Duration::ZERO, ..default_cli() })]
         fn zero_optional_timeout_allowed(#[case] cli: TxManagerCli) {
             assert!(TxManagerConfig::from_cli(cli, 1).is_ok());
-        }
-
-        // ── Preset tests ────────────────────────────────────────────
-
-        #[test]
-        fn batcher_preset_defaults() {
-            let cli = TxManagerCli::with_preset(TxManagerPreset::Batcher);
-            assert_eq!(cli.num_confirmations, 10);
-            assert_eq!(cli.fee_limit_multiplier, 5);
-            assert_eq!(cli.network_timeout, Duration::from_secs(10));
-            assert_eq!(cli.resubmission_timeout, Duration::from_secs(48));
-        }
-
-        #[test]
-        fn challenger_preset_defaults() {
-            let cli = TxManagerCli::with_preset(TxManagerPreset::Challenger);
-            assert_eq!(cli.num_confirmations, 3);
-            assert_eq!(cli.fee_limit_multiplier, 5);
-            assert_eq!(cli.network_timeout, Duration::from_secs(10));
-            assert_eq!(cli.resubmission_timeout, Duration::from_secs(48));
-        }
-
-        #[test]
-        fn challenger_preset_roundtrip_through_from_cli() {
-            let cli = TxManagerCli::with_preset(TxManagerPreset::Challenger);
-            let config = TxManagerConfig::from_cli(cli, 8453).unwrap();
-            assert_eq!(config.num_confirmations(), 3);
-            assert_eq!(config.chain_id(), 8453);
-            assert_eq!(config.fee_config().fee_limit_multiplier, 5);
-            assert_eq!(config.network_timeout(), Duration::from_secs(10));
-            assert_eq!(config.resubmission_timeout(), Duration::from_secs(48));
         }
     }
 }

@@ -14,8 +14,7 @@
 /// `"BASE_CHALLENGER_TX_MANAGER_"` the num-confirmations field reads from
 /// `BASE_CHALLENGER_TX_MANAGER_NUM_CONFIRMATIONS`.
 ///
-/// Also generates `base_defaults()`, `with_preset(TxManagerPreset)`, and
-/// `into_params(chain_id) -> Result<TxManagerParams, ConfigError>` methods.
+/// Also generates an `into_params(chain_id) -> Result<TxManagerParams, ConfigError>` method.
 #[rustfmt::skip]
 #[macro_export]
 macro_rules! define_tx_manager_cli {
@@ -132,29 +131,6 @@ macro_rules! define_tx_manager_cli {
         }
 
         impl TxManagerCli {
-            /// Shared defaults used by all presets. Individual presets override
-            /// only the fields that differ (e.g. `num_confirmations`).
-            fn base_defaults() -> Self {
-                <Self as ::clap::Parser>::try_parse_from(["base"])
-                    .expect("hardcoded defaults are valid")
-            }
-
-            /// Returns a [`TxManagerCli`] populated with preset-appropriate defaults.
-            ///
-            /// The returned struct can be overridden by actual CLI arguments or
-            /// environment variables when flattened into a parent parser.
-            #[must_use]
-            pub fn with_preset(preset: $crate::TxManagerPreset) -> Self {
-                let mut cli = Self::base_defaults();
-                match preset {
-                    $crate::TxManagerPreset::Batcher => cli,
-                    $crate::TxManagerPreset::Challenger => {
-                        cli.num_confirmations = 3;
-                        cli
-                    }
-                }
-            }
-
             /// Converts CLI arguments into validated [`TxManagerParams`],
             /// parsing gwei strings to wei.
             ///

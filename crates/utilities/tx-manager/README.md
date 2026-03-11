@@ -38,8 +38,7 @@ Transaction lifecycle management for Base onchain components.
   pre-publish nonce-too-low, threshold nonce-too-low, and mempool deadline expiry.
 - **`TxManagerCli`**: Clap-based CLI argument struct with environment variable fallbacks
   (prefix `BASE_TX_MANAGER_`). Captures all tunable tx-manager parameters and is designed
-  to be `#[command(flatten)]`-ed into parent CLI structs. Use `TxManagerCli::with_preset`
-  to get role-specific defaults (batcher or challenger).
+  to be `#[command(flatten)]`-ed into parent CLI structs.
 - **`TxManagerConfig`**: Validated runtime configuration constructed from `TxManagerCli`
   via `TxManagerConfig::from_cli(cli, chain_id)`. Immutable fields (confirmations,
   timeouts, chain ID) are set once; fee-related fields (`fee_limit_multiplier`,
@@ -49,8 +48,6 @@ Transaction lifecycle management for Base onchain components.
   `TxManagerConfig` for deterministic fee calculations in `FeeCalculator::check_limits`.
 - **`ConfigError`**: Validation error enum returned by `TxManagerConfig::from_cli` when
   configuration values are out of range or gwei strings are invalid.
-- **`TxManagerPreset`**: Enum for batcher/challenger role defaults. Batcher uses 10
-  confirmations; challenger uses 3.
 - **`GweiParser`**: Unit struct with `parse` method for converting decimal gwei strings
   to `u128` wei via `alloy_primitives::utils::parse_units`.
 - **`TxManager`**: Trait defining the public API — `send` (blocking), `send_async` (returns
@@ -153,21 +150,6 @@ let cli = TxManagerCli::try_parse().unwrap();
 // Validate and build the runtime config. Returns ConfigError on invalid
 // values (zero confirmations, zero timeouts, invalid gwei strings, etc.).
 let config = TxManagerConfig::from_cli(cli, chain_id)?;
-```
-
-### Presets
-
-*Requires the `cli` feature (enabled by default).*
-
-Role-specific defaults are available via `TxManagerPreset`. Batcher uses 10
-confirmations; challenger uses 3:
-
-```rust,ignore
-use base_tx_manager::{TxManagerCli, TxManagerConfig, TxManagerPreset};
-
-let cli = TxManagerCli::with_preset(TxManagerPreset::Challenger);
-let config = TxManagerConfig::from_cli(cli, chain_id)?;
-assert_eq!(config.num_confirmations(), 3);
 ```
 
 ### Custom env var prefix

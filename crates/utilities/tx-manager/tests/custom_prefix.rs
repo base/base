@@ -74,14 +74,3 @@ fn into_params_works() {
     assert_eq!(params.min_tip_cap, 0);
     assert_eq!(params.min_basefee, 0);
 }
-
-#[test]
-fn with_preset_works() {
-    use base_tx_manager::TxManagerPreset;
-
-    let batcher = TxManagerCli::with_preset(TxManagerPreset::Batcher);
-    assert_eq!(batcher.num_confirmations, 10);
-
-    let challenger = TxManagerCli::with_preset(TxManagerPreset::Challenger);
-    assert_eq!(challenger.num_confirmations, 3);
-}
