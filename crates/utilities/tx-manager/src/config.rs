@@ -7,6 +7,7 @@
 
 use std::time::Duration;
 
+use alloy_primitives::utils::{UnitsError, parse_units};
 use clap::Parser;
 use parking_lot::RwLock;
 use thiserror::Error;
@@ -27,61 +28,46 @@ pub enum ConfigError {
         value: String,
     },
 
-    /// A gwei value failed validation (negative, `NaN`, or infinity).
-    #[error("invalid gwei value for {field}: {reason}")]
+    /// A gwei string could not be parsed or represents an invalid value.
+    #[error("invalid gwei value for {field}: {source}")]
     InvalidGwei {
         /// The field name that contains the invalid gwei value.
         field: &'static str,
-        /// Human-readable reason the value is invalid.
-        reason: String,
+        /// The underlying parsing error.
+        source: UnitsError,
     },
 }
 
-// ── GweiConversion ──────────────────────────────────────────────────────
+// ── GweiParser ─────────────────────────────────────────────────────────
 
-/// Converts gwei (f64) values to wei (u128).
+/// Parses gwei decimal strings to wei (`u128`) via
+/// [`alloy_primitives::utils::parse_units`].
 ///
 /// Placed on a unit struct per project convention (prefer methods on types
 /// over bare functions).
 #[derive(Debug)]
-pub struct GweiConversion;
+pub struct GweiParser;
 
-impl GweiConversion {
-    /// Number of wei per gwei.
-    const WEI_PER_GWEI: f64 = 1_000_000_000.0;
-
-    /// Converts a gwei value to wei.
+impl GweiParser {
+    /// Parses a gwei decimal string to wei (`u128`).
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::InvalidGwei`] if the value is negative, `NaN`,
-    /// infinite, or so large that the wei result would overflow `u128`.
-    pub fn gwei_to_wei(gwei: f64, field: &'static str) -> Result<u128, ConfigError> {
-        if gwei.is_nan() {
-            return Err(ConfigError::InvalidGwei { field, reason: "value is NaN".to_string() });
-        }
-        if gwei.is_infinite() {
+    /// Returns [`ConfigError::InvalidGwei`] if the string is not a valid
+    /// decimal number, represents a negative value, or overflows `u128`.
+    pub fn parse(gwei: &str, field: &'static str) -> Result<u128, ConfigError> {
+        let parsed =
+            parse_units(gwei, "gwei").map_err(|e| ConfigError::InvalidGwei { field, source: e })?;
+        if parsed.is_negative() {
             return Err(ConfigError::InvalidGwei {
                 field,
-                reason: "value is infinite".to_string(),
+                source: UnitsError::InvalidUnit(format!("negative value: {gwei}")),
             });
         }
-        if gwei < 0.0 {
-            return Err(ConfigError::InvalidGwei {
-                field,
-                reason: format!("value is negative ({gwei})"),
-            });
-        }
-        let wei = gwei * Self::WEI_PER_GWEI;
-        // Guard against silent saturation: f64 values >= 2^128 would
-        // saturate to u128::MAX when cast with `as u128`.
-        if wei >= u128::MAX as f64 {
-            return Err(ConfigError::InvalidGwei {
-                field,
-                reason: format!("value too large ({gwei} gwei overflows u128 wei)"),
-            });
-        }
-        Ok(wei as u128)
+        u128::try_from(parsed).map_err(|_| ConfigError::InvalidGwei {
+            field,
+            source: UnitsError::InvalidUnit(format!("value too large: {gwei}")),
+        })
     }
 }
 
@@ -166,29 +152,31 @@ pub struct TxManagerCli {
     pub fee_limit_multiplier: u64,
 
     /// Minimum suggested fee (in gwei) at which the fee-limit check
-    /// activates. Below this value, fees are unconstrained.
+    /// activates. Accepts decimal strings (e.g. `"100"`, `"1.5"`).
     #[arg(
         long = "tx-manager.fee-limit-threshold",
         env = "BASE_TX_MANAGER_FEE_LIMIT_THRESHOLD",
-        default_value = "100.0"
+        default_value = "100"
     )]
-    pub fee_limit_threshold_gwei: f64,
+    pub fee_limit_threshold_gwei: String,
 
-    /// Minimum tip cap (in gwei) to use for transactions.
+    /// Minimum tip cap (in gwei) to use for transactions. Accepts
+    /// decimal strings (e.g. `"0"`, `"1.5"`).
     #[arg(
         long = "tx-manager.min-tip-cap",
         env = "BASE_TX_MANAGER_MIN_TIP_CAP",
-        default_value = "0.0"
+        default_value = "0"
     )]
-    pub min_tip_cap_gwei: f64,
+    pub min_tip_cap_gwei: String,
 
-    /// Minimum basefee (in gwei) to use for transactions.
+    /// Minimum basefee (in gwei) to use for transactions. Accepts
+    /// decimal strings (e.g. `"0"`, `"0.25"`).
     #[arg(
         long = "tx-manager.min-basefee",
         env = "BASE_TX_MANAGER_MIN_BASEFEE",
-        default_value = "0.0"
+        default_value = "0"
     )]
-    pub min_basefee_gwei: f64,
+    pub min_basefee_gwei: String,
 
     /// Timeout for network requests (e.g., "10s", "1m").
     #[arg(
@@ -241,14 +229,14 @@ pub struct TxManagerCli {
 impl TxManagerCli {
     /// Shared defaults used by all presets. Individual presets override
     /// only the fields that differ (e.g. `num_confirmations`).
-    const fn base_defaults() -> Self {
+    fn base_defaults() -> Self {
         Self {
             num_confirmations: 10,
             safe_abort_nonce_too_low_count: 3,
             fee_limit_multiplier: 5,
-            fee_limit_threshold_gwei: 100.0,
-            min_tip_cap_gwei: 0.0,
-            min_basefee_gwei: 0.0,
+            fee_limit_threshold_gwei: "100".to_string(),
+            min_tip_cap_gwei: "0".to_string(),
+            min_basefee_gwei: "0".to_string(),
             network_timeout: Duration::from_secs(10),
             resubmission_timeout: Duration::from_secs(48),
             receipt_query_interval: Duration::from_secs(12),
@@ -262,7 +250,7 @@ impl TxManagerCli {
     /// The returned struct can be overridden by actual CLI arguments or
     /// environment variables when flattened into a parent parser.
     #[must_use]
-    pub const fn with_preset(preset: TxManagerPreset) -> Self {
+    pub fn with_preset(preset: TxManagerPreset) -> Self {
         let mut cli = Self::base_defaults();
         match preset {
             TxManagerPreset::Batcher => cli,
@@ -382,7 +370,7 @@ impl TxManagerConfig {
     /// - `network_timeout` must be > 0
     /// - `resubmission_timeout` must be > 0
     /// - `receipt_query_interval` must be > 0
-    /// - Gwei values must not be negative, `NaN`, or infinite
+    /// - Gwei strings must be valid non-negative decimals
     pub fn from_cli(cli: TxManagerCli, chain_id: u64) -> Result<Self, ConfigError> {
         // ── Validate integer fields ─────────────────────────────────
         if cli.num_confirmations == 0 {
@@ -430,11 +418,11 @@ impl TxManagerConfig {
             });
         }
 
-        // ── Convert gwei to wei ─────────────────────────────────────
+        // ── Parse gwei strings to wei ─────────────────────────────────
         let fee_limit_threshold =
-            GweiConversion::gwei_to_wei(cli.fee_limit_threshold_gwei, "fee_limit_threshold")?;
-        let min_tip_cap = GweiConversion::gwei_to_wei(cli.min_tip_cap_gwei, "min_tip_cap")?;
-        let min_basefee = GweiConversion::gwei_to_wei(cli.min_basefee_gwei, "min_basefee")?;
+            GweiParser::parse(&cli.fee_limit_threshold_gwei, "fee_limit_threshold")?;
+        let min_tip_cap = GweiParser::parse(&cli.min_tip_cap_gwei, "min_tip_cap")?;
+        let min_basefee = GweiParser::parse(&cli.min_basefee_gwei, "min_basefee")?;
 
         Ok(Self {
             num_confirmations: cli.num_confirmations,
@@ -557,7 +545,7 @@ impl TxManagerConfig {
     /// Updates the fee-limit threshold (in wei) at runtime.
     ///
     /// Callers are responsible for providing a sensible value. Use
-    /// [`GweiConversion::gwei_to_wei`] for gwei-to-wei conversion with
+    /// [`GweiParser::parse`] for gwei-to-wei conversion with
     /// validation.
     pub fn set_fee_limit_threshold(&self, val: u128) {
         self.hot.write().fee_limit_threshold = val;
@@ -566,7 +554,7 @@ impl TxManagerConfig {
     /// Updates the minimum tip cap (in wei) at runtime.
     ///
     /// Callers are responsible for providing a sensible value. Use
-    /// [`GweiConversion::gwei_to_wei`] for gwei-to-wei conversion with
+    /// [`GweiParser::parse`] for gwei-to-wei conversion with
     /// validation.
     pub fn set_min_tip_cap(&self, val: u128) {
         self.hot.write().min_tip_cap = val;
@@ -575,7 +563,7 @@ impl TxManagerConfig {
     /// Updates the minimum basefee (in wei) at runtime.
     ///
     /// Callers are responsible for providing a sensible value. Use
-    /// [`GweiConversion::gwei_to_wei`] for gwei-to-wei conversion with
+    /// [`GweiParser::parse`] for gwei-to-wei conversion with
     /// validation.
     pub fn set_min_basefee(&self, val: u128) {
         self.hot.write().min_basefee = val;
@@ -608,9 +596,9 @@ mod tests {
         assert_eq!(cli.num_confirmations, 10);
         assert_eq!(cli.safe_abort_nonce_too_low_count, 3);
         assert_eq!(cli.fee_limit_multiplier, 5);
-        assert!((cli.fee_limit_threshold_gwei - 100.0).abs() < f64::EPSILON);
-        assert!((cli.min_tip_cap_gwei - 0.0).abs() < f64::EPSILON);
-        assert!((cli.min_basefee_gwei - 0.0).abs() < f64::EPSILON);
+        assert_eq!(cli.fee_limit_threshold_gwei, "100");
+        assert_eq!(cli.min_tip_cap_gwei, "0");
+        assert_eq!(cli.min_basefee_gwei, "0");
         assert_eq!(cli.network_timeout, Duration::from_secs(10));
         assert_eq!(cli.resubmission_timeout, Duration::from_secs(48));
         assert_eq!(cli.receipt_query_interval, Duration::from_secs(12));
@@ -649,9 +637,9 @@ mod tests {
         assert_eq!(cli.num_confirmations, 5);
         assert_eq!(cli.fee_limit_multiplier, 10);
         assert_eq!(cli.safe_abort_nonce_too_low_count, 7);
-        assert!((cli.fee_limit_threshold_gwei - 200.0).abs() < f64::EPSILON);
-        assert!((cli.min_tip_cap_gwei - 1.5).abs() < f64::EPSILON);
-        assert!((cli.min_basefee_gwei - 0.25).abs() < f64::EPSILON);
+        assert_eq!(cli.fee_limit_threshold_gwei, "200.0");
+        assert_eq!(cli.min_tip_cap_gwei, "1.5");
+        assert_eq!(cli.min_basefee_gwei, "0.25");
         assert_eq!(cli.network_timeout, Duration::from_secs(30));
         assert_eq!(cli.resubmission_timeout, Duration::from_secs(60));
         assert_eq!(cli.receipt_query_interval, Duration::from_secs(5));
@@ -693,46 +681,46 @@ mod tests {
         );
     }
 
-    // ── Gwei conversion tests ───────────────────────────────────────
+    // ── GweiParser tests ───────────────────────────────────────────
 
     #[rstest]
-    #[case::zero(0.0, 0)]
-    #[case::one_gwei(1.0, 1_000_000_000)]
-    #[case::half_gwei(0.5, 500_000_000)]
-    #[case::hundred_gwei(100.0, 100_000_000_000)]
-    #[case::fractional(0.001, 1_000_000)]
-    fn gwei_to_wei_valid(#[case] gwei: f64, #[case] expected_wei: u128) {
-        let result = GweiConversion::gwei_to_wei(gwei, "test_field").unwrap();
+    #[case::zero("0", 0)]
+    #[case::one_gwei("1", 1_000_000_000)]
+    #[case::one_point_zero("1.0", 1_000_000_000)]
+    #[case::half_gwei("0.5", 500_000_000)]
+    #[case::hundred_gwei("100", 100_000_000_000)]
+    #[case::fractional("0.001", 1_000_000)]
+    #[case::nine_decimals("1.123456789", 1_123_456_789)]
+    fn gwei_parse_valid(#[case] gwei: &str, #[case] expected_wei: u128) {
+        let result = GweiParser::parse(gwei, "test_field").unwrap();
         assert_eq!(result, expected_wei);
     }
 
     #[rstest]
-    #[case::negative(-1.0, None)]
-    #[case::nan(f64::NAN, Some("NaN"))]
-    #[case::infinity(f64::INFINITY, Some("infinite"))]
-    #[case::neg_infinity(f64::NEG_INFINITY, None)]
-    #[case::very_large_finite(f64::MAX, Some("too large"))]
-    #[case::borderline_large(1e30, None)]
-    fn gwei_to_wei_invalid(#[case] gwei: f64, #[case] expected_substr: Option<&str>) {
-        let result = GweiConversion::gwei_to_wei(gwei, "test_field");
+    #[case::negative("-1", "negative")]
+    #[case::abc("abc", "test_field")]
+    #[case::spaces("  ", "test_field")]
+    fn gwei_parse_invalid(#[case] gwei: &str, #[case] expected_substr: &str) {
+        let result = GweiParser::parse(gwei, "test_field");
         assert!(matches!(result, Err(ConfigError::InvalidGwei { field: "test_field", .. })));
-        if let Some(substr) = expected_substr {
-            let err = result.unwrap_err();
-            assert!(err.to_string().contains(substr), "error should mention {substr}: {err}");
-        }
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains(expected_substr),
+            "error should mention {expected_substr}: {err}"
+        );
     }
 
     // ── Invalid gwei in config construction ─────────────────────────
 
     #[rstest]
     #[case::negative_fee_threshold(
-        TxManagerCli { fee_limit_threshold_gwei: -1.0, ..default_cli() }, "fee_limit_threshold"
+        TxManagerCli { fee_limit_threshold_gwei: "-1".to_string(), ..default_cli() }, "fee_limit_threshold"
     )]
-    #[case::nan_min_tip_cap(
-        TxManagerCli { min_tip_cap_gwei: f64::NAN, ..default_cli() }, "min_tip_cap"
+    #[case::invalid_min_tip_cap(
+        TxManagerCli { min_tip_cap_gwei: "abc".to_string(), ..default_cli() }, "min_tip_cap"
     )]
-    #[case::infinite_min_basefee(
-        TxManagerCli { min_basefee_gwei: f64::INFINITY, ..default_cli() }, "min_basefee"
+    #[case::invalid_min_basefee(
+        TxManagerCli { min_basefee_gwei: "not_a_number".to_string(), ..default_cli() }, "min_basefee"
     )]
     fn invalid_gwei_in_config_rejected(#[case] cli: TxManagerCli, #[case] expected_field: &str) {
         let result = TxManagerConfig::from_cli(cli, 1);
@@ -919,23 +907,22 @@ mod tests {
         "num_confirmations must be >= 1, got 0"
     )]
     #[case::invalid_gwei(
-        ConfigError::InvalidGwei { field: "min_tip_cap", reason: "value is NaN".to_string() },
-        "invalid gwei value for min_tip_cap: value is NaN"
+        ConfigError::InvalidGwei { field: "min_tip_cap", source: UnitsError::InvalidUnit("negative value: -1".to_string()) },
+        "invalid gwei value for min_tip_cap: "
     )]
     fn config_error_display(#[case] error: ConfigError, #[case] expected: &str) {
-        assert_eq!(error.to_string(), expected);
+        let msg = error.to_string();
+        assert!(msg.contains(expected), "expected display to contain {expected:?}, got: {msg}");
     }
 
     // ── Property tests ──────────────────────────────────────────────
 
     proptest! {
         #[test]
-        fn gwei_to_wei_non_negative(gwei in 0.0..1_000_000.0f64) {
-            let result = GweiConversion::gwei_to_wei(gwei, "prop_test");
-            prop_assert!(result.is_ok(), "non-negative finite gwei should convert: {gwei}");
-            let wei = result.unwrap();
-            let expected = (gwei * 1_000_000_000.0) as u128;
-            prop_assert_eq!(wei, expected);
+        fn gwei_parse_non_negative(whole in 0u64..1_000_000, frac in 0u32..1_000_000_000) {
+            let gwei_str = format!("{whole}.{frac:09}");
+            let result = GweiParser::parse(&gwei_str, "prop_test");
+            prop_assert!(result.is_ok(), "valid decimal string should parse: {gwei_str}");
         }
     }
 }

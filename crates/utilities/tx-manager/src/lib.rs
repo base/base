@@ -21,7 +21,7 @@ pub use send_state::SendState;
 
 mod config;
 pub use config::{
-    ConfigError, FeeConfig, GweiConversion, TxManagerCli, TxManagerConfig, TxManagerPreset,
+    ConfigError, FeeConfig, GweiParser, TxManagerCli, TxManagerConfig, TxManagerPreset,
 };
 
 mod traits;

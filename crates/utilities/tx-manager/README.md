@@ -48,12 +48,11 @@ Transaction lifecycle management for Base onchain components.
 - **`FeeConfig`**: Lightweight snapshot of fee-limit parameters extracted from
   `TxManagerConfig` for deterministic fee calculations in `FeeCalculator::check_limits`.
 - **`ConfigError`**: Validation error enum returned by `TxManagerConfig::from_cli` when
-  configuration values are out of range or gwei values are invalid (negative, `NaN`,
-  infinity).
+  configuration values are out of range or gwei strings are invalid.
 - **`TxManagerPreset`**: Enum for batcher/challenger role defaults. Batcher uses 10
   confirmations; challenger uses 3.
-- **`GweiConversion`**: Unit struct with `gwei_to_wei` method for converting f64 gwei
-  values to u128 wei, with validation for negative, `NaN`, and infinite values.
+- **`GweiParser`**: Unit struct with `parse` method for converting decimal gwei strings
+  to `u128` wei via `alloy_primitives::utils::parse_units`.
 - **`TxManager`**: Trait defining the public API — `send` (blocking), `send_async` (returns
   a `SendHandle`), and `sender_address`. Requires `Send + Sync`.
 - **`NonceManager`**: Manages nonce allocation and tracking.
@@ -123,7 +122,7 @@ use base_tx_manager::{TxManagerCli, TxManagerConfig};
 let cli = TxManagerCli::try_parse().unwrap();
 
 // Validate and build the runtime config. Returns ConfigError on invalid
-// values (zero confirmations, zero timeouts, negative gwei, etc.).
+// values (zero confirmations, zero timeouts, invalid gwei strings, etc.).
 let config = TxManagerConfig::from_cli(cli, chain_id)?;
 ```
 
@@ -149,7 +148,7 @@ updated at runtime without restarting the process:
 ```rust,ignore
 // Update fee parameters at runtime.
 config.set_fee_limit_multiplier(10)?;
-config.set_min_basefee(GweiConversion::gwei_to_wei(1.5, "min_basefee")?);
+config.set_min_basefee(GweiParser::parse("1.5", "min_basefee")?);
 
 // Take a point-in-time snapshot for deterministic fee calculations.
 let fee_cfg = config.fee_config();
