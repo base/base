@@ -390,31 +390,6 @@ impl TxManagerConfig {
     }
 }
 
-/// Returns a [`TxManagerParams`] with valid defaults for tests.
-#[cfg(test)]
-const fn valid_params(chain_id: u64) -> TxManagerParams {
-    TxManagerParams {
-        num_confirmations: 10,
-        safe_abort_nonce_too_low_count: 3,
-        fee_limit_multiplier: 5,
-        fee_limit_threshold: 100_000_000_000,
-        min_tip_cap: 0,
-        min_basefee: 0,
-        network_timeout: Duration::from_secs(10),
-        resubmission_timeout: Duration::from_secs(48),
-        receipt_query_interval: Duration::from_secs(12),
-        tx_send_timeout: Duration::ZERO,
-        tx_not_in_mempool_timeout: Duration::from_secs(120),
-        chain_id,
-    }
-}
-
-/// Helper to build a valid [`TxManagerConfig`] with CLI defaults for tests.
-#[cfg(test)]
-fn test_config(chain_id: u64) -> TxManagerConfig {
-    TxManagerConfig::new(valid_params(chain_id)).expect("test defaults are valid")
-}
-
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
@@ -486,90 +461,6 @@ mod tests {
         assert_send_sync::<TxManagerConfig>();
     }
 
-    // ── TxManagerConfig::new valid construction ─────────────────────
-
-    #[test]
-    fn new_valid() {
-        let config = test_config(42);
-        assert_eq!(config.num_confirmations(), 10);
-        assert_eq!(config.safe_abort_nonce_too_low_count(), 3);
-        assert_eq!(config.chain_id(), 42);
-        assert_eq!(config.fee_config().fee_limit_multiplier, 5);
-        assert_eq!(config.fee_config().fee_limit_threshold, 100_000_000_000);
-        assert_eq!(config.fee_config().min_tip_cap, 0);
-        assert_eq!(config.fee_config().min_basefee, 0);
-        assert_eq!(config.network_timeout(), Duration::from_secs(10));
-        assert_eq!(config.resubmission_timeout(), Duration::from_secs(48));
-        assert_eq!(config.receipt_query_interval(), Duration::from_secs(12));
-        assert_eq!(config.tx_send_timeout(), Duration::ZERO);
-        assert_eq!(config.tx_not_in_mempool_timeout(), Duration::from_secs(120));
-    }
-
-    // ── Validation rejection tests ──────────────────────────────────
-
-    #[test]
-    fn new_rejects_zero_num_confirmations() {
-        let mut params = valid_params(1);
-        params.num_confirmations = 0;
-        let err = TxManagerConfig::new(params).unwrap_err();
-        assert!(matches!(err, ConfigError::OutOfRange { field: "num_confirmations", .. }));
-    }
-
-    #[test]
-    fn new_rejects_zero_safe_abort_nonce_too_low_count() {
-        let mut params = valid_params(1);
-        params.safe_abort_nonce_too_low_count = 0;
-        let err = TxManagerConfig::new(params).unwrap_err();
-        assert!(matches!(
-            err,
-            ConfigError::OutOfRange { field: "safe_abort_nonce_too_low_count", .. }
-        ));
-    }
-
-    #[test]
-    fn new_rejects_zero_fee_limit_multiplier() {
-        let mut params = valid_params(1);
-        params.fee_limit_multiplier = 0;
-        let err = TxManagerConfig::new(params).unwrap_err();
-        assert!(matches!(err, ConfigError::OutOfRange { field: "fee_limit_multiplier", .. }));
-    }
-
-    #[test]
-    fn new_rejects_zero_network_timeout() {
-        let mut params = valid_params(1);
-        params.network_timeout = Duration::ZERO;
-        let err = TxManagerConfig::new(params).unwrap_err();
-        assert!(matches!(err, ConfigError::OutOfRange { field: "network_timeout", .. }));
-    }
-
-    #[test]
-    fn new_rejects_zero_resubmission_timeout() {
-        let mut params = valid_params(1);
-        params.resubmission_timeout = Duration::ZERO;
-        let err = TxManagerConfig::new(params).unwrap_err();
-        assert!(matches!(err, ConfigError::OutOfRange { field: "resubmission_timeout", .. }));
-    }
-
-    #[test]
-    fn new_rejects_zero_receipt_query_interval() {
-        let mut params = valid_params(1);
-        params.receipt_query_interval = Duration::ZERO;
-        let err = TxManagerConfig::new(params).unwrap_err();
-        assert!(matches!(err, ConfigError::OutOfRange { field: "receipt_query_interval", .. }));
-    }
-
-    // ── FeeConfig snapshot ──────────────────────────────────────────
-
-    #[test]
-    fn fee_config_snapshot() {
-        let config = test_config(1);
-        let snapshot = config.fee_config();
-        assert_eq!(snapshot.fee_limit_multiplier, 5);
-        assert_eq!(snapshot.fee_limit_threshold, 100_000_000_000);
-        assert_eq!(snapshot.min_tip_cap, 0);
-        assert_eq!(snapshot.min_basefee, 0);
-    }
-
     // ── Property tests ──────────────────────────────────────────────
 
     proptest! {
@@ -594,6 +485,107 @@ mod tests {
         fn default_cli() -> TxManagerCli {
             TxManagerCli::try_parse_from(["test"]).unwrap()
         }
+
+        fn default_params(chain_id: u64) -> TxManagerParams {
+            default_cli().into_params(chain_id).expect("CLI defaults produce valid params")
+        }
+
+        // ── TxManagerConfig::new valid construction ─────────────────
+
+        #[test]
+        fn new_valid() {
+            let config =
+                TxManagerConfig::new(default_params(42)).expect("CLI defaults are valid");
+            assert_eq!(config.num_confirmations(), 10);
+            assert_eq!(config.safe_abort_nonce_too_low_count(), 3);
+            assert_eq!(config.chain_id(), 42);
+            assert_eq!(config.fee_config().fee_limit_multiplier, 5);
+            assert_eq!(config.fee_config().fee_limit_threshold, 100_000_000_000);
+            assert_eq!(config.fee_config().min_tip_cap, 0);
+            assert_eq!(config.fee_config().min_basefee, 0);
+            assert_eq!(config.network_timeout(), Duration::from_secs(10));
+            assert_eq!(config.resubmission_timeout(), Duration::from_secs(48));
+            assert_eq!(config.receipt_query_interval(), Duration::from_secs(12));
+            assert_eq!(config.tx_send_timeout(), Duration::ZERO);
+            assert_eq!(config.tx_not_in_mempool_timeout(), Duration::from_secs(120));
+        }
+
+        // ── Validation rejection tests ──────────────────────────────
+
+        #[test]
+        fn new_rejects_zero_num_confirmations() {
+            let mut params = default_params(1);
+            params.num_confirmations = 0;
+            let err = TxManagerConfig::new(params).unwrap_err();
+            assert!(matches!(err, ConfigError::OutOfRange { field: "num_confirmations", .. }));
+        }
+
+        #[test]
+        fn new_rejects_zero_safe_abort_nonce_too_low_count() {
+            let mut params = default_params(1);
+            params.safe_abort_nonce_too_low_count = 0;
+            let err = TxManagerConfig::new(params).unwrap_err();
+            assert!(matches!(
+                err,
+                ConfigError::OutOfRange { field: "safe_abort_nonce_too_low_count", .. }
+            ));
+        }
+
+        #[test]
+        fn new_rejects_zero_fee_limit_multiplier() {
+            let mut params = default_params(1);
+            params.fee_limit_multiplier = 0;
+            let err = TxManagerConfig::new(params).unwrap_err();
+            assert!(matches!(
+                err,
+                ConfigError::OutOfRange { field: "fee_limit_multiplier", .. }
+            ));
+        }
+
+        #[test]
+        fn new_rejects_zero_network_timeout() {
+            let mut params = default_params(1);
+            params.network_timeout = Duration::ZERO;
+            let err = TxManagerConfig::new(params).unwrap_err();
+            assert!(matches!(err, ConfigError::OutOfRange { field: "network_timeout", .. }));
+        }
+
+        #[test]
+        fn new_rejects_zero_resubmission_timeout() {
+            let mut params = default_params(1);
+            params.resubmission_timeout = Duration::ZERO;
+            let err = TxManagerConfig::new(params).unwrap_err();
+            assert!(matches!(
+                err,
+                ConfigError::OutOfRange { field: "resubmission_timeout", .. }
+            ));
+        }
+
+        #[test]
+        fn new_rejects_zero_receipt_query_interval() {
+            let mut params = default_params(1);
+            params.receipt_query_interval = Duration::ZERO;
+            let err = TxManagerConfig::new(params).unwrap_err();
+            assert!(matches!(
+                err,
+                ConfigError::OutOfRange { field: "receipt_query_interval", .. }
+            ));
+        }
+
+        // ── FeeConfig snapshot ──────────────────────────────────────
+
+        #[test]
+        fn fee_config_snapshot() {
+            let config =
+                TxManagerConfig::new(default_params(1)).expect("CLI defaults are valid");
+            let snapshot = config.fee_config();
+            assert_eq!(snapshot.fee_limit_multiplier, 5);
+            assert_eq!(snapshot.fee_limit_threshold, 100_000_000_000);
+            assert_eq!(snapshot.min_tip_cap, 0);
+            assert_eq!(snapshot.min_basefee, 0);
+        }
+
+        // ── CLI defaults ────────────────────────────────────────────
 
         #[test]
         fn cli_defaults_from_empty_args() {
