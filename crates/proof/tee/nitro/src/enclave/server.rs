@@ -4,7 +4,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_alloy_evm::OpEvmFactory;
 use base_proof_client::{BootInfo, Prologue};
 use base_proof_preimage::PreimageKey;
-use base_proof_primitives::{ProofResult, ProofJournal, Proposal};
+use base_proof_primitives::{ProofJournal, ProofResult, Proposal};
 use tracing::{info, warn};
 
 use crate::{
