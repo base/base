@@ -13,13 +13,16 @@ workspace = true
 
 [dependencies]
 thiserror.workspace = true
-alloy-primitives.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 alloy-eips = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 rstest.workspace = true
 proptest.workspace = true
+humantime.workspace = true
 alloy-consensus.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
+serde = { workspace = true, features = ["derive", "std"] }
