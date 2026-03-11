@@ -68,7 +68,7 @@ impl VsockTransport {
         match response {
             EnclaveResponse::Prove(result) => Ok(*result),
             EnclaveResponse::Error(e) => Err(NitroError::Transport(e)),
-            EnclaveResponse::SignerPublicKey(_) => {
+            EnclaveResponse::SignerPublicKey(_) | EnclaveResponse::SignerAttestation(_) => {
                 Err(NitroError::Transport("unexpected response type for prove".into()))
             }
         }
@@ -103,8 +103,36 @@ impl VsockTransport {
                 Ok(key)
             }
             EnclaveResponse::Error(e) => Err(NitroError::Transport(e)),
-            EnclaveResponse::Prove(_) => {
+            EnclaveResponse::Prove(_) | EnclaveResponse::SignerAttestation(_) => {
                 Err(NitroError::Transport("unexpected response type for signer_public_key".into()))
+            }
+        }
+    }
+
+    /// Return the raw Nitro attestation document (`COSE_Sign1` bytes) for the enclave signer.
+    pub async fn signer_attestation(&self) -> Result<Vec<u8>, NitroError> {
+        let mut stream = self.connect().await?;
+
+        Frame::write(&mut stream, &EnclaveRequest::SignerAttestation)
+            .await
+            .map_err(|e| NitroError::Transport(e.to_string()))?;
+
+        let response: EnclaveResponse =
+            tokio::time::timeout(SIGNER_TIMEOUT, Frame::read(&mut stream))
+                .await
+                .map_err(|_| {
+                    NitroError::Transport(
+                        io::Error::new(io::ErrorKind::TimedOut, "signer_attestation timed out")
+                            .to_string(),
+                    )
+                })?
+                .map_err(|e| NitroError::Transport(e.to_string()))?;
+
+        match response {
+            EnclaveResponse::SignerAttestation(doc) => Ok(doc),
+            EnclaveResponse::Error(e) => Err(NitroError::Transport(e)),
+            EnclaveResponse::Prove(_) | EnclaveResponse::SignerPublicKey(_) => {
+                Err(NitroError::Transport("unexpected response type for signer_attestation".into()))
             }
         }
     }

@@ -21,4 +21,8 @@ pub trait EnclaveApi {
     /// Return the 65-byte uncompressed ECDSA public key for the enclave signer.
     #[method(name = "signerPublicKey")]
     async fn signer_public_key(&self) -> RpcResult<Vec<u8>>;
+
+    /// Return the raw Nitro attestation document (`COSE_Sign1` bytes) for the enclave signer.
+    #[method(name = "signerAttestation")]
+    async fn signer_attestation(&self) -> RpcResult<Vec<u8>>;
 }

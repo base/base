@@ -9,6 +9,8 @@ pub enum EnclaveRequest {
     Prove(Vec<(PreimageKey, Vec<u8>)>),
     /// Return the enclave's 65-byte uncompressed ECDSA public key.
     SignerPublicKey,
+    /// Return the raw Nitro attestation document (`COSE_Sign1` bytes).
+    SignerAttestation,
 }
 
 /// Typed response returned by the enclave over vsock.
@@ -18,6 +20,8 @@ pub enum EnclaveResponse {
     Prove(Box<ProofResult>),
     /// 65-byte uncompressed ECDSA public key for [`EnclaveRequest::SignerPublicKey`].
     SignerPublicKey(Vec<u8>),
+    /// Raw Nitro attestation document (`COSE_Sign1` bytes) for [`EnclaveRequest::SignerAttestation`].
+    SignerAttestation(Vec<u8>),
     /// An error occurred while handling the request.
     Error(String),
 }

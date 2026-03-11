@@ -51,4 +51,13 @@ impl NitroTransport {
             Self::Local(s) => Ok(s.signer_public_key()),
         }
     }
+
+    /// Return the raw Nitro attestation document (`COSE_Sign1` bytes) for the enclave signer.
+    pub async fn signer_attestation(&self) -> Result<Vec<u8>, NitroError> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Vsock(t) => t.signer_attestation().await,
+            Self::Local(s) => s.signer_attestation(),
+        }
+    }
 }
