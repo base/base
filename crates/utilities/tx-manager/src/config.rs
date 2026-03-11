@@ -23,6 +23,7 @@ use thiserror::Error;
 
 /// Errors returned during configuration validation.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ConfigError {
     /// A field value is out of the allowed range.
     #[error("{field} must be {constraint}, got {value}")]
