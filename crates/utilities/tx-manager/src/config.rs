@@ -91,7 +91,7 @@ impl GweiParser {
 /// All fields are public for direct construction. Use [`Self::validate`]
 /// to check invariants, or [`Self::from_cli`] (requires the `cli` feature)
 /// which validates automatically.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TxManagerConfig {
     /// Number of block confirmations to wait.
     pub num_confirmations: u64,
@@ -473,6 +473,15 @@ mod tests {
         #[case::tx_not_in_mempool_timeout(TxManagerCli { tx_not_in_mempool_timeout: Duration::ZERO, ..default_cli() })]
         fn zero_optional_timeout_allowed(#[case] cli: TxManagerCli) {
             assert!(TxManagerConfig::from_cli(cli).is_ok());
+        }
+
+        // ── CLI / Config default drift detection ─────────────────────
+
+        #[test]
+        fn cli_defaults_match_config_defaults() {
+            let cli = TxManagerCli::try_parse_from(["test"]).unwrap();
+            let config = TxManagerConfig::from_cli(cli).unwrap();
+            assert_eq!(config, TxManagerConfig::default());
         }
     }
 }
