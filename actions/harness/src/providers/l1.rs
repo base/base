@@ -40,6 +40,11 @@ impl SharedL1Chain {
         self.0.lock().expect("chain lock poisoned").truncate((number + 1) as usize);
     }
 
+    /// Look up a block by number, returning a clone if it exists.
+    pub fn get_block(&self, number: u64) -> Option<L1Block> {
+        self.0.lock().expect("chain lock poisoned").get(number as usize).cloned()
+    }
+
     fn with<R>(&self, f: impl FnOnce(&[L1Block]) -> R) -> R {
         let g = self.0.lock().expect("chain lock poisoned");
         f(&g)
@@ -117,6 +122,9 @@ impl ChainProvider for ActionL1ChainProvider {
         &mut self,
         hash: B256,
     ) -> Result<(BlockInfo, Vec<alloy_consensus::TxEnvelope>), Self::Error> {
+        // The derivation pipeline reads batcher data via `DataAvailabilityProvider::next`,
+        // not via this method. Returning an empty transaction list is correct for the
+        // current action-test use case; returning real batcher txs here is not needed.
         self.chain.with(|blocks| {
             blocks
                 .iter()
