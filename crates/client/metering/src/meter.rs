@@ -12,17 +12,17 @@ use eyre::{Result as EyreResult, eyre};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_primitives_traits::{Account, SealedHeader};
 use reth_revm::{database::StateProviderDatabase, db::State, primitives::KECCAK_EMPTY};
-use reth_trie_common::TrieInput;
+use reth_trie_common::{HashedPostState, TrieInput};
 use revm_database::states::{BundleState, CacheState, bundle_state::BundleRetention};
 
 use crate::{metrics::Metrics, transaction::validate_tx};
 
-/// Computes the pending trie input from the bundle state.
+/// Computes the pending trie input from a pre-built [`HashedPostState`].
 ///
 /// This function records metrics for cache misses and compute duration.
 pub(crate) fn compute_pending_trie_input<SP>(
     state_provider: &SP,
-    bundle_state: &BundleState,
+    hashed_state: HashedPostState,
     metrics: &Metrics,
 ) -> EyreResult<PendingTrieInput>
 where
@@ -31,13 +31,13 @@ where
     metrics.pending_trie_cache_misses.increment(1);
     let start = Instant::now();
 
-    let hashed = state_provider.hashed_post_state(bundle_state);
-    let (_state_root, trie_updates) = state_provider.state_root_with_updates(hashed.clone())?;
+    let (_state_root, trie_updates) =
+        state_provider.state_root_with_updates(hashed_state.clone())?;
 
     let elapsed = start.elapsed();
     metrics.pending_trie_compute_duration.record(elapsed.as_secs_f64());
 
-    Ok(PendingTrieInput { trie_updates, hashed_state: hashed })
+    Ok(PendingTrieInput { trie_updates, hashed_state })
 }
 
 /// Converts a pending [`BundleState`] into a [`CacheState`] for execution.
@@ -147,7 +147,8 @@ where
                 metrics.pending_trie_cache_hits.increment(1);
                 Ok(cached.clone())
             } else {
-                compute_pending_trie_input(&state_provider, &ps.bundle_state, &metrics)
+                let hashed = state_provider.hashed_post_state(&ps.bundle_state);
+                compute_pending_trie_input(&state_provider, hashed, &metrics)
             }
         })
         .transpose()?;
@@ -1056,8 +1057,8 @@ mod tests {
             .blockchain_provider()
             .state_by_block_hash(latest.hash())
             .context("getting state provider for trie")?;
-        let trie_input =
-            compute_pending_trie_input(&state_provider, &bundle_state, &Metrics::default())?;
+        let hashed = state_provider.hashed_post_state(&bundle_state);
+        let trie_input = compute_pending_trie_input(&state_provider, hashed, &Metrics::default())?;
         drop(state_provider);
 
         let pending_state = PendingState { bundle_state, trie_input: Some(trie_input) };
