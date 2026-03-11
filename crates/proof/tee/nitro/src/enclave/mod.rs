@@ -87,6 +87,8 @@ impl NitroEnclave {
 ///
 /// Must be generous enough to cover large [`EnclaveRequest::Prove`] payloads,
 /// which include the full preimage bundle and can be many megabytes over vsock.
+/// A single timeout applies to all request types because the request type is
+/// unknown until the frame has been fully read.
 #[cfg(target_os = "linux")]
 const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
@@ -110,7 +112,10 @@ async fn handle_connection(
             Frame::write(&mut stream, &EnclaveResponse::SignerPublicKey(key)).await?;
         }
         EnclaveRequest::SignerAttestation => {
-            let response = match server.signer_attestation() {
+            // nsm_init() and nsm_process_request() are blocking FFI calls; use
+            // block_in_place so they do not stall the async executor.
+            let result = tokio::task::block_in_place(|| server.signer_attestation());
+            let response = match result {
                 Ok(doc) => EnclaveResponse::SignerAttestation(doc),
                 Err(e) => EnclaveResponse::Error(e.to_string()),
             };
