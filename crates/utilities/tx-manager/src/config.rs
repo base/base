@@ -1,9 +1,10 @@
 //! Transaction manager configuration.
 //!
 //! [`TxManagerConfig`] is the validated runtime configuration for the
-//! transaction manager. Construct it via [`TxManagerConfig::from_cli`]
-//! (requires the `cli` feature), which parses CLI/env arguments and
-//! validates them into the runtime configuration.
+//! transaction manager. All fields are `pub` for direct construction.
+//! Use [`TxManagerConfig::validate`] to check invariants, or construct
+//! via [`TxManagerConfig::from_cli`] (requires the `cli` feature) which
+//! parses CLI/env arguments and validates automatically.
 
 use std::time::Duration;
 
@@ -77,39 +78,50 @@ impl GweiParser {
 
 /// Validated runtime configuration for the transaction manager.
 ///
-/// Construct via [`TxManagerConfig::from_cli`] (requires the `cli` feature).
+/// All fields are public for direct construction. Use [`Self::validate`]
+/// to check invariants, or [`Self::from_cli`] (requires the `cli` feature)
+/// which validates automatically.
 #[derive(Debug, Clone)]
 pub struct TxManagerConfig {
     /// Number of block confirmations to wait.
-    num_confirmations: u64,
+    pub num_confirmations: u64,
     /// Nonce-too-low abort threshold.
-    safe_abort_nonce_too_low_count: u64,
+    pub safe_abort_nonce_too_low_count: u64,
     /// Maximum fee multiplier applied to the suggested gas price.
-    fee_limit_multiplier: u64,
+    pub fee_limit_multiplier: u64,
     /// Minimum suggested fee (in wei) at which the fee-limit check activates.
-    fee_limit_threshold: u128,
+    pub fee_limit_threshold: u128,
     /// Minimum tip cap (in wei) to use for transactions.
-    min_tip_cap: u128,
+    pub min_tip_cap: u128,
     /// Minimum basefee (in wei) to use for transactions.
-    min_basefee: u128,
+    pub min_basefee: u128,
     /// Network request timeout.
-    network_timeout: Duration,
+    pub network_timeout: Duration,
     /// Fee-bump resubmission timeout.
-    resubmission_timeout: Duration,
+    pub resubmission_timeout: Duration,
     /// Receipt polling interval.
-    receipt_query_interval: Duration,
+    pub receipt_query_interval: Duration,
     /// Overall send timeout (zero = disabled).
-    tx_send_timeout: Duration,
+    pub tx_send_timeout: Duration,
     /// Mempool appearance timeout (zero = disabled).
-    tx_not_in_mempool_timeout: Duration,
+    pub tx_not_in_mempool_timeout: Duration,
     /// Chain ID for the target network.
-    chain_id: u64,
+    pub chain_id: u64,
 }
 
 impl TxManagerConfig {
     /// Validates the configuration fields.
-    #[cfg(feature = "cli")]
-    fn validate(&self) -> Result<(), ConfigError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::OutOfRange`] if any required field is zero:
+    /// - `num_confirmations` must be >= 1
+    /// - `safe_abort_nonce_too_low_count` must be >= 1
+    /// - `fee_limit_multiplier` must be >= 1
+    /// - `network_timeout` must be > 0
+    /// - `resubmission_timeout` must be > 0
+    /// - `receipt_query_interval` must be > 0
+    pub fn validate(&self) -> Result<(), ConfigError> {
         if self.num_confirmations == 0 {
             return Err(ConfigError::OutOfRange {
                 field: "num_confirmations",
@@ -193,82 +205,6 @@ impl TxManagerConfig {
         };
         config.validate()?;
         Ok(config)
-    }
-
-    // ── Field accessors ────────────────────────────────────────────
-
-    /// Returns the number of block confirmations required.
-    #[must_use]
-    pub const fn num_confirmations(&self) -> u64 {
-        self.num_confirmations
-    }
-
-    /// Returns the nonce-too-low abort threshold.
-    #[must_use]
-    pub const fn safe_abort_nonce_too_low_count(&self) -> u64 {
-        self.safe_abort_nonce_too_low_count
-    }
-
-    /// Returns the network request timeout.
-    #[must_use]
-    pub const fn network_timeout(&self) -> Duration {
-        self.network_timeout
-    }
-
-    /// Returns the fee-bump resubmission timeout.
-    #[must_use]
-    pub const fn resubmission_timeout(&self) -> Duration {
-        self.resubmission_timeout
-    }
-
-    /// Returns the receipt polling interval.
-    #[must_use]
-    pub const fn receipt_query_interval(&self) -> Duration {
-        self.receipt_query_interval
-    }
-
-    /// Returns the overall send timeout (zero means disabled).
-    #[must_use]
-    pub const fn tx_send_timeout(&self) -> Duration {
-        self.tx_send_timeout
-    }
-
-    /// Returns the mempool appearance timeout (zero means disabled).
-    #[must_use]
-    pub const fn tx_not_in_mempool_timeout(&self) -> Duration {
-        self.tx_not_in_mempool_timeout
-    }
-
-    /// Returns the chain ID.
-    #[must_use]
-    pub const fn chain_id(&self) -> u64 {
-        self.chain_id
-    }
-
-    // ── Fee field accessors ─────────────────────────────────────────
-
-    /// Returns the fee-limit multiplier.
-    #[must_use]
-    pub const fn fee_limit_multiplier(&self) -> u64 {
-        self.fee_limit_multiplier
-    }
-
-    /// Returns the fee-limit threshold (in wei).
-    #[must_use]
-    pub const fn fee_limit_threshold(&self) -> u128 {
-        self.fee_limit_threshold
-    }
-
-    /// Returns the minimum tip cap (in wei).
-    #[must_use]
-    pub const fn min_tip_cap(&self) -> u128 {
-        self.min_tip_cap
-    }
-
-    /// Returns the minimum basefee (in wei).
-    #[must_use]
-    pub const fn min_basefee(&self) -> u128 {
-        self.min_basefee
     }
 }
 
@@ -476,18 +412,18 @@ mod tests {
         fn from_cli_valid() {
             let cli = default_cli();
             let config = TxManagerConfig::from_cli(cli, 42).unwrap();
-            assert_eq!(config.num_confirmations(), 10);
-            assert_eq!(config.safe_abort_nonce_too_low_count(), 3);
-            assert_eq!(config.chain_id(), 42);
-            assert_eq!(config.fee_limit_multiplier(), 5);
-            assert_eq!(config.fee_limit_threshold(), 100_000_000_000); // 100 gwei
-            assert_eq!(config.min_tip_cap(), 0);
-            assert_eq!(config.min_basefee(), 0);
-            assert_eq!(config.network_timeout(), Duration::from_secs(10));
-            assert_eq!(config.resubmission_timeout(), Duration::from_secs(48));
-            assert_eq!(config.receipt_query_interval(), Duration::from_secs(12));
-            assert_eq!(config.tx_send_timeout(), Duration::ZERO);
-            assert_eq!(config.tx_not_in_mempool_timeout(), Duration::from_secs(120));
+            assert_eq!(config.num_confirmations, 10);
+            assert_eq!(config.safe_abort_nonce_too_low_count, 3);
+            assert_eq!(config.chain_id, 42);
+            assert_eq!(config.fee_limit_multiplier, 5);
+            assert_eq!(config.fee_limit_threshold, 100_000_000_000); // 100 gwei
+            assert_eq!(config.min_tip_cap, 0);
+            assert_eq!(config.min_basefee, 0);
+            assert_eq!(config.network_timeout, Duration::from_secs(10));
+            assert_eq!(config.resubmission_timeout, Duration::from_secs(48));
+            assert_eq!(config.receipt_query_interval, Duration::from_secs(12));
+            assert_eq!(config.tx_send_timeout, Duration::ZERO);
+            assert_eq!(config.tx_not_in_mempool_timeout, Duration::from_secs(120));
         }
 
         // ── Zero optional timeouts allowed via from_cli ─────────────

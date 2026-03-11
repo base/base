@@ -39,9 +39,9 @@ Transaction lifecycle management for Base onchain components.
 - **`TxManagerCli`**: Clap-based CLI argument struct with environment variable fallbacks
   (prefix `BASE_TX_MANAGER_`). Captures all tunable tx-manager parameters and is designed
   to be `#[command(flatten)]`-ed into parent CLI structs.
-- **`TxManagerConfig`**: Validated runtime configuration constructed via
-  `TxManagerConfig::from_cli(cli, chain_id)` (requires the `cli` feature). All fields
-  are immutable after construction with read-only `const fn` accessors.
+- **`TxManagerConfig`**: Validated runtime configuration with public fields. Can be
+  constructed directly and validated via `validate()`, or built from CLI arguments via
+  `TxManagerConfig::from_cli(cli, chain_id)` (requires the `cli` feature).
 - **`ConfigError`**: Validation error enum returned by `TxManagerConfig::from_cli`
   when configuration values are out of range or gwei strings are invalid.
 - **`GweiParser`**: Unit struct with `parse` method for converting decimal gwei strings
@@ -98,9 +98,11 @@ For custom error matching beyond the built-in classification, use
 
 ## Configuration
 
-`TxManagerConfig` is the validated runtime configuration. Construct it via
-`TxManagerConfig::from_cli` (requires the `cli` feature, enabled by
-default), which parses CLI/env arguments and validates them.
+`TxManagerConfig` is the validated runtime configuration. All fields are
+public, so you can construct it directly and call `validate()` to check
+invariants. Alternatively, use `TxManagerConfig::from_cli` (requires the
+`cli` feature, enabled by default) which parses CLI/env arguments and
+validates automatically.
 
 ### CLI parsing and validation
 
@@ -149,8 +151,8 @@ the config:
 FeeCalculator::check_limits(
     proposed_fee,
     suggested_fee,
-    config.fee_limit_multiplier(),
-    config.fee_limit_threshold(),
+    config.fee_limit_multiplier,
+    config.fee_limit_threshold,
 )?;
 ```
 
