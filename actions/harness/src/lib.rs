@@ -10,13 +10,15 @@ mod miner;
 pub use miner::{L1Block, L1Miner, L1MinerConfig, PendingTx, ReorgError, block_info_from};
 
 mod l2;
-pub use l2::{MockL2Block, MockL2Source};
+pub use l2::{
+    ActionL2Source, L2BlockBuilder, L2BuilderError, TEST_ACCOUNT_ADDRESS, TEST_ACCOUNT_KEY,
+};
 
 mod harness;
 pub use harness::ActionTestHarness;
 
 mod batcher;
-pub use batcher::{Batcher, BatcherConfig, BatcherError};
+pub use batcher::{Batcher, BatcherConfig, BatcherError, ChannelDriverConfig};
 
 mod providers;
 pub use providers::{

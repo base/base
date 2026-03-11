@@ -1,6 +1,7 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use alloy_eips::BlockNumHash;
+use alloy_primitives::B256;
 use alloy_rlp::Decodable;
 use base_alloy_consensus::TxDeposit;
 use base_consensus_derive::{
@@ -63,6 +64,14 @@ pub struct L2Verifier {
     pipeline: VerifierPipeline,
     /// The current L2 safe head (advances as attributes are consumed).
     safe_head: L2BlockInfo,
+    /// Block hashes by L2 block number, registered externally from the
+    /// [`L2BlockBuilder`](crate::L2BlockBuilder). Used by [`apply_attributes`]
+    /// so the verifier's safe-head hash matches the builder's real block hash,
+    /// enabling correct `parent_hash` validation in [`BatchQueue`].
+    ///
+    /// [`apply_attributes`]: L2Verifier::apply_attributes
+    /// [`BatchQueue`]: base_consensus_derive::BatchQueue
+    block_hashes: HashMap<u64, B256>,
 }
 
 impl L2Verifier {
@@ -96,7 +105,7 @@ impl L2Verifier {
             .builder(attrs_builder)
             .build_indexed();
 
-        Self { pipeline, safe_head }
+        Self { pipeline, safe_head, block_hashes: HashMap::new() }
     }
 
     /// Initialize the pipeline by seeding the genesis [`SystemConfig`] and
@@ -241,6 +250,18 @@ impl L2Verifier {
         self.pipeline.origin()
     }
 
+    /// Register the block hash for a given L2 block number.
+    ///
+    /// Call this after [`L2BlockBuilder::build_next_block`] to record the real
+    /// block hash. When derivation later applies attributes for this block
+    /// number, the verifier will use the registered hash instead of a default,
+    /// keeping the `parent_hash` chain consistent with the builder.
+    ///
+    /// [`L2BlockBuilder::build_next_block`]: crate::L2BlockBuilder::build_next_block
+    pub fn register_block_hash(&mut self, number: u64, hash: B256) {
+        self.block_hashes.insert(number, hash);
+    }
+
     /// Apply derived attributes to the in-memory L2 chain, advancing the safe head.
     ///
     /// This is the minimal "engine": no EVM execution, no state root computation.
@@ -252,6 +273,13 @@ impl L2Verifier {
     /// `safe_head.l1_origin.number`, so using the inclusion block here would cause
     /// subsequent same-epoch batches to be rejected as `EpochTooOld`.
     ///
+    /// The block hash is looked up from [`register_block_hash`] entries. When the
+    /// [`L2BlockBuilder`] produces real sealed headers, the test must register each
+    /// block's hash so the verifier's `parent_hash` chain stays consistent with
+    /// the batches the builder submitted.
+    ///
+    /// [`register_block_hash`]: L2Verifier::register_block_hash
+    /// [`L2BlockBuilder`]: crate::L2BlockBuilder
     /// [`BatchQueue`]: base_consensus_derive::BatchQueue
     fn apply_attributes(&mut self, attrs: OpAttributesWithParent) {
         let new_number = self.safe_head.block_info.number + 1;
@@ -265,13 +293,13 @@ impl L2Verifier {
         // BatchQueue uses this for batch ordering validation.
         let seq_num =
             if l1_origin == self.safe_head.l1_origin { self.safe_head.seq_num + 1 } else { 0 };
+        let hash = self.block_hashes.get(&new_number).copied().unwrap_or_default();
         self.safe_head = L2BlockInfo {
             block_info: BlockInfo {
                 number: new_number,
                 timestamp: new_timestamp,
-                // Hash is left as default — action tests assert on number/origin,
-                // not on the exact L2 block hash.
-                ..Default::default()
+                hash,
+                parent_hash: self.safe_head.block_info.hash,
             },
             l1_origin,
             seq_num,

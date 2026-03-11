@@ -117,6 +117,7 @@ impl CompressorWriter for BrotliCompressor {
     fn read(&mut self, buf: &mut [u8]) -> CompressorResult<usize> {
         let len = self.compressed.len().min(buf.len());
         buf[..len].copy_from_slice(&self.compressed[..len]);
+        self.compressed.drain(..len);
         Ok(len)
     }
 
