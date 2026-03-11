@@ -83,18 +83,18 @@ impl NitroEnclave {
     }
 }
 
+/// Deadline for receiving a complete request frame from the host.
+///
+/// Must be generous enough to cover large [`EnclaveRequest::Prove`] payloads,
+/// which include the full preimage bundle and can be many megabytes over vsock.
+#[cfg(target_os = "linux")]
+const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
 #[cfg(target_os = "linux")]
 async fn handle_connection(
     mut stream: tokio_vsock::VsockStream,
     server: &Server,
 ) -> eyre::Result<()> {
-    /// Deadline for receiving the request frame.
-    ///
-    /// The `Prove` variant includes the full witness preimage bundle which can be
-    /// many megabytes, so this timeout must be long enough for any realistic
-    /// payload to arrive over vsock.
-    const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-
     let request: EnclaveRequest = timeout(REQUEST_READ_TIMEOUT, Frame::read(&mut stream)).await??;
 
     match request {
@@ -108,6 +108,13 @@ async fn handle_connection(
         EnclaveRequest::SignerPublicKey => {
             let key = server.signer_public_key();
             Frame::write(&mut stream, &EnclaveResponse::SignerPublicKey(key)).await?;
+        }
+        EnclaveRequest::SignerAttestation => {
+            let response = match server.signer_attestation() {
+                Ok(doc) => EnclaveResponse::SignerAttestation(doc),
+                Err(e) => EnclaveResponse::Error(e.to_string()),
+            };
+            Frame::write(&mut stream, &response).await?;
         }
     }
 
