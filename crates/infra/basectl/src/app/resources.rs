@@ -381,11 +381,8 @@ impl FlashState {
             self.current_base_fee = base_fee;
         }
 
-        let effective_base_fee = if is_same_block_as_previous {
-            base_fee.or(self.current_base_fee)
-        } else {
-            base_fee
-        };
+        let effective_base_fee =
+            if is_same_block_as_previous { base_fee.or(self.current_base_fee) } else { base_fee };
 
         let time_diff_ms =
             self.entries.front().map(|prev| (received_at - prev.timestamp).num_milliseconds());

@@ -178,7 +178,9 @@ impl TransactionPane {
                             tx.effective_priority_fee_per_gas = tx
                                 .base_fee_per_gas
                                 .map(u128::from)
-                                .map(|base_fee| receipt.effective_gas_price.saturating_sub(base_fee))
+                                .map(|base_fee| {
+                                    receipt.effective_gas_price.saturating_sub(base_fee)
+                                })
                                 .or(Some(receipt.effective_gas_price));
                         }
                     }
@@ -361,13 +363,13 @@ impl TransactionPane {
                 Row::new(vec![
                     render_tx_hash_cell(tx_summary, hash_w, style),
                     Cell::from(Text::styled(truncate_hex(&from_addr, from_w), from_style)),
-                    match tx_summary.to {
-                        Some(a) => {
+                    tx_summary.to.map_or_else(
+                        || Cell::from("Create"),
+                        |a| {
                             let to_text = truncate_hex(&format!("{a:#x}"), to_w);
                             Cell::from(Text::styled(to_text, style.fg(address_color(a))))
-                        }
-                        None => Cell::from("Create"),
-                    },
+                        },
+                    ),
                     Cell::from(format_mwei(tx_summary.effective_priority_fee_per_gas)),
                     Cell::from(format_gas_used(tx_summary.gas_used)),
                 ])
@@ -419,12 +421,10 @@ fn render_tx_hash_cell(tx_summary: &TxSummary, max_width: usize, style: Style) -
     let hash = format!("{:#x}", tx_summary.hash);
     if tx_summary.reverted == Some(true) && max_width >= 3 {
         let hash_text = truncate_hex(&hash, max_width.saturating_sub(2));
-        Cell::from(Text::from(vec![
-            Line::from(vec![
-                Span::styled("\u{26A0} ", style.fg(Color::Red)),
-                Span::styled(hash_text, style),
-            ]),
-        ]))
+        Cell::from(Text::from(vec![Line::from(vec![
+            Span::styled("\u{26A0} ", style.fg(Color::Red)),
+            Span::styled(hash_text, style),
+        ])]))
     } else {
         Cell::from(Text::styled(truncate_hex(&hash, max_width), style))
     }

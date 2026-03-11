@@ -729,9 +729,7 @@ pub(crate) async fn fetch_block_transactions(
                                 tx_obj
                                     .inner
                                     .effective_gas_price(base_fee)
-                                    .saturating_sub(
-                                        base_fee.map(u128::from).unwrap_or_default(),
-                                    ),
+                                    .saturating_sub(base_fee.map(u128::from).unwrap_or_default()),
                             )
                         }),
                     base_fee_per_gas: base_fee,
