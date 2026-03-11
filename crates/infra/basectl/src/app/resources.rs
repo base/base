@@ -42,7 +42,6 @@ pub(crate) struct DaState {
     pub l1_connection_mode: Option<L1ConnectionMode>,
     buffered_flashblocks: Vec<Flashblock>,
     buffered_safe_heads: Vec<u64>,
-    buffered_l1_blocks: Vec<L1BlockInfo>,
     fb_rx: Option<mpsc::Receiver<Flashblock>>,
     sync_rx: Option<mpsc::Receiver<u64>>,
     backlog_rx: Option<mpsc::Receiver<BacklogFetchResult>>,
@@ -120,7 +119,6 @@ impl DaState {
             l1_connection_mode: None,
             buffered_flashblocks: Vec::new(),
             buffered_safe_heads: Vec::new(),
-            buffered_l1_blocks: Vec::new(),
             fb_rx: None,
             sync_rx: None,
             backlog_rx: None,
@@ -234,11 +232,7 @@ impl DaState {
             .unwrap_or_default();
 
         for l1_block in l1_blocks {
-            if self.loaded {
-                self.tracker.record_l1_block(l1_block);
-            } else {
-                self.buffered_l1_blocks.push(l1_block);
-            }
+            self.tracker.record_l1_block(l1_block);
         }
 
         if let Some(mode) = self.l1_mode_rx.as_mut().and_then(|rx| rx.try_recv().ok()) {
@@ -252,9 +246,6 @@ impl DaState {
         }
         for safe_block in std::mem::take(&mut self.buffered_safe_heads) {
             self.tracker.update_safe_head(safe_block);
-        }
-        for l1_block in std::mem::take(&mut self.buffered_l1_blocks) {
-            self.tracker.record_l1_block(l1_block);
         }
     }
 
@@ -414,5 +405,41 @@ impl FlashState {
 
         self.entries.push_front(entry);
         self.evict_old_blocks();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc;
+
+    use super::DaState;
+    use crate::rpc::{BacklogFetchResult, BlockDaInfo, L1BlockInfo};
+
+    #[test]
+    fn records_l1_blocks_before_backlog_load_completes() {
+        let (_fb_tx, fb_rx) = mpsc::channel(1);
+        let (_sync_tx, sync_rx) = mpsc::channel(1);
+        let (_backlog_tx, backlog_rx) = mpsc::channel::<BacklogFetchResult>(1);
+        let (block_req_tx, _block_req_rx) = mpsc::channel::<u64>(1);
+        let (_block_res_tx, block_res_rx) = mpsc::channel::<BlockDaInfo>(1);
+        let (l1_block_tx, l1_block_rx) = mpsc::channel(1);
+
+        let mut state = DaState::new();
+        state.set_channels(fb_rx, sync_rx, backlog_rx, block_req_tx, block_res_rx, l1_block_rx);
+
+        l1_block_tx
+            .try_send(L1BlockInfo {
+                block_number: 123,
+                timestamp: 456,
+                total_blobs: 2,
+                base_blobs: 1,
+            })
+            .unwrap();
+
+        state.poll();
+
+        assert!(!state.loaded);
+        assert_eq!(state.tracker.l1_blocks.len(), 1);
+        assert_eq!(state.tracker.l1_blocks.front().unwrap().block_number, 123);
     }
 }
