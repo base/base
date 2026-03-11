@@ -39,14 +39,14 @@ Transaction lifecycle management for Base onchain components.
 - **`TxManagerCli`**: Clap-based CLI argument struct with environment variable fallbacks
   (prefix `BASE_TX_MANAGER_`). Captures all tunable tx-manager parameters and is designed
   to be `#[command(flatten)]`-ed into parent CLI structs.
-- **`TxManagerConfig`**: Validated runtime configuration constructed from `TxManagerCli`
-  via `TxManagerConfig::from_cli(cli, chain_id)`. All fields are immutable after
-  construction with read-only `const fn` accessors. `fee_config()` returns a `FeeConfig`
-  snapshot for use with `FeeCalculator::check_limits`.
+- **`TxManagerConfig`**: Validated runtime configuration constructed via
+  `TxManagerConfig::from_cli(cli, chain_id)` (requires the `cli` feature). All fields
+  are immutable after construction with read-only `const fn` accessors. `fee_config()`
+  returns a `FeeConfig` snapshot for use with `FeeCalculator::check_limits`.
 - **`FeeConfig`**: Lightweight snapshot of fee-limit parameters extracted from
   `TxManagerConfig` for deterministic fee calculations in `FeeCalculator::check_limits`.
-- **`ConfigError`**: Validation error enum returned by `TxManagerConfig::from_cli` when
-  configuration values are out of range or gwei strings are invalid.
+- **`ConfigError`**: Validation error enum returned by `TxManagerConfig::from_cli`
+  when configuration values are out of range or gwei strings are invalid.
 - **`GweiParser`**: Unit struct with `parse` method for converting decimal gwei strings
   to `u128` wei via `alloy_primitives::utils::parse_units`.
 - **`TxManager`**: Trait defining the public API — `send` (blocking), `send_async` (returns
@@ -101,36 +101,9 @@ For custom error matching beyond the built-in classification, use
 
 ## Configuration
 
-The crate uses a two-layer configuration system: `TxManagerConfig` is the
-validated runtime configuration that can be constructed either
-programmatically via `TxManagerConfig::new` (always available) or from CLI
-arguments via `TxManagerConfig::from_cli` (requires the `cli` feature).
-
-### Programmatic construction
-
-`TxManagerConfig::new` takes a `TxManagerParams` struct (fees in wei,
-durations as `Duration`). This path has no dependency on `clap` or
-`humantime`:
-
-```rust,ignore
-use std::time::Duration;
-use base_tx_manager::{TxManagerConfig, TxManagerParams};
-
-let config = TxManagerConfig::new(TxManagerParams {
-    num_confirmations: 10,
-    safe_abort_nonce_too_low_count: 3,
-    fee_limit_multiplier: 5,
-    fee_limit_threshold: 100_000_000_000, // 100 gwei in wei
-    min_tip_cap: 0,
-    min_basefee: 0,
-    network_timeout: Duration::from_secs(10),
-    resubmission_timeout: Duration::from_secs(48),
-    receipt_query_interval: Duration::from_secs(12),
-    tx_send_timeout: Duration::ZERO,      // 0 = disabled
-    tx_not_in_mempool_timeout: Duration::from_secs(120),
-    chain_id,
-})?;
-```
+`TxManagerConfig` is the validated runtime configuration. Construct it via
+`TxManagerConfig::from_cli` (requires the `cli` feature, enabled by
+default), which parses CLI/env arguments and validates them.
 
 ### CLI parsing and validation
 
@@ -167,7 +140,7 @@ struct Cli {
     tx: TxManagerCli,
 }
 
-let config = TxManagerConfig::new(cli.tx.into_params(chain_id)?)?;
+let config = TxManagerConfig::from_cli(cli.tx, chain_id)?;
 ```
 
 ### Fee configuration
@@ -189,8 +162,8 @@ Add the dependency to your `Cargo.toml`:
 base-tx-manager = { git = "https://github.com/base/base" }
 ```
 
-For consumers that only need `TxManagerConfig` constructed programmatically
-(without `clap`/`humantime`):
+For consumers that only need the core types without the CLI constructor
+(disables `clap`/`humantime` dependencies):
 
 ```toml
 [dependencies]

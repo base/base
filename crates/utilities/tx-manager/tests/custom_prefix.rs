@@ -63,15 +63,3 @@ fn defaults_are_unchanged() {
     assert_eq!(cli.tx.tx_send_timeout, Duration::ZERO);
     assert_eq!(cli.tx.tx_not_in_mempool_timeout, Duration::from_secs(120));
 }
-
-#[test]
-fn into_params_works() {
-    let cli = TestCli::parse_from(["test"]);
-    let params = cli.tx.into_params(1).expect("default params should be valid");
-    assert_eq!(params.num_confirmations, 10);
-    assert_eq!(params.chain_id, 1);
-    // 100 gwei = 100_000_000_000 wei
-    assert_eq!(params.fee_limit_threshold, 100_000_000_000);
-    assert_eq!(params.min_tip_cap, 0);
-    assert_eq!(params.min_basefee, 0);
-}

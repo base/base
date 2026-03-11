@@ -24,7 +24,7 @@ pub use send_state::SendState;
 mod macros;
 
 mod config;
-pub use config::{ConfigError, FeeConfig, GweiParser, TxManagerConfig, TxManagerParams};
+pub use config::{ConfigError, FeeConfig, GweiParser, TxManagerConfig};
 
 #[cfg(feature = "cli")]
 define_tx_manager_cli!("BASE_TX_MANAGER_");

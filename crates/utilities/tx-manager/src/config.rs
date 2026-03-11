@@ -1,12 +1,9 @@
 //! Transaction manager configuration.
 //!
-//! Two-layer configuration system:
-//!
-//! - **Programmatic**: [`TxManagerConfig::new`] takes validated parameters
-//!   directly (fees in wei, durations as [`Duration`]). Always available.
-//! - **CLI** *(requires the `cli` feature)*: [`TxManagerCli`] captures
-//!   CLI/env arguments at startup, and [`TxManagerConfig::from_cli`]
-//!   validates and converts them into the runtime configuration.
+//! [`TxManagerConfig`] is the validated runtime configuration for the
+//! transaction manager. Construct it via [`TxManagerConfig::from_cli`]
+//! (requires the `cli` feature), which parses CLI/env arguments and
+//! validates them into the runtime configuration.
 
 use std::time::Duration;
 
@@ -120,45 +117,11 @@ impl Default for FeeConfig {
     }
 }
 
-// ── TxManagerParams ─────────────────────────────────────────────────────
-
-/// Parameters for constructing a [`TxManagerConfig`].
-///
-/// Uses named fields to prevent transposition bugs at call sites.
-#[derive(Debug)]
-pub struct TxManagerParams {
-    /// Number of block confirmations to wait.
-    pub num_confirmations: u64,
-    /// Nonce-too-low abort threshold.
-    pub safe_abort_nonce_too_low_count: u64,
-    /// Maximum fee multiplier applied to the suggested gas price.
-    pub fee_limit_multiplier: u64,
-    /// Minimum suggested fee (in wei) at which the fee-limit check activates.
-    pub fee_limit_threshold: u128,
-    /// Minimum tip cap (in wei) to use for transactions.
-    pub min_tip_cap: u128,
-    /// Minimum basefee (in wei) to use for transactions.
-    pub min_basefee: u128,
-    /// Timeout for individual RPC calls.
-    pub network_timeout: Duration,
-    /// Interval between fee-bump resubmissions.
-    pub resubmission_timeout: Duration,
-    /// Interval between receipt polling queries.
-    pub receipt_query_interval: Duration,
-    /// Maximum time to wait for initial tx broadcast.
-    pub tx_send_timeout: Duration,
-    /// Maximum time to wait for a tx to appear in the mempool.
-    pub tx_not_in_mempool_timeout: Duration,
-    /// Chain ID for the target network.
-    pub chain_id: u64,
-}
-
 // ── TxManagerConfig ─────────────────────────────────────────────────────
 
 /// Validated runtime configuration for the transaction manager.
 ///
-/// Construct via [`TxManagerConfig::new`] (always available) or
-/// [`TxManagerConfig::from_cli`] (requires the `cli` feature).
+/// Construct via [`TxManagerConfig::from_cli`] (requires the `cli` feature).
 #[derive(Debug, Clone)]
 pub struct TxManagerConfig {
     /// Number of block confirmations to wait.
@@ -188,103 +151,58 @@ pub struct TxManagerConfig {
 }
 
 impl TxManagerConfig {
-    /// Creates a validated [`TxManagerConfig`] from a [`TxManagerParams`].
-    ///
-    /// Fee values (`fee_limit_threshold`, `min_tip_cap`, `min_basefee`)
-    /// are specified in **wei**. Use [`GweiParser::parse`] if converting
-    /// from gwei strings.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError`] if any validation check fails:
-    /// - `num_confirmations` must be >= 1
-    /// - `safe_abort_nonce_too_low_count` must be >= 1
-    /// - `fee_limit_multiplier` must be >= 1
-    /// - `network_timeout` must be > 0
-    /// - `resubmission_timeout` must be > 0
-    /// - `receipt_query_interval` must be > 0
-    pub fn new(params: TxManagerParams) -> Result<Self, ConfigError> {
-        let TxManagerParams {
-            num_confirmations,
-            safe_abort_nonce_too_low_count,
-            fee_limit_multiplier,
-            fee_limit_threshold,
-            min_tip_cap,
-            min_basefee,
-            network_timeout,
-            resubmission_timeout,
-            receipt_query_interval,
-            tx_send_timeout,
-            tx_not_in_mempool_timeout,
-            chain_id,
-        } = params;
-        // ── Validate integer fields ─────────────────────────────────
-        if num_confirmations == 0 {
+    /// Validates the configuration fields.
+    #[cfg(feature = "cli")]
+    fn validate(&self) -> Result<(), ConfigError> {
+        if self.num_confirmations == 0 {
             return Err(ConfigError::OutOfRange {
                 field: "num_confirmations",
                 constraint: ">= 1",
                 value: "0".to_string(),
             });
         }
-        if safe_abort_nonce_too_low_count == 0 {
+        if self.safe_abort_nonce_too_low_count == 0 {
             return Err(ConfigError::OutOfRange {
                 field: "safe_abort_nonce_too_low_count",
                 constraint: ">= 1",
                 value: "0".to_string(),
             });
         }
-        if fee_limit_multiplier == 0 {
+        if self.fee_limit_multiplier == 0 {
             return Err(ConfigError::OutOfRange {
                 field: "fee_limit_multiplier",
                 constraint: ">= 1",
                 value: "0".to_string(),
             });
         }
-
-        // ── Validate duration fields ────────────────────────────────
-        if network_timeout.is_zero() {
+        if self.network_timeout.is_zero() {
             return Err(ConfigError::OutOfRange {
                 field: "network_timeout",
                 constraint: "> 0",
                 value: "0s".to_string(),
             });
         }
-        if resubmission_timeout.is_zero() {
+        if self.resubmission_timeout.is_zero() {
             return Err(ConfigError::OutOfRange {
                 field: "resubmission_timeout",
                 constraint: "> 0",
                 value: "0s".to_string(),
             });
         }
-        if receipt_query_interval.is_zero() {
+        if self.receipt_query_interval.is_zero() {
             return Err(ConfigError::OutOfRange {
                 field: "receipt_query_interval",
                 constraint: "> 0",
                 value: "0s".to_string(),
             });
         }
-
-        Ok(Self {
-            num_confirmations,
-            safe_abort_nonce_too_low_count,
-            fee_limit_multiplier,
-            fee_limit_threshold,
-            min_tip_cap,
-            min_basefee,
-            network_timeout,
-            resubmission_timeout,
-            receipt_query_interval,
-            tx_send_timeout,
-            tx_not_in_mempool_timeout,
-            chain_id,
-        })
+        Ok(())
     }
 
     /// Creates a validated [`TxManagerConfig`] from parsed CLI arguments
     /// and a chain ID.
     ///
-    /// Requires the `cli` feature. Parses gwei strings from the CLI
-    /// struct and delegates to [`Self::new`].
+    /// Parses gwei strings from the CLI struct and validates all fields.
     ///
     /// # Errors
     ///
@@ -298,7 +216,27 @@ impl TxManagerConfig {
     /// - Gwei strings must be valid non-negative decimals
     #[cfg(feature = "cli")]
     pub fn from_cli(cli: TxManagerCli, chain_id: u64) -> Result<Self, ConfigError> {
-        Self::new(cli.into_params(chain_id)?)
+        let fee_limit_threshold =
+            GweiParser::parse(&cli.fee_limit_threshold_gwei, "fee_limit_threshold")?;
+        let min_tip_cap = GweiParser::parse(&cli.min_tip_cap_gwei, "min_tip_cap")?;
+        let min_basefee = GweiParser::parse(&cli.min_basefee_gwei, "min_basefee")?;
+
+        let config = Self {
+            num_confirmations: cli.num_confirmations,
+            safe_abort_nonce_too_low_count: cli.safe_abort_nonce_too_low_count,
+            fee_limit_multiplier: cli.fee_limit_multiplier,
+            fee_limit_threshold,
+            min_tip_cap,
+            min_basefee,
+            network_timeout: cli.network_timeout,
+            resubmission_timeout: cli.resubmission_timeout,
+            receipt_query_interval: cli.receipt_query_interval,
+            tx_send_timeout: cli.tx_send_timeout,
+            tx_not_in_mempool_timeout: cli.tx_not_in_mempool_timeout,
+            chain_id,
+        };
+        config.validate()?;
+        Ok(config)
     }
 
     // ── Field accessors ────────────────────────────────────────────
@@ -486,87 +424,12 @@ mod tests {
             TxManagerCli::try_parse_from(["test"]).unwrap()
         }
 
-        fn default_params(chain_id: u64) -> TxManagerParams {
-            default_cli().into_params(chain_id).expect("CLI defaults produce valid params")
-        }
-
-        // ── TxManagerConfig::new valid construction ─────────────────
-
-        #[test]
-        fn new_valid() {
-            let config = TxManagerConfig::new(default_params(42)).expect("CLI defaults are valid");
-            assert_eq!(config.num_confirmations(), 10);
-            assert_eq!(config.safe_abort_nonce_too_low_count(), 3);
-            assert_eq!(config.chain_id(), 42);
-            assert_eq!(config.fee_config().fee_limit_multiplier, 5);
-            assert_eq!(config.fee_config().fee_limit_threshold, 100_000_000_000);
-            assert_eq!(config.fee_config().min_tip_cap, 0);
-            assert_eq!(config.fee_config().min_basefee, 0);
-            assert_eq!(config.network_timeout(), Duration::from_secs(10));
-            assert_eq!(config.resubmission_timeout(), Duration::from_secs(48));
-            assert_eq!(config.receipt_query_interval(), Duration::from_secs(12));
-            assert_eq!(config.tx_send_timeout(), Duration::ZERO);
-            assert_eq!(config.tx_not_in_mempool_timeout(), Duration::from_secs(120));
-        }
-
-        // ── Validation rejection tests ──────────────────────────────
-
-        #[test]
-        fn new_rejects_zero_num_confirmations() {
-            let mut params = default_params(1);
-            params.num_confirmations = 0;
-            let err = TxManagerConfig::new(params).unwrap_err();
-            assert!(matches!(err, ConfigError::OutOfRange { field: "num_confirmations", .. }));
-        }
-
-        #[test]
-        fn new_rejects_zero_safe_abort_nonce_too_low_count() {
-            let mut params = default_params(1);
-            params.safe_abort_nonce_too_low_count = 0;
-            let err = TxManagerConfig::new(params).unwrap_err();
-            assert!(matches!(
-                err,
-                ConfigError::OutOfRange { field: "safe_abort_nonce_too_low_count", .. }
-            ));
-        }
-
-        #[test]
-        fn new_rejects_zero_fee_limit_multiplier() {
-            let mut params = default_params(1);
-            params.fee_limit_multiplier = 0;
-            let err = TxManagerConfig::new(params).unwrap_err();
-            assert!(matches!(err, ConfigError::OutOfRange { field: "fee_limit_multiplier", .. }));
-        }
-
-        #[test]
-        fn new_rejects_zero_network_timeout() {
-            let mut params = default_params(1);
-            params.network_timeout = Duration::ZERO;
-            let err = TxManagerConfig::new(params).unwrap_err();
-            assert!(matches!(err, ConfigError::OutOfRange { field: "network_timeout", .. }));
-        }
-
-        #[test]
-        fn new_rejects_zero_resubmission_timeout() {
-            let mut params = default_params(1);
-            params.resubmission_timeout = Duration::ZERO;
-            let err = TxManagerConfig::new(params).unwrap_err();
-            assert!(matches!(err, ConfigError::OutOfRange { field: "resubmission_timeout", .. }));
-        }
-
-        #[test]
-        fn new_rejects_zero_receipt_query_interval() {
-            let mut params = default_params(1);
-            params.receipt_query_interval = Duration::ZERO;
-            let err = TxManagerConfig::new(params).unwrap_err();
-            assert!(matches!(err, ConfigError::OutOfRange { field: "receipt_query_interval", .. }));
-        }
-
         // ── FeeConfig snapshot ──────────────────────────────────────
 
         #[test]
         fn fee_config_snapshot() {
-            let config = TxManagerConfig::new(default_params(1)).expect("CLI defaults are valid");
+            let config =
+                TxManagerConfig::from_cli(default_cli(), 1).expect("CLI defaults are valid");
             let snapshot = config.fee_config();
             assert_eq!(snapshot.fee_limit_multiplier, 5);
             assert_eq!(snapshot.fee_limit_threshold, 100_000_000_000);

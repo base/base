@@ -13,8 +13,6 @@
 /// `concat!($prefix, "FIELD_NAME")` — e.g., with prefix
 /// `"BASE_CHALLENGER_TX_MANAGER_"` the num-confirmations field reads from
 /// `BASE_CHALLENGER_TX_MANAGER_NUM_CONFIRMATIONS`.
-///
-/// Also generates an `into_params(chain_id) -> Result<TxManagerParams, ConfigError>` method.
 #[rustfmt::skip]
 #[macro_export]
 macro_rules! define_tx_manager_cli {
@@ -128,47 +126,6 @@ macro_rules! define_tx_manager_cli {
                 value_parser = ::humantime::parse_duration
             )]
             pub tx_not_in_mempool_timeout: ::std::time::Duration,
-        }
-
-        impl TxManagerCli {
-            /// Converts CLI arguments into validated [`TxManagerParams`],
-            /// parsing gwei strings to wei.
-            ///
-            /// # Errors
-            ///
-            /// Returns [`ConfigError`] if any gwei string is invalid.
-            pub fn into_params(
-                self,
-                chain_id: u64,
-            ) -> ::std::result::Result<$crate::TxManagerParams, $crate::ConfigError> {
-                let fee_limit_threshold = $crate::GweiParser::parse(
-                    &self.fee_limit_threshold_gwei,
-                    "fee_limit_threshold",
-                )?;
-                let min_tip_cap = $crate::GweiParser::parse(
-                    &self.min_tip_cap_gwei,
-                    "min_tip_cap",
-                )?;
-                let min_basefee = $crate::GweiParser::parse(
-                    &self.min_basefee_gwei,
-                    "min_basefee",
-                )?;
-
-                Ok($crate::TxManagerParams {
-                    num_confirmations: self.num_confirmations,
-                    safe_abort_nonce_too_low_count: self.safe_abort_nonce_too_low_count,
-                    fee_limit_multiplier: self.fee_limit_multiplier,
-                    fee_limit_threshold,
-                    min_tip_cap,
-                    min_basefee,
-                    network_timeout: self.network_timeout,
-                    resubmission_timeout: self.resubmission_timeout,
-                    receipt_query_interval: self.receipt_query_interval,
-                    tx_send_timeout: self.tx_send_timeout,
-                    tx_not_in_mempool_timeout: self.tx_not_in_mempool_timeout,
-                    chain_id,
-                })
-            }
         }
     };
 }
