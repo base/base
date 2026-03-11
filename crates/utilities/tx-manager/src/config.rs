@@ -73,50 +73,6 @@ impl GweiParser {
     }
 }
 
-// ── FeeConfig ───────────────────────────────────────────────────────────
-
-/// Snapshot of fee-limit parameters for deterministic fee calculations.
-///
-/// Extracted from [`TxManagerConfig`] for use with
-/// [`FeeCalculator::check_limits`](crate::FeeCalculator::check_limits).
-#[derive(Debug, Clone)]
-pub struct FeeConfig {
-    /// Maximum allowed multiplier applied to the suggested fee.
-    ///
-    /// When the suggested fee is at or above [`fee_limit_threshold`](Self::fee_limit_threshold),
-    /// a proposed fee that exceeds `fee_limit_multiplier × suggested` is rejected
-    /// with [`TxManagerError::FeeLimitExceeded`](crate::TxManagerError::FeeLimitExceeded).
-    pub fee_limit_multiplier: u64,
-
-    /// Minimum suggested fee (in wei) at which the fee-limit check activates.
-    ///
-    /// If the suggested fee is below this value the limit check is skipped,
-    /// allowing unconstrained fees in low-fee environments.
-    pub fee_limit_threshold: u128,
-
-    /// Minimum tip cap (in wei) to use for transactions.
-    ///
-    /// When non-zero, the transaction manager will ensure the tip cap
-    /// is at least this value.
-    pub min_tip_cap: u128,
-
-    /// Minimum basefee (in wei) to use for transactions.
-    ///
-    /// When non-zero, the transaction manager will ensure the basefee
-    /// is at least this value.
-    pub min_basefee: u128,
-}
-
-/// Note: the default `fee_limit_threshold` is `0` (check always active),
-/// which differs from the CLI default of 100 gwei. This provides a
-/// minimal/permissive starting point for callers constructing a
-/// [`FeeConfig`] directly rather than via [`TxManagerConfig::fee_config`].
-impl Default for FeeConfig {
-    fn default() -> Self {
-        Self { fee_limit_multiplier: 5, fee_limit_threshold: 0, min_tip_cap: 0, min_basefee: 0 }
-    }
-}
-
 // ── TxManagerConfig ─────────────────────────────────────────────────────
 
 /// Validated runtime configuration for the transaction manager.
@@ -314,18 +270,6 @@ impl TxManagerConfig {
     pub const fn min_basefee(&self) -> u128 {
         self.min_basefee
     }
-
-    /// Returns a [`FeeConfig`] snapshot for use with
-    /// [`FeeCalculator::check_limits`](crate::FeeCalculator::check_limits).
-    #[must_use]
-    pub const fn fee_config(&self) -> FeeConfig {
-        FeeConfig {
-            fee_limit_multiplier: self.fee_limit_multiplier,
-            fee_limit_threshold: self.fee_limit_threshold,
-            min_tip_cap: self.min_tip_cap,
-            min_basefee: self.min_basefee,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -362,17 +306,6 @@ mod tests {
             err.to_string().contains(expected_substr),
             "error should mention {expected_substr}: {err}"
         );
-    }
-
-    // ── FeeConfig default ───────────────────────────────────────────
-
-    #[test]
-    fn fee_config_default() {
-        let fc = FeeConfig::default();
-        assert_eq!(fc.fee_limit_multiplier, 5);
-        assert_eq!(fc.fee_limit_threshold, 0);
-        assert_eq!(fc.min_tip_cap, 0);
-        assert_eq!(fc.min_basefee, 0);
     }
 
     // ── ConfigError display ─────────────────────────────────────────
@@ -422,19 +355,6 @@ mod tests {
 
         fn default_cli() -> TxManagerCli {
             TxManagerCli::try_parse_from(["test"]).unwrap()
-        }
-
-        // ── FeeConfig snapshot ──────────────────────────────────────
-
-        #[test]
-        fn fee_config_snapshot() {
-            let config =
-                TxManagerConfig::from_cli(default_cli(), 1).expect("CLI defaults are valid");
-            let snapshot = config.fee_config();
-            assert_eq!(snapshot.fee_limit_multiplier, 5);
-            assert_eq!(snapshot.fee_limit_threshold, 100_000_000_000);
-            assert_eq!(snapshot.min_tip_cap, 0);
-            assert_eq!(snapshot.min_basefee, 0);
         }
 
         // ── CLI defaults ────────────────────────────────────────────
@@ -559,10 +479,10 @@ mod tests {
             assert_eq!(config.num_confirmations(), 10);
             assert_eq!(config.safe_abort_nonce_too_low_count(), 3);
             assert_eq!(config.chain_id(), 42);
-            assert_eq!(config.fee_config().fee_limit_multiplier, 5);
-            assert_eq!(config.fee_config().fee_limit_threshold, 100_000_000_000); // 100 gwei
-            assert_eq!(config.fee_config().min_tip_cap, 0);
-            assert_eq!(config.fee_config().min_basefee, 0);
+            assert_eq!(config.fee_limit_multiplier(), 5);
+            assert_eq!(config.fee_limit_threshold(), 100_000_000_000); // 100 gwei
+            assert_eq!(config.min_tip_cap(), 0);
+            assert_eq!(config.min_basefee(), 0);
             assert_eq!(config.network_timeout(), Duration::from_secs(10));
             assert_eq!(config.resubmission_timeout(), Duration::from_secs(48));
             assert_eq!(config.receipt_query_interval(), Duration::from_secs(12));

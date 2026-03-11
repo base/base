@@ -41,10 +41,7 @@ Transaction lifecycle management for Base onchain components.
   to be `#[command(flatten)]`-ed into parent CLI structs.
 - **`TxManagerConfig`**: Validated runtime configuration constructed via
   `TxManagerConfig::from_cli(cli, chain_id)` (requires the `cli` feature). All fields
-  are immutable after construction with read-only `const fn` accessors. `fee_config()`
-  returns a `FeeConfig` snapshot for use with `FeeCalculator::check_limits`.
-- **`FeeConfig`**: Lightweight snapshot of fee-limit parameters extracted from
-  `TxManagerConfig` for deterministic fee calculations in `FeeCalculator::check_limits`.
+  are immutable after construction with read-only `const fn` accessors.
 - **`ConfigError`**: Validation error enum returned by `TxManagerConfig::from_cli`
   when configuration values are out of range or gwei strings are invalid.
 - **`GweiParser`**: Unit struct with `parse` method for converting decimal gwei strings
@@ -81,8 +78,8 @@ fn handle_rpc_error(raw_msg: &str) {
 `ChannelClosed` is returned by [`SendHandle`] when the background send task drops
 its sender before delivering a result (panic or cancellation). It is non-retryable.
 
-`FeeLimitExceeded` is returned by `FeeCalculator::check_limits` when the proposed fee exceeds
-`fee_limit_multiplier × suggested_fee` and the suggested fee is at or above
+`FeeLimitExceeded` is returned by `FeeCalculator::check_limits` when the proposed fee
+exceeds `fee_limit_multiplier × suggested_fee` and the suggested fee is at or above
 `fee_limit_threshold`. It is non-retryable.
 
 `InvalidSafeAbortNonceTooLowCount` is returned by `SendState::new` when the
@@ -143,14 +140,18 @@ struct Cli {
 let config = TxManagerConfig::from_cli(cli.tx, chain_id)?;
 ```
 
-### Fee configuration
+### Fee limit checks
 
-Use `fee_config()` to obtain a `FeeConfig` snapshot for deterministic fee
-limit checks:
+Use `FeeCalculator::check_limits` with the multiplier and threshold from
+the config:
 
 ```rust,ignore
-let fee_cfg = config.fee_config();
-FeeCalculator::check_limits(proposed_fee, suggested_fee, &fee_cfg)?;
+FeeCalculator::check_limits(
+    proposed_fee,
+    suggested_fee,
+    config.fee_limit_multiplier(),
+    config.fee_limit_threshold(),
+)?;
 ```
 
 ## Usage
