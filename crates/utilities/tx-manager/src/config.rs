@@ -69,8 +69,8 @@ impl GweiParser {
     /// decimal number. Returns [`ConfigError::InvalidValue`] if the parsed
     /// value is negative or overflows `u128`.
     pub fn parse(gwei: &str, field: &'static str) -> Result<u128, ConfigError> {
-        let parsed =
-            parse_units(gwei, "gwei").map_err(|e| ConfigError::InvalidGwei { field, reason: e.to_string() })?;
+        let parsed = parse_units(gwei, "gwei")
+            .map_err(|e| ConfigError::InvalidGwei { field, reason: e.to_string() })?;
         if parsed.is_negative() {
             return Err(ConfigError::InvalidValue {
                 field,
