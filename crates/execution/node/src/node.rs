@@ -62,7 +62,11 @@ use reth_transaction_pool::{
 use reth_trie_common::KeccakKeyHasher;
 use serde::de::DeserializeOwned;
 
-use crate::{OpEngineApiBuilder, OpEngineTypes, args::RollupArgs, engine::OpEngineValidator};
+use crate::{
+    OpEngineApiBuilder, OpEngineTypes,
+    args::{RollupArgs, TxpoolOrdering},
+    engine::OpEngineValidator,
+};
 
 /// Marker trait for Optimism node types with standard engine, chain spec, and primitives.
 pub trait OpNodeTypes:
@@ -233,8 +237,8 @@ impl OpNode {
             ..
         } = self.args;
         let ordering = match txpool_ordering {
-            crate::args::TxpoolOrdering::CoinbaseTip => BaseOrdering::coinbase_tip(),
-            crate::args::TxpoolOrdering::Timestamp => BaseOrdering::timestamp(),
+            TxpoolOrdering::CoinbaseTip => BaseOrdering::coinbase_tip(),
+            TxpoolOrdering::Timestamp => BaseOrdering::timestamp(),
         };
         ComponentsBuilder::default()
             .node_types::<Node>()
