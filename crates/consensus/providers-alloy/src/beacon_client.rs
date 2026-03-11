@@ -278,15 +278,19 @@ impl BeaconClient for OnlineBeaconClient {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::Blob;
-    use alloy_primitives::{FixedBytes, hex::FromHex};
+    use alloy_primitives::{B256, FixedBytes, hex::FromHex};
     use httpmock::prelude::*;
     use serde_json::json;
 
     use super::*;
 
-    const TEST_BLOB_DATA: Blob = FixedBytes::repeat_byte(1);
     const TEST_BLOB_HASH_HEX: &str =
         "0x016c357b8b3a6b3fd82386e7bebf77143d537cdb1c856509661c412602306a04";
+
+    /// Computes the versioned hash for a blob using the same path as production code.
+    fn versioned_hash_for(blob: &Blob) -> B256 {
+        super::blob_versioned_hash(blob).unwrap()
+    }
 
     #[test]
     fn test_blob_versioned_hash() {
@@ -295,68 +299,74 @@ mod tests {
         assert_eq!(test_blob_hash, blob_versioned_hash(&input).unwrap());
     }
 
+    /// Verifies that `filtered_beacon_blobs` returns blobs in request order, not server order.
+    ///
+    /// The server returns `[blob_a, blob_b]` but the client requests `[hash_b, hash_a]`.
+    /// The result must follow the request order: `[blob_b, blob_a]`.
     #[tokio::test]
-    async fn test_filtered_beacon_blobs() {
-        let slot = 987654321;
-        let slot_string = slot.to_string();
-        let repeated_blob_data: Vec<Blob> = vec![TEST_BLOB_DATA, TEST_BLOB_DATA];
-        let garbage_blob_data: Vec<Blob> = vec![FixedBytes::repeat_byte(2)];
-        let required_query_param = format!("{TEST_BLOB_HASH_HEX},{TEST_BLOB_HASH_HEX}");
-        let test_blob_hash: FixedBytes<32> = FixedBytes::from_hex(TEST_BLOB_HASH_HEX).unwrap();
-        let requested_blob_hashes: Vec<B256> = vec![test_blob_hash, test_blob_hash];
+    async fn test_filtered_beacon_blobs_distinct_blobs() {
+        let blob_a: Blob = FixedBytes::repeat_byte(1);
+        let blob_b: Blob = FixedBytes::repeat_byte(2);
+        let hash_a = versioned_hash_for(&blob_a);
+        let hash_b = versioned_hash_for(&blob_b);
 
-        struct TestCase {
-            name: &'static str,
-            mock_response_data: Vec<Blob>,
-            want: Option<Vec<BoxedBlob>>, // if none, expect an error
-        }
-
-        let test_cases = vec![
-            TestCase {
-                name: "Repeated Blob Data, expect success",
-                mock_response_data: repeated_blob_data,
-                want: Some(vec![
-                    BoxedBlob { blob: Box::new(TEST_BLOB_DATA) },
-                    BoxedBlob { blob: Box::new(TEST_BLOB_DATA) },
-                ]),
-            },
-            TestCase {
-                name: "Garbage Blob Data, expect error",
-                mock_response_data: garbage_blob_data,
-                want: None, // indicates an error is expected
-            },
-        ];
+        let slot = 987654321u64;
+        // Request in reverse order relative to what the server will return.
+        let requested_hashes: Vec<B256> = vec![hash_b, hash_a];
+        let required_query_param = format!("{hash_b},{hash_a}");
 
         let server = MockServer::start();
-        for test_case in test_cases {
-            // This server mocks a single, specific query on a beacon node,
-            let mock_response = json!({
+        let blobs_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path(format!("/eth/v1/beacon/blobs/{slot}"))
+                .query_param("versioned_hashes", required_query_param);
+            then.status(200).json_body(json!({
                 "execution_optimistic": false,
                 "finalized": false,
-                "data": test_case.mock_response_data
-            });
-            let mut blobs_mock = server.mock(|when, then| {
-                when.method(GET)
-                    .path(format!("/eth/v1/beacon/blobs/{slot_string}"))
-                    .query_param("versioned_hashes", required_query_param.clone());
-                then.status(200).json_body(mock_response);
-            });
+                "data": [blob_a, blob_b]  // server returns natural order
+            }));
+        });
 
-            let client = OnlineBeaconClient::new_http(server.base_url());
-            let response = client.filtered_beacon_blobs(slot, &requested_blob_hashes).await;
-            blobs_mock.assert();
-            match test_case.want {
-                Some(s) => {
-                    let r = response.unwrap();
-                    assert_eq!(r.len(), s.len(), "length mismatch{}", test_case.name);
-                    assert_eq!(r, s, "{}", test_case.name)
-                }
-                None => {
-                    assert!(response.is_err(), "{}", test_case.name)
-                }
-            }
-            blobs_mock.delete();
-        }
+        let client = OnlineBeaconClient::new_http(server.base_url());
+        let result = client.filtered_beacon_blobs(slot, &requested_hashes).await.unwrap();
+        blobs_mock.assert();
+
+        // Output must follow request order (hash_b first, then hash_a).
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], BoxedBlob { blob: Box::new(blob_b) }, "first result must be blob_b");
+        assert_eq!(result[1], BoxedBlob { blob: Box::new(blob_a) }, "second result must be blob_a");
+    }
+
+    /// Verifies that requesting a hash that does not match any returned blob yields
+    /// `BeaconClientError::BlobNotFound`.
+    ///
+    /// The server returns `blob_b` (which hashes to `hash_b`), but the client requests
+    /// `hash_a`. Since no returned blob hashes to `hash_a`, the lookup must fail.
+    #[tokio::test]
+    async fn test_filtered_beacon_blobs_hash_mismatch_returns_not_found() {
+        let blob_a: Blob = FixedBytes::repeat_byte(1);
+        let blob_b: Blob = FixedBytes::repeat_byte(2);
+        let hash_a = versioned_hash_for(&blob_a);
+
+        let slot = 5678u64;
+        let server = MockServer::start();
+        let blobs_mock = server.mock(|when, then| {
+            when.method(GET).path(format!("/eth/v1/beacon/blobs/{slot}"));
+            then.status(200).json_body(json!({
+                "execution_optimistic": false,
+                "finalized": false,
+                "data": [blob_b]  // server returns blob_b, but client wants hash_a
+            }));
+        });
+
+        let client = OnlineBeaconClient::new_http(server.base_url());
+        let result = client.filtered_beacon_blobs(slot, &[hash_a]).await;
+        blobs_mock.assert();
+
+        assert!(
+            matches!(result, Err(BeaconClientError::BlobNotFound(_))),
+            "expected BlobNotFound when returned blob does not match requested hash, got {result:?}"
+        );
     }
 
     /// Regression test: a beacon node HTTP 404 for a given slot must return
