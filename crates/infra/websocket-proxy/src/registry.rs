@@ -103,7 +103,8 @@ impl Registry {
                 count = entries.len(),
                 "Replaying ring buffer entries to client"
             );
-            let mut sent_positions: HashSet<FlashblockPosition> = HashSet::new();
+            let mut sent_positions: HashSet<FlashblockPosition> =
+                HashSet::with_capacity(entries.len());
             let mut none_sent: usize = 0;
             for (pos, payload) in &entries {
                 if !filter.matches(payload, compressed) {
