@@ -35,4 +35,4 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [features]
-local = ["base-proof-transport/test-utils"]
+local = [ "base-proof-transport/test-utils" ]
