@@ -19,10 +19,17 @@ pub use fees::{FeeCalculator, GasPriceCaps};
 mod send_state;
 pub use send_state::SendState;
 
-mod config;
-pub use config::{ConfigError, FeeConfig, GweiParser, TxManagerConfig, TxManagerParams};
 #[cfg(feature = "cli")]
-pub use config::{TxManagerCli, TxManagerPreset};
+#[macro_use]
+mod macros;
+
+mod config;
+#[cfg(feature = "cli")]
+pub use config::TxManagerPreset;
+pub use config::{ConfigError, FeeConfig, GweiParser, TxManagerConfig, TxManagerParams};
+
+#[cfg(feature = "cli")]
+define_tx_manager_cli!("BASE_TX_MANAGER_");
 
 mod traits;
 pub use traits::{SendHandle, SendResponse, TxManager};

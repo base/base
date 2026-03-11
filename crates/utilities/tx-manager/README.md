@@ -170,6 +170,25 @@ let config = TxManagerConfig::from_cli(cli, chain_id)?;
 assert_eq!(config.num_confirmations(), 3);
 ```
 
+### Custom env var prefix
+
+Consumer crates that need a different env var prefix (e.g.
+`BASE_CHALLENGER_TX_MANAGER_` instead of `BASE_TX_MANAGER_`) can invoke
+the `define_tx_manager_cli!` macro directly:
+
+```rust,ignore
+// In your crate — generates a local `TxManagerCli` with custom env vars.
+base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER_TX_MANAGER_");
+
+#[derive(clap::Parser)]
+struct Cli {
+    #[command(flatten)]
+    tx: TxManagerCli,
+}
+
+let config = TxManagerConfig::new(cli.tx.into_params(chain_id)?)?;
+```
+
 ### Hot-reloadable fields
 
 Fee-related parameters (`fee_limit_multiplier`, `fee_limit_threshold`,

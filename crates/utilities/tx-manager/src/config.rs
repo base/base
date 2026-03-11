@@ -14,10 +14,11 @@
 use std::time::Duration;
 
 use alloy_primitives::utils::{UnitsError, parse_units};
-#[cfg(feature = "cli")]
-use clap::Parser;
 use parking_lot::RwLock;
 use thiserror::Error;
+
+#[cfg(feature = "cli")]
+use crate::TxManagerCli;
 
 // ── Error ───────────────────────────────────────────────────────────────
 
@@ -134,145 +135,6 @@ pub enum TxManagerPreset {
     Batcher,
     /// Challenger role: lower confirmation count for faster response.
     Challenger,
-}
-
-// ── TxManagerCli ────────────────────────────────────────────────────────
-
-/// CLI arguments for the transaction manager.
-///
-/// Designed to be `#[command(flatten)]`-ed into parent CLI structs
-/// (proposer, challenger, batcher binaries). All fields use environment
-/// variable fallbacks with the `BASE_TX_MANAGER_` prefix.
-///
-/// Requires the `cli` feature.
-#[cfg(feature = "cli")]
-#[derive(Debug, Clone, Parser)]
-#[command(next_help_heading = "Tx Manager")]
-pub struct TxManagerCli {
-    /// Number of block confirmations to wait before considering a
-    /// transaction finalized.
-    #[arg(
-        long = "tx-manager.num-confirmations",
-        env = "BASE_TX_MANAGER_NUM_CONFIRMATIONS",
-        default_value = "10"
-    )]
-    pub num_confirmations: u64,
-
-    /// Number of consecutive nonce-too-low errors after a successful
-    /// publish before the send loop aborts.
-    #[arg(
-        long = "tx-manager.safe-abort-nonce-too-low-count",
-        env = "BASE_TX_MANAGER_SAFE_ABORT_NONCE_TOO_LOW_COUNT",
-        default_value = "3"
-    )]
-    pub safe_abort_nonce_too_low_count: u64,
-
-    /// Maximum fee multiplier applied to the suggested gas price.
-    #[arg(
-        long = "tx-manager.fee-limit-multiplier",
-        env = "BASE_TX_MANAGER_FEE_LIMIT_MULTIPLIER",
-        default_value = "5"
-    )]
-    pub fee_limit_multiplier: u64,
-
-    /// Minimum suggested fee (in gwei) at which the fee-limit check
-    /// activates. Accepts decimal strings (e.g. `"100"`, `"1.5"`).
-    #[arg(
-        long = "tx-manager.fee-limit-threshold",
-        env = "BASE_TX_MANAGER_FEE_LIMIT_THRESHOLD",
-        default_value = "100"
-    )]
-    pub fee_limit_threshold_gwei: String,
-
-    /// Minimum tip cap (in gwei) to use for transactions. Accepts
-    /// decimal strings (e.g. `"0"`, `"1.5"`).
-    #[arg(
-        long = "tx-manager.min-tip-cap",
-        env = "BASE_TX_MANAGER_MIN_TIP_CAP",
-        default_value = "0"
-    )]
-    pub min_tip_cap_gwei: String,
-
-    /// Minimum basefee (in gwei) to use for transactions. Accepts
-    /// decimal strings (e.g. `"0"`, `"0.25"`).
-    #[arg(
-        long = "tx-manager.min-basefee",
-        env = "BASE_TX_MANAGER_MIN_BASEFEE",
-        default_value = "0"
-    )]
-    pub min_basefee_gwei: String,
-
-    /// Timeout for network requests (e.g., "10s", "1m").
-    #[arg(
-        long = "tx-manager.network-timeout",
-        env = "BASE_TX_MANAGER_NETWORK_TIMEOUT",
-        default_value = "10s",
-        value_parser = humantime::parse_duration
-    )]
-    pub network_timeout: Duration,
-
-    /// Timeout before resubmitting a transaction with bumped fees
-    /// (e.g., "48s", "2m").
-    #[arg(
-        long = "tx-manager.resubmission-timeout",
-        env = "BASE_TX_MANAGER_RESUBMISSION_TIMEOUT",
-        default_value = "48s",
-        value_parser = humantime::parse_duration
-    )]
-    pub resubmission_timeout: Duration,
-
-    /// Interval between receipt query attempts (e.g., "12s").
-    #[arg(
-        long = "tx-manager.receipt-query-interval",
-        env = "BASE_TX_MANAGER_RECEIPT_QUERY_INTERVAL",
-        default_value = "12s",
-        value_parser = humantime::parse_duration
-    )]
-    pub receipt_query_interval: Duration,
-
-    /// Overall timeout for sending a transaction. Set to "0s" to disable.
-    #[arg(
-        long = "tx-manager.tx-send-timeout",
-        env = "BASE_TX_MANAGER_TX_SEND_TIMEOUT",
-        default_value = "0s",
-        value_parser = humantime::parse_duration
-    )]
-    pub tx_send_timeout: Duration,
-
-    /// Maximum time to wait for a transaction to appear in the mempool.
-    /// Set to "0s" to disable.
-    #[arg(
-        long = "tx-manager.tx-not-in-mempool-timeout",
-        env = "BASE_TX_MANAGER_TX_NOT_IN_MEMPOOL_TIMEOUT",
-        default_value = "2m",
-        value_parser = humantime::parse_duration
-    )]
-    pub tx_not_in_mempool_timeout: Duration,
-}
-
-#[cfg(feature = "cli")]
-impl TxManagerCli {
-    /// Shared defaults used by all presets. Individual presets override
-    /// only the fields that differ (e.g. `num_confirmations`).
-    fn base_defaults() -> Self {
-        Self::try_parse_from(["base"]).expect("hardcoded defaults are valid")
-    }
-
-    /// Returns a [`TxManagerCli`] populated with preset-appropriate defaults.
-    ///
-    /// The returned struct can be overridden by actual CLI arguments or
-    /// environment variables when flattened into a parent parser.
-    #[must_use]
-    pub fn with_preset(preset: TxManagerPreset) -> Self {
-        let mut cli = Self::base_defaults();
-        match preset {
-            TxManagerPreset::Batcher => cli,
-            TxManagerPreset::Challenger => {
-                cli.num_confirmations = 3;
-                cli
-            }
-        }
-    }
 }
 
 // ── HotConfig ───────────────────────────────────────────────────────────
@@ -523,25 +385,7 @@ impl TxManagerConfig {
     /// - Gwei strings must be valid non-negative decimals
     #[cfg(feature = "cli")]
     pub fn from_cli(cli: TxManagerCli, chain_id: u64) -> Result<Self, ConfigError> {
-        let fee_limit_threshold =
-            GweiParser::parse(&cli.fee_limit_threshold_gwei, "fee_limit_threshold")?;
-        let min_tip_cap = GweiParser::parse(&cli.min_tip_cap_gwei, "min_tip_cap")?;
-        let min_basefee = GweiParser::parse(&cli.min_basefee_gwei, "min_basefee")?;
-
-        Self::new(TxManagerParams {
-            num_confirmations: cli.num_confirmations,
-            safe_abort_nonce_too_low_count: cli.safe_abort_nonce_too_low_count,
-            fee_limit_multiplier: cli.fee_limit_multiplier,
-            fee_limit_threshold,
-            min_tip_cap,
-            min_basefee,
-            network_timeout: cli.network_timeout,
-            resubmission_timeout: cli.resubmission_timeout,
-            receipt_query_interval: cli.receipt_query_interval,
-            tx_send_timeout: cli.tx_send_timeout,
-            tx_not_in_mempool_timeout: cli.tx_not_in_mempool_timeout,
-            chain_id,
-        })
+        Self::new(cli.into_params(chain_id)?)
     }
 
     // ── Immutable field accessors ───────────────────────────────────
@@ -938,9 +782,11 @@ mod tests {
 
     #[cfg(feature = "cli")]
     mod cli_tests {
+        use clap::Parser;
         use rstest::rstest;
 
         use super::super::*;
+        use crate::TxManagerCli;
 
         fn default_cli() -> TxManagerCli {
             TxManagerCli::try_parse_from(["test"]).unwrap()
