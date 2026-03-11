@@ -2,6 +2,7 @@
 
 use alloc::vec;
 
+use alloy_rlp::Encodable;
 use base_consensus_genesis::RollupConfig;
 use base_protocol::{Batch, ChannelId, Frame};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
@@ -89,14 +90,20 @@ where
         let mut buf = vec![];
         batch.encode(&mut buf).map_err(|_| ChannelOutError::BatchEncoding)?;
 
+        // Wrap in an RLP byte string so the BatchReader can decode it via Bytes::decode().
+        // Use `&buf[..]` (a `[u8]` slice) to get the byte-string encoding rather than
+        // `buf` (a `Vec<u8>`) which would use the generic Vec<T> list encoding.
+        let mut rlp_buf = vec![];
+        buf.as_slice().encode(&mut rlp_buf);
+
         // Validate that the RLP length is within the channel's limits.
         let max_rlp_bytes_per_channel = self.config.max_rlp_bytes_per_channel(batch.timestamp());
-        if self.rlp_length + buf.len() as u64 > max_rlp_bytes_per_channel {
+        if self.rlp_length + rlp_buf.len() as u64 > max_rlp_bytes_per_channel {
             return Err(ChannelOutError::ExceedsMaxRlpBytesPerChannel);
         }
 
-        self.compressor.write(&buf)?;
-        self.rlp_length += buf.len() as u64;
+        self.compressor.write(&rlp_buf)?;
+        self.rlp_length += rlp_buf.len() as u64;
 
         Ok(())
     }
@@ -132,9 +139,20 @@ where
         let mut frame =
             Frame { id: self.id, number: self.frame_number, is_last: self.closed, data: vec![] };
 
-        let mut max_size = max_size - FRAME_V0_OVERHEAD;
+        // The first frame carries the channel version prefix (if any) so that
+        // the reader can identify the compression format.  For brotli this is
+        // `0x01`; zlib data is self-identifying and needs no prefix.
+        let version_byte =
+            if self.frame_number == 0 { self.compressor.channel_version_byte() } else { None };
+        let prefix_len = usize::from(version_byte.is_some());
+
+        let mut max_size = max_size - FRAME_V0_OVERHEAD - prefix_len;
         if max_size > self.ready_bytes() {
             max_size = self.ready_bytes();
+        }
+
+        if let Some(v) = version_byte {
+            frame.data.push(v);
         }
 
         // Read `max_size` bytes from the compressed data.
@@ -296,7 +314,10 @@ mod tests {
         assert!(encoded.len() as u64 <= max_rlp, "test batch should fit within per-channel limit");
 
         channel.add_batch(large_batch.clone()).expect("first batch should fit");
-        assert_eq!(channel.rlp_length, encoded.len() as u64);
+        // rlp_length tracks the RLP byte-string-wrapped size (includes header bytes).
+        let mut rlp_wrapped = Vec::new();
+        encoded.as_slice().encode(&mut rlp_wrapped);
+        assert_eq!(channel.rlp_length, rlp_wrapped.len() as u64);
 
         let err = channel.add_batch(large_batch).unwrap_err();
         assert_eq!(err, ChannelOutError::ExceedsMaxRlpBytesPerChannel);

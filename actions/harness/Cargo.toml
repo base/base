@@ -1,0 +1,29 @@
+[package]
+name = "base-action-harness"
+description = "Action test harness for Base — simulated L1/L2 actors for protocol integration testing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tracing.workspace = true
+thiserror.workspace = true
+alloy-rlp.workspace = true
+alloy-eips.workspace = true
+async-trait.workspace = true
+alloy-primitives.workspace = true
+alloy-consensus = { workspace = true, features = ["std"] }
+base-protocol = { workspace = true, features = ["std"] }
+base-alloy-consensus = { workspace = true, features = ["std"] }
+base-consensus-genesis = { workspace = true, features = ["std"] }
+base-consensus-derive = { workspace = true, features = ["test-utils"] }
+base-batcher-driver.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
