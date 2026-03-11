@@ -367,6 +367,7 @@ pub(crate) async fn run_l1_blob_watcher(
             .await
     {
         let _ = mode_tx.send(L1ConnectionMode::Polling).await;
+        let _ = toast_tx.try_send(Toast::info("L1 watcher fell back to HTTP polling"));
         run_l1_blob_watcher_poll(&l1_rpc, batcher_address, result_tx, &toast_tx).await;
     }
 }
