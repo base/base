@@ -2749,6 +2749,7 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "alloy-sol-types",
+ "ambassador",
  "arbitrary",
  "base-consensus-genesis",
  "base-protocol",
@@ -3073,6 +3074,7 @@ dependencies = [
  "alloy-primitives",
  "base-alloy-hardforks",
  "base-consensus-genesis",
+ "derive_more",
  "spin 0.10.0",
  "toml 1.0.6+spec-1.1.0",
 ]
