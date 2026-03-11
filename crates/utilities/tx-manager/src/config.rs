@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use alloy_primitives::utils::{UnitsError, parse_units};
+use alloy_primitives::utils::parse_units;
 use thiserror::Error;
 
 #[cfg(feature = "cli")]
@@ -32,12 +32,12 @@ pub enum ConfigError {
     },
 
     /// A gwei string could not be parsed or represents an invalid value.
-    #[error("invalid gwei value for {field}: {source}")]
+    #[error("invalid gwei value for {field}: {reason}")]
     InvalidGwei {
         /// The field name that contains the invalid gwei value.
         field: &'static str,
-        /// The underlying parsing error.
-        source: UnitsError,
+        /// Human-readable reason the parse failed.
+        reason: String,
     },
 
     /// A field value is semantically invalid (e.g. negative or overflows).
@@ -70,7 +70,7 @@ impl GweiParser {
     /// value is negative or overflows `u128`.
     pub fn parse(gwei: &str, field: &'static str) -> Result<u128, ConfigError> {
         let parsed =
-            parse_units(gwei, "gwei").map_err(|e| ConfigError::InvalidGwei { field, source: e })?;
+            parse_units(gwei, "gwei").map_err(|e| ConfigError::InvalidGwei { field, reason: e.to_string() })?;
         if parsed.is_negative() {
             return Err(ConfigError::InvalidValue {
                 field,
