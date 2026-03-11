@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256};
 #[cfg(target_os = "linux")]
-use base_proof_transport::{EnclaveRequest, EnclaveResponse, Frame};
+use base_proof_transport::Frame;
 #[cfg(target_os = "linux")]
 use tokio::time::{Duration, timeout};
 #[cfg(target_os = "linux")]
@@ -22,6 +22,9 @@ pub use crypto::{Ecdsa, SIGNATURE_LENGTH, SIGNING_DATA_BASE_LENGTH, Signing};
 
 mod nsm;
 pub use nsm::{NsmRng, NsmSession};
+
+mod protocol;
+pub use protocol::{EnclaveRequest, EnclaveResponse};
 
 mod server;
 pub use server::Server;
@@ -85,9 +88,12 @@ async fn handle_connection(
     mut stream: tokio_vsock::VsockStream,
     server: &Server,
 ) -> eyre::Result<()> {
-    /// Short deadline for receiving the request frame — all request types are
-    /// small, so a slow sender is never expected.
-    const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(10);
+    /// Deadline for receiving the request frame.
+    ///
+    /// The `Prove` variant includes the full witness preimage bundle which can be
+    /// many megabytes, so this timeout must be long enough for any realistic
+    /// payload to arrive over vsock.
+    const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
     let request: EnclaveRequest = timeout(REQUEST_READ_TIMEOUT, Frame::read(&mut stream)).await??;
 

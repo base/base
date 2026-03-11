@@ -1,5 +1,8 @@
 use thiserror::Error;
 
+/// Result type for proof transport operations.
+pub type TransportResult<T> = Result<T, TransportError>;
+
 /// Errors that can occur during proof transport operations.
 #[derive(Error, Debug)]
 pub enum TransportError {
@@ -7,24 +10,7 @@ pub enum TransportError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// The blocking task panicked or was cancelled.
-    #[cfg(feature = "vsock")]
-    #[error("task failed: {0}")]
-    TaskFailed(#[from] tokio::task::JoinError),
-
     /// Serialization or deserialization of a message failed.
     #[error("codec error: {0}")]
     Codec(String),
-
-    /// The proof execution itself failed.
-    #[error("prove execution failed: {0}")]
-    ProveExecution(String),
-
-    /// The enclave returned an error response.
-    #[error("enclave error: {0}")]
-    Enclave(String),
-
-    /// The operation is not supported by this transport.
-    #[error("operation not supported: {0}")]
-    Unsupported(String),
 }

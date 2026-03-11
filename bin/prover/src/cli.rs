@@ -1,22 +1,24 @@
 //! CLI definition for the TEE prover binary.
 
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
+#[cfg(any(target_os = "linux", feature = "local"))]
+use std::sync::Arc;
 
 use alloy_primitives::{Address, B256};
-use base_consensus_registry::Registry;
-use base_proof_host::ProverConfig;
 #[cfg(any(target_os = "linux", feature = "local"))]
+use base_consensus_registry::Registry;
+#[cfg(any(target_os = "linux", feature = "local"))]
+use base_proof_host::ProverConfig;
 use base_proof_tee_nitro::EnclaveConfig;
 #[cfg(target_os = "linux")]
 use base_proof_tee_nitro::NitroEnclave;
-use base_proof_tee_nitro::NitroProverServer;
 #[cfg(feature = "local")]
 use base_proof_tee_nitro::Server;
-use base_proof_transport::VsockTransport;
-#[cfg(feature = "local")]
-use base_proof_transport::{NativeTransport, TransportError};
+#[cfg(any(target_os = "linux", feature = "local"))]
+use base_proof_tee_nitro::{NitroProverServer, NitroTransport};
 use clap::{Parser, Subcommand};
 use eyre::eyre;
+#[cfg(any(target_os = "linux", feature = "local"))]
 use tracing::info;
 
 /// TEE prover.
@@ -48,6 +50,7 @@ enum NitroCommand {
     ///
     /// Accepts proving requests over JSON-RPC and forwards them to the Nitro
     /// Enclave over vsock.
+    #[cfg(target_os = "linux")]
     Server(NitroServerArgs),
 
     /// Run the proving process inside the Nitro Enclave.
@@ -89,6 +92,7 @@ struct ProverServerArgs {
 }
 
 /// Arguments for the `nitro server` subcommand.
+#[cfg(target_os = "linux")]
 #[derive(Parser)]
 struct NitroServerArgs {
     #[command(flatten)]
@@ -136,6 +140,7 @@ impl Cli {
 impl NitroArgs {
     async fn run(self) -> eyre::Result<()> {
         match self.command {
+            #[cfg(target_os = "linux")]
             NitroCommand::Server(args) => args.run().await,
             NitroCommand::Enclave(args) => args.run().await,
             #[cfg(feature = "local")]
@@ -144,6 +149,7 @@ impl NitroArgs {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl NitroServerArgs {
     async fn run(self) -> eyre::Result<()> {
         let rollup_config = Registry::rollup_config(self.server.l2_chain_id)
@@ -164,7 +170,7 @@ impl NitroServerArgs {
             enable_experimental_witness_endpoint: self.server.enable_experimental_witness_endpoint,
         };
 
-        let transport = Arc::new(VsockTransport::new(self.vsock_cid, self.vsock_port));
+        let transport = Arc::new(NitroTransport::vsock(self.vsock_cid, self.vsock_port));
         let server = NitroProverServer::new(config, transport);
 
         info!(addr = %self.server.rpc_addr, "starting nitro prover server");
@@ -176,18 +182,21 @@ impl NitroServerArgs {
 
 impl NitroEnclaveArgs {
     async fn run(self) -> eyre::Result<()> {
+        let config = EnclaveConfig {
+            vsock_port: self.vsock_port,
+            proposer: self.proposer,
+            config_hash: self.config_hash,
+            tee_image_hash: self.tee_image_hash,
+        };
+
         #[cfg(not(target_os = "linux"))]
-        return Err(eyre!("enclave subcommand is only supported on Linux"));
+        {
+            let _ = config;
+            Err(eyre!("enclave subcommand is only supported on Linux"))
+        }
 
         #[cfg(target_os = "linux")]
         {
-            let config = EnclaveConfig {
-                vsock_port: self.vsock_port,
-                proposer: self.proposer,
-                config_hash: self.config_hash,
-                tee_image_hash: self.tee_image_hash,
-            };
-
             let enclave = NitroEnclave::new(&config)?;
             enclave.run().await
         }
@@ -232,20 +241,6 @@ impl NitroLocalArgs {
             tee_image_hash: self.tee_image_hash,
         };
 
-        let enclave_server = Arc::new(Server::new(&enclave_config)?);
-        let transport = Arc::new(NativeTransport::new({
-            let server = Arc::clone(&enclave_server);
-            move |preimages| {
-                let server = Arc::clone(&server);
-                let preimages = preimages.to_vec();
-                tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(server.prove(preimages))
-                        .map_err(|e| TransportError::ProveExecution(e.to_string()))
-                })
-            }
-        }));
-
         let prover_config = ProverConfig {
             l1_eth_url: self.server.l1_eth_url,
             l2_eth_url: self.server.l2_eth_url,
@@ -256,6 +251,8 @@ impl NitroLocalArgs {
             enable_experimental_witness_endpoint: self.server.enable_experimental_witness_endpoint,
         };
 
+        let enclave_server = Arc::new(Server::new(&enclave_config)?);
+        let transport = Arc::new(NitroTransport::local(enclave_server));
         let server = NitroProverServer::new(prover_config, transport);
 
         info!(addr = %self.server.rpc_addr, "starting nitro prover server (local mode)");

@@ -8,8 +8,8 @@ rust-version.workspace = true
 # Core
 base-alloy-evm.workspace = true
 base-proof-client.workspace = true
-base-proof-preimage.workspace = true
-base-proof-primitives.workspace = true
+base-proof-preimage = { workspace = true, features = ["serde"] }
+base-proof-primitives = { workspace = true, features = ["std", "serde"] }
 base-proof-transport = { workspace = true, features = ["frame"] }
 base-proof-host = { workspace = true, optional = true }
 jsonrpsee = { workspace = true, optional = true, features = ["server", "macros"] }
@@ -57,14 +57,12 @@ rand_08.workspace = true
 tokio-vsock.workspace = true
 
 [dev-dependencies]
-base-proof-transport = { workspace = true, features = ["test-utils"] }
 rand_08.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [features]
 host = [
 	"base-proof-primitives/rpc-server",
-	"base-proof-transport/vsock",
 	"dep:base-proof-host",
 	"dep:jsonrpsee",
 	"tokio/net",

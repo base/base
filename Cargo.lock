@@ -4186,15 +4186,10 @@ dependencies = [
 name = "base-proof-transport"
 version = "0.0.0"
 dependencies = [
- "alloy-primitives",
- "async-trait",
- "base-proof-preimage",
- "base-proof-primitives",
  "bincode 2.0.1",
  "serde",
  "thiserror 2.0.18",
  "tokio",
- "tokio-vsock",
 ]
 
 [[package]]
@@ -4321,11 +4316,9 @@ dependencies = [
  "base-consensus-registry",
  "base-proof-host",
  "base-proof-tee-nitro",
- "base-proof-transport",
  "clap",
  "eyre",
  "tokio",
- "tracing",
  "tracing-subscriber 0.3.22",
 ]
 

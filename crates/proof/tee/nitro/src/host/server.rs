@@ -2,7 +2,6 @@ use std::{fmt, net::SocketAddr, sync::Arc};
 
 use base_proof_host::{ProverConfig, ProverService};
 use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
-use base_proof_transport::ProofTransport;
 use jsonrpsee::{
     RpcModule,
     core::{RpcResult, async_trait},
@@ -10,7 +9,7 @@ use jsonrpsee::{
 };
 use tracing::info;
 
-use super::NitroBackend;
+use super::{NitroBackend, transport::NitroTransport};
 
 /// Host-side TEE prover server exposing a JSON-RPC interface.
 ///
@@ -19,7 +18,7 @@ use super::NitroBackend;
 /// - `enclave_*`: signer info queries (also forwarded via transport)
 pub struct NitroProverServer {
     service: ProverService<NitroBackend>,
-    transport: Arc<dyn ProofTransport>,
+    transport: Arc<NitroTransport>,
 }
 
 impl fmt::Debug for NitroProverServer {
@@ -30,7 +29,7 @@ impl fmt::Debug for NitroProverServer {
 
 impl NitroProverServer {
     /// Create a server with the given prover config and enclave transport.
-    pub fn new(config: ProverConfig, transport: Arc<dyn ProofTransport>) -> Self {
+    pub fn new(config: ProverConfig, transport: Arc<NitroTransport>) -> Self {
         let backend = NitroBackend::new(Arc::clone(&transport));
         Self { service: ProverService::new(config, backend), transport }
     }
@@ -65,7 +64,7 @@ impl ProverApiServer for NitroProverRpc {
 
 /// Inner RPC handler for `enclave_*` methods.
 struct NitroSignerRpc {
-    transport: Arc<dyn ProofTransport>,
+    transport: Arc<NitroTransport>,
 }
 
 #[async_trait]
@@ -79,44 +78,32 @@ impl EnclaveApiServer for NitroSignerRpc {
 
 #[cfg(test)]
 mod tests {
-    use base_proof_preimage::PreimageKey;
-    use base_proof_primitives::ProofResult;
-    use base_proof_transport::{NativeTransport, TransportError, TransportResult};
+    use alloy_primitives::{Address, B256};
+    use base_proof_primitives::EnclaveApiServer;
 
     use super::*;
+    use crate::enclave::{EnclaveConfig, Server as EnclaveServer};
 
-    struct MockSignerTransport {
-        public_key: Vec<u8>,
-    }
-
-    #[async_trait]
-    impl ProofTransport for MockSignerTransport {
-        async fn prove(
-            &self,
-            _preimages: &[(PreimageKey, Vec<u8>)],
-        ) -> TransportResult<ProofResult> {
-            unimplemented!("not used in signer tests")
+    fn test_config() -> EnclaveConfig {
+        EnclaveConfig {
+            vsock_port: 0,
+            proposer: Address::ZERO,
+            config_hash: B256::ZERO,
+            tee_image_hash: B256::ZERO,
         }
-
-        async fn signer_public_key(&self) -> TransportResult<Vec<u8>> {
-            Ok(self.public_key.clone())
-        }
-    }
-
-    #[tokio::test]
-    async fn signer_public_key_unsupported_for_native_transport() {
-        let transport: NativeTransport<fn(&_) -> _> = NativeTransport::new(|_| unimplemented!());
-        let result = transport.signer_public_key().await;
-        assert!(matches!(result, Err(TransportError::Unsupported(_))));
     }
 
     #[tokio::test]
     async fn signer_public_key_routed_to_transport() {
-        let expected = vec![0x04u8; 65];
-        let rpc = NitroSignerRpc {
-            transport: Arc::new(MockSignerTransport { public_key: expected.clone() }),
-        };
+        let config = test_config();
+        let server = Arc::new(EnclaveServer::new(&config).unwrap());
+        let transport = Arc::new(NitroTransport::local(Arc::clone(&server)));
+        let expected = server.signer_public_key();
+
+        let rpc = NitroSignerRpc { transport };
         let result = EnclaveApiServer::signer_public_key(&rpc).await.unwrap();
         assert_eq!(result, expected);
+        assert_eq!(result.len(), 65);
+        assert_eq!(result[0], 0x04);
     }
 }
