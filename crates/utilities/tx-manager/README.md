@@ -112,13 +112,13 @@ fallbacks. The macro also generates `Default` and
 `TryFrom<TxManagerCli> for TxManagerConfig` impls:
 
 ```rust,ignore
-use base_tx_manager::{TxManagerCli, TxManagerConfig};
+use base_tx_manager::TxManagerConfig;
+
+base_tx_manager::define_tx_manager_cli!("BASE_TX_MANAGER");
 
 // Parse from CLI args (typically done by the parent binary).
 let cli = TxManagerCli::try_parse().unwrap();
 
-// Validate and build the runtime config. Returns ConfigError on invalid
-// values (zero confirmations, zero timeouts, invalid gwei strings, etc.).
 let config = TxManagerConfig::try_from(cli)?;
 ```
 
