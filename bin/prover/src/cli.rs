@@ -12,9 +12,9 @@ use base_proof_tee_nitro::NitroEnclave;
 use base_proof_tee_nitro::NitroProverServer;
 #[cfg(feature = "local")]
 use base_proof_tee_nitro::Server;
+use base_proof_transport::VsockTransport;
 #[cfg(feature = "local")]
 use base_proof_transport::{NativeTransport, TransportError};
-use base_proof_transport::VsockTransport;
 use clap::{Parser, Subcommand};
 use eyre::eyre;
 use tracing::info;
