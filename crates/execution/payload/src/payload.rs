@@ -12,9 +12,7 @@ use alloy_rpc_types_engine::{
     BlobsBundleV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2, ExecutionPayloadV1,
     ExecutionPayloadV3, PayloadId,
 };
-use base_alloy_consensus::{
-    EIP1559ParamError, encode_holocene_extra_data, encode_jovian_extra_data,
-};
+use base_alloy_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 /// Re-export for use in downstream arguments.
 pub use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_alloy_rpc_types_engine::{
@@ -71,7 +69,7 @@ impl<T> OpPayloadBuilderAttributes<T> {
         default_base_fee_params: BaseFeeParams,
     ) -> Result<Bytes, EIP1559ParamError> {
         self.eip_1559_params
-            .map(|params| encode_holocene_extra_data(params, default_base_fee_params))
+            .map(|params| HoloceneExtraData::encode(params, default_base_fee_params))
             .ok_or(EIP1559ParamError::NoEIP1559Params)?
     }
 
@@ -83,7 +81,7 @@ impl<T> OpPayloadBuilderAttributes<T> {
     ) -> Result<Bytes, EIP1559ParamError> {
         let min_base_fee = self.min_base_fee.ok_or(EIP1559ParamError::MinBaseFeeNotSet)?;
         self.eip_1559_params
-            .map(|params| encode_jovian_extra_data(params, default_base_fee_params, min_base_fee))
+            .map(|params| JovianExtraData::encode(params, default_base_fee_params, min_base_fee))
             .ok_or(EIP1559ParamError::NoEIP1559Params)?
     }
 }

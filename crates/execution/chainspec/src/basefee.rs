@@ -4,9 +4,7 @@ use core::cmp::max;
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::calc_next_block_base_fee;
-use base_alloy_consensus::{
-    EIP1559ParamError, decode_holocene_extra_data, decode_jovian_extra_data,
-};
+use base_alloy_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 use base_execution_forks::OpHardforks;
 use reth_chainspec::{BaseFeeParams, EthChainSpec};
 
@@ -23,7 +21,7 @@ pub fn decode_holocene_base_fee<H>(
 where
     H: BlockHeader,
 {
-    let (elasticity, denominator) = decode_holocene_extra_data(parent.extra_data())?;
+    let (elasticity, denominator) = HoloceneExtraData::decode(parent.extra_data())?;
 
     let base_fee_params = if elasticity == 0 && denominator == 0 {
         chain_spec.base_fee_params_at_timestamp(timestamp)
@@ -50,7 +48,7 @@ pub fn compute_jovian_base_fee<H>(
 where
     H: BlockHeader,
 {
-    let (elasticity, denominator, min_base_fee) = decode_jovian_extra_data(parent.extra_data())?;
+    let (elasticity, denominator, min_base_fee) = JovianExtraData::decode(parent.extra_data())?;
 
     let base_fee_params = if elasticity == 0 && denominator == 0 {
         chain_spec.base_fee_params_at_timestamp(timestamp)
@@ -80,7 +78,7 @@ where
 mod tests {
     use alloc::sync::Arc;
 
-    use base_alloy_consensus::encode_jovian_extra_data;
+    use base_alloy_consensus::JovianExtraData;
     use base_execution_forks::OpHardfork;
     use reth_chainspec::{ChainSpec, ForkCondition, Hardfork};
 
@@ -116,7 +114,7 @@ mod tests {
         const MIN_BASE_FEE: u64 = 100_000_000;
 
         parent.extra_data =
-            encode_jovian_extra_data([0; 8].into(), BaseFeeParams::base_sepolia(), MIN_BASE_FEE)
+            JovianExtraData::encode([0; 8].into(), BaseFeeParams::base_sepolia(), MIN_BASE_FEE)
                 .unwrap();
         parent.blob_gas_used = Some(BLOB_GAS_USED);
         parent.gas_used = GAS_USED;
@@ -155,7 +153,7 @@ mod tests {
         const MIN_BASE_FEE: u64 = 100_000_000;
 
         parent.extra_data =
-            encode_jovian_extra_data([0; 8].into(), BaseFeeParams::base_sepolia(), MIN_BASE_FEE)
+            JovianExtraData::encode([0; 8].into(), BaseFeeParams::base_sepolia(), MIN_BASE_FEE)
                 .unwrap();
         parent.blob_gas_used = Some(BLOB_GAS_USED);
         parent.gas_used = GAS_USED;
@@ -185,7 +183,7 @@ mod tests {
         const MIN_BASE_FEE: u64 = 5_000_000_000;
 
         parent.extra_data =
-            encode_jovian_extra_data([0; 8].into(), BaseFeeParams::base_sepolia(), MIN_BASE_FEE)
+            JovianExtraData::encode([0; 8].into(), BaseFeeParams::base_sepolia(), MIN_BASE_FEE)
                 .unwrap();
         parent.blob_gas_used = Some(BLOB_GAS_USED);
         parent.gas_used = GAS_USED;

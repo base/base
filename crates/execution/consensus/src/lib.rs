@@ -236,9 +236,7 @@ mod tests {
     use alloy_consensus::{BlockBody, Eip658Value, Header, Receipt, TxEip7702, TxReceipt};
     use alloy_eips::{eip4895::Withdrawals, eip7685::Requests};
     use alloy_primitives::{Address, Bytes, Log, Signature, U256};
-    use base_alloy_consensus::{
-        OpTypedTransaction, encode_holocene_extra_data, encode_jovian_extra_data,
-    };
+    use base_alloy_consensus::{HoloceneExtraData, JovianExtraData, OpTypedTransaction};
     use base_execution_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
     use base_execution_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
     use reth_chainspec::BaseFeeParams;
@@ -524,7 +522,7 @@ mod tests {
                 &receipt.with_bloom_ref(),
             )),
             logs_bloom: receipt.bloom(),
-            extra_data: encode_jovian_extra_data(
+            extra_data: JovianExtraData::encode(
                 Default::default(),
                 BaseFeeParams::optimism(),
                 MIN_BASE_FEE,
@@ -595,7 +593,7 @@ mod tests {
                 &receipt.with_bloom_ref(),
             )),
             logs_bloom: receipt.bloom(),
-            extra_data: encode_jovian_extra_data(
+            extra_data: JovianExtraData::encode(
                 Default::default(),
                 BaseFeeParams::optimism(),
                 MIN_BASE_FEE,
@@ -672,7 +670,7 @@ mod tests {
                 &receipt.with_bloom_ref(),
             )),
             logs_bloom: receipt.bloom(),
-            extra_data: encode_jovian_extra_data(
+            extra_data: JovianExtraData::encode(
                 Default::default(),
                 BaseFeeParams::optimism(),
                 MIN_BASE_FEE,
@@ -746,7 +744,7 @@ mod tests {
                 &receipt.with_bloom_ref(),
             )),
             logs_bloom: receipt.bloom(),
-            extra_data: encode_holocene_extra_data(Default::default(), BaseFeeParams::optimism())
+            extra_data: HoloceneExtraData::encode(Default::default(), BaseFeeParams::optimism())
                 .unwrap(),
             gas_limit: GAS_LIMIT,
             ..Default::default()
