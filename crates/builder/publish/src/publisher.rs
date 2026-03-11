@@ -106,7 +106,11 @@ impl WebSocketPublisher {
         let size = utf8_bytes.len();
         let position = Some((block_number, flashblock_index));
 
-        // Always store in the ring buffer for reconnecting clients.
+        // Always store in the ring buffer first so reconnecting clients can
+        // replay missed entries, even during periods with no live subscribers.
+        // Both orderings are safe with the three-phase bridge protocol;
+        // ring-buffer-first guarantees the buffer is populated regardless of
+        // whether the broadcast succeeds.
         self.ring_buffer
             .write()
             .unwrap_or_else(|e| e.into_inner())
@@ -114,7 +118,7 @@ impl WebSocketPublisher {
 
         // Broadcast to live subscribers. The send only fails when there are
         // zero receivers, which is expected during periods without connected
-        // clients — the ring buffer still captures the entry above.
+        // clients.
         let _ = self.pipe.send((position, utf8_bytes));
 
         self.metrics.on_payload_size(size);

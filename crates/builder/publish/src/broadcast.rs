@@ -95,6 +95,7 @@ impl BroadcastLoop {
                 "Replaying ring buffer entries"
             );
             let mut sent_positions: HashSet<FlashblockPosition> = HashSet::new();
+            let mut none_sent: usize = 0;
             for (pos, payload) in &entries {
                 if self.cancel.is_cancelled() {
                     return;
@@ -119,8 +120,13 @@ impl BroadcastLoop {
                         return;
                     }
                 }
-                if let Some(p) = *pos {
-                    sent_positions.insert(p);
+                match *pos {
+                    Some(p) => {
+                        sent_positions.insert(p);
+                    }
+                    None => {
+                        none_sent += 1;
+                    }
                 }
             }
 
@@ -145,8 +151,25 @@ impl BroadcastLoop {
                 dedup_count = sent_positions.len(),
                 "Bridging ring buffer entries after replay"
             );
+            // Dedup bridge entries against phase 1. Positioned entries use
+            // hash lookup; sentinel entries (position = None) use a count
+            // since they share the same `None` key. The ring buffer preserves
+            // insertion order, so the first `none_sent` sentinels in the
+            // bridge correspond to the ones already delivered in phase 1.
+            let mut none_skipped: usize = 0;
             for (pos, payload) in &bridge_entries {
-                if pos.is_some_and(|p| sent_positions.contains(&p)) {
+                let already_sent = match *pos {
+                    Some(p) => sent_positions.contains(&p),
+                    None => {
+                        if none_skipped < none_sent {
+                            none_skipped += 1;
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                };
+                if already_sent {
                     continue;
                 }
                 if self.cancel.is_cancelled() {

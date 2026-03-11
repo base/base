@@ -253,17 +253,22 @@ async fn main() {
             Bytes::from(data.into_bytes())
         };
 
-        // Broadcast first so that live subscribers never miss a message that
-        // exists in the ring buffer. The ring buffer is then populated for
-        // reconnecting clients.
-        match send.send((pos, Message::Binary(message_data.clone()))) {
+        // Always store in the ring buffer first so reconnecting clients can
+        // replay missed entries, even during periods with no live subscribers.
+        ring_buffer_listener
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(pos, message_data.clone());
+
+        // Then broadcast to live subscribers. Both orderings are safe with the
+        // three-phase bridge protocol; ring-buffer-first guarantees the buffer
+        // is populated regardless of whether the broadcast succeeds.
+        match send.send((pos, Message::Binary(message_data))) {
             Ok(_) => {
                 metrics_clone.broadcast_queue_size.set(send.len() as f64);
             }
             Err(e) => error!(message = "failed to send data", error = e.to_string()),
         }
-
-        ring_buffer_listener.write().unwrap_or_else(|e| e.into_inner()).push(pos, message_data);
     };
 
     let token = CancellationToken::new();
