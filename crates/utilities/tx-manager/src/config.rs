@@ -119,6 +119,25 @@ pub struct TxManagerConfig {
     pub chain_id: u64,
 }
 
+impl Default for TxManagerConfig {
+    fn default() -> Self {
+        Self {
+            num_confirmations: 10,
+            safe_abort_nonce_too_low_count: 3,
+            fee_limit_multiplier: 5,
+            fee_limit_threshold: 100_000_000_000, // 100 gwei
+            min_tip_cap: 0,
+            min_basefee: 0,
+            network_timeout: Duration::from_secs(10),
+            resubmission_timeout: Duration::from_secs(48),
+            receipt_query_interval: Duration::from_secs(12),
+            tx_send_timeout: Duration::ZERO,
+            tx_not_in_mempool_timeout: Duration::from_secs(120),
+            chain_id: 0,
+        }
+    }
+}
+
 impl TxManagerConfig {
     /// Validates the configuration fields.
     ///
@@ -303,6 +322,23 @@ mod tests {
             let result = GweiParser::parse(&gwei_str, "prop_test");
             prop_assert!(result.is_ok(), "valid decimal string should parse: {gwei_str}");
         }
+    }
+
+    // ── Default impl tests ─────────────────────────────────────────
+
+    #[test]
+    fn default_passes_validation_with_chain_id() {
+        let config = TxManagerConfig { chain_id: 1, ..Default::default() };
+        config.validate().expect("default config with chain_id=1 should be valid");
+    }
+
+    #[test]
+    fn default_without_chain_id_fails_validation() {
+        let err = TxManagerConfig::default().validate().expect_err("chain_id=0 should fail");
+        assert!(
+            matches!(&err, ConfigError::OutOfRange { field: "chain_id", .. }),
+            "expected OutOfRange for chain_id, got: {err}"
+        );
     }
 
     // ── CLI-dependent tests ─────────────────────────────────────────
