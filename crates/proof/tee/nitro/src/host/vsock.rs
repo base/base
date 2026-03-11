@@ -68,7 +68,9 @@ impl VsockTransport {
         match response {
             EnclaveResponse::Prove(result) => Ok(*result),
             EnclaveResponse::Error(e) => Err(NitroError::Transport(e)),
-            _ => Err(NitroError::Transport("unexpected response type for prove".into())),
+            EnclaveResponse::SignerPublicKey(_) => {
+                Err(NitroError::Transport("unexpected response type for prove".into()))
+            }
         }
     }
 
@@ -92,9 +94,16 @@ impl VsockTransport {
                 .map_err(|e| NitroError::Transport(e.to_string()))?;
 
         match response {
-            EnclaveResponse::SignerPublicKey(key) => Ok(key),
+            EnclaveResponse::SignerPublicKey(key) => {
+                if key.len() != 65 || key[0] != 0x04 {
+                    return Err(NitroError::Transport(
+                        "invalid signer public key: expected 65-byte uncompressed SEC1 key".into(),
+                    ));
+                }
+                Ok(key)
+            }
             EnclaveResponse::Error(e) => Err(NitroError::Transport(e)),
-            _ => {
+            EnclaveResponse::Prove(_) => {
                 Err(NitroError::Transport("unexpected response type for signer_public_key".into()))
             }
         }
