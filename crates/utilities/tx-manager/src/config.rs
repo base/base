@@ -39,6 +39,15 @@ pub enum ConfigError {
         /// The underlying parsing error.
         source: UnitsError,
     },
+
+    /// A field value is semantically invalid (e.g. negative or overflows).
+    #[error("{field} has invalid value: {reason}")]
+    InvalidValue {
+        /// The field name.
+        field: &'static str,
+        /// Human-readable reason.
+        reason: String,
+    },
 }
 
 // ── GweiParser ─────────────────────────────────────────────────────────
@@ -62,14 +71,14 @@ impl GweiParser {
         let parsed =
             parse_units(gwei, "gwei").map_err(|e| ConfigError::InvalidGwei { field, source: e })?;
         if parsed.is_negative() {
-            return Err(ConfigError::InvalidGwei {
+            return Err(ConfigError::InvalidValue {
                 field,
-                source: UnitsError::InvalidUnit(format!("negative value: {gwei}")),
+                reason: format!("negative values not allowed: {gwei}"),
             });
         }
-        u128::try_from(parsed).map_err(|_| ConfigError::InvalidGwei {
+        u128::try_from(parsed).map_err(|_| ConfigError::InvalidValue {
             field,
-            source: UnitsError::InvalidUnit(format!("value too large: {gwei}")),
+            reason: format!("value too large: {gwei}"),
         })
     }
 }
@@ -231,7 +240,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::negative("-1", "negative")]
     #[case::abc("abc", "test_field")]
     #[case::spaces("  ", "test_field")]
     fn gwei_parse_invalid(#[case] gwei: &str, #[case] expected_substr: &str) {
@@ -244,6 +252,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn gwei_parse_negative_returns_invalid_value() {
+        let result = GweiParser::parse("-1", "test_field");
+        assert!(matches!(
+            result,
+            Err(ConfigError::InvalidValue { field: "test_field", .. })
+        ));
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("negative"),
+            "error should mention negative: {err}"
+        );
+    }
+
     // ── ConfigError display ─────────────────────────────────────────
 
     #[rstest]
@@ -251,9 +273,9 @@ mod tests {
         ConfigError::OutOfRange { field: "num_confirmations", constraint: ">= 1", value: "0".to_string() },
         "num_confirmations must be >= 1, got 0"
     )]
-    #[case::invalid_gwei(
-        ConfigError::InvalidGwei { field: "min_tip_cap", source: UnitsError::InvalidUnit("negative value: -1".to_string()) },
-        "invalid gwei value for min_tip_cap: "
+    #[case::invalid_value(
+        ConfigError::InvalidValue { field: "fee_limit_threshold", reason: "negative values not allowed: -1".to_string() },
+        "fee_limit_threshold has invalid value: negative values not allowed: -1"
     )]
     fn config_error_display(#[case] error: ConfigError, #[case] expected: &str) {
         let msg = error.to_string();
@@ -401,9 +423,6 @@ mod tests {
         // ── Invalid gwei in config construction ─────────────────────
 
         #[rstest]
-        #[case::negative_fee_threshold(
-            TxManagerCli { fee_limit_threshold_gwei: "-1".to_string(), ..default_cli() }, "fee_limit_threshold"
-        )]
         #[case::invalid_min_tip_cap(
             TxManagerCli { min_tip_cap_gwei: "abc".to_string(), ..default_cli() }, "min_tip_cap"
         )]
@@ -419,6 +438,20 @@ mod tests {
             assert!(
                 matches!(&err, ConfigError::InvalidGwei { field, .. } if *field == expected_field),
                 "expected InvalidGwei for {expected_field}, got: {err}"
+            );
+        }
+
+        #[test]
+        fn negative_gwei_in_config_rejected() {
+            let cli = TxManagerCli {
+                fee_limit_threshold_gwei: "-1".to_string(),
+                ..default_cli()
+            };
+            let result = TxManagerConfig::from_cli(cli, 1);
+            let err = result.expect_err("expected InvalidValue error");
+            assert!(
+                matches!(&err, ConfigError::InvalidValue { field: "fee_limit_threshold", .. }),
+                "expected InvalidValue for fee_limit_threshold, got: {err}"
             );
         }
 
