@@ -20,8 +20,8 @@ workspace = true
 base-proof-host.workspace = true
 alloy-primitives.workspace = true
 base-consensus-registry.workspace = true
-base-proof-transport = { workspace = true, features = ["vsock"] }
 base-proof-tee-nitro = { workspace = true, features = ["host"] }
+base-proof-transport = { workspace = true, features = ["vsock"] }
 
 # CLI
 eyre.workspace = true
