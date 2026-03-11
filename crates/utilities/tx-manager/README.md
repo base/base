@@ -41,7 +41,7 @@ Transaction lifecycle management for Base onchain components.
   to be `#[command(flatten)]`-ed into parent CLI structs.
 - **`TxManagerConfig`**: Validated runtime configuration with public fields. Can be
   constructed directly and validated via `validate()`, or built from CLI arguments via
-  `TxManagerConfig::from_cli(cli, chain_id)` (requires the `cli` feature).
+  `TxManagerConfig::from_cli(cli)` (requires the `cli` feature).
 - **`ConfigError`**: Validation error enum returned by `TxManagerConfig::from_cli`
   when configuration values are out of range or gwei strings are invalid.
 - **`GweiParser`**: Unit struct with `parse` method for converting decimal gwei strings
@@ -120,7 +120,7 @@ let cli = TxManagerCli::try_parse().unwrap();
 
 // Validate and build the runtime config. Returns ConfigError on invalid
 // values (zero confirmations, zero timeouts, invalid gwei strings, etc.).
-let config = TxManagerConfig::from_cli(cli, chain_id)?;
+let config = TxManagerConfig::from_cli(cli)?;
 ```
 
 ### Custom env var prefix
@@ -139,7 +139,7 @@ struct Cli {
     tx: TxManagerCli,
 }
 
-let config = TxManagerConfig::from_cli(cli.tx, chain_id)?;
+let config = TxManagerConfig::from_cli(cli.tx)?;
 ```
 
 > **Note:** The macro expands to absolute paths (`::clap::Parser`,

@@ -115,8 +115,6 @@ pub struct TxManagerConfig {
     pub tx_send_timeout: Duration,
     /// Mempool appearance timeout (zero = disabled).
     pub tx_not_in_mempool_timeout: Duration,
-    /// Chain ID for the target network.
-    pub chain_id: u64,
 }
 
 impl Default for TxManagerConfig {
@@ -133,7 +131,6 @@ impl Default for TxManagerConfig {
             receipt_query_interval: Duration::from_secs(12),
             tx_send_timeout: Duration::ZERO,
             tx_not_in_mempool_timeout: Duration::from_secs(120),
-            chain_id: 0,
         }
     }
 }
@@ -144,7 +141,6 @@ impl TxManagerConfig {
     /// # Errors
     ///
     /// Returns [`ConfigError::OutOfRange`] if any required field is zero:
-    /// - `chain_id` must be >= 1
     /// - `num_confirmations` must be >= 1
     /// - `safe_abort_nonce_too_low_count` must be >= 1
     /// - `fee_limit_multiplier` must be >= 1
@@ -152,13 +148,6 @@ impl TxManagerConfig {
     /// - `resubmission_timeout` must be > 0
     /// - `receipt_query_interval` must be > 0
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.chain_id == 0 {
-            return Err(ConfigError::OutOfRange {
-                field: "chain_id",
-                constraint: ">= 1",
-                value: "0".to_string(),
-            });
-        }
         if self.num_confirmations == 0 {
             return Err(ConfigError::OutOfRange {
                 field: "num_confirmations",
@@ -204,15 +193,13 @@ impl TxManagerConfig {
         Ok(())
     }
 
-    /// Creates a validated [`TxManagerConfig`] from parsed CLI arguments
-    /// and a chain ID.
+    /// Creates a validated [`TxManagerConfig`] from parsed CLI arguments.
     ///
     /// Parses gwei strings from the CLI struct and validates all fields.
     ///
     /// # Errors
     ///
     /// Returns [`ConfigError`] if any validation check fails:
-    /// - `chain_id` must be >= 1
     /// - `num_confirmations` must be >= 1
     /// - `safe_abort_nonce_too_low_count` must be >= 1
     /// - `fee_limit_multiplier` must be >= 1
@@ -221,7 +208,7 @@ impl TxManagerConfig {
     /// - `receipt_query_interval` must be > 0
     /// - Gwei strings must be valid non-negative decimals
     #[cfg(feature = "cli")]
-    pub fn from_cli(cli: TxManagerCli, chain_id: u64) -> Result<Self, ConfigError> {
+    pub fn from_cli(cli: TxManagerCli) -> Result<Self, ConfigError> {
         let fee_limit_threshold =
             GweiParser::parse(&cli.fee_limit_threshold_gwei, "fee_limit_threshold")?;
         let min_tip_cap = GweiParser::parse(&cli.min_tip_cap_gwei, "min_tip_cap")?;
@@ -239,7 +226,6 @@ impl TxManagerConfig {
             receipt_query_interval: cli.receipt_query_interval,
             tx_send_timeout: cli.tx_send_timeout,
             tx_not_in_mempool_timeout: cli.tx_not_in_mempool_timeout,
-            chain_id,
         };
         config.validate()?;
         Ok(config)
@@ -327,18 +313,8 @@ mod tests {
     // ── Default impl tests ─────────────────────────────────────────
 
     #[test]
-    fn default_passes_validation_with_chain_id() {
-        let config = TxManagerConfig { chain_id: 1, ..Default::default() };
-        config.validate().expect("default config with chain_id=1 should be valid");
-    }
-
-    #[test]
-    fn default_without_chain_id_fails_validation() {
-        let err = TxManagerConfig::default().validate().expect_err("chain_id=0 should fail");
-        assert!(
-            matches!(&err, ConfigError::OutOfRange { field: "chain_id", .. }),
-            "expected OutOfRange for chain_id, got: {err}"
-        );
+    fn default_passes_validation() {
+        TxManagerConfig::default().validate().expect("default config should be valid");
     }
 
     // ── CLI-dependent tests ─────────────────────────────────────────
@@ -432,22 +408,11 @@ mod tests {
             TxManagerCli { receipt_query_interval: Duration::ZERO, ..default_cli() }, "receipt_query_interval"
         )]
         fn zero_value_rejected(#[case] cli: TxManagerCli, #[case] expected_field: &str) {
-            let result = TxManagerConfig::from_cli(cli, 1);
+            let result = TxManagerConfig::from_cli(cli);
             let err = result.expect_err("expected OutOfRange error");
             assert!(
                 matches!(&err, ConfigError::OutOfRange { field, .. } if *field == expected_field),
                 "expected OutOfRange for {expected_field}, got: {err}"
-            );
-        }
-
-        #[test]
-        fn zero_chain_id_rejected() {
-            let cli = default_cli();
-            let result = TxManagerConfig::from_cli(cli, 0);
-            let err = result.expect_err("expected OutOfRange error");
-            assert!(
-                matches!(&err, ConfigError::OutOfRange { field: "chain_id", .. }),
-                "expected OutOfRange for chain_id, got: {err}"
             );
         }
 
@@ -464,7 +429,7 @@ mod tests {
             #[case] cli: TxManagerCli,
             #[case] expected_field: &str,
         ) {
-            let result = TxManagerConfig::from_cli(cli, 1);
+            let result = TxManagerConfig::from_cli(cli);
             let err = result.expect_err("expected InvalidGwei error");
             assert!(
                 matches!(&err, ConfigError::InvalidGwei { field, .. } if *field == expected_field),
@@ -475,7 +440,7 @@ mod tests {
         #[test]
         fn negative_gwei_in_config_rejected() {
             let cli = TxManagerCli { fee_limit_threshold_gwei: "-1".to_string(), ..default_cli() };
-            let result = TxManagerConfig::from_cli(cli, 1);
+            let result = TxManagerConfig::from_cli(cli);
             let err = result.expect_err("expected InvalidValue error");
             assert!(
                 matches!(&err, ConfigError::InvalidValue { field: "fee_limit_threshold", .. }),
@@ -488,10 +453,9 @@ mod tests {
         #[test]
         fn from_cli_valid() {
             let cli = default_cli();
-            let config = TxManagerConfig::from_cli(cli, 42).unwrap();
+            let config = TxManagerConfig::from_cli(cli).unwrap();
             assert_eq!(config.num_confirmations, 10);
             assert_eq!(config.safe_abort_nonce_too_low_count, 3);
-            assert_eq!(config.chain_id, 42);
             assert_eq!(config.fee_limit_multiplier, 5);
             assert_eq!(config.fee_limit_threshold, 100_000_000_000); // 100 gwei
             assert_eq!(config.min_tip_cap, 0);
@@ -509,7 +473,7 @@ mod tests {
         #[case::tx_send_timeout(TxManagerCli { tx_send_timeout: Duration::ZERO, ..default_cli() })]
         #[case::tx_not_in_mempool_timeout(TxManagerCli { tx_not_in_mempool_timeout: Duration::ZERO, ..default_cli() })]
         fn zero_optional_timeout_allowed(#[case] cli: TxManagerCli) {
-            assert!(TxManagerConfig::from_cli(cli, 1).is_ok());
+            assert!(TxManagerConfig::from_cli(cli).is_ok());
         }
     }
 }
