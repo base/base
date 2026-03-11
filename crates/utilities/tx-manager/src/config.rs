@@ -312,6 +312,39 @@ struct HotConfig {
     min_basefee: u128,
 }
 
+// ── TxManagerParams ─────────────────────────────────────────────────────
+
+/// Parameters for constructing a [`TxManagerConfig`].
+///
+/// Uses named fields to prevent transposition bugs at call sites.
+#[derive(Debug)]
+pub struct TxManagerParams {
+    /// Number of block confirmations to wait.
+    pub num_confirmations: u64,
+    /// Nonce-too-low abort threshold.
+    pub safe_abort_nonce_too_low_count: u64,
+    /// Maximum fee multiplier applied to the suggested gas price.
+    pub fee_limit_multiplier: u64,
+    /// Minimum suggested fee (in wei) at which the fee-limit check activates.
+    pub fee_limit_threshold: u128,
+    /// Minimum tip cap (in wei) to use for transactions.
+    pub min_tip_cap: u128,
+    /// Minimum basefee (in wei) to use for transactions.
+    pub min_basefee: u128,
+    /// Timeout for individual RPC calls.
+    pub network_timeout: Duration,
+    /// Interval between fee-bump resubmissions.
+    pub resubmission_timeout: Duration,
+    /// Interval between receipt polling queries.
+    pub receipt_query_interval: Duration,
+    /// Maximum time to wait for initial tx broadcast.
+    pub tx_send_timeout: Duration,
+    /// Maximum time to wait for a tx to appear in the mempool.
+    pub tx_not_in_mempool_timeout: Duration,
+    /// Chain ID for the target network.
+    pub chain_id: u64,
+}
+
 // ── TxManagerConfig ─────────────────────────────────────────────────────
 
 /// Validated runtime configuration for the transaction manager.
@@ -390,7 +423,7 @@ impl Clone for TxManagerConfig {
 }
 
 impl TxManagerConfig {
-    /// Creates a validated [`TxManagerConfig`] from individual parameters.
+    /// Creates a validated [`TxManagerConfig`] from a [`TxManagerParams`].
     ///
     /// Fee values (`fee_limit_threshold`, `min_tip_cap`, `min_basefee`)
     /// are specified in **wei**. Use [`GweiParser::parse`] if converting
@@ -405,21 +438,21 @@ impl TxManagerConfig {
     /// - `network_timeout` must be > 0
     /// - `resubmission_timeout` must be > 0
     /// - `receipt_query_interval` must be > 0
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        num_confirmations: u64,
-        safe_abort_nonce_too_low_count: u64,
-        fee_limit_multiplier: u64,
-        fee_limit_threshold: u128,
-        min_tip_cap: u128,
-        min_basefee: u128,
-        network_timeout: Duration,
-        resubmission_timeout: Duration,
-        receipt_query_interval: Duration,
-        tx_send_timeout: Duration,
-        tx_not_in_mempool_timeout: Duration,
-        chain_id: u64,
-    ) -> Result<Self, ConfigError> {
+    pub fn new(params: TxManagerParams) -> Result<Self, ConfigError> {
+        let TxManagerParams {
+            num_confirmations,
+            safe_abort_nonce_too_low_count,
+            fee_limit_multiplier,
+            fee_limit_threshold,
+            min_tip_cap,
+            min_basefee,
+            network_timeout,
+            resubmission_timeout,
+            receipt_query_interval,
+            tx_send_timeout,
+            tx_not_in_mempool_timeout,
+            chain_id,
+        } = params;
         // ── Validate integer fields ─────────────────────────────────
         if num_confirmations == 0 {
             return Err(ConfigError::OutOfRange {
@@ -507,20 +540,20 @@ impl TxManagerConfig {
         let min_tip_cap = GweiParser::parse(&cli.min_tip_cap_gwei, "min_tip_cap")?;
         let min_basefee = GweiParser::parse(&cli.min_basefee_gwei, "min_basefee")?;
 
-        Self::new(
-            cli.num_confirmations,
-            cli.safe_abort_nonce_too_low_count,
-            cli.fee_limit_multiplier,
+        Self::new(TxManagerParams {
+            num_confirmations: cli.num_confirmations,
+            safe_abort_nonce_too_low_count: cli.safe_abort_nonce_too_low_count,
+            fee_limit_multiplier: cli.fee_limit_multiplier,
             fee_limit_threshold,
             min_tip_cap,
             min_basefee,
-            cli.network_timeout,
-            cli.resubmission_timeout,
-            cli.receipt_query_interval,
-            cli.tx_send_timeout,
-            cli.tx_not_in_mempool_timeout,
+            network_timeout: cli.network_timeout,
+            resubmission_timeout: cli.resubmission_timeout,
+            receipt_query_interval: cli.receipt_query_interval,
+            tx_send_timeout: cli.tx_send_timeout,
+            tx_not_in_mempool_timeout: cli.tx_not_in_mempool_timeout,
             chain_id,
-        )
+        })
     }
 
     // ── Immutable field accessors ───────────────────────────────────
@@ -638,24 +671,29 @@ impl TxManagerConfig {
     }
 }
 
+/// Returns a [`TxManagerParams`] with valid defaults for tests.
+#[cfg(test)]
+fn valid_params(chain_id: u64) -> TxManagerParams {
+    TxManagerParams {
+        num_confirmations: 10,
+        safe_abort_nonce_too_low_count: 3,
+        fee_limit_multiplier: 5,
+        fee_limit_threshold: 100_000_000_000,
+        min_tip_cap: 0,
+        min_basefee: 0,
+        network_timeout: Duration::from_secs(10),
+        resubmission_timeout: Duration::from_secs(48),
+        receipt_query_interval: Duration::from_secs(12),
+        tx_send_timeout: Duration::ZERO,
+        tx_not_in_mempool_timeout: Duration::from_secs(120),
+        chain_id,
+    }
+}
+
 /// Helper to build a valid [`TxManagerConfig`] with CLI defaults for tests.
 #[cfg(test)]
 fn test_config(chain_id: u64) -> TxManagerConfig {
-    TxManagerConfig::new(
-        10,                       // num_confirmations
-        3,                        // safe_abort_nonce_too_low_count
-        5,                        // fee_limit_multiplier
-        100_000_000_000,          // fee_limit_threshold (100 gwei)
-        0,                        // min_tip_cap
-        0,                        // min_basefee
-        Duration::from_secs(10),  // network_timeout
-        Duration::from_secs(48),  // resubmission_timeout
-        Duration::from_secs(12),  // receipt_query_interval
-        Duration::ZERO,           // tx_send_timeout
-        Duration::from_secs(120), // tx_not_in_mempool_timeout
-        chain_id,
-    )
-    .expect("test defaults are valid")
+    TxManagerConfig::new(valid_params(chain_id)).expect("test defaults are valid")
 }
 
 #[cfg(test)]
@@ -752,41 +790,17 @@ mod tests {
 
     #[test]
     fn new_rejects_zero_num_confirmations() {
-        let err = TxManagerConfig::new(
-            0,
-            3,
-            5,
-            0,
-            0,
-            0,
-            Duration::from_secs(10),
-            Duration::from_secs(48),
-            Duration::from_secs(12),
-            Duration::ZERO,
-            Duration::from_secs(120),
-            1,
-        )
-        .unwrap_err();
+        let mut params = valid_params(1);
+        params.num_confirmations = 0;
+        let err = TxManagerConfig::new(params).unwrap_err();
         assert!(matches!(err, ConfigError::OutOfRange { field: "num_confirmations", .. }));
     }
 
     #[test]
     fn new_rejects_zero_safe_abort_nonce_too_low_count() {
-        let err = TxManagerConfig::new(
-            10,
-            0,
-            5,
-            0,
-            0,
-            0,
-            Duration::from_secs(10),
-            Duration::from_secs(48),
-            Duration::from_secs(12),
-            Duration::ZERO,
-            Duration::from_secs(120),
-            1,
-        )
-        .unwrap_err();
+        let mut params = valid_params(1);
+        params.safe_abort_nonce_too_low_count = 0;
+        let err = TxManagerConfig::new(params).unwrap_err();
         assert!(matches!(
             err,
             ConfigError::OutOfRange { field: "safe_abort_nonce_too_low_count", .. }
@@ -795,81 +809,33 @@ mod tests {
 
     #[test]
     fn new_rejects_zero_fee_limit_multiplier() {
-        let err = TxManagerConfig::new(
-            10,
-            3,
-            0,
-            0,
-            0,
-            0,
-            Duration::from_secs(10),
-            Duration::from_secs(48),
-            Duration::from_secs(12),
-            Duration::ZERO,
-            Duration::from_secs(120),
-            1,
-        )
-        .unwrap_err();
+        let mut params = valid_params(1);
+        params.fee_limit_multiplier = 0;
+        let err = TxManagerConfig::new(params).unwrap_err();
         assert!(matches!(err, ConfigError::OutOfRange { field: "fee_limit_multiplier", .. }));
     }
 
     #[test]
     fn new_rejects_zero_network_timeout() {
-        let err = TxManagerConfig::new(
-            10,
-            3,
-            5,
-            0,
-            0,
-            0,
-            Duration::ZERO,
-            Duration::from_secs(48),
-            Duration::from_secs(12),
-            Duration::ZERO,
-            Duration::from_secs(120),
-            1,
-        )
-        .unwrap_err();
+        let mut params = valid_params(1);
+        params.network_timeout = Duration::ZERO;
+        let err = TxManagerConfig::new(params).unwrap_err();
         assert!(matches!(err, ConfigError::OutOfRange { field: "network_timeout", .. }));
     }
 
     #[test]
     fn new_rejects_zero_resubmission_timeout() {
-        let err = TxManagerConfig::new(
-            10,
-            3,
-            5,
-            0,
-            0,
-            0,
-            Duration::from_secs(10),
-            Duration::ZERO,
-            Duration::from_secs(12),
-            Duration::ZERO,
-            Duration::from_secs(120),
-            1,
-        )
-        .unwrap_err();
+        let mut params = valid_params(1);
+        params.resubmission_timeout = Duration::ZERO;
+        let err = TxManagerConfig::new(params).unwrap_err();
         assert!(matches!(err, ConfigError::OutOfRange { field: "resubmission_timeout", .. }));
     }
 
     #[test]
     fn new_rejects_zero_receipt_query_interval() {
-        let err = TxManagerConfig::new(
-            10,
-            3,
-            5,
-            0,
-            0,
-            0,
-            Duration::from_secs(10),
-            Duration::from_secs(48),
-            Duration::ZERO,
-            Duration::ZERO,
-            Duration::from_secs(120),
-            1,
-        )
-        .unwrap_err();
+        let mut params = valid_params(1);
+        params.receipt_query_interval = Duration::ZERO;
+        let err = TxManagerConfig::new(params).unwrap_err();
         assert!(matches!(err, ConfigError::OutOfRange { field: "receipt_query_interval", .. }));
     }
 

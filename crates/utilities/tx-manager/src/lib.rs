@@ -20,7 +20,7 @@ mod send_state;
 pub use send_state::SendState;
 
 mod config;
-pub use config::{ConfigError, FeeConfig, GweiParser, TxManagerConfig};
+pub use config::{ConfigError, FeeConfig, GweiParser, TxManagerConfig, TxManagerParams};
 #[cfg(feature = "cli")]
 pub use config::{TxManagerCli, TxManagerPreset};
 
