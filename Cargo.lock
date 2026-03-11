@@ -2780,7 +2780,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-sol-types",
- "ambassador",
  "arbitrary",
  "base-consensus-genesis",
  "base-protocol",
