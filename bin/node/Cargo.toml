@@ -17,12 +17,12 @@ workspace = true
 
 [dependencies]
 # workspace
-base-tx-forwarding.workspace = true
 base-metering.workspace = true
 base-cli-utils.workspace = true
 base-txpool-rpc.workspace = true
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
+base-tx-forwarding.workspace = true
 base-txpool-tracing.workspace = true
 base-flashblocks-node.workspace = true
 base-proofs-extension.workspace = true

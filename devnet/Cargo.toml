@@ -15,13 +15,13 @@ workspace = true
 # workspace
 base-txpool-rpc.workspace = true
 base-flashblocks.workspace = true
+base-tx-forwarding.workspace = true
 base-txpool-tracing.workspace = true
 base-flashblocks-node.workspace = true
 base-consensus-rpc = { workspace = true, features = ["client"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-builder-core = { workspace = true, features = ["test-utils"] }
-base-tx-forwarding.workspace = true
 
 # consensus
 base-consensus-disc.workspace = true
