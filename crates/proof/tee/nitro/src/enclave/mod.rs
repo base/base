@@ -85,15 +85,19 @@ async fn handle_connection(
     mut stream: tokio_vsock::VsockStream,
     server: &Server,
 ) -> eyre::Result<()> {
-    const READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+    /// Short deadline for receiving the request frame — all request types are
+    /// small, so a slow sender is never expected.
+    const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
-    let request: EnclaveRequest =
-        timeout(READ_TIMEOUT, Frame::read(&mut stream)).await??;
+    let request: EnclaveRequest = timeout(REQUEST_READ_TIMEOUT, Frame::read(&mut stream)).await??;
 
     match request {
         EnclaveRequest::Prove(preimages) => {
-            let result = server.prove(preimages).await?;
-            Frame::write(&mut stream, &EnclaveResponse::Prove(Box::new(result))).await?;
+            let response = match server.prove(preimages).await {
+                Ok(result) => EnclaveResponse::Prove(Box::new(result)),
+                Err(e) => EnclaveResponse::Error(e.to_string()),
+            };
+            Frame::write(&mut stream, &response).await?;
         }
         EnclaveRequest::SignerPublicKey => {
             let key = server.signer_public_key();

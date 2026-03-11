@@ -20,6 +20,10 @@ pub enum TransportError {
     #[error("prove execution failed: {0}")]
     ProveExecution(String),
 
+    /// The enclave returned an error response.
+    #[error("enclave error: {0}")]
+    Enclave(String),
+
     /// The operation is not supported by this transport.
     #[error("operation not supported: {0}")]
     Unsupported(String),

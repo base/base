@@ -52,19 +52,18 @@ impl ProofTransport for VsockTransport {
 
         Frame::write(&mut stream, &EnclaveRequest::Prove(preimages.to_vec())).await?;
 
-        let response: EnclaveResponse =
-            tokio::time::timeout(PROVE_TIMEOUT, Frame::read(&mut stream))
-                .await
-                .map_err(|_| {
-                    TransportError::Io(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "prove timed out",
-                    ))
-                })??;
+        let response: EnclaveResponse = tokio::time::timeout(
+            PROVE_TIMEOUT,
+            Frame::read(&mut stream),
+        )
+        .await
+        .map_err(|_| {
+            TransportError::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, "prove timed out"))
+        })??;
 
         match response {
             EnclaveResponse::Prove(result) => Ok(*result),
-            EnclaveResponse::Error(e) => Err(TransportError::ProveExecution(e)),
+            EnclaveResponse::Error(e) => Err(TransportError::Enclave(e)),
             _ => Err(TransportError::Codec("unexpected response type for prove".into())),
         }
     }
@@ -75,21 +74,21 @@ impl ProofTransport for VsockTransport {
         Frame::write(&mut stream, &EnclaveRequest::SignerPublicKey).await?;
 
         let response: EnclaveResponse =
-            tokio::time::timeout(SIGNER_TIMEOUT, Frame::read(&mut stream))
-                .await
-                .map_err(|_| {
+            tokio::time::timeout(SIGNER_TIMEOUT, Frame::read(&mut stream)).await.map_err(
+                |_| {
                     TransportError::Io(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
                         "signer_public_key timed out",
                     ))
-                })??;
+                },
+            )??;
 
         match response {
             EnclaveResponse::SignerPublicKey(key) => Ok(key),
-            EnclaveResponse::Error(e) => Err(TransportError::ProveExecution(e)),
-            _ => Err(TransportError::Codec(
-                "unexpected response type for signer_public_key".into(),
-            )),
+            EnclaveResponse::Error(e) => Err(TransportError::Enclave(e)),
+            _ => {
+                Err(TransportError::Codec("unexpected response type for signer_public_key".into()))
+            }
         }
     }
 }

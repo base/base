@@ -105,8 +105,7 @@ mod tests {
 
     #[tokio::test]
     async fn signer_public_key_unsupported_for_native_transport() {
-        let transport: NativeTransport<fn(&_) -> _> =
-            NativeTransport::new(|_| unimplemented!());
+        let transport: NativeTransport<fn(&_) -> _> = NativeTransport::new(|_| unimplemented!());
         let result = transport.signer_public_key().await;
         assert!(matches!(result, Err(TransportError::Unsupported(_))));
     }
