@@ -1,7 +1,6 @@
 #![cfg(feature = "cli")]
 //! Integration tests for `define_tx_manager_cli!` macro with a custom prefix.
 
-
 use clap::{CommandFactory, Parser};
 
 base_tx_manager::define_tx_manager_cli!("CUSTOM_PREFIX_");
