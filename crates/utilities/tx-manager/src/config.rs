@@ -2,17 +2,14 @@
 //!
 //! [`TxManagerConfig`] is the validated runtime configuration for the
 //! transaction manager. All fields are `pub` for direct construction.
-//! Use [`TxManagerConfig::validate`] to check invariants, or construct
-//! via [`TxManagerConfig::from_cli`] (requires the `cli` feature) which
-//! parses CLI/env arguments and validates automatically.
+//! Use [`TxManagerConfig::validate`] to check invariants, or convert
+//! from `TxManagerCli` via `TryFrom` (requires the `cli` feature)
+//! which parses CLI/env arguments and validates automatically.
 
 use std::time::Duration;
 
 use alloy_primitives::utils::parse_units;
 use thiserror::Error;
-
-#[cfg(feature = "cli")]
-use crate::TxManagerCli;
 
 // ── Error ───────────────────────────────────────────────────────────────
 
@@ -89,8 +86,8 @@ impl GweiParser {
 /// Validated runtime configuration for the transaction manager.
 ///
 /// All fields are public for direct construction. Use [`Self::validate`]
-/// to check invariants, or [`Self::from_cli`] (requires the `cli` feature)
-/// which validates automatically.
+/// to check invariants, or convert from `TxManagerCli` via `TryFrom`
+/// (requires the `cli` feature) which validates automatically.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TxManagerConfig {
     /// Number of block confirmations to wait.
@@ -192,44 +189,6 @@ impl TxManagerConfig {
         }
         Ok(())
     }
-
-    /// Creates a validated [`TxManagerConfig`] from parsed CLI arguments.
-    ///
-    /// Parses gwei strings from the CLI struct and validates all fields.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigError`] if any validation check fails:
-    /// - `num_confirmations` must be >= 1
-    /// - `safe_abort_nonce_too_low_count` must be >= 1
-    /// - `fee_limit_multiplier` must be >= 1
-    /// - `network_timeout` must be > 0
-    /// - `resubmission_timeout` must be > 0
-    /// - `receipt_query_interval` must be > 0
-    /// - Gwei strings must be valid non-negative decimals
-    #[cfg(feature = "cli")]
-    pub fn from_cli(cli: TxManagerCli) -> Result<Self, ConfigError> {
-        let fee_limit_threshold =
-            GweiParser::parse(&cli.fee_limit_threshold_gwei, "fee_limit_threshold")?;
-        let min_tip_cap = GweiParser::parse(&cli.min_tip_cap_gwei, "min_tip_cap")?;
-        let min_basefee = GweiParser::parse(&cli.min_basefee_gwei, "min_basefee")?;
-
-        let config = Self {
-            num_confirmations: cli.num_confirmations,
-            safe_abort_nonce_too_low_count: cli.safe_abort_nonce_too_low_count,
-            fee_limit_multiplier: cli.fee_limit_multiplier,
-            fee_limit_threshold,
-            min_tip_cap,
-            min_basefee,
-            network_timeout: cli.network_timeout,
-            resubmission_timeout: cli.resubmission_timeout,
-            receipt_query_interval: cli.receipt_query_interval,
-            tx_send_timeout: cli.tx_send_timeout,
-            tx_not_in_mempool_timeout: cli.tx_not_in_mempool_timeout,
-        };
-        config.validate()?;
-        Ok(config)
-    }
 }
 
 #[cfg(test)]
@@ -326,22 +285,6 @@ mod tests {
         use super::super::*;
         use crate::TxManagerCli;
 
-        fn default_cli() -> TxManagerCli {
-            TxManagerCli {
-                num_confirmations: 10,
-                safe_abort_nonce_too_low_count: 3,
-                fee_limit_multiplier: 5,
-                fee_limit_threshold_gwei: "100".to_string(),
-                min_tip_cap_gwei: "0".to_string(),
-                min_basefee_gwei: "0".to_string(),
-                network_timeout: Duration::from_secs(10),
-                resubmission_timeout: Duration::from_secs(48),
-                receipt_query_interval: Duration::from_secs(12),
-                tx_send_timeout: Duration::ZERO,
-                tx_not_in_mempool_timeout: Duration::from_secs(120),
-            }
-        }
-
         // ── CLI defaults ────────────────────────────────────────────
 
         #[test]
@@ -385,29 +328,29 @@ mod tests {
             assert_eq!(cli.tx_not_in_mempool_timeout, Duration::from_secs(180));
         }
 
-        // ── Validation rejection via from_cli ───────────────────────
+        // ── Validation rejection via TryFrom ────────────────────────
 
         #[rstest]
         #[case::num_confirmations(
-            TxManagerCli { num_confirmations: 0, ..default_cli() }, "num_confirmations"
+            TxManagerCli { num_confirmations: 0, ..TxManagerCli::default() }, "num_confirmations"
         )]
         #[case::safe_abort_nonce_too_low_count(
-            TxManagerCli { safe_abort_nonce_too_low_count: 0, ..default_cli() }, "safe_abort_nonce_too_low_count"
+            TxManagerCli { safe_abort_nonce_too_low_count: 0, ..TxManagerCli::default() }, "safe_abort_nonce_too_low_count"
         )]
         #[case::fee_limit_multiplier(
-            TxManagerCli { fee_limit_multiplier: 0, ..default_cli() }, "fee_limit_multiplier"
+            TxManagerCli { fee_limit_multiplier: 0, ..TxManagerCli::default() }, "fee_limit_multiplier"
         )]
         #[case::network_timeout(
-            TxManagerCli { network_timeout: Duration::ZERO, ..default_cli() }, "network_timeout"
+            TxManagerCli { network_timeout: Duration::ZERO, ..TxManagerCli::default() }, "network_timeout"
         )]
         #[case::resubmission_timeout(
-            TxManagerCli { resubmission_timeout: Duration::ZERO, ..default_cli() }, "resubmission_timeout"
+            TxManagerCli { resubmission_timeout: Duration::ZERO, ..TxManagerCli::default() }, "resubmission_timeout"
         )]
         #[case::receipt_query_interval(
-            TxManagerCli { receipt_query_interval: Duration::ZERO, ..default_cli() }, "receipt_query_interval"
+            TxManagerCli { receipt_query_interval: Duration::ZERO, ..TxManagerCli::default() }, "receipt_query_interval"
         )]
         fn zero_value_rejected(#[case] cli: TxManagerCli, #[case] expected_field: &str) {
-            let result = TxManagerConfig::from_cli(cli);
+            let result = TxManagerConfig::try_from(cli);
             let err = result.expect_err("expected OutOfRange error");
             assert!(
                 matches!(&err, ConfigError::OutOfRange { field, .. } if *field == expected_field),
@@ -419,16 +362,16 @@ mod tests {
 
         #[rstest]
         #[case::invalid_min_tip_cap(
-            TxManagerCli { min_tip_cap_gwei: "abc".to_string(), ..default_cli() }, "min_tip_cap"
+            TxManagerCli { min_tip_cap_gwei: "abc".to_string(), ..TxManagerCli::default() }, "min_tip_cap"
         )]
         #[case::invalid_min_basefee(
-            TxManagerCli { min_basefee_gwei: "not_a_number".to_string(), ..default_cli() }, "min_basefee"
+            TxManagerCli { min_basefee_gwei: "not_a_number".to_string(), ..TxManagerCli::default() }, "min_basefee"
         )]
         fn invalid_gwei_in_config_rejected(
             #[case] cli: TxManagerCli,
             #[case] expected_field: &str,
         ) {
-            let result = TxManagerConfig::from_cli(cli);
+            let result = TxManagerConfig::try_from(cli);
             let err = result.expect_err("expected InvalidGwei error");
             assert!(
                 matches!(&err, ConfigError::InvalidGwei { field, .. } if *field == expected_field),
@@ -438,8 +381,11 @@ mod tests {
 
         #[test]
         fn negative_gwei_in_config_rejected() {
-            let cli = TxManagerCli { fee_limit_threshold_gwei: "-1".to_string(), ..default_cli() };
-            let result = TxManagerConfig::from_cli(cli);
+            let cli = TxManagerCli {
+                fee_limit_threshold_gwei: "-1".to_string(),
+                ..TxManagerCli::default()
+            };
+            let result = TxManagerConfig::try_from(cli);
             let err = result.expect_err("expected InvalidValue error");
             assert!(
                 matches!(&err, ConfigError::InvalidValue { field: "fee_limit_threshold", .. }),
@@ -447,12 +393,12 @@ mod tests {
             );
         }
 
-        // ── from_cli valid ──────────────────────────────────────────
+        // ── TryFrom valid ───────────────────────────────────────────
 
         #[test]
-        fn from_cli_valid() {
-            let cli = default_cli();
-            let config = TxManagerConfig::from_cli(cli).unwrap();
+        fn try_from_valid() {
+            let cli = TxManagerCli::default();
+            let config = TxManagerConfig::try_from(cli).unwrap();
             assert_eq!(config.num_confirmations, 10);
             assert_eq!(config.safe_abort_nonce_too_low_count, 3);
             assert_eq!(config.fee_limit_multiplier, 5);
@@ -466,13 +412,13 @@ mod tests {
             assert_eq!(config.tx_not_in_mempool_timeout, Duration::from_secs(120));
         }
 
-        // ── Zero optional timeouts allowed via from_cli ─────────────
+        // ── Zero optional timeouts allowed via TryFrom ──────────────
 
         #[rstest]
-        #[case::tx_send_timeout(TxManagerCli { tx_send_timeout: Duration::ZERO, ..default_cli() })]
-        #[case::tx_not_in_mempool_timeout(TxManagerCli { tx_not_in_mempool_timeout: Duration::ZERO, ..default_cli() })]
+        #[case::tx_send_timeout(TxManagerCli { tx_send_timeout: Duration::ZERO, ..TxManagerCli::default() })]
+        #[case::tx_not_in_mempool_timeout(TxManagerCli { tx_not_in_mempool_timeout: Duration::ZERO, ..TxManagerCli::default() })]
         fn zero_optional_timeout_allowed(#[case] cli: TxManagerCli) {
-            assert!(TxManagerConfig::from_cli(cli).is_ok());
+            assert!(TxManagerConfig::try_from(cli).is_ok());
         }
 
         // ── CLI / Config default drift detection ─────────────────────
@@ -480,7 +426,7 @@ mod tests {
         #[test]
         fn cli_defaults_match_config_defaults() {
             let cli = TxManagerCli::try_parse_from(["test"]).unwrap();
-            let config = TxManagerConfig::from_cli(cli).unwrap();
+            let config = TxManagerConfig::try_from(cli).unwrap();
             assert_eq!(config, TxManagerConfig::default());
         }
     }

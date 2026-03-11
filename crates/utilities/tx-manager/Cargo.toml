@@ -19,6 +19,7 @@ alloy-eips = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 clap = { workspace = true, optional = true, features = ["derive", "env"] }
+serde = { workspace = true, optional = true, features = ["derive", "std"] }
 
 [dev-dependencies]
 rstest.workspace = true
@@ -28,4 +29,4 @@ tokio = { workspace = true, features = ["macros", "rt"] }
 
 [features]
 default = [ "cli" ]
-cli = [ "dep:clap", "dep:humantime" ]
+cli = [ "dep:clap", "dep:humantime", "dep:serde" ]

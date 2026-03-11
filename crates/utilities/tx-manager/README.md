@@ -37,13 +37,14 @@ Transaction lifecycle management for Base onchain components.
   evaluates abort conditions in priority order: mined tx suppression, already-reserved,
   pre-publish nonce-too-low, threshold nonce-too-low, and mempool deadline expiry.
 - **`TxManagerCli`**: Clap-based CLI argument struct with environment variable fallbacks
-  (prefix `BASE_TX_MANAGER_`). Captures all tunable tx-manager parameters and is designed
-  to be `#[command(flatten)]`-ed into parent CLI structs.
+  (prefix `BASE_TX_MANAGER`). Captures all tunable tx-manager parameters and is designed
+  to be `#[command(flatten)]`-ed into parent CLI structs. Derives `Serialize`/`Deserialize`
+  and generates `Default` and `TryFrom<TxManagerCli> for TxManagerConfig` impls.
 - **`TxManagerConfig`**: Validated runtime configuration with public fields. Can be
-  constructed directly and validated via `validate()`, or built from CLI arguments via
-  `TxManagerConfig::from_cli(cli)` (requires the `cli` feature).
-- **`ConfigError`**: Validation error enum returned by `TxManagerConfig::from_cli`
-  when configuration values are out of range or gwei strings are invalid.
+  constructed directly and validated via `validate()`, or converted from `TxManagerCli`
+  via `TryFrom` (requires the `cli` feature).
+- **`ConfigError`**: Validation error enum returned by the `TryFrom<TxManagerCli>`
+  conversion when configuration values are out of range or gwei strings are invalid.
 - **`GweiParser`**: Unit struct with `parse` method for converting decimal gwei strings
   to `u128` wei via `alloy_primitives::utils::parse_units`.
 - **`TxManager`**: Trait defining the public API — `send` (blocking), `send_async` (returns
@@ -100,9 +101,9 @@ For custom error matching beyond the built-in classification, use
 
 `TxManagerConfig` is the validated runtime configuration. All fields are
 public, so you can construct it directly and call `validate()` to check
-invariants. Alternatively, use `TxManagerConfig::from_cli` (requires the
-`cli` feature, enabled by default) which parses CLI/env arguments and
-validates automatically.
+invariants. Alternatively, convert from `TxManagerCli` via `TryFrom`
+(requires the `cli` feature, enabled by default) which parses CLI/env
+arguments and validates automatically.
 
 ### CLI parsing and validation
 
@@ -110,7 +111,8 @@ validates automatically.
 
 `TxManagerCli` is a `clap::Parser` struct designed to be `#[command(flatten)]`-ed
 into parent CLI structs. All fields use `BASE_TX_MANAGER_` environment variable
-fallbacks:
+fallbacks. The macro also generates `Default` and
+`TryFrom<TxManagerCli> for TxManagerConfig` impls:
 
 ```rust,ignore
 use base_tx_manager::{TxManagerCli, TxManagerConfig};
@@ -120,18 +122,18 @@ let cli = TxManagerCli::try_parse().unwrap();
 
 // Validate and build the runtime config. Returns ConfigError on invalid
 // values (zero confirmations, zero timeouts, invalid gwei strings, etc.).
-let config = TxManagerConfig::from_cli(cli)?;
+let config = TxManagerConfig::try_from(cli)?;
 ```
 
 ### Custom env var prefix
 
 Consumer crates that need a different env var prefix (e.g.
-`BASE_CHALLENGER_TX_MANAGER_` instead of `BASE_TX_MANAGER_`) can invoke
+`BASE_CHALLENGER_TX_MANAGER` instead of `BASE_TX_MANAGER`) can invoke
 the `define_tx_manager_cli!` macro directly:
 
 ```rust,ignore
 // In your crate — generates a local `TxManagerCli` with custom env vars.
-base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER_TX_MANAGER_");
+base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER_TX_MANAGER");
 
 #[derive(clap::Parser)]
 struct Cli {
@@ -139,12 +141,13 @@ struct Cli {
     tx: TxManagerCli,
 }
 
-let config = TxManagerConfig::from_cli(cli.tx)?;
+let config = TxManagerConfig::try_from(cli.tx)?;
 ```
 
 > **Note:** The macro expands to absolute paths (`::clap::Parser`,
-> `::humantime::parse_duration`), so consumer crates must add `clap`
-> (with `derive` + `env` features) and `humantime` to their own
+> `::humantime::parse_duration`, `::serde::{Serialize, Deserialize}`),
+> so consumer crates must add `clap` (with `derive` + `env` features),
+> `humantime`, and `serde` (with `derive` feature) to their own
 > `Cargo.toml`.
 
 ### Fee limit checks
