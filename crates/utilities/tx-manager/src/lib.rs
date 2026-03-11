@@ -19,7 +19,6 @@ pub use fees::{FeeCalculator, GasPriceCaps};
 mod send_state;
 pub use send_state::SendState;
 
-#[macro_use]
 mod macros;
 
 mod config;
