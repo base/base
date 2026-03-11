@@ -1,4 +1,4 @@
-use metrics::{Counter, Histogram};
+use metrics::{Counter, Gauge, Histogram};
 use metrics_derive::Metrics;
 use tokio::time::Duration;
 
@@ -59,4 +59,8 @@ pub struct Metrics {
     /// Number of bundles that exceeded the metering time.
     #[metric(describe = "Number of bundles that exceeded the metering time")]
     pub bundles_exceeded_metering_time: Counter,
+
+    /// Size of the buffered `MeterBundleResponse` channel.
+    #[metric(describe = "Size of buffered meter bundle responses")]
+    pub buffered_meter_bundle_responses_size: Gauge,
 }
