@@ -4,7 +4,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_alloy_evm::OpEvmFactory;
 use base_proof_client::{BootInfo, Prologue};
 use base_proof_preimage::PreimageKey;
-use base_proof_primitives::{ProofResult, Proposal};
+use base_proof_primitives::{ProofResult, ProofJournal, Proposal};
 use tracing::{info, warn};
 
 use crate::{
@@ -159,19 +159,20 @@ impl Server {
             let l1_origin_hash = l2_info.l1_origin.hash;
             let l1_origin_number = U256::from(l2_info.l1_origin.number);
 
-            let signing_data = Signing::build_data(
-                self.signer_key.address(),
+            let journal = ProofJournal {
+                proposer: self.signer_key.address(),
                 l1_origin_hash,
                 prev_output_root,
-                l2_block_number
+                starting_l2_block: l2_block_number
                     .checked_sub(U256::from(1))
                     .ok_or_else(|| NitroError::ProofPipeline("l2_block_number is 0".into()))?,
-                *output_root,
-                l2_block_number,
-                &[],
-                self.config_hash,
-                self.tee_image_hash,
-            );
+                output_root: *output_root,
+                ending_l2_block: l2_block_number,
+                intermediate_roots: vec![],
+                config_hash: self.config_hash,
+                tee_image_hash: self.tee_image_hash,
+            };
+            let signing_data = journal.encode();
 
             let signature = Signing::sign(&self.signer_key, &signing_data)?;
 
@@ -197,20 +198,21 @@ impl Server {
             let intermediate_roots: Vec<B256> =
                 proposals[..proposals.len() - 1].iter().map(|p| p.output_root).collect();
 
-            let signing_data = Signing::build_data(
-                self.signer_key.address(),
-                last.l1_origin_hash,
-                agreed_l2_output_root,
-                first
+            let journal = ProofJournal {
+                proposer: self.signer_key.address(),
+                l1_origin_hash: last.l1_origin_hash,
+                prev_output_root: agreed_l2_output_root,
+                starting_l2_block: first
                     .l2_block_number
                     .checked_sub(U256::from(1))
                     .ok_or_else(|| NitroError::ProofPipeline("l2_block_number is 0".into()))?,
-                last.output_root,
-                last.l2_block_number,
-                &intermediate_roots,
-                self.config_hash,
-                self.tee_image_hash,
-            );
+                output_root: last.output_root,
+                ending_l2_block: last.l2_block_number,
+                intermediate_roots,
+                config_hash: self.config_hash,
+                tee_image_hash: self.tee_image_hash,
+            };
+            let signing_data = journal.encode();
 
             let signature = Signing::sign(&self.signer_key, &signing_data)?;
 
