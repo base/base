@@ -109,7 +109,7 @@ impl VsockTransport {
         }
     }
 
-    /// Return the raw Nitro attestation document (COSE_Sign1 bytes) for the enclave signer.
+    /// Return the raw Nitro attestation document (`COSE_Sign1` bytes) for the enclave signer.
     pub async fn signer_attestation(&self) -> Result<Vec<u8>, NitroError> {
         let mut stream = self.connect().await?;
 
