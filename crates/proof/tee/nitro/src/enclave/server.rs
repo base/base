@@ -125,11 +125,6 @@ impl Server {
         session.get_attestation(public_key)
     }
 
-    /// Try to get attestation bytes, returning empty vec on failure.
-    fn try_get_attestation_bytes(&self) -> Vec<u8> {
-        self.signer_attestation().unwrap_or_default()
-    }
-
     /// Run the proof-client pipeline for the given preimages and return per-block proposals
     /// with an aggregate.
     pub async fn prove(
