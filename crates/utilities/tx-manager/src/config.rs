@@ -91,7 +91,7 @@ impl GweiParser {
 /// All fields are public for direct construction. Use [`Self::validate`]
 /// to check invariants, or [`Self::from_cli`] (requires the `cli` feature)
 /// which validates automatically.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TxManagerConfig {
     /// Number of block confirmations to wait.
     pub num_confirmations: u64,
