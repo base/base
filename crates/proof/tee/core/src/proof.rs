@@ -4,7 +4,7 @@ use base_proof_primitives::ECDSA_SIGNATURE_LENGTH;
 use crate::CryptoError;
 
 /// Offset to add to ECDSA v-value (0/1 -> 27/28).
-pub const ECDSA_V_OFFSET: u8 = 27;
+pub(crate) const ECDSA_V_OFFSET: u8 = 27;
 
 /// Proof type byte for TEE proofs (matches `AggregateVerifier.ProofType.TEE`).
 pub const PROOF_TYPE_TEE: u8 = 0;

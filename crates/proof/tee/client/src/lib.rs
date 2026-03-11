@@ -5,7 +5,7 @@
 #![deny(rust_2018_idioms)]
 
 mod client;
-pub use client::{EnclaveClient, EnclaveProvider};
+pub use client::EnclaveClient;
 
 mod client_error;
 pub use client_error::ClientError;

@@ -12,17 +12,12 @@
 
 use alloy_eips::eip1898::BlockNumHash;
 use alloy_primitives::{Address, B256, U256, keccak256};
-// Re-export RollupConfig from base_consensus_genesis for ecosystem compatibility
 pub use base_consensus_genesis::RollupConfig;
+use base_consensus_genesis::{BaseFeeConfig, BaseHardforkConfig, HardForkConfig};
 use serde::{Deserialize, Serialize};
 
-use crate::config::default_rollup_config;
-
-/// Version constant for binary serialization format.
 const VERSION_0: u64 = 0;
-
-/// Total size of marshaled binary output in bytes.
-pub const MARSHAL_BINARY_SIZE: usize = 212;
+const MARSHAL_BINARY_SIZE: usize = 212;
 
 /// A block identifier containing both hash and number.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,26 +197,39 @@ impl PerChainConfig {
         self.genesis.system_config.overhead = B256::ZERO;
     }
 
-    /// Convert to `base_consensus_genesis::RollupConfig` using default template.
-    ///
-    /// This starts with `default_rollup_config()` and overwrites the 5 chain-specific fields:
-    /// - `l2_chain_id`
-    /// - `genesis`
-    /// - `block_time`
-    /// - `deposit_contract_address`
-    /// - `l1_system_config_address`
+    /// Converts this per-chain configuration into a full [`RollupConfig`] with default fork
+    /// settings (all forks active at genesis).
     #[must_use]
     pub fn to_rollup_config(&self) -> RollupConfig {
-        let mut cfg = default_rollup_config();
-
-        // Overwrite chain-specific fields
-        cfg.l2_chain_id = alloy_chains::Chain::from_id(self.chain_id.to::<u64>());
-        cfg.genesis = self.to_chain_genesis();
-        cfg.block_time = self.block_time;
-        cfg.deposit_contract_address = self.deposit_contract_address;
-        cfg.l1_system_config_address = self.l1_system_config_address;
-
-        cfg
+        RollupConfig {
+            l1_chain_id: 1,
+            l2_chain_id: alloy_chains::Chain::from_id(self.chain_id.to::<u64>()),
+            genesis: self.to_chain_genesis(),
+            block_time: self.block_time,
+            max_sequencer_drift: 600,
+            seq_window_size: 3600,
+            channel_timeout: 300,
+            granite_channel_timeout: 300,
+            deposit_contract_address: self.deposit_contract_address,
+            l1_system_config_address: self.l1_system_config_address,
+            batch_inbox_address: Address::ZERO,
+            protocol_versions_address: Address::ZERO,
+            blobs_enabled_l1_timestamp: Some(0),
+            hardforks: HardForkConfig {
+                regolith_time: Some(0),
+                canyon_time: Some(0),
+                delta_time: Some(0),
+                ecotone_time: Some(0),
+                fjord_time: Some(0),
+                granite_time: Some(0),
+                holocene_time: Some(0),
+                pectra_blob_schedule_time: None,
+                isthmus_time: Some(0),
+                jovian_time: Some(0),
+                base: Some(BaseHardforkConfig { v1: Some(0) }),
+            },
+            chain_op_config: BaseFeeConfig::base_mainnet(),
+        }
     }
 
     /// Convert our Genesis to `base_consensus_genesis::ChainGenesis`.
@@ -426,21 +434,20 @@ mod tests {
     }
 
     #[test]
-    fn test_rollup_config_default_values() {
-        let rollup_config = crate::config::default_rollup_config();
+    fn test_to_rollup_config_timing() {
+        let config = sample_config();
+        let rollup_config = config.to_rollup_config();
 
-        // Verify timing parameters from Go's L2CoreDeployConfig
-        assert_eq!(rollup_config.block_time, 2);
         assert_eq!(rollup_config.max_sequencer_drift, 600);
         assert_eq!(rollup_config.seq_window_size, 3600);
         assert_eq!(rollup_config.channel_timeout, 300);
     }
 
     #[test]
-    fn test_all_forks_active_at_genesis() {
-        let rollup_config = crate::config::default_rollup_config();
+    fn test_to_rollup_config_forks_active_at_genesis() {
+        let config = sample_config();
+        let rollup_config = config.to_rollup_config();
 
-        // All forks should be active at genesis (time = 0)
         assert_eq!(rollup_config.hardforks.canyon_time, Some(0));
         assert_eq!(rollup_config.hardforks.delta_time, Some(0));
         assert_eq!(rollup_config.hardforks.ecotone_time, Some(0));
@@ -448,8 +455,6 @@ mod tests {
         assert_eq!(rollup_config.hardforks.granite_time, Some(0));
         assert_eq!(rollup_config.hardforks.holocene_time, Some(0));
         assert_eq!(rollup_config.hardforks.isthmus_time, Some(0));
-
-        // Regolith should also be active at genesis
         assert_eq!(rollup_config.hardforks.regolith_time, Some(0));
     }
 }

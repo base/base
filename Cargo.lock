@@ -305,7 +305,6 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-hardforks",
- "alloy-op-hardforks",
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
@@ -411,18 +410,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-serde",
  "serde",
-]
-
-[[package]]
-name = "alloy-op-hardforks"
-version = "0.4.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6472c610150c4c4c15be9e1b964c9b78068f933bda25fb9cdf09b9ac2bb66f36"
-dependencies = [
- "alloy-chains",
- "alloy-hardforks",
- "alloy-primitives",
- "auto_impl",
 ]
 
 [[package]]
@@ -3177,30 +3164,18 @@ dependencies = [
  "alloy-chains",
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm",
  "alloy-primitives",
  "alloy-rlp",
- "alloy-rpc-types-engine",
  "alloy-trie",
- "async-trait",
  "base-alloy-consensus",
- "base-alloy-evm",
- "base-alloy-rpc-types-engine",
  "base-consensus-genesis",
- "base-proof-executor",
- "base-proof-mpt",
  "base-proof-primitives",
  "base-protocol",
- "base-revm",
  "hex",
- "hex-literal 1.1.0",
- "parking_lot",
- "revm",
  "rstest",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
@@ -3208,12 +3183,10 @@ name = "base-enclave-client"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "async-trait",
  "base-enclave",
  "base-proof-primitives",
  "jsonrpsee",
  "rustls 0.23.37",
- "rustls-pki-types",
  "thiserror 2.0.18",
 ]
 
@@ -7853,9 +7826,6 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "hex-conservative"

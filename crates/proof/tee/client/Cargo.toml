@@ -16,12 +16,10 @@ base-proof-primitives = { workspace = true, features = ["serde", "std"] }
 alloy-primitives.workspace = true
 
 # RPC
-async-trait.workspace = true
 jsonrpsee = { workspace = true, features = ["http-client"] }
 
 # Error handling
 thiserror.workspace = true
 
 # TLS
-rustls-pki-types.workspace = true
 rustls = { workspace = true, features = ["std", "tls12"] }
