@@ -661,7 +661,7 @@ impl TxManagerConfig {
 
 /// Returns a [`TxManagerParams`] with valid defaults for tests.
 #[cfg(test)]
-fn valid_params(chain_id: u64) -> TxManagerParams {
+const fn valid_params(chain_id: u64) -> TxManagerParams {
     TxManagerParams {
         num_confirmations: 10,
         safe_abort_nonce_too_low_count: 3,
