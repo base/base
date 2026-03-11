@@ -41,6 +41,7 @@ members = [
   "crates/execution/*",
   "crates/txpool",
   "devnet",
+  "etc/witness-diff",
 ]
 default-members = [
   "bin/based",
