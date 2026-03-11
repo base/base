@@ -131,6 +131,7 @@ impl TxManagerConfig {
     /// - `network_timeout` must be > 0
     /// - `resubmission_timeout` must be > 0
     /// - `receipt_query_interval` must be > 0
+    #[must_use = "validation errors must be handled"]
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.chain_id == 0 {
             return Err(ConfigError::OutOfRange {
