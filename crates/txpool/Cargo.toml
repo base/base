@@ -36,10 +36,10 @@ base-alloy-consensus.workspace = true
 base-execution-primitives.workspace = true
 
 # misc
+futures.workspace = true
 url.workspace = true
 serde.workspace = true
 c-kzg.workspace = true
-futures.workspace = true
 metrics.workspace = true
 tracing.workspace = true
 tokio-util.workspace = true

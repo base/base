@@ -2,7 +2,7 @@
 //! forwarding pipeline on the Base node builder.
 
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
-use base_txpool::{ConsumerHandle, ForwarderHandle};
+use base_txpool::{SpawnedConsumer, SpawnedForwarder};
 use tracing::info;
 
 use crate::TxForwardingConfig;
@@ -30,7 +30,7 @@ impl BaseNodeExtension for TxForwardingExtension {
 
         let config = self.config;
 
-        hooks.add_rpc_module(move |ctx| {
+        hooks.add_node_started_hook(move |ctx| {
             info!(
                 builder_urls = ?config.builder_urls,
                 resend_after_ms = config.resend_after_ms,
@@ -40,16 +40,20 @@ impl BaseNodeExtension for TxForwardingExtension {
             );
 
             let pool = ctx.pool().clone();
-
-            // Spawn the consumer on a dedicated OS thread. It continuously reads
-            // from best_transactions(), deduplicates, and broadcasts to subscribers.
             let consumer_config = config.to_consumer_config();
-            let consumer_handle = ConsumerHandle::spawn(pool, consumer_config);
-
-            // This forwarder handle will spawn one forwarder async task per builder URL. Each subscribes to
-            // the consumer's broadcast channel and forwards transactions via RPC.
             let forwarder_config = config.to_forwarder_config();
-            let _ = ForwarderHandle::spawn(&consumer_handle.sender, forwarder_config);
+
+            let executor = ctx.task_executor;
+            let consumer = SpawnedConsumer::spawn(pool, consumer_config, &executor);
+            let forwarder = SpawnedForwarder::spawn(&consumer.sender, forwarder_config, &executor);
+
+            executor.spawn_with_graceful_shutdown_signal(|signal| {
+                Box::pin(async move {
+                    let _guard = signal.await;
+                    forwarder.shutdown().await;
+                    consumer.shutdown();
+                })
+            });
 
             Ok(())
         })

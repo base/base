@@ -17,10 +17,10 @@ mod ordering;
 pub use ordering::{BaseOrdering, TimestampOrdering};
 
 mod consumer;
-pub use consumer::{Consumer, ConsumerConfig, ConsumerHandle, ConsumerMetrics, RecentlySent};
+pub use consumer::{Consumer, ConsumerConfig, ConsumerMetrics, RecentlySent, SpawnedConsumer};
 
 mod forwarder;
-pub use forwarder::{Forwarder, ForwarderConfig, ForwarderHandle, ForwarderMetrics};
+pub use forwarder::{Forwarder, ForwarderConfig, ForwarderMetrics, SpawnedForwarder};
 
 mod builder;
 pub use builder::{BuilderApiImpl, BuilderApiMetrics, BuilderApiServer};

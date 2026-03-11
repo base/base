@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use jsonrpsee::http_client::HttpClientBuilder;
+use reth_tasks::TaskExecutor;
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
@@ -15,22 +16,24 @@ pub use metrics::ForwarderMetrics;
 mod task;
 pub use task::Forwarder;
 
-/// Handle for the set of forwarder tasks (one per builder URL).
+/// Set of spawned forwarder tasks (one per builder URL).
 ///
-/// Cancels all forwarder tasks on drop. For a clean shutdown that waits for
-/// in-flight RPC requests to complete, use [`ForwarderHandle::shutdown`].
-#[must_use = "dropping the handle cancels all forwarder tasks without draining buffers — call shutdown() for graceful termination"]
-pub struct ForwarderHandle {
-    cancel: CancellationToken,
+/// Exposes the [`CancellationToken`] and task join handles so callers can
+/// wire up graceful shutdown (e.g. via reth's
+/// `spawn_with_graceful_shutdown_signal`).
+pub struct SpawnedForwarder {
+    /// Cancellation token — cancel this to stop all forwarder loops.
+    pub cancel: CancellationToken,
     tasks: Vec<tokio::task::JoinHandle<()>>,
 }
 
-impl ForwarderHandle {
+impl SpawnedForwarder {
     /// Spawns one forwarder async task per builder URL, each subscribing to
     /// the given broadcast sender.
     pub fn spawn<T>(
         sender: &broadcast::Sender<Arc<ValidPoolTransaction<T>>>,
         config: ForwarderConfig,
+        executor: &TaskExecutor,
     ) -> Self
     where
         T: PoolTransaction + 'static,
@@ -67,32 +70,23 @@ impl ForwarderHandle {
                 cancel.child_token(),
             );
 
-            let handle = tokio::spawn(async move {
+            let handle = executor.spawn_task(Box::pin(async move {
                 forwarder.run().await;
-            });
+            }));
 
             info!(builder_url = %url, "spawned transaction forwarder");
             tasks.push(handle);
         }
 
-        if tasks.is_empty() {
-            warn!("no forwarder tasks spawned — check builder_urls config");
-        }
-
         Self { cancel, tasks }
     }
-}
 
-impl ForwarderHandle {
-    /// Gracefully shuts down all forwarder tasks.
-    ///
-    /// Signals cancellation and waits up to 30 seconds for each forwarder to
+    /// Cancels all forwarder tasks and waits up to 30 seconds for each to
     /// drain its buffer and complete in-flight RPC requests.
-    pub async fn shutdown(mut self) {
+    pub async fn shutdown(self) {
         self.cancel.cancel();
 
-        let tasks = std::mem::take(&mut self.tasks);
-        if tokio::time::timeout(Duration::from_secs(30), futures::future::join_all(tasks))
+        if tokio::time::timeout(Duration::from_secs(30), futures::future::join_all(self.tasks))
             .await
             .is_err()
         {
@@ -101,15 +95,9 @@ impl ForwarderHandle {
     }
 }
 
-impl Drop for ForwarderHandle {
-    fn drop(&mut self) {
-        self.cancel.cancel();
-    }
-}
-
-impl std::fmt::Debug for ForwarderHandle {
+impl std::fmt::Debug for SpawnedForwarder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ForwarderHandle")
+        f.debug_struct("SpawnedForwarder")
             .field("tasks", &self.tasks.len())
             .field("cancelled", &self.cancel.is_cancelled())
             .finish()
