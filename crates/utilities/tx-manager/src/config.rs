@@ -92,6 +92,18 @@ pub struct FeeConfig {
     /// If the suggested fee is below this value the limit check is skipped,
     /// allowing unconstrained fees in low-fee environments.
     pub fee_limit_threshold: u128,
+
+    /// Minimum tip cap (in wei) to use for transactions.
+    ///
+    /// When non-zero, the transaction manager will ensure the tip cap
+    /// is at least this value.
+    pub min_tip_cap: u128,
+
+    /// Minimum basefee (in wei) to use for transactions.
+    ///
+    /// When non-zero, the transaction manager will ensure the basefee
+    /// is at least this value.
+    pub min_basefee: u128,
 }
 
 /// Note: the default `fee_limit_threshold` is `0` (check always active),
@@ -100,7 +112,7 @@ pub struct FeeConfig {
 /// [`FeeConfig`] directly rather than via [`TxManagerConfig::fee_config`].
 impl Default for FeeConfig {
     fn default() -> Self {
-        Self { fee_limit_multiplier: 5, fee_limit_threshold: 0 }
+        Self { fee_limit_multiplier: 5, fee_limit_threshold: 0, min_tip_cap: 0, min_basefee: 0 }
     }
 }
 
@@ -577,6 +589,8 @@ impl TxManagerConfig {
         FeeConfig {
             fee_limit_multiplier: hot.fee_limit_multiplier,
             fee_limit_threshold: hot.fee_limit_threshold,
+            min_tip_cap: hot.min_tip_cap,
+            min_basefee: hot.min_basefee,
         }
     }
 }
@@ -859,11 +873,16 @@ mod tests {
         let snapshot = config.fee_config();
         assert_eq!(snapshot.fee_limit_multiplier, 5);
         assert_eq!(snapshot.fee_limit_threshold, 100_000_000_000);
+        assert_eq!(snapshot.min_tip_cap, 0);
+        assert_eq!(snapshot.min_basefee, 0);
 
         // Mutate hot config — snapshot should be independent
         config.set_fee_limit_multiplier(99).unwrap();
+        config.set_min_tip_cap(42);
         assert_eq!(snapshot.fee_limit_multiplier, 5);
+        assert_eq!(snapshot.min_tip_cap, 0);
         assert_eq!(config.fee_limit_multiplier(), 99);
+        assert_eq!(config.min_tip_cap(), 42);
     }
 
     // ── Clone captures hot state ────────────────────────────────────
@@ -888,6 +907,8 @@ mod tests {
         let fc = FeeConfig::default();
         assert_eq!(fc.fee_limit_multiplier, 5);
         assert_eq!(fc.fee_limit_threshold, 0);
+        assert_eq!(fc.min_tip_cap, 0);
+        assert_eq!(fc.min_basefee, 0);
     }
 
     // ── Zero tx_send_timeout and tx_not_in_mempool_timeout allowed ──

@@ -322,7 +322,8 @@ mod tests {
         #[case] threshold: u128,
         #[case] should_pass: bool,
     ) {
-        let config = FeeConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: threshold };
+        let config =
+            FeeConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: threshold, ..Default::default() };
         let result = FeeCalculator::check_limits(fee, suggested, &config);
         assert_eq!(result.is_ok(), should_pass);
         if !should_pass {
@@ -418,7 +419,7 @@ mod tests {
         ) {
             // threshold is always above suggested → skip check → Ok
             let threshold = suggested.saturating_add(1);
-            let config = FeeConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: threshold };
+            let config = FeeConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: threshold, ..Default::default() };
             let result = FeeCalculator::check_limits(fee, suggested, &config);
             prop_assert!(result.is_ok(), "expected Ok when suggested < threshold");
         }
@@ -430,7 +431,7 @@ mod tests {
         ) {
             // fee exactly at ceiling → should be Ok
             let ceiling = (multiplier as u128).saturating_mul(suggested);
-            let config = FeeConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: 0 };
+            let config = FeeConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: 0, ..Default::default() };
             let result = FeeCalculator::check_limits(ceiling, suggested, &config);
             prop_assert!(result.is_ok(), "expected Ok when fee == ceiling");
         }
@@ -445,7 +446,7 @@ mod tests {
             let fee = ceiling.saturating_add(1);
             // guard: only test when fee actually exceeded ceiling (no saturation)
             prop_assume!(fee > ceiling);
-            let config = FeeConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: 0 };
+            let config = FeeConfig { fee_limit_multiplier: multiplier, fee_limit_threshold: 0, ..Default::default() };
             let result = FeeCalculator::check_limits(fee, suggested, &config);
             prop_assert!(result.is_err(), "expected Err when fee > ceiling");
         }
