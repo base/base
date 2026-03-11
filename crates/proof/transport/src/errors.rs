@@ -15,4 +15,8 @@ pub enum TransportError {
     /// Serialization or deserialization of a message failed.
     #[error("codec error: {0}")]
     Codec(String),
+
+    /// The proof execution itself failed.
+    #[error("prove execution failed: {0}")]
+    ProveExecution(String),
 }
