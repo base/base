@@ -255,15 +255,9 @@ mod tests {
     #[test]
     fn gwei_parse_negative_returns_invalid_value() {
         let result = GweiParser::parse("-1", "test_field");
-        assert!(matches!(
-            result,
-            Err(ConfigError::InvalidValue { field: "test_field", .. })
-        ));
+        assert!(matches!(result, Err(ConfigError::InvalidValue { field: "test_field", .. })));
         let err = result.unwrap_err();
-        assert!(
-            err.to_string().contains("negative"),
-            "error should mention negative: {err}"
-        );
+        assert!(err.to_string().contains("negative"), "error should mention negative: {err}");
     }
 
     // ── ConfigError display ─────────────────────────────────────────
@@ -329,13 +323,9 @@ mod tests {
 
         // ── CLI defaults ────────────────────────────────────────────
 
-        /// NOTE: This test exercises clap's `default_value` + `env` integration.
-        /// It will fail if any `BASE_TX_MANAGER_*` env vars are set in the
-        /// process environment, since clap reads env vars even with
-        /// `try_parse_from`.
         #[test]
         fn cli_defaults_from_empty_args() {
-            let cli = TxManagerCli::try_parse_from(["test"]).unwrap();
+            let cli = default_cli();
             assert_eq!(cli.num_confirmations, 10);
             assert_eq!(cli.safe_abort_nonce_too_low_count, 3);
             assert_eq!(cli.fee_limit_multiplier, 5);
@@ -443,10 +433,7 @@ mod tests {
 
         #[test]
         fn negative_gwei_in_config_rejected() {
-            let cli = TxManagerCli {
-                fee_limit_threshold_gwei: "-1".to_string(),
-                ..default_cli()
-            };
+            let cli = TxManagerCli { fee_limit_threshold_gwei: "-1".to_string(), ..default_cli() };
             let result = TxManagerConfig::from_cli(cli, 1);
             let err = result.expect_err("expected InvalidValue error");
             assert!(

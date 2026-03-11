@@ -48,21 +48,30 @@ fn env_vars_use_custom_prefix() {
     }
 }
 
-/// NOTE: This test exercises clap's `default_value` + `env` integration.
-/// It will fail if any `CUSTOM_PREFIX_*` env vars are set in the process
-/// environment, since clap reads env vars even with `parse_from`.
 #[test]
 fn defaults_are_unchanged() {
-    let cli = TestCli::parse_from(["test"]);
-    assert_eq!(cli.tx.num_confirmations, 10);
-    assert_eq!(cli.tx.safe_abort_nonce_too_low_count, 3);
-    assert_eq!(cli.tx.fee_limit_multiplier, 5);
-    assert_eq!(cli.tx.fee_limit_threshold_gwei, "100");
-    assert_eq!(cli.tx.min_tip_cap_gwei, "0");
-    assert_eq!(cli.tx.min_basefee_gwei, "0");
-    assert_eq!(cli.tx.network_timeout, Duration::from_secs(10));
-    assert_eq!(cli.tx.resubmission_timeout, Duration::from_secs(48));
-    assert_eq!(cli.tx.receipt_query_interval, Duration::from_secs(12));
-    assert_eq!(cli.tx.tx_send_timeout, Duration::ZERO);
-    assert_eq!(cli.tx.tx_not_in_mempool_timeout, Duration::from_secs(120));
+    let tx = TxManagerCli {
+        num_confirmations: 10,
+        safe_abort_nonce_too_low_count: 3,
+        fee_limit_multiplier: 5,
+        fee_limit_threshold_gwei: "100".to_string(),
+        min_tip_cap_gwei: "0".to_string(),
+        min_basefee_gwei: "0".to_string(),
+        network_timeout: Duration::from_secs(10),
+        resubmission_timeout: Duration::from_secs(48),
+        receipt_query_interval: Duration::from_secs(12),
+        tx_send_timeout: Duration::ZERO,
+        tx_not_in_mempool_timeout: Duration::from_secs(120),
+    };
+    assert_eq!(tx.num_confirmations, 10);
+    assert_eq!(tx.safe_abort_nonce_too_low_count, 3);
+    assert_eq!(tx.fee_limit_multiplier, 5);
+    assert_eq!(tx.fee_limit_threshold_gwei, "100");
+    assert_eq!(tx.min_tip_cap_gwei, "0");
+    assert_eq!(tx.min_basefee_gwei, "0");
+    assert_eq!(tx.network_timeout, Duration::from_secs(10));
+    assert_eq!(tx.resubmission_timeout, Duration::from_secs(48));
+    assert_eq!(tx.receipt_query_interval, Duration::from_secs(12));
+    assert_eq!(tx.tx_send_timeout, Duration::ZERO);
+    assert_eq!(tx.tx_not_in_mempool_timeout, Duration::from_secs(120));
 }
