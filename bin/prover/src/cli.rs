@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use std::sync::Arc;
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::B256;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_consensus_registry::Registry;
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -114,10 +114,6 @@ struct NitroEnclaveArgs {
     #[arg(long, env = "VSOCK_PORT", default_value_t = 1234)]
     vsock_port: u32,
 
-    /// Proposer address.
-    #[arg(long, env = "PROPOSER")]
-    proposer: Address,
-
     /// Per-chain configuration hash.
     #[arg(long, env = "CONFIG_HASH")]
     config_hash: B256,
@@ -184,7 +180,6 @@ impl NitroEnclaveArgs {
     async fn run(self) -> eyre::Result<()> {
         let config = EnclaveConfig {
             vsock_port: self.vsock_port,
-            proposer: self.proposer,
             config_hash: self.config_hash,
             tee_image_hash: self.tee_image_hash,
         };
@@ -210,10 +205,6 @@ struct NitroLocalArgs {
     #[command(flatten)]
     server: ProverServerArgs,
 
-    /// Proposer address.
-    #[arg(long, env = "PROPOSER")]
-    proposer: Address,
-
     /// Per-chain configuration hash.
     #[arg(long, env = "CONFIG_HASH")]
     config_hash: B256,
@@ -236,7 +227,6 @@ impl NitroLocalArgs {
 
         let enclave_config = EnclaveConfig {
             vsock_port: 0,
-            proposer: self.proposer,
             config_hash: self.config_hash,
             tee_image_hash: self.tee_image_hash,
         };
