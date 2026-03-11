@@ -7,7 +7,7 @@ mod proof;
 pub use proof::{ProofBundle, ProofClaim, ProofEvidence, ProofRequest, ProofResult};
 
 mod proposal;
-pub use proposal::{Proposal, SIGNATURE_LENGTH};
+pub use proposal::{ECDSA_SIGNATURE_LENGTH, Proposal};
 
 mod prover;
 pub use prover::ProverBackend;

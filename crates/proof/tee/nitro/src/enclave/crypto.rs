@@ -5,13 +5,11 @@
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use base_proof_primitives::ECDSA_SIGNATURE_LENGTH;
 use k256::ecdsa::{Signature, SigningKey, VerifyingKey, signature::hazmat::PrehashVerifier};
 use rand_08::CryptoRng;
 
 use crate::error::{CryptoError, ProposalError, Result};
-
-/// Expected length of an ECDSA signature (r: 32 bytes, s: 32 bytes, v: 1 byte).
-pub const SIGNATURE_LENGTH: usize = 65;
 
 /// Base length of the signing data without intermediate roots:
 /// address(20) + 7 x bytes32(32) = 244 bytes.
@@ -136,7 +134,7 @@ impl Signing {
     ///
     /// Uses only the first 64 bytes (r, s), matching Go's `crypto.VerifySignature`.
     pub fn verify(public_key: &[u8], data: &[u8], signature: &[u8]) -> Result<bool> {
-        if signature.len() != SIGNATURE_LENGTH {
+        if signature.len() != ECDSA_SIGNATURE_LENGTH {
             return Err(ProposalError::InvalidSignatureLength(signature.len()).into());
         }
 
@@ -299,7 +297,7 @@ mod tests {
 
         let data = test_signing_data();
         let signature = Signing::sign(&signer, &data).expect("signing failed");
-        assert_eq!(signature.len(), SIGNATURE_LENGTH);
+        assert_eq!(signature.len(), ECDSA_SIGNATURE_LENGTH);
 
         let public_key = Ecdsa::public_key_bytes(&signer);
         let valid = Signing::verify(&public_key, &data, &signature).expect("verification failed");
