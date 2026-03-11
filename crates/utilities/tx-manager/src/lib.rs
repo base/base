@@ -22,12 +22,12 @@ pub use send_state::SendState;
 #[cfg(feature = "cli")]
 #[macro_use]
 mod macros;
+// Generates `TxManagerCli` at crate root.
+#[cfg(feature = "cli")]
+define_tx_manager_cli!("BASE_TX_MANAGER_");
 
 mod config;
 pub use config::{ConfigError, GweiParser, TxManagerConfig};
-
-#[cfg(feature = "cli")]
-define_tx_manager_cli!("BASE_TX_MANAGER_");
 
 mod traits;
 pub use traits::{SendHandle, SendResponse, TxManager};
