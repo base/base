@@ -5,49 +5,32 @@ use base_proof_preimage::PreimageKey;
 
 use crate::Proposal;
 
-/// The claim being proven, containing an aggregated proposal over a block range
-/// and the individual per-block proposals that were aggregated.
+/// The result of a proof computation, parameterized by backend.
 ///
-/// The TEE server generates a [`Proposal`] for each block in the range, then
-/// aggregates them into a single [`Proposal`]. Verifiers can check both
-/// per-block correctness and aggregation integrity.
+/// Each variant carries exactly the data its backend needs:
+///
+/// - **`Tee`**: The TEE server generates a [`Proposal`] for each block in the
+///   range, then aggregates them into a single [`Proposal`]. On-chain
+///   verification uses the per-proposal ECDSA signatures directly; the
+///   attestation document is handled separately at signer registration time.
+///
+/// - **`Zk`**: The ZK prover produces an opaque proof blob that the on-chain
+///   verifier checks against a committed image ID.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ProofClaim {
-    /// The aggregated proposal covering the entire proven block range.
-    pub aggregate_proposal: Proposal,
-    /// The individual per-block proposals that were aggregated.
-    pub proposals: Vec<Proposal>,
-}
-
-/// Backend-specific evidence that accompanies a [`ProofClaim`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum ProofEvidence {
-    /// Evidence produced by a TEE backend.
+pub enum ProofResult {
+    /// Result from a TEE backend.
     Tee {
-        /// The attestation document from the enclave.
-        attestation_doc: Vec<u8>,
-        /// The signature over the claim.
-        signature: Vec<u8>,
+        /// The aggregated proposal covering the entire proven block range.
+        aggregate_proposal: Proposal,
+        /// The individual per-block proposals that were aggregated.
+        proposals: Vec<Proposal>,
     },
-    /// Evidence produced by a ZK backend.
+    /// Result from a ZK backend.
     Zk {
         /// The ZK proof bytes.
         proof_bytes: Vec<u8>,
-        /// The image ID (program hash) that produced this proof.
-        image_id: B256,
     },
-}
-
-/// A proven claim: a [`ProofClaim`] paired with its [`ProofEvidence`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ProofResult {
-    /// The claim being proven.
-    pub claim: ProofClaim,
-    /// The backend-specific evidence for this claim.
-    pub evidence: ProofEvidence,
 }
 
 /// Per-proof parameters — which block to prove.

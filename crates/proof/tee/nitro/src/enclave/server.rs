@@ -4,7 +4,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_alloy_evm::OpEvmFactory;
 use base_proof_client::{BootInfo, Prologue};
 use base_proof_preimage::PreimageKey;
-use base_proof_primitives::{ProofClaim, ProofEvidence, ProofResult, Proposal};
+use base_proof_primitives::{ProofResult, Proposal};
 use tracing::{info, warn};
 
 use crate::{
@@ -230,16 +230,7 @@ impl Server {
             }
         };
 
-        let attestation_doc = self.try_get_attestation_bytes();
-        let evidence_signature = Signing::sign(&self.signer_key, &aggregate_proposal.signature)?;
-
-        Ok(ProofResult {
-            claim: ProofClaim { aggregate_proposal, proposals },
-            evidence: ProofEvidence::Tee {
-                attestation_doc,
-                signature: evidence_signature.to_vec(),
-            },
-        })
+        Ok(ProofResult::Tee { aggregate_proposal, proposals })
     }
 
     /// Create a server for testing (no NSM, no PCR0 verification).
