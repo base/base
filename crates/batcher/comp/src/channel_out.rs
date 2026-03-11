@@ -1,4 +1,4 @@
-//! Contains the `ChannelOut` primitive for Optimism.
+//! Contains the `ChannelOut` primitive for Base.
 
 use alloc::vec;
 

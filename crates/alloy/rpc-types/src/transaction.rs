@@ -1,4 +1,4 @@
-//! Types related to transactions for OP chains.
+//! Types related to transactions for Base chains.
 
 use alloy_consensus::{Transaction as TransactionTrait, Typed2718, transaction::Recovered};
 use alloy_eips::{Encodable2718, eip2930::AccessList, eip7702::SignedAuthorization};
@@ -168,7 +168,7 @@ impl<T: TransactionTrait + Encodable2718> alloy_network_primitives::TransactionR
     }
 }
 
-/// OP chain-specific transaction fields
+/// Base chain-specific transaction fields
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpTransactionFields {

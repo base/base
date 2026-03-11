@@ -21,10 +21,10 @@ pub struct AddressList {
     pub l1_standard_bridge_proxy: Option<Address>,
     /// L2 Output Oracle Proxy address
     pub l2_output_oracle_proxy: Option<Address>,
-    /// Optimism Mintable ERC20 Factory Proxy address
+    /// Mintable ERC20 Factory Proxy address
     #[cfg_attr(feature = "serde", serde(alias = "OptimismMintableERC20FactoryProxy"))]
     pub optimism_mintable_erc20_factory_proxy: Option<Address>,
-    /// Optimism Portal Proxy address
+    /// Portal Proxy address
     pub optimism_portal_proxy: Option<Address>,
     /// System Config Proxy address
     pub system_config_proxy: Option<Address>,

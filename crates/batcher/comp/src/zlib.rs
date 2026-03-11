@@ -1,4 +1,4 @@
-//! Contains ZLIB compression and decompression primitives for Optimism.
+//! Contains ZLIB compression and decompression primitives for Base.
 
 use alloc::vec::Vec;
 

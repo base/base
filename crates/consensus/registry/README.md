@@ -42,7 +42,7 @@ println!("Base Mainnet Rollup Config: {:?}", base_rollup_config);
 
 ## Credits
 
-[alloy] and [op-alloy] for creating and maintaining high quality Ethereum and Optimism types in rust.
+[alloy] and [op-alloy] for creating and maintaining high quality Ethereum and Base types in rust.
 
 
 <!-- Hyperlinks -->

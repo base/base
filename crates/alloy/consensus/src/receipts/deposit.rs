@@ -1,4 +1,4 @@
-//! Transaction receipt types for OP chains.
+//! Transaction receipt types for Base chains.
 
 use alloy_consensus::{
     Eip658Value, Receipt, ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt,

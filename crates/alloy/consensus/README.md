@@ -8,7 +8,7 @@ Contains constants, types, and functions for implementing Base EL consensus and 
 Includes an extended `OpTxEnvelope` type with deposit transactions, and receipts containing
 chain-specific fields (`deposit_nonce` + `deposit_receipt_version`). Types in this crate
 correspond to `alloy-consensus` types that were modified from the base Ethereum protocol for
-the OP Stack.
+the Base protocol.
 
 For consensus types that are not modified by Base, the `alloy-consensus` types should be used
 instead.

@@ -1,6 +1,6 @@
 //! Error type
 
-/// Optimism specific payload building errors.
+/// Base-specific payload building errors.
 #[derive(Debug, thiserror::Error)]
 pub enum OpPayloadBuilderError {
     /// Thrown when a transaction fails to convert to a

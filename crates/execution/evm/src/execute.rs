@@ -1,4 +1,4 @@
-//! Optimism block execution strategy.
+//! Base block execution strategy.
 
 /// Helper type with backwards compatible methods to obtain executor providers.
 pub type OpExecutorProvider = crate::OpEvmConfig;

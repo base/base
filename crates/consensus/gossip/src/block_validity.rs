@@ -101,7 +101,7 @@ impl BlockHandler {
     pub const SEEN_HASH_CACHE_SIZE: usize = 1_000;
 
     /// The maximum number of blocks to keep per height.
-    /// This value is chosen according to the optimism specs:
+    /// This value is chosen according to the Base specs:
     /// <https://specs.optimism.io/protocol/rollup-node-p2p.html#block-validation>
     const MAX_BLOCKS_TO_KEEP: usize = 5;
 

@@ -5,7 +5,7 @@
 
 ## Overview
 
-jsonrpsee trait definitions for the Optimism rollup node RPC API. Provides `SyncStatusApiServer`
+jsonrpsee trait definitions for the Base rollup node RPC API. Provides `SyncStatusApiServer`
 and `SyncStatusApiClient` for the `optimism_syncStatus` method, which returns current L1 and L2
 block references (unsafe, safe, and finalized heads). Enable the `client` feature for the
 generated HTTP client.

@@ -18,7 +18,7 @@ use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use base_alloy_consensus::EIP1559ParamError;
 use base_alloy_evm::{OpReceiptBuilder, OpTxEnv};
 use base_execution_chainspec::OpChainSpec;
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_primitives::{DepositReceipt, OpPrimitives};
 use base_revm::{OpSpecId, OpTransaction};
 use reth_chainspec::EthChainSpec;
@@ -57,7 +57,10 @@ pub use base_alloy_evm::{OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvm, OpE
 pub use error::{L1BlockInfoError, OpBlockExecutionError};
 
 /// Builds an [`EvmEnv`] for a given block header using [`base_alloy_evm`]'s spec resolution.
-fn op_evm_env(header: &Header, chain_spec: &(impl OpHardforks + EthChainSpec)) -> EvmEnv<OpSpecId> {
+fn op_evm_env(
+    header: &Header,
+    chain_spec: &(impl BaseUpgrades + EthChainSpec),
+) -> EvmEnv<OpSpecId> {
     let spec = revm_spec_by_timestamp_after_bedrock(chain_spec, header.timestamp);
     let cfg_env =
         CfgEnv::new().with_chain_id(chain_spec.chain().id()).with_spec_and_mainnet_gas_params(spec);
@@ -88,7 +91,7 @@ fn op_next_evm_env(
     parent: &Header,
     attributes: &OpNextBlockEnvAttributes,
     base_fee_per_gas: u64,
-    chain_spec: &(impl OpHardforks + EthChainSpec),
+    chain_spec: &(impl BaseUpgrades + EthChainSpec),
 ) -> EvmEnv<OpSpecId> {
     let spec = revm_spec_by_timestamp_after_bedrock(chain_spec, attributes.timestamp);
     let cfg_env =
@@ -115,7 +118,7 @@ fn op_next_evm_env(
     EvmEnv { cfg_env, block_env }
 }
 
-/// Optimism-related EVM configuration.
+/// Base EVM configuration.
 #[derive(Debug)]
 pub struct OpEvmConfig<
     ChainSpec = OpChainSpec,
@@ -125,7 +128,7 @@ pub struct OpEvmConfig<
 > {
     /// Inner [`OpBlockExecutorFactory`].
     pub executor_factory: OpBlockExecutorFactory<R, Arc<ChainSpec>, EvmFactory>,
-    /// Optimism block assembler.
+    /// Base block assembler.
     pub block_assembler: OpBlockAssembler<ChainSpec>,
     #[doc(hidden)]
     pub _pd: core::marker::PhantomData<N>,
@@ -143,14 +146,14 @@ impl<ChainSpec, N: NodePrimitives, R: Clone, EvmFactory: Clone> Clone
     }
 }
 
-impl<ChainSpec: OpHardforks> OpEvmConfig<ChainSpec> {
-    /// Creates a new [`OpEvmConfig`] with the given chain spec for OP chains.
+impl<ChainSpec: BaseUpgrades> OpEvmConfig<ChainSpec> {
+    /// Creates a new [`OpEvmConfig`] with the given chain spec for Base chains.
     pub fn optimism(chain_spec: Arc<ChainSpec>) -> Self {
         Self::new(chain_spec, OpRethReceiptBuilder::default())
     }
 }
 
-impl<ChainSpec: OpHardforks, N: NodePrimitives, R> OpEvmConfig<ChainSpec, N, R> {
+impl<ChainSpec: BaseUpgrades, N: NodePrimitives, R> OpEvmConfig<ChainSpec, N, R> {
     /// Creates a new [`OpEvmConfig`] with the given chain spec.
     pub fn new(chain_spec: Arc<ChainSpec>, receipt_builder: R) -> Self {
         Self {
@@ -167,7 +170,7 @@ impl<ChainSpec: OpHardforks, N: NodePrimitives, R> OpEvmConfig<ChainSpec, N, R> 
 
 impl<ChainSpec, N, R, EvmFactory> OpEvmConfig<ChainSpec, N, R, EvmFactory>
 where
-    ChainSpec: OpHardforks,
+    ChainSpec: BaseUpgrades,
     N: NodePrimitives,
 {
     /// Returns the chain spec associated with this configuration.
@@ -178,7 +181,7 @@ where
 
 impl<ChainSpec, N, R, EvmF> ConfigureEvm for OpEvmConfig<ChainSpec, N, R, EvmF>
 where
-    ChainSpec: EthChainSpec<Header = Header> + OpHardforks,
+    ChainSpec: EthChainSpec<Header = Header> + BaseUpgrades,
     N: NodePrimitives<
             Receipt = R::Receipt,
             SignedTx = R::Transaction,
@@ -255,7 +258,7 @@ where
 #[cfg(feature = "std")]
 impl<ChainSpec, N, R> ConfigureEngineEvm<OpExecutionData> for OpEvmConfig<ChainSpec, N, R>
 where
-    ChainSpec: EthChainSpec<Header = Header> + OpHardforks,
+    ChainSpec: EthChainSpec<Header = Header> + BaseUpgrades,
     N: NodePrimitives<
             Receipt = R::Receipt,
             SignedTx = R::Transaction,

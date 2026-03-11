@@ -16,14 +16,14 @@ use crate::{
 };
 
 hardfork!(
-    /// The name of an optimism hardfork.
+    /// The name of a Base network upgrade.
     ///
     /// When building a list of hardforks for a chain, it's still expected to zip with
     /// [`EthereumHardfork`](alloy_hardforks::EthereumHardfork).
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     #[derive(Default)]
-    OpHardfork {
-        /// Bedrock: <https://blog.oplabs.co/introducing-optimism-bedrock>.
+    BaseUpgrade {
+        /// Bedrock: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#bedrock>.
         Bedrock,
         /// Regolith: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#regolith>.
         Regolith,
@@ -47,13 +47,13 @@ hardfork!(
     }
 );
 
-impl OpHardfork {
+impl BaseUpgrade {
     /// Reverse lookup to find the hardfork given a chain ID and block timestamp.
-    /// Returns the active hardfork at the given timestamp for the specified OP chain.
+    /// Returns the active hardfork at the given timestamp for the specified Base chain.
     ///
-    /// Note: standalone upgrades like [`OpHardfork::BaseV1`] are not included here because
+    /// Note: standalone upgrades like [`BaseUpgrade::BaseV1`] are not included here because
     /// they do not participate in the sequential cascade and have no scheduled activation
-    /// timestamp on production chains. Use [`crate::OpHardforks::is_base_v1_active_at_timestamp`]
+    /// timestamp on production chains. Use [`crate::BaseUpgrades::is_base_v1_active_at_timestamp`]
     /// to check those independently.
     pub fn from_chain_and_timestamp(chain: Chain, timestamp: u64) -> Option<Self> {
         let named = chain.named()?;
@@ -180,54 +180,54 @@ mod tests {
     extern crate alloc;
 
     #[test]
-    fn check_op_hardfork_from_str() {
+    fn check_base_hardfork_from_str() {
         let hardfork_str = [
             "beDrOck", "rEgOlITH", "cAnYoN", "eCoToNe", "FJorD", "GRaNiTe", "hOlOcEnE", "isthMUS",
             "jOvIaN", "bAsEv1",
         ];
         let expected_hardforks = [
-            OpHardfork::Bedrock,
-            OpHardfork::Regolith,
-            OpHardfork::Canyon,
-            OpHardfork::Ecotone,
-            OpHardfork::Fjord,
-            OpHardfork::Granite,
-            OpHardfork::Holocene,
-            OpHardfork::Isthmus,
-            OpHardfork::Jovian,
-            OpHardfork::BaseV1,
+            BaseUpgrade::Bedrock,
+            BaseUpgrade::Regolith,
+            BaseUpgrade::Canyon,
+            BaseUpgrade::Ecotone,
+            BaseUpgrade::Fjord,
+            BaseUpgrade::Granite,
+            BaseUpgrade::Holocene,
+            BaseUpgrade::Isthmus,
+            BaseUpgrade::Jovian,
+            BaseUpgrade::BaseV1,
         ];
 
-        let hardforks: alloc::vec::Vec<OpHardfork> =
-            hardfork_str.iter().map(|h| OpHardfork::from_str(h).unwrap()).collect();
+        let hardforks: alloc::vec::Vec<BaseUpgrade> =
+            hardfork_str.iter().map(|h| BaseUpgrade::from_str(h).unwrap()).collect();
 
         assert_eq!(hardforks, expected_hardforks);
     }
 
     #[test]
     fn check_nonexistent_hardfork_from_str() {
-        assert!(OpHardfork::from_str("not a hardfork").is_err());
+        assert!(BaseUpgrade::from_str("not a hardfork").is_err());
     }
 
     #[test]
-    fn test_reverse_lookup_op_chains() {
+    fn test_reverse_lookup_base_chains() {
         let test_cases = [
-            (Chain::base_mainnet(), BASE_MAINNET_CANYON_TIMESTAMP, OpHardfork::Canyon),
-            (Chain::base_mainnet(), BASE_MAINNET_ECOTONE_TIMESTAMP, OpHardfork::Ecotone),
-            (Chain::base_mainnet(), BASE_MAINNET_JOVIAN_TIMESTAMP, OpHardfork::Jovian),
-            (Chain::base_sepolia(), BASE_SEPOLIA_CANYON_TIMESTAMP, OpHardfork::Canyon),
-            (Chain::base_sepolia(), BASE_SEPOLIA_ECOTONE_TIMESTAMP, OpHardfork::Ecotone),
-            (Chain::base_sepolia(), BASE_SEPOLIA_JOVIAN_TIMESTAMP, OpHardfork::Jovian),
+            (Chain::base_mainnet(), BASE_MAINNET_CANYON_TIMESTAMP, BaseUpgrade::Canyon),
+            (Chain::base_mainnet(), BASE_MAINNET_ECOTONE_TIMESTAMP, BaseUpgrade::Ecotone),
+            (Chain::base_mainnet(), BASE_MAINNET_JOVIAN_TIMESTAMP, BaseUpgrade::Jovian),
+            (Chain::base_sepolia(), BASE_SEPOLIA_CANYON_TIMESTAMP, BaseUpgrade::Canyon),
+            (Chain::base_sepolia(), BASE_SEPOLIA_ECOTONE_TIMESTAMP, BaseUpgrade::Ecotone),
+            (Chain::base_sepolia(), BASE_SEPOLIA_JOVIAN_TIMESTAMP, BaseUpgrade::Jovian),
         ];
 
         for (chain_id, timestamp, expected) in test_cases {
             assert_eq!(
-                OpHardfork::from_chain_and_timestamp(chain_id, timestamp),
+                BaseUpgrade::from_chain_and_timestamp(chain_id, timestamp),
                 Some(expected),
                 "chain {chain_id} at timestamp {timestamp}"
             );
         }
 
-        assert_eq!(OpHardfork::from_chain_and_timestamp(Chain::from_id(999999), 1000000), None);
+        assert_eq!(BaseUpgrade::from_chain_and_timestamp(Chain::from_id(999999), 1000000), None);
     }
 }

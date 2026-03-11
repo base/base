@@ -14,7 +14,7 @@ use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_flashblocks::Flashblock;
 use base_alloy_network::TransactionResponse;
 use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_primitives::OpBlock;
 use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
@@ -58,7 +58,7 @@ pub struct StateProcessor<Client> {
 impl<Client> StateProcessor<Client>
 where
     Client: StateProviderFactory
-        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
+        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + BaseUpgrades>
         + BlockReaderIdExt<Header = Header>
         + Clone
         + 'static,

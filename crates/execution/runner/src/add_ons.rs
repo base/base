@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_payload_builder::{
     OpAttributes, OpPayloadPrimitives,
     config::{OpDAConfig, OpGasLimitConfig},
@@ -28,9 +28,9 @@ use reth_tracing::tracing::debug;
 use reth_transaction_pool::TransactionPool;
 use serde::de::DeserializeOwned;
 
-/// Add-ons w.r.t. optimism.
+/// Add-ons w.r.t. Base.
 ///
-/// This type provides optimism-specific addons to the node and exposes the RPC server and engine
+/// This type provides Base-specific addons to the node and exposes the RPC server and engine
 /// API.
 #[derive(Debug)]
 pub struct BaseAddOns<
@@ -180,7 +180,7 @@ impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> NodeAddOns<N>
 where
     N: FullNodeComponents<
             Types: NodeTypes<
-                ChainSpec: OpHardforks,
+                ChainSpec: BaseUpgrades,
                 Primitives: OpPayloadPrimitives,
                 Payload: PayloadTypes<PayloadBuilderAttributes = Attrs>,
             >,
@@ -258,7 +258,7 @@ impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> RethRpcAddOns<N>
 where
     N: FullNodeComponents<
             Types: NodeTypes<
-                ChainSpec: OpHardforks,
+                ChainSpec: BaseUpgrades,
                 Primitives: OpPayloadPrimitives,
                 Payload: PayloadTypes<PayloadBuilderAttributes = Attrs>,
             >,
@@ -302,7 +302,7 @@ where
     }
 }
 
-/// A regular optimism evm and executor builder.
+/// A regular Base EVM and executor builder.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {

@@ -1,6 +1,6 @@
 use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
-use base_alloy_hardforks::OpHardforks;
+use base_alloy_upgrades::BaseUpgrades;
 use revm::{DatabaseCommit, primitives::HashMap, state::Bytecode};
 
 /// The address of the create2 deployer
@@ -19,7 +19,7 @@ const CREATE_2_DEPLOYER_BYTECODE: [u8; 1584] = hex!(
 /// deployer contract. This is done by directly setting the code of the create2 deployer account
 /// prior to executing any transactions on the timestamp activation of the fork.
 pub fn ensure_create2_deployer<DB>(
-    chain_spec: impl OpHardforks,
+    chain_spec: impl BaseUpgrades,
     timestamp: u64,
     db: &mut DB,
 ) -> Result<(), DB::Error>
@@ -28,7 +28,7 @@ where
 {
     // If the canyon hardfork is active at the current timestamp, and it was not active at the
     // previous block timestamp (heuristically, block time is not perfectly constant at 2s), and the
-    // chain is an optimism chain, then we need to force-deploy the create2 deployer contract.
+    // chain is a Base chain, then we need to force-deploy the create2 deployer contract.
     if chain_spec.is_canyon_active_at_timestamp(timestamp)
         && !chain_spec.is_canyon_active_at_timestamp(timestamp.saturating_sub(2))
     {

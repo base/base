@@ -6,7 +6,7 @@ use revm::context_interface::{
     transaction::TransactionError,
 };
 
-/// Optimism transaction validation error.
+/// Base transaction validation error.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum OpTransactionError {
@@ -44,7 +44,7 @@ pub enum OpTransactionError {
     HaltedDepositPostRegolith,
     /// Missing enveloped transaction bytes for non-deposit transaction.
     ///
-    /// Non-deposit transactions on Optimism must have `enveloped_tx` field set
+    /// Non-deposit transactions on Base must have `enveloped_tx` field set
     /// to properly calculate L1 costs.
     MissingEnvelopedTx,
 }

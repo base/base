@@ -2,7 +2,7 @@
 
 use crate::{BlockInfo, L2BlockInfo};
 
-/// The [`SyncStatus`] of an Optimism Rollup Node.
+/// The [`SyncStatus`] of a Base Rollup Node.
 ///
 /// The sync status is a snapshot of the current state of the node's sync process.
 /// Values may not be derived yet and are zeroed out if they are not yet derived.

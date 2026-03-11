@@ -4,7 +4,7 @@ EVM configuration and execution for Base.
 
 ## Overview
 
-Orchestrates EVM block execution for OP chains. The `OpEvmConfig` type implements Reth's
+Orchestrates EVM block execution for Base chains. The `OpEvmConfig` type implements Reth's
 `ConfigureEvm` and `ConfigureEngineEvm` traits, constructing hardfork-aware execution environments
 by mapping timestamps to `SpecId` values and building the correct EVM context for each block.
 Re-exports executor factories, block executors, and error types from the underlying alloy/revm

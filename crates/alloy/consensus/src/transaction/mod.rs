@@ -1,4 +1,4 @@
-//! Transaction types for OP chains.
+//! Transaction types for Base chains.
 
 mod deposit;
 pub use deposit::{DepositTransaction, TxDeposit};

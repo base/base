@@ -1,68 +1,68 @@
 use alloc::vec::Vec;
 use core::ops::Index;
 
+use BaseUpgrade::{
+    BaseV1, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
+};
 // Production imports for hardfork implementations
 use EthereumHardfork::{
     Amsterdam, ArrowGlacier, Berlin, Bpo1, Bpo2, Bpo3, Bpo4, Bpo5, Byzantium, Cancun,
     Constantinople, Dao, Frontier, GrayGlacier, Homestead, Istanbul, London, MuirGlacier, Osaka,
     Paris, Petersburg, Prague, Shanghai, SpuriousDragon, Tangerine,
 };
-use OpHardfork::{
-    BaseV1, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
-};
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::U256;
 
-use crate::{OpHardfork, OpHardforks};
+use crate::{BaseUpgrade, BaseUpgrades};
 
 /// A type allowing to configure activation [`ForkCondition`]s for a given list of
-/// [`OpHardfork`]s.
+/// [`BaseUpgrade`]s.
 ///
-/// Zips together [`EthereumHardfork`]s and [`OpHardfork`]s. Optimism hard forks, at least,
-/// whenever Ethereum hard forks. When Ethereum hard forks, a new [`OpHardfork`] piggybacks on top
-/// of the new [`EthereumHardfork`] to include (or to noop) the L1 changes on L2.
+/// Zips together [`EthereumHardfork`]s and [`BaseUpgrade`]s. Base hard forks whenever Ethereum
+/// hard forks. When Ethereum hard forks, a new [`BaseUpgrade`] piggybacks on top of the new
+/// [`EthereumHardfork`] to include (or to noop) the L1 changes on L2.
 ///
-/// Optimism can also hard fork independently of Ethereum. The relation between Ethereum and
-/// Optimism hard forks is described by predicate [`EthereumHardfork`] `=>` [`OpHardfork`], since
-/// an OP chain can undergo an [`OpHardfork`] without an [`EthereumHardfork`], but not the other
-/// way around.
+/// Base can also hard fork independently of Ethereum. The relation between Ethereum and Base
+/// hard forks is described by predicate [`EthereumHardfork`] `=>` [`BaseUpgrade`], since a Base
+/// chain can undergo a [`BaseUpgrade`] without an [`EthereumHardfork`], but not the other way
+/// around.
 #[derive(Debug, Clone)]
-pub struct OpChainHardforks {
-    /// Ordered list of OP hardfork activations.
-    forks: Vec<(OpHardfork, ForkCondition)>,
+pub struct BaseChainUpgrades {
+    /// Ordered list of hardfork activations.
+    forks: Vec<(BaseUpgrade, ForkCondition)>,
 }
 
-impl OpChainHardforks {
-    /// Creates a new [`OpChainHardforks`] with the given list of forks. The input list is sorted
-    /// w.r.t. the hardcoded canonicity of [`OpHardfork`]s.
-    pub fn new(forks: impl IntoIterator<Item = (OpHardfork, ForkCondition)>) -> Self {
+impl BaseChainUpgrades {
+    /// Creates a new [`BaseChainUpgrades`] with the given list of forks. The input list is sorted
+    /// w.r.t. the hardcoded canonicity of [`BaseUpgrade`]s.
+    pub fn new(forks: impl IntoIterator<Item = (BaseUpgrade, ForkCondition)>) -> Self {
         let mut forks = forks.into_iter().collect::<Vec<_>>();
         forks.sort();
         Self { forks }
     }
 
-    /// Creates a new [`OpChainHardforks`] with Base mainnet configuration.
+    /// Creates a new [`BaseChainUpgrades`] with Base mainnet configuration.
     pub fn base_mainnet() -> Self {
-        Self::new(OpHardfork::base_mainnet())
+        Self::new(BaseUpgrade::base_mainnet())
     }
 
-    /// Creates a new [`OpChainHardforks`] with Base Sepolia configuration.
+    /// Creates a new [`BaseChainUpgrades`] with Base Sepolia configuration.
     pub fn base_sepolia() -> Self {
-        Self::new(OpHardfork::base_sepolia())
+        Self::new(BaseUpgrade::base_sepolia())
     }
 
-    /// Creates a new [`OpChainHardforks`] with devnet configuration.
+    /// Creates a new [`BaseChainUpgrades`] with devnet configuration.
     pub fn devnet() -> Self {
-        Self::new(OpHardfork::devnet())
+        Self::new(BaseUpgrade::devnet())
     }
 
-    /// Creates a new [`OpChainHardforks`] with Base devnet-0-sepolia-dev-0 configuration.
+    /// Creates a new [`BaseChainUpgrades`] with Base devnet-0-sepolia-dev-0 configuration.
     pub fn base_devnet_0_sepolia_dev_0() -> Self {
-        Self::new(OpHardfork::base_devnet_0_sepolia_dev_0())
+        Self::new(BaseUpgrade::base_devnet_0_sepolia_dev_0())
     }
 }
 
-impl EthereumHardforks for OpChainHardforks {
+impl EthereumHardforks for BaseChainUpgrades {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
         if self.forks.is_empty() {
             return ForkCondition::Never;
@@ -79,8 +79,8 @@ impl EthereumHardforks for OpChainHardforks {
     }
 }
 
-impl OpHardforks for OpChainHardforks {
-    fn op_fork_activation(&self, fork: OpHardfork) -> ForkCondition {
+impl BaseUpgrades for BaseChainUpgrades {
+    fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition {
         // check index out of bounds
         if self.forks.len() <= fork.idx() {
             return ForkCondition::Never;
@@ -89,10 +89,10 @@ impl OpHardforks for OpChainHardforks {
     }
 }
 
-impl Index<OpHardfork> for OpChainHardforks {
+impl Index<BaseUpgrade> for BaseChainUpgrades {
     type Output = ForkCondition;
 
-    fn index(&self, hf: OpHardfork) -> &Self::Output {
+    fn index(&self, hf: BaseUpgrade) -> &Self::Output {
         match hf {
             Bedrock => &self.forks[Bedrock.idx()].1,
             Regolith => &self.forks[Regolith.idx()].1,
@@ -108,12 +108,12 @@ impl Index<OpHardfork> for OpChainHardforks {
     }
 }
 
-impl Index<EthereumHardfork> for OpChainHardforks {
+impl Index<EthereumHardfork> for BaseChainUpgrades {
     type Output = ForkCondition;
 
     fn index(&self, hf: EthereumHardfork) -> &Self::Output {
         match hf {
-            // Dao Hardfork is not needed for OpChainHardforks
+            // Dao Hardfork is not needed for BaseChainUpgrades
             Dao | Osaka | Bpo1 | Bpo2 | Bpo3 | Bpo4 | Bpo5 | Amsterdam => &ForkCondition::Never,
             Frontier | Homestead | Tangerine | SpuriousDragon | Byzantium | Constantinople
             | Petersburg | Istanbul | MuirGlacier | Berlin => &ForkCondition::ZERO_BLOCK,
@@ -133,7 +133,7 @@ impl Index<EthereumHardfork> for OpChainHardforks {
 
 #[cfg(test)]
 mod tests {
-    use OpHardfork::{
+    use BaseUpgrade::{
         BaseV1, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
     };
     use alloy_hardforks::EthereumHardfork;
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn base_mainnet_fork_conditions() {
-        let base_mainnet_forks = OpChainHardforks::base_mainnet();
+        let base_mainnet_forks = BaseChainUpgrades::base_mainnet();
         assert_eq!(base_mainnet_forks[Bedrock], ForkCondition::Block(BASE_MAINNET_BEDROCK_BLOCK));
         assert_eq!(
             base_mainnet_forks[Regolith],
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn base_sepolia_fork_conditions() {
-        let base_sepolia_forks = OpChainHardforks::base_sepolia();
+        let base_sepolia_forks = BaseChainUpgrades::base_sepolia();
         assert_eq!(base_sepolia_forks[Bedrock], ForkCondition::Block(BASE_SEPOLIA_BEDROCK_BLOCK));
         assert_eq!(
             base_sepolia_forks[Regolith],
@@ -223,7 +223,7 @@ mod tests {
             ForkCondition::Timestamp(BASE_SEPOLIA_ISTHMUS_TIMESTAMP)
         );
         assert_eq!(
-            base_sepolia_forks.op_fork_activation(Jovian),
+            base_sepolia_forks.upgrade_activation(Jovian),
             ForkCondition::Timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP)
         );
         assert_eq!(base_sepolia_forks[BaseV1], ForkCondition::Never);
@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn is_jovian_active_at_timestamp() {
-        let base_mainnet_forks = OpChainHardforks::base_mainnet();
+        let base_mainnet_forks = BaseChainUpgrades::base_mainnet();
         assert!(base_mainnet_forks.is_jovian_active_at_timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP));
         assert!(
             !base_mainnet_forks.is_jovian_active_at_timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP - 1)
@@ -240,7 +240,7 @@ mod tests {
             base_mainnet_forks.is_jovian_active_at_timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP + 1000)
         );
 
-        let base_sepolia_forks = OpChainHardforks::base_sepolia();
+        let base_sepolia_forks = BaseChainUpgrades::base_sepolia();
         assert!(base_sepolia_forks.is_jovian_active_at_timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP));
         assert!(
             !base_sepolia_forks.is_jovian_active_at_timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP - 1)
@@ -253,20 +253,20 @@ mod tests {
     #[test]
     fn is_base_v1_active_at_timestamp() {
         // BaseV1 is not scheduled on mainnet or sepolia yet (ForkCondition::Never)
-        let base_mainnet_forks = OpChainHardforks::base_mainnet();
+        let base_mainnet_forks = BaseChainUpgrades::base_mainnet();
         assert!(!base_mainnet_forks.is_base_v1_active_at_timestamp(0));
         assert!(!base_mainnet_forks.is_base_v1_active_at_timestamp(u64::MAX));
 
-        let base_sepolia_forks = OpChainHardforks::base_sepolia();
+        let base_sepolia_forks = BaseChainUpgrades::base_sepolia();
         assert!(!base_sepolia_forks.is_base_v1_active_at_timestamp(0));
         assert!(!base_sepolia_forks.is_base_v1_active_at_timestamp(u64::MAX));
 
         // BaseV1 is active at genesis on devnet (ForkCondition::ZERO_TIMESTAMP)
-        let devnet_forks = OpChainHardforks::devnet();
+        let devnet_forks = BaseChainUpgrades::devnet();
         assert!(devnet_forks.is_base_v1_active_at_timestamp(0));
 
         // BaseV1 activates alongside Jovian on devnet-0-sepolia-dev-0
-        let devnet0_forks = OpChainHardforks::base_devnet_0_sepolia_dev_0();
+        let devnet0_forks = BaseChainUpgrades::base_devnet_0_sepolia_dev_0();
         assert!(
             !devnet0_forks
                 .is_base_v1_active_at_timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP - 1)
@@ -279,12 +279,12 @@ mod tests {
 
     #[test]
     fn test_ethereum_fork_activation_consistency() {
-        let base_mainnet_forks = OpChainHardforks::base_mainnet();
+        let base_mainnet_forks = BaseChainUpgrades::base_mainnet();
         for ethereum_hardfork in EthereumHardfork::VARIANTS {
             let _ = base_mainnet_forks.ethereum_fork_activation(*ethereum_hardfork);
         }
-        for op_hardfork in OpHardfork::VARIANTS {
-            let _ = base_mainnet_forks.op_fork_activation(*op_hardfork);
+        for base_hardfork in BaseUpgrade::VARIANTS {
+            let _ = base_mainnet_forks.upgrade_activation(*base_hardfork);
         }
     }
 }

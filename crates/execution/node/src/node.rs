@@ -1,4 +1,4 @@
-//! Optimism Node types config.
+//! Base Node types config.
 
 use std::{marker::PhantomData, sync::Arc};
 
@@ -9,7 +9,7 @@ use base_alloy_rpc_types_engine::{OpExecutionData, OpPayloadAttributes};
 use base_execution_chainspec::OpChainSpec;
 use base_execution_consensus::OpBeaconConsensus;
 use base_execution_evm::{OpEvmConfig, OpRethReceiptBuilder};
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_payload_builder::{
     OpAttributes, OpBuiltPayload, OpPayloadPrimitives,
     builder::OpPayloadTransactions,
@@ -64,26 +64,26 @@ use serde::de::DeserializeOwned;
 
 use crate::{OpEngineApiBuilder, OpEngineTypes, args::RollupArgs, engine::OpEngineValidator};
 
-/// Marker trait for Optimism node types with standard engine, chain spec, and primitives.
+/// Marker trait for Base node types with standard engine, chain spec, and primitives.
 pub trait OpNodeTypes:
-    NodeTypes<Payload = OpEngineTypes, ChainSpec: OpHardforks + Hardforks, Primitives = OpPrimitives>
+    NodeTypes<Payload = OpEngineTypes, ChainSpec: BaseUpgrades + Hardforks, Primitives = OpPrimitives>
 {
 }
-/// Blanket impl for all node types that conform to the Optimism spec.
+/// Blanket impl for all node types that conform to the Base spec.
 impl<N> OpNodeTypes for N where
     N: NodeTypes<
             Payload = OpEngineTypes,
-            ChainSpec: OpHardforks + Hardforks,
+            ChainSpec: BaseUpgrades + Hardforks,
             Primitives = OpPrimitives,
         >
 {
 }
 
-/// Helper trait for Optimism node types with full configuration including storage and execution
+/// Helper trait for Base node types with full configuration including storage and execution
 /// data.
 pub trait OpFullNodeTypes:
     NodeTypes<
-        ChainSpec: OpHardforks,
+        ChainSpec: BaseUpgrades,
         Primitives: OpPayloadPrimitives,
         Storage = OpStorage,
         Payload: EngineTypes<ExecutionData = OpExecutionData>,
@@ -93,7 +93,7 @@ pub trait OpFullNodeTypes:
 
 impl<N> OpFullNodeTypes for N where
     N: NodeTypes<
-            ChainSpec: OpHardforks,
+            ChainSpec: BaseUpgrades,
             Primitives: OpPayloadPrimitives,
             Storage = OpStorage,
             Payload: EngineTypes<ExecutionData = OpExecutionData>,
@@ -169,11 +169,11 @@ impl PayloadAttributesBuilder<OpPayloadAttributes> for BaseLocalPayloadAttribute
     }
 }
 
-/// Type configuration for a regular Optimism node.
+/// Type configuration for a regular Base node.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct OpNode {
-    /// Additional Optimism args
+    /// Additional Base args
     pub args: RollupArgs,
     /// Data availability configuration for the OP builder.
     ///
@@ -188,7 +188,7 @@ pub struct OpNode {
     pub gas_limit_config: OpGasLimitConfig,
 }
 
-/// A [`ComponentsBuilder`] with its generic arguments set to a stack of Optimism specific builders.
+/// A [`ComponentsBuilder`] with its generic arguments set to a stack of Base-specific builders.
 pub type OpNodeComponentBuilder<Node, Payload = OpPayloadBuilder> = ComponentsBuilder<
     Node,
     OpPoolBuilder,
@@ -199,7 +199,7 @@ pub type OpNodeComponentBuilder<Node, Payload = OpPayloadBuilder> = ComponentsBu
 >;
 
 impl OpNode {
-    /// Creates a new instance of the Optimism node type.
+    /// Creates a new instance of the Base node type.
     pub fn new(args: RollupArgs) -> Self {
         Self {
             args,
@@ -344,9 +344,9 @@ impl NodeTypes for OpNode {
     type Payload = OpEngineTypes;
 }
 
-/// Add-ons w.r.t. optimism.
+/// Add-ons w.r.t. Base.
 ///
-/// This type provides optimism-specific addons to the node and exposes the RPC server and engine
+/// This type provides Base-specific addons to the node and exposes the RPC server and engine
 /// API.
 #[derive(Debug)]
 pub struct OpAddOns<
@@ -532,7 +532,7 @@ impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> NodeAddOns<N>
 where
     N: FullNodeComponents<
             Types: NodeTypes<
-                ChainSpec: OpHardforks,
+                ChainSpec: BaseUpgrades,
                 Primitives: OpPayloadPrimitives,
                 Payload: PayloadTypes<PayloadBuilderAttributes = Attrs>,
             >,
@@ -610,7 +610,7 @@ impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> RethRpcAddOns<N>
 where
     N: FullNodeComponents<
             Types: NodeTypes<
-                ChainSpec: OpHardforks,
+                ChainSpec: BaseUpgrades,
                 Primitives: OpPayloadPrimitives,
                 Payload: PayloadTypes<PayloadBuilderAttributes = Attrs>,
             >,
@@ -654,7 +654,7 @@ where
     }
 }
 
-/// A regular optimism evm and executor builder.
+/// A regular Base EVM and executor builder.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct OpAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
@@ -800,14 +800,14 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
     }
 }
 
-/// A regular optimism evm and executor builder.
+/// A regular Base EVM and executor builder.
 #[derive(Debug, Copy, Clone, Default)]
 #[non_exhaustive]
 pub struct OpExecutorBuilder;
 
 impl<Node> ExecutorBuilder<Node> for OpExecutorBuilder
 where
-    Node: FullNodeTypes<Types: NodeTypes<ChainSpec: OpHardforks, Primitives = OpPrimitives>>,
+    Node: FullNodeTypes<Types: NodeTypes<ChainSpec: BaseUpgrades, Primitives = OpPrimitives>>,
 {
     type EVM =
         OpEvmConfig<<Node::Types as NodeTypes>::ChainSpec, <Node::Types as NodeTypes>::Primitives>;
@@ -819,7 +819,7 @@ where
     }
 }
 
-/// A basic optimism transaction pool.
+/// A basic Base transaction pool.
 ///
 /// This contains various settings that can be configured and take precedence over the node's
 /// config.
@@ -872,7 +872,7 @@ impl<T> OpPoolBuilder<T> {
 
 impl<Node, T, Evm> PoolBuilder<Node, Evm> for OpPoolBuilder<T>
 where
-    Node: FullNodeTypes<Types: NodeTypes<ChainSpec: OpHardforks>>,
+    Node: FullNodeTypes<Types: NodeTypes<ChainSpec: BaseUpgrades>>,
     T: EthPoolTransaction<Consensus = TxTy<Node::Types>> + OpPooledTx + TimestampedTransaction,
     Evm: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + Clone + 'static,
 {
@@ -924,7 +924,7 @@ where
     }
 }
 
-/// A basic optimism payload service builder
+/// A basic Base payload service builder
 #[derive(Debug, Default, Clone)]
 pub struct OpPayloadBuilder<Txs = ()> {
     /// By default the pending block equals the latest block
@@ -984,7 +984,7 @@ impl<Txs> OpPayloadBuilder<Txs> {
 impl<Node, Pool, Txs, Evm, Attrs> PayloadBuilderBuilder<Node, Pool, Evm> for OpPayloadBuilder<Txs>
 where
     Node: FullNodeTypes<
-            Provider: ChainSpecProvider<ChainSpec: OpHardforks>,
+            Provider: ChainSpecProvider<ChainSpec: BaseUpgrades>,
             Types: NodeTypes<
                 Primitives: OpPayloadPrimitives,
                 Payload: PayloadTypes<
@@ -1030,7 +1030,7 @@ where
     }
 }
 
-/// A basic optimism network builder.
+/// A basic Base network builder.
 #[derive(Debug, Default)]
 pub struct OpNetworkBuilder {
     /// Disable transaction pool gossip
@@ -1126,7 +1126,7 @@ where
     }
 }
 
-/// A basic optimism consensus builder.
+/// A basic Base consensus builder.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct OpConsensusBuilder;
@@ -1135,7 +1135,7 @@ impl<Node> ConsensusBuilder<Node> for OpConsensusBuilder
 where
     Node: FullNodeTypes<
         Types: NodeTypes<
-            ChainSpec: OpHardforks,
+            ChainSpec: BaseUpgrades,
             Primitives: NodePrimitives<Receipt: DepositReceipt>,
         >,
     >,
@@ -1156,7 +1156,7 @@ impl<Node> PayloadValidatorBuilder<Node> for OpEngineValidatorBuilder
 where
     Node: FullNodeComponents<
         Types: NodeTypes<
-            ChainSpec: OpHardforks,
+            ChainSpec: BaseUpgrades,
             Payload: PayloadTypes<ExecutionData = OpExecutionData>,
         >,
     >,
@@ -1175,5 +1175,5 @@ where
     }
 }
 
-/// Network primitive types used by Optimism networks.
+/// Network primitive types used by Base networks.
 pub type OpNetworkPrimitives = BasicNetworkPrimitives<OpPrimitives, OpPooledTransaction>;

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use base_execution_chainspec::{OpChainSpec, SUPPORTED_CHAINS};
 use reth_cli::chainspec::{ChainSpecParser, parse_genesis};
 
-/// Optimism chain specification parser.
+/// Base chain specification parser.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct OpChainSpecParser;

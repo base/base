@@ -1,4 +1,4 @@
-//! Contains the transaction type identifier for OP chains.
+//! Contains the transaction type identifier for Base chains.
 
 use core::fmt::Display;
 

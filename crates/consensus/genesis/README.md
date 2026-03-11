@@ -5,8 +5,8 @@
 
 ## Overview
 
-Genesis types for Optimism. Provides the `RollupConfig` type — the primary configuration
-for OP Stack chains — encoding hardfork activation timestamps, L1 and L2 genesis block
+Genesis types for Base. Provides the `RollupConfig` type — the primary configuration
+for Base chains — encoding hardfork activation timestamps, L1 and L2 genesis block
 information, batch inbox address, and system config. `no_std` compatible when default
 features are disabled.
 
@@ -23,7 +23,7 @@ base-consensus-genesis = { version = "x.y.z", default-features = false, features
 
 ### Rollup Config
 
-`base-consensus-genesis` exports a `RollupConfig`, the primary genesis type for Optimism Consensus.
+`base-consensus-genesis` exports a `RollupConfig`, the primary genesis type for Base Consensus.
 
 
 <!-- Links -->

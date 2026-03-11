@@ -1,4 +1,4 @@
-//! Verification of blocks w.r.t. Optimism hardforks.
+//! Verification of blocks w.r.t. Base hardforks.
 
 pub mod canyon;
 pub mod isthmus;
@@ -11,7 +11,7 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
 pub use base_execution_chainspec::decode_holocene_base_fee;
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_primitives::DepositReceipt;
 use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
@@ -27,7 +27,7 @@ use crate::proof::calculate_receipt_root_optimism;
 ///   - transaction root
 ///   - withdrawals root: the body's withdrawals root must only match the header's before isthmus
 pub fn validate_body_against_header_op<B, H>(
-    chain_spec: impl OpHardforks,
+    chain_spec: impl BaseUpgrades,
     body: &B,
     header: &H,
 ) -> Result<(), ConsensusError>
@@ -92,7 +92,7 @@ where
 /// instead of computing them from the receipts.
 pub fn validate_block_post_execution<R: DepositReceipt>(
     header: impl BlockHeader,
-    chain_spec: impl OpHardforks,
+    chain_spec: impl BaseUpgrades,
     result: &BlockExecutionResult<R>,
     receipt_root_bloom: Option<(B256, Bloom)>,
 ) -> Result<(), ConsensusError> {
@@ -162,7 +162,7 @@ fn verify_receipts_optimism<R: DepositReceipt>(
     expected_receipts_root: B256,
     expected_logs_bloom: Bloom,
     receipts: &[R],
-    chain_spec: impl OpHardforks,
+    chain_spec: impl BaseUpgrades,
     timestamp: u64,
 ) -> Result<(), ConsensusError> {
     // Calculate receipts root.
@@ -215,7 +215,7 @@ mod tests {
     use alloy_primitives::{Bytes, U256, b256, hex};
     use base_alloy_consensus::OpTxEnvelope;
     use base_execution_chainspec::{BASE_SEPOLIA, OpChainSpec};
-    use base_execution_forks::{BASE_SEPOLIA_HARDFORKS, OpHardfork};
+    use base_execution_forks::{BASE_SEPOLIA_HARDFORKS, BaseUpgrade};
     use base_execution_primitives::OpReceipt;
     use reth_chainspec::{BaseFeeParams, ChainSpec, EthChainSpec, ForkCondition, Hardfork};
 
@@ -229,7 +229,7 @@ mod tests {
     fn holocene_chainspec() -> Arc<OpChainSpec> {
         let mut hardforks = BASE_SEPOLIA_HARDFORKS.clone();
         hardforks
-            .insert(OpHardfork::Holocene.boxed(), ForkCondition::Timestamp(HOLOCENE_TIMESTAMP));
+            .insert(BaseUpgrade::Holocene.boxed(), ForkCondition::Timestamp(HOLOCENE_TIMESTAMP));
         Arc::new(OpChainSpec {
             inner: ChainSpec {
                 chain: BASE_SEPOLIA.inner.chain,
@@ -249,7 +249,7 @@ mod tests {
         chainspec
             .inner
             .hardforks
-            .insert(OpHardfork::Isthmus.boxed(), ForkCondition::Timestamp(ISTHMUS_TIMESTAMP));
+            .insert(BaseUpgrade::Isthmus.boxed(), ForkCondition::Timestamp(ISTHMUS_TIMESTAMP));
         chainspec
     }
 
@@ -258,7 +258,7 @@ mod tests {
         chainspec
             .inner
             .hardforks
-            .insert(OpHardfork::Jovian.boxed(), ForkCondition::Timestamp(JOVIAN_TIMESTAMP));
+            .insert(BaseUpgrade::Jovian.boxed(), ForkCondition::Timestamp(JOVIAN_TIMESTAMP));
         chainspec
     }
 

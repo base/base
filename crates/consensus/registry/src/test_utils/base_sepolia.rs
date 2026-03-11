@@ -3,7 +3,7 @@
 use alloy_chains::Chain;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{address, b256, uint};
-use base_alloy_hardforks::{
+use base_alloy_upgrades::{
     BASE_SEPOLIA_CANYON_TIMESTAMP, BASE_SEPOLIA_ECOTONE_TIMESTAMP, BASE_SEPOLIA_FJORD_TIMESTAMP,
     BASE_SEPOLIA_GRANITE_TIMESTAMP, BASE_SEPOLIA_HOLOCENE_TIMESTAMP,
     BASE_SEPOLIA_ISTHMUS_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP,

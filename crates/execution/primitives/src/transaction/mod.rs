@@ -1,4 +1,4 @@
-//! Optimism transaction types
+//! Base transaction types
 
 mod tx_type;
 

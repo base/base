@@ -4,10 +4,10 @@ RPC extensions for the Base execution node.
 
 ## Overview
 
-Provides JSON-RPC API implementations for OP chains, including the full Ethereum API
+Provides JSON-RPC API implementations for Base chains, including the full Ethereum API
 (`OpEthApi`), the Engine API (`OpEngineApi`), debug, miner, sequencer, and witness endpoints.
 Also includes `SequencerClient` for forwarding transactions to the sequencer and error types for
-OP-specific RPC failures.
+Base-specific RPC failures.
 
 ## Usage
 

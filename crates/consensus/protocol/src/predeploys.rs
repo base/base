@@ -46,7 +46,7 @@ impl Predeploys {
         address!("0x4200000000000000000000000000000000000000");
 
     /// The `DeployerWhitelist` was used to provide additional safety during initial phases of
-    /// Optimism.
+    /// Base.
     /// <https://specs.optimism.io/protocol/predeploys.html#deployerwhitelist>
     pub const DEPLOYER_WHITELIST: Address = address!("0x4200000000000000000000000000000000000002");
 
@@ -71,7 +71,7 @@ impl Predeploys {
     /// <https://specs.optimism.io/protocol/predeploys.html#sequencerfeevault>
     pub const SEQUENCER_FEE_VAULT: Address = address!("0x4200000000000000000000000000000000000011");
 
-    /// The Optimism mintable ERC20 factory proxy address.
+    /// The mintable ERC20 factory proxy address.
     /// <https://specs.optimism.io/protocol/predeploys.html#optimismmintableerc20factory>
     pub const OP_MINTABLE_ERC20_FACTORY: Address =
         address!("0x4200000000000000000000000000000000000012");
@@ -101,7 +101,7 @@ impl Predeploys {
     /// <https://specs.optimism.io/protocol/predeploys.html>
     pub const L2_ERC721_BRIDGE: Address = address!("0x4200000000000000000000000000000000000014");
 
-    /// The Optimism mintable ERC721 proxy address.
+    /// The mintable ERC721 proxy address.
     /// <https://specs.optimism.io/protocol/predeploys.html#optimismmintableerc721factory>
     pub const OP_MINTABLE_ERC721_FACTORY: Address =
         address!("0x4200000000000000000000000000000000000017");

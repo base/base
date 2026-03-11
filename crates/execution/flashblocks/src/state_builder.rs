@@ -15,7 +15,7 @@ use alloy_rpc_types_eth::state::StateOverride;
 use base_alloy_consensus::{OpReceipt, OpTxEnvelope};
 use base_alloy_evm::ensure_create2_deployer;
 use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_primitives::OpPrimitives;
 use base_execution_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
 use base_revm::{L1_BLOCK_CONTRACT, L1BlockInfo, OpHaltReason, estimate_tx_compressed_size};
@@ -66,7 +66,7 @@ where
     E: Evm<DB = DB, HaltReason = OpHaltReason>,
     DB: Database + DatabaseCommit,
     E::Tx: FromRecoveredTx<OpTxEnvelope>,
-    ChainSpec: OpHardforks + Clone,
+    ChainSpec: BaseUpgrades + Clone,
 {
     /// Creates a new pending state builder.
     pub fn new(

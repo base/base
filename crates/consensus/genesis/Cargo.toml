@@ -1,7 +1,7 @@
 [package]
 name = "base-consensus-genesis"
 version.workspace = true
-description = "Optimism genesis types"
+description = "Base genesis types"
 
 edition.workspace = true
 rust-version.workspace = true
@@ -22,7 +22,7 @@ alloy-sol-types.workspace = true
 alloy-consensus.workspace = true
 alloy-hardforks.workspace = true
 alloy-primitives.workspace = true
-base-alloy-hardforks.workspace = true
+base-alloy-upgrades.workspace = true
 
 # Misc
 thiserror.workspace = true
@@ -75,7 +75,7 @@ serde = [
 	"alloy-eips/serde",
 	"alloy-hardforks/serde",
 	"alloy-primitives/serde",
-	"base-alloy-hardforks/serde",
+	"base-alloy-upgrades/serde",
 	"base-revm?/serde",
 	"dep:serde",
 ]

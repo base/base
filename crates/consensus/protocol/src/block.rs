@@ -1,4 +1,4 @@
-//! Block Types for Optimism.
+//! Block Types for Base.
 
 use alloc::vec::Vec;
 

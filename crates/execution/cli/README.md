@@ -5,7 +5,7 @@ CLI extensions for the Base execution node.
 ## Overview
 
 Provides the command-line interface for the op-reth execution node. Wraps argument parsing with
-OP Stack-specific chain spec resolution via `OpChainSpecParser`, and exposes a `Cli` type that
+Base-specific chain spec resolution via `OpChainSpecParser`, and exposes a `Cli` type that
 drives node startup from parsed arguments.
 
 ## Usage

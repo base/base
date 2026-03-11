@@ -9,9 +9,9 @@
 
 /// A configurable App on top of the cli parser.
 pub mod app;
-/// Optimism chain specification parser.
+/// Base chain specification parser.
 pub mod chainspec;
-/// Optimism CLI commands.
+/// Base CLI commands.
 pub mod commands;
 
 use std::{ffi::OsString, fmt, marker::PhantomData};

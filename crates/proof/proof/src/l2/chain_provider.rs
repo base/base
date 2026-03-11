@@ -137,7 +137,7 @@ impl<T: CommsClient + Send + Sync> BatchValidationProvider for OracleL2ChainProv
             .collect::<Result<Vec<_>, _>>()
             .map_err(OracleProviderError::Rlp)?;
 
-        let optimism_block = OpBlock {
+        let block = OpBlock {
             header,
             body: BlockBody {
                 transactions,
@@ -148,7 +148,7 @@ impl<T: CommsClient + Send + Sync> BatchValidationProvider for OracleL2ChainProv
                     .then(|| alloy_eips::eip4895::Withdrawals::new(Vec::new())),
             },
         };
-        Ok(optimism_block)
+        Ok(block)
     }
 }
 

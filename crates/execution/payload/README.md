@@ -4,7 +4,7 @@ Payload builder for Base.
 
 ## Overview
 
-Implements OP Stack payload building and validation for the Base execution node. The
+Implements Base payload building and validation for the Base execution node. The
 `OpPayloadBuilder` assembles new execution payloads from transaction pool contents and
 `OpPayloadAttributes` received from the consensus layer. `OpExecutionPayloadValidator` verifies
 built payloads against consensus rules. Also provides data availability configuration via

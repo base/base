@@ -17,7 +17,7 @@ use alloy_consensus::{
     BlockHeader as _, EMPTY_OMMER_ROOT_HASH, constants::MAXIMUM_EXTRA_DATA_SIZE,
 };
 use alloy_primitives::B64;
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_primitives::DepositReceipt;
 use reth_chainspec::EthChainSpec;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
@@ -41,7 +41,7 @@ pub use validation::{canyon, isthmus, validate_block_post_execution};
 pub mod error;
 pub use error::OpConsensusError;
 
-/// Optimism consensus implementation.
+/// Base consensus implementation.
 ///
 /// Provides basic checks as outlined in the execution specs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,7 +73,7 @@ impl<ChainSpec> OpBeaconConsensus<ChainSpec> {
 impl<N, ChainSpec> FullConsensus<N> for OpBeaconConsensus<ChainSpec>
 where
     N: NodePrimitives<Receipt: DepositReceipt>,
-    ChainSpec: EthChainSpec<Header = N::BlockHeader> + OpHardforks + Debug + Send + Sync,
+    ChainSpec: EthChainSpec<Header = N::BlockHeader> + BaseUpgrades + Debug + Send + Sync,
 {
     fn validate_block_post_execution(
         &self,
@@ -88,7 +88,7 @@ where
 impl<B, ChainSpec> Consensus<B> for OpBeaconConsensus<ChainSpec>
 where
     B: Block,
-    ChainSpec: EthChainSpec<Header = B::Header> + OpHardforks + Debug + Send + Sync,
+    ChainSpec: EthChainSpec<Header = B::Header> + BaseUpgrades + Debug + Send + Sync,
 {
     fn validate_body_against_header(
         &self,
@@ -153,7 +153,7 @@ where
 impl<H, ChainSpec> HeaderValidator<H> for OpBeaconConsensus<ChainSpec>
 where
     H: BlockHeader,
-    ChainSpec: EthChainSpec<Header = H> + OpHardforks + Debug + Send + Sync,
+    ChainSpec: EthChainSpec<Header = H> + BaseUpgrades + Debug + Send + Sync,
 {
     fn validate_header(&self, header: &SealedHeader<H>) -> Result<(), ConsensusError> {
         let header = header.header();
@@ -198,7 +198,7 @@ where
         )?;
 
         // Ensure that the blob gas fields for this block are correctly set.
-        // In the op-stack, the excess blob gas is always 0 for all blocks after ecotone.
+        // On Base, the excess blob gas is always 0 for all blocks after ecotone.
         // The blob gas used and the excess blob gas should both be set after ecotone.
         // After Jovian, the blob gas used contains the current DA footprint.
         if self.chain_spec.is_ecotone_active_at_timestamp(header.timestamp()) {
