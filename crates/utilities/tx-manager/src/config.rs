@@ -334,21 +334,27 @@ pub struct TxManagerConfig {
 
 impl std::fmt::Debug for TxManagerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let hot = self.hot.read();
-        f.debug_struct("TxManagerConfig")
-            .field("num_confirmations", &self.num_confirmations)
+        let mut s = f.debug_struct("TxManagerConfig");
+        s.field("num_confirmations", &self.num_confirmations)
             .field("safe_abort_nonce_too_low_count", &self.safe_abort_nonce_too_low_count)
             .field("network_timeout", &self.network_timeout)
             .field("resubmission_timeout", &self.resubmission_timeout)
             .field("receipt_query_interval", &self.receipt_query_interval)
             .field("tx_send_timeout", &self.tx_send_timeout)
             .field("tx_not_in_mempool_timeout", &self.tx_not_in_mempool_timeout)
-            .field("chain_id", &self.chain_id)
-            .field("fee_limit_multiplier", &hot.fee_limit_multiplier)
-            .field("fee_limit_threshold", &hot.fee_limit_threshold)
-            .field("min_tip_cap", &hot.min_tip_cap)
-            .field("min_basefee", &hot.min_basefee)
-            .finish()
+            .field("chain_id", &self.chain_id);
+        match self.hot.try_read() {
+            Some(hot) => {
+                s.field("fee_limit_multiplier", &hot.fee_limit_multiplier)
+                    .field("fee_limit_threshold", &hot.fee_limit_threshold)
+                    .field("min_tip_cap", &hot.min_tip_cap)
+                    .field("min_basefee", &hot.min_basefee);
+            }
+            None => {
+                s.field("hot", &"<locked>");
+            }
+        }
+        s.finish()
     }
 }
 
