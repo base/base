@@ -8,7 +8,7 @@ use base_alloy_rpc_types_engine::{
     OpPayloadAttributes,
 };
 use base_execution_consensus::isthmus;
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_payload_builder::{OpExecutionPayloadValidator, OpPayloadTypes};
 use base_execution_primitives::OpBlock;
 use base_protocol::Predeploys;
@@ -26,7 +26,7 @@ use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SignedTransacti
 use reth_provider::StateProviderFactory;
 use reth_trie_common::{HashedPostState, KeyHasher};
 
-/// The types used in the optimism beacon consensus engine.
+/// The types used in the Base beacon consensus engine.
 #[derive(Debug, Default, Clone, serde::Deserialize, serde::Serialize)]
 #[non_exhaustive]
 pub struct OpEngineTypes<T: PayloadTypes = OpPayloadTypes> {
@@ -67,7 +67,7 @@ where
     type ExecutionPayloadEnvelopeV6 = OpExecutionPayloadEnvelopeV4;
 }
 
-/// Validator for Optimism engine API.
+/// Validator for Base engine API.
 #[derive(Debug)]
 pub struct OpEngineValidator<P, Tx, ChainSpec> {
     inner: OpExecutionPayloadValidator<ChainSpec>,
@@ -92,7 +92,7 @@ impl<P, Tx, ChainSpec> OpEngineValidator<P, Tx, ChainSpec> {
 impl<P, Tx, ChainSpec> Clone for OpEngineValidator<P, Tx, ChainSpec>
 where
     P: Clone,
-    ChainSpec: OpHardforks,
+    ChainSpec: BaseUpgrades,
 {
     fn clone(&self) -> Self {
         Self {
@@ -106,7 +106,7 @@ where
 
 impl<P, Tx, ChainSpec> OpEngineValidator<P, Tx, ChainSpec>
 where
-    ChainSpec: OpHardforks,
+    ChainSpec: BaseUpgrades,
 {
     /// Returns the chain spec used by the validator.
     #[inline]
@@ -119,7 +119,7 @@ impl<P, Tx, ChainSpec, Types> PayloadValidator<Types> for OpEngineValidator<P, T
 where
     P: StateProviderFactory + Unpin + 'static,
     Tx: SignedTransaction + Unpin + 'static,
-    ChainSpec: OpHardforks + Send + Sync + 'static,
+    ChainSpec: BaseUpgrades + Send + Sync + 'static,
     Types: PayloadTypes<ExecutionData = OpExecutionData>,
 {
     type Block = alloy_consensus::Block<Tx>;
@@ -171,7 +171,7 @@ where
         >,
     P: StateProviderFactory + Unpin + 'static,
     Tx: SignedTransaction + Unpin + 'static,
-    ChainSpec: OpHardforks + Send + Sync + 'static,
+    ChainSpec: BaseUpgrades + Send + Sync + 'static,
 {
     fn validate_version_specific_fields(
         &self,
@@ -264,7 +264,7 @@ where
 /// Canyon activates the Shanghai EIPs, see the Canyon specs for more details:
 /// <https://github.com/ethereum-optimism/optimism/blob/ab926c5fd1e55b5c864341c44842d6d1ca679d99/specs/superchain-upgrades.md#canyon>
 pub fn validate_withdrawals_presence(
-    chain_spec: impl OpHardforks,
+    chain_spec: impl BaseUpgrades,
     version: EngineApiMessageVersion,
     message_validation_kind: MessageValidationKind,
     timestamp: u64,
@@ -305,7 +305,7 @@ pub fn validate_withdrawals_presence(
 mod test {
     use alloy_primitives::{Address, B64, B256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
-    use base_alloy_hardforks::BASE_SEPOLIA_JOVIAN_TIMESTAMP;
+    use base_alloy_upgrades::BASE_SEPOLIA_JOVIAN_TIMESTAMP;
     use base_execution_chainspec::BASE_SEPOLIA;
     use reth_provider::noop::NoopProvider;
     use reth_trie_common::KeccakKeyHasher;

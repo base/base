@@ -89,7 +89,7 @@ impl OpPooledTransaction {
         }
     }
 
-    /// Converts the transaction into the OP chain [`OpTxEnvelope`].
+    /// Converts the transaction into the Base chain [`OpTxEnvelope`].
     pub fn into_op_envelope(self) -> OpTxEnvelope {
         match self {
             Self::Legacy(tx) => tx.into(),

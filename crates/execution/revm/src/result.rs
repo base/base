@@ -1,7 +1,7 @@
 //! Contains the `[OpHaltReason]` type.
 use revm::context_interface::result::HaltReason;
 
-/// Optimism halt reason.
+/// Base halt reason.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum OpHaltReason {

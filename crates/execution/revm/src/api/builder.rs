@@ -1,4 +1,4 @@
-//! Optimism builder trait [`OpBuilder`] used to build [`OpEvm`].
+//! Base builder trait [`OpBuilder`] used to build [`OpEvm`].
 use revm::{
     Context, Database,
     context::Cfg,
@@ -14,7 +14,7 @@ use crate::{L1BlockInfo, OpSpecId, evm::OpEvm, precompiles::OpPrecompiles, trans
 pub type DefaultOpEvm<CTX, INSP = ()> =
     OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, OpPrecompiles>;
 
-/// Trait that allows for optimism `OpEvm` to be built.
+/// Trait that allows for Base `OpEvm` to be built.
 pub trait OpBuilder: Sized {
     /// Type of the context.
     type Context;

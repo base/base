@@ -2,10 +2,10 @@ use base_alloy_consensus::{OpDepositReceipt, OpReceipt};
 
 /// Trait for deposit receipt.
 pub trait DepositReceipt: reth_primitives_traits::Receipt {
-    /// Converts a `Receipt` into a mutable Optimism deposit receipt.
+    /// Converts a `Receipt` into a mutable Base deposit receipt.
     fn as_deposit_receipt_mut(&mut self) -> Option<&mut OpDepositReceipt>;
 
-    /// Extracts an Optimism deposit receipt from `Receipt`.
+    /// Extracts a Base deposit receipt from `Receipt`.
     fn as_deposit_receipt(&self) -> Option<&OpDepositReceipt>;
 }
 

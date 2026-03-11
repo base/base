@@ -8,7 +8,7 @@ A `no_std` compatible implementation of Base's [derivation pipeline][derive].
 
 ## Overview
 
-Implements the full L2 chain derivation pipeline as specified by the OP Stack. The
+Implements the full L2 chain derivation pipeline as specified by the Base protocol. The
 `DerivationPipeline` steps through L1 data to produce `OpPayloadAttributes` for each L2 block.
 `EthereumDataSource` fetches batch data from calldata or blobs, `StatefulAttributesBuilder`
 constructs payload attributes with deposits and sequencer configuration, and `PipelineBuilder`

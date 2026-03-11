@@ -1,4 +1,4 @@
-//! RPC metrics unique for OP-stack.
+//! RPC metrics unique for Base.
 
 use core::time::Duration;
 use std::time::Instant;
@@ -8,9 +8,9 @@ use metrics::{Counter, Histogram};
 use reth_metrics::Metrics;
 use strum::{EnumCount, EnumIter, IntoEnumIterator};
 
-/// Optimism sequencer metrics
+/// Base sequencer metrics
 #[derive(Metrics, Clone)]
-#[metrics(scope = "optimism_rpc.sequencer")]
+#[metrics(scope = "base_rpc.sequencer")]
 pub struct SequencerMetrics {
     /// How long it takes to forward a transaction to the sequencer
     pub(crate) sequencer_forward_latency: Histogram,
@@ -24,9 +24,9 @@ impl SequencerMetrics {
     }
 }
 
-/// Optimism ETH API extension metrics
+/// Base ETH API extension metrics
 #[derive(Metrics, Clone)]
-#[metrics(scope = "optimism_rpc.eth_api_ext")]
+#[metrics(scope = "base_rpc.eth_api_ext")]
 pub struct EthApiExtMetrics {
     /// How long it takes to handle a `eth_getProof` request successfully
     pub(crate) get_proof_latency: Histogram,
@@ -96,9 +96,9 @@ impl Default for DebugApiExtMetrics {
     }
 }
 
-/// Optimism Debug API extension metrics
+/// Base Debug API extension metrics
 #[derive(Metrics, Clone)]
-#[metrics(scope = "optimism_rpc.debug_api_ext")]
+#[metrics(scope = "base_rpc.debug_api_ext")]
 pub struct DebugApiExtRpcMetrics {
     /// End-to-end time to handle this API call
     pub(crate) latency: Histogram,

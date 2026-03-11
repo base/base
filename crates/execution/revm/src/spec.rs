@@ -3,7 +3,7 @@ use core::str::FromStr;
 
 use revm::primitives::hardfork::{SpecId, UnknownHardfork, name as eth_name};
 
-/// Optimism spec id.
+/// Base spec id.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -97,7 +97,7 @@ impl From<OpSpecId> for &'static str {
     }
 }
 
-/// String identifiers for Optimism hardforks
+/// String identifiers for Base hardforks
 pub mod name {
     /// Bedrock spec name.
     pub const BEDROCK: &str = "Bedrock";

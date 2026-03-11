@@ -4,11 +4,15 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
+# Core
 base-enclave.workspace = true
 base-proof-primitives = { workspace = true, features = ["serde", "std"] }
 
-# Alloy types
+# Alloy
 alloy-primitives.workspace = true
 
 # RPC
@@ -21,6 +25,3 @@ thiserror.workspace = true
 # TLS
 rustls-pki-types.workspace = true
 rustls = { workspace = true, features = ["std", "tls12"] }
-
-[lints]
-workspace = true

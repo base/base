@@ -5,7 +5,7 @@ use std::sync::{
 
 use alloy_consensus::{BlockHeader, Transaction};
 use base_execution_evm::RethL1BlockInfo;
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_revm::L1BlockInfo;
 use parking_lot::RwLock;
 use reth_chainspec::ChainSpecProvider;
@@ -38,7 +38,7 @@ impl OpL1BlockInfo {
     }
 }
 
-/// Validator for Optimism transactions.
+/// Validator for Base transactions.
 #[derive(Debug, Clone)]
 pub struct OpTransactionValidator<Client, Tx, Evm> {
     /// The type that performs the actual validation.
@@ -86,7 +86,7 @@ impl<Client, Tx, Evm> OpTransactionValidator<Client, Tx, Evm> {
 impl<Client, Tx, Evm> OpTransactionValidator<Client, Tx, Evm>
 where
     Client:
-        ChainSpecProvider<ChainSpec: OpHardforks> + StateProviderFactory + BlockReaderIdExt + Sync,
+        ChainSpecProvider<ChainSpec: BaseUpgrades> + StateProviderFactory + BlockReaderIdExt + Sync,
     Tx: EthPoolTransaction + OpPooledTx,
     Evm: ConfigureEvm,
 {
@@ -240,7 +240,7 @@ where
 impl<Client, Tx, Evm> TransactionValidator for OpTransactionValidator<Client, Tx, Evm>
 where
     Client:
-        ChainSpecProvider<ChainSpec: OpHardforks> + StateProviderFactory + BlockReaderIdExt + Sync,
+        ChainSpecProvider<ChainSpec: BaseUpgrades> + StateProviderFactory + BlockReaderIdExt + Sync,
     Tx: EthPoolTransaction + OpPooledTx,
     Evm: ConfigureEvm,
 {

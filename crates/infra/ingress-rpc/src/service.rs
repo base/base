@@ -186,6 +186,8 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
 
             if let Some(meter_info) = meter_bundle_response.as_ref() {
                 self.metrics.successful_simulations.increment(1);
+                // Update the current size of the `builder_tx` channel captured right before sending to the builder
+                self.metrics.buffered_meter_bundle_responses_size.set(self.builder_tx.len() as f64);
                 if self.send_to_builder {
                     _ = self.builder_tx.send(meter_info.clone());
                 }

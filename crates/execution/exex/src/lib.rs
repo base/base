@@ -226,7 +226,7 @@ where
         let latest_stored = self.storage.get_latest_block_number()?.map(|(n, _)| n).unwrap_or(0);
         if latest_stored < best_block {
             info!(
-                target: "optimism::exex",
+                target: "base::exex",
                 latest_stored,
                 best_block,
                 "Storage behind tip, starting sync immediately"
@@ -318,7 +318,7 @@ where
         let task_evm_config = self.ctx.evm_config().clone();
 
         self.ctx.task_executor().spawn_critical_task(
-            "optimism::exex::proofs_storage_sync_loop",
+            "base::exex::proofs_storage_sync_loop",
             async move {
                 let storage = task_storage.clone();
                 let task_collector =
@@ -337,18 +337,18 @@ where
         provider: Node::Provider,
         collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
     ) {
-        debug!(target: "optimism::exex", "Starting proofs storage sync loop");
+        debug!(target: "base::exex", "Starting proofs storage sync loop");
 
         loop {
             let target = *sync_target_rx.borrow_and_update();
             let latest = match storage.get_latest_block_number() {
                 Ok(Some((n, _))) => n,
                 Ok(None) => {
-                    error!(target: "optimism::exex", "No blocks stored in proofs storage during sync loop");
+                    error!(target: "base::exex", "No blocks stored in proofs storage during sync loop");
                     continue;
                 }
                 Err(e) => {
-                    error!(target: "optimism::exex", error = ?e, "Failed to get latest block");
+                    error!(target: "base::exex", error = ?e, "Failed to get latest block");
                     continue;
                 }
             };
@@ -362,11 +362,11 @@ where
             if let Err(e) =
                 Self::process_batch(latest, target, &provider, collector, SYNC_BLOCKS_BATCH_SIZE)
             {
-                error!(target: "optimism::exex", error = ?e, "Batch processing failed");
+                error!(target: "base::exex", error = ?e, "Batch processing failed");
             }
 
             // Yield to allow other tasks to run
-            debug!(target: "optimism::exex", latest_stored = latest, target, "Batch processed, yielding");
+            debug!(target: "base::exex", latest_stored = latest, target, "Batch processed, yielding");
             task::yield_now().await;
         }
     }
@@ -381,7 +381,7 @@ where
     ) -> eyre::Result<()> {
         let end = (start + batch_size as u64).min(target);
         debug!(
-            target: "optimism::exex",
+            target: "base::exex",
             start,
             end,
             "Processing proofs storage sync batch"
@@ -444,7 +444,7 @@ where
         sync_target_tx: &watch::Sender<u64>,
     ) -> eyre::Result<()> {
         debug!(
-            target: "optimism::exex",
+            target: "base::exex",
             block_number = new.tip().number(),
             block_hash = ?new.tip().hash(),
             "ChainCommitted notification received",
@@ -453,7 +453,7 @@ where
         // If tip is not newer than what we have, nothing to do.
         if new.tip().number() <= latest_stored {
             debug!(
-                target: "optimism::exex",
+                target: "base::exex",
                 block_number = new.tip().number(),
                 latest_stored,
                 "Already processed, skipping"
@@ -468,7 +468,7 @@ where
 
         if is_sequential && is_near_tip {
             debug!(
-                target: "optimism::exex",
+                target: "base::exex",
                 block_number = new.tip().number(),
                 latest_stored,
                 best_block,
@@ -482,7 +482,7 @@ where
             }
         } else {
             debug!(
-                target: "optimism::exex",
+                target: "base::exex",
                 block_number = new.tip().number(),
                 latest_stored,
                 best_block,
@@ -523,7 +523,7 @@ where
                 // Use fast path only if we're not scheduled to verify this block
                 if !should_verify {
                     debug!(
-                        target: "optimism::exex",
+                        target: "base::exex",
                         block_number,
                         "Using pre-computed state updates from notification"
                     );
@@ -538,7 +538,7 @@ where
                 }
 
                 info!(
-                    target: "optimism::exex",
+                    target: "base::exex",
                     block_number,
                     verification_interval = self.verification_interval,
                     "Periodic verification: performing full block execution"
@@ -546,7 +546,7 @@ where
             }
 
             debug!(
-                target: "optimism::exex",
+                target: "base::exex",
                 block_number,
                 "Block present in notification but state updates missing, falling back to execution"
             );
@@ -554,7 +554,7 @@ where
 
         // 2. Slow Path: Block not in chain (or state missing), fetch from provider and execute
         debug!(
-            target: "optimism::exex",
+            target: "base::exex",
             block_number,
             "Fetching block from provider for execution",
         );
@@ -585,7 +585,7 @@ where
         );
 
         if old.first().number() > latest_stored {
-            debug!(target: "optimism::exex", "Reorg beyond stored blocks, skipping");
+            debug!(target: "base::exex", "Reorg beyond stored blocks, skipping");
             return Ok(());
         }
 
@@ -637,7 +637,7 @@ where
         collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
     ) -> eyre::Result<()> {
         info!(
-            target: "optimism::exex",
+            target: "base::exex",
             old_block_number = old.tip().number(),
             old_block_hash = ?old.tip().hash(),
             "ChainReverted notification received",
@@ -645,7 +645,7 @@ where
 
         if old.first().number() > latest_stored {
             debug!(
-                target: "optimism::exex",
+                target: "base::exex",
                 first_block_number = old.first().number(),
                 latest_stored = latest_stored,
                 "Fork block number is greater than latest stored, skipping",

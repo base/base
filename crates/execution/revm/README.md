@@ -4,7 +4,7 @@ Base-specific constants, types, and helpers for the revm EVM implementation.
 
 ## Overview
 
-Integrates revm with the OP Stack, providing OP-specific EVM execution infrastructure. Includes
+Integrates revm with Base, providing Base-specific EVM execution infrastructure. Includes
 `OpEvm` and associated builder/handler types, `OpTransaction` and `OpTransactionBuilder` for
 transaction handling, `OpPrecompiles` with hardfork-accelerated precompile sets (BLS, BN254,
 Fjord, Granite, Isthmus, Jovian), `L1BlockInfo` for fee calculation, and `OpSpecId` variants

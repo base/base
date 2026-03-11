@@ -10,10 +10,10 @@
 #[cfg(feature = "test-utils")]
 use reth_db_api as _;
 
-/// CLI argument parsing for the optimism node.
+/// CLI argument parsing for the Base node.
 pub mod args;
 
-/// Exports optimism-specific implementations of the [`EngineTypes`](reth_node_api::EngineTypes)
+/// Exports Base-specific implementations of the [`EngineTypes`](reth_node_api::EngineTypes)
 /// trait.
 pub mod engine;
 pub use engine::OpEngineTypes;

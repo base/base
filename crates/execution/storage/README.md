@@ -5,7 +5,7 @@ Storage implementation for Base.
 ## Overview
 
 Defines the `OpStorage` abstraction for chain state persistence in the Base execution node.
-Wraps Reth's storage layer with OP Stack-specific configuration including pruning mode
+Wraps Reth's storage layer with Base-specific configuration including pruning mode
 compatibility checks and the storage types needed by the execution engine and provider stack.
 
 ## Usage

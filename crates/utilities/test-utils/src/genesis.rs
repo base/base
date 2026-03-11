@@ -17,7 +17,7 @@ pub const GENESIS_GAS_LIMIT: u64 = 100_000_000;
 ///
 /// Creates a Base Sepolia-like genesis with:
 /// - All EVM and OP hardforks enabled from genesis
-/// - Optimism EIP-1559 settings (elasticity=6, denominator=50)
+/// - Base EIP-1559 settings (elasticity=6, denominator=50)
 /// - Pre-funded test accounts from the `Account` enum
 pub fn build_test_genesis() -> Genesis {
     // OP EIP-1559 base fee parameters

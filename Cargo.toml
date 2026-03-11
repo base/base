@@ -34,12 +34,14 @@ members = [
   "crates/proof/proposer",
   "crates/proof/challenge",
   "crates/utilities/*",
+  "crates/batcher/*",
   "crates/builder/*",
   "crates/infra/*",
   "crates/alloy/*",
   "crates/execution/*",
   "crates/txpool",
   "devnet",
+  "actions/harness",
 ]
 default-members = [
   "bin/based",
@@ -147,7 +149,7 @@ base-bundles = { path = "crates/alloy/bundles" }
 base-alloy-network = { path = "crates/alloy/network" }
 base-alloy-provider = { path = "crates/alloy/provider" }
 base-alloy-rpc-types = { path = "crates/alloy/rpc-types" }
-base-alloy-hardforks = { path = "crates/alloy/hardforks" }
+base-alloy-upgrades = { path = "crates/alloy/upgrades" }
 base-access-lists = { path = "crates/alloy/access-lists" }
 base-alloy-flashblocks = { path = "crates/alloy/flashblocks" }
 base-alloy-rpc-jsonrpsee = { path = "crates/alloy/rpc-jsonrpsee" }
@@ -166,7 +168,7 @@ base-metering = { path = "crates/client/metering" }
 base-txpool-tracing = { path = "crates/client/txpool-tracing" }
 
 # Consensus
-base-comp = { path = "crates/consensus/comp", default-features = false }
+base-comp = { path = "crates/batcher/comp", default-features = false }
 base-consensus-rpc = { path = "crates/consensus/rpc" }
 base-protocol = { path = "crates/consensus/protocol", default-features = false }
 base-consensus-disc = { path = "crates/consensus/disc", default-features = false }
@@ -230,6 +232,12 @@ base-proposer = { path = "crates/proof/proposer" }
 base-zk-client = { path = "crates/proof/zk/client" }
 base-challenger = { path = "crates/proof/challenge" }
 base-proof-transport = { path = "crates/proof/transport" }
+
+# Actions
+base-action-harness = { path = "actions/harness" }
+
+# Batcher
+base-batcher-driver = { path = "crates/batcher/driver" }
 
 # Utilities
 base-jwt = { path = "crates/utilities/jwt" }

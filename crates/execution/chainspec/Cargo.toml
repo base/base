@@ -41,7 +41,7 @@ derive_more.workspace = true
 base-alloy-consensus.workspace = true
 
 [dev-dependencies]
-base-alloy-hardforks.workspace = true
+base-alloy-upgrades.workspace = true
 reth-chainspec = { workspace = true, features = ["test-utils"] }
 
 [features]

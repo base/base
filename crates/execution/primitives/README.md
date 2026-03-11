@@ -4,7 +4,7 @@ Primitive types for Base execution.
 
 ## Overview
 
-Defines the core OP Stack primitive types used throughout the Base execution layer: `OpPrimitives`
+Defines the core Base primitive types used throughout the Base execution layer: `OpPrimitives`
 (the `NodePrimitives` implementation), `OpBlock`, `OpBlockBody`, `OpReceipt`,
 `OpTransactionSigned`, and the `DepositReceipt` trait. These are the canonical types passed
 between execution subsystems (engine, EVM, storage, payload builder).

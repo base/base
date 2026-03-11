@@ -330,7 +330,7 @@ mod tests {
 
     use crate::{BasePooledTransaction, OpTransactionValidator};
     #[tokio::test]
-    async fn validate_optimism_transaction() {
+    async fn validate_base_transaction() {
         let client = MockEthProvider::<OpPrimitives>::new()
             .with_chain_spec(BASE_MAINNET.clone())
             .with_genesis_block();

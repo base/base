@@ -9,7 +9,7 @@ use alloy_evm::block::BlockExecutorFactory;
 use alloy_primitives::logs_bloom;
 use base_alloy_evm::OpBlockExecutionCtx;
 use base_execution_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_primitives::DepositReceipt;
 use reth_evm::execute::{BlockAssembler, BlockAssemblerInput};
 use reth_execution_errors::BlockExecutionError;
@@ -17,7 +17,7 @@ use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{Receipt, SignedTransaction};
 use revm::context::Block as _;
 
-/// Block builder for Optimism.
+/// Block builder for Base.
 #[derive(Debug)]
 pub struct OpBlockAssembler<ChainSpec> {
     chain_spec: Arc<ChainSpec>,
@@ -30,7 +30,7 @@ impl<ChainSpec> OpBlockAssembler<ChainSpec> {
     }
 }
 
-impl<ChainSpec: OpHardforks> OpBlockAssembler<ChainSpec> {
+impl<ChainSpec: BaseUpgrades> OpBlockAssembler<ChainSpec> {
     /// Builds a block for `input` without any bounds on header `H`.
     pub fn assemble_block<
         F: for<'a> BlockExecutorFactory<
@@ -65,7 +65,7 @@ impl<ChainSpec: OpHardforks> OpBlockAssembler<ChainSpec> {
         let mut requests_hash = None;
 
         let withdrawals_root =
-            if OpHardforks::is_isthmus_active_at_timestamp(&*self.chain_spec, timestamp) {
+            if BaseUpgrades::is_isthmus_active_at_timestamp(&*self.chain_spec, timestamp) {
                 // always empty requests hash post isthmus
                 requests_hash = Some(EMPTY_REQUESTS_HASH);
 
@@ -75,18 +75,18 @@ impl<ChainSpec: OpHardforks> OpBlockAssembler<ChainSpec> {
                     isthmus::withdrawals_root(bundle_state, state_provider)
                         .map_err(BlockExecutionError::other)?,
                 )
-            } else if OpHardforks::is_canyon_active_at_timestamp(&*self.chain_spec, timestamp) {
+            } else if BaseUpgrades::is_canyon_active_at_timestamp(&*self.chain_spec, timestamp) {
                 Some(EMPTY_WITHDRAWALS)
             } else {
                 None
             };
 
         let (excess_blob_gas, blob_gas_used) =
-            if OpHardforks::is_jovian_active_at_timestamp(&*self.chain_spec, timestamp) {
+            if BaseUpgrades::is_jovian_active_at_timestamp(&*self.chain_spec, timestamp) {
                 // In jovian, we're using the blob gas used field to store the current da
                 // footprint's value.
                 (Some(0), Some(*blob_gas_used))
-            } else if OpHardforks::is_ecotone_active_at_timestamp(&*self.chain_spec, timestamp) {
+            } else if BaseUpgrades::is_ecotone_active_at_timestamp(&*self.chain_spec, timestamp) {
                 (Some(0), Some(0))
             } else {
                 (None, None)
@@ -121,7 +121,7 @@ impl<ChainSpec: OpHardforks> OpBlockAssembler<ChainSpec> {
             BlockBody {
                 transactions,
                 ommers: Default::default(),
-                withdrawals: OpHardforks::is_canyon_active_at_timestamp(
+                withdrawals: BaseUpgrades::is_canyon_active_at_timestamp(
                     &*self.chain_spec,
                     timestamp,
                 )
@@ -139,7 +139,7 @@ impl<ChainSpec> Clone for OpBlockAssembler<ChainSpec> {
 
 impl<F, ChainSpec> BlockAssembler<F> for OpBlockAssembler<ChainSpec>
 where
-    ChainSpec: OpHardforks,
+    ChainSpec: BaseUpgrades,
     F: for<'a> BlockExecutorFactory<
             ExecutionCtx<'a> = OpBlockExecutionCtx,
             Transaction: SignedTransaction,

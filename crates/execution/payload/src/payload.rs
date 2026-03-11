@@ -12,16 +12,14 @@ use alloy_rpc_types_engine::{
     BlobsBundleV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2, ExecutionPayloadV1,
     ExecutionPayloadV3, PayloadId,
 };
-use base_alloy_consensus::{
-    EIP1559ParamError, encode_holocene_extra_data, encode_jovian_extra_data,
-};
+use base_alloy_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 /// Re-export for use in downstream arguments.
 pub use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
 };
 use base_execution_evm::OpNextBlockEnvAttributes;
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_primitives::OpPrimitives;
 use reth_chainspec::EthChainSpec;
 use reth_payload_builder::{EthPayloadBuilderAttributes, PayloadBuilderError};
@@ -32,7 +30,7 @@ use reth_primitives_traits::{
     NodePrimitives, SealedBlock, SealedHeader, SignedTransaction, WithEncoded,
 };
 
-/// Optimism Payload Builder Attributes
+/// Base Payload Builder Attributes
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpPayloadBuilderAttributes<T> {
     /// Inner ethereum payload builder attributes
@@ -71,7 +69,7 @@ impl<T> OpPayloadBuilderAttributes<T> {
         default_base_fee_params: BaseFeeParams,
     ) -> Result<Bytes, EIP1559ParamError> {
         self.eip_1559_params
-            .map(|params| encode_holocene_extra_data(params, default_base_fee_params))
+            .map(|params| HoloceneExtraData::encode(params, default_base_fee_params))
             .ok_or(EIP1559ParamError::NoEIP1559Params)?
     }
 
@@ -83,7 +81,7 @@ impl<T> OpPayloadBuilderAttributes<T> {
     ) -> Result<Bytes, EIP1559ParamError> {
         let min_base_fee = self.min_base_fee.ok_or(EIP1559ParamError::MinBaseFeeNotSet)?;
         self.eip_1559_params
-            .map(|params| encode_jovian_extra_data(params, default_base_fee_params, min_base_fee))
+            .map(|params| JovianExtraData::encode(params, default_base_fee_params, min_base_fee))
             .ok_or(EIP1559ParamError::NoEIP1559Params)?
     }
 }
@@ -408,7 +406,7 @@ impl<H, T, ChainSpec> BuildNextEnv<OpPayloadBuilderAttributes<T>, H, ChainSpec>
 where
     H: BlockHeader,
     T: SignedTransaction,
-    ChainSpec: EthChainSpec + OpHardforks,
+    ChainSpec: EthChainSpec + BaseUpgrades,
 {
     fn build_next_env(
         attributes: &OpPayloadBuilderAttributes<T>,

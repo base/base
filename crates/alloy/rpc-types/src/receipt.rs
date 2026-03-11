@@ -79,7 +79,7 @@ impl alloy_network_primitives::ReceiptResponse for OpTransactionReceipt {
     }
 }
 
-/// Additional fields for OP chain transaction receipts: <https://github.com/ethereum-optimism/op-geth/blob/f2e69450c6eec9c35d56af91389a1c47737206ca/core/types/receipt.go#L87-L87>
+/// Additional fields for Base chain transaction receipts: <https://github.com/ethereum-optimism/op-geth/blob/f2e69450c6eec9c35d56af91389a1c47737206ca/core/types/receipt.go#L87-L87>
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpTransactionReceiptFields {
