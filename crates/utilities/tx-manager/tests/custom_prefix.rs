@@ -1,7 +1,6 @@
 #![cfg(feature = "cli")]
 //! Integration tests for `define_tx_manager_cli!` macro with a custom prefix.
 
-use std::time::Duration;
 
 use clap::{CommandFactory, Parser};
 
