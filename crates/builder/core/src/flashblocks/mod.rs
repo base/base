@@ -6,7 +6,6 @@ pub use best_txs::BestFlashblocksTxs;
 mod generator;
 pub use generator::{
     BlockCell, BlockPayloadJob, BlockPayloadJobGenerator, BuildArguments, ResolvePayload,
-    WaitForValue,
 };
 
 mod traits;

@@ -4,7 +4,7 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use futures::{Future, FutureExt};
+use futures::Future;
 use parking_lot::Mutex;
 use reth_basic_payload_builder::{
     BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig, PrecachedState,
@@ -274,7 +274,7 @@ where
             self.cancel.cancel();
         }
 
-        let resolve_future = ResolvePayload::new(self.finalized_cell.wait_for_value());
+        let resolve_future = ResolvePayload::new(&self.finalized_cell);
 
         (resolve_future, KeepPayloadJobAlive::No)
     }
@@ -362,7 +362,7 @@ where
 
 /// A future that resolves when a payload becomes available in the [`BlockCell`].
 pub struct ResolvePayload<T> {
-    future: WaitForValue<T>,
+    future: Pin<Box<dyn Future<Output = T> + Send>>,
 }
 
 impl<T> std::fmt::Debug for ResolvePayload<T> {
@@ -371,17 +371,18 @@ impl<T> std::fmt::Debug for ResolvePayload<T> {
     }
 }
 
-impl<T> ResolvePayload<T> {
-    pub const fn new(future: WaitForValue<T>) -> Self {
-        Self { future }
+impl<T: Clone + Send + 'static> ResolvePayload<T> {
+    pub fn new(cell: &BlockCell<T>) -> Self {
+        let cell = cell.clone();
+        Self { future: Box::pin(async move { cell.wait_for_value().await }) }
     }
 }
 
-impl<T: Clone> Future for ResolvePayload<T> {
+impl<T> Future for ResolvePayload<T> {
     type Output = Result<T, PayloadBuilderError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.get_mut().future.poll_unpin(cx) {
+        match self.get_mut().future.as_mut().poll(cx) {
             Poll::Ready(value) => Poll::Ready(Ok(value)),
             Poll::Pending => Poll::Pending,
         }
@@ -405,7 +406,7 @@ impl<T: Clone> BlockCell<T> {
     pub fn set(&self, value: T) {
         let mut inner = self.inner.lock();
         *inner = Some(value);
-        self.notify.notify_one();
+        self.notify.notify_waiters();
     }
 
     pub fn get(&self) -> Option<T> {
@@ -414,34 +415,13 @@ impl<T: Clone> BlockCell<T> {
     }
 
     /// Return a future that resolves when a value is set.
-    pub fn wait_for_value(&self) -> WaitForValue<T> {
-        WaitForValue { cell: self.clone() }
-    }
-}
-
-/// Future that resolves when a value is set in [`BlockCell`].
-#[derive(Clone)]
-pub struct WaitForValue<T> {
-    cell: BlockCell<T>,
-}
-
-impl<T> std::fmt::Debug for WaitForValue<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WaitForValue").finish_non_exhaustive()
-    }
-}
-
-impl<T: Clone> Future for WaitForValue<T> {
-    type Output = T;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.cell.get().map_or_else(
-            || {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            },
-            Poll::Ready,
-        )
+    pub async fn wait_for_value(&self) -> T {
+        loop {
+            if let Some(value) = self.get() {
+                return value;
+            }
+            self.notify.notified().await;
+        }
     }
 }
 

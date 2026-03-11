@@ -33,7 +33,7 @@ mod flashblocks;
 pub use flashblocks::{
     BestFlashblocksTxs, BlockCell, BlockPayloadJob, BlockPayloadJobGenerator, BuildArguments,
     FlashblocksExecutionInfo, FlashblocksExtraCtx, FlashblocksServiceBuilder, OpPayloadBuilderCtx,
-    PayloadBuilder, PayloadHandler, ResolvePayload, WaitForValue,
+    PayloadBuilder, PayloadHandler, ResolvePayload,
 };
 
 mod extension;
