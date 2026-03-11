@@ -40,10 +40,9 @@ Transaction lifecycle management for Base onchain components.
   (prefix `BASE_TX_MANAGER_`). Captures all tunable tx-manager parameters and is designed
   to be `#[command(flatten)]`-ed into parent CLI structs.
 - **`TxManagerConfig`**: Validated runtime configuration constructed from `TxManagerCli`
-  via `TxManagerConfig::from_cli(cli, chain_id)`. Immutable fields (confirmations,
-  timeouts, chain ID) are set once; fee-related fields (`fee_limit_multiplier`,
-  `fee_limit_threshold`, `min_tip_cap`, `min_basefee`) are hot-reloadable via accessor
-  and mutator methods backed by `parking_lot::RwLock`.
+  via `TxManagerConfig::from_cli(cli, chain_id)`. All fields are immutable after
+  construction with read-only `const fn` accessors. `fee_config()` returns a `FeeConfig`
+  snapshot for use with `FeeCalculator::check_limits`.
 - **`FeeConfig`**: Lightweight snapshot of fee-limit parameters extracted from
   `TxManagerConfig` for deterministic fee calculations in `FeeCalculator::check_limits`.
 - **`ConfigError`**: Validation error enum returned by `TxManagerConfig::from_cli` when
@@ -171,18 +170,12 @@ struct Cli {
 let config = TxManagerConfig::new(cli.tx.into_params(chain_id)?)?;
 ```
 
-### Hot-reloadable fields
+### Fee configuration
 
-Fee-related parameters (`fee_limit_multiplier`, `fee_limit_threshold`,
-`min_tip_cap`, `min_basefee`) are backed by a `parking_lot::RwLock` and can be
-updated at runtime without restarting the process:
+Use `fee_config()` to obtain a `FeeConfig` snapshot for deterministic fee
+limit checks:
 
 ```rust,ignore
-// Update fee parameters at runtime.
-config.set_fee_limit_multiplier(10)?;
-config.set_min_basefee(GweiParser::parse("1.5", "min_basefee")?);
-
-// Take a point-in-time snapshot for deterministic fee calculations.
 let fee_cfg = config.fee_config();
 FeeCalculator::check_limits(proposed_fee, suggested_fee, &fee_cfg)?;
 ```
