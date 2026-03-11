@@ -494,8 +494,7 @@ mod tests {
 
         #[test]
         fn new_valid() {
-            let config =
-                TxManagerConfig::new(default_params(42)).expect("CLI defaults are valid");
+            let config = TxManagerConfig::new(default_params(42)).expect("CLI defaults are valid");
             assert_eq!(config.num_confirmations(), 10);
             assert_eq!(config.safe_abort_nonce_too_low_count(), 3);
             assert_eq!(config.chain_id(), 42);
@@ -536,10 +535,7 @@ mod tests {
             let mut params = default_params(1);
             params.fee_limit_multiplier = 0;
             let err = TxManagerConfig::new(params).unwrap_err();
-            assert!(matches!(
-                err,
-                ConfigError::OutOfRange { field: "fee_limit_multiplier", .. }
-            ));
+            assert!(matches!(err, ConfigError::OutOfRange { field: "fee_limit_multiplier", .. }));
         }
 
         #[test]
@@ -555,10 +551,7 @@ mod tests {
             let mut params = default_params(1);
             params.resubmission_timeout = Duration::ZERO;
             let err = TxManagerConfig::new(params).unwrap_err();
-            assert!(matches!(
-                err,
-                ConfigError::OutOfRange { field: "resubmission_timeout", .. }
-            ));
+            assert!(matches!(err, ConfigError::OutOfRange { field: "resubmission_timeout", .. }));
         }
 
         #[test]
@@ -566,18 +559,14 @@ mod tests {
             let mut params = default_params(1);
             params.receipt_query_interval = Duration::ZERO;
             let err = TxManagerConfig::new(params).unwrap_err();
-            assert!(matches!(
-                err,
-                ConfigError::OutOfRange { field: "receipt_query_interval", .. }
-            ));
+            assert!(matches!(err, ConfigError::OutOfRange { field: "receipt_query_interval", .. }));
         }
 
         // ── FeeConfig snapshot ──────────────────────────────────────
 
         #[test]
         fn fee_config_snapshot() {
-            let config =
-                TxManagerConfig::new(default_params(1)).expect("CLI defaults are valid");
+            let config = TxManagerConfig::new(default_params(1)).expect("CLI defaults are valid");
             let snapshot = config.fee_config();
             assert_eq!(snapshot.fee_limit_multiplier, 5);
             assert_eq!(snapshot.fee_limit_threshold, 100_000_000_000);
