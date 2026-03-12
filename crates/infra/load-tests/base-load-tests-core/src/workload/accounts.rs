@@ -51,7 +51,7 @@ impl FundedAccount {
 }
 
 /// A pool of funded accounts for workload execution.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AccountPool {
     accounts: Vec<FundedAccount>,
     rng: StdRng,
@@ -92,7 +92,9 @@ impl AccountPool {
         let mut accounts = Vec::with_capacity(count);
 
         for i in 0..count {
-            let index = (offset + i) as u32;
+            let index = u32::try_from(offset + i).map_err(|_| {
+                BaselineError::Config(format!("mnemonic index {} exceeds u32::MAX", offset + i))
+            })?;
             let signer = MnemonicBuilder::<English>::default()
                 .phrase(mnemonic)
                 .index(index)

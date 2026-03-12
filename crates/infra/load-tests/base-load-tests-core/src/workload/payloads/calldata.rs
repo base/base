@@ -3,7 +3,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use super::Payload;
 use crate::{rpc::TransactionRequest, workload::SeededRng};
 
-const GAS_PER_CALLDATA_BYTE: u64 = 48;
+const GAS_PER_NONZERO_BYTE: u64 = 16;
 
 /// Generates ETH transfer transactions with random calldata.
 #[derive(Debug, Clone)]
@@ -46,7 +46,7 @@ impl Payload for CalldataPayload {
         };
 
         let data: Vec<u8> = (0..size).map(|_| rng.gen_range(0..=255)).collect();
-        let gas_limit = 21_000 + (size as u64 * GAS_PER_CALLDATA_BYTE);
+        let gas_limit = 21_000 + (size as u64 * GAS_PER_NONZERO_BYTE);
 
         TransactionRequest {
             to,

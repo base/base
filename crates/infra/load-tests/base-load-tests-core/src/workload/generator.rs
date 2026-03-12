@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::{debug, instrument};
 
 use super::{AccountPool, Payload, SeededRng};
-use crate::{config::WorkloadConfig, rpc::TransactionRequest, utils::Result};
+use crate::{BaselineError, config::WorkloadConfig, rpc::TransactionRequest, utils::Result};
 
 /// Generates transaction workloads from configured payloads.
 pub struct WorkloadGenerator {
@@ -56,7 +56,7 @@ impl WorkloadGenerator {
     }
 
     fn generate_single(&mut self) -> Result<TransactionRequest> {
-        let payload = self.select_payload();
+        let payload = self.select_payload()?;
         let from_account = self.accounts.random_account();
         let from = from_account.address;
 
@@ -68,9 +68,9 @@ impl WorkloadGenerator {
         Ok(request)
     }
 
-    fn select_payload(&mut self) -> Arc<dyn Payload> {
+    fn select_payload(&mut self) -> Result<Arc<dyn Payload>> {
         if self.payloads.is_empty() {
-            panic!("no payloads configured");
+            return Err(BaselineError::Workload("no payloads configured".into()));
         }
 
         let total: f64 = self.payloads.iter().map(|(_, share)| share).sum();
@@ -79,11 +79,11 @@ impl WorkloadGenerator {
         for (payload, share) in &self.payloads {
             target -= share;
             if target <= 0.0 {
-                return Arc::clone(payload);
+                return Ok(Arc::clone(payload));
             }
         }
 
-        Arc::clone(&self.payloads.last().unwrap().0)
+        Ok(Arc::clone(&self.payloads.last().unwrap().0))
     }
 
     /// Resets the generator to its initial state.

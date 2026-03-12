@@ -36,10 +36,11 @@ impl<'a> MetricsAggregator<'a> {
         let len = latencies.len();
         let sum: Duration = latencies.iter().sum();
 
+        let mean = Duration::from_nanos(sum.as_nanos() as u64 / len as u64);
         LatencyMetrics {
             min: latencies[0],
             max: latencies[len - 1],
-            mean: sum / len as u32,
+            mean,
             p50: Self::percentile(&latencies, 50),
             p95: Self::percentile(&latencies, 95),
             p99: Self::percentile(&latencies, 99),

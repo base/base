@@ -48,6 +48,7 @@ pub struct LoadRunner {
     stop_flag: Arc<AtomicBool>,
     nonce_tracker: NonceTracker,
     providers: HashMap<Address, WalletProvider>,
+    gas_price: u128,
 }
 
 impl LoadRunner {
@@ -78,7 +79,7 @@ impl LoadRunner {
         let providers = Self::build_providers(&config.rpc_url, &accounts);
 
         let workload_config = WorkloadConfig::new("load-test").with_seed(config.seed);
-        let generator = Self::create_generator(workload_config, &config, &accounts)?;
+        let generator = Self::create_generator(workload_config, &config, accounts.clone())?;
 
         info!(
             account_count = config.account_count,
@@ -95,6 +96,7 @@ impl LoadRunner {
             stop_flag: Arc::new(AtomicBool::new(false)),
             nonce_tracker: NonceTracker::new(),
             providers,
+            gas_price: 0,
         })
     }
 
@@ -116,10 +118,9 @@ impl LoadRunner {
     fn create_generator(
         workload_config: WorkloadConfig,
         config: &LoadConfig,
-        accounts: &AccountPool,
+        accounts: AccountPool,
     ) -> Result<WorkloadGenerator> {
-        let accounts_clone = AccountPool::new(workload_config.seed.unwrap_or(0), accounts.len())?;
-        let mut generator = WorkloadGenerator::new(workload_config, accounts_clone);
+        let mut generator = WorkloadGenerator::new(workload_config, accounts);
 
         let total_weight: u32 = config.transactions.iter().map(|t| t.weight).sum();
         if total_weight == 0 {
@@ -193,6 +194,7 @@ impl LoadRunner {
             "funding accounts"
         );
 
+        let mut pending_txs = Vec::new();
         for address in &accounts_to_fund {
             let tx = AlloyTxRequest::default()
                 .with_to(*address)
@@ -203,7 +205,9 @@ impl LoadRunner {
 
             match funder_provider.send_transaction(tx).await {
                 Ok(pending) => {
-                    debug!(to = %address, nonce, tx_hash = %pending.tx_hash(), "funding tx sent");
+                    let tx_hash = *pending.tx_hash();
+                    debug!(to = %address, nonce, tx_hash = %tx_hash, "funding tx sent");
+                    pending_txs.push((tx_hash, *address));
                     nonce += 1;
                 }
                 Err(e) => {
@@ -215,11 +219,47 @@ impl LoadRunner {
             }
         }
 
-        info!("waiting for funding txs to confirm");
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        info!(count = pending_txs.len(), "waiting for funding txs to confirm");
+        let timeout = Duration::from_secs(60);
+        let poll_interval = Duration::from_millis(500);
+        let start = Instant::now();
+
+        while !pending_txs.is_empty() && start.elapsed() < timeout {
+            tokio::time::sleep(poll_interval).await;
+
+            let mut still_pending = Vec::new();
+            for (tx_hash, address) in pending_txs {
+                match self.client.get_transaction_receipt(tx_hash).await {
+                    Ok(Some(_)) => {
+                        debug!(tx_hash = %tx_hash, address = %address, "funding tx confirmed");
+                    }
+                    Ok(None) => {
+                        still_pending.push((tx_hash, address));
+                    }
+                    Err(e) => {
+                        warn!(tx_hash = %tx_hash, error = %e, "failed to get receipt");
+                        still_pending.push((tx_hash, address));
+                    }
+                }
+            }
+            pending_txs = still_pending;
+        }
+
+        if !pending_txs.is_empty() {
+            let unconfirmed: Vec<_> = pending_txs.iter().map(|(_, addr)| addr).collect();
+            return Err(BaselineError::Transaction(format!(
+                "funding txs did not confirm within timeout: {unconfirmed:?}"
+            )));
+        }
 
         for account in self.accounts.accounts_mut() {
             let balance = self.client.get_balance(account.address).await?;
+            if balance < amount_per_account {
+                return Err(BaselineError::Transaction(format!(
+                    "account {} still underfunded: {} < {}",
+                    account.address, balance, amount_per_account
+                )));
+            }
             account.balance = balance;
             let account_nonce = self.client.get_nonce(account.address).await?;
             account.nonce = account_nonce;
@@ -239,6 +279,9 @@ impl LoadRunner {
         self.collector.reset();
         self.collector.start();
         self.stop_flag.store(false, Ordering::SeqCst);
+
+        self.gas_price = self.client.get_gas_price().await?;
+        info!(gas_price = self.gas_price, "fetched current gas price");
 
         for account in self.accounts.accounts() {
             if self.nonce_tracker.pending_count(&account.address) == 0 {
@@ -413,6 +456,7 @@ impl LoadRunner {
                 continue;
             };
 
+            let max_fee = self.gas_price.saturating_mul(2);
             let tx = AlloyTxRequest::default()
                 .with_from(prepared.from)
                 .with_to(prepared.to)
@@ -420,8 +464,8 @@ impl LoadRunner {
                 .with_input(prepared.data.clone())
                 .with_nonce(prepared.nonce)
                 .with_chain_id(chain_id)
-                .with_max_fee_per_gas(1_000_000_000u128)
-                .with_max_priority_fee_per_gas(0)
+                .with_max_fee_per_gas(max_fee)
+                .with_max_priority_fee_per_gas(self.gas_price / 10)
                 .with_gas_limit(prepared.gas_limit);
 
             let mut attempts = 0;

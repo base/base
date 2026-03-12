@@ -23,7 +23,7 @@ impl NonceTracker {
     pub fn init_account(&mut self, address: Address, nonce: u64) {
         self.expected.insert(address, nonce);
         self.pending.insert(address, BTreeSet::new());
-        self.confirmed.insert(address, nonce.saturating_sub(1));
+        self.confirmed.insert(address, nonce);
     }
 
     /// Allocates the next nonce for an account.
@@ -72,7 +72,7 @@ impl NonceTracker {
         };
 
         let mut gaps = Vec::new();
-        for nonce in (*confirmed + 1)..*expected {
+        for nonce in *confirmed..*expected {
             if !pending.contains(&nonce) {
                 gaps.push(nonce);
             }
@@ -113,10 +113,9 @@ impl NonceTracker {
         }
 
         if let Some(confirmed) = self.confirmed.get_mut(address)
-            && on_chain_nonce > 0
-            && on_chain_nonce - 1 > *confirmed
+            && on_chain_nonce > *confirmed
         {
-            *confirmed = on_chain_nonce - 1;
+            *confirmed = on_chain_nonce;
         }
 
         Ok(gaps)

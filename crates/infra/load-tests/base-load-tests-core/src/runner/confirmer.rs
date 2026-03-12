@@ -44,15 +44,20 @@ pub struct ConfirmerHandle {
 
 impl ConfirmerHandle {
     /// Records a submitted transaction for confirmation tracking.
-    pub fn record_submitted(&self, tx_hash: TxHash, from: Address) {
+    /// Returns false if the confirmer has shut down.
+    pub fn record_submitted(&self, tx_hash: TxHash, from: Address) -> bool {
         let pending = PendingTx { tx_hash, from, submit_time: Instant::now() };
+
+        if self.pending_tx.send(pending).is_err() {
+            return false;
+        }
 
         if let Some(counter) = self.in_flight_per_sender.get(&from) {
             counter.fetch_add(1, Ordering::SeqCst);
         }
         self.total_in_flight.fetch_add(1, Ordering::SeqCst);
 
-        let _ = self.pending_tx.send(pending);
+        true
     }
 
     /// Returns the in-flight count for a specific sender.
