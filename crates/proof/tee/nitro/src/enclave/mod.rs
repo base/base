@@ -8,7 +8,6 @@ use tokio::time::{Duration, timeout};
 use tokio_vsock::{VsockAddr, VsockListener};
 #[cfg(target_os = "linux")]
 use tracing::{debug, info, warn};
-
 #[cfg(target_os = "linux")]
 use crate::transport::Frame;
 

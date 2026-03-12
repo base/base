@@ -39,9 +39,9 @@ aws-nitro-enclaves-nsm-api.workspace = true
 base64.workspace = true
 ciborium.workspace = true
 serde_bytes.workspace = true
-bincode = { workspace = true, features = ["serde"] }
-serde = { workspace = true, features = ["derive"] }
 zip = { workspace = true, features = ["deflate"] }
+serde = { workspace = true, features = ["derive"] }
+bincode = { workspace = true, features = ["serde"] }
 
 # Async
 async-trait.workspace = true
