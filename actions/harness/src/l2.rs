@@ -40,9 +40,9 @@ pub const TEST_ACCOUNT_ADDRESS: Address =
 /// Initial balance for the test account (1 ETH).
 const TEST_ACCOUNT_BALANCE: U256 = U256::from_limbs([1_000_000_000_000_000_000u64, 0, 0, 0]);
 
-/// Error type returned by [`L2BlockBuilder`].
+/// Error type returned by [`L2Sequencer`].
 #[derive(Debug, thiserror::Error)]
-pub enum L2BuilderError {
+pub enum L2SequencerError {
     /// The L1 block required for the current epoch is missing from the chain.
     #[error("L1 block {0} not found in shared chain")]
     MissingL1Block(u64),
@@ -103,7 +103,8 @@ impl L2BlockProvider for ActionL2Source {
 ///   test account ([`TEST_ACCOUNT_KEY`]).
 ///
 /// Epoch selection mirrors the real sequencer: the epoch advances to the next
-/// L1 block once that block's timestamp is ≤ the new L2 block's timestamp.
+/// L1 block once that block's timestamp is ≤ the new L2 block's timestamp,
+/// unless an L1 origin is pinned via [`pin_l1_origin`].
 ///
 /// # EVM Execution & State Root
 ///
@@ -111,8 +112,10 @@ impl L2BlockProvider for ActionL2Source {
 /// test account balance (1 ETH). The state root in the header is computed from
 /// the post-execution state using a Merkle Patricia Trie. The header is sealed
 /// to produce a real block hash, which is used for correct parent-hash chaining.
+///
+/// [`pin_l1_origin`]: L2Sequencer::pin_l1_origin
 #[derive(Debug)]
-pub struct L2BlockBuilder {
+pub struct L2Sequencer {
     /// Current unsafe L2 head.
     head: L2BlockInfo,
     /// Shared view of the L1 chain for epoch selection.
@@ -131,10 +134,13 @@ pub struct L2BlockBuilder {
     nonce: u64,
     /// In-memory EVM database carrying state across blocks.
     db: InMemoryDB,
+    /// Optional pinned L1 origin. When set, epoch selection is bypassed and
+    /// this block is used as the epoch for every subsequent L2 block built.
+    l1_origin_pin: Option<BlockInfo>,
 }
 
-impl L2BlockBuilder {
-    /// Create a new builder starting from the given L2 genesis head.
+impl L2Sequencer {
+    /// Create a new sequencer starting from the given L2 genesis head.
     pub fn new(
         head: L2BlockInfo,
         l1_chain: SharedL1Chain,
@@ -160,6 +166,7 @@ impl L2BlockBuilder {
             user_txs_per_block: 1,
             nonce: 0,
             db,
+            l1_origin_pin: None,
         }
     }
 
@@ -169,23 +176,67 @@ impl L2BlockBuilder {
         self
     }
 
+    /// Return the current unsafe L2 head (alias for [`head`]).
+    ///
+    /// [`head`]: L2Sequencer::head
+    pub const fn unsafe_head(&self) -> L2BlockInfo {
+        self.head
+    }
+
     /// Return the current unsafe L2 head.
     pub const fn head(&self) -> L2BlockInfo {
         self.head
+    }
+
+    /// Pin the L1 origin to the given block, bypassing automatic epoch advance.
+    ///
+    /// While pinned, every call to [`build_next_block`] uses `origin` as the
+    /// epoch regardless of timestamps. The sequencer number increments within
+    /// the same epoch until the pin is cleared.
+    ///
+    /// [`build_next_block`]: L2Sequencer::build_next_block
+    pub fn pin_l1_origin(&mut self, origin: BlockInfo) {
+        self.l1_origin_pin = Some(origin);
+    }
+
+    /// Clear the pinned L1 origin, restoring automatic epoch selection.
+    pub fn clear_l1_origin_pin(&mut self) {
+        self.l1_origin_pin = None;
+    }
+
+    /// Build the next L2 block containing no user transactions.
+    ///
+    /// Temporarily sets `user_txs_per_block = 0`, calls [`build_next_block`],
+    /// then restores the original count. Useful for simulating forced-empty
+    /// blocks at the sequencer drift boundary.
+    ///
+    /// [`build_next_block`]: L2Sequencer::build_next_block
+    pub fn build_empty_block(&mut self) -> Result<OpBlock, L2SequencerError> {
+        let saved = self.user_txs_per_block;
+        self.user_txs_per_block = 0;
+        let result = self.build_next_block();
+        self.user_txs_per_block = saved;
+        result
     }
 
     /// Build the next L2 block and advance the internal head.
     ///
     /// Returns a fully-formed [`OpBlock`] containing the L1-info deposit and
     /// any configured user transactions, with a real state root and block hash.
-    pub fn build_next_block(&mut self) -> Result<OpBlock, L2BuilderError> {
+    pub fn build_next_block(&mut self) -> Result<OpBlock, L2SequencerError> {
         let next_number = self.head.block_info.number + 1;
         let next_timestamp = self.head.block_info.timestamp + self.rollup_config.block_time;
         let parent_hash = self.head.block_info.hash;
         let current_epoch = self.head.l1_origin.number;
 
-        // Epoch selection: advance when the next L1 block's timestamp is reached.
-        let (epoch_number, l1_header) = {
+        // Epoch selection: use pinned origin if set, otherwise auto-advance.
+        let (epoch_number, l1_header) = if let Some(pin) = self.l1_origin_pin {
+            let block = self
+                .l1_chain
+                .get_block(pin.number)
+                .ok_or(L2SequencerError::MissingL1Block(pin.number))?;
+            (block.number(), block.header.clone())
+        } else {
             if let Some(next_l1) = self.l1_chain.get_block(current_epoch + 1) {
                 if next_l1.timestamp() <= next_timestamp {
                     let hdr = next_l1.header.clone();
@@ -194,7 +245,7 @@ impl L2BlockBuilder {
                     let cur = self
                         .l1_chain
                         .get_block(current_epoch)
-                        .ok_or(L2BuilderError::MissingL1Block(current_epoch))?;
+                        .ok_or(L2SequencerError::MissingL1Block(current_epoch))?;
                     let hdr = cur.header.clone();
                     (cur.number(), hdr)
                 }
@@ -202,7 +253,7 @@ impl L2BlockBuilder {
                 let cur = self
                     .l1_chain
                     .get_block(current_epoch)
-                    .ok_or(L2BuilderError::MissingL1Block(current_epoch))?;
+                    .ok_or(L2SequencerError::MissingL1Block(current_epoch))?;
                 let hdr = cur.header.clone();
                 (cur.number(), hdr)
             }
@@ -286,7 +337,7 @@ impl L2BlockBuilder {
         block_number: u64,
         timestamp: u64,
         parent_hash: B256,
-    ) -> Result<(B256, u64), L2BuilderError> {
+    ) -> Result<(B256, u64), L2SequencerError> {
         let chain_spec = Arc::new(
             OpChainSpecBuilder::base_mainnet().chain(self.rollup_config.l2_chain_id).build(),
         );
@@ -308,7 +359,7 @@ impl L2BlockBuilder {
             let op_tx: OpTransaction<TxEnv> = OpTransaction::from_recovered_tx(tx, sender);
 
             let evm_env =
-                evm_config.evm_env(&header).map_err(|e| L2BuilderError::Evm(e.to_string()))?;
+                evm_config.evm_env(&header).map_err(|e| L2SequencerError::Evm(e.to_string()))?;
             let mut evm = evm_config.evm_with_env(&mut self.db, evm_env);
             match evm.transact(op_tx) {
                 Ok(ResultAndState { state, result }) => {
@@ -316,7 +367,7 @@ impl L2BlockBuilder {
                     self.db.commit(state);
                 }
                 Err(e) => {
-                    return Err(L2BuilderError::Evm(format!("{e:?}")));
+                    return Err(L2SequencerError::Evm(format!("{e:?}")));
                 }
             }
         }
@@ -374,11 +425,11 @@ fn compute_state_root(db: &InMemoryDB) -> B256 {
     state_root_unhashed(accounts)
 }
 
-impl L2BlockProvider for L2BlockBuilder {
+impl L2BlockProvider for L2Sequencer {
     fn next_block(&mut self) -> Option<OpBlock> {
         Some(
             self.build_next_block()
-                .unwrap_or_else(|e| panic!("L2BlockBuilder::next_block failed: {e}")),
+                .unwrap_or_else(|e| panic!("L2Sequencer::next_block failed: {e}")),
         )
     }
 }

@@ -12,15 +12,26 @@ use base_consensus_derive::{
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo, OpAttributesWithParent};
 
-use crate::{ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider};
+use crate::{ActionBlobDataSource, ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider};
 
-/// The concrete pipeline type used by [`L2Verifier`].
+/// The concrete pipeline type used by [`L2Verifier`] with calldata DA.
 ///
 /// Assembled from the indexed traversal path so tests drive derivation block-by-block
 /// via [`L2Verifier::act_l1_head_signal`] rather than polling an RPC.
 pub type VerifierPipeline = base_consensus_derive::DerivationPipeline<
     IndexedAttributesQueueStage<
         ActionDataSource,
+        ActionL1ChainProvider,
+        ActionL2ChainProvider,
+        StatefulAttributesBuilder<ActionL1ChainProvider, ActionL2ChainProvider>,
+    >,
+    ActionL2ChainProvider,
+>;
+
+/// The concrete pipeline type used by [`L2Verifier`] with blob DA.
+pub type BlobVerifierPipeline = base_consensus_derive::DerivationPipeline<
+    IndexedAttributesQueueStage<
+        ActionBlobDataSource,
         ActionL1ChainProvider,
         ActionL2ChainProvider,
         StatefulAttributesBuilder<ActionL1ChainProvider, ActionL2ChainProvider>,
@@ -52,22 +63,35 @@ pub enum VerifierError {
 /// There is no P2P, no background async task, and no real EVM execution.
 /// The "engine" is a simple in-memory state that accepts derived
 /// [`OpAttributesWithParent`] and advances `l2_safe` accordingly.
-///
-/// # Unsafe head
-///
-/// The unsafe head is not tracked; action tests that only verify derivation
-/// correctness do not need it. A `L2Sequencer` actor (building on this type)
-/// can be added later.
 #[derive(Debug)]
 pub struct L2Verifier {
     /// The real derivation pipeline wired to in-memory providers.
     pipeline: VerifierPipeline,
     /// The current L2 safe head (advances as attributes are consumed).
     safe_head: L2BlockInfo,
+    /// The current L2 finalized head.
+    ///
+    /// Updated via [`act_l1_finalized_signal`] by scanning [`safe_head_history`]
+    /// for the highest safe L2 block whose L1 origin is ≤ the finalized L1 number.
+    ///
+    /// [`act_l1_finalized_signal`]: L2Verifier::act_l1_finalized_signal
+    /// [`safe_head_history`]: L2Verifier::safe_head_history
+    finalized_head: L2BlockInfo,
+    /// Tracks the most recently signalled finalized L1 block number.
+    finalized_l1_number: u64,
+    /// History of safe head updates paired with the L1 origin number.
+    ///
+    /// Each entry is `(l2_block_info, l1_origin_number)`. Appended by
+    /// [`apply_attributes`] so that [`act_l1_finalized_signal`] can scan
+    /// backward to find the highest L2 block whose L1 origin is finalized.
+    ///
+    /// [`apply_attributes`]: L2Verifier::apply_attributes
+    /// [`act_l1_finalized_signal`]: L2Verifier::act_l1_finalized_signal
+    safe_head_history: Vec<(L2BlockInfo, u64)>,
     /// Block hashes by L2 block number, registered externally from the
-    /// [`L2BlockBuilder`](crate::L2BlockBuilder). Used by [`apply_attributes`]
-    /// so the verifier's safe-head hash matches the builder's real block hash,
-    /// enabling correct `parent_hash` validation in [`BatchQueue`].
+    /// [`L2Sequencer`](crate::L2Sequencer). Used by [`apply_attributes`]
+    /// so the verifier's safe-head hash matches the sequencer's real block
+    /// hash, enabling correct `parent_hash` validation in [`BatchQueue`].
     ///
     /// [`apply_attributes`]: L2Verifier::apply_attributes
     /// [`BatchQueue`]: base_consensus_derive::BatchQueue
@@ -105,7 +129,14 @@ impl L2Verifier {
             .builder(attrs_builder)
             .build_indexed();
 
-        Self { pipeline, safe_head, block_hashes: HashMap::new() }
+        Self {
+            pipeline,
+            safe_head,
+            finalized_head: safe_head,
+            finalized_l1_number: 0,
+            safe_head_history: Vec::new(),
+            block_hashes: HashMap::new(),
+        }
     }
 
     /// Initialize the pipeline by seeding the genesis [`SystemConfig`] and
@@ -147,6 +178,22 @@ impl L2Verifier {
         self.safe_head
     }
 
+    /// Return the current L2 unsafe head.
+    ///
+    /// In a verifier-only setup the unsafe head is the same as the safe head
+    /// since no sequencer is operating. When paired with an [`L2Sequencer`]
+    /// actor this will diverge.
+    ///
+    /// [`L2Sequencer`]: crate::L2Sequencer
+    pub const fn l2_unsafe(&self) -> L2BlockInfo {
+        self.safe_head
+    }
+
+    /// Return the current L2 finalized head.
+    pub const fn l2_finalized(&self) -> L2BlockInfo {
+        self.finalized_head
+    }
+
     /// Signal the pipeline that a new L1 block is available.
     ///
     /// This is equivalent to op-e2e's `ActL1HeadSignal`. The [`IndexedTraversal`]
@@ -156,6 +203,40 @@ impl L2Verifier {
     /// [`IndexedTraversal`]: base_consensus_derive::IndexedTraversal
     pub async fn act_l1_head_signal(&mut self, head: BlockInfo) -> Result<(), VerifierError> {
         self.pipeline.signal(Signal::ProvideBlock(head)).await.map_err(VerifierError::Signal)
+    }
+
+    /// Signal the pipeline that a new L1 safe head is available.
+    ///
+    /// Currently a no-op in the verifier — the safe L2 head is already tracked
+    /// by derivation. Stored for future use.
+    pub async fn act_l1_safe_signal(&mut self, _head: BlockInfo) -> Result<(), VerifierError> {
+        Ok(())
+    }
+
+    /// Signal the pipeline that an L1 block has been finalized.
+    ///
+    /// Scans [`safe_head_history`] to find the highest L2 safe block whose
+    /// L1 origin number is ≤ `head.number`, then updates `finalized_head`.
+    ///
+    /// [`safe_head_history`]: L2Verifier::safe_head_history
+    pub async fn act_l1_finalized_signal(&mut self, head: BlockInfo) -> Result<(), VerifierError> {
+        self.finalized_l1_number = head.number;
+
+        // Scan history most-recent-first for highest L2 block whose L1 origin
+        // is at or before the finalized L1 number.
+        let candidate = self
+            .safe_head_history
+            .iter()
+            .rev()
+            .find(|(_, l1_origin_number)| *l1_origin_number <= self.finalized_l1_number)
+            .map(|(l2_info, _)| *l2_info);
+
+        if let Some(l2) = candidate {
+            if l2.block_info.number > self.finalized_head.block_info.number {
+                self.finalized_head = l2;
+            }
+        }
+        Ok(())
     }
 
     /// Reset the pipeline to the given L1 origin and L2 safe head.
@@ -252,12 +333,12 @@ impl L2Verifier {
 
     /// Register the block hash for a given L2 block number.
     ///
-    /// Call this after [`L2BlockBuilder::build_next_block`] to record the real
+    /// Call this after [`L2Sequencer::build_next_block`] to record the real
     /// block hash. When derivation later applies attributes for this block
     /// number, the verifier will use the registered hash instead of a default,
-    /// keeping the `parent_hash` chain consistent with the builder.
+    /// keeping the `parent_hash` chain consistent with the sequencer.
     ///
-    /// [`L2BlockBuilder::build_next_block`]: crate::L2BlockBuilder::build_next_block
+    /// [`L2Sequencer::build_next_block`]: crate::L2Sequencer::build_next_block
     pub fn register_block_hash(&mut self, number: u64, hash: B256) {
         self.block_hashes.insert(number, hash);
     }
@@ -274,12 +355,12 @@ impl L2Verifier {
     /// subsequent same-epoch batches to be rejected as `EpochTooOld`.
     ///
     /// The block hash is looked up from [`register_block_hash`] entries. When the
-    /// [`L2BlockBuilder`] produces real sealed headers, the test must register each
+    /// [`L2Sequencer`] produces real sealed headers, the test must register each
     /// block's hash so the verifier's `parent_hash` chain stays consistent with
-    /// the batches the builder submitted.
+    /// the batches the sequencer submitted.
     ///
     /// [`register_block_hash`]: L2Verifier::register_block_hash
-    /// [`L2BlockBuilder`]: crate::L2BlockBuilder
+    /// [`L2Sequencer`]: crate::L2Sequencer
     /// [`BatchQueue`]: base_consensus_derive::BatchQueue
     fn apply_attributes(&mut self, attrs: OpAttributesWithParent) {
         let new_number = self.safe_head.block_info.number + 1;
@@ -304,6 +385,8 @@ impl L2Verifier {
             l1_origin,
             seq_num,
         };
+        // Track history for finalization scanning.
+        self.safe_head_history.push((self.safe_head, l1_origin.number));
     }
 
     /// Decode the L1 epoch (`l1_origin`) from the L1 info deposit transaction

@@ -47,23 +47,53 @@ fn parent_hash_chain_is_valid() {
     }
 }
 
-/// Safe head lags 32 blocks behind latest; finalized lags 64.
+/// Safe and finalized pointers are at genesis initially and can be advanced
+/// explicitly via the action methods.
 #[test]
-fn safe_and_finalized_heads_lag_correctly() {
+fn explicit_safe_finalized_pointer_control() {
     let mut h = ActionTestHarness::default();
 
-    // Before the lag window: both heads stay at genesis.
-    h.mine_l1_blocks(10);
+    // Initially both safe and finalized are at genesis (block 0).
+    assert_eq!(h.l1.safe_number(), 0);
+    assert_eq!(h.l1.finalized_number(), 0);
     assert_eq!(h.l1.safe_head().number(), 0);
     assert_eq!(h.l1.finalized_head().number(), 0);
 
-    // Once we pass the safe lag of 32, safe head advances.
-    h.mine_l1_blocks(25); // total = 35
-    assert_eq!(h.l1.safe_head().number(), 35u64.saturating_sub(32));
+    // Mine several blocks; pointers do not move automatically.
+    h.mine_l1_blocks(5);
+    assert_eq!(h.l1.safe_number(), 0, "safe pointer should not auto-advance");
+    assert_eq!(h.l1.finalized_number(), 0, "finalized pointer should not auto-advance");
 
-    // Once we pass finalized lag of 64, finalized head advances.
-    h.mine_l1_blocks(30); // total = 65
-    assert_eq!(h.l1.finalized_head().number(), 65u64.saturating_sub(64));
+    // Advance safe one block at a time.
+    h.l1.act_l1_safe_next(); // → 1
+    assert_eq!(h.l1.safe_number(), 1);
+    h.l1.act_l1_safe_next(); // → 2
+    assert_eq!(h.l1.safe_number(), 2);
+
+    // Advance finalized one block at a time (capped at safe).
+    h.l1.act_l1_finalize_next(); // → 1
+    assert_eq!(h.l1.finalized_number(), 1);
+    h.l1.act_l1_finalize_next(); // → 2
+    assert_eq!(h.l1.finalized_number(), 2);
+
+    // Finalized cannot exceed safe.
+    h.l1.act_l1_finalize_next(); // clamped to safe=2
+    assert_eq!(h.l1.finalized_number(), 2);
+
+    // Jump to specific values.
+    h.l1.act_l1_safe(5);
+    assert_eq!(h.l1.safe_number(), 5);
+    h.l1.act_l1_finalize(4);
+    assert_eq!(h.l1.finalized_number(), 4);
+
+    // Safe head block reference is correct.
+    assert_eq!(h.l1.safe_head().number(), 5);
+    assert_eq!(h.l1.finalized_head().number(), 4);
+
+    // After a reorg, pointers are clamped.
+    h.l1.reorg_to(3).unwrap();
+    assert_eq!(h.l1.safe_number(), 3, "safe clamped to reorg target");
+    assert_eq!(h.l1.finalized_number(), 3, "finalized clamped to safe after reorg");
 }
 
 /// The Action trait impl returns the mined block number.

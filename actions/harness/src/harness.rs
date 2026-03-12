@@ -6,7 +6,7 @@ use base_protocol::{BlockInfo, L2BlockInfo};
 
 use crate::{
     ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, Batcher, BatcherConfig,
-    L1Miner, L1MinerConfig, L2BlockBuilder, L2BlockProvider, L2Verifier, SharedL1Chain,
+    L1Miner, L1MinerConfig, L2BlockProvider, L2Sequencer, L2Verifier, SharedL1Chain,
     block_info_from,
 };
 
@@ -16,11 +16,11 @@ use crate::{
 /// the [`L1Miner`] and the [`RollupConfig`] shared by all actors. Tests drive
 /// the harness step-by-step using the public actor APIs.
 ///
-/// L2 blocks are produced by an [`L2BlockBuilder`] obtained via
-/// [`create_l2_builder`]. Blocks contain real L1-info deposit transactions and
-/// real signed EIP-1559 user transactions — no simplified mock types.
+/// L2 blocks are produced by an [`L2Sequencer`] obtained via
+/// [`create_l2_sequencer`]. Blocks contain real L1-info deposit transactions
+/// and real signed EIP-1559 user transactions — no simplified mock types.
 ///
-/// [`create_l2_builder`]: ActionTestHarness::create_l2_builder
+/// [`create_l2_sequencer`]: ActionTestHarness::create_l2_sequencer
 ///
 /// # Example
 ///
@@ -95,16 +95,17 @@ impl ActionTestHarness {
         Batcher::new(&mut self.l1, source, &self.rollup_config, config)
     }
 
-    /// Create an [`L2BlockBuilder`] starting from L2 genesis, wired to a
+    /// Create an [`L2Sequencer`] starting from L2 genesis, wired to a
     /// snapshot of the current L1 chain.
     ///
-    /// The returned builder generates real [`OpBlock`]s with a proper L1-info
-    /// deposit transaction (first tx) and signed EIP-1559 user transactions.
-    /// Call `build_next_block()` once per L2 block to advance the builder.
+    /// The returned sequencer generates real [`OpBlock`]s with a proper
+    /// L1-info deposit transaction (first tx) and signed EIP-1559 user
+    /// transactions. Call `build_next_block()` once per L2 block to advance
+    /// the sequencer.
     ///
     /// After mining new L1 blocks, push them to the [`SharedL1Chain`] returned
-    /// alongside the verifier so the builder sees the updated epochs.
-    pub fn create_l2_builder(&self, l1_chain: SharedL1Chain) -> L2BlockBuilder {
+    /// alongside the verifier so the sequencer sees the updated epochs.
+    pub fn create_l2_sequencer(&self, l1_chain: SharedL1Chain) -> L2Sequencer {
         let l1_genesis_hash = l1_chain.get_block(0).map(|b| b.hash()).unwrap_or_default();
 
         let genesis_head = L2BlockInfo {
@@ -120,7 +121,7 @@ impl ActionTestHarness {
 
         let system_config = self.rollup_config.genesis.system_config.unwrap_or_default();
 
-        L2BlockBuilder::new(genesis_head, l1_chain, self.rollup_config.clone(), system_config)
+        L2Sequencer::new(genesis_head, l1_chain, self.rollup_config.clone(), system_config)
     }
 
     /// Create an [`L2Verifier`] wired to the harness's L1 chain.

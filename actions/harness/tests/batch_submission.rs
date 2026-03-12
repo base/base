@@ -1,7 +1,8 @@
 #![doc = "Action tests for L2 batch submission via the Batcher actor."]
 
 use base_action_harness::{
-    Action, ActionL2Source, ActionTestHarness, BatcherConfig, BatcherError, SharedL1Chain,
+    Action, ActionL2Source, ActionTestHarness, BatchType, BatcherConfig, BatcherError, GarbageKind,
+    SharedL1Chain,
 };
 use base_protocol::DERIVATION_VERSION_0;
 
@@ -11,16 +12,16 @@ use base_protocol::DERIVATION_VERSION_0;
 /// [`OpBlock`]: base_alloy_consensus::OpBlock
 fn make_source(h: &ActionTestHarness, n: u64) -> ActionL2Source {
     let chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut builder = h.create_l2_builder(chain);
+    let mut sequencer = h.create_l2_sequencer(chain);
     let mut source = ActionL2Source::new();
     for _ in 0..n {
-        source.push(builder.build_next_block().expect("build L2 block"));
+        source.push(sequencer.build_next_block().expect("build L2 block"));
     }
     source
 }
 
 // ---------------------------------------------------------------------------
-// Basic encoding
+// Basic encoding — singular batches
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -48,6 +49,30 @@ fn batcher_errors_when_no_l2_blocks() {
     let mut batcher = h.create_batcher(source, BatcherConfig::default());
     let err = batcher.advance().expect_err("should fail with no blocks");
     assert!(matches!(err, BatcherError::NoBlocks));
+}
+
+// ---------------------------------------------------------------------------
+// Span batch encoding
+// ---------------------------------------------------------------------------
+
+#[test]
+fn batcher_produces_frames_for_single_block_span() {
+    let mut h = ActionTestHarness::default();
+    let source = make_source(&h, 1);
+    let cfg = BatcherConfig { batch_type: BatchType::Span, ..Default::default() };
+    let mut batcher = h.create_batcher(source, cfg);
+    let frames = batcher.advance().expect("span advance should succeed");
+    assert!(!frames.is_empty(), "expected at least one span frame");
+}
+
+#[test]
+fn batcher_produces_span_frames_for_multiple_blocks() {
+    let mut h = ActionTestHarness::default();
+    let source = make_source(&h, 5);
+    let cfg = BatcherConfig { batch_type: BatchType::Span, ..Default::default() };
+    let mut batcher = h.create_batcher(source, cfg);
+    let frames = batcher.advance().expect("span advance should succeed");
+    assert!(!frames.is_empty(), "expected at least one span frame");
 }
 
 // ---------------------------------------------------------------------------
@@ -127,13 +152,13 @@ fn action_act_delegates_to_advance() {
 fn two_batcher_cycles_each_submit_distinct_txs() {
     let mut h = ActionTestHarness::default();
     let chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut builder = h.create_l2_builder(chain);
+    let mut sequencer = h.create_l2_sequencer(chain);
 
     // First cycle: 2 L2 blocks.
     {
         let mut source = ActionL2Source::new();
         for _ in 0..2 {
-            source.push(builder.build_next_block().expect("build"));
+            source.push(sequencer.build_next_block().expect("build"));
         }
         let mut batcher = h.create_batcher(source, BatcherConfig::default());
         batcher.advance().expect("first advance");
@@ -142,11 +167,11 @@ fn two_batcher_cycles_each_submit_distinct_txs() {
     let after_first = h.l1.tip().batcher_txs.len();
     assert!(after_first > 0);
 
-    // Second cycle: 3 more L2 blocks (builder state continues from block 3).
+    // Second cycle: 3 more L2 blocks (sequencer state continues from block 3).
     {
         let mut source = ActionL2Source::new();
         for _ in 0..3 {
-            source.push(builder.build_next_block().expect("build"));
+            source.push(sequencer.build_next_block().expect("build"));
         }
         let mut batcher = h.create_batcher(source, BatcherConfig::default());
         batcher.advance().expect("second advance");
@@ -167,7 +192,7 @@ fn two_batcher_cycles_each_submit_distinct_txs() {
 fn batcher_txs_survive_reorg_and_resubmit() {
     let mut h = ActionTestHarness::default();
     let chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut builder = h.create_l2_builder(chain);
+    let mut sequencer = h.create_l2_sequencer(chain);
 
     // Mine an empty block 1 so we have a safe reorg target.
     h.l1.mine_block();
@@ -176,7 +201,7 @@ fn batcher_txs_survive_reorg_and_resubmit() {
     {
         let mut source = ActionL2Source::new();
         for _ in 0..2 {
-            source.push(builder.build_next_block().expect("build"));
+            source.push(sequencer.build_next_block().expect("build"));
         }
         let mut batcher = h.create_batcher(source, BatcherConfig::default());
         batcher.advance().expect("advance");
@@ -194,7 +219,7 @@ fn batcher_txs_survive_reorg_and_resubmit() {
     {
         let mut source = ActionL2Source::new();
         for _ in 0..2 {
-            source.push(builder.build_next_block().expect("build"));
+            source.push(sequencer.build_next_block().expect("build"));
         }
         let mut batcher = h.create_batcher(source, BatcherConfig::default());
         batcher.advance().expect("re-advance after reorg");
@@ -204,4 +229,48 @@ fn batcher_txs_survive_reorg_and_resubmit() {
     // Post-reorg block 2 should also contain batcher txs.
     assert!(!h.l1.tip().batcher_txs.is_empty());
     assert_eq!(h.l1.latest_number(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// Garbage frame tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn garbage_random_submitted_to_l1() {
+    let mut h = ActionTestHarness::default();
+    let source = ActionL2Source::new();
+    let mut batcher = h.create_batcher(source, BatcherConfig::default());
+    batcher.submit_garbage_frames(GarbageKind::Random);
+    drop(batcher);
+    assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
+}
+
+#[test]
+fn garbage_truncated_submitted_to_l1() {
+    let mut h = ActionTestHarness::default();
+    let source = ActionL2Source::new();
+    let mut batcher = h.create_batcher(source, BatcherConfig::default());
+    batcher.submit_garbage_frames(GarbageKind::Truncated);
+    drop(batcher);
+    assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
+}
+
+#[test]
+fn garbage_malformed_rlp_submitted_to_l1() {
+    let mut h = ActionTestHarness::default();
+    let source = ActionL2Source::new();
+    let mut batcher = h.create_batcher(source, BatcherConfig::default());
+    batcher.submit_garbage_frames(GarbageKind::MalformedRlp);
+    drop(batcher);
+    assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
+}
+
+#[test]
+fn garbage_invalid_brotli_submitted_to_l1() {
+    let mut h = ActionTestHarness::default();
+    let source = ActionL2Source::new();
+    let mut batcher = h.create_batcher(source, BatcherConfig::default());
+    batcher.submit_garbage_frames(GarbageKind::InvalidBrotli);
+    drop(batcher);
+    assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
 }

@@ -1,12 +1,36 @@
-use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bytes};
-use base_alloy_consensus::OpTxEnvelope;
 use base_batcher_driver::{ChannelDriver, ChannelDriverConfig, ChannelDriverError};
+use base_comp::{BatchComposeError, BatchComposer};
 use base_consensus_genesis::RollupConfig;
-use base_protocol::{DERIVATION_VERSION_0, Frame, L1BlockInfoTx, SingleBatch};
+use base_protocol::{Batch, DERIVATION_VERSION_0, Frame, SingleBatch, SpanBatch, SpanBatchError};
 use tracing::info;
 
 use crate::{Action, L1Miner, L2BlockProvider, PendingTx};
+
+/// Selects whether the batcher encodes blocks as individual [`SingleBatch`]es
+/// or groups them into a single [`SpanBatch`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BatchType {
+    /// Each L2 block is encoded as a separate [`SingleBatch`] (default).
+    #[default]
+    Single,
+    /// All L2 blocks in one cycle are grouped into a single [`SpanBatch`].
+    Span,
+}
+
+/// Selects the kind of invalid frame data submitted by
+/// [`Batcher::submit_garbage_frames`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GarbageKind {
+    /// 200 bytes of `0xDE` — random-looking, no valid structure.
+    Random,
+    /// Valid `DERIVATION_VERSION_0` prefix + 16-byte channel ID, then EOF.
+    Truncated,
+    /// Valid frame header (channel ID + frame num + length), invalid RLP body.
+    MalformedRlp,
+    /// Valid frame header, brotli magic byte `0x00`, then random bytes.
+    InvalidBrotli,
+}
 
 /// Configuration for the [`Batcher`] actor.
 #[derive(Debug, Clone)]
@@ -18,6 +42,11 @@ pub struct BatcherConfig {
     pub inbox_address: Address,
     /// [`ChannelDriverConfig`] passed through to the underlying encoder.
     pub driver: ChannelDriverConfig,
+    /// Whether to encode blocks as [`SingleBatch`]es or a [`SpanBatch`].
+    pub batch_type: BatchType,
+    /// When `true`, submit frames as blob transactions (stored in
+    /// [`L1Block::blob_sidecars`](crate::L1Block)) rather than calldata.
+    pub use_blobs: bool,
 }
 
 impl Default for BatcherConfig {
@@ -26,6 +55,8 @@ impl Default for BatcherConfig {
             batcher_address: Address::repeat_byte(0xBA),
             inbox_address: Address::repeat_byte(0xCA),
             driver: ChannelDriverConfig::default(),
+            batch_type: BatchType::Single,
+            use_blobs: false,
         }
     }
 }
@@ -36,20 +67,24 @@ pub enum BatcherError {
     /// The L2 source was exhausted before any blocks could be batched.
     #[error("no L2 blocks available to batch")]
     NoBlocks,
-    /// The L1 info deposit transaction could not be decoded.
-    #[error("missing or undecodable L1 info deposit in block")]
-    MissingL1Info,
+    /// Conversion from L2 block to single batch failed.
+    #[error("batch compose error: {0}")]
+    Compose(#[from] BatchComposeError),
     /// The channel driver failed to encode or compress the batches.
     #[error("channel driver error: {0}")]
     Driver(#[from] ChannelDriverError),
+    /// Span batch construction failed.
+    #[error("span batch error: {0}")]
+    SpanBatch(#[from] SpanBatchError),
 }
 
 /// Batcher actor for action tests.
 ///
 /// `Batcher` drains [`OpBlock`]s from an [`L2BlockProvider`], encodes each
-/// one as a [`SingleBatch`], compresses all batches for the current cycle into
-/// a channel via [`ChannelDriver`] (Brotli-10), and submits the resulting
-/// frame data to the [`L1Miner`] as a [`PendingTx`].
+/// one as a [`SingleBatch`] or groups them into a [`SpanBatch`] depending on
+/// [`BatcherConfig::batch_type`], compresses batches into a channel via
+/// [`ChannelDriver`] (Brotli-10), and submits the resulting frame data to the
+/// [`L1Miner`] as a [`PendingTx`].
 ///
 /// The translation from `OpBlock` to `SingleBatch` mirrors op-batcher:
 /// 1. Decode the L1 info from the first (deposit) transaction to get the epoch.
@@ -68,6 +103,7 @@ pub struct Batcher<'a, S: L2BlockProvider> {
     l2_source: S,
     driver: ChannelDriver,
     config: BatcherConfig,
+    rollup_config: RollupConfig,
 }
 
 impl<'a, S: L2BlockProvider> Batcher<'a, S> {
@@ -83,11 +119,15 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
         config: BatcherConfig,
     ) -> Self {
         let driver = ChannelDriver::new(rollup_config.clone(), config.driver.clone());
-        Self { l1_miner, l2_source, driver, config }
+        Self { l1_miner, l2_source, driver, config, rollup_config: rollup_config.clone() }
     }
 
     /// Drain all available L2 blocks and encode them into frames without
     /// submitting to L1.
+    ///
+    /// For [`BatchType::Single`], each block is encoded as a [`SingleBatch`].
+    /// For [`BatchType::Span`], all blocks are collected and grouped into one
+    /// [`SpanBatch`] before flushing.
     ///
     /// Returns the encoded frames so callers can inspect or submit them
     /// selectively. Use [`submit_frames`] to submit a subset of frames to
@@ -98,35 +138,21 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
     /// # Errors
     ///
     /// Returns [`BatcherError::NoBlocks`] if the L2 source is empty.
-    /// Returns [`BatcherError::MissingL1Info`] if the first tx is not a valid deposit.
+    /// Returns [`BatcherError::Compose`] if the first tx is not a valid deposit.
     /// Returns [`BatcherError::Driver`] if channel encoding fails.
+    /// Returns [`BatcherError::SpanBatch`] if span batch construction fails.
     pub fn encode_frames(&mut self) -> Result<Vec<Frame>, BatcherError> {
+        match self.config.batch_type {
+            BatchType::Single => self.encode_single_frames(),
+            BatchType::Span => self.encode_span_frames(),
+        }
+    }
+
+    fn encode_single_frames(&mut self) -> Result<Vec<Frame>, BatcherError> {
         let mut batch_count = 0u64;
 
         while let Some(block) = self.l2_source.next_block() {
-            // The first transaction in every L2 block must be the L1 info deposit.
-            let first_tx = block.body.transactions.first().ok_or(BatcherError::MissingL1Info)?;
-            let deposit = first_tx.as_deposit().ok_or(BatcherError::MissingL1Info)?;
-            let l1_info = L1BlockInfoTx::decode_calldata(&deposit.input)
-                .map_err(|_| BatcherError::MissingL1Info)?;
-            let epoch = l1_info.id();
-
-            // Filter deposits; EIP-2718-encode user transactions.
-            let transactions: Vec<Bytes> = block
-                .body
-                .transactions
-                .iter()
-                .filter(|tx| !matches!(tx, OpTxEnvelope::Deposit(_)))
-                .map(|tx| tx.encoded_2718().into())
-                .collect();
-
-            let batch = SingleBatch {
-                parent_hash: block.header.parent_hash,
-                epoch_num: epoch.number,
-                epoch_hash: epoch.hash,
-                timestamp: block.header.timestamp,
-                transactions,
-            };
+            let (batch, _) = BatchComposer::block_to_single_batch(&block)?;
             self.driver.add_batch(batch);
             batch_count += 1;
         }
@@ -136,7 +162,31 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
         }
 
         let frames = self.driver.flush()?;
-        info!(batches = batch_count, frames = frames.len(), "batcher encoded frames");
+        info!(batches = batch_count, frames = frames.len(), "batcher encoded single frames");
+        Ok(frames)
+    }
+
+    fn encode_span_frames(&mut self) -> Result<Vec<Frame>, BatcherError> {
+        let mut singles: Vec<(SingleBatch, u64)> = Vec::new();
+
+        while let Some(block) = self.l2_source.next_block() {
+            let (single, l1_info) = BatchComposer::block_to_single_batch(&block)?;
+            singles.push((single, l1_info.sequence_number()));
+        }
+
+        if singles.is_empty() {
+            return Err(BatcherError::NoBlocks);
+        }
+
+        let mut span_batch =
+            SpanBatch { chain_id: self.rollup_config.l2_chain_id.id(), ..Default::default() };
+        for (single, seq_num) in singles {
+            span_batch.append_singular_batch(single, seq_num)?;
+        }
+
+        self.driver.add_raw_batch(Batch::Span(span_batch));
+        let frames = self.driver.flush()?;
+        info!(frames = frames.len(), "batcher encoded span frames");
         Ok(frames)
     }
 
@@ -157,6 +207,56 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
             });
         }
         info!(frames = frames.len(), "batcher submitted frames to L1");
+    }
+
+    /// Submit intentionally malformed frame data to L1.
+    ///
+    /// These garbage frames should be silently dropped by the derivation
+    /// pipeline. Use them to test that invalid data does not corrupt channel
+    /// state or advance the safe head.
+    pub fn submit_garbage_frames(&mut self, kind: GarbageKind) {
+        let input = match kind {
+            GarbageKind::Random => {
+                // 200 bytes of 0xDE — no valid structure.
+                Bytes::from(vec![0xDE_u8; 200])
+            }
+            GarbageKind::Truncated => {
+                // DERIVATION_VERSION_0 prefix + 16-byte channel ID, then EOF.
+                let mut v = vec![DERIVATION_VERSION_0];
+                v.extend_from_slice(&[0u8; 16]); // channel ID
+                Bytes::from(v)
+            }
+            GarbageKind::MalformedRlp => {
+                // Valid frame header bytes then invalid RLP body.
+                // Header: channel_id(16) + frame_number(2) + frame_data_length(4)
+                // Body: 0xFF bytes (invalid RLP for a byte-string context).
+                let mut v = vec![DERIVATION_VERSION_0];
+                v.extend_from_slice(&[0u8; 16]); // channel ID
+                v.extend_from_slice(&[0u8, 0u8]); // frame number = 0
+                v.extend_from_slice(&[0u8, 0u8, 0u8, 10u8]); // frame data length = 10
+                v.extend_from_slice(&[0xFFu8; 10]); // invalid RLP
+                v.push(0u8); // is_last = false
+                Bytes::from(v)
+            }
+            GarbageKind::InvalidBrotli => {
+                // Valid frame header, brotli magic `0x00`, then random bytes.
+                let mut v = vec![DERIVATION_VERSION_0];
+                v.extend_from_slice(&[0u8; 16]); // channel ID
+                v.extend_from_slice(&[0u8, 0u8]); // frame number = 0
+                v.extend_from_slice(&[0u8, 0u8, 0u8, 20u8]); // frame data length = 20
+                v.push(0x00); // brotli version prefix
+                v.extend_from_slice(&[0xDE_u8; 19]); // random body
+                v.push(1u8); // is_last = true
+                Bytes::from(v)
+            }
+        };
+
+        self.l1_miner.submit_tx(PendingTx {
+            from: self.config.batcher_address,
+            to: self.config.inbox_address,
+            input,
+        });
+        info!(kind = ?kind, "batcher submitted garbage frame");
     }
 
     /// Encode and submit all frames in one step (convenience wrapper).
