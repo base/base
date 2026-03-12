@@ -14,7 +14,7 @@ use crate::TxManagerError;
 /// Pairs the optional cached nonce with a generation counter that
 /// distinguishes "never initialized" (`generation == 0`) from
 /// "cleared by [`NonceManager::reset`]" (`generation > 0`).
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct NonceState {
     /// The cached nonce value, or `None` if uninitialized / reset.
     nonce: Option<u64>,
@@ -44,12 +44,6 @@ impl NonceState {
     /// Returns the current generation counter.
     pub const fn generation(&self) -> u64 {
         self.generation
-    }
-}
-
-impl Default for NonceState {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
