@@ -1,5 +1,5 @@
 use core::fmt::{Debug, Formatter};
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, num::NonZeroUsize, sync::Arc};
 
 use base_ring_buffer::RingBuffer;
 use parking_lot::RwLock;
@@ -21,7 +21,7 @@ pub type PositionedPayload = (FlashblockPosition, Utf8Bytes);
 const DEFAULT_CHANNEL_CAPACITY: usize = 100;
 
 /// Default ring buffer capacity (number of retained entries for replay).
-const DEFAULT_RING_BUFFER_CAPACITY: usize = 16;
+const DEFAULT_RING_BUFFER_CAPACITY: NonZeroUsize = NonZeroUsize::new(16).unwrap();
 
 /// A WebSocket publisher that accepts connections from clients and broadcasts
 /// serialized messages to all connected subscribers.
@@ -61,7 +61,7 @@ impl WebSocketPublisher {
     pub fn with_capacity(
         addr: SocketAddr,
         channel_capacity: usize,
-        ring_buffer_capacity: usize,
+        ring_buffer_capacity: NonZeroUsize,
     ) -> std::io::Result<Self> {
         let (pipe, _) = broadcast::channel(channel_capacity);
         let cancel = CancellationToken::new();
@@ -170,7 +170,8 @@ mod tests {
     #[tokio::test]
     async fn publish_with_custom_capacity() {
         let addr = ephemeral_addr();
-        let publisher = WebSocketPublisher::with_capacity(addr, 8, 4).unwrap();
+        let publisher =
+            WebSocketPublisher::with_capacity(addr, 8, NonZeroUsize::new(4).unwrap()).unwrap();
 
         let (mut client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -215,7 +216,8 @@ mod tests {
     #[tokio::test]
     async fn ring_buffer_stores_entries() {
         let addr = ephemeral_addr();
-        let publisher = WebSocketPublisher::with_capacity(addr, 8, 4).unwrap();
+        let publisher =
+            WebSocketPublisher::with_capacity(addr, 8, NonZeroUsize::new(4).unwrap()).unwrap();
 
         publisher.publish(&serde_json::json!({"n": 1}), 100, 0).unwrap();
         publisher.publish(&serde_json::json!({"n": 2}), 100, 1).unwrap();

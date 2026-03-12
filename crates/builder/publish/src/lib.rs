@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod metrics;
-pub use metrics::{PublishingMetrics, PublisherMetrics};
+pub use metrics::{NoopPublisherMetrics, PublishingMetrics, PublisherMetrics};
 
 mod broadcast;
 pub use broadcast::BroadcastLoop;

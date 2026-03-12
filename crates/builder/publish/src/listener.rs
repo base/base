@@ -146,13 +146,51 @@ fn parse_resume_position(request: &http::Request<()>) -> Option<FlashblockPositi
 
 #[cfg(test)]
 mod tests {
-    use std::{net::SocketAddr, time::Duration};
+    use std::{
+        net::SocketAddr,
+        num::NonZeroUsize,
+        sync::atomic::{AtomicU64, Ordering},
+        time::Duration,
+    };
 
     use futures::StreamExt;
     use tokio::sync::broadcast;
     use tokio_tungstenite::{connect_async, tungstenite::Message};
 
     use super::*;
+
+    fn cap(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).unwrap()
+    }
+
+    struct MockMetrics {
+        opened: AtomicU64,
+        closed: AtomicU64,
+        sent: AtomicU64,
+    }
+
+    impl MockMetrics {
+        fn new() -> Self {
+            Self { opened: AtomicU64::new(0), closed: AtomicU64::new(0), sent: AtomicU64::new(0) }
+        }
+    }
+
+    impl PublisherMetrics for MockMetrics {
+        fn on_message_sent(&self) {
+            self.sent.fetch_add(1, Ordering::Relaxed);
+        }
+        fn on_connection_opened(&self) {
+            self.opened.fetch_add(1, Ordering::Relaxed);
+        }
+        fn on_connection_closed(&self, _duration: Duration) {
+            self.closed.fetch_add(1, Ordering::Relaxed);
+        }
+        fn on_lagged(&self, _skipped: u64) {}
+        fn on_payload_size(&self, _size: usize) {}
+        fn on_send_error(&self) {}
+        fn on_handshake_error(&self) {}
+    }
+
 
     async fn bind_listener() -> (TcpListener, SocketAddr) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -166,7 +204,7 @@ mod tests {
         let (tx, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics = Arc::new(MockMetrics::new());
-        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(16)));
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(16))));
 
         let handle = tokio::spawn({
             let cancel = cancel.clone();
@@ -194,7 +232,7 @@ mod tests {
         let (_, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics: Arc<dyn PublisherMetrics> = Arc::new(MockMetrics::new());
-        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(16)));
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(16))));
 
         let handle = tokio::spawn({
             let cancel = cancel.clone();
@@ -213,7 +251,7 @@ mod tests {
         let (tx, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics = Arc::new(MockMetrics::new());
-        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(16)));
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(16))));
 
         let handle = tokio::spawn({
             let cancel = cancel.clone();
@@ -282,7 +320,7 @@ mod tests {
         let (_tx, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics = Arc::new(MockMetrics::new());
-        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(16)));
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(16))));
 
         // Pre-populate the ring buffer with entries.
         {
