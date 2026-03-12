@@ -89,7 +89,7 @@ fn interleave_rollup_config(batcher: &BatcherConfig) -> RollupConfig {
 /// ## Recovery
 ///
 /// After the timeout, the batcher resubmits all L2 blocks in a fresh channel
-/// (new ChannelDriver instance = new channel ID) within the timeout window.
+/// (new `ChannelDriver` instance = new channel ID) within the timeout window.
 /// The pipeline derives the L2 blocks from the new channel.
 ///
 /// ## Harness requirements
@@ -327,7 +327,7 @@ async fn channel_timeout_recovery_resubmits_successfully() {
 /// is already supported by the harness: call `submit_frames` for each
 /// frame individually, then mine one block.
 ///
-/// ## NOTE on IndexedTraversal limitation
+/// ## NOTE on `IndexedTraversal` limitation
 ///
 /// The current `IndexedTraversal` mode processes one L1 block at a time
 /// and clears the channel bank between blocks. This means multi-block

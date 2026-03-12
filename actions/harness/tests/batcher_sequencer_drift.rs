@@ -70,7 +70,7 @@ fn drift_rollup_config(batcher: &BatcherConfig) -> RollupConfig {
 /// - `L2Sequencer::pin_l1_origin()` to prevent epoch advance (ALREADY EXISTS)
 /// - `L2Sequencer::build_empty_block()` for forced-empty blocks (ALREADY EXISTS)
 /// - The sequencer to allow building blocks past the drift boundary. Currently
-///   `build_next_block` does NOT enforce max_sequencer_drift — it builds any
+///   `build_next_block` does NOT enforce `max_sequencer_drift` — it builds any
 ///   block the caller requests. The enforcement happens in the derivation
 ///   pipeline's `BatchQueue`, which is what we are testing here.
 #[tokio::test]
@@ -161,7 +161,7 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
 // B. Sequencer drift with forced-empty blocks
 // ---------------------------------------------------------------------------
 
-/// When max_sequencer_drift is exceeded, the sequencer should produce
+/// When `max_sequencer_drift` is exceeded, the sequencer should produce
 /// deposit-only (empty) blocks. These empty blocks should be accepted by
 /// the derivation pipeline because they contain no user transactions.
 ///
