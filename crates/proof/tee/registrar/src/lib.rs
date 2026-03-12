@@ -7,6 +7,9 @@ pub use config::{BoundlessConfig, RegistrarConfig, RemoteSignerConfig, SigningCo
 mod error;
 pub use error::{RegistrarError, Result};
 
+mod registry;
+pub use registry::RegistryChecker;
+
 mod traits;
 pub use traits::{AttestationProofProvider, InstanceDiscovery};
 
