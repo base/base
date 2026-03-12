@@ -146,15 +146,12 @@ impl NonceManager {
     pub async fn next_nonce(&self) -> Result<NonceGuard, TxManagerError> {
         for attempt in 0..Self::MAX_RETRY_ATTEMPTS {
             // Acquire the owned lock once upfront.
-            let mut guard = Arc::clone(&self.inner).lock_owned().await;
+            let guard = Arc::clone(&self.inner).lock_owned().await;
 
             // Fast path: cache is populated — read-and-increment in a
             // single lock round-trip.
             if let Some(n) = guard.nonce {
-                let next = n.checked_add(1).ok_or(TxManagerError::NonceOverflow)?;
-                guard.nonce = Some(next);
-                debug!(nonce = n, "nonce reserved");
-                return Ok(NonceGuard { guard: Some(guard), nonce: n });
+                return Self::reserve_nonce(guard, n);
             }
 
             // Cache miss: snapshot the generation, then drop the lock so
@@ -199,14 +196,27 @@ impl NonceManager {
                 debug!(nonce = fetched, "nonce fetched from chain");
                 fetched
             });
-            let next = nonce.checked_add(1).ok_or(TxManagerError::NonceOverflow)?;
-            guard.nonce = Some(next);
-            debug!(nonce, "nonce reserved");
-            return Ok(NonceGuard { guard: Some(guard), nonce });
+            return Self::reserve_nonce(guard, nonce);
         }
 
         warn!(attempts = Self::MAX_RETRY_ATTEMPTS, "nonce acquisition failed after max retries",);
         Err(TxManagerError::NonceAcquisitionFailed)
+    }
+
+    /// Advances the cached nonce by one and returns a [`NonceGuard`]
+    /// holding the lock and the reserved value.
+    ///
+    /// Both the fast path (cache hit) and Phase 3 (after RPC fetch) use
+    /// this single call-site for the `checked_add` overflow check,
+    /// ensuring consistent behavior.
+    fn reserve_nonce(
+        mut guard: OwnedMutexGuard<NonceState>,
+        nonce: u64,
+    ) -> Result<NonceGuard, TxManagerError> {
+        let next = nonce.checked_add(1).ok_or(TxManagerError::NonceOverflow)?;
+        guard.nonce = Some(next);
+        debug!(nonce, "nonce reserved");
+        Ok(NonceGuard { guard: Some(guard), nonce })
     }
 
     /// Clears the cached nonce, forcing a fresh chain fetch on the next
@@ -304,6 +314,20 @@ mod tests {
                 test_barrier: Some(barrier),
             }
         }
+    }
+
+    #[test]
+    fn nonce_state_new_is_none_and_generation_zero() {
+        let state = NonceState::new();
+        assert_eq!(state.nonce(), None);
+        assert_eq!(state.generation(), 0);
+    }
+
+    #[test]
+    fn nonce_state_default_matches_new() {
+        let state = NonceState::default();
+        assert_eq!(state.nonce(), None);
+        assert_eq!(state.generation(), 0);
     }
 
     #[tokio::test]
