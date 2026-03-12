@@ -152,20 +152,20 @@ impl BroadcastLoop {
         }
 
         // Phase 2: drain receiver messages that accumulated during phase 1.
-        // This loop is bounded: the broadcast channel has finite capacity, so
-        // `try_recv` will either return `Empty` (buffer drained) or `Lagged`
-        // (channel overflowed) — both terminate the loop.
+        // Collect everything synchronously first so the drain is bounded by the
+        // channel's capacity at this instant — no new messages can arrive between
+        // try_recv calls (unlike the previous approach that interleaved sends).
         //
         // Sentinel dedup: sentinels (None-positioned entries) only exist in
         // the ring buffer. The broadcast channel carries `FlashblockPosition`
         // (always `Some`), so sentinels cannot appear in phase 2.
+        let mut pending = Vec::new();
         loop {
             match self.receiver.try_recv() {
                 Ok((pos, data)) => {
-                    if !sent_positions.insert(pos) {
-                        continue;
+                    if sent_positions.insert(pos) {
+                        pending.push(data);
                     }
-                    self.send_replay_message(data).await?;
                 }
                 Err(broadcast::error::TryRecvError::Empty) => break,
                 Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
@@ -179,6 +179,9 @@ impl BroadcastLoop {
                     return Err(ReplayError::ChannelClosed);
                 }
             }
+        }
+        for data in pending {
+            self.send_replay_message(data).await?;
         }
 
         Ok(())
