@@ -242,15 +242,14 @@ async fn concurrent_next_nonce_and_reset_stress() {
             nonces.push(h.await.unwrap());
         }
 
-        // All nonces within a round must be unique.
+        // Each round re-fetches from chain (0 — no txs sent) so the
+        // sorted nonces must form the contiguous range 0..batch_size.
         nonces.sort();
-        for pair in nonces.windows(2) {
-            assert_ne!(
-                pair[0], pair[1],
-                "round {round}: duplicate nonce {}, full set: {nonces:?}",
-                pair[0],
-            );
-        }
+        let expected: Vec<u64> = (0..batch_size as u64).collect();
+        assert_eq!(
+            nonces, expected,
+            "round {round}: nonces should be contiguous 0..{batch_size}",
+        );
 
         // Reset clears the cache, forcing a fresh chain fetch next round.
         manager.reset().await;
