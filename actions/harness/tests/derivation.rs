@@ -11,43 +11,37 @@ use base_action_harness::{
 };
 use base_blobs::BlobEncoder;
 use base_consensus_genesis::{
-    CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, ChainGenesis, HardForkConfig,
-    L1ChainConfig, RollupConfig, SystemConfig,
+    CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, L1ChainConfig, RollupConfig,
 };
+use base_consensus_registry::Registry;
 use base_protocol::{
     BlockInfo, DEPOSIT_EVENT_ABI_HASH, DEPOSIT_EVENT_VERSION_0, DERIVATION_VERSION_0, L2BlockInfo,
 };
 
 /// Build a [`RollupConfig`] wired to the given [`BatcherConfig`].
 ///
-/// The config is minimal but sufficient for derivation tests:
-/// - `batch_inbox_address` matches the batcher's inbox so frames are picked up.
-/// - `genesis.system_config.batcher_address` matches the batcher's address so
-///   the pipeline's batcher-address filter accepts the L1 transactions.
-/// - `block_time = 2` so L2 timestamps advance.
-/// - `seq_window_size` and `channel_timeout` are generous so no windows expire.
+/// Starts from the real Base mainnet config and overrides only the fields that
+/// must differ for in-memory action tests:
+/// - `batch_inbox_address` and `batcher_address` wire the test actors.
+/// - `genesis` is zeroed so the in-memory L1 miner (which starts at ts=0) is
+///   the chain origin.
+/// - Canyon through Fjord are set to `Some(0)` so the batcher's brotli
+///   compression and span-batch encoding are accepted from genesis.
+/// - Hardforks after Fjord retain their mainnet timestamps, which are
+///   unreachable during tests (L1 miner starts at ts=0), making them
+///   effectively inactive without losing their real config values.
 fn rollup_config_for(batcher: &BatcherConfig) -> RollupConfig {
-    RollupConfig {
-        batch_inbox_address: batcher.inbox_address,
-        block_time: 2,
-        max_sequencer_drift: 600,
-        seq_window_size: 3600,
-        channel_timeout: 300,
-        genesis: ChainGenesis {
-            system_config: Some(SystemConfig {
-                batcher_address: batcher.batcher_address,
-                gas_limit: 30_000_000,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        // The batcher uses brotli compression which BatchReader only accepts
-        // when Fjord is active.  Setting fjord_time=0 also implicitly activates
-        // all earlier hardforks (canyon/delta/ecotone) via the cascading
-        // is_X_active checks, so no transition blocks are triggered.
-        hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
-        ..Default::default()
-    }
+    let mut rc = Registry::rollup_config(8453).expect("mainnet config").clone();
+    rc.batch_inbox_address = batcher.inbox_address;
+    rc.genesis.system_config.as_mut().unwrap().batcher_address = batcher.batcher_address;
+    rc.genesis.l2_time = 0;
+    rc.genesis.l1 = Default::default();
+    rc.genesis.l2 = Default::default();
+    rc.hardforks.canyon_time = Some(0);
+    rc.hardforks.delta_time = Some(0);
+    rc.hardforks.ecotone_time = Some(0);
+    rc.hardforks.fjord_time = Some(0);
+    rc
 }
 
 /// The derivation pipeline reads a single batcher frame from L1 and derives
@@ -400,23 +394,8 @@ async fn batch_accepted_at_last_seq_window_block() {
     const SEQ_WINDOW: u64 = 4;
 
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = RollupConfig {
-        batch_inbox_address: batcher_cfg.inbox_address,
-        block_time: 2,
-        max_sequencer_drift: 600,
-        seq_window_size: SEQ_WINDOW,
-        channel_timeout: 300,
-        genesis: ChainGenesis {
-            system_config: Some(SystemConfig {
-                batcher_address: batcher_cfg.batcher_address,
-                gas_limit: 30_000_000,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
-        ..Default::default()
-    };
+    let mut rollup_cfg = rollup_config_for(&batcher_cfg);
+    rollup_cfg.seq_window_size = SEQ_WINDOW;
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Build L2 block 1 referencing L1 genesis (epoch 0).
@@ -642,24 +621,8 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     let batcher_b =
         BatcherConfig { batcher_address: Address::repeat_byte(0xBB), ..batcher_a.clone() };
 
-    let rollup_cfg = RollupConfig {
-        batch_inbox_address: batcher_a.inbox_address,
-        block_time: 2,
-        max_sequencer_drift: 600,
-        seq_window_size: 3600,
-        channel_timeout: 300,
-        l1_system_config_address: l1_sys_cfg_addr,
-        genesis: ChainGenesis {
-            system_config: Some(SystemConfig {
-                batcher_address: batcher_a.batcher_address,
-                gas_limit: 30_000_000,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
-        ..Default::default()
-    };
+    let mut rollup_cfg = rollup_config_for(&batcher_a);
+    rollup_cfg.l1_system_config_address = l1_sys_cfg_addr;
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
     // Build all L2 blocks (1, 2, and 3) upfront from the L1 genesis state.
@@ -806,23 +769,8 @@ async fn multi_l2_per_l1_epoch() {
 async fn batch_past_sequence_window_rejected() {
     const SEQ_WINDOW: u64 = 3;
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = RollupConfig {
-        batch_inbox_address: batcher_cfg.inbox_address,
-        block_time: 2,
-        max_sequencer_drift: 600,
-        seq_window_size: SEQ_WINDOW,
-        channel_timeout: 300,
-        genesis: ChainGenesis {
-            system_config: Some(SystemConfig {
-                batcher_address: batcher_cfg.batcher_address,
-                gas_limit: 30_000_000,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
-        ..Default::default()
-    };
+    let mut rollup_cfg = rollup_config_for(&batcher_cfg);
+    rollup_cfg.seq_window_size = SEQ_WINDOW;
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Build L2 block 1 (epoch 0).
@@ -1887,24 +1835,8 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     let batcher_b =
         BatcherConfig { batcher_address: Address::repeat_byte(0xBB), ..batcher_a.clone() };
 
-    let rollup_cfg = RollupConfig {
-        batch_inbox_address: batcher_a.inbox_address,
-        block_time: 2,
-        max_sequencer_drift: 600,
-        seq_window_size: 3600,
-        channel_timeout: 300,
-        l1_system_config_address: l1_sys_cfg_addr,
-        genesis: ChainGenesis {
-            system_config: Some(SystemConfig {
-                batcher_address: batcher_a.batcher_address,
-                gas_limit: 30_000_000,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
-        ..Default::default()
-    };
+    let mut rollup_cfg = rollup_config_for(&batcher_a);
+    rollup_cfg.l1_system_config_address = l1_sys_cfg_addr;
     let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 

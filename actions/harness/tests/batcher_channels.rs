@@ -4,7 +4,8 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, BatcherConfig, ChannelDriverConfig, L1MinerConfig,
     SharedL1Chain, block_info_from,
 };
-use base_consensus_genesis::{ChainGenesis, HardForkConfig, RollupConfig, SystemConfig};
+use base_consensus_genesis::RollupConfig;
+use base_consensus_registry::Registry;
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -12,51 +13,39 @@ use base_consensus_genesis::{ChainGenesis, HardForkConfig, RollupConfig, SystemC
 
 /// Build a [`RollupConfig`] with tight `channel_timeout` for timeout tests.
 ///
+/// Starts from the real Base mainnet config. Overrides:
 /// - `channel_timeout = 2` so a channel whose first frame lands in L1 block N
 ///   expires if no more frames arrive by block N+2.
-/// - All other windows are generous so only the timeout matters.
+/// - Batcher actor fields, genesis, and hardfork times as in all test configs.
 fn timeout_rollup_config(batcher: &BatcherConfig) -> RollupConfig {
-    RollupConfig {
-        batch_inbox_address: batcher.inbox_address,
-        block_time: 2,
-        max_sequencer_drift: 600,
-        seq_window_size: 3600,
-        channel_timeout: 2,
-        genesis: ChainGenesis {
-            system_config: Some(SystemConfig {
-                batcher_address: batcher.batcher_address,
-                gas_limit: 30_000_000,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
-        ..Default::default()
-    }
+    let mut rc = base_rollup_config_for(batcher);
+    rc.channel_timeout = 2;
+    rc
 }
 
 /// Build a standard [`RollupConfig`] for interleaving tests.
 ///
-/// Uses generous windows; the test exercises the channel bank's ability to
-/// track multiple open channels rather than any timeout logic.
+/// Starts from the real Base mainnet config. Uses generous windows; the test
+/// exercises the channel bank's ability to track multiple open channels rather
+/// than any timeout logic.
 fn interleave_rollup_config(batcher: &BatcherConfig) -> RollupConfig {
-    RollupConfig {
-        batch_inbox_address: batcher.inbox_address,
-        block_time: 2,
-        max_sequencer_drift: 600,
-        seq_window_size: 3600,
-        channel_timeout: 300,
-        genesis: ChainGenesis {
-            system_config: Some(SystemConfig {
-                batcher_address: batcher.batcher_address,
-                gas_limit: 30_000_000,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
-        ..Default::default()
-    }
+    base_rollup_config_for(batcher)
+}
+
+/// Base config for all channel tests: real Base mainnet config with test actor
+/// fields and hardfork times overridden for the in-memory L1 miner.
+fn base_rollup_config_for(batcher: &BatcherConfig) -> RollupConfig {
+    let mut rc = Registry::rollup_config(8453).expect("mainnet config").clone();
+    rc.batch_inbox_address = batcher.inbox_address;
+    rc.genesis.system_config.as_mut().unwrap().batcher_address = batcher.batcher_address;
+    rc.genesis.l2_time = 0;
+    rc.genesis.l1 = Default::default();
+    rc.genesis.l2 = Default::default();
+    rc.hardforks.canyon_time = Some(0);
+    rc.hardforks.delta_time = Some(0);
+    rc.hardforks.ecotone_time = Some(0);
+    rc.hardforks.fjord_time = Some(0);
+    rc
 }
 
 // ---------------------------------------------------------------------------

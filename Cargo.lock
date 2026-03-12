@@ -2314,6 +2314,7 @@ dependencies = [
  "base-comp",
  "base-consensus-derive",
  "base-consensus-genesis",
+ "base-consensus-registry",
  "base-execution-chainspec",
  "base-execution-evm",
  "base-protocol",
