@@ -166,8 +166,8 @@ async fn reset_then_rollback_interaction() {
     assert_eq!(g_next.nonce(), 1);
 }
 
-#[tokio::test]
-async fn nonce_guard_is_send() {
+#[test]
+fn nonce_guard_is_send() {
     // `NonceGuard` must be `Send` so it can be moved into a `tokio::spawn`
     // task after nonce reservation in `send_async()`.
     /// Asserts that `T` implements [`Send`].
