@@ -20,8 +20,8 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # misc
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "time"] }
 tracing = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["sync", "time"] }
 
 [dev-dependencies]
 rstest.workspace = true
