@@ -333,7 +333,10 @@ mod tests {
         "invalid safe_abort_nonce_too_low_count: must be greater than 0"
     )]
     #[case::nonce_overflow(TxManagerError::NonceOverflow, "nonce overflow")]
-    #[case::nonce_acquisition_failed(TxManagerError::NonceAcquisitionFailed, "nonce acquisition failed")]
+    #[case::nonce_acquisition_failed(
+        TxManagerError::NonceAcquisitionFailed,
+        "nonce acquisition failed"
+    )]
     #[case::rpc(TxManagerError::Rpc("test".to_string()), "rpc error: test")]
     fn display_output(#[case] error: TxManagerError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);
