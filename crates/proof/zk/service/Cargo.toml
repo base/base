@@ -12,11 +12,6 @@ base-zk-db.workspace = true
 base-zk-outbox.workspace = true
 base-zk-client = { workspace = true, features = ["server"] }
 
-alloy-provider.workspace = true
-alloy-primitives.workspace = true
-alloy-rpc-types.workspace = true
-base-alloy-network.workspace = true
-
 async-trait.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 
@@ -33,7 +28,6 @@ nonzero_ext.workspace = true
 uuid = { workspace = true, features = ["v4", "serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-bincode.workspace = true
 
 anyhow.workspace = true
 

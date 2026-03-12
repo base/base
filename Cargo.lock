@@ -4649,17 +4649,12 @@ dependencies = [
 name = "base-zk-service"
 version = "0.0.0"
 dependencies = [
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
  "anyhow",
  "async-trait",
  "axum",
- "base-alloy-network",
  "base-zk-client",
  "base-zk-db",
  "base-zk-outbox",
- "bincode 2.0.1",
  "governor",
  "nonzero_ext",
  "reqwest 0.13.2",
