@@ -79,8 +79,8 @@ pub struct RegistrarConfig {
     // ── L1 ────────────────────────────────────────────────────────────────────
     /// L1 Ethereum RPC endpoint.
     pub l1_rpc_url: Url,
-    /// `SystemConfigGlobal` contract address on L1.
-    pub system_config_global_address: Address,
+    /// `TEEProverRegistry` contract address on L1.
+    pub tee_prover_registry_address: Address,
     // ── AWS ───────────────────────────────────────────────────────────────────
     /// AWS ALB target group ARN for prover instance discovery.
     pub target_group_arn: String,
@@ -115,7 +115,7 @@ impl std::fmt::Debug for RegistrarConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RegistrarConfig")
             .field("l1_rpc_url", &url_origin(&self.l1_rpc_url))
-            .field("system_config_global_address", &self.system_config_global_address)
+            .field("tee_prover_registry_address", &self.tee_prover_registry_address)
             .field("target_group_arn", &self.target_group_arn)
             .field("aws_region", &self.aws_region)
             .field("prover_port", &self.prover_port)

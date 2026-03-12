@@ -42,7 +42,7 @@ pub struct AttestationResponse {
     pub signer_address: Address,
 }
 
-/// ZK proof ready for on-chain registration via `SystemConfigGlobal.registerSigner`.
+/// ZK proof ready for on-chain registration via `TEEProverRegistry.registerSigner`.
 #[derive(Debug, Clone)]
 pub struct AttestationProof {
     /// ABI-encoded `VerifierJournal` output from the Boundless / Automata SDK.
@@ -51,7 +51,7 @@ pub struct AttestationProof {
     pub proof_bytes: Bytes,
 }
 
-/// A signer currently registered on-chain via `SystemConfigGlobal`.
+/// A signer currently registered on-chain via `TEEProverRegistry`.
 #[derive(Debug, Clone)]
 pub struct RegisteredSigner {
     /// The signer's Ethereum address.

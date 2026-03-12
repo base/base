@@ -28,9 +28,9 @@ pub(crate) struct Cli {
     #[arg(long, env = "REGISTRAR_L1_RPC_URL")]
     l1_rpc_url: Url,
 
-    /// `SystemConfigGlobal` contract address on L1.
-    #[arg(long, env = "REGISTRAR_SYSTEM_CONFIG_GLOBAL_ADDRESS")]
-    system_config_global_address: Address,
+    /// `TEEProverRegistry` contract address on L1.
+    #[arg(long, env = "REGISTRAR_TEE_PROVER_REGISTRY_ADDRESS")]
+    tee_prover_registry_address: Address,
 
     // ── AWS ───────────────────────────────────────────────────────────────────
     /// AWS ALB target group ARN for prover instance discovery.
@@ -151,7 +151,7 @@ impl Cli {
 
         Ok(RegistrarConfig {
             l1_rpc_url: self.l1_rpc_url,
-            system_config_global_address: self.system_config_global_address,
+            tee_prover_registry_address: self.tee_prover_registry_address,
             target_group_arn: self.target_group_arn,
             aws_region: self.aws_region,
             prover_port: self.prover_port,
@@ -192,7 +192,7 @@ mod tests {
             "prover-registrar",
             "--l1-rpc-url",
             "http://localhost:8545",
-            "--system-config-global-address",
+            "--tee-prover-registry-address",
             "0x0000000000000000000000000000000000000001",
             "--target-group-arn",
             "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/test/abc",
@@ -214,7 +214,7 @@ mod tests {
             "prover-registrar",
             "--l1-rpc-url",
             "http://localhost:8545",
-            "--system-config-global-address",
+            "--tee-prover-registry-address",
             "0x0000000000000000000000000000000000000001",
             "--target-group-arn",
             "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/test/abc",
@@ -261,7 +261,7 @@ mod tests {
             "prover-registrar",
             "--l1-rpc-url",
             "http://localhost:8545",
-            "--system-config-global-address",
+            "--tee-prover-registry-address",
             "0x0000000000000000000000000000000000000001",
             "--target-group-arn",
             "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/test/abc",
@@ -283,7 +283,7 @@ mod tests {
             "prover-registrar",
             "--l1-rpc-url",
             "http://localhost:8545",
-            "--system-config-global-address",
+            "--tee-prover-registry-address",
             "0x0000000000000000000000000000000000000001",
             "--target-group-arn",
             "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/test/abc",
