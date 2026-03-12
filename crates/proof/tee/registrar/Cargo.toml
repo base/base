@@ -26,5 +26,3 @@ thiserror.workspace = true
 # Misc
 hex.workspace = true
 
-[dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
