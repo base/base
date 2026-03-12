@@ -3,8 +3,10 @@ use std::time::Duration;
 use alloy_primitives::Address;
 use url::Url;
 
-use crate::utils::{BaselineError, Result};
-use crate::workload::PrecompileTarget;
+use crate::{
+    utils::{BaselineError, Result},
+    workload::PrecompileTarget,
+};
 
 /// Configuration for a single transaction type with its weight.
 #[derive(Debug, Clone)]

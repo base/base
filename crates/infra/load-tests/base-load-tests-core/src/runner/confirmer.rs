@@ -57,10 +57,7 @@ impl ConfirmerHandle {
 
     /// Returns the in-flight count for a specific sender.
     pub fn in_flight_for(&self, address: &Address) -> u64 {
-        self.in_flight_per_sender
-            .get(address)
-            .map(|c| c.load(Ordering::SeqCst))
-            .unwrap_or(0)
+        self.in_flight_per_sender.get(address).map(|c| c.load(Ordering::SeqCst)).unwrap_or(0)
     }
 
     /// Returns the total in-flight count.

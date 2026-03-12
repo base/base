@@ -1,8 +1,8 @@
 use alloy_network::{Ethereum, EthereumWallet};
 use alloy_primitives::{Address, TxHash, U256};
 use alloy_provider::{
-    fillers::{FillProvider, JoinFill, WalletFiller},
     Identity, Provider, ProviderBuilder, RootProvider,
+    fillers::{FillProvider, JoinFill, WalletFiller},
 };
 use alloy_rpc_types::TransactionReceipt;
 use tracing::instrument;

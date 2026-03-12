@@ -134,8 +134,7 @@ impl LoadRunner {
                     generator = generator.with_payload(TransferPayload::default(), weight_pct);
                 }
                 TxType::Calldata { max_size } => {
-                    generator =
-                        generator.with_payload(CalldataPayload::new(*max_size), weight_pct);
+                    generator = generator.with_payload(CalldataPayload::new(*max_size), weight_pct);
                 }
                 TxType::Erc20 { contract } => {
                     generator = generator.with_payload(
@@ -144,8 +143,7 @@ impl LoadRunner {
                     );
                 }
                 TxType::Precompile { target } => {
-                    generator =
-                        generator.with_payload(PrecompilePayload::new(*target), weight_pct);
+                    generator = generator.with_payload(PrecompilePayload::new(*target), weight_pct);
                 }
             }
         }
@@ -335,18 +333,14 @@ impl LoadRunner {
                 let batch = std::mem::replace(&mut pending_batch, Vec::with_capacity(batch_size));
                 batch_start = Instant::now();
 
-                let submitted = self
-                    .submit_batch(batch, &confirmer_handle, &mut backoff)
-                    .await;
+                let submitted = self.submit_batch(batch, &confirmer_handle, &mut backoff).await;
 
                 debug!(submitted, "batch submitted");
             }
         }
 
         if !pending_batch.is_empty() {
-            let submitted = self
-                .submit_batch(pending_batch, &confirmer_handle, &mut backoff)
-                .await;
+            let submitted = self.submit_batch(pending_batch, &confirmer_handle, &mut backoff).await;
 
             debug!(submitted, "final batch submitted");
         }

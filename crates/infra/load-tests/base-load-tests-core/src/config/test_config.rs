@@ -1,12 +1,13 @@
-use std::path::Path;
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 use alloy_primitives::Address;
 use serde::{Deserialize, Serialize};
 
-use crate::runner::{TxConfig, TxType};
-use crate::utils::{BaselineError, Result};
-use crate::workload::PrecompileTarget;
+use crate::{
+    runner::{TxConfig, TxType},
+    utils::{BaselineError, Result},
+    workload::PrecompileTarget,
+};
 
 /// Configuration for a load test, loadable from YAML.
 #[derive(Debug, Clone, Serialize, Deserialize)]

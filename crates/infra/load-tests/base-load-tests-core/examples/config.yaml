@@ -5,7 +5,7 @@
 rpc: https://base-sepolia-alpha.cbhq.net
 
 # [REQUIRED] Private key for funding test accounts (hex with 0x prefix)
-funder_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+funder_key: "<your key here>"
 
 # Mnemonic phrase for deriving sender accounts
 # If not provided, accounts are generated deterministically from seed

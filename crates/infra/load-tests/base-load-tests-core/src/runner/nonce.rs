@@ -94,7 +94,8 @@ impl NonceTracker {
         let pending = self.pending.get_mut(address);
 
         if let (Some(expected), Some(pending)) = (expected, pending) {
-            let stale: Vec<u64> = pending.iter().filter(|&&n| n < on_chain_nonce).copied().collect();
+            let stale: Vec<u64> =
+                pending.iter().filter(|&&n| n < on_chain_nonce).copied().collect();
             for nonce in &stale {
                 pending.remove(nonce);
                 debug!(address = %address, nonce, "removed stale pending nonce");

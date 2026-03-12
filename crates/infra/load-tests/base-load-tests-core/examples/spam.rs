@@ -10,9 +10,10 @@ use eyre::{Result, bail};
 async fn main() -> Result<()> {
     init_tracing();
 
-    let config_path = std::env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/config.yaml")
-    });
+    let config_path = std::env::args()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/config.yaml"));
 
     if !config_path.exists() {
         bail!("config file not found: {}", config_path.display());
@@ -25,11 +26,8 @@ async fn main() -> Result<()> {
 
     let rpc_url = test_config.rpc.parse()?;
     let client = RpcClient::new(rpc_url);
-    let rpc_chain_id = if test_config.chain_id.is_none() {
-        Some(client.chain_id().await?)
-    } else {
-        None
-    };
+    let rpc_chain_id =
+        if test_config.chain_id.is_none() { Some(client.chain_id().await?) } else { None };
 
     let load_config = test_config.to_load_config(rpc_chain_id)?;
 
