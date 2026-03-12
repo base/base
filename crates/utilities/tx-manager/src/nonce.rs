@@ -42,9 +42,11 @@ impl NonceManager {
     /// increment the cached value locally without making RPC calls.
     ///
     /// The RPC fetch (when needed) is performed without holding the
-    /// assignment lock, so concurrent callers are not blocked by the
-    /// network round-trip. The lock is only held for the fast
-    /// read-and-increment path.
+    /// lock, so concurrent callers are not blocked by the network
+    /// round-trip. Once a nonce is reserved, the returned
+    /// [`NonceGuard`] holds the lock for its entire lifetime,
+    /// serializing all nonce assignment until the guard is dropped or
+    /// rolled back.
     ///
     /// Returns a [`NonceGuard`] that holds the mutex lock for the duration
     /// of transaction signing. Drop the guard on success, or call
@@ -76,12 +78,10 @@ impl NonceManager {
                 // unset. Another caller may have won the race; its value
                 // is used.
                 let mut guard = Arc::clone(&self.inner).lock_owned().await;
-                if guard.is_none() {
-                    *guard = Some(fetched);
+                let nonce = *guard.get_or_insert_with(|| {
                     debug!(nonce = fetched, "nonce fetched from chain");
-                }
-
-                let nonce = guard.expect("cache is initialized");
+                    fetched
+                });
                 *guard = Some(nonce + 1);
                 debug!(nonce, "nonce reserved");
                 return Ok(NonceGuard { guard: Some(guard), nonce });
@@ -139,6 +139,14 @@ impl NonceGuard {
         if let Some(mut guard) = self.guard.take() {
             *guard = Some(self.nonce);
             debug!(nonce = self.nonce, "nonce rolled back");
+        }
+    }
+}
+
+impl Drop for NonceGuard {
+    fn drop(&mut self) {
+        if self.guard.is_some() {
+            debug!(nonce = self.nonce, "nonce consumed");
         }
     }
 }
