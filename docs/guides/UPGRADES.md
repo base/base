@@ -247,7 +247,7 @@ Until an activation timestamp is confirmed, leave `base: None` and the chain arr
 
 ### 7. Update the default rollup config
 
-**File:** [`crates/proof/tee/core/src/config/defaults.rs`](https://github.com/base/base/blob/main/crates/proof/tee/core/src/config/defaults.rs)
+**File:** [`crates/consensus/registry/src/test_utils/base_sepolia.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/base_sepolia.rs)
 
 The `default_rollup_config()` function sets all upgrades active at genesis for dev use. Add the new upgrade:
 
