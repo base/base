@@ -60,8 +60,10 @@ impl NonceManager {
     /// # Errors
     ///
     /// Returns [`TxManagerError::Rpc`] if the provider call fails,
-    /// or [`TxManagerError::NonceOverflow`] if the nonce exceeds
-    /// `u64::MAX`.
+    /// [`TxManagerError::NonceAcquisitionFailed`] if the nonce cache is
+    /// repeatedly cleared by concurrent [`reset`](Self::reset) calls during
+    /// acquisition, or [`TxManagerError::NonceOverflow`] if the nonce
+    /// exceeds `u64::MAX`.
     pub async fn next_nonce(&self) -> Result<NonceGuard, TxManagerError> {
         for attempt in 0..Self::MAX_RETRY_ATTEMPTS {
             // Phase 1: peek under the lock to check whether init is needed.
@@ -112,7 +114,7 @@ impl NonceManager {
         }
 
         warn!(attempts = Self::MAX_RETRY_ATTEMPTS, "nonce acquisition failed after max retries",);
-        Err(TxManagerError::Rpc("nonce cache repeatedly cleared during acquisition".to_string()))
+        Err(TxManagerError::NonceAcquisitionFailed)
     }
 
     /// Clears the cached nonce, forcing a fresh chain fetch on the next
