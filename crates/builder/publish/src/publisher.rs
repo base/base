@@ -1,5 +1,5 @@
 use core::fmt::{Debug, Formatter};
-use std::{io, net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 
 use base_ring_buffer::RingBuffer;
 use parking_lot::RwLock;
@@ -48,7 +48,7 @@ impl WebSocketPublisher {
     /// Spawns a background listener task that accepts WebSocket connections
     /// and broadcasts messages published via [`Self::publish`]. Metrics are
     /// registered automatically under the `base_builder` scope.
-    pub fn new(addr: SocketAddr) -> io::Result<Self> {
+    pub fn new(addr: SocketAddr) -> std::io::Result<Self> {
         Self::with_capacity(addr, DEFAULT_CHANNEL_CAPACITY, DEFAULT_RING_BUFFER_CAPACITY)
     }
 
@@ -62,7 +62,7 @@ impl WebSocketPublisher {
         addr: SocketAddr,
         channel_capacity: usize,
         ring_buffer_capacity: usize,
-    ) -> io::Result<Self> {
+    ) -> std::io::Result<Self> {
         let (pipe, _) = broadcast::channel(channel_capacity);
         let cancel = CancellationToken::new();
         let metrics: Arc<dyn PublisherMetrics> = Arc::new(PublishingMetrics::default());
@@ -98,7 +98,7 @@ impl WebSocketPublisher {
         payload: &impl Serialize,
         block_number: u64,
         flashblock_index: u64,
-    ) -> io::Result<usize> {
+    ) -> Result<usize, serde_json::Error> {
         let json = serde_json::to_string(payload)?;
         let size = json.len();
         let utf8_bytes = Utf8Bytes::from(json);

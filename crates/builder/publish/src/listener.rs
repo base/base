@@ -69,47 +69,55 @@ impl Listener {
                     let ring_buffer = Arc::clone(&ring_buffer);
                     let metrics = Arc::clone(&metrics);
 
-                    let (pos_tx, pos_rx) = tokio::sync::oneshot::channel();
-                    let handshake = accept_hdr_async(connection, move |req: &http::Request<()>, resp| {
-                        let _ = pos_tx.send(parse_resume_position(req));
-                        Ok(resp)
+                    tokio::spawn(async move {
+                        let (pos_tx, pos_rx) = tokio::sync::oneshot::channel();
+                        let handshake = accept_hdr_async(connection, move |req: &http::Request<()>, resp| {
+                            let _ = pos_tx.send(parse_resume_position(req));
+                            Ok(resp)
+                        });
+
+                        let stream = match timeout(HANDSHAKE_TIMEOUT, handshake).await {
+                            Ok(Ok(stream)) => stream,
+                            Ok(Err(e)) => {
+                                metrics.on_handshake_error();
+                                warn!(peer_addr = %peer_addr, error = %e, "Failed to accept WebSocket connection");
+                                return;
+                            }
+                            Err(_) => {
+                                metrics.on_handshake_error();
+                                warn!(peer_addr = %peer_addr, "WebSocket handshake timed out");
+                                return;
+                            }
+                        };
+
+                        let resume_from = pos_rx.await.ok().flatten();
+                        if let Some(ref pos) = resume_from {
+                            debug!(
+                                peer_addr = %peer_addr,
+                                block_number = pos.0,
+                                flashblock_index = pos.1,
+                                "Client requesting replay"
+                            );
+                        }
+
+                        metrics.on_connection_opened();
+                        let connected_at = std::time::Instant::now();
+                        debug!(peer_addr = %peer_addr, "WebSocket connection established");
+
+                        BroadcastLoop::new(
+                            stream,
+                            Arc::clone(&metrics),
+                            cancel,
+                            receiver,
+                            Arc::clone(&ring_buffer),
+                            resume_from,
+                        )
+                        .run()
+                        .await;
+
+                        metrics.on_connection_closed(connected_at.elapsed());
+                        debug!(peer_addr = %peer_addr, "WebSocket connection closed");
                     });
-
-                    match timeout(HANDSHAKE_TIMEOUT, handshake).await {
-                        Ok(Ok(stream)) => {
-                            let resume_from = pos_rx.await.ok().flatten();
-                            tokio::spawn({
-                                let metrics = Arc::clone(&metrics);
-                                async move {
-                                    metrics.on_connection_opened();
-                                    let connected_at = std::time::Instant::now();
-                                    debug!(peer_addr = %peer_addr, "WebSocket connection established");
-
-                                    BroadcastLoop::new(
-                                        stream,
-                                        Arc::clone(&metrics),
-                                        cancel,
-                                        receiver,
-                                        Arc::clone(&ring_buffer),
-                                        resume_from,
-                                    )
-                                    .run()
-                                    .await;
-
-                                    metrics.on_connection_closed(connected_at.elapsed());
-                                    debug!(peer_addr = %peer_addr, "WebSocket connection closed");
-                                }
-                            });
-                        }
-                        Ok(Err(e)) => {
-                            metrics.on_handshake_error();
-                            warn!(peer_addr = %peer_addr, error = %e, "Failed to accept WebSocket connection");
-                        }
-                        Err(_) => {
-                            metrics.on_handshake_error();
-                            warn!(peer_addr = %peer_addr, "WebSocket handshake timed out");
-                        }
-                    }
                 }
             }
         }

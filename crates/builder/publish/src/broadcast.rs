@@ -122,8 +122,13 @@ impl BroadcastLoop {
     ///   `cutoff`, tracking sent positions for dedup.
     /// - **Phase 2**: Drain any messages that accumulated on the receiver
     ///   during phase 1, deduplicating by position.
+    ///
+    /// Checks the cancellation token between sends so shutdown is not blocked
+    /// for the full duration of a large replay.
     async fn replay(&mut self, cutoff: &FlashblockPosition) -> Result<(), ReplayError> {
         // Phase 1: snapshot ring buffer and replay.
+        // `Utf8Bytes` is reference-counted (`bytes::Bytes`), so cloning is O(1)
+        // per entry. Lock hold time is bounded by entry count, not payload size.
         let snapshot: Vec<_> = {
             let buf = self.ring_buffer.read();
             buf.positioned_entries_after(cutoff)
@@ -132,6 +137,9 @@ impl BroadcastLoop {
         };
         let mut sent_positions = HashSet::with_capacity(snapshot.len());
         for (pos, val) in snapshot {
+            if self.cancel.is_cancelled() {
+                return Err(ReplayError::Cancelled);
+            }
             if let Some(p) = pos {
                 sent_positions.insert(p);
             }
@@ -139,7 +147,17 @@ impl BroadcastLoop {
         }
 
         // Phase 2: drain receiver messages that accumulated during phase 1.
+        // This loop is bounded: the broadcast channel has finite capacity, so
+        // `try_recv` will either return `Empty` (buffer drained) or `Lagged`
+        // (channel overflowed) — both terminate the loop.
+        //
+        // Sentinel dedup: sentinels (None-positioned entries) only exist in
+        // the ring buffer. The broadcast channel carries `FlashblockPosition`
+        // (always `Some`), so sentinels cannot appear in phase 2.
         loop {
+            if self.cancel.is_cancelled() {
+                return Err(ReplayError::Cancelled);
+            }
             match self.receiver.try_recv() {
                 Ok((pos, data)) => {
                     if !sent_positions.insert(pos) {
@@ -148,7 +166,13 @@ impl BroadcastLoop {
                     self.send_replay_message(data).await?;
                 }
                 Err(broadcast::error::TryRecvError::Empty) => break,
-                Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
+                    warn!(
+                        skipped = skipped,
+                        "Broadcast receiver lagged during replay, client may have gaps"
+                    );
+                    return Err(ReplayError::Lagged(skipped));
+                }
                 Err(broadcast::error::TryRecvError::Closed) => {
                     return Err(ReplayError::ChannelClosed);
                 }
@@ -170,24 +194,23 @@ impl BroadcastLoop {
 }
 
 /// Errors that can occur during the replay phase.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 enum ReplayError {
     /// A replay message send timed out.
+    #[error("replay send timed out")]
     SendTimeout,
+    /// The publisher was cancelled during replay.
+    #[error("publisher cancelled during replay")]
+    Cancelled,
     /// The broadcast channel was closed during replay.
+    #[error("broadcast channel closed during replay")]
     ChannelClosed,
+    /// The broadcast receiver lagged during replay, losing messages.
+    #[error("broadcast receiver lagged during replay, lost {0} messages")]
+    Lagged(u64),
     /// A WebSocket send error occurred.
-    WebSocket(tokio_tungstenite::tungstenite::Error),
-}
-
-impl core::fmt::Display for ReplayError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::SendTimeout => write!(f, "replay send timed out"),
-            Self::ChannelClosed => write!(f, "broadcast channel closed during replay"),
-            Self::WebSocket(e) => write!(f, "websocket error during replay: {e}"),
-        }
-    }
+    #[error("websocket error during replay: {0}")]
+    WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
 }
 
 #[cfg(test)]
@@ -331,6 +354,32 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         assert!(metrics.lagged.load(Ordering::Relaxed) > 0);
         cancel.cancel();
+
+        server_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn broadcast_loop_exits_on_channel_closed() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = broadcast::channel::<PositionedPayload>(16);
+        let cancel = CancellationToken::new();
+        let metrics: Arc<dyn crate::PublisherMetrics> = Arc::new(MockMetrics::new());
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(16)));
+
+        let server_handle = tokio::spawn({
+            async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let ws = accept_async(stream).await.unwrap();
+                BroadcastLoop::new(ws, metrics, cancel, rx, ring_buffer, None).run().await;
+            }
+        });
+
+        let (_client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Drop the sender to close the broadcast channel.
+        drop(tx);
 
         server_handle.await.unwrap();
     }

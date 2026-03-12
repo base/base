@@ -192,7 +192,10 @@ where
             "{base}{separator}block_number={block_number}&flashblock_index={flashblock_index}"
         );
 
-        with_params.parse().unwrap_or_else(|_| self.uri.clone())
+        with_params.parse().unwrap_or_else(|e| {
+            warn!(error = %e, uri = %with_params, "Failed to parse reconnect URI, falling back to base URI");
+            self.uri.clone()
+        })
     }
 
     async fn connect_and_listen(&mut self) -> Result<(), Error> {
@@ -298,7 +301,9 @@ where
                 );
                 self.metrics.message_received_from_upstream(&self.uri_label);
 
-                // Update position tracking before calling handler.
+                // Update position tracking before calling handler so that if
+                // the connection drops immediately after, reconnection resumes
+                // from the latest delivered message rather than re-processing it.
                 if let Some(pos) = parse_flashblock_position(text.as_str()) {
                     self.last_position = Some(pos);
                 }
@@ -334,6 +339,10 @@ where
 /// a valid flashblock payload or either field is missing.
 ///
 /// Uses a minimal typed struct to avoid materializing the entire JSON tree.
+///
+/// Called on every incoming text message. Non-flashblock messages (e.g.
+/// heartbeats) will simply fail to deserialize and leave `last_position`
+/// unchanged.
 fn parse_flashblock_position(data: &str) -> Option<(u64, u64)> {
     #[derive(serde::Deserialize)]
     struct PositionExtract {

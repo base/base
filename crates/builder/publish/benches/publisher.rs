@@ -1,3 +1,5 @@
+//! Benchmarks for [`WebSocketPublisher`] publish throughput.
+
 use std::{hint::black_box, net::SocketAddr, time::Duration};
 
 use base_builder_publish::WebSocketPublisher;
@@ -17,7 +19,7 @@ fn ephemeral_addr() -> SocketAddr {
 /// Builds a flashblock-like JSON payload of approximately `tx_count` transactions.
 /// Each transaction is ~512 hex chars plus a receipt with one log entry.
 fn payload_with_txs(tx_count: usize) -> serde_json::Value {
-    let txs: Vec<_> = (0..tx_count).map(|i| format!("0x{}", format!("{i:0>512}"))).collect();
+    let txs: Vec<_> = (0..tx_count).map(|i| format!("0x{i:0>512}")).collect();
     let receipts: Vec<_> = (0..tx_count)
         .map(|i| {
             serde_json::json!({

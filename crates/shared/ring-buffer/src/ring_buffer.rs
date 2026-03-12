@@ -14,11 +14,7 @@ pub struct RingBuffer<I, V> {
     capacity: usize,
 }
 
-impl<I, V> RingBuffer<I, V>
-where
-    I: Ord + Clone,
-    V: Clone,
-{
+impl<I, V> RingBuffer<I, V> {
     /// Creates a new ring buffer with the given capacity.
     ///
     /// # Panics
@@ -39,6 +35,21 @@ where
         self.entries.push_back((position, value));
     }
 
+    /// Returns the number of entries currently stored.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns `true` if the buffer contains no entries.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+impl<I, V> RingBuffer<I, V>
+where
+    I: Ord,
+{
     /// Returns an iterator over values for entries whose position is
     /// strictly greater than `cutoff`, plus all sentinel (`None`-position)
     /// entries.
@@ -62,16 +73,6 @@ where
             None => Some((None, val)),
             _ => None,
         })
-    }
-
-    /// Returns the number of entries currently stored.
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Returns `true` if the buffer contains no entries.
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 }
 
