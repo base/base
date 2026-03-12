@@ -159,6 +159,17 @@ impl SimpleTxManager {
     /// fixed delay between retries. Only errors where
     /// [`TxManagerError::is_retryable`] returns `true` trigger a retry.
     ///
+    /// # Cancellation safety
+    ///
+    /// This future is **not** cancellation-safe. Each retry iteration
+    /// delegates to [`craft_tx`](Self::craft_tx), which acquires a nonce
+    /// from the [`NonceManager`]. If the future is dropped after nonce
+    /// acquisition but before signing completes, the nonce is consumed
+    /// without producing a transaction, creating a permanent nonce gap.
+    /// Callers must not wrap this future in `tokio::select!`,
+    /// `tokio::time::timeout`, or similar combinators that may drop it
+    /// mid-flight.
+    ///
     /// # Errors
     ///
     /// Returns immediately with [`TxManagerError::ChannelClosed`] if the
@@ -248,9 +259,18 @@ impl SimpleTxManager {
     /// 1. Query gas price caps via [`suggest_gas_price_caps`](Self::suggest_gas_price_caps)
     /// 2. Check fee limits via [`FeeCalculator::check_limits`]
     /// 3. Build a [`TransactionRequest`] with all fields set manually
-    /// 4. Estimate gas (if `gas_limit == 0`) or validate (if `gas_limit > 0`)
+    /// 4. Estimate gas (if `gas_limit == 0`) or use `max(estimate, candidate.gas_limit)`
     /// 5. Assign nonce via [`NonceManager::next_nonce`]
     /// 6. Sign and RLP-encode to raw transaction bytes
+    ///
+    /// # Cancellation safety
+    ///
+    /// This future is **not** cancellation-safe. If dropped after nonce
+    /// acquisition (step 5) but before signing completes (step 6), the
+    /// nonce is consumed without producing a transaction, creating a
+    /// permanent nonce gap. Callers must not wrap this future in
+    /// `tokio::select!`, `tokio::time::timeout`, or similar combinators
+    /// that may drop it mid-flight.
     ///
     /// # Errors
     ///
@@ -306,14 +326,16 @@ impl SimpleTxManager {
                 .await
                 .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?
         } else {
-            // Validate with the given gas limit.
-            let validation_request = tx_request.clone().with_gas_limit(candidate.gas_limit);
-            let _ = self
+            // Use estimate_gas to enforce intrinsic gas checks (e.g. the
+            // 21 000 minimum for plain value transfers that eth_call would
+            // not catch), then take the max so the caller's explicit gas
+            // limit is honoured as a floor.
+            let estimated = self
                 .provider
-                .call(validation_request)
+                .estimate_gas(tx_request.clone())
                 .await
                 .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
-            candidate.gas_limit
+            candidate.gas_limit.max(estimated)
         };
         tx_request = tx_request.with_gas_limit(gas_limit);
 
