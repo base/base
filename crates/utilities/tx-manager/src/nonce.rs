@@ -140,14 +140,10 @@ impl NonceManager {
                 continue;
             }
 
-            // If `nonce` is still `None`, we are the first writer —
-            // populate the cache with the fetched value. If `Some`,
-            // a concurrent caller that won the race already set it.
-            if guard.nonce.is_none() {
+            let nonce = *guard.nonce.get_or_insert_with(|| {
                 debug!(nonce = fetched, "nonce fetched from chain");
-                guard.nonce = Some(fetched);
-            }
-            let nonce = guard.nonce.expect("always Some: set above or by concurrent caller");
+                fetched
+            });
             return Self::reserve_nonce(guard, nonce);
         }
 
