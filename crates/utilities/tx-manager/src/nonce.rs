@@ -171,3 +171,33 @@ impl Drop for NonceGuard {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_node_bindings::Anvil;
+
+    use super::*;
+
+    impl NonceManager {
+        /// Creates a [`NonceManager`] with the cache pre-seeded to `nonce`.
+        ///
+        /// Test-only: allows exercising edge-case nonce values (e.g.
+        /// `u64::MAX`) without a real chain fetch.
+        fn new_with_nonce(provider: RootProvider, address: Address, nonce: u64) -> Self {
+            Self { inner: Arc::new(Mutex::new(Some(nonce))), provider, address }
+        }
+    }
+
+    #[tokio::test]
+    async fn next_nonce_returns_overflow_at_u64_max() {
+        let anvil = Anvil::new().spawn();
+        let url = anvil.endpoint_url();
+        let provider = RootProvider::new_http(url);
+        let address = anvil.addresses()[0];
+
+        let manager = NonceManager::new_with_nonce(provider, address, u64::MAX);
+
+        let err = manager.next_nonce().await.expect_err("should overflow");
+        assert_eq!(err, TxManagerError::NonceOverflow);
+    }
+}
