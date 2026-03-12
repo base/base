@@ -17,7 +17,7 @@ use crate::TxManagerError;
 #[derive(Debug, Default)]
 pub struct NonceState {
     /// The cached nonce value, or `None` if uninitialized / reset.
-    nonce: Option<u64>,
+    pub nonce: Option<u64>,
     /// Monotonically increasing counter bumped on every
     /// [`NonceManager::reset`].
     ///
@@ -25,26 +25,7 @@ pub struct NonceState {
     /// generation collision (wrapping all the way around to the same
     /// snapshot value) would require 2^64 calls to `reset()`, which
     /// is infeasible in practice.
-    generation: u64,
-}
-
-impl NonceState {
-    /// Creates a new [`NonceState`] with no cached nonce and generation
-    /// zero.
-    pub const fn new() -> Self {
-        Self { nonce: None, generation: 0 }
-    }
-
-    /// Returns the cached nonce value, or `None` if uninitialized /
-    /// reset.
-    pub const fn nonce(&self) -> Option<u64> {
-        self.nonce
-    }
-
-    /// Returns the current generation counter.
-    pub const fn generation(&self) -> u64 {
-        self.generation
-    }
+    pub generation: u64,
 }
 
 /// Manages nonce allocation and tracking.
@@ -74,7 +55,7 @@ impl NonceManager {
     /// The first call to [`next_nonce`](Self::next_nonce) will fetch the
     /// current transaction count from the provider.
     pub fn new(provider: RootProvider, address: Address, rpc_timeout: Duration) -> Self {
-        Self { inner: Arc::new(Mutex::new(NonceState::new())), provider, address, rpc_timeout }
+        Self { inner: Arc::new(Mutex::new(NonceState::default())), provider, address, rpc_timeout }
     }
 
     /// Maximum number of retry attempts when `reset()` races with
@@ -270,17 +251,10 @@ mod tests {
     }
 
     #[test]
-    fn nonce_state_new_is_none_and_generation_zero() {
-        let state = NonceState::new();
-        assert_eq!(state.nonce(), None);
-        assert_eq!(state.generation(), 0);
-    }
-
-    #[test]
-    fn nonce_state_default_matches_new() {
+    fn nonce_state_default_is_none_and_generation_zero() {
         let state = NonceState::default();
-        assert_eq!(state.nonce(), None);
-        assert_eq!(state.generation(), 0);
+        assert_eq!(state.nonce, None);
+        assert_eq!(state.generation, 0);
     }
 
     #[tokio::test]
