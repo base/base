@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};
+#[cfg(test)]
+use tokio::sync::Notify;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use tracing::{debug, info, warn};
 
@@ -37,6 +39,31 @@ impl Default for NonceState {
     }
 }
 
+/// Synchronization barrier for deterministic race-condition testing.
+///
+/// Inserted between Phase 2 (RPC fetch) and Phase 3 (lock
+/// re-acquisition) in [`NonceManager::next_nonce`] to give tests a
+/// window to call [`NonceManager::reset`] and verify the
+/// generation-mismatch retry logic.
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct TestBarrier {
+    /// Signalled by `next_nonce` after the RPC fetch completes, before
+    /// re-acquiring the lock.
+    pub(crate) fetch_completed: Notify,
+    /// Awaited by `next_nonce` after signalling `fetch_completed`.
+    /// The test signals this once it has finished mutating state.
+    pub(crate) may_proceed: Notify,
+}
+
+#[cfg(test)]
+impl TestBarrier {
+    /// Creates a new [`TestBarrier`].
+    pub(crate) fn new() -> Self {
+        Self { fetch_completed: Notify::new(), may_proceed: Notify::new() }
+    }
+}
+
 /// Manages nonce allocation and tracking.
 ///
 /// Wraps a [`tokio::sync::Mutex`] around a [`NonceState`], lazily
@@ -52,6 +79,8 @@ pub struct NonceManager {
     inner: Arc<Mutex<NonceState>>,
     provider: RootProvider,
     address: Address,
+    #[cfg(test)]
+    test_barrier: Option<Arc<TestBarrier>>,
 }
 
 impl NonceManager {
@@ -60,7 +89,13 @@ impl NonceManager {
     /// The first call to [`next_nonce`](Self::next_nonce) will fetch the
     /// current transaction count from the provider.
     pub fn new(provider: RootProvider, address: Address) -> Self {
-        Self { inner: Arc::new(Mutex::new(NonceState::new())), provider, address }
+        Self {
+            inner: Arc::new(Mutex::new(NonceState::new())),
+            provider,
+            address,
+            #[cfg(test)]
+            test_barrier: None,
+        }
     }
 
     /// Maximum number of retry attempts when `reset()` races with
@@ -114,6 +149,14 @@ impl NonceManager {
                         );
                         TxManagerError::Rpc(e.to_string())
                     })?;
+
+                // Test hook: pause between Phase 2 and Phase 3 so tests
+                // can deterministically call reset() during this window.
+                #[cfg(test)]
+                if let Some(barrier) = &self.test_barrier {
+                    barrier.fetch_completed.notify_one();
+                    barrier.may_proceed.notified().await;
+                }
 
                 // Phase 3: re-acquire the lock and populate only if still
                 // unset AND the generation has not changed. If reset()
@@ -229,6 +272,25 @@ mod tests {
                 inner: Arc::new(Mutex::new(NonceState { nonce: Some(nonce), generation: 0 })),
                 provider,
                 address,
+                test_barrier: None,
+            }
+        }
+
+        /// Creates a [`NonceManager`] with a [`TestBarrier`] installed.
+        ///
+        /// The barrier pauses `next_nonce` between the RPC fetch and
+        /// lock re-acquisition, giving the test precise control over
+        /// when `reset()` is called.
+        fn new_with_barrier(
+            provider: RootProvider,
+            address: Address,
+            barrier: Arc<TestBarrier>,
+        ) -> Self {
+            Self {
+                inner: Arc::new(Mutex::new(NonceState::new())),
+                provider,
+                address,
+                test_barrier: Some(barrier),
             }
         }
     }
@@ -244,5 +306,58 @@ mod tests {
 
         let err = manager.next_nonce().await.expect_err("should overflow");
         assert_eq!(err, TxManagerError::NonceOverflow);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn generation_mismatch_retries_after_reset_during_fetch() {
+        let anvil = Anvil::new().spawn();
+        let url = anvil.endpoint_url();
+        let provider = RootProvider::new_http(url);
+        let address = anvil.addresses()[0];
+
+        let barrier = Arc::new(TestBarrier::new());
+        let manager = NonceManager::new_with_barrier(provider, address, Arc::clone(&barrier));
+        let mgr = manager.clone();
+
+        let handle = tokio::spawn(async move { mgr.next_nonce().await });
+
+        // Attempt 0: intercept between fetch and re-lock, then reset to
+        // bump the generation so the fetched value is discarded.
+        barrier.fetch_completed.notified().await;
+        manager.reset().await;
+        barrier.may_proceed.notify_one();
+
+        // Attempt 1: the retry re-fetches. Let it proceed normally.
+        barrier.fetch_completed.notified().await;
+        barrier.may_proceed.notify_one();
+
+        let guard = handle.await.unwrap().expect("should succeed on retry");
+        // Fresh Anvil account — nonce should be 0.
+        assert_eq!(guard.nonce(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn retry_exhaustion_returns_nonce_acquisition_failed() {
+        let anvil = Anvil::new().spawn();
+        let url = anvil.endpoint_url();
+        let provider = RootProvider::new_http(url);
+        let address = anvil.addresses()[0];
+
+        let barrier = Arc::new(TestBarrier::new());
+        let manager = NonceManager::new_with_barrier(provider, address, Arc::clone(&barrier));
+        let mgr = manager.clone();
+
+        let handle = tokio::spawn(async move { mgr.next_nonce().await });
+
+        // Reset during every attempt so the generation always mismatches,
+        // exhausting MAX_RETRY_ATTEMPTS.
+        for _ in 0..NonceManager::MAX_RETRY_ATTEMPTS {
+            barrier.fetch_completed.notified().await;
+            manager.reset().await;
+            barrier.may_proceed.notify_one();
+        }
+
+        let err = handle.await.unwrap().expect_err("should exhaust retries");
+        assert_eq!(err, TxManagerError::NonceAcquisitionFailed);
     }
 }
