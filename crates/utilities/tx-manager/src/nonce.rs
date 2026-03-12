@@ -41,6 +41,11 @@ impl NonceManager {
     /// current transaction count from the provider. Subsequent calls
     /// increment the cached value locally without making RPC calls.
     ///
+    /// The RPC fetch (when needed) is performed without holding the
+    /// assignment lock, so concurrent callers are not blocked by the
+    /// network round-trip. The lock is only held for the fast
+    /// read-and-increment path.
+    ///
     /// Returns a [`NonceGuard`] that holds the mutex lock for the duration
     /// of transaction signing. Drop the guard on success, or call
     /// [`NonceGuard::rollback`] on failure to restore the nonce.
@@ -49,26 +54,53 @@ impl NonceManager {
     ///
     /// Returns [`TxManagerError::Rpc`] if the provider call fails.
     pub async fn next_nonce(&self) -> Result<NonceGuard, TxManagerError> {
-        let mut guard = Arc::clone(&self.inner).lock_owned().await;
+        loop {
+            // Phase 1: peek under the lock to check whether init is needed.
+            let needs_init = self.inner.lock().await.is_none();
 
-        let nonce = match *guard {
-            Some(n) => {
+            // Phase 2: if uninitialized, fetch from chain *without* holding
+            // the lock so concurrent callers are not blocked by the RPC
+            // round-trip. Multiple concurrent callers may fetch redundantly;
+            // only the first writer's value is used.
+            if needs_init {
+                let fetched =
+                    self.provider.get_transaction_count(self.address).await.map_err(|e| {
+                        warn!(
+                            error = %e, address = %self.address,
+                            "failed to fetch nonce from chain",
+                        );
+                        TxManagerError::Rpc(e.to_string())
+                    })?;
+
+                // Phase 3: re-acquire the lock and populate only if still
+                // unset. Another caller may have won the race; its value
+                // is used.
+                let mut guard = Arc::clone(&self.inner).lock_owned().await;
+                if guard.is_none() {
+                    *guard = Some(fetched);
+                    debug!(nonce = fetched, "nonce fetched from chain");
+                }
+
+                let nonce = guard.expect("cache is initialized");
+                *guard = Some(nonce + 1);
+                debug!(nonce, "nonce reserved");
+                return Ok(NonceGuard { guard: Some(guard), nonce });
+            }
+
+            // Steady-state fast path: cache is populated. Acquire the
+            // owned lock for the read-and-increment.
+            let mut guard = Arc::clone(&self.inner).lock_owned().await;
+            if let Some(n) = *guard {
+                *guard = Some(n + 1);
                 debug!(nonce = n, "nonce reserved");
-                n
+                return Ok(NonceGuard { guard: Some(guard), nonce: n });
             }
-            None => {
-                let n = self.provider.get_transaction_count(self.address).await.map_err(|e| {
-                    warn!(error = %e, address = %self.address, "failed to fetch nonce from chain");
-                    TxManagerError::Rpc(e.to_string())
-                })?;
-                debug!(nonce = n, "nonce fetched from chain");
-                n
-            }
-        };
 
-        *guard = Some(nonce + 1);
-
-        Ok(NonceGuard { guard: Some(guard), nonce })
+            // Rare: reset() cleared the cache between our peek and lock
+            // acquisition. Drop the lock and retry.
+            drop(guard);
+            debug!("nonce cache cleared during acquisition, retrying");
+        }
     }
 
     /// Clears the cached nonce, forcing a fresh chain fetch on the next
