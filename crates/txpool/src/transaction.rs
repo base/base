@@ -52,6 +52,14 @@ pub struct BasePooledTransaction<
     encoded_2718: OnceLock<Bytes>,
     /// Timestamp (millis since Unix epoch) when this transaction was received.
     received_at: u128,
+    /// Optional target block number from bundle submission.
+    target_block_number: Option<u64>,
+    /// Optional minimum timestamp (millis since Unix epoch) from bundle submission.
+    /// The transaction should not be included before this time.
+    min_timestamp: Option<u64>,
+    /// Optional maximum timestamp (millis since Unix epoch) from bundle submission.
+    /// The transaction should be evicted after this time.
+    max_timestamp: Option<u64>,
 }
 
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
@@ -63,6 +71,9 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             _pd: core::marker::PhantomData,
             encoded_2718: Default::default(),
             received_at: unix_time_millis(),
+            target_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
         }
     }
 
@@ -80,7 +91,23 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             _pd: core::marker::PhantomData,
             encoded_2718: Default::default(),
             received_at,
+            target_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
         }
+    }
+
+    /// Sets bundle metadata on this transaction, returning the modified instance.
+    pub fn with_bundle_metadata(
+        mut self,
+        target_block_number: Option<u64>,
+        min_timestamp: Option<u64>,
+        max_timestamp: Option<u64>,
+    ) -> Self {
+        self.target_block_number = target_block_number;
+        self.min_timestamp = min_timestamp;
+        self.max_timestamp = max_timestamp;
+        self
     }
 
     /// Returns the estimated compressed size of a transaction in bytes.
@@ -168,7 +195,9 @@ impl<Cons: Typed2718, Pooled> Typed2718 for BasePooledTransaction<Cons, Pooled> 
 
 impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Pooled> {
     fn size(&self) -> usize {
-        self.inner.size() + core::mem::size_of::<u128>()
+        self.inner.size()
+            + core::mem::size_of::<u128>()
+            + core::mem::size_of::<Option<u64>>() * 3
     }
 }
 
@@ -310,6 +339,85 @@ where
 {
     fn timestamp(&self) -> u128 {
         self.received_at()
+    }
+}
+
+/// Assumed block time in seconds for converting time-based limits to block counts.
+pub const BLOCK_TIME_SECS: u64 = 2;
+
+/// Maximum allowed advance window for bundle parameters (seconds).
+pub const MAX_BUNDLE_ADVANCE_SECS: u64 = 60;
+
+/// Maximum allowed advance window for bundle parameters (milliseconds).
+pub const MAX_BUNDLE_ADVANCE_MILLIS: u64 = MAX_BUNDLE_ADVANCE_SECS * 1000;
+
+/// Maximum allowed advance window in blocks.
+pub const MAX_BUNDLE_ADVANCE_BLOCKS: u64 = MAX_BUNDLE_ADVANCE_SECS / BLOCK_TIME_SECS;
+
+/// Trait for transactions that may carry bundle metadata.
+///
+/// All timestamp values are in milliseconds since Unix epoch. Block-timestamp
+/// arguments (which arrive in seconds) are converted internally.
+pub trait BundleTransaction {
+    /// Returns the target block number, if set.
+    fn target_block_number(&self) -> Option<u64>;
+
+    /// Returns the minimum timestamp in milliseconds.
+    fn min_timestamp_millis(&self) -> Option<u64>;
+
+    /// Returns the maximum timestamp in milliseconds.
+    fn max_timestamp_millis(&self) -> Option<u64>;
+
+    /// Returns `true` if this transaction's bundle constraints have expired
+    /// relative to the given block number and block timestamp (in seconds).
+    fn is_bundle_expired(&self, block_number: u64, block_timestamp_secs: u64) -> bool {
+        let block_timestamp_millis = block_timestamp_secs * 1000;
+
+        if let Some(max_ts) = self.max_timestamp_millis() {
+            if block_timestamp_millis > max_ts {
+                return true;
+            }
+        }
+
+        if let Some(target) = self.target_block_number() {
+            if block_number > target {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Returns `true` if this transaction's `min_timestamp` has not yet been
+    /// reached. `block_timestamp_secs` is the block timestamp in seconds.
+    fn is_bundle_not_yet_valid(&self, block_timestamp_secs: u64) -> bool {
+        let block_timestamp_millis = block_timestamp_secs * 1000;
+
+        if let Some(min_ts) = self.min_timestamp_millis() {
+            if block_timestamp_millis < min_ts {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+impl<Cons, Pooled> BundleTransaction for BasePooledTransaction<Cons, Pooled>
+where
+    Cons: Send + Sync,
+    Pooled: Send + Sync + 'static,
+{
+    fn target_block_number(&self) -> Option<u64> {
+        self.target_block_number
+    }
+
+    fn min_timestamp_millis(&self) -> Option<u64> {
+        self.min_timestamp
+    }
+
+    fn max_timestamp_millis(&self) -> Option<u64> {
+        self.max_timestamp
     }
 }
 

@@ -11,4 +11,13 @@ pub struct ValidatedTransaction {
     pub sender: Address,
     /// EIP-2718 encoded transaction bytes.
     pub raw: Bytes,
+    /// Target block number for bundle inclusion.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub target_block_number: Option<u64>,
+    /// Milliseconds since Unix epoch.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub min_timestamp: Option<u64>,
+    /// Milliseconds since Unix epoch.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub max_timestamp: Option<u64>,
 }

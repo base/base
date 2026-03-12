@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 
 use super::{config::ForwarderConfig, metrics::ForwarderMetrics};
-use crate::ValidatedTransaction;
+use crate::{ValidatedTransaction, transaction::BundleTransaction};
 
 /// Sliding window rate limiter that tracks request timestamps.
 ///
@@ -93,7 +93,7 @@ pub struct Forwarder<T: PoolTransaction> {
 
 impl<T> Forwarder<T>
 where
-    T: PoolTransaction,
+    T: PoolTransaction + BundleTransaction,
     <T as PoolTransaction>::Consensus: Encodable2718,
 {
     /// Creates a new forwarder for a single builder endpoint.
@@ -173,7 +173,16 @@ where
                 let sender = *tx.sender_ref();
                 let consensus = tx.transaction.clone_into_consensus();
                 let raw = Bytes::from(consensus.inner().encoded_2718());
-                self.buffer.push(ValidatedTransaction { sender, raw });
+                let target_block_number = tx.transaction.target_block_number();
+                let min_timestamp = tx.transaction.min_timestamp_millis();
+                let max_timestamp = tx.transaction.max_timestamp_millis();
+                self.buffer.push(ValidatedTransaction {
+                    sender,
+                    raw,
+                    target_block_number,
+                    min_timestamp,
+                    max_timestamp,
+                });
                 self.metrics.buffer_size.set(self.buffer.len() as f64);
                 false
             }
