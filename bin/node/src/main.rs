@@ -11,6 +11,7 @@ use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteringConfig, MeteringExtension};
 use base_node_runner::BaseNodeRunner;
 use base_proofs_extension::ProofsHistoryExtension;
+use base_tx_forwarding::TxForwardingExtension;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 
@@ -48,6 +49,7 @@ fn main() {
             MeteringConfig::disabled()
         };
         runner.install_ext::<MeteringExtension>(metering_config);
+        runner.install_ext::<TxForwardingExtension>((&args).into());
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<ProofsHistoryExtension>(args.rollup_args);
 
