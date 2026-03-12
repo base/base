@@ -40,6 +40,12 @@ use crate::{
     TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult,
 };
 
+/// Maximum number of retry attempts for [`SimpleTxManager::prepare`].
+const PREPARE_MAX_RETRIES: usize = 30;
+
+/// Fixed delay between retry attempts in [`SimpleTxManager::prepare`].
+const PREPARE_RETRY_DELAY: Duration = Duration::from_secs(2);
+
 /// Default transaction manager implementation.
 ///
 /// Constructs, signs, and submits EIP-1559 transactions. All RPC fields
@@ -148,9 +154,10 @@ impl SimpleTxManager {
 
     /// Constructs and signs a transaction, retrying on transient errors.
     ///
-    /// Wraps [`craft_tx`](Self::craft_tx) in a retry loop with up to 30
-    /// attempts and a fixed 2-second delay between retries. Only errors
-    /// where [`TxManagerError::is_retryable`] returns `true` trigger a retry.
+    /// Wraps [`craft_tx`](Self::craft_tx) in a retry loop with up to
+    /// [`PREPARE_MAX_RETRIES`] attempts and a [`PREPARE_RETRY_DELAY`]
+    /// fixed delay between retries. Only errors where
+    /// [`TxManagerError::is_retryable`] returns `true` trigger a retry.
     ///
     /// # Errors
     ///
@@ -163,15 +170,19 @@ impl SimpleTxManager {
         }
 
         (|| async {
-            // Re-check closed flag on each retry attempt to avoid up to
-            // 60 s of wasted RPC calls after shutdown. ChannelClosed is
-            // non-retryable, so backon exits the loop immediately.
+            // Re-check closed flag on each retry attempt to avoid wasted
+            // RPC calls after shutdown. ChannelClosed is non-retryable,
+            // so backon exits the loop immediately.
             if self.is_closed() {
                 return Err(TxManagerError::ChannelClosed);
             }
             self.craft_tx(candidate).await
         })
-        .retry(ConstantBuilder::default().with_delay(Duration::from_secs(2)).with_max_times(30))
+        .retry(
+            ConstantBuilder::default()
+                .with_delay(PREPARE_RETRY_DELAY)
+                .with_max_times(PREPARE_MAX_RETRIES),
+        )
         .when(|e: &TxManagerError| e.is_retryable())
         .notify(|err, dur| {
             warn!(error = %err, delay = ?dur, "retrying craft_tx");
