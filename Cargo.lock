@@ -4247,8 +4247,11 @@ dependencies = [
 name = "base-proof-tee-registrar"
 version = "0.0.0"
 dependencies = [
+ "alloy-contract",
  "alloy-primitives",
+ "alloy-provider",
  "alloy-signer-local",
+ "alloy-sol-types",
  "async-trait",
  "thiserror 2.0.18",
  "url",

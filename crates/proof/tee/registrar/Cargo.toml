@@ -12,6 +12,9 @@ workspace = true
 
 [dependencies]
 # Alloy
+alloy-contract.workspace = true
+alloy-provider.workspace = true
+alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 
