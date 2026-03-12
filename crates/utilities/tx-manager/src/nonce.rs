@@ -106,7 +106,7 @@ impl NonceManager {
     const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 
     /// Creates a new [`NonceManager`] with no cached nonce and the
-    /// [`default RPC timeout`](Self::DEFAULT_RPC_TIMEOUT).
+    /// default RPC timeout (10 seconds).
     ///
     /// The first call to [`next_nonce`](Self::next_nonce) will fetch the
     /// current transaction count from the provider.
