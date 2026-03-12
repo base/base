@@ -1,3 +1,5 @@
+//! Proving backends for ZK proof generation.
+
 mod generic_zkvm;
 mod traits;
 

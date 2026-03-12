@@ -1,3 +1,5 @@
+//! gRPC server implementation for the prover service.
+
 use std::fmt;
 
 use base_zk_client::{

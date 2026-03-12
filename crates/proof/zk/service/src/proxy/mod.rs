@@ -1,3 +1,5 @@
+//! Rate-limited reverse-proxy servers for L1, L2, and Beacon RPC endpoints.
+
 mod config;
 pub use config::{ProxyConfig, ProxyConfigs, RateLimitConfig};
 
