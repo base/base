@@ -12,13 +12,16 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-thiserror.workspace = true
+# alloy
 alloy-provider.workspace = true
-tokio = { workspace = true, features = ["sync"] }
-tracing = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+
+# misc
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 rstest.workspace = true
