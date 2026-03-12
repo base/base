@@ -40,12 +40,6 @@ use crate::{
     TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult,
 };
 
-/// Maximum number of retry attempts for [`SimpleTxManager::prepare`].
-const PREPARE_MAX_RETRIES: usize = 30;
-
-/// Fixed delay between retry attempts in [`SimpleTxManager::prepare`].
-const PREPARE_RETRY_DELAY: Duration = Duration::from_secs(2);
-
 /// Default transaction manager implementation.
 ///
 /// Constructs, signs, and submits EIP-1559 transactions. All RPC fields
@@ -68,6 +62,12 @@ pub struct SimpleTxManager {
 }
 
 impl SimpleTxManager {
+    /// Maximum number of retry attempts for [`Self::prepare`].
+    const PREPARE_MAX_RETRIES: usize = 30;
+
+    /// Fixed delay between retry attempts in [`Self::prepare`].
+    const PREPARE_RETRY_DELAY: Duration = Duration::from_secs(2);
+
     /// Creates a new [`SimpleTxManager`].
     ///
     /// Internally creates a [`NonceManager`] using the wallet's default
@@ -155,7 +155,7 @@ impl SimpleTxManager {
     /// Constructs and signs a transaction, retrying on transient errors.
     ///
     /// Wraps [`craft_tx`](Self::craft_tx) in a retry loop with up to
-    /// [`PREPARE_MAX_RETRIES`] attempts and a [`PREPARE_RETRY_DELAY`]
+    /// [`Self::PREPARE_MAX_RETRIES`] attempts and a [`Self::PREPARE_RETRY_DELAY`]
     /// fixed delay between retries. Only errors where
     /// [`TxManagerError::is_retryable`] returns `true` trigger a retry.
     ///
@@ -191,8 +191,8 @@ impl SimpleTxManager {
         })
         .retry(
             ConstantBuilder::default()
-                .with_delay(PREPARE_RETRY_DELAY)
-                .with_max_times(PREPARE_MAX_RETRIES),
+                .with_delay(Self::PREPARE_RETRY_DELAY)
+                .with_max_times(Self::PREPARE_MAX_RETRIES),
         )
         .when(|e: &TxManagerError| e.is_retryable())
         .notify(|err, dur| {
