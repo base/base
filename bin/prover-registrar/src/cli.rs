@@ -126,8 +126,10 @@ impl Cli {
             }
         };
 
-        // Validate boundless private key.
-        decode_private_key("--boundless-private-key", &self.boundless_private_key)?;
+        let boundless_signer = PrivateKeySigner::from_signing_key(decode_private_key(
+            "--boundless-private-key",
+            &self.boundless_private_key,
+        )?);
 
         if self.boundless_min_price > self.boundless_max_price {
             return Err(RegistrarError::Config(
@@ -155,7 +157,7 @@ impl Cli {
             prover_port: self.prover_port,
             signing,
             boundless_rpc_url: self.boundless_rpc_url,
-            boundless_private_key: self.boundless_private_key,
+            boundless_signer,
             boundless_verifier_program_url: self.boundless_verifier_program_url,
             boundless_min_price: self.boundless_min_price,
             boundless_max_price: self.boundless_max_price,

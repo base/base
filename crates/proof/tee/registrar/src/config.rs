@@ -61,8 +61,8 @@ pub struct RegistrarConfig {
     // ── Boundless ─────────────────────────────────────────────────────────────
     /// Boundless Network RPC URL.
     pub boundless_rpc_url: Url,
-    /// Hex-encoded private key for Boundless Network proving fees.
-    pub boundless_private_key: String,
+    /// Parsed signer for Boundless Network proving fees.
+    pub boundless_signer: PrivateKeySigner,
     /// IPFS URL of the Nitro attestation verifier ELF uploaded via `nitro-attest-cli`.
     pub boundless_verifier_program_url: Url,
     /// Minimum price in wei per cycle for Boundless proof requests.
@@ -100,7 +100,7 @@ impl std::fmt::Debug for RegistrarConfig {
             .field("prover_port", &self.prover_port)
             .field("signing", &self.signing)
             .field("boundless_rpc_url", &url_origin(&self.boundless_rpc_url))
-            .field("boundless_private_key", &"<redacted>")
+            .field("boundless_signer", &self.boundless_signer.address())
             .field("boundless_verifier_program_url", &self.boundless_verifier_program_url)
             .field("boundless_min_price", &self.boundless_min_price)
             .field("boundless_max_price", &self.boundless_max_price)
