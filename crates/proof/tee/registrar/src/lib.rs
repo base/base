@@ -8,7 +8,7 @@ mod error;
 pub use error::{RegistrarError, Result};
 
 mod registry;
-pub use registry::RegistryChecker;
+pub use registry::{RegistryClient, RegistryContractClient};
 
 mod traits;
 pub use traits::{AttestationProofProvider, InstanceDiscovery};
