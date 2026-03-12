@@ -1,4 +1,26 @@
 //! Core transaction manager implementation.
+//!
+//! [`SimpleTxManager`] takes a [`TxCandidate`] through the full construction
+//! pipeline: gas price estimation via [`suggest_gas_price_caps`], fee limit
+//! enforcement via [`FeeCalculator::check_limits`], gas estimation or
+//! validation against the provider, nonce assignment via [`NonceManager`],
+//! and signing via alloy's [`NetworkWallet`] trait.
+//!
+//! The outer [`prepare`] method wraps [`craft_tx`] in a `backon` retry loop
+//! (up to 30 attempts, 2-second fixed delay) that retries only on transient
+//! errors and exits immediately on shutdown.
+//!
+//! All transaction fields are set manually on [`TransactionRequest`] — no
+//! alloy fillers or `PendingTransactionBuilder` are used.
+//!
+//! [`TxCandidate`]: crate::TxCandidate
+//! [`suggest_gas_price_caps`]: SimpleTxManager::suggest_gas_price_caps
+//! [`FeeCalculator::check_limits`]: crate::FeeCalculator::check_limits
+//! [`NonceManager`]: crate::NonceManager
+//! [`NetworkWallet`]: alloy_network::NetworkWallet
+//! [`prepare`]: SimpleTxManager::prepare
+//! [`craft_tx`]: SimpleTxManager::craft_tx
+//! [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
 
 use std::{
     sync::atomic::{AtomicBool, Ordering},
