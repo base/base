@@ -19,5 +19,5 @@ use base_health::{HealthzApiServer, HealthzRpc};
 use jsonrpsee::RpcModule;
 
 let mut module = RpcModule::new(());
-module.merge(HealthzRpc.into_rpc())?;
+module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc())?;
 ```
