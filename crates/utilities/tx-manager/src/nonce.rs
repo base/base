@@ -35,6 +35,11 @@ impl NonceManager {
         Self { inner: Arc::new(Mutex::new(None)), provider, address }
     }
 
+    /// Maximum number of retry attempts when `reset()` races with
+    /// `next_nonce()`, clearing the cache between the peek and lock
+    /// acquisition.
+    const MAX_RETRY_ATTEMPTS: u8 = 5;
+
     /// Reserves the next nonce for transaction signing.
     ///
     /// On the first call (or after [`reset`](Self::reset)), fetches the
@@ -54,9 +59,11 @@ impl NonceManager {
     ///
     /// # Errors
     ///
-    /// Returns [`TxManagerError::Rpc`] if the provider call fails.
+    /// Returns [`TxManagerError::Rpc`] if the provider call fails,
+    /// or [`TxManagerError::NonceOverflow`] if the nonce exceeds
+    /// `u64::MAX`.
     pub async fn next_nonce(&self) -> Result<NonceGuard, TxManagerError> {
-        loop {
+        for attempt in 0..Self::MAX_RETRY_ATTEMPTS {
             // Phase 1: peek under the lock to check whether init is needed.
             let needs_init = self.inner.lock().await.is_none();
 
@@ -82,7 +89,8 @@ impl NonceManager {
                     debug!(nonce = fetched, "nonce fetched from chain");
                     fetched
                 });
-                *guard = Some(nonce + 1);
+                let next = nonce.checked_add(1).ok_or(TxManagerError::NonceOverflow)?;
+                *guard = Some(next);
                 debug!(nonce, "nonce reserved");
                 return Ok(NonceGuard { guard: Some(guard), nonce });
             }
@@ -91,7 +99,8 @@ impl NonceManager {
             // owned lock for the read-and-increment.
             let mut guard = Arc::clone(&self.inner).lock_owned().await;
             if let Some(n) = *guard {
-                *guard = Some(n + 1);
+                let next = n.checked_add(1).ok_or(TxManagerError::NonceOverflow)?;
+                *guard = Some(next);
                 debug!(nonce = n, "nonce reserved");
                 return Ok(NonceGuard { guard: Some(guard), nonce: n });
             }
@@ -99,12 +108,22 @@ impl NonceManager {
             // Rare: reset() cleared the cache between our peek and lock
             // acquisition. Drop the lock and retry.
             drop(guard);
-            debug!("nonce cache cleared during acquisition, retrying");
+            debug!(attempt, "nonce cache cleared during acquisition, retrying");
         }
+
+        warn!(attempts = Self::MAX_RETRY_ATTEMPTS, "nonce acquisition failed after max retries",);
+        Err(TxManagerError::Rpc("nonce cache repeatedly cleared during acquisition".to_string()))
     }
 
     /// Clears the cached nonce, forcing a fresh chain fetch on the next
     /// call to [`next_nonce`](Self::next_nonce).
+    ///
+    /// # Caution
+    ///
+    /// The fresh fetch uses the `latest` block tag, so pending-but-unconfirmed
+    /// transactions are not counted. Callers should avoid calling `reset()`
+    /// while transactions are still in-flight, as the freshly fetched nonce
+    /// may conflict with pending transactions in the mempool.
     pub async fn reset(&self) {
         let mut guard = self.inner.lock().await;
         *guard = None;

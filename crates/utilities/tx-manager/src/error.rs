@@ -37,6 +37,10 @@ pub enum TxManagerError {
     #[error("nonce already reserved")]
     AlreadyReserved,
 
+    /// Nonce arithmetic overflowed `u64::MAX`.
+    #[error("nonce overflow")]
+    NonceOverflow,
+
     /// Send response channel closed before a result was delivered.
     ///
     /// The background send task exited (panicked or was cancelled)
@@ -272,6 +276,7 @@ mod tests {
     #[case::channel_closed(TxManagerError::ChannelClosed, false)]
     #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 0, ceiling: 0 }, false)]
     #[case::invalid_safe_abort(TxManagerError::InvalidSafeAbortNonceTooLowCount, false)]
+    #[case::nonce_overflow(TxManagerError::NonceOverflow, false)]
     #[case::underpriced(TxManagerError::Underpriced, true)]
     #[case::replacement_underpriced(TxManagerError::ReplacementUnderpriced, true)]
     #[case::fee_too_low(TxManagerError::FeeTooLow, true)]
@@ -322,6 +327,7 @@ mod tests {
         TxManagerError::InvalidSafeAbortNonceTooLowCount,
         "invalid safe_abort_nonce_too_low_count: must be greater than 0"
     )]
+    #[case::nonce_overflow(TxManagerError::NonceOverflow, "nonce overflow")]
     #[case::rpc(TxManagerError::Rpc("test".to_string()), "rpc error: test")]
     fn display_output(#[case] error: TxManagerError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);
