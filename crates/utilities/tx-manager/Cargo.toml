@@ -13,6 +13,8 @@ workspace = true
 
 [dependencies]
 # alloy
+backon.workspace = true
+alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
@@ -30,6 +32,7 @@ proptest.workspace = true
 humantime.workspace = true
 alloy-consensus.workspace = true
 alloy-node-bindings.workspace = true
+alloy-signer-local.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }
 tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread"] }
