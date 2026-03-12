@@ -60,11 +60,22 @@ impl BroadcastLoop {
         };
 
         // If resume_from is set, replay from ring buffer first.
-        if let Some(cutoff) = self.resume_from.take()
-            && let Err(e) = self.replay(&cutoff).await
-        {
-            debug!(peer_addr = %peer_addr, error = %e, "Replay failed, closing connection");
-            return;
+        // Wrap in select! so cancellation is detected immediately at each
+        // .await inside replay() rather than only between sends.
+        if let Some(cutoff) = self.resume_from.take() {
+            let cancel = self.cancel.clone();
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    info!("WebSocketPublisher is terminating during replay, closing connection");
+                    return;
+                }
+                result = self.replay(&cutoff) => {
+                    if let Err(e) = result {
+                        debug!(peer_addr = %peer_addr, error = %e, "Replay failed, closing connection");
+                        return;
+                    }
+                }
+            }
         }
 
         loop {
@@ -122,9 +133,6 @@ impl BroadcastLoop {
     ///   `cutoff`, tracking sent positions for dedup.
     /// - **Phase 2**: Drain any messages that accumulated on the receiver
     ///   during phase 1, deduplicating by position.
-    ///
-    /// Checks the cancellation token between sends so shutdown is not blocked
-    /// for the full duration of a large replay.
     async fn replay(&mut self, cutoff: &FlashblockPosition) -> Result<(), ReplayError> {
         // Phase 1: snapshot ring buffer and replay.
         // `Utf8Bytes` is reference-counted (`bytes::Bytes`), so cloning is O(1)
@@ -137,9 +145,6 @@ impl BroadcastLoop {
         };
         let mut sent_positions = HashSet::with_capacity(snapshot.len());
         for (pos, val) in snapshot {
-            if self.cancel.is_cancelled() {
-                return Err(ReplayError::Cancelled);
-            }
             if let Some(p) = pos {
                 sent_positions.insert(p);
             }
@@ -155,9 +160,6 @@ impl BroadcastLoop {
         // the ring buffer. The broadcast channel carries `FlashblockPosition`
         // (always `Some`), so sentinels cannot appear in phase 2.
         loop {
-            if self.cancel.is_cancelled() {
-                return Err(ReplayError::Cancelled);
-            }
             match self.receiver.try_recv() {
                 Ok((pos, data)) => {
                     if !sent_positions.insert(pos) {
@@ -199,9 +201,6 @@ enum ReplayError {
     /// A replay message send timed out.
     #[error("replay send timed out")]
     SendTimeout,
-    /// The publisher was cancelled during replay.
-    #[error("publisher cancelled during replay")]
-    Cancelled,
     /// The broadcast channel was closed during replay.
     #[error("broadcast channel closed during replay")]
     ChannelClosed,
