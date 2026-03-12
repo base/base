@@ -7,7 +7,7 @@ use alloy_primitives::{Address, B256, Bytes, LogData, U256};
 use base_action_harness::{
     ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, ActionL2Source,
     ActionTestHarness, BatchType, BatcherConfig, ChannelDriverConfig, GarbageKind, L1MinerConfig,
-    L2Sequencer, L2Verifier, PendingTx, SharedL1Chain, block_info_from,
+    L2Sequencer, L2Verifier, PendingTx, SharedL1Chain, StepResult, block_info_from,
 };
 use base_blobs::BlobEncoder;
 use base_consensus_genesis::{
@@ -2010,5 +2010,244 @@ async fn batcher_config_update_rolled_back_on_reorg() {
         verifier.l2_safe().block_info.number,
         3,
         "safe head advances to 3 — config rollback restored batcher A"
+    );
+}
+
+// ── act_l2_pipeline_until edge-case tests ─────────────────────────────────────
+
+/// Submit the batch for L2 block 2 to L1 before the batch for L2 block 1.
+///
+/// The [`BatchQueue`] (pre-Holocene) buffers future batches rather than
+/// dropping them. When the missing predecessor batch (block 1) arrives on the
+/// next L1 block, the queue derives block 1 first, then pops the buffered
+/// block 2 — restoring correct L2 ordering even though the L1 submission order
+/// was reversed.
+///
+/// [`act_l2_pipeline_until`] is used to stop after each
+/// [`StepResult::PreparedAttributes`] so the test can assert the exact block
+/// number at each derivation step rather than racing to the final safe head.
+///
+/// [`BatchQueue`]: base_consensus_derive::BatchQueue
+/// [`act_l2_pipeline_until`]: L2Verifier::act_l2_pipeline_until
+#[tokio::test]
+async fn out_of_order_singular_batches_reordered_by_batch_queue() {
+    let batcher_cfg = BatcherConfig::default();
+    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_sequencer(l1_chain);
+
+    // Build 2 L2 blocks in epoch 0 (both reference L1 genesis as L1 origin).
+    let block1 = builder.build_next_block().expect("build L2 block 1");
+    let hash1 = builder.head().block_info.hash;
+    let block2 = builder.build_next_block().expect("build L2 block 2");
+    let hash2 = builder.head().block_info.hash;
+
+    let (mut verifier, chain) = h.create_verifier();
+    verifier.register_block_hash(1, hash1);
+    verifier.register_block_hash(2, hash2);
+
+    // L1 block 1: carry the batch for L2 block 2 (submitted out of order).
+    {
+        let mut source = ActionL2Source::new();
+        source.push(block2);
+        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
+        batcher.advance().expect("submit future batch (block 2)");
+        drop(batcher);
+    }
+    h.mine_and_push(&chain); // L1 block 1: future batch
+
+    // L1 block 2: carry the batch for L2 block 1 (the expected-next batch).
+    {
+        let mut source = ActionL2Source::new();
+        source.push(block1);
+        let mut batcher = h.create_batcher(source, batcher_cfg);
+        batcher.advance().expect("submit present batch (block 1)");
+        drop(batcher);
+    }
+    h.mine_and_push(&chain); // L1 block 2: present batch
+
+    verifier.initialize().await.expect("initialize");
+
+    // Signal L1 block 1 and step until idle.  The BatchQueue sees a future
+    // batch (block 2, timestamp 4 > expected 2) and buffers it.  No attributes
+    // are produced; the pipeline returns Eof.
+    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
+    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    let (_, hit) = verifier
+        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
+        .await
+        .expect("step after block 1 signal");
+    assert!(
+        !hit,
+        "pipeline must not derive anything from L1 block 1 alone: \
+         the batch for block 2 is a future batch — block 1 has not arrived yet"
+    );
+    assert_eq!(verifier.l2_safe().block_info.number, 0, "safe head must remain at genesis");
+
+    // Signal L1 block 2.  The BatchQueue now receives the expected-next batch
+    // (block 1) and derives it before popping the buffered block 2.
+    let l1_block_2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
+    verifier.act_l1_head_signal(l1_block_2).await.expect("signal block 2");
+
+    // First PreparedAttributes: must be L2 block 1 (earliest timestamp).
+    let (_, hit1) = verifier
+        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
+        .await
+        .expect("step for block 1 attributes");
+    assert!(hit1, "pipeline must derive block 1 when its batch arrives");
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        1,
+        "BatchQueue must reorder: block 1 derived before the buffered block 2"
+    );
+
+    // Second PreparedAttributes: the buffered block 2 batch is now the
+    // expected-next (timestamp 4 == safe head timestamp 2 + block_time 2).
+    let (_, hit2) = verifier
+        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
+        .await
+        .expect("step for block 2 attributes");
+    assert!(hit2, "pipeline must derive buffered block 2 after block 1 is safe");
+    assert_eq!(verifier.l2_safe().block_info.number, 2, "safe head must reach block 2");
+}
+
+/// [`act_l2_pipeline_until`] returns `(steps, false)` when the pipeline is
+/// idle (no L1 data signalled yet), and `(steps, true)` once a block with
+/// batch data is signalled.
+///
+/// This documents the Eof → data → attributes lifecycle and verifies that
+/// calling [`act_l2_pipeline_until`] before and after an
+/// [`act_l1_head_signal`] produces the expected pair of outcomes.
+///
+/// [`act_l2_pipeline_until`]: L2Verifier::act_l2_pipeline_until
+/// [`act_l1_head_signal`]: L2Verifier::act_l1_head_signal
+#[tokio::test]
+async fn pipeline_idle_before_l1_signal_derives_after() {
+    let batcher_cfg = BatcherConfig::default();
+    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_sequencer(l1_chain);
+    let block1 = builder.build_next_block().expect("build L2 block 1");
+    let hash1 = builder.head().block_info.hash;
+
+    let mut source = ActionL2Source::new();
+    source.push(block1);
+    let mut batcher = h.create_batcher(source, batcher_cfg);
+    batcher.advance().expect("encode and submit");
+    drop(batcher);
+
+    let (mut verifier, chain) = h.create_verifier();
+    verifier.register_block_hash(1, hash1);
+    h.mine_and_push(&chain);
+    verifier.initialize().await.expect("initialize");
+
+    // Before any signal: the pipeline exhausted genesis during initialize() and
+    // is now at Eof.  The condition should never fire; the call returns quickly.
+    let (_, before_signal) = verifier
+        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 50)
+        .await
+        .expect("step before signal");
+    assert!(!before_signal, "pipeline must be idle before receiving an L1 head signal");
+    assert_eq!(verifier.l2_safe().block_info.number, 0);
+
+    // After signalling L1 block 1: the pipeline can now derive L2 block 1.
+    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
+    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    let (_, after_signal) = verifier
+        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
+        .await
+        .expect("step after signal");
+    assert!(after_signal, "pipeline must derive L2 block 1 after receiving L1 head signal");
+    assert_eq!(verifier.l2_safe().block_info.number, 1);
+}
+
+/// After all L2 blocks from an L1 block are derived, the pipeline emits
+/// [`StepResult::AdvancedOrigin`] when it transitions to the next L1 block.
+///
+/// Two L2 blocks are encoded into a single L1 channel.  After both are derived,
+/// the pipeline has exhausted L1 block 1's data.  Signalling an empty L1
+/// block 2 and calling [`act_l2_pipeline_until`] with
+/// [`StepResult::AdvancedOrigin`] catches the L1 origin advance without any
+/// new L2 attributes being produced — demonstrating that the safe head stays
+/// at 2 while the pipeline moves forward on L1.
+///
+/// `AdvancedOrigin` is returned by `DerivationPipeline::step` only when
+/// `next_attributes` returns `Eof` for the current epoch **and** the
+/// traversal can advance to the next L1 block.  A single-batch block bypasses
+/// this: `next_attributes` succeeds inline and returns `PreparedAttributes`
+/// without emitting `AdvancedOrigin` first.  The two-block setup here
+/// exhausts all attributes from block 1 before block 2 is processed.
+///
+/// [`act_l2_pipeline_until`]: L2Verifier::act_l2_pipeline_until
+#[tokio::test]
+async fn pipeline_l1_origin_advance_observable_after_epoch_exhausted() {
+    let batcher_cfg = BatcherConfig::default();
+    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_sequencer(l1_chain);
+
+    // Build 2 L2 blocks and submit them in a single L1 channel (same L1 block).
+    let mut source = ActionL2Source::new();
+    let block1 = builder.build_next_block().expect("build L2 block 1");
+    let hash1 = builder.head().block_info.hash;
+    let block2 = builder.build_next_block().expect("build L2 block 2");
+    let hash2 = builder.head().block_info.hash;
+    source.push(block1);
+    source.push(block2);
+
+    let mut batcher = h.create_batcher(source, batcher_cfg);
+    batcher.advance().expect("encode and submit both blocks");
+    drop(batcher);
+
+    let (mut verifier, chain) = h.create_verifier();
+    verifier.register_block_hash(1, hash1);
+    verifier.register_block_hash(2, hash2);
+
+    h.mine_and_push(&chain); // L1 block 1: carries the channel for blocks 1 & 2
+    h.mine_and_push(&chain); // L1 block 2: empty — used only for origin advance
+
+    verifier.initialize().await.expect("initialize");
+
+    // Signal and derive both L2 blocks from L1 block 1.
+    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
+    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    let (_, hit1) = verifier
+        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
+        .await
+        .expect("step for L2 block 1");
+    assert!(hit1);
+    assert_eq!(verifier.l2_safe().block_info.number, 1);
+
+    let (_, hit2) = verifier
+        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
+        .await
+        .expect("step for L2 block 2");
+    assert!(hit2);
+    assert_eq!(verifier.l2_safe().block_info.number, 2);
+
+    // L1 block 1 is now fully exhausted.  Signal the empty L1 block 2 and
+    // step until AdvancedOrigin: the pipeline advances the L1 origin from
+    // block 1 to block 2 without producing any new L2 attributes.
+    let l1_block_2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
+    verifier.act_l1_head_signal(l1_block_2).await.expect("signal block 2");
+    let (_, advanced) = verifier
+        .act_l2_pipeline_until(|r| matches!(r, StepResult::AdvancedOrigin), 50)
+        .await
+        .expect("step until origin advance");
+    assert!(
+        advanced,
+        "pipeline must emit AdvancedOrigin when transitioning from an \
+         exhausted L1 block to the next"
+    );
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        2,
+        "safe head must not change: origin advanced but empty block 2 has no batch"
     );
 }
