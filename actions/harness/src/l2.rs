@@ -176,13 +176,6 @@ impl L2Sequencer {
         self
     }
 
-    /// Return the current unsafe L2 head (alias for [`head`]).
-    ///
-    /// [`head`]: L2Sequencer::head
-    pub const fn unsafe_head(&self) -> L2BlockInfo {
-        self.head
-    }
-
     /// Return the current unsafe L2 head.
     pub const fn head(&self) -> L2BlockInfo {
         self.head

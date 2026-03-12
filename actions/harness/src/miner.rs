@@ -227,12 +227,14 @@ impl L1Miner {
 
     /// Return the safe head block.
     pub fn safe_head(&self) -> &L1Block {
-        &self.blocks[self.safe_number as usize]
+        self.blocks.get(self.safe_number as usize).expect("safe block must exist in chain")
     }
 
     /// Return the finalized head block.
     pub fn finalized_head(&self) -> &L1Block {
-        &self.blocks[self.finalized_number as usize]
+        self.blocks
+            .get(self.finalized_number as usize)
+            .expect("finalized block must exist in chain")
     }
 
     /// Return the current safe block number.

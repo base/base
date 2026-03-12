@@ -91,7 +91,10 @@ impl ActionBlobDataSource {
     }
 
     fn load_block(&mut self, block_ref: &BlockInfo, batcher_address: Address) {
-        let Some(block) = self.chain.get_block(block_ref.number) else { return };
+        let Some(block) = self.chain.get_block(block_ref.number) else {
+            self.open = true;
+            return;
+        };
         // Guard against stale block_refs after a reorg.
         if block.hash() != block_ref.hash {
             self.open = true;
