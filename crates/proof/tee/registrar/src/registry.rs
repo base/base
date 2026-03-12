@@ -61,14 +61,18 @@ impl RegistryContractClient {
 #[async_trait]
 impl RegistryClient for RegistryContractClient {
     async fn is_registered(&self, signer: Address) -> Result<bool> {
-        self.contract.isValidSigner(signer).call().await.map_err(|e| {
-            RegistrarError::Registry(format!("isValidSigner({signer}) failed: {e}").into())
+        self.contract.isValidSigner(signer).call().await.map_err(|e| RegistrarError::RegistryCall {
+            context: format!("isValidSigner({signer})"),
+            source: Box::new(e),
         })
     }
 
     async fn get_registered_signers(&self) -> Result<Vec<Address>> {
         self.contract.getRegisteredSigners().call().await.map_err(|e| {
-            RegistrarError::Registry(format!("getRegisteredSigners() failed: {e}").into())
+            RegistrarError::RegistryCall {
+                context: "getRegisteredSigners()".into(),
+                source: Box::new(e),
+            }
         })
     }
 }

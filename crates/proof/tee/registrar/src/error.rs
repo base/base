@@ -25,6 +25,16 @@ pub enum RegistrarError {
     #[error("registry error")]
     Registry(#[source] Box<dyn std::error::Error + Send + Sync>),
 
+    /// An on-chain registry contract call failed.
+    #[error("registry call failed: {context}")]
+    RegistryCall {
+        /// Description of the call that failed (e.g. `"isValidSigner(0x1234…)"`).
+        context: String,
+        /// The underlying contract call error.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
     /// Transaction signing or submission failed.
     #[error("signing error")]
     Signing(#[source] Box<dyn std::error::Error + Send + Sync>),
