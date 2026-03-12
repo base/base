@@ -1,5 +1,7 @@
 //! Integration tests for [`SimpleTxManager`] transaction construction with Anvil.
 
+use std::time::Duration;
+
 use alloy_consensus::{TxEip1559, TxEnvelope};
 use alloy_eips::{Decodable2718, eip4844::Blob};
 use alloy_network::EthereumWallet;
@@ -11,19 +13,27 @@ use base_tx_manager::{
     GasPriceCaps, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig, TxManagerError,
 };
 
-/// Helper: spawns an Anvil instance and returns a [`SimpleTxManager`].
-async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
+/// Helper: spawns an Anvil instance and returns a [`SimpleTxManager`]
+/// configured with the given [`TxManagerConfig`].
+async fn setup_with_config(
+    config: TxManagerConfig,
+) -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
     let anvil = Anvil::new().spawn();
     let url = anvil.endpoint_url();
     let provider = RootProvider::new_http(url);
     let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
     let wallet = EthereumWallet::from(signer);
     let chain_id = anvil.chain_id();
-    let config = TxManagerConfig::default();
     let manager = SimpleTxManager::new(provider, wallet, config, chain_id)
         .await
         .expect("should create manager");
     (manager, anvil)
+}
+
+/// Helper: spawns an Anvil instance and returns a [`SimpleTxManager`]
+/// with the default [`TxManagerConfig`].
+async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
+    setup_with_config(TxManagerConfig::default()).await
 }
 
 /// Decodes raw RLP-encoded transaction bytes into the inner [`TxEip1559`].
@@ -59,7 +69,7 @@ async fn craft_tx_produces_valid_signed_eip1559_transaction() {
     assert_eq!(tx.value, value);
     assert_eq!(tx.chain_id, anvil.chain_id());
     assert_eq!(tx.nonce, 0, "first tx should have nonce 0");
-    assert!(tx.gas_limit > 0, "gas_limit should be non-zero");
+    assert_eq!(tx.gas_limit, 21_000, "plain value transfer intrinsic gas should be 21,000");
     assert!(tx.max_fee_per_gas > 0, "max_fee_per_gas should be non-zero");
     assert!(tx.max_priority_fee_per_gas > 0, "max_priority_fee_per_gas should be non-zero");
 }
@@ -269,13 +279,6 @@ async fn craft_tx_preserves_calldata() {
 
 #[tokio::test]
 async fn suggest_gas_price_caps_enforces_min_tip_cap_and_min_basefee() {
-    let anvil = Anvil::new().spawn();
-    let url = anvil.endpoint_url();
-    let provider = RootProvider::new_http(url);
-    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
-    let wallet = EthereumWallet::from(signer);
-    let chain_id = anvil.chain_id();
-
     // Set minimums well above what Anvil returns (Anvil tip is ~1 gwei,
     // base fee ~1 gwei) so the .max() enforcement is exercised.
     let high_min_tip = 50_000_000_000u128; // 50 gwei
@@ -286,9 +289,7 @@ async fn suggest_gas_price_caps_enforces_min_tip_cap_and_min_basefee() {
         ..TxManagerConfig::default()
     };
 
-    let manager = SimpleTxManager::new(provider, wallet, config, chain_id)
-        .await
-        .expect("should create manager");
+    let (manager, _anvil) = setup_with_config(config).await;
 
     let candidate = TxCandidate::default();
     let caps = manager.suggest_gas_price_caps(&candidate).await.expect("should return caps");
@@ -344,13 +345,6 @@ async fn new_rejects_invalid_config() {
 
 #[tokio::test]
 async fn craft_tx_returns_fee_limit_exceeded_when_minimums_inflate_beyond_multiplier() {
-    let anvil = Anvil::new().spawn();
-    let url = anvil.endpoint_url();
-    let provider = RootProvider::new_http(url);
-    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
-    let wallet = EthereumWallet::from(signer);
-    let chain_id = anvil.chain_id();
-
     // fee_limit_multiplier = 1 means the enforced fee cap must not exceed
     // 1 × raw_gas_fee_cap.  Setting min_tip_cap and min_basefee far above
     // Anvil's actual values (~1 gwei each) inflates gas_fee_cap well past
@@ -363,9 +357,7 @@ async fn craft_tx_returns_fee_limit_exceeded_when_minimums_inflate_beyond_multip
         ..TxManagerConfig::default()
     };
 
-    let manager = SimpleTxManager::new(provider, wallet, config, chain_id)
-        .await
-        .expect("should create manager");
+    let (manager, _anvil) = setup_with_config(config).await;
 
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
@@ -377,6 +369,34 @@ async fn craft_tx_returns_fee_limit_exceeded_when_minimums_inflate_beyond_multip
     assert!(
         matches!(err, TxManagerError::FeeLimitExceeded { .. }),
         "expected TxManagerError::FeeLimitExceeded, got {err:?}",
+    );
+}
+
+/// Verifies that `prepare()` exits immediately on a non-retryable error
+/// rather than looping through all 30 retry attempts. A 5-second timeout
+/// guard catches regressions where `Unsupported` is accidentally marked
+/// retryable.
+#[tokio::test]
+async fn prepare_exits_immediately_on_non_retryable_error() {
+    let (manager, _anvil) = setup().await;
+
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        blobs: vec![Blob::default()],
+        ..Default::default()
+    };
+
+    // If Unsupported were retryable, prepare would wait up to
+    // 30 × 2 s = 60 s. The 5-second timeout catches that regression.
+    let result = tokio::time::timeout(Duration::from_secs(5), manager.prepare(&candidate)).await;
+
+    let err = result
+        .expect("prepare should return within 5 s for a non-retryable error")
+        .expect_err("should reject blob tx");
+
+    assert!(
+        matches!(err, TxManagerError::Unsupported(_)),
+        "expected TxManagerError::Unsupported, got {err:?}",
     );
 }
 
