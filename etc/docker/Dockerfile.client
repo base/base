@@ -1,5 +1,5 @@
 # --- Builder ---
-FROM rust:1.93-trixie AS builder
+FROM public.ecr.aws/docker/library/rust:1.93-trixie AS builder
 WORKDIR /app
 ARG MOLD_VERSION=2.40.4
 ARG MOLD_SHA256_AARCH64=c799b9ccae8728793da2186718fbe53b76400a9da396184fac0c64aa3298ec37
@@ -32,7 +32,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo $PROFILE)/base-reth-node /app/base-client
 
 # --- Runtime ---
-FROM debian:trixie-slim
+FROM public.ecr.aws/docker/library/debian:trixie-slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/* && \

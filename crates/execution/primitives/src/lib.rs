@@ -8,6 +8,9 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
+// Used in submodule transaction::signed and receipt.
+use alloy_primitives as _;
+
 pub mod transaction;
 pub use transaction::*;
 

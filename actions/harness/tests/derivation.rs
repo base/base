@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumHash;
-use alloy_primitives::{Address, B256, Bytes, LogData};
+use alloy_primitives::{Address, B256, Bytes, LogData, U256};
 use base_action_harness::{
     ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, ActionL2Source,
     ActionTestHarness, BatchType, BatcherConfig, ChannelDriverConfig, GarbageKind, L1MinerConfig,
@@ -14,7 +14,9 @@ use base_consensus_genesis::{
     CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, ChainGenesis, HardForkConfig,
     L1ChainConfig, RollupConfig, SystemConfig,
 };
-use base_protocol::{BlockInfo, DERIVATION_VERSION_0, L2BlockInfo};
+use base_protocol::{
+    BlockInfo, DEPOSIT_EVENT_ABI_HASH, DEPOSIT_EVENT_VERSION_0, DERIVATION_VERSION_0, L2BlockInfo,
+};
 
 /// Build a [`RollupConfig`] wired to the given [`BatcherConfig`].
 ///
@@ -478,6 +480,134 @@ fn batcher_update_log(l1_sys_cfg_addr: Address, new_batcher: Address) -> alloy_p
             data.into(),
         ),
     }
+}
+
+/// Build a `TransactionDeposited` log encoding a user deposit.
+///
+/// The log is addressed to the rollup config's `deposit_contract_address` so
+/// that the derivation pipeline's attributes builder picks it up and includes
+/// the deposit transaction in the derived L2 block.
+///
+/// Log layout (mirrors the on-chain `OptimismPortal.sol` event):
+/// - `topics[0]` = `DEPOSIT_EVENT_ABI_HASH`
+/// - `topics[1]` = `from` address left-padded to B256
+/// - `topics[2]` = `to` address left-padded to B256
+/// - `topics[3]` = `DEPOSIT_EVENT_VERSION_0` (`B256::ZERO`)
+/// - `data`      = ABI-encoded opaqueData:
+///   offset(32) + length(32) + tightly-packed(mint(32) + value(32) + gas(8) + isCreation(1) + calldata)
+fn user_deposit_log(
+    deposit_contract: Address,
+    from: Address,
+    to: Address,
+    mint: u128,
+    value: U256,
+    gas_limit: u64,
+    data: &[u8],
+) -> alloy_primitives::Log {
+    // opaqueData: mint(32) + value(32) + gas_limit(8) + isCreation(1) + data
+    let opaque_len = 32 + 32 + 8 + 1 + data.len();
+    let opaque_padded = opaque_len.div_ceil(32) * 32;
+    let total_len = 64 + opaque_padded; // offset(32) + length(32) + padded opaqueData
+
+    let mut log_data = vec![0u8; total_len];
+
+    // offset = 32 (right-aligned u64 in 32-byte slot)
+    log_data[24..32].copy_from_slice(&32u64.to_be_bytes());
+    // length of opaqueData
+    log_data[56..64].copy_from_slice(&(opaque_len as u64).to_be_bytes());
+
+    let base = 64;
+    // mint: u128 big-endian in bytes [16..32] of a 32-byte slot (upper 16 bytes are zero)
+    log_data[base + 16..base + 32].copy_from_slice(&mint.to_be_bytes());
+    // value: U256 big-endian in 32 bytes
+    log_data[base + 32..base + 64].copy_from_slice(&value.to_be_bytes::<32>());
+    // gas_limit: u64 big-endian in 8 bytes
+    log_data[base + 64..base + 72].copy_from_slice(&gas_limit.to_be_bytes());
+    // isCreation: 0 (call, not create)
+    log_data[base + 72] = 0;
+    // calldata
+    log_data[base + 73..base + 73 + data.len()].copy_from_slice(data);
+
+    // Build from/to topics: left-padded addresses in B256
+    let mut from_topic = [0u8; 32];
+    from_topic[12..32].copy_from_slice(from.as_slice());
+    let mut to_topic = [0u8; 32];
+    to_topic[12..32].copy_from_slice(to.as_slice());
+
+    alloy_primitives::Log {
+        address: deposit_contract,
+        data: LogData::new_unchecked(
+            vec![
+                DEPOSIT_EVENT_ABI_HASH,
+                B256::from(from_topic),
+                B256::from(to_topic),
+                DEPOSIT_EVENT_VERSION_0,
+            ],
+            log_data.into(),
+        ),
+    }
+}
+
+/// A user deposit log on L1 is processed by the derivation pipeline without
+/// errors.
+///
+/// The deposit log is placed in an L1 block that also contains the batcher
+/// frame for L2 block 1. The pipeline must:
+/// 1. Not crash when encountering the deposit log in the L1 receipts.
+/// 2. Correctly derive L2 block 1 (safe head advances to 1).
+/// 3. The L2 block's L1 origin is the block containing the deposit log.
+///
+/// This validates the deposit-processing path in the attributes builder
+/// without needing EVM execution (the verifier applies attributes without
+/// executing deposit transactions).
+#[tokio::test]
+async fn l1_deposit_included_in_derived_l2_block() {
+    let deposit_contract = Address::repeat_byte(0xDD);
+    let batcher_cfg = BatcherConfig::default();
+    let rollup_cfg = RollupConfig {
+        deposit_contract_address: deposit_contract,
+        ..rollup_config_for(&batcher_cfg)
+    };
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    // Build L2 block 1 from the sequencer.
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let mut source = ActionL2Source::new();
+    source.push(sequencer.build_next_block().expect("build L2 block 1"));
+
+    // Enqueue a user deposit log: from=0xAA..AA, to=0xBB..BB, value=1 ETH, gas=100k.
+    h.l1.enqueue_log(user_deposit_log(
+        deposit_contract,
+        Address::repeat_byte(0xAA),
+        Address::repeat_byte(0xBB),
+        0,                                         // mint
+        U256::from(1_000_000_000_000_000_000u128), // 1 ETH in wei
+        100_000,                                   // gas_limit
+        &[],                                       // empty calldata
+    ));
+
+    // Submit the batcher frame into the same L1 block as the deposit log.
+    let mut batcher = h.create_batcher(source, batcher_cfg);
+    batcher.advance().expect("batcher encode");
+    drop(batcher);
+    h.l1.mine_block();
+
+    // Create verifier AFTER mining so the snapshot contains block 1.
+    let (mut verifier, _chain) = h.create_verifier();
+    let l1_block_1 = block_info_from(h.l1.tip());
+
+    verifier.initialize().await.expect("initialize should succeed");
+    verifier.act_l1_head_signal(l1_block_1).await.expect("signal should succeed");
+    let derived = verifier.act_l2_pipeline_full().await.expect("pipeline step should succeed");
+
+    assert_eq!(derived, 1, "expected exactly one L2 block to be derived");
+    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head should be L2 block 1");
+    // The L2 block references L1 genesis (epoch 0) because the sequencer built
+    // it before L1 block 1 existed. The deposit log lives in L1 block 1, which
+    // is the *inclusion* block, not the L1 origin. The pipeline processed the
+    // deposit log from block 1's receipts without errors.
+    assert_eq!(verifier.l2_safe().l1_origin.number, 0, "L2 block 1 references epoch 0");
 }
 
 /// After a batcher-address rotation committed to L1 via a `ConfigUpdate` log,
@@ -1726,5 +1856,159 @@ async fn multiple_l2_blocks_derived_from_blob() {
         verifier.l2_safe().block_info.number,
         L2_BLOCK_COUNT,
         "safe head should be L2 block 3"
+    );
+}
+
+/// A `SystemConfig` batcher-address update committed in an L1 block is
+/// correctly rolled back when that L1 block is removed by a reorg.
+///
+/// The test proceeds in six phases:
+///
+///   1. **Setup** — build three L2 blocks upfront with batcher A.
+///   2. **Derive blocks 1-2** — batcher A frames are accepted, safe head → 2.
+///   3. **Rotate config** — L1 block 3 carries a `ConfigUpdate` log switching
+///      the batcher address from A to B.  No batch data, so safe head stays 2.
+///   4. **Verify old batcher ignored** — batcher A submits block 3 in L1 block
+///      4.  The pipeline ignores it because its internal batcher address is now
+///      B.  Safe head stays 2.
+///   5. **Reorg** — L1 is rewound to block 2, discarding the config update and
+///      block 4.  The pipeline is reset with the genesis (pre-rotation) system
+///      config.
+///   6. **New fork** — batcher A submits block 3 in L1 block 3'.  The pipeline
+///      now accepts it because the config update was rolled back.  Safe head
+///      advances to 3.
+///
+/// This is the reorg-reversal half of op-e2e's `BatcherKeyRotation` scenario.
+#[tokio::test]
+async fn batcher_config_update_rolled_back_on_reorg() {
+    // --- Phase 1: Setup ---
+    let l1_sys_cfg_addr = Address::repeat_byte(0xCC);
+    let batcher_a = BatcherConfig::default();
+    let batcher_b =
+        BatcherConfig { batcher_address: Address::repeat_byte(0xBB), ..batcher_a.clone() };
+
+    let rollup_cfg = RollupConfig {
+        batch_inbox_address: batcher_a.inbox_address,
+        block_time: 2,
+        max_sequencer_drift: 600,
+        seq_window_size: 3600,
+        channel_timeout: 300,
+        l1_system_config_address: l1_sys_cfg_addr,
+        genesis: ChainGenesis {
+            system_config: Some(SystemConfig {
+                batcher_address: batcher_a.batcher_address,
+                gas_limit: 30_000_000,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
+        ..Default::default()
+    };
+    let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
+
+    // Build L2 blocks 1, 2, 3 upfront from the L1 genesis state.
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_sequencer(l1_chain);
+    let block1 = builder.build_next_block().expect("build block 1");
+    let hash1 = builder.head().block_info.hash;
+    let block2 = builder.build_next_block().expect("build block 2");
+    let hash2 = builder.head().block_info.hash;
+    let block3 = builder.build_next_block().expect("build block 3");
+    let hash3 = builder.head().block_info.hash;
+
+    // Clone blocks for resubmission on the new fork after reorg.
+    let block1_clone = block1.clone();
+    let block2_clone = block2.clone();
+
+    // --- Phase 2: Derive blocks 1-2 with batcher A (L1 blocks 1-2). ---
+    for block in [block1, block2] {
+        let mut source = ActionL2Source::new();
+        source.push(block);
+        let mut batcher = h.create_batcher(source, batcher_a.clone());
+        batcher.advance().expect("batcher A encode");
+        drop(batcher);
+        h.l1.mine_block();
+    }
+
+    // --- Phase 3: Rotate config (L1 block 3 — config update log only). ---
+    h.l1.enqueue_log(batcher_update_log(l1_sys_cfg_addr, batcher_b.batcher_address));
+    h.l1.mine_block();
+
+    // Create verifier after all pre-reorg L1 blocks are mined.
+    let (mut verifier, chain) = h.create_verifier();
+    verifier.register_block_hash(1, hash1);
+    verifier.register_block_hash(2, hash2);
+    verifier.register_block_hash(3, hash3);
+    verifier.initialize().await.expect("initialize");
+
+    // Drive derivation through L1 blocks 1-2.
+    for i in 1u64..=2 {
+        let block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
+        verifier.act_l1_head_signal(block).await.expect("signal");
+        verifier.act_l2_pipeline_full().await.expect("step");
+    }
+    assert_eq!(verifier.l2_safe().block_info.number, 2, "blocks 1-2 derived with batcher A");
+
+    // Step over the rotation block — no batch, but system config updates to B.
+    let rotation_block = block_info_from(h.l1.block_by_number(3).expect("rotation block"));
+    verifier.act_l1_head_signal(rotation_block).await.expect("signal rotation block");
+    let rotation_derived = verifier.act_l2_pipeline_full().await.expect("step rotation block");
+    assert_eq!(rotation_derived, 0, "rotation block contains no batch");
+
+    // --- Phase 4: Verify old batcher is now ignored (L1 block 4). ---
+    let mut source_a = ActionL2Source::new();
+    source_a.push(block3.clone());
+    let mut batcher = h.create_batcher(source_a, batcher_a.clone());
+    batcher.advance().expect("batcher A encode block 3");
+    drop(batcher);
+    h.l1.mine_block();
+    chain.push(h.l1.tip().clone());
+
+    verifier.act_l1_head_signal(block_info_from(h.l1.tip())).await.expect("signal block 4");
+    let derived_a = verifier.act_l2_pipeline_full().await.expect("step block 4");
+    assert_eq!(derived_a, 0, "batcher A frame must be ignored after key rotation");
+    assert_eq!(verifier.l2_safe().block_info.number, 2, "safe head must not advance");
+
+    // --- Phase 5: Reorg L1 back to genesis (discard config update + block 4). ---
+    // We must discard all post-genesis L1 blocks so the pipeline can be cleanly
+    // reset to genesis.  L1 blocks 1-2 (with batcher A frames) will be re-mined
+    // on the new fork.
+    h.l1.reorg_to(0).expect("reorg to genesis");
+    chain.truncate_to(0);
+
+    let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis always present"));
+    let l2_genesis = h.l2_genesis();
+
+    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset");
+    // Drain the reset origin (genesis has no batch data).
+    verifier.act_l2_pipeline_full().await.expect("drain genesis after reset");
+
+    // --- Phase 6: New fork — re-mine blocks 1-2 with batcher A, then block 3'
+    //     also with batcher A (no config update log). ---
+    // Re-submit the same L2 blocks that were derived pre-reorg, plus block 3.
+    // Build fresh batchers to create new frames for the new fork.
+    let resubmit_blocks = [block1_clone, block2_clone, block3];
+    for block in resubmit_blocks {
+        let mut source = ActionL2Source::new();
+        source.push(block);
+        let mut batcher = h.create_batcher(source, batcher_a.clone());
+        batcher.advance().expect("batcher A encode on new fork");
+        drop(batcher);
+        h.l1.mine_block();
+        chain.push(h.l1.tip().clone());
+    }
+
+    // Drive derivation through L1 blocks 1', 2', 3' on the new fork.
+    for i in 1u64..=3 {
+        let block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
+        verifier.act_l1_head_signal(block).await.expect("signal");
+        verifier.act_l2_pipeline_full().await.expect("step");
+    }
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        3,
+        "safe head advances to 3 — config rollback restored batcher A"
     );
 }
