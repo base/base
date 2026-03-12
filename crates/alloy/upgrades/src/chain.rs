@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use core::ops::Index;
 
 use BaseUpgrade::{
-    BaseV1, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
+    Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith, V1,
 };
 // Production imports for hardfork implementations
 use EthereumHardfork::{
@@ -42,13 +42,13 @@ impl BaseChainUpgrades {
     }
 
     /// Creates a new [`BaseChainUpgrades`] with Base mainnet configuration.
-    pub fn base_mainnet() -> Self {
-        Self::new(BaseUpgrade::base_mainnet())
+    pub fn mainnet() -> Self {
+        Self::new(BaseUpgrade::mainnet())
     }
 
     /// Creates a new [`BaseChainUpgrades`] with Base Sepolia configuration.
-    pub fn base_sepolia() -> Self {
-        Self::new(BaseUpgrade::base_sepolia())
+    pub fn sepolia() -> Self {
+        Self::new(BaseUpgrade::sepolia())
     }
 
     /// Creates a new [`BaseChainUpgrades`] with devnet configuration.
@@ -103,7 +103,7 @@ impl Index<BaseUpgrade> for BaseChainUpgrades {
             Holocene => &self.forks[Holocene.idx()].1,
             Isthmus => &self.forks[Isthmus.idx()].1,
             Jovian => &self.forks[Jovian.idx()].1,
-            BaseV1 => &self.forks[BaseV1.idx()].1,
+            V1 => &self.forks[V1.idx()].1,
         }
     }
 }
@@ -134,7 +134,7 @@ impl Index<EthereumHardfork> for BaseChainUpgrades {
 #[cfg(test)]
 mod tests {
     use BaseUpgrade::{
-        BaseV1, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
+        Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith, V1,
     };
     use alloy_hardforks::EthereumHardfork;
 
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn base_mainnet_fork_conditions() {
-        let base_mainnet_forks = BaseChainUpgrades::base_mainnet();
+        let base_mainnet_forks = BaseChainUpgrades::mainnet();
         assert_eq!(base_mainnet_forks[Bedrock], ForkCondition::Block(BASE_MAINNET_BEDROCK_BLOCK));
         assert_eq!(
             base_mainnet_forks[Regolith],
@@ -187,12 +187,12 @@ mod tests {
             base_mainnet_forks[Jovian],
             ForkCondition::Timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP)
         );
-        assert_eq!(base_mainnet_forks[BaseV1], ForkCondition::Never);
+        assert_eq!(base_mainnet_forks[V1], ForkCondition::Never);
     }
 
     #[test]
     fn base_sepolia_fork_conditions() {
-        let base_sepolia_forks = BaseChainUpgrades::base_sepolia();
+        let base_sepolia_forks = BaseChainUpgrades::sepolia();
         assert_eq!(base_sepolia_forks[Bedrock], ForkCondition::Block(BASE_SEPOLIA_BEDROCK_BLOCK));
         assert_eq!(
             base_sepolia_forks[Regolith],
@@ -226,12 +226,12 @@ mod tests {
             base_sepolia_forks.upgrade_activation(Jovian),
             ForkCondition::Timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP)
         );
-        assert_eq!(base_sepolia_forks[BaseV1], ForkCondition::Never);
+        assert_eq!(base_sepolia_forks[V1], ForkCondition::Never);
     }
 
     #[test]
     fn is_jovian_active_at_timestamp() {
-        let base_mainnet_forks = BaseChainUpgrades::base_mainnet();
+        let base_mainnet_forks = BaseChainUpgrades::mainnet();
         assert!(base_mainnet_forks.is_jovian_active_at_timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP));
         assert!(
             !base_mainnet_forks.is_jovian_active_at_timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP - 1)
@@ -240,7 +240,7 @@ mod tests {
             base_mainnet_forks.is_jovian_active_at_timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP + 1000)
         );
 
-        let base_sepolia_forks = BaseChainUpgrades::base_sepolia();
+        let base_sepolia_forks = BaseChainUpgrades::sepolia();
         assert!(base_sepolia_forks.is_jovian_active_at_timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP));
         assert!(
             !base_sepolia_forks.is_jovian_active_at_timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP - 1)
@@ -252,20 +252,20 @@ mod tests {
 
     #[test]
     fn is_base_v1_active_at_timestamp() {
-        // BaseV1 is not scheduled on mainnet or sepolia yet (ForkCondition::Never)
-        let base_mainnet_forks = BaseChainUpgrades::base_mainnet();
+        // V1 is not scheduled on mainnet or sepolia yet (ForkCondition::Never)
+        let base_mainnet_forks = BaseChainUpgrades::mainnet();
         assert!(!base_mainnet_forks.is_base_v1_active_at_timestamp(0));
         assert!(!base_mainnet_forks.is_base_v1_active_at_timestamp(u64::MAX));
 
-        let base_sepolia_forks = BaseChainUpgrades::base_sepolia();
+        let base_sepolia_forks = BaseChainUpgrades::sepolia();
         assert!(!base_sepolia_forks.is_base_v1_active_at_timestamp(0));
         assert!(!base_sepolia_forks.is_base_v1_active_at_timestamp(u64::MAX));
 
-        // BaseV1 is active at genesis on devnet (ForkCondition::ZERO_TIMESTAMP)
+        // V1 is active at genesis on devnet (ForkCondition::ZERO_TIMESTAMP)
         let devnet_forks = BaseChainUpgrades::devnet();
         assert!(devnet_forks.is_base_v1_active_at_timestamp(0));
 
-        // BaseV1 activates alongside Jovian on devnet-0-sepolia-dev-0
+        // V1 activates alongside Jovian on devnet-0-sepolia-dev-0
         let devnet0_forks = BaseChainUpgrades::base_devnet_0_sepolia_dev_0();
         assert!(
             !devnet0_forks
@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn test_ethereum_fork_activation_consistency() {
-        let base_mainnet_forks = BaseChainUpgrades::base_mainnet();
+        let base_mainnet_forks = BaseChainUpgrades::mainnet();
         for ethereum_hardfork in EthereumHardfork::VARIANTS {
             let _ = base_mainnet_forks.ethereum_fork_activation(*ethereum_hardfork);
         }

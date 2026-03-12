@@ -42,8 +42,8 @@ hardfork!(
         Isthmus,
         /// Jovian: <https://github.com/ethereum-optimism/specs/tree/main/specs/protocol/jovian>
         Jovian,
-        /// Base V1: First Base-specific network upgrade.
-        BaseV1,
+        /// V1: First Base-specific network upgrade.
+        V1,
     }
 );
 
@@ -51,7 +51,7 @@ impl BaseUpgrade {
     /// Reverse lookup to find the hardfork given a chain ID and block timestamp.
     /// Returns the active hardfork at the given timestamp for the specified Base chain.
     ///
-    /// Note: standalone upgrades like [`BaseUpgrade::BaseV1`] are not included here because
+    /// Note: standalone upgrades like [`BaseUpgrade::V1`] are not included here because
     /// they do not participate in the sequential cascade and have no scheduled activation
     /// timestamp on production chains. Use [`crate::BaseUpgrades::is_base_v1_active_at_timestamp`]
     /// to check those independently.
@@ -84,7 +84,7 @@ impl BaseUpgrade {
     }
 
     /// Base mainnet list of hardforks.
-    pub const fn base_mainnet() -> [(Self, ForkCondition); 10] {
+    pub const fn mainnet() -> [(Self, ForkCondition); 10] {
         [
             (Self::Bedrock, ForkCondition::Block(BASE_MAINNET_BEDROCK_BLOCK)),
             (Self::Regolith, ForkCondition::Timestamp(BASE_MAINNET_REGOLITH_TIMESTAMP)),
@@ -95,12 +95,12 @@ impl BaseUpgrade {
             (Self::Holocene, ForkCondition::Timestamp(BASE_MAINNET_HOLOCENE_TIMESTAMP)),
             (Self::Isthmus, ForkCondition::Timestamp(BASE_MAINNET_ISTHMUS_TIMESTAMP)),
             (Self::Jovian, ForkCondition::Timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP)),
-            (Self::BaseV1, ForkCondition::Never),
+            (Self::V1, ForkCondition::Never),
         ]
     }
 
     /// Base Sepolia list of hardforks.
-    pub const fn base_sepolia() -> [(Self, ForkCondition); 10] {
+    pub const fn sepolia() -> [(Self, ForkCondition); 10] {
         [
             (Self::Bedrock, ForkCondition::Block(BASE_SEPOLIA_BEDROCK_BLOCK)),
             (Self::Regolith, ForkCondition::Timestamp(BASE_SEPOLIA_REGOLITH_TIMESTAMP)),
@@ -111,7 +111,7 @@ impl BaseUpgrade {
             (Self::Holocene, ForkCondition::Timestamp(BASE_SEPOLIA_HOLOCENE_TIMESTAMP)),
             (Self::Isthmus, ForkCondition::Timestamp(BASE_SEPOLIA_ISTHMUS_TIMESTAMP)),
             (Self::Jovian, ForkCondition::Timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP)),
-            (Self::BaseV1, ForkCondition::Never),
+            (Self::V1, ForkCondition::Never),
         ]
     }
 
@@ -127,7 +127,7 @@ impl BaseUpgrade {
             (Self::Holocene, ForkCondition::ZERO_TIMESTAMP),
             (Self::Isthmus, ForkCondition::ZERO_TIMESTAMP),
             (Self::Jovian, ForkCondition::ZERO_TIMESTAMP),
-            (Self::BaseV1, ForkCondition::ZERO_TIMESTAMP),
+            (Self::V1, ForkCondition::ZERO_TIMESTAMP),
         ]
     }
 
@@ -158,10 +158,10 @@ impl BaseUpgrade {
                 ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_ISTHMUS_TIMESTAMP),
             ),
             (Self::Jovian, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
-            // BaseV1 co-activates with Jovian on this devnet. Both resolve to OpSpecId::BASE_V1
-            // since spec_by_timestamp_after_bedrock checks BaseV1 first (newest wins). This is
-            // intentional: BaseV1 is a strict superset of Jovian on this devnet configuration.
-            (Self::BaseV1, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
+            // V1 co-activates with Jovian on this devnet. Both resolve to OpSpecId::BASE_V1
+            // since spec_by_timestamp_after_bedrock checks V1 first (newest wins). This is
+            // intentional: V1 is a strict superset of Jovian on this devnet configuration.
+            (Self::V1, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
         ]
     }
 
@@ -183,7 +183,7 @@ mod tests {
     fn check_base_hardfork_from_str() {
         let hardfork_str = [
             "beDrOck", "rEgOlITH", "cAnYoN", "eCoToNe", "FJorD", "GRaNiTe", "hOlOcEnE", "isthMUS",
-            "jOvIaN", "bAsEv1",
+            "jOvIaN", "v1",
         ];
         let expected_hardforks = [
             BaseUpgrade::Bedrock,
@@ -195,7 +195,7 @@ mod tests {
             BaseUpgrade::Holocene,
             BaseUpgrade::Isthmus,
             BaseUpgrade::Jovian,
-            BaseUpgrade::BaseV1,
+            BaseUpgrade::V1,
         ];
 
         let hardforks: alloc::vec::Vec<BaseUpgrade> =

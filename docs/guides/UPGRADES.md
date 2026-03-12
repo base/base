@@ -2,7 +2,7 @@
 
 This guide covers every code change required to introduce a new network upgrade to this repository. Changes are split into two groups: those required for every upgrade, and those that depend on whether the upgrade changes EVM execution rules.
 
-The BaseV1 upgrade is used as the running example throughout. Replace `BaseV1` / `base_v1` / `BASE_V1` with the actual upgrade name.
+The V1 upgrade is used as the running example throughout. Replace `V1` / `base_v1` / `BASE_V1` with the actual upgrade name.
 
 ---
 
@@ -32,8 +32,8 @@ hardfork!(
         // ... existing variants ...
         /// Jovian: <https://github.com/ethereum-optimism/specs/tree/main/specs/protocol/jovian>
         Jovian,
-        /// Base V1: First Base-specific network upgrade.
-        BaseV1,   // <-- add here
+        /// V1: First Base-specific network upgrade.
+        V1,   // <-- add here
     }
 );
 ```
@@ -41,17 +41,17 @@ hardfork!(
 Then update all four chain config array methods from `[(Self, ForkCondition); N]` to `N+1` and append the new entry. Mainnet and sepolia use `ForkCondition::Never` until the upgrade is scheduled; the generic devnet uses `ForkCondition::ZERO_TIMESTAMP`:
 
 ```rust
-pub const fn base_mainnet() -> [(Self, ForkCondition); 10] {
+pub const fn mainnet() -> [(Self, ForkCondition); 10] {
     [
         // ... existing entries ...
-        (Self::BaseV1, ForkCondition::Never),
+        (Self::V1, ForkCondition::Never),
     ]
 }
 
 pub const fn devnet() -> [(Self, ForkCondition); 10] {
     [
         // ... existing entries ...
-        (Self::BaseV1, ForkCondition::ZERO_TIMESTAMP),
+        (Self::V1, ForkCondition::ZERO_TIMESTAMP),
     ]
 }
 ```
@@ -63,7 +63,7 @@ pub const fn base_devnet_0_sepolia_dev_0() -> [(Self, ForkCondition); 10] {
     [
         // ... existing entries ...
         (Self::Jovian, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
-        (Self::BaseV1, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
+        (Self::V1, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
     ]
 }
 ```
@@ -76,11 +76,11 @@ Update `check_base_upgrade_from_str` in the test module to include the new upgra
 
 **File:** [`crates/alloy/upgrades/src/chain.rs`](../../crates/alloy/upgrades/src/chain.rs)
 
-Add `BaseV1` to the `use BaseUpgrade::{...}` import and add a match arm to `Index<BaseUpgrade>`:
+Add `V1` to the `use BaseUpgrade::{...}` import and add a match arm to `Index<BaseUpgrade>`:
 
 ```rust
 use BaseUpgrade::{
-    BaseV1, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
+    Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith, V1,
 };
 
 impl Index<BaseUpgrade> for BaseChainUpgrades {
@@ -88,7 +88,7 @@ impl Index<BaseUpgrade> for BaseChainUpgrades {
         match hf {
             // ... existing arms ...
             Jovian  => &self.forks[Jovian.idx()].1,
-            BaseV1  => &self.forks[BaseV1.idx()].1,  // <-- add
+            V1      => &self.forks[V1.idx()].1,  // <-- add
         }
     }
 }
@@ -140,7 +140,7 @@ Add `is_X_active` and `is_first_X_block` after the previous upgrade's methods.
 
 There are two patterns depending on whether the new upgrade is **standalone** or **cascading**:
 
-**Standalone** (e.g. `pectra_blob_schedule`, `BaseV1`) — activated independently, never implied by a later upgrade being active. Use this pattern when the upgrade affects only protocol-level behavior and is not a prerequisite for the next upgrade:
+**Standalone** (e.g. `pectra_blob_schedule`, `V1`) — activated independently, never implied by a later upgrade being active. Use this pattern when the upgrade affects only protocol-level behavior and is not a prerequisite for the next upgrade:
 
 ```rust
 /// Returns true if Base V1 is active at the given timestamp.
@@ -180,7 +180,7 @@ BaseUpgrade::Jovian => self
     .jovian_time
     .map(ForkCondition::Timestamp)
     .unwrap_or(ForkCondition::Never),  // standalone: no cascade
-BaseUpgrade::BaseV1 => self
+BaseUpgrade::V1 => self
     .hardforks
     .base
     .as_ref()
@@ -199,9 +199,9 @@ For **cascading** upgrades, replace the previous arm's `unwrap_or(ForkCondition:
 **File:** [`crates/alloy/upgrades/src/hardforks.rs`](../../crates/alloy/upgrades/src/hardforks.rs)
 
 ```rust
-/// Returns `true` if [`BaseV1`](BaseUpgrade::BaseV1) is active at given block timestamp.
+/// Returns `true` if [`V1`](BaseUpgrade::V1) is active at given block timestamp.
 fn is_base_v1_active_at_timestamp(&self, timestamp: u64) -> bool {
-    self.upgrade_activation(BaseUpgrade::BaseV1).active_at_timestamp(timestamp)
+    self.upgrade_activation(BaseUpgrade::V1).active_at_timestamp(timestamp)
 }
 ```
 
@@ -265,12 +265,12 @@ hardforks: HardForkConfig {
 
 **File:** [`crates/consensus/registry/tests/hardfork_consistency.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/tests/hardfork_consistency.rs)
 
-These tests assert that `BASE_MAINNET_CONFIG.upgrade_activation(fork)` matches `BaseChainUpgrades::base_mainnet().upgrade_activation(fork)` for every `BaseUpgrade` variant. They should pass without changes as long as both sides consistently return `ForkCondition::Never` for an unscheduled upgrade or the same timestamp once scheduled.
+These tests assert that `BASE_MAINNET_CONFIG.upgrade_activation(fork)` matches `BaseChainUpgrades::mainnet().upgrade_activation(fork)` for every `BaseUpgrade` variant. They should pass without changes as long as both sides consistently return `ForkCondition::Never` for an unscheduled upgrade or the same timestamp once scheduled.
 
 If there is a known discrepancy (e.g. the cascade causes a mismatch for an unset upgrade), add a skip with an explanatory comment as done for `Regolith`:
 
 ```rust
-if *fork == BaseUpgrade::BaseV1 {
+if *fork == BaseUpgrade::V1 {
     continue; // explanation of why the two sides differ
 }
 ```
@@ -304,7 +304,7 @@ Add the string name and wire up `FromStr` and `From<OpSpecId> for &'static str`:
 
 ```rust
 // name module
-pub const BASE_V1: &str = "BaseV1";
+pub const BASE_V1: &str = "V1";
 
 // FromStr
 name::BASE_V1 => Ok(Self::BASE_V1),
@@ -374,7 +374,7 @@ Append the new upgrade in `to_chain_hardforks()`. If it pairs with a new Ethereu
 ```rust
 // No paired Ethereum hardfork
 forks.push((BaseUpgrade::Jovian.boxed(), self[BaseUpgrade::Jovian]));
-forks.push((BaseUpgrade::BaseV1.boxed(), self[BaseUpgrade::BaseV1]));  // <-- add
+forks.push((BaseUpgrade::V1.boxed(), self[BaseUpgrade::V1]));  // <-- add
 ```
 
 ---

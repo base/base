@@ -380,7 +380,7 @@ mod tests {
     fn test_with_encoded() {
         let executor_factory = OpBlockExecutorFactory::new(
             OpAlloyReceiptBuilder::default(),
-            BaseChainUpgrades::base_mainnet(),
+            BaseChainUpgrades::mainnet(),
             OpEvmFactory::default(),
         );
         let mut db =
@@ -487,7 +487,7 @@ mod tests {
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
         let op_chain_hardforks = BaseChainUpgrades::new(
-            BaseUpgrade::base_mainnet()
+            BaseUpgrade::mainnet()
                 .into_iter()
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
@@ -532,7 +532,7 @@ mod tests {
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
         let op_chain_hardforks = BaseChainUpgrades::new(
-            BaseUpgrade::base_mainnet()
+            BaseUpgrade::mainnet()
                 .into_iter()
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
@@ -589,7 +589,7 @@ mod tests {
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
         let op_chain_hardforks = BaseChainUpgrades::new(
-            BaseUpgrade::base_mainnet()
+            BaseUpgrade::mainnet()
                 .into_iter()
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
