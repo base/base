@@ -58,6 +58,8 @@ async fn craft_tx_produces_valid_signed_eip1559_transaction() {
     assert_eq!(tx.to, TxKind::Call(to));
     assert_eq!(tx.value, value);
     assert_eq!(tx.chain_id, anvil.chain_id());
+    assert_eq!(tx.nonce, 0, "first tx should have nonce 0");
+    assert!(tx.gas_limit > 0, "gas_limit should be non-zero");
     assert!(tx.max_fee_per_gas > 0, "max_fee_per_gas should be non-zero");
     assert!(tx.max_priority_fee_per_gas > 0, "max_priority_fee_per_gas should be non-zero");
 }
@@ -132,6 +134,13 @@ async fn suggest_gas_price_caps_returns_valid_estimates() {
     assert!(caps.gas_tip_cap > 0, "tip_cap should be non-zero");
     // gas_fee_cap = tip + 2 * base_fee, which is always > tip alone.
     assert!(caps.gas_fee_cap > caps.gas_tip_cap, "fee_cap should exceed tip_cap");
+    // raw_gas_fee_cap (from provider values before enforcing minimums) should
+    // be <= gas_fee_cap (after enforcing minimums) and non-zero on Anvil.
+    assert!(caps.raw_gas_fee_cap > 0, "raw_gas_fee_cap should be non-zero");
+    assert!(
+        caps.raw_gas_fee_cap <= caps.gas_fee_cap,
+        "raw_gas_fee_cap should be <= gas_fee_cap after enforcing minimums",
+    );
     // Blob fee cap should be None for non-blob transactions.
     assert!(caps.blob_fee_cap.is_none(), "blob_fee_cap should be None");
 }
@@ -153,6 +162,7 @@ async fn prepare_produces_valid_signed_transaction() {
 
     // Confirm the candidate's fields survive the retry wrapper.
     assert_eq!(tx.to, TxKind::Call(to));
+    assert_eq!(tx.value, U256::from(1_000u64));
 }
 
 #[tokio::test]
@@ -227,6 +237,100 @@ async fn new_rejects_chain_id_mismatch() {
             assert!(
                 msg.contains("chain_id mismatch"),
                 "expected chain_id mismatch error, got: {msg}",
+            );
+        }
+        other => panic!("expected TxManagerError::InvalidConfig, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn craft_tx_preserves_calldata() {
+    let (manager, _anvil) = setup().await;
+
+    let calldata = Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]);
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        tx_data: calldata.clone(),
+        value: U256::ZERO,
+        gas_limit: 0,
+        ..Default::default()
+    };
+
+    let raw_tx = manager.craft_tx(&candidate).await.expect("should craft tx with calldata");
+    let tx = decode_eip1559(&raw_tx);
+
+    assert_eq!(tx.input, calldata, "calldata should be preserved in the decoded transaction");
+}
+
+#[tokio::test]
+async fn suggest_gas_price_caps_enforces_min_tip_cap_and_min_basefee() {
+    let anvil = Anvil::new().spawn();
+    let url = anvil.endpoint_url();
+    let provider = RootProvider::new_http(url);
+    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+    let wallet = EthereumWallet::from(signer);
+    let chain_id = anvil.chain_id();
+
+    // Set minimums well above what Anvil returns (Anvil tip is ~1 gwei,
+    // base fee ~1 gwei) so the .max() enforcement is exercised.
+    let high_min_tip = 50_000_000_000u128; // 50 gwei
+    let high_min_basefee = 100_000_000_000u128; // 100 gwei
+    let config = TxManagerConfig {
+        min_tip_cap: high_min_tip,
+        min_basefee: high_min_basefee,
+        ..TxManagerConfig::default()
+    };
+
+    let manager = SimpleTxManager::new(provider, wallet, config, chain_id)
+        .await
+        .expect("should create manager");
+
+    let candidate = TxCandidate::default();
+    let caps = manager.suggest_gas_price_caps(&candidate).await.expect("should return caps");
+
+    // Tip cap should be at least the configured minimum.
+    assert!(
+        caps.gas_tip_cap >= high_min_tip,
+        "gas_tip_cap {} should be >= min_tip_cap {high_min_tip}",
+        caps.gas_tip_cap,
+    );
+    // Fee cap should reflect the enforced minimum base fee:
+    // gas_fee_cap = tip + 2 * base_fee >= high_min_tip + 2 * high_min_basefee.
+    let expected_min_fee_cap = high_min_tip + 2 * high_min_basefee;
+    assert!(
+        caps.gas_fee_cap >= expected_min_fee_cap,
+        "gas_fee_cap {} should be >= {expected_min_fee_cap} (min_tip + 2 * min_basefee)",
+        caps.gas_fee_cap,
+    );
+    // raw_gas_fee_cap should be strictly less than gas_fee_cap since we
+    // inflated both tip and base fee above the Anvil defaults.
+    assert!(
+        caps.raw_gas_fee_cap < caps.gas_fee_cap,
+        "raw_gas_fee_cap {} should be < gas_fee_cap {} when minimums are enforced",
+        caps.raw_gas_fee_cap,
+        caps.gas_fee_cap,
+    );
+}
+
+#[tokio::test]
+async fn new_rejects_invalid_config() {
+    let anvil = Anvil::new().spawn();
+    let url = anvil.endpoint_url();
+    let provider = RootProvider::new_http(url);
+    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+    let wallet = EthereumWallet::from(signer);
+
+    let invalid_config = TxManagerConfig { num_confirmations: 0, ..TxManagerConfig::default() };
+
+    let err = SimpleTxManager::new(provider, wallet, invalid_config, anvil.chain_id())
+        .await
+        .expect_err("should reject invalid config");
+
+    match &err {
+        TxManagerError::InvalidConfig(msg) => {
+            assert!(
+                msg.contains("num_confirmations"),
+                "expected num_confirmations validation error, got: {msg}",
             );
         }
         other => panic!("expected TxManagerError::InvalidConfig, got {other:?}"),
