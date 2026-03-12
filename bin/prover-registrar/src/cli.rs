@@ -1,12 +1,13 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
+use std::time::Duration;
+
 use alloy_primitives::Address;
-use alloy_signer::k256::ecdsa::SigningKey;
 use alloy_signer_local::PrivateKeySigner;
 use base_proof_tee_registrar::{
-    RegistrarConfig, RegistrarError, RemoteSignerConfig, SigningConfig,
+    BoundlessConfig, RegistrarConfig, RegistrarError, RemoteSignerConfig, SigningConfig,
 };
-use clap::{ArgGroup, Parser};
+use clap::{ArgGroup, Args, Parser};
 use url::Url;
 
 /// Prover Registrar — automated TEE signer registration service.
@@ -37,7 +38,7 @@ pub(crate) struct Cli {
     target_group_arn: String,
 
     /// AWS region.
-    #[arg(long, env = "REGISTRAR_AWS_REGION", default_value = "us-east-1")]
+    #[arg(long, env = "REGISTRAR_AWS_REGION")]
     aws_region: String,
 
     /// JSON-RPC port to poll on each prover instance.
@@ -58,6 +59,22 @@ pub(crate) struct Cli {
     private_key: Option<String>,
 
     // ── Boundless ─────────────────────────────────────────────────────────────
+    #[command(flatten)]
+    boundless: BoundlessArgs,
+
+    // ── Polling / Server ──────────────────────────────────────────────────────
+    /// Interval between discovery and registration poll cycles, in seconds.
+    #[arg(long, env = "REGISTRAR_POLL_INTERVAL_SECS", default_value_t = 30)]
+    poll_interval_secs: u64,
+
+    /// Port for the health check and Prometheus metrics HTTP server.
+    #[arg(long, env = "REGISTRAR_HEALTH_PORT", default_value_t = 7300)]
+    health_port: u16,
+}
+
+/// Boundless Network CLI arguments.
+#[derive(Args)]
+struct BoundlessArgs {
     /// Boundless Network RPC URL.
     #[arg(long, env = "REGISTRAR_BOUNDLESS_RPC_URL")]
     boundless_rpc_url: Url,
@@ -85,24 +102,14 @@ pub(crate) struct Cli {
     /// `NitroEnclaveVerifier` contract address for certificate caching (optional).
     #[arg(long, env = "REGISTRAR_NITRO_VERIFIER_ADDRESS")]
     nitro_verifier_address: Option<Address>,
-
-    // ── Polling / Server ──────────────────────────────────────────────────────
-    /// Interval between discovery and registration poll cycles, in seconds.
-    #[arg(long, env = "REGISTRAR_POLL_INTERVAL_SECS", default_value_t = 30)]
-    poll_interval_secs: u64,
-
-    /// Port for the health check and Prometheus metrics HTTP server.
-    #[arg(long, env = "REGISTRAR_HEALTH_PORT", default_value_t = 7300)]
-    health_port: u16,
 }
 
-/// Decode and validate a hex-encoded secp256k1 private key string.
-fn decode_private_key(field: &str, s: &str) -> Result<SigningKey, RegistrarError> {
-    let hex_str = s.strip_prefix("0x").unwrap_or(s);
-    let key_bytes = hex::decode(hex_str)
-        .map_err(|e| RegistrarError::Config(format!("{field}: invalid hex encoding: {e}")))?;
-    SigningKey::from_slice(&key_bytes)
-        .map_err(|e| RegistrarError::Config(format!("{field}: invalid secp256k1 key: {e}")))
+/// Parse a hex-encoded secp256k1 private key string into a [`PrivateKeySigner`].
+fn parse_private_key(field: &str, s: &str) -> Result<PrivateKeySigner, RegistrarError> {
+    s.strip_prefix("0x")
+        .unwrap_or(s)
+        .parse::<PrivateKeySigner>()
+        .map_err(|e| RegistrarError::Config(format!("{field}: {e}")))
 }
 
 impl Cli {
@@ -110,9 +117,7 @@ impl Cli {
     pub(crate) fn into_config(self) -> Result<RegistrarConfig, RegistrarError> {
         // Validate signing config and resolve to SigningConfig.
         let signing = match (&self.private_key, &self.signer_endpoint, &self.signer_address) {
-            (Some(pk), None, None) => SigningConfig::Local(PrivateKeySigner::from_signing_key(
-                decode_private_key("--private-key", pk)?,
-            )),
+            (Some(pk), None, None) => SigningConfig::Local(parse_private_key("--private-key", pk)?),
             (None, Some(endpoint), Some(address)) => SigningConfig::Remote(RemoteSignerConfig {
                 endpoint: endpoint.clone(),
                 address: *address,
@@ -126,18 +131,13 @@ impl Cli {
             }
         };
 
-        let boundless_signer = PrivateKeySigner::from_signing_key(decode_private_key(
-            "--boundless-private-key",
-            &self.boundless_private_key,
-        )?);
-
-        if self.boundless_min_price > self.boundless_max_price {
+        if self.boundless.boundless_min_price > self.boundless.boundless_max_price {
             return Err(RegistrarError::Config(
                 "--boundless-min-price must not exceed --boundless-max-price".into(),
             ));
         }
 
-        if self.boundless_timeout_secs == 0 {
+        if self.boundless.boundless_timeout_secs == 0 {
             return Err(RegistrarError::Config(
                 "--boundless-timeout-secs must be greater than 0".into(),
             ));
@@ -156,14 +156,19 @@ impl Cli {
             aws_region: self.aws_region,
             prover_port: self.prover_port,
             signing,
-            boundless_rpc_url: self.boundless_rpc_url,
-            boundless_signer,
-            boundless_verifier_program_url: self.boundless_verifier_program_url,
-            boundless_min_price: self.boundless_min_price,
-            boundless_max_price: self.boundless_max_price,
-            boundless_timeout_secs: self.boundless_timeout_secs,
-            nitro_verifier_address: self.nitro_verifier_address,
-            poll_interval_secs: self.poll_interval_secs,
+            boundless: BoundlessConfig {
+                rpc_url: self.boundless.boundless_rpc_url,
+                signer: parse_private_key(
+                    "--boundless-private-key",
+                    &self.boundless.boundless_private_key,
+                )?,
+                verifier_program_url: self.boundless.boundless_verifier_program_url,
+                min_price: self.boundless.boundless_min_price,
+                max_price: self.boundless.boundless_max_price,
+                timeout: Duration::from_secs(self.boundless.boundless_timeout_secs),
+                nitro_verifier_address: self.boundless.nitro_verifier_address,
+            },
+            poll_interval: Duration::from_secs(self.poll_interval_secs),
             health_port: self.health_port,
         })
     }
@@ -191,6 +196,8 @@ mod tests {
             "0x0000000000000000000000000000000000000001",
             "--target-group-arn",
             "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/test/abc",
+            "--aws-region",
+            "us-east-1",
             "--private-key",
             "0x0101010101010101010101010101010101010101010101010101010101010101",
             "--boundless-rpc-url",
@@ -211,6 +218,8 @@ mod tests {
             "0x0000000000000000000000000000000000000001",
             "--target-group-arn",
             "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/test/abc",
+            "--aws-region",
+            "us-east-1",
             "--signer-endpoint",
             "http://localhost:8546",
             "--signer-address",
@@ -256,6 +265,8 @@ mod tests {
             "0x0000000000000000000000000000000000000001",
             "--target-group-arn",
             "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/test/abc",
+            "--aws-region",
+            "us-east-1",
             "--boundless-rpc-url",
             "http://localhost:9545",
             "--boundless-private-key",
@@ -276,6 +287,8 @@ mod tests {
             "0x0000000000000000000000000000000000000001",
             "--target-group-arn",
             "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/test/abc",
+            "--aws-region",
+            "us-east-1",
             "--signer-endpoint",
             "http://localhost:8546",
             "--boundless-rpc-url",
@@ -320,6 +333,6 @@ mod tests {
     #[test]
     fn poll_interval_returns_duration() {
         let config = Cli::parse_from(base_args()).into_config().unwrap();
-        assert_eq!(config.poll_interval(), Duration::from_secs(30));
+        assert_eq!(config.poll_interval, Duration::from_secs(30));
     }
 }

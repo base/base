@@ -37,6 +37,39 @@ impl std::fmt::Debug for SigningConfig {
     }
 }
 
+/// Boundless Network configuration for ZK proof generation.
+#[derive(Clone)]
+pub struct BoundlessConfig {
+    /// Boundless Network RPC URL.
+    pub rpc_url: Url,
+    /// Signer for Boundless Network proving fees.
+    pub signer: PrivateKeySigner,
+    /// IPFS URL of the Nitro attestation verifier ELF uploaded via `nitro-attest-cli`.
+    pub verifier_program_url: Url,
+    /// Minimum price in wei per cycle for Boundless proof requests.
+    pub min_price: u64,
+    /// Maximum price in wei per cycle for Boundless proof requests.
+    pub max_price: u64,
+    /// Proof generation timeout.
+    pub timeout: Duration,
+    /// `NitroEnclaveVerifier` contract address for certificate caching (optional).
+    pub nitro_verifier_address: Option<Address>,
+}
+
+impl std::fmt::Debug for BoundlessConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BoundlessConfig")
+            .field("rpc_url", &url_origin(&self.rpc_url))
+            .field("signer", &self.signer.address())
+            .field("verifier_program_url", &url_origin(&self.verifier_program_url))
+            .field("min_price", &self.min_price)
+            .field("max_price", &self.max_price)
+            .field("timeout", &self.timeout)
+            .field("nitro_verifier_address", &self.nitro_verifier_address)
+            .finish()
+    }
+}
+
 /// Runtime configuration for the prover registrar.
 ///
 /// Constructed by the CLI layer (`bin/prover-registrar`), which handles argument
@@ -59,23 +92,11 @@ pub struct RegistrarConfig {
     /// Resolved signing configuration.
     pub signing: SigningConfig,
     // ── Boundless ─────────────────────────────────────────────────────────────
-    /// Boundless Network RPC URL.
-    pub boundless_rpc_url: Url,
-    /// Parsed signer for Boundless Network proving fees.
-    pub boundless_signer: PrivateKeySigner,
-    /// IPFS URL of the Nitro attestation verifier ELF uploaded via `nitro-attest-cli`.
-    pub boundless_verifier_program_url: Url,
-    /// Minimum price in wei per cycle for Boundless proof requests.
-    pub boundless_min_price: u64,
-    /// Maximum price in wei per cycle for Boundless proof requests.
-    pub boundless_max_price: u64,
-    /// Proof generation timeout in seconds.
-    pub boundless_timeout_secs: u64,
-    /// `NitroEnclaveVerifier` contract address for certificate caching (optional).
-    pub nitro_verifier_address: Option<Address>,
+    /// Boundless Network configuration.
+    pub boundless: BoundlessConfig,
     // ── Polling / Server ──────────────────────────────────────────────────────
-    /// Interval between discovery and registration poll cycles, in seconds.
-    pub poll_interval_secs: u64,
+    /// Interval between discovery and registration poll cycles.
+    pub poll_interval: Duration,
     /// Port for the health check and Prometheus metrics HTTP server.
     pub health_port: u16,
 }
@@ -99,30 +120,9 @@ impl std::fmt::Debug for RegistrarConfig {
             .field("aws_region", &self.aws_region)
             .field("prover_port", &self.prover_port)
             .field("signing", &self.signing)
-            .field("boundless_rpc_url", &url_origin(&self.boundless_rpc_url))
-            .field("boundless_signer", &self.boundless_signer.address())
-            .field(
-                "boundless_verifier_program_url",
-                &url_origin(&self.boundless_verifier_program_url),
-            )
-            .field("boundless_min_price", &self.boundless_min_price)
-            .field("boundless_max_price", &self.boundless_max_price)
-            .field("boundless_timeout_secs", &self.boundless_timeout_secs)
-            .field("nitro_verifier_address", &self.nitro_verifier_address)
-            .field("poll_interval_secs", &self.poll_interval_secs)
+            .field("boundless", &self.boundless)
+            .field("poll_interval", &self.poll_interval)
             .field("health_port", &self.health_port)
             .finish()
-    }
-}
-
-impl RegistrarConfig {
-    /// Return the poll interval as a [`Duration`].
-    pub const fn poll_interval(&self) -> Duration {
-        Duration::from_secs(self.poll_interval_secs)
-    }
-
-    /// Return the Boundless proof generation timeout as a [`Duration`].
-    pub const fn boundless_timeout(&self) -> Duration {
-        Duration::from_secs(self.boundless_timeout_secs)
     }
 }

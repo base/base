@@ -4209,12 +4209,10 @@ name = "base-proof-tee-registrar-bin"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "alloy-signer",
  "alloy-signer-local",
  "base-proof-tee-registrar",
  "clap",
  "eyre",
- "hex",
  "tokio",
  "url",
 ]

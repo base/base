@@ -2,7 +2,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod config;
-pub use config::{RegistrarConfig, RemoteSignerConfig, SigningConfig};
+pub use config::{BoundlessConfig, RegistrarConfig, RemoteSignerConfig, SigningConfig};
 
 mod error;
 pub use error::{RegistrarError, Result};
