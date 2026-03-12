@@ -1,44 +1,18 @@
 #![doc = include_str!("../README.md")]
 
-// Re-export commonly used types from alloy
 pub use alloy_consensus::Header;
-// Re-export base_consensus_genesis types for ecosystem compatibility
-pub use alloy_eips::eip1898::BlockNumHash;
 pub use alloy_primitives::{Address, B256, Bytes, U256};
-pub use base_alloy_consensus::OpReceiptEnvelope;
-pub use base_consensus_genesis::{
-    ChainConfig, ChainGenesis, HardForkConfig, L1ChainConfig, SystemConfig,
-};
-
-mod config;
-pub use config::{
-    default_l1_config, default_rollup_config, l1_config_for_l2_chain_id, sepolia_l1_config,
-};
+pub use base_consensus_genesis::ChainConfig;
 
 mod error;
-pub use error::{ConfigError, CryptoError, EnclaveError, ExecutorError, ProviderError, Result};
+pub use error::{CryptoError, ProviderError};
 
 mod proof;
-pub use proof::{ECDSA_SIGNATURE_LENGTH, ECDSA_V_OFFSET, PROOF_TYPE_TEE, ProofEncoder};
-
-mod executor;
-pub use executor::{
-    BlockExecutionResult, DEPOSIT_EVENT_TOPIC, EnclaveEvmFactory, EnclaveTrieDB, EnclaveTrieHinter,
-    ExecutionResult, ExecutionWitness, L1BlockInfo, MAX_SEQUENCER_DRIFT_FJORD, TransformedWitness,
-    TrieProviderError, build_l1_block_info_from_deposit, execute_block, execute_stateless,
-    extract_deposits_from_receipts, l2_block_to_block_info, transform_witness,
-    validate_not_deposit, validate_sequencer_drift, verify_execution_result,
-};
-
-mod providers;
-pub use providers::{
-    BlockInfoWrapper, L1ReceiptsFetcher, L2SystemConfigFetcher, compute_l1_receipt_root,
-    compute_receipt_root, compute_tx_root,
-};
+pub use proof::{PROOF_TYPE_TEE, ProofEncoder};
 
 mod types;
 pub use types::{
-    AccountResult, AggregateRequest, BlockId, ExecuteStatelessRequest, Genesis,
-    GenesisSystemConfig, MARSHAL_BINARY_SIZE, PerChainConfig, RollupConfig, StorageProof,
-    output_root_v0, output_root_v0_with_hash,
+    AccountResult, AggregateRequest, BlockId, ExecuteStatelessRequest, ExecutionWitness, Genesis,
+    GenesisSystemConfig, L2BlockRefError, PerChainConfig, RollupConfig, StorageProof,
+    l2_block_to_block_info, output_root_v0, output_root_v0_with_hash,
 };

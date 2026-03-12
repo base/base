@@ -1,4 +1,4 @@
-//! Receipt envelope types for OP chains.
+//! Receipt envelope types for Base chains.
 
 use alloc::vec::Vec;
 

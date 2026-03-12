@@ -4,11 +4,11 @@ Base chain RPC types.
 
 ## Overview
 
-Defines the JSON-RPC request and response types specific to OP chains, including genesis and
+Defines the JSON-RPC request and response types specific to Base chains, including genesis and
 chain info types (`OpGenesisInfo`, `OpChainInfo`, `OpBaseFeeInfo`), transaction types
 (`OpTransactionFields`, `OpTransactionRequest`, `Transaction`), receipt types
 (`OpTransactionReceipt`, `OpTransactionReceiptFields`), and `L1BlockInfo` for fee data. These
-types are used to serialize and deserialize OP-specific RPC payloads.
+types are used to serialize and deserialize Base-specific RPC payloads.
 
 ## Usage
 

@@ -4,9 +4,7 @@ use alloy_eips::{Decodable2718, eip1559::BaseFeeParams};
 use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rpc_types_eth::{Block, BlockTransactions, Withdrawals};
-use base_alloy_consensus::{
-    EIP1559ParamError, OpTxEnvelope, decode_holocene_extra_data, decode_jovian_extra_data,
-};
+use base_alloy_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData, OpTxEnvelope};
 use base_alloy_rpc_types::Transaction;
 use base_consensus_genesis::RollupConfig;
 use base_protocol::OpAttributesWithParent;
@@ -211,9 +209,9 @@ impl AttributesMatch {
         };
 
         let extra_data_decoded = if config.is_jovian_active(block.header.timestamp) {
-            decode_jovian_extra_data(&block.header.extra_data).map(|(be, bd, _)| (be, bd))
+            JovianExtraData::decode(&block.header.extra_data).map(|(be, bd, _)| (be, bd))
         } else if config.is_holocene_active(block.header.timestamp) {
-            decode_holocene_extra_data(&block.header.extra_data)
+            HoloceneExtraData::decode(&block.header.extra_data)
         } else {
             return AttributesMismatch::MissingBlockEIP1559.into();
         };
@@ -401,7 +399,7 @@ mod tests {
     use alloy_primitives::{Bytes, FixedBytes, address, b256};
     use alloy_rpc_types_eth::BlockTransactions;
     use arbitrary::{Arbitrary, Unstructured};
-    use base_alloy_consensus::encode_holocene_extra_data;
+    use base_alloy_consensus::HoloceneExtraData;
     use base_alloy_rpc_types_engine::OpPayloadAttributes;
     use base_consensus_registry::Registry;
     use base_protocol::{BlockInfo, L2BlockInfo};
@@ -821,7 +819,7 @@ mod tests {
         let (cfg, mut attributes, mut block) = eip1559_test_setup();
 
         attributes.attributes.eip_1559_params = Some(Default::default());
-        block.header.extra_data = encode_holocene_extra_data(
+        block.header.extra_data = HoloceneExtraData::encode(
             Default::default(),
             BaseFeeParams { max_change_denominator: 250, elasticity_multiplier: 6 },
         )
@@ -836,7 +834,7 @@ mod tests {
     fn test_eip1559_parameters_custom_values_match() {
         let (cfg, mut attributes, mut block) = eip1559_test_setup();
 
-        let eip1559_extra_params = encode_holocene_extra_data(
+        let eip1559_extra_params = HoloceneExtraData::encode(
             Default::default(),
             BaseFeeParams { max_change_denominator: 100, elasticity_multiplier: 2 },
         )
@@ -856,13 +854,13 @@ mod tests {
     fn test_eip1559_parameters_custom_values_mismatch() {
         let (cfg, mut attributes, mut block) = eip1559_test_setup();
 
-        let eip1559_extra_params = encode_holocene_extra_data(
+        let eip1559_extra_params = HoloceneExtraData::encode(
             Default::default(),
             BaseFeeParams { max_change_denominator: 100, elasticity_multiplier: 2 },
         )
         .unwrap();
 
-        let eip1559_params: FixedBytes<8> = encode_holocene_extra_data(
+        let eip1559_params: FixedBytes<8> = HoloceneExtraData::encode(
             Default::default(),
             BaseFeeParams { max_change_denominator: 99, elasticity_multiplier: 2 },
         )
@@ -891,7 +889,7 @@ mod tests {
     fn test_eip1559_parameters_combination_mismatch() {
         let (cfg, mut attributes, mut block) = eip1559_test_setup();
 
-        let eip1559_extra_params = encode_holocene_extra_data(
+        let eip1559_extra_params = HoloceneExtraData::encode(
             Default::default(),
             BaseFeeParams { max_change_denominator: 5, elasticity_multiplier: 0 },
         )
@@ -915,7 +913,7 @@ mod tests {
     fn test_eip1559_parameters_invalid_version() {
         let (cfg, mut attributes, mut block) = eip1559_test_setup();
 
-        let eip1559_extra_params = encode_holocene_extra_data(
+        let eip1559_extra_params = HoloceneExtraData::encode(
             Default::default(),
             BaseFeeParams { max_change_denominator: 100, elasticity_multiplier: 2 },
         )
@@ -941,7 +939,7 @@ mod tests {
 
         cfg.hardforks.jovian_time = Some(0);
 
-        let eip1559_extra_params = encode_holocene_extra_data(
+        let eip1559_extra_params = HoloceneExtraData::encode(
             Default::default(),
             BaseFeeParams { max_change_denominator: 100, elasticity_multiplier: 2 },
         )

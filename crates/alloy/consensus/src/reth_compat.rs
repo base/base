@@ -106,7 +106,11 @@ impl reth_primitives_traits::InMemorySize for OpTxEnvelope {
 
 impl reth_primitives_traits::SignedTransaction for OpPooledTransaction {}
 
-impl reth_primitives_traits::SignedTransaction for OpTxEnvelope {}
+impl reth_primitives_traits::SignedTransaction for OpTxEnvelope {
+    fn is_system_tx(&self) -> bool {
+        self.is_system_transaction()
+    }
+}
 
 // ---------------------------------------------------------------------------
 // SerdeBincodeCompat (reth-primitives-traits)

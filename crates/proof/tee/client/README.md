@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let result = client.prove(request).await?;
-    println!("Proof claim: {:?}", result.claim);
+    println!("Proof result: {:?}", result);
 
     Ok(())
 }

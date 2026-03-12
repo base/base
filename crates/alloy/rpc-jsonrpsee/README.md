@@ -4,9 +4,9 @@ Base chain JSON-RPC server and client implementations.
 
 ## Overview
 
-Provides jsonrpsee-based JSON-RPC trait definitions for OP chain admin and miner APIs.
+Provides jsonrpsee-based JSON-RPC trait definitions for Base chain admin and miner APIs.
 `MinerApiExtServer` and `MinerApiExtClient` expose miner-side endpoints, while `OpAdminApiServer`
-exposes admin-side RPC methods. These traits are implemented by node components to expose OP-specific
+exposes admin-side RPC methods. These traits are implemented by node components to expose Base-specific
 JSON-RPC functionality over HTTP or WebSocket transports.
 
 ## Usage

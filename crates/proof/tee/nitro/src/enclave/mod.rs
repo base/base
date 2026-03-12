@@ -1,17 +1,13 @@
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
 
-use alloy_primitives::{Address, B256};
-#[cfg(target_os = "linux")]
-use base_proof_preimage::PreimageKey;
-#[cfg(target_os = "linux")]
-use base_proof_primitives::ProofResult;
+use alloy_primitives::B256;
 #[cfg(target_os = "linux")]
 use base_proof_transport::Frame;
 #[cfg(target_os = "linux")]
 use tokio::time::{Duration, timeout};
 #[cfg(target_os = "linux")]
-use tokio_vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener};
+use tokio_vsock::{VsockAddr, VsockListener};
 #[cfg(target_os = "linux")]
 use tracing::{debug, info, warn};
 
@@ -22,10 +18,13 @@ pub use attestation::{
 };
 
 mod crypto;
-pub use crypto::{Ecdsa, SIGNATURE_LENGTH, SIGNING_DATA_BASE_LENGTH, Signing};
+pub use crypto::{Ecdsa, Signing};
 
 mod nsm;
 pub use nsm::{NsmRng, NsmSession};
+
+mod protocol;
+pub use protocol::{EnclaveRequest, EnclaveResponse};
 
 mod server;
 pub use server::Server;
@@ -33,13 +32,13 @@ pub use server::Server;
 /// Enclave runtime configuration.
 #[derive(Debug)]
 pub struct EnclaveConfig {
+    /// Vsock CID to bind.
+    pub vsock_cid: u32,
     /// Vsock port to listen on.
     pub vsock_port: u32,
-    /// The proposer address (set at deploy time).
-    pub proposer: Address,
     /// Per-chain configuration hash.
     pub config_hash: B256,
-    /// Expected PCR0 measurement. Verified against NSM at startup.
+    /// Expected TEE image hash. In enclave mode, verified as keccak256(PCR0) against NSM at startup.
     pub tee_image_hash: B256,
 }
 
@@ -48,6 +47,7 @@ pub struct EnclaveConfig {
 #[derive(Debug)]
 pub struct NitroEnclave {
     server: Arc<Server>,
+    vsock_cid: u32,
     vsock_port: u32,
 }
 
@@ -57,13 +57,13 @@ impl NitroEnclave {
     pub fn new(config: &EnclaveConfig) -> eyre::Result<Self> {
         let server = Arc::new(Server::new(config)?);
         info!(address = %server.signer_address(), "enclave initialized");
-        Ok(Self { server, vsock_port: config.vsock_port })
+        Ok(Self { server, vsock_cid: config.vsock_cid, vsock_port: config.vsock_port })
     }
 
     /// Listen on vsock, prove blocks, return results.
     pub async fn run(self) -> eyre::Result<()> {
-        let listener = VsockListener::bind(VsockAddr::new(VMADDR_CID_ANY, self.vsock_port))?;
-        info!(port = self.vsock_port, "listening on vsock");
+        let listener = VsockListener::bind(VsockAddr::new(self.vsock_cid, self.vsock_port))?;
+        info!(cid = self.vsock_cid, port = self.vsock_port, "listening on vsock");
 
         loop {
             let (stream, peer) = listener.accept().await?;
@@ -84,16 +84,45 @@ impl NitroEnclave {
     }
 }
 
+/// Deadline for receiving a complete request frame from the host.
+///
+/// Must be generous enough to cover large [`EnclaveRequest::Prove`] payloads,
+/// which include the full preimage bundle and can be many megabytes over vsock.
+/// A single timeout applies to all request types because the request type is
+/// unknown until the frame has been fully read.
+#[cfg(target_os = "linux")]
+const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
 #[cfg(target_os = "linux")]
 async fn handle_connection(
     mut stream: tokio_vsock::VsockStream,
     server: &Server,
 ) -> eyre::Result<()> {
-    const READ_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+    let request: EnclaveRequest = timeout(REQUEST_READ_TIMEOUT, Frame::read(&mut stream)).await??;
 
-    let preimages: Vec<(PreimageKey, Vec<u8>)> =
-        timeout(READ_TIMEOUT, Frame::read(&mut stream)).await??;
-    let result: ProofResult = server.prove(preimages).await?;
-    Frame::write(&mut stream, &result).await?;
+    match request {
+        EnclaveRequest::Prove(preimages) => {
+            let response = match server.prove(preimages).await {
+                Ok(result) => EnclaveResponse::Prove(Box::new(result)),
+                Err(e) => EnclaveResponse::Error(e.to_string()),
+            };
+            Frame::write(&mut stream, &response).await?;
+        }
+        EnclaveRequest::SignerPublicKey => {
+            let key = server.signer_public_key();
+            Frame::write(&mut stream, &EnclaveResponse::SignerPublicKey(key)).await?;
+        }
+        EnclaveRequest::SignerAttestation => {
+            // nsm_init() and nsm_process_request() are blocking FFI calls; use
+            // block_in_place so they do not stall the async executor.
+            let result = tokio::task::block_in_place(|| server.signer_attestation());
+            let response = match result {
+                Ok(doc) => EnclaveResponse::SignerAttestation(doc),
+                Err(e) => EnclaveResponse::Error(e.to_string()),
+            };
+            Frame::write(&mut stream, &response).await?;
+        }
+    }
+
     Ok(())
 }

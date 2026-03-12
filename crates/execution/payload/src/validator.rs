@@ -1,11 +1,11 @@
-//! Validates execution payload wrt Optimism consensus rules
+//! Validates execution payload wrt Base consensus rules
 
 use alloc::sync::Arc;
 
 use alloy_consensus::Block;
 use alloy_rpc_types_engine::PayloadError;
 use base_alloy_rpc_types_engine::{OpExecutionData, OpPayloadError};
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use derive_more::{Constructor, Deref};
 use reth_payload_validator::{cancun, prague, shanghai};
 use reth_primitives_traits::{Block as _, SealedBlock, SignedTransaction};
@@ -20,7 +20,7 @@ pub struct OpExecutionPayloadValidator<ChainSpec> {
 
 impl<ChainSpec> OpExecutionPayloadValidator<ChainSpec>
 where
-    ChainSpec: OpHardforks,
+    ChainSpec: BaseUpgrades,
 {
     /// Returns reference to chain spec.
     pub fn chain_spec(&self) -> &ChainSpec {
@@ -62,7 +62,7 @@ pub fn ensure_well_formed_payload<ChainSpec, T>(
     payload: OpExecutionData,
 ) -> Result<SealedBlock<Block<T>>, OpPayloadError>
 where
-    ChainSpec: OpHardforks,
+    ChainSpec: BaseUpgrades,
     T: SignedTransaction,
 {
     let OpExecutionData { payload, sidecar } = payload;

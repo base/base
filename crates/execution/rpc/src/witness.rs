@@ -1,10 +1,10 @@
-//! Support for optimism specific witness RPCs.
+//! Support for Base-specific witness RPCs.
 
 use std::{fmt::Debug, sync::Arc};
 
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_payload_builder::{OpAttributes, OpPayloadBuilder, OpPayloadPrimitives};
 use base_txpool::OpPooledTx;
 use jsonrpsee_core::{RpcResult, async_trait};
@@ -68,7 +68,7 @@ where
     Provider: BlockReaderIdExt<Header = <Provider::Primitives as NodePrimitives>::BlockHeader>
         + NodePrimitivesProvider<Primitives: OpPayloadPrimitives>
         + StateProviderFactory
-        + ChainSpecProvider<ChainSpec: OpHardforks>
+        + ChainSpecProvider<ChainSpec: BaseUpgrades>
         + Clone
         + 'static,
     EvmConfig: ConfigureEvm<

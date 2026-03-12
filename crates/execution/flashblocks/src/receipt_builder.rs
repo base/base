@@ -1,11 +1,11 @@
-//! Unified receipt builder for Optimism transactions.
+//! Unified receipt builder for Base transactions.
 //!
 //! This module provides a receipt builder that handles both deposit and non-deposit
 //! transactions seamlessly, without requiring error handling at the call site.
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use base_alloy_consensus::{OpDepositReceipt, OpTxEnvelope, OpTxType};
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_primitives::OpReceipt;
 use reth_evm::Evm;
 use revm::{Database, context::result::ExecutionResult};
@@ -48,7 +48,7 @@ impl<C> UnifiedReceiptBuilder<C> {
     }
 }
 
-impl<C: OpHardforks> UnifiedReceiptBuilder<C> {
+impl<C: BaseUpgrades> UnifiedReceiptBuilder<C> {
     /// Builds a receipt for any transaction type, handling deposit receipts internally.
     ///
     /// This method builds either a regular receipt or a deposit receipt based on

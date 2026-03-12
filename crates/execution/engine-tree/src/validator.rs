@@ -82,7 +82,7 @@ use crate::cached_execution::{
 /// This type satisfies [`EngineValidator`] and is responsible for executing blocks/payloads.
 ///
 /// This type contains common validation, execution, and state root computation logic that can be
-/// used by network-specific payload validators (e.g., Ethereum, Optimism). It is not meant to be
+/// used by network-specific payload validators. It is not meant to be
 /// used as a standalone component, but rather as a building block for concrete implementations.
 #[derive(derive_more::Debug)]
 pub struct BaseEngineValidator<P, Evm, V, C>

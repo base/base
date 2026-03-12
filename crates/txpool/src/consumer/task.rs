@@ -9,7 +9,6 @@ use super::{config::ConsumerConfig, metrics::ConsumerMetrics, validator::Recentl
 
 /// Background consumer that drains the pool and broadcasts transactions.
 ///
-/// Runs on a dedicated OS thread via [`std::thread::Builder`].
 /// Each iteration creates a fresh `best_transactions()` snapshot, skips
 /// recently-sent hashes, and broadcasts new transactions. Downstream
 /// forwarders (one per builder) each subscribe to receive every transaction.
@@ -40,7 +39,7 @@ where
     }
 
     /// Blocking loop — runs until the [`CancellationToken`] is cancelled.
-    pub fn run(mut self) {
+    pub fn run(&mut self) {
         info!(
             resend_after_ms = self.config.resend_after.as_millis() as u64,
             channel_capacity = self.config.channel_capacity,

@@ -4,7 +4,7 @@ EVM implementation.
 
 ## Overview
 
-Provides OP Stack-specific EVM execution support. Maps hardfork activation timestamps to revm
+Provides Base-specific EVM execution support. Maps hardfork activation timestamps to revm
 `SpecId` values, and exposes `OpEvm`, `OpEvmFactory`, `OpBlockExecutor`, and
 `OpBlockExecutorFactory` for executing blocks with the correct gas rules and precompile sets for
 each hardfork. Also provides `OpAlloyReceiptBuilder` for constructing OP receipts and

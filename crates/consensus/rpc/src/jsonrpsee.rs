@@ -1,4 +1,4 @@
-//! The Optimism RPC API using `jsonrpsee`
+//! The Base RPC API using `jsonrpsee`
 
 use core::net::IpAddr;
 
@@ -20,7 +20,7 @@ use jsonrpsee::{
 
 use crate::{OutputResponse, SafeHeadResponse, health::HealthzResponse};
 
-/// Optimism specified rpc interface.
+/// Base rollup node RPC interface.
 ///
 /// https://docs.optimism.io/builders/node-operators/json-rpc
 /// https://github.com/ethereum-optimism/optimism/blob/8dd17a7b114a7c25505cd2e15ce4e3d0f7e3f7c1/op-node/node/api.go#L114

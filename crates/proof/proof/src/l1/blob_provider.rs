@@ -4,7 +4,7 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::str::FromStr;
 
 use alloy_consensus::Blob;
-use alloy_eips::eip4844::{FIELD_ELEMENTS_PER_BLOB, IndexedBlobHash};
+use alloy_eips::eip4844::FIELD_ELEMENTS_PER_BLOB;
 use alloy_primitives::{B256, keccak256};
 use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, BigInteger256, Field, PrimeField};
@@ -95,11 +95,11 @@ impl<T: CommsClient + Sync + Send> BlobProvider for OracleBlobProvider<T> {
     async fn get_and_validate_blobs(
         &mut self,
         block_ref: &BlockInfo,
-        blob_hashes: &[IndexedBlobHash],
+        blob_hashes: &[B256],
     ) -> Result<Vec<Box<Blob>>, Self::Error> {
         let mut blobs = Vec::with_capacity(blob_hashes.len());
-        for indexed in blob_hashes {
-            blobs.push(Box::new(self.get_blob(block_ref, &indexed.hash).await?));
+        for hash in blob_hashes {
+            blobs.push(Box::new(self.get_blob(block_ref, hash).await?));
         }
         Ok(blobs)
     }

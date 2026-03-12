@@ -23,7 +23,7 @@ use crate::{
     transaction::OpTxTr,
 };
 
-/// Type alias for Optimism context
+/// Type alias for Base context
 pub trait OpContextTr:
     ContextTr<
         Journal: JournalTr<State = EvmState>,

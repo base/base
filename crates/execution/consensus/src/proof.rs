@@ -1,4 +1,4 @@
-//! Helper function for Receipt root calculation for Optimism hardforks.
+//! Helper function for Receipt root calculation for Base hardforks.
 
 use alloc::vec::Vec;
 
@@ -6,13 +6,13 @@ use alloy_consensus::ReceiptWithBloom;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
 use alloy_trie::root::ordered_trie_root_with_encoder;
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_primitives::DepositReceipt;
 
 /// Calculates the receipt root for a header.
 pub(crate) fn calculate_receipt_root_optimism<R: DepositReceipt>(
     receipts: &[ReceiptWithBloom<&R>],
-    chain_spec: impl OpHardforks,
+    chain_spec: impl BaseUpgrades,
     timestamp: u64,
 ) -> B256 {
     // There is a minor bug in op-geth and op-erigon where in the Regolith hardfork,
@@ -45,7 +45,7 @@ pub(crate) fn calculate_receipt_root_optimism<R: DepositReceipt>(
 /// NOTE: Prefer calculate receipt root optimism if you have log blooms memoized.
 pub fn calculate_receipt_root_no_memo_optimism<R: DepositReceipt>(
     receipts: &[R],
-    chain_spec: impl OpHardforks,
+    chain_spec: impl BaseUpgrades,
     timestamp: u64,
 ) -> B256 {
     // There is a minor bug in op-geth and op-erigon where in the Regolith hardfork,

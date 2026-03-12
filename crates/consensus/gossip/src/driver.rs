@@ -1,4 +1,4 @@
-//! Consensus-layer gossipsub driver for Optimism.
+//! Consensus-layer gossipsub driver for Base.
 
 use std::{
     collections::HashMap,

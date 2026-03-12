@@ -37,12 +37,41 @@ pub enum TxManagerError {
     #[error("nonce already reserved")]
     AlreadyReserved,
 
+    /// Nonce arithmetic overflowed `u64::MAX`.
+    #[error("nonce overflow")]
+    NonceOverflow,
+
+    /// Nonce reservation failed due to repeated cache contention.
+    #[error("nonce acquisition failed")]
+    NonceAcquisitionFailed,
+
     /// Send response channel closed before a result was delivered.
     ///
     /// The background send task exited (panicked or was cancelled)
     /// before completing. Non-retryable.
     #[error("send response channel closed")]
     ChannelClosed,
+
+    /// Calculated fee exceeds the configured fee-limit ceiling.
+    ///
+    /// Returned by [`FeeCalculator::check_limits`] when the proposed fee
+    /// surpasses `fee_limit_multiplier × suggested_fee` and the suggested
+    /// fee is at or above `fee_limit_threshold`. Non-retryable.
+    #[error("fee limit exceeded: fee {fee} exceeds ceiling {ceiling}")]
+    FeeLimitExceeded {
+        /// The proposed fee that was rejected.
+        fee: u128,
+        /// The ceiling that was exceeded (`fee_limit_multiplier × suggested`).
+        ceiling: u128,
+    },
+
+    /// The `safe_abort_nonce_too_low_count` threshold was set to zero.
+    ///
+    /// A zero threshold would cause the send loop to abort on the very first
+    /// nonce-too-low error after a successful publish, making fee bumps
+    /// impossible.
+    #[error("invalid safe_abort_nonce_too_low_count: must be greater than 0")]
+    InvalidSafeAbortNonceTooLowCount,
 
     // ── Fee / replacement errors (retryable) ─────────────────────────────
     /// Fee too low to enter the mempool.
@@ -249,6 +278,10 @@ mod tests {
     #[case::mempool_deadline(TxManagerError::MempoolDeadlineExpired, false)]
     #[case::already_reserved(TxManagerError::AlreadyReserved, false)]
     #[case::channel_closed(TxManagerError::ChannelClosed, false)]
+    #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 0, ceiling: 0 }, false)]
+    #[case::invalid_safe_abort(TxManagerError::InvalidSafeAbortNonceTooLowCount, false)]
+    #[case::nonce_overflow(TxManagerError::NonceOverflow, false)]
+    #[case::nonce_acquisition_failed(TxManagerError::NonceAcquisitionFailed, false)]
     #[case::underpriced(TxManagerError::Underpriced, true)]
     #[case::replacement_underpriced(TxManagerError::ReplacementUnderpriced, true)]
     #[case::fee_too_low(TxManagerError::FeeTooLow, true)]
@@ -267,6 +300,7 @@ mod tests {
     #[case::underpriced(TxManagerError::Underpriced, false)]
     #[case::rpc_with_already_known_text(TxManagerError::Rpc("already known".to_string()), false)]
     #[case::channel_closed(TxManagerError::ChannelClosed, false)]
+    #[case::invalid_safe_abort(TxManagerError::InvalidSafeAbortNonceTooLowCount, false)]
     fn is_already_known(#[case] error: TxManagerError, #[case] expected: bool) {
         assert_eq!(error.is_already_known(), expected);
     }
@@ -293,6 +327,16 @@ mod tests {
     )]
     #[case::already_known(TxManagerError::AlreadyKnown, "transaction already known")]
     #[case::channel_closed(TxManagerError::ChannelClosed, "send response channel closed")]
+    #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 501, ceiling: 500 }, "fee limit exceeded: fee 501 exceeds ceiling 500")]
+    #[case::invalid_safe_abort(
+        TxManagerError::InvalidSafeAbortNonceTooLowCount,
+        "invalid safe_abort_nonce_too_low_count: must be greater than 0"
+    )]
+    #[case::nonce_overflow(TxManagerError::NonceOverflow, "nonce overflow")]
+    #[case::nonce_acquisition_failed(
+        TxManagerError::NonceAcquisitionFailed,
+        "nonce acquisition failed"
+    )]
     #[case::rpc(TxManagerError::Rpc("test".to_string()), "rpc error: test")]
     fn display_output(#[case] error: TxManagerError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);

@@ -52,7 +52,7 @@ pub struct SystemConfig {
 
 /// Custom EIP-1559 parameter decoding is needed here for holocene encoding.
 ///
-/// This is used by the Optimism monorepo [here][here].
+/// This is used by the upstream monorepo [here][here].
 ///
 /// [here]: https://github.com/ethereum-optimism/optimism/blob/cf28bffc7d880292794f53bb76bfc4df7898307b/op-service/eth/types.go#L519
 #[cfg(feature = "serde")]

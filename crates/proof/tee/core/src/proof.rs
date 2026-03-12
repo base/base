@@ -1,12 +1,10 @@
 use alloy_primitives::{B256, Bytes, U256};
+use base_proof_primitives::ECDSA_SIGNATURE_LENGTH;
 
 use crate::CryptoError;
 
-/// Length of an ECDSA signature in bytes (r + s + v).
-pub const ECDSA_SIGNATURE_LENGTH: usize = 65;
-
 /// Offset to add to ECDSA v-value (0/1 -> 27/28).
-pub const ECDSA_V_OFFSET: u8 = 27;
+pub(crate) const ECDSA_V_OFFSET: u8 = 27;
 
 /// Proof type byte for TEE proofs (matches `AggregateVerifier.ProofType.TEE`).
 pub const PROOF_TYPE_TEE: u8 = 0;

@@ -11,7 +11,7 @@ use base_alloy_consensus::{OpDepositReceipt, OpTxType};
 use base_alloy_evm::OpReceiptBuilder;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_payload_builder::error::OpPayloadBuilderError;
 use base_execution_primitives::{OpReceipt, OpTransactionSigned};
 use base_node_core::OpPayloadBuilderAttributes;

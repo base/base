@@ -1,10 +1,29 @@
 //! Additional Node command arguments.
 
-//! clap [Args](clap::Args) for optimism rollup configuration
+//! clap [Args](clap::Args) for Base rollup configuration
 
 use std::{path::PathBuf, time::Duration};
 
-use clap::builder::ArgPredicate;
+use clap::{ValueEnum, builder::ArgPredicate};
+
+/// Transaction ordering strategy for the mempool.
+///
+/// Determines how transactions are prioritized when building blocks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum TxpoolOrdering {
+    /// Order by coinbase tip (fee-based, higher tip = higher priority).
+    ///
+    /// This is the default ordering strategy that prioritizes transactions
+    /// based on the priority fee (tip) they offer to the block producer.
+    #[default]
+    CoinbaseTip,
+    /// Order by receive timestamp (FIFO, earlier = higher priority).
+    ///
+    /// Transactions are ordered by when they were received by the mempool,
+    /// regardless of the fees they offer.
+    Timestamp,
+}
 
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -40,6 +59,14 @@ pub struct RollupArgs {
     /// Minimum suggested priority fee (tip) in wei, default `1_000_000`
     #[arg(long, default_value_t = 1_000_000)]
     pub min_suggested_priority_fee: u64,
+
+    /// Transaction ordering strategy for the mempool.
+    ///
+    /// Determines how transactions are prioritized when building blocks.
+    /// - `coinbase-tip`: Order by priority fee (higher tip = higher priority). Default.
+    /// - `timestamp`: Order by receive time (FIFO, earlier = higher priority).
+    #[arg(long = "rollup.txpool-ordering", default_value = "coinbase-tip")]
+    pub txpool_ordering: TxpoolOrdering,
 
     /// If true, initialize external-proofs exex to save and serve trie nodes to provide proofs
     /// faster.
@@ -111,6 +138,7 @@ impl Default for RollupArgs {
             discovery_v4: false,
             sequencer_headers: Vec::new(),
             min_suggested_priority_fee: 1_000_000,
+            txpool_ordering: TxpoolOrdering::default(),
             proofs_history: false,
             proofs_history_storage_path: None,
             proofs_history_window: 1_296_000,
@@ -134,14 +162,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_optimism_default_args() {
+    fn test_parse_rollup_default_args() {
         let default_args = RollupArgs::default();
         let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
         assert_eq!(args, default_args);
     }
 
     #[test]
-    fn test_parse_optimism_compute_pending_block_args() {
+    fn test_parse_rollup_compute_pending_block_args() {
         let expected_args = RollupArgs { compute_pending_block: true, ..Default::default() };
         let args =
             CommandParser::<RollupArgs>::parse_from(["reth", "--rollup.compute-pending-block"])
@@ -150,14 +178,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_optimism_discovery_v4_args() {
+    fn test_parse_rollup_discovery_v4_args() {
         let expected_args = RollupArgs { discovery_v4: true, ..Default::default() };
         let args = CommandParser::<RollupArgs>::parse_from(["reth", "--rollup.discovery.v4"]).args;
         assert_eq!(args, expected_args);
     }
 
     #[test]
-    fn test_parse_optimism_sequencer_http_args() {
+    fn test_parse_rollup_sequencer_http_args() {
         let expected_args =
             RollupArgs { sequencer: Some("http://host:port".into()), ..Default::default() };
         let args = CommandParser::<RollupArgs>::parse_from([
@@ -170,7 +198,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_optimism_disable_txpool_args() {
+    fn test_parse_rollup_disable_txpool_args() {
         let expected_args = RollupArgs { disable_txpool_gossip: true, ..Default::default() };
         let args =
             CommandParser::<RollupArgs>::parse_from(["reth", "--rollup.disable-tx-pool-gossip"])
@@ -179,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_optimism_many_args() {
+    fn test_parse_rollup_many_args() {
         let expected_args = RollupArgs {
             disable_txpool_gossip: true,
             compute_pending_block: true,
@@ -195,5 +223,33 @@ mod tests {
         ])
         .args;
         assert_eq!(args, expected_args);
+    }
+
+    #[test]
+    fn test_parse_txpool_ordering_default() {
+        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
+        assert_eq!(args.txpool_ordering, TxpoolOrdering::CoinbaseTip);
+    }
+
+    #[test]
+    fn test_parse_txpool_ordering_coinbase_tip() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--rollup.txpool-ordering",
+            "coinbase-tip",
+        ])
+        .args;
+        assert_eq!(args.txpool_ordering, TxpoolOrdering::CoinbaseTip);
+    }
+
+    #[test]
+    fn test_parse_txpool_ordering_timestamp() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--rollup.txpool-ordering",
+            "timestamp",
+        ])
+        .args;
+        assert_eq!(args.txpool_ordering, TxpoolOrdering::Timestamp);
     }
 }

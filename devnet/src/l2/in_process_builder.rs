@@ -13,13 +13,12 @@ use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, test_utils::ge
 use base_execution_chainspec::OpChainSpec;
 use base_node_core::{args::RollupArgs, node::OpPoolBuilder};
 use base_node_runner::BaseNode;
-use base_txpool::BasePooledTransaction;
+use base_txpool::{BasePooledTransaction, BuilderApiImpl, BuilderApiServer};
 use eyre::{Result, WrapErr, eyre};
 use nanoid::nanoid;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
-    test_utils::TempDatabase,
 };
 use reth_node_builder::{NodeBuilder, NodeConfig, NodeHandle};
 use reth_node_core::{
@@ -134,7 +133,7 @@ impl InProcessBuilder {
             .with_gas_limit_config(gas_limit_config)
             .build();
 
-        let (db, db_path) = create_test_db(&data_path)?;
+        let (db, _db_path) = create_test_db(&data_path)?;
 
         let node_config = create_node_config(chain_spec, &data_path, &jwt_path, &config)?;
         let p2p_port = node_config.network.port;
@@ -150,7 +149,13 @@ impl InProcessBuilder {
                     .payload(FlashblocksServiceBuilder(builder_config)),
             )
             .with_add_ons(addons)
-            .on_component_initialized(move |_ctx| Ok(()));
+            .on_component_initialized(move |_ctx| Ok(()))
+            // Register the builder API RPC module (base_insertValidatedTransaction)
+            .extend_rpc_modules(|ctx| {
+                let api = BuilderApiImpl::new(ctx.pool().clone());
+                ctx.modules.merge_configured(api.into_rpc())?;
+                Ok(())
+            });
 
         let NodeHandle { node: node_handle, node_exit_future } =
             node_builder.launch().await.wrap_err("Failed to launch builder node")?;
@@ -166,9 +171,6 @@ impl InProcessBuilder {
             .ok_or_else(|| eyre!("WebSocket RPC server failed to bind to address"))?;
 
         let engine_addr = node_handle.auth_server_handle().local_addr();
-
-        // Delete db_path since we use data_path as the main cleanup path
-        drop(db_path);
 
         Ok(Self {
             http_api_addr,
@@ -321,11 +323,6 @@ fn create_node_config(
         .with_rpc(rpc)
         .with_network(network);
 
-    // Use legacy state root computation to avoid a reth debug_assert panic in rayon
-    // proof workers (paradigmxyz/reth#22505). The docker-compose devnet sidesteps this by
-    // building with the release profile; remove this once reth ships the fix.
-    node_config.engine.legacy_state_root_task_enabled = true;
-
     if config.http_port.is_none()
         && config.ws_port.is_none()
         && config.auth_port.is_none()
@@ -337,9 +334,7 @@ fn create_node_config(
     Ok(node_config)
 }
 
-fn create_test_db(
-    data_path: &std::path::Path,
-) -> Result<(Arc<TempDatabase<DatabaseEnv>>, PathBuf)> {
+fn create_test_db(data_path: &std::path::Path) -> Result<(DatabaseEnv, PathBuf)> {
     let db_path = data_path.join("db");
     std::fs::create_dir_all(&db_path).wrap_err("Failed to create db directory")?;
 
@@ -352,7 +347,7 @@ fn create_test_db(
     )
     .wrap_err("Failed to initialize database")?;
 
-    Ok((Arc::new(TempDatabase::new(db, db_path.clone())), db_path))
+    Ok((db, db_path))
 }
 
 fn pool_component(_rollup_args: &RollupArgs) -> OpPoolBuilder<BasePooledTransaction> {

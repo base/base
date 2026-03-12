@@ -1,4 +1,4 @@
-//! Optimism constants used in the Optimism EVM.
+//! Base constants used in the Base EVM.
 use revm::primitives::{Address, U256, address};
 
 /// The cost of a non-zero byte in the EVM.

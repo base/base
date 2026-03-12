@@ -3,7 +3,7 @@
 use alloy_serde::OtherFields;
 use serde::de::Error;
 
-/// Container type for all OP chain-specific fields in a genesis file.
+/// Container type for all Base chain-specific fields in a genesis file.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpChainInfo {
@@ -14,7 +14,7 @@ pub struct OpChainInfo {
 }
 
 impl OpChainInfo {
-    /// Extracts the OP chain-specific fields from a genesis file. These fields are expected to be
+    /// Extracts the Base chain-specific fields from a genesis file. These fields are expected to be
     /// contained in the `genesis.config` under `extra_fields` property.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
         Self::try_from(others).ok()
@@ -32,7 +32,7 @@ impl TryFrom<&OtherFields> for OpChainInfo {
     }
 }
 
-/// The OP chain-specific genesis block specification.
+/// The Base chain-specific genesis block specification.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpGenesisInfo {
@@ -57,7 +57,7 @@ pub struct OpGenesisInfo {
 }
 
 impl OpGenesisInfo {
-    /// Extract the OP chain-specific genesis info from a genesis file.
+    /// Extract the Base chain-specific genesis info from a genesis file.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
         Self::try_from(others).ok()
     }
@@ -71,7 +71,7 @@ impl TryFrom<&OtherFields> for OpGenesisInfo {
     }
 }
 
-/// The OP chain-specific base fee specification.
+/// The Base chain-specific base fee specification.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpBaseFeeInfo {
@@ -84,7 +84,7 @@ pub struct OpBaseFeeInfo {
 }
 
 impl OpBaseFeeInfo {
-    /// Extracts the OP chain base fee info by looking for the `optimism` key. It is intended to be
+    /// Extracts the Base chain base fee info by looking for the `optimism` key. It is intended to be
     /// parsed from a genesis file.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
         Self::try_from(others).ok()

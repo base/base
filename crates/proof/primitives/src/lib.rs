@@ -4,10 +4,10 @@
 extern crate alloc;
 
 mod proof;
-pub use proof::{ProofBundle, ProofClaim, ProofEvidence, ProofRequest, ProofResult};
+pub use proof::{ProofBundle, ProofRequest, ProofResult};
 
 mod proposal;
-pub use proposal::{Proposal, SIGNATURE_LENGTH};
+pub use proposal::{ECDSA_SIGNATURE_LENGTH, PROOF_JOURNAL_BASE_LENGTH, ProofJournal, Proposal};
 
 mod prover;
 pub use prover::ProverBackend;
@@ -15,6 +15,6 @@ pub use prover::ProverBackend;
 #[cfg(any(feature = "rpc-server", feature = "rpc-client"))]
 mod rpc;
 #[cfg(feature = "rpc-client")]
-pub use rpc::ProverApiClient;
+pub use rpc::{EnclaveApiClient, ProverApiClient};
 #[cfg(feature = "rpc-server")]
-pub use rpc::ProverApiServer;
+pub use rpc::{EnclaveApiServer, ProverApiServer};

@@ -14,7 +14,7 @@ use alloy_rlp::{Buf, BufMut, Decodable, Encodable, Header};
 use super::{OpDepositReceipt, OpTxReceipt};
 use crate::{OpReceiptEnvelope, OpTxType};
 
-/// Transaction receipt for OP chains.
+/// Transaction receipt for Base chains.
 ///
 /// Receipt containing result of transaction execution.
 #[derive(Clone, Debug, PartialEq, Eq)]

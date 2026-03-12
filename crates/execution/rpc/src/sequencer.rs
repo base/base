@@ -1,4 +1,4 @@
-//! Helpers for optimism specific RPC implementations.
+//! Helpers for Base-specific RPC implementations.
 
 use std::{str::FromStr, sync::Arc, time::Instant};
 

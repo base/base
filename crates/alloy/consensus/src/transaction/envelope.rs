@@ -44,7 +44,7 @@ pub enum OpTxEnvelope {
     Deposit(Sealed<TxDeposit>),
 }
 
-/// Represents a transaction envelope for OP chains.
+/// Represents a transaction envelope for Base chains.
 ///
 /// Compared to Ethereum it can tell whether the transaction is a deposit.
 pub trait OpTransaction {

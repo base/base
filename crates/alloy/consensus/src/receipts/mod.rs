@@ -1,4 +1,4 @@
-//! Receipt types for OP chains.
+//! Receipt types for Base chains.
 
 use alloy_consensus::TxReceipt;
 

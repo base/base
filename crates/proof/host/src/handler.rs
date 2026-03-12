@@ -1,14 +1,12 @@
 use alloy_consensus::Header;
-use alloy_eips::{
-    eip2718::Encodable2718,
-    eip4844::{FIELD_ELEMENTS_PER_BLOB, IndexedBlobHash},
-};
+use alloy_eips::{eip2718::Encodable2718, eip4844::FIELD_ELEMENTS_PER_BLOB};
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_provider::Provider;
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{Block, debug::ExecutionWitness};
 use ark_ff::{BigInteger, PrimeField};
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_consensus_providers::BlobWithCommitmentAndProof;
 use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
 use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, OutputRoot, Predeploys};
@@ -108,19 +106,16 @@ pub async fn handle_hint(
 
             let partial_block_ref = BlockInfo { timestamp, ..Default::default() };
 
-            let blob_hash = IndexedBlobHash { hash, index: 0 };
             let mut blobs = providers
                 .blobs
-                .fetch_filtered_blob_sidecars(&partial_block_ref, &[blob_hash])
+                .fetch_blobs_with_proofs(&partial_block_ref, &[hash])
                 .await
                 .map_err(|e| HostError::BlobSidecarFetchFailed(e.to_string()))?;
             if blobs.len() != 1 {
                 return Err(HostError::BlobCountMismatch { expected: 1, actual: blobs.len() });
             }
-            let sidecar = blobs.pop().expect("Expected 1 blob");
-            let blob = &sidecar.blob;
-            let proof = sidecar.kzg_proof;
-            let commitment = sidecar.kzg_commitment;
+            let BlobWithCommitmentAndProof { blob, kzg_proof: proof, kzg_commitment: commitment } =
+                blobs.pop().expect("Expected 1 blob");
 
             let mut kv_lock = kv.write().await;
 

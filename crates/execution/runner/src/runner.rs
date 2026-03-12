@@ -15,7 +15,7 @@ use crate::{
 /// Wraps the Base node configuration and orchestrates builder wiring.
 #[derive(Debug)]
 pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuilder> {
-    /// Rollup-specific arguments forwarded to the Optimism node implementation.
+    /// Rollup-specific arguments forwarded to the Base node implementation.
     rollup_args: RollupArgs,
     /// Registered builder extensions.
     extensions: Vec<Box<dyn BaseNodeExtension>>,

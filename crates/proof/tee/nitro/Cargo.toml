@@ -4,14 +4,17 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 # Core
 base-alloy-evm.workspace = true
 base-proof-client.workspace = true
-base-proof-preimage.workspace = true
-base-proof-primitives.workspace = true
-base-proof-transport = { workspace = true, features = ["frame"] }
+base-proof-preimage = { workspace = true, features = ["serde"] }
+base-proof-primitives = { workspace = true, features = ["std", "serde"] }
 base-proof-host = { workspace = true, optional = true }
+base-proof-transport = { workspace = true, features = ["frame"] }
 jsonrpsee = { workspace = true, optional = true, features = ["server", "macros"] }
 
 # Alloy
@@ -37,8 +40,8 @@ serde = { workspace = true, features = ["derive"] }
 zip = { workspace = true, features = ["deflate"] }
 
 # Async
-tokio = { workspace = true, features = ["rt", "time"] }
 async-trait.workspace = true
+tokio = { workspace = true, features = ["rt", "time"] }
 
 # Error
 eyre.workspace = true
@@ -55,16 +58,15 @@ rand_08.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-vsock.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [dev-dependencies]
-base-proof-transport = { workspace = true, features = ["test-utils"] }
 rand_08.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [features]
 host = [
 	"base-proof-primitives/rpc-server",
-	"base-proof-transport/vsock",
 	"dep:base-proof-host",
 	"dep:jsonrpsee",
 	"tokio/net",
@@ -72,6 +74,3 @@ host = [
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["aws-nitro-enclaves-nsm-api"]
-
-[lints]
-workspace = true

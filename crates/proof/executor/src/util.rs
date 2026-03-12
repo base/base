@@ -3,10 +3,7 @@
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::Bytes;
-use base_alloy_consensus::{
-    EIP1559ParamError, decode_holocene_extra_data, decode_jovian_extra_data,
-    encode_holocene_extra_data, encode_jovian_extra_data,
-};
+use base_alloy_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_consensus_genesis::RollupConfig;
 
@@ -23,7 +20,7 @@ use crate::{Eip1559ValidationError, ExecutorError, ExecutorResult};
 pub(crate) fn decode_holocene_eip_1559_params_block_header(
     header: &Header,
 ) -> ExecutorResult<BaseFeeParams> {
-    let (elasticity, denominator) = decode_holocene_extra_data(header.extra_data())?;
+    let (elasticity, denominator) = HoloceneExtraData::decode(header.extra_data())?;
 
     // Check for potential division by zero.
     // In the block header, the denominator is always non-zero.
@@ -41,7 +38,7 @@ pub(crate) fn decode_holocene_eip_1559_params_block_header(
 pub(crate) fn decode_jovian_eip_1559_params_block_header(
     header: &Header,
 ) -> ExecutorResult<(BaseFeeParams, u64)> {
-    let (elasticity, denominator, min_base_fee) = decode_jovian_extra_data(header.extra_data())?;
+    let (elasticity, denominator, min_base_fee) = JovianExtraData::decode(header.extra_data())?;
 
     // Check for potential division by zero.
     // In the block header, the denominator is always non-zero.
@@ -72,7 +69,7 @@ pub(crate) fn encode_holocene_eip_1559_params(
     config: &RollupConfig,
     attributes: &OpPayloadAttributes,
 ) -> ExecutorResult<Bytes> {
-    Ok(encode_holocene_extra_data(
+    Ok(HoloceneExtraData::encode(
         attributes.eip_1559_params.ok_or(ExecutorError::MissingEIP1559Params)?,
         config.chain_op_config.post_canyon_params(),
     )?)
@@ -91,7 +88,7 @@ pub(crate) fn encode_jovian_eip_1559_params(
     config: &RollupConfig,
     attributes: &OpPayloadAttributes,
 ) -> ExecutorResult<Bytes> {
-    Ok(encode_jovian_extra_data(
+    Ok(JovianExtraData::encode(
         attributes.eip_1559_params.ok_or(ExecutorError::MissingEIP1559Params)?,
         config.chain_op_config.post_canyon_params(),
         attributes.min_base_fee.ok_or(ExecutorError::InvalidExtraData(

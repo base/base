@@ -19,14 +19,16 @@ pub use fees::{FeeCalculator, GasPriceCaps};
 mod send_state;
 pub use send_state::SendState;
 
+mod macros;
+
 mod config;
-pub use config::TxManagerConfig;
+pub use config::{ConfigError, GweiParser, TxManagerConfig};
 
 mod traits;
 pub use traits::{SendHandle, SendResponse, TxManager};
 
 mod nonce;
-pub use nonce::NonceManager;
+pub use nonce::{NonceGuard, NonceManager, NonceState};
 
 mod manager;
 pub use manager::SimpleTxManager;

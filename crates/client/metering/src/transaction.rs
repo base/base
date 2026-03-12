@@ -4,7 +4,6 @@ use alloy_primitives::U256;
 use base_revm::{L1BlockInfo, OpSpecId};
 use derive_more::Display;
 use reth_primitives_traits::Account;
-use tracing::warn;
 
 /// Errors that can occur when validating a transaction.
 #[derive(Debug, PartialEq, Eq, Display)]
@@ -36,7 +35,6 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
 
     // Return error if execution cost exceeds balance
     if txn_cost > account.balance {
-        warn!(message = "Insufficient funds for transfer");
         return Err(TxValidationError::InsufficientFundsForTransfer(txn_cost, account.balance));
     }
 
@@ -45,7 +43,6 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
     let l1_cost_addition = l1_block_info.calculate_tx_l1_cost(&data, OpSpecId::ISTHMUS);
     let l1_cost = txn_cost.saturating_add(l1_cost_addition);
     if l1_cost > account.balance {
-        warn!(message = "Insufficient funds for L1 gas");
         return Err(TxValidationError::InsufficientFundsForL1Gas(l1_cost, account.balance));
     }
 

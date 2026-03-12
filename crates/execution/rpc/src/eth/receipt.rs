@@ -8,7 +8,7 @@ use alloy_rpc_types_eth::{Log, TransactionReceipt};
 use base_alloy_consensus::{OpReceipt, OpTransaction};
 use base_alloy_rpc_types::{L1BlockInfo, OpTransactionReceipt, OpTransactionReceiptFields};
 use base_execution_evm::RethL1BlockInfo;
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_revm::estimate_tx_compressed_size;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_node_api::NodePrimitives;
@@ -46,8 +46,10 @@ impl<Provider> OpReceiptConverter<Provider> {
 impl<Provider, N> ReceiptConverter<N> for OpReceiptConverter<Provider>
 where
     N: NodePrimitives<SignedTx: OpTransaction, Receipt = OpReceipt>,
-    Provider:
-        BlockReader<Block = N::Block> + ChainSpecProvider<ChainSpec: OpHardforks> + Debug + 'static,
+    Provider: BlockReader<Block = N::Block>
+        + ChainSpecProvider<ChainSpec: BaseUpgrades>
+        + Debug
+        + 'static,
 {
     type RpcReceipt = OpTransactionReceipt;
     type Error = OpEthApiError;
@@ -169,7 +171,7 @@ impl OpReceiptFieldsBuilder {
     /// Applies [`L1BlockInfo`](base_revm::L1BlockInfo).
     pub fn l1_block_info<T: Encodable2718 + OpTransaction>(
         mut self,
-        chain_spec: &impl OpHardforks,
+        chain_spec: &impl BaseUpgrades,
         tx: &T,
         l1_block_info: &mut base_revm::L1BlockInfo,
     ) -> Result<Self, OpEthApiError> {
@@ -281,7 +283,7 @@ pub struct OpReceiptBuilder {
 impl OpReceiptBuilder {
     /// Returns a new builder.
     pub fn new<N>(
-        chain_spec: &impl OpHardforks,
+        chain_spec: &impl BaseUpgrades,
         input: ConvertReceiptInput<'_, N>,
         l1_block_info: &mut base_revm::L1BlockInfo,
     ) -> Result<Self, OpEthApiError>
@@ -346,7 +348,7 @@ mod test {
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, Bytes, Signature, U256, hex};
     use base_alloy_consensus::OpTypedTransaction;
-    use base_alloy_hardforks::{BASE_MAINNET_ISTHMUS_TIMESTAMP, BASE_MAINNET_JOVIAN_TIMESTAMP};
+    use base_alloy_upgrades::{BASE_MAINNET_ISTHMUS_TIMESTAMP, BASE_MAINNET_JOVIAN_TIMESTAMP};
     use base_execution_chainspec::BASE_MAINNET;
     use base_execution_primitives::{OpPrimitives, OpTransactionSigned};
     use reth_primitives_traits::Recovered;
@@ -414,7 +416,7 @@ mod test {
             base_execution_evm::extract_l1_info(&block.body).expect("should extract l1 info");
 
         // test
-        assert!(OpHardforks::is_fjord_active_at_timestamp(
+        assert!(BaseUpgrades::is_fjord_active_at_timestamp(
             &*BASE_MAINNET,
             BLOCK_124665056_TIMESTAMP
         ));

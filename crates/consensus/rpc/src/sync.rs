@@ -1,7 +1,7 @@
 use base_protocol::SyncStatus;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
-/// Optimism sync status RPC API.
+/// Base sync status RPC API.
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "optimism"))]
 #[cfg_attr(feature = "client", rpc(server, client, namespace = "optimism"))]
 pub trait SyncStatusApi {

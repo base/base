@@ -1,6 +1,7 @@
 # `base-prover`
 
-TEE prover server binary with two subcommands:
+TEE prover binary for AWS Nitro Enclaves. Subcommands live under `nitro`:
 
-- **`nitro`** — Runs the TEE prover enclave server, listening on vsock (Nitro) or HTTP (local dev).
-- **`proxy`** — Runs an HTTP-to-vsock bridge for AWS Nitro Enclaves.
+- **`nitro server`** — Runs the JSON-RPC server on the EC2 host, forwarding proving requests to the enclave over vsock.
+- **`nitro enclave`** — Runs the proving process inside the Nitro Enclave, listening on vsock.
+- **`nitro local`** *(feature-gated)* — Runs server and enclave in a single process for local development.

@@ -1,10 +1,10 @@
-//! Optimism consensus errors
+//! Base consensus errors
 
 use alloy_primitives::B256;
 use reth_consensus::ConsensusError;
 use reth_storage_errors::provider::ProviderError;
 
-/// Optimism consensus error.
+/// Base consensus error.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum OpConsensusError {
     /// Block body has non-empty withdrawals list (l1 withdrawals).

@@ -51,7 +51,7 @@ base-execution-primitives = { workspace = true, features = [
 base-execution-evm = { workspace = true, features = ["std", "rpc"] }
 base-execution-consensus = { workspace = true, features = ["std"] }
 
-# revm with required optimism features
+# revm with required Base features
 # Note: this must be kept to ensure all features are properly enabled/forwarded
 revm = { workspace = true, features = [
 	"secp256k1",
@@ -102,7 +102,7 @@ futures.workspace = true
 alloy-eips.workspace = true
 alloy-network.workspace = true
 base-alloy-network.workspace = true
-base-alloy-hardforks.workspace = true
+base-alloy-upgrades.workspace = true
 
 [features]
 default = [ "reth-codec" ]

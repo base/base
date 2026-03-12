@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use alloy_primitives::Bytes;
-use async_trait::async_trait;
 use base_enclave::{AggregateRequest, ExecuteStatelessRequest};
 use base_proof_primitives::{ProofRequest, ProofResult, Proposal};
 use jsonrpsee::{
@@ -198,31 +197,12 @@ impl EnclaveClient {
     /// [`aggregate`](Self::aggregate), which require the caller to orchestrate individual block
     /// executions and aggregation, this method delegates all orchestration to the TEE server.
     /// The server handles generating per-block proposals, aggregating them, and returning a
-    /// complete [`ProofResult`] containing the [`ProofClaim`] and [`ProofEvidence`].
+    /// complete [`ProofResult`].
     ///
     /// # Errors
     ///
     /// Returns an error if the RPC call fails.
     pub async fn prove(&self, request: ProofRequest) -> Result<ProofResult, ClientError> {
         self.inner.request("enclave_prove", rpc_params![request]).await.map_err(Into::into)
-    }
-}
-
-/// Abstraction over a TEE prover that accepts a [`ProofRequest`] and returns a
-/// [`ProofResult`].
-///
-/// The canonical implementation delegates to
-/// [`EnclaveClient::prove`], but the trait allows callers (e.g. the challenger)
-/// to swap in a mock for testing without needing real RPC servers.
-#[async_trait]
-pub trait EnclaveProvider: Send + Sync {
-    /// Generate a complete TEE proof for the given request.
-    async fn prove(&self, request: ProofRequest) -> Result<ProofResult, ClientError>;
-}
-
-#[async_trait]
-impl EnclaveProvider for EnclaveClient {
-    async fn prove(&self, request: ProofRequest) -> Result<ProofResult, ClientError> {
-        self.prove(request).await
     }
 }

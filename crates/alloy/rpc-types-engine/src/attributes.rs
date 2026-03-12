@@ -1,4 +1,4 @@
-//! Payload attributes for OP chains.
+//! Payload attributes for Base chains.
 
 use alloc::vec::Vec;
 
@@ -10,10 +10,7 @@ use alloy_eips::{
 use alloy_primitives::{B64, B256, Bytes, keccak256};
 use alloy_rlp::{Encodable, Result};
 use alloy_rpc_types_engine::{PayloadAttributes, PayloadId};
-use base_alloy_consensus::{
-    EIP1559ParamError, OpTxEnvelope, decode_eip_1559_params, encode_holocene_extra_data,
-    encode_jovian_extra_data,
-};
+use base_alloy_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData, OpTxEnvelope};
 use sha2::Digest;
 
 /// Payload Attributes
@@ -118,7 +115,7 @@ impl OpPayloadAttributes {
             return Err(EIP1559ParamError::MinBaseFeeMustBeNone);
         }
         self.eip_1559_params
-            .map(|params| encode_holocene_extra_data(params, default_base_fee_params))
+            .map(|params| HoloceneExtraData::encode(params, default_base_fee_params))
             .ok_or(EIP1559ParamError::NoEIP1559Params)?
     }
 
@@ -127,7 +124,7 @@ impl OpPayloadAttributes {
     ///
     /// Returns (`elasticity`, `denominator`)
     pub fn decode_eip_1559_params(&self) -> Option<(u32, u32)> {
-        self.eip_1559_params.map(decode_eip_1559_params)
+        self.eip_1559_params.map(HoloceneExtraData::decode_params)
     }
 
     /// Encodes the `eip1559` parameters for the payload along with the minimum base fee.
@@ -140,11 +137,7 @@ impl OpPayloadAttributes {
         }
         self.eip_1559_params
             .map(|params| {
-                encode_jovian_extra_data(
-                    params,
-                    default_base_fee_params,
-                    self.min_base_fee.unwrap(),
-                )
+                JovianExtraData::encode(params, default_base_fee_params, self.min_base_fee.unwrap())
             })
             .ok_or(EIP1559ParamError::NoEIP1559Params)?
     }

@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 
 use crate::{OpBuiltPayload, OpNode as OtherOpNode, OpPayloadBuilderAttributes};
 
-/// Optimism Node Helper type
+/// Base Node Helper type
 pub(crate) type OpNode =
     NodeHelperType<OtherOpNode, BlockchainProvider<NodeTypesWithDBAdapter<OtherOpNode, TmpDB>>>;
 

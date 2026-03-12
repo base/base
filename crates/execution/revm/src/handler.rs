@@ -1,4 +1,4 @@
-//!Handler related to Optimism chain
+//! Handler related to Base chain
 use std::boxed::Box;
 
 use revm::{
@@ -30,16 +30,16 @@ use crate::{
     transaction::{DEPOSIT_TRANSACTION_TYPE, OpTransactionError, OpTxTr},
 };
 
-/// Optimism handler extends the [`Handler`] with Optimism specific logic.
+/// Base handler extends the [`Handler`] with Base-specific logic.
 #[derive(Debug, Clone)]
 pub struct OpHandler<EVM, ERROR, FRAME> {
-    /// Mainnet handler allows us to use functions from the mainnet handler inside optimism handler.
+    /// Mainnet handler allows us to use functions from the mainnet handler inside the Base handler.
     /// So we dont duplicate the logic
     pub mainnet: MainnetHandler<EVM, ERROR, FRAME>,
 }
 
 impl<EVM, ERROR, FRAME> OpHandler<EVM, ERROR, FRAME> {
-    /// Create a new Optimism handler.
+    /// Create a new Base handler.
     pub fn new() -> Self {
         Self { mainnet: MainnetHandler::default() }
     }

@@ -12,13 +12,24 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-thiserror.workspace = true
-alloy-primitives.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+# alloy
+alloy-provider.workspace = true
 alloy-eips = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
+# misc
+thiserror.workspace = true
+tracing = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["sync", "time"] }
+
 [dev-dependencies]
+rayon.workspace = true
 rstest.workspace = true
+proptest.workspace = true
+humantime.workspace = true
 alloy-consensus.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
+alloy-node-bindings.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+serde = { workspace = true, features = ["derive", "std"] }
+tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread"] }

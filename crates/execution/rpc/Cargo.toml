@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Ethereum RPC implementation for optimism."
+description = "Ethereum RPC implementation for Base."
 
 [lints]
 workspace = true
@@ -87,7 +87,7 @@ reth-metrics.workspace = true
 strum.workspace = true
 
 [dev-dependencies]
-base-alloy-hardforks.workspace = true
+base-alloy-upgrades.workspace = true
 base-execution-chainspec.workspace = true
 
 [features]

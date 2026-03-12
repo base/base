@@ -15,16 +15,23 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
-[dependencies]
-# workspace
-base-enclave-server.workspace = true
+[features]
+local = []
 
-# cli
+[dependencies]
+# Workspace
+base-proof-host.workspace = true
+alloy-primitives.workspace = true
+base-consensus-registry.workspace = true
+base-proof-tee-nitro = { workspace = true, features = ["host"] }
+
+# CLI
 eyre.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 
-# async
+# Async
 tokio = { workspace = true, features = ["full"] }
 
-# tracing
+# Tracing
+tracing.workspace = true
 tracing-subscriber.workspace = true

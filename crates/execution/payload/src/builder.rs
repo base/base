@@ -1,4 +1,4 @@
-//! Optimism payload builder implementation.
+//! Base payload builder implementation.
 use std::{marker::PhantomData, sync::Arc};
 
 use alloy_consensus::{BlockHeader, Transaction, Typed2718};
@@ -6,7 +6,7 @@ use alloy_evm::Evm as AlloyEvm;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
-use base_execution_forks::OpHardforks;
+use base_execution_forks::BaseUpgrades;
 use base_execution_primitives::transaction::OpTransaction;
 use base_protocol::Predeploys;
 use base_revm::{L1_BLOCK_CONTRACT, L1BlockInfo};
@@ -44,7 +44,7 @@ use crate::{
     error::OpPayloadBuilderError, payload::OpBuiltPayload,
 };
 
-/// Optimism's payload builder
+/// Base payload builder
 #[derive(Debug)]
 pub struct OpPayloadBuilder<
     Pool,
@@ -156,7 +156,7 @@ impl<Pool, Client, Evm, Txs, Attrs> OpPayloadBuilder<Pool, Client, Evm, Txs, Att
 impl<Pool, Client, Evm, N, T, Attrs> OpPayloadBuilder<Pool, Client, Evm, T, Attrs>
 where
     Pool: TransactionPool<Transaction: OpPooledTx<Consensus = N::SignedTx>>,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: OpHardforks>,
+    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: BaseUpgrades>,
     N: OpPayloadPrimitives,
     Evm: ConfigureEvm<
             Primitives = N,
@@ -164,12 +164,12 @@ where
         >,
     Attrs: OpAttributes<Transaction = TxTy<Evm::Primitives>>,
 {
-    /// Constructs an Optimism payload from the transactions sent via the
+    /// Constructs a Base payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
     /// the payload attributes, the transaction pool will be ignored and the only transactions
     /// included in the payload will be those sent through the attributes.
     ///
-    /// Given build arguments including an Optimism client, transaction pool,
+    /// Given build arguments including a Base client, transaction pool,
     /// and configuration, this function creates a transaction payload. Returns
     /// a result indicating success with the payload or an error in case of failure.
     fn build_payload<'a, Txs>(
@@ -240,7 +240,7 @@ impl<Pool, Client, Evm, N, Txs, Attrs> PayloadBuilder
     for OpPayloadBuilder<Pool, Client, Evm, Txs, Attrs>
 where
     N: OpPayloadPrimitives,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: OpHardforks> + Clone,
+    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: BaseUpgrades> + Clone,
     Pool: TransactionPool<Transaction: OpPooledTx<Consensus = N::SignedTx>>,
     Evm: ConfigureEvm<
             Primitives = N,
@@ -289,7 +289,7 @@ where
 
 /// The type that builds the payload.
 ///
-/// Payload building for optimism is composed of several steps.
+/// Payload building for Base is composed of several steps.
 /// The first steps are mandatory and defined by the protocol.
 ///
 /// 1. first all System calls are applied.
@@ -329,7 +329,7 @@ impl<Txs> OpBuilder<'_, Txs> {
                 Primitives = N,
                 NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, ChainSpec>,
             >,
-        ChainSpec: EthChainSpec + OpHardforks,
+        ChainSpec: EthChainSpec + BaseUpgrades,
         N: OpPayloadPrimitives,
         Txs:
             PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx> + OpPooledTx>,
@@ -414,7 +414,7 @@ impl<Txs> OpBuilder<'_, Txs> {
                 Primitives = N,
                 NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, ChainSpec>,
             >,
-        ChainSpec: EthChainSpec + OpHardforks,
+        ChainSpec: EthChainSpec + BaseUpgrades,
         N: OpPayloadPrimitives,
         Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx>>,
         Attrs: OpAttributes<Transaction = N::SignedTx>,
@@ -563,7 +563,7 @@ where
             Primitives: OpPayloadPrimitives,
             NextBlockEnvCtx: BuildNextEnv<Attrs, HeaderTy<Evm::Primitives>, ChainSpec>,
         >,
-    ChainSpec: EthChainSpec + OpHardforks,
+    ChainSpec: EthChainSpec + BaseUpgrades,
     Attrs: OpAttributes<Transaction = TxTy<Evm::Primitives>>,
 {
     /// Returns the parent block the payload will be build on.

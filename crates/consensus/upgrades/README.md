@@ -7,7 +7,7 @@ Consensus layer hardfork types for Base including network upgrade transactions.
 
 ## Overview
 
-Provides typed hardfork abstractions for the OP Stack consensus layer. Defines the `Hardfork`
+Provides typed hardfork abstractions for the Base consensus layer. Defines the `Hardfork`
 trait and a `Hardforks` registry, with concrete implementations for each upgrade (Ecotone, Fjord,
 Isthmus, Jovian) including the network upgrade transactions that must be injected at hardfork
 activation blocks.
