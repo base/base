@@ -18,7 +18,7 @@ pub use attestation::{
 };
 
 mod crypto;
-pub use crypto::{Ecdsa, SIGNING_DATA_BASE_LENGTH, Signing};
+pub use crypto::{Ecdsa, Signing};
 
 mod nsm;
 pub use nsm::{NsmRng, NsmSession};
