@@ -9,10 +9,38 @@ use tracing::{debug, info, warn};
 
 use crate::TxManagerError;
 
+/// Internal state tracked by [`NonceManager`].
+///
+/// Pairs the optional cached nonce with a generation counter that
+/// distinguishes "never initialized" (`generation == 0`) from
+/// "cleared by [`NonceManager::reset`]" (`generation > 0`).
+#[derive(Debug)]
+pub struct NonceState {
+    /// The cached nonce value, or `None` if uninitialized / reset.
+    pub nonce: Option<u64>,
+    /// Monotonically increasing counter bumped on every
+    /// [`NonceManager::reset`].
+    pub generation: u64,
+}
+
+impl NonceState {
+    /// Creates a new [`NonceState`] with no cached nonce and generation
+    /// zero.
+    pub const fn new() -> Self {
+        Self { nonce: None, generation: 0 }
+    }
+}
+
+impl Default for NonceState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Manages nonce allocation and tracking.
 ///
-/// Wraps a [`tokio::sync::Mutex`] around an optional cached nonce value,
-/// lazily fetching the initial nonce from chain state via
+/// Wraps a [`tokio::sync::Mutex`] around a [`NonceState`], lazily
+/// fetching the initial nonce from chain state via
 /// [`Provider::get_transaction_count`] on first use. Subsequent calls
 /// increment locally without making RPC calls.
 ///
@@ -21,7 +49,7 @@ use crate::TxManagerError;
 /// under concurrent access.
 #[derive(Debug, Clone)]
 pub struct NonceManager {
-    inner: Arc<Mutex<Option<u64>>>,
+    inner: Arc<Mutex<NonceState>>,
     provider: RootProvider,
     address: Address,
 }
@@ -32,7 +60,7 @@ impl NonceManager {
     /// The first call to [`next_nonce`](Self::next_nonce) will fetch the
     /// current transaction count from the provider.
     pub fn new(provider: RootProvider, address: Address) -> Self {
-        Self { inner: Arc::new(Mutex::new(None)), provider, address }
+        Self { inner: Arc::new(Mutex::new(NonceState::new())), provider, address }
     }
 
     /// Maximum number of retry attempts when `reset()` races with
@@ -66,8 +94,12 @@ impl NonceManager {
     /// exceeds `u64::MAX`.
     pub async fn next_nonce(&self) -> Result<NonceGuard, TxManagerError> {
         for attempt in 0..Self::MAX_RETRY_ATTEMPTS {
-            // Phase 1: peek under the lock to check whether init is needed.
-            let needs_init = self.inner.lock().await.is_none();
+            // Phase 1: peek under the lock to check whether init is needed
+            // and snapshot the current generation.
+            let (needs_init, generation) = {
+                let state = self.inner.lock().await;
+                (state.nonce.is_none(), state.generation)
+            };
 
             // Phase 2: if uninitialized, fetch from chain *without* holding
             // the lock so concurrent callers are not blocked by the RPC
@@ -84,15 +116,23 @@ impl NonceManager {
                     })?;
 
                 // Phase 3: re-acquire the lock and populate only if still
-                // unset. Another caller may have won the race; its value
-                // is used.
+                // unset AND the generation has not changed. If reset()
+                // was called mid-flight the generation will have been
+                // bumped — discard the stale fetch and retry.
                 let mut guard = Arc::clone(&self.inner).lock_owned().await;
-                let nonce = *guard.get_or_insert_with(|| {
+
+                if guard.generation != generation {
+                    drop(guard);
+                    debug!(attempt, "nonce cache reset during RPC fetch, retrying");
+                    continue;
+                }
+
+                let nonce = *guard.nonce.get_or_insert_with(|| {
                     debug!(nonce = fetched, "nonce fetched from chain");
                     fetched
                 });
                 let next = nonce.checked_add(1).ok_or(TxManagerError::NonceOverflow)?;
-                *guard = Some(next);
+                guard.nonce = Some(next);
                 debug!(nonce, "nonce reserved");
                 return Ok(NonceGuard { guard: Some(guard), nonce });
             }
@@ -100,9 +140,9 @@ impl NonceManager {
             // Steady-state fast path: cache is populated. Acquire the
             // owned lock for the read-and-increment.
             let mut guard = Arc::clone(&self.inner).lock_owned().await;
-            if let Some(n) = *guard {
+            if let Some(n) = guard.nonce {
                 let next = n.checked_add(1).ok_or(TxManagerError::NonceOverflow)?;
-                *guard = Some(next);
+                guard.nonce = Some(next);
                 debug!(nonce = n, "nonce reserved");
                 return Ok(NonceGuard { guard: Some(guard), nonce: n });
             }
@@ -128,7 +168,8 @@ impl NonceManager {
     /// may conflict with pending transactions in the mempool.
     pub async fn reset(&self) {
         let mut guard = self.inner.lock().await;
-        *guard = None;
+        guard.nonce = None;
+        guard.generation = guard.generation.wrapping_add(1);
         info!(address = %self.address, "nonce cache reset");
     }
 }
@@ -141,7 +182,7 @@ impl NonceManager {
 /// to restore the nonce for reuse.
 #[derive(Debug)]
 pub struct NonceGuard {
-    guard: Option<OwnedMutexGuard<Option<u64>>>,
+    guard: Option<OwnedMutexGuard<NonceState>>,
     nonce: u64,
 }
 
@@ -158,7 +199,7 @@ impl NonceGuard {
     /// the same nonce value. Consumes the guard, releasing the lock.
     pub fn rollback(mut self) {
         if let Some(mut guard) = self.guard.take() {
-            *guard = Some(self.nonce);
+            guard.nonce = Some(self.nonce);
             debug!(nonce = self.nonce, "nonce rolled back");
         }
     }
@@ -184,7 +225,11 @@ mod tests {
         /// Test-only: allows exercising edge-case nonce values (e.g.
         /// `u64::MAX`) without a real chain fetch.
         fn new_with_nonce(provider: RootProvider, address: Address, nonce: u64) -> Self {
-            Self { inner: Arc::new(Mutex::new(Some(nonce))), provider, address }
+            Self {
+                inner: Arc::new(Mutex::new(NonceState { nonce: Some(nonce), generation: 0 })),
+                provider,
+                address,
+            }
         }
     }
 

@@ -28,7 +28,7 @@ mod traits;
 pub use traits::{SendHandle, SendResponse, TxManager};
 
 mod nonce;
-pub use nonce::{NonceGuard, NonceManager};
+pub use nonce::{NonceGuard, NonceManager, NonceState};
 
 mod manager;
 pub use manager::SimpleTxManager;
