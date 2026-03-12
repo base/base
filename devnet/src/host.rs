@@ -23,10 +23,9 @@
 
 #[cfg(target_os = "macos")]
 use testcontainers::core::Host;
-#[cfg(all(not(target_os = "macos"), not(feature = "host-port-exposure")))]
 use testcontainers::{ContainerRequest, Image};
 #[cfg(any(target_os = "macos", feature = "host-port-exposure"))]
-use testcontainers::{ContainerRequest, Image, ImageExt as _};
+use testcontainers::ImageExt as _;
 
 /// Returns the address containers should use to reach the host machine.
 ///
