@@ -106,7 +106,7 @@ impl WebSocketPublisher {
 
         {
             let mut buf = self.ring_buffer.write();
-            buf.push(Some(position), utf8_bytes.clone());
+            buf.push(position, utf8_bytes.clone());
         }
 
         // Ignore SendError — there may be zero receivers when no clients

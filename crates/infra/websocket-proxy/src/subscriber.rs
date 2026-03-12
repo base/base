@@ -339,10 +339,6 @@ where
 /// a valid flashblock payload or either field is missing.
 ///
 /// Uses a minimal typed struct to avoid materializing the entire JSON tree.
-///
-/// Called on every incoming text message. Non-flashblock messages (e.g.
-/// heartbeats) will simply fail to deserialize and leave `last_position`
-/// unchanged.
 fn parse_flashblock_position(data: &str) -> Option<(u64, u64)> {
     #[derive(serde::Deserialize)]
     struct PositionExtract {

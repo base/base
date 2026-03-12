@@ -87,14 +87,13 @@ impl BroadcastLoop {
 
                 payload = self.receiver.recv() => match payload {
                     Ok((_position, data)) => {
-                        self.metrics.on_message_sent();
-
                         debug!(payload = ?data, "Broadcasted payload");
                         if let Err(e) = self.stream.send(Message::Text(data)).await {
                             self.metrics.on_send_error();
                             debug!(peer_addr = %peer_addr, error = %e, "Closing subscription");
                             break;
                         }
+                        self.metrics.on_message_sent();
                     }
                     Err(RecvError::Closed) => {
                         debug!("Broadcast channel closed, exiting broadcast loop");
@@ -104,8 +103,9 @@ impl BroadcastLoop {
                         self.metrics.on_lagged(skipped);
                         warn!(
                             skipped = skipped,
-                            "Broadcast channel lagged, some messages were dropped"
+                            "Broadcast channel lagged, disconnecting client for replay"
                         );
+                        break;
                     }
                 },
 
@@ -139,15 +139,11 @@ impl BroadcastLoop {
         // per entry. Lock hold time is bounded by entry count, not payload size.
         let snapshot: Vec<_> = {
             let buf = self.ring_buffer.read();
-            buf.positioned_entries_after(cutoff)
-                .map(|(pos, val)| (pos.copied(), val.clone()))
-                .collect()
+            buf.positioned_entries_after(cutoff).map(|(pos, val)| (*pos, val.clone())).collect()
         };
         let mut sent_positions = HashSet::with_capacity(snapshot.len());
         for (pos, val) in snapshot {
-            if let Some(p) = pos {
-                sent_positions.insert(p);
-            }
+            sent_positions.insert(pos);
             self.send_replay_message(val).await?;
         }
 
@@ -155,10 +151,6 @@ impl BroadcastLoop {
         // Collect everything synchronously first so the drain is bounded by the
         // channel's capacity at this instant — no new messages can arrive between
         // try_recv calls (unlike the previous approach that interleaved sends).
-        //
-        // Sentinel dedup: sentinels (None-positioned entries) only exist in
-        // the ring buffer. The broadcast channel carries `FlashblockPosition`
-        // (always `Some`), so sentinels cannot appear in phase 2.
         let mut pending = Vec::new();
         loop {
             match self.receiver.try_recv() {

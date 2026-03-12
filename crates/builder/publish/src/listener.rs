@@ -90,6 +90,12 @@ impl Listener {
                             }
                         };
 
+                        // Resubscribe after handshake so the receiver starts
+                        // from the broadcast tail now, not from when the TCP
+                        // connection was accepted. The ring buffer snapshot
+                        // covers everything before this point.
+                        let receiver = receiver.resubscribe();
+
                         let resume_from = pos_rx.await.ok().flatten();
                         if let Some(ref pos) = resume_from {
                             debug!(
@@ -330,9 +336,9 @@ mod tests {
         // Pre-populate the ring buffer with entries.
         {
             let mut buf = ring_buffer.write();
-            buf.push(Some((100, 0)), Utf8Bytes::from("msg-100-0"));
-            buf.push(Some((100, 1)), Utf8Bytes::from("msg-100-1"));
-            buf.push(Some((101, 0)), Utf8Bytes::from("msg-101-0"));
+            buf.push((100, 0), Utf8Bytes::from("msg-100-0"));
+            buf.push((100, 1), Utf8Bytes::from("msg-100-1"));
+            buf.push((101, 0), Utf8Bytes::from("msg-101-0"));
         }
 
         let handle = tokio::spawn({

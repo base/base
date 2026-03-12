@@ -26,7 +26,6 @@ tokio-tungstenite.workspace = true
 tokio = { workspace = true, features = ["net", "sync", "macros", "rt", "time"] }
 
 [dev-dependencies]
-rstest.workspace = true
 criterion.workspace = true
 tokio-tungstenite.workspace = true
 tokio = { workspace = true, features = ["net", "sync", "macros", "rt", "rt-multi-thread", "test-util"] }
