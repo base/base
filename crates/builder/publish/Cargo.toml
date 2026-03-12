@@ -26,7 +26,6 @@ serde_json = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["net", "sync", "macros", "rt", "time"] }
 
 [dev-dependencies]
-rstest.workspace = true
 criterion.workspace = true
 metrics.workspace = true
 tokio-tungstenite.workspace = true
