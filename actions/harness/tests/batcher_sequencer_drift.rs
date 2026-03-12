@@ -235,10 +235,7 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
     // All 6 blocks should be derived: 4 normal + 2 empty.
     // The empty blocks past the drift boundary should be accepted because
     // they contain no user transactions.
-    assert!(
-        total_derived >= 4,
-        "at least the 4 within-drift blocks should be derived"
-    );
+    assert!(total_derived >= 4, "at least the 4 within-drift blocks should be derived");
     assert_eq!(
         verifier.l2_safe().block_info.number,
         total_derived as u64,

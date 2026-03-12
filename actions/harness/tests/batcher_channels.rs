@@ -362,11 +362,7 @@ async fn interleaved_channels_correctly_reassembled() {
     source_a.push(block_a);
     let mut batcher_a = h.create_batcher(source_a, batcher_cfg.clone());
     let frames_a = batcher_a.encode_frames().expect("encode channel A");
-    assert!(
-        frames_a.len() >= 2,
-        "channel A should have 2+ frames, got {}",
-        frames_a.len()
-    );
+    assert!(frames_a.len() >= 2, "channel A should have 2+ frames, got {}", frames_a.len());
     drop(batcher_a);
 
     // Encode channel B (L2 block 2).
@@ -377,11 +373,7 @@ async fn interleaved_channels_correctly_reassembled() {
     source_b.push(block_b);
     let mut batcher_b = h.create_batcher(source_b, batcher_cfg.clone());
     let frames_b = batcher_b.encode_frames().expect("encode channel B");
-    assert!(
-        frames_b.len() >= 2,
-        "channel B should have 2+ frames, got {}",
-        frames_b.len()
-    );
+    assert!(frames_b.len() >= 2, "channel B should have 2+ frames, got {}", frames_b.len());
     drop(batcher_b);
 
     // Verify channels have distinct IDs (will fail until ChannelDriver is updated).
