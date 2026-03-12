@@ -460,12 +460,15 @@ async fn accessors_return_expected_values() {
 }
 
 /// Verifies that when signing fails, the nonce is rolled back and the
-/// next successful `craft_tx` call reuses the same nonce.
+/// next `next_nonce()` call on the same manager reuses the same value.
 ///
 /// This exercises the `guard.rollback()` path in step 6 of `craft_tx`.
+/// By querying the *same* `NonceManager` instance after the failure, we
+/// confirm rollback restored the nonce — if `rollback()` were removed,
+/// the nonce would advance to 1.
 #[tokio::test]
 async fn craft_tx_rolls_back_nonce_on_sign_failure() {
-    let (failing_manager, anvil) = setup_with_failing_signer().await;
+    let (failing_manager, _anvil) = setup_with_failing_signer().await;
 
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
@@ -478,26 +481,13 @@ async fn craft_tx_rolls_back_nonce_on_sign_failure() {
     let err = failing_manager.craft_tx(&candidate).await.expect_err("should fail to sign");
     assert!(matches!(err, TxManagerError::Sign(_)), "expected TxManagerError::Sign, got {err:?}",);
 
-    // Second call: signing fails again, but should reuse nonce 0
-    // (proving rollback worked). We cannot inspect the nonce directly
-    // from the error, so instead create a second manager with a real
-    // signer and verify it also gets nonce 0 — confirming the failing
-    // manager did not consume the nonce.
-    //
-    // Build a working manager against the same Anvil instance whose
-    // nonce state is independent (no tx was actually submitted).
-    let url = anvil.endpoint_url();
-    let provider = RootProvider::new_http(url);
-    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
-    let wallet = EthereumWallet::from(signer);
-    let working_manager =
-        SimpleTxManager::new(provider, wallet, TxManagerConfig::default(), anvil.chain_id())
-            .await
-            .expect("should create working manager");
-
-    let raw_tx = working_manager.craft_tx(&candidate).await.expect("should craft tx");
-    let tx = decode_eip1559(&raw_tx);
-    assert_eq!(tx.nonce, 0, "nonce should be 0 — the failing manager must not have consumed it");
+    // Query the same NonceManager directly. If rollback worked the
+    // cached nonce is still 0; if it didn't, it would have advanced
+    // to 1 (the nonce after 0 was "consumed").
+    let guard = failing_manager.nonce_manager().next_nonce().await.expect("should reserve nonce");
+    assert_eq!(guard.nonce(), 0, "nonce should be 0 — rollback must have restored it");
+    // Drop the guard so the nonce is consumed (prevents test pollution).
+    drop(guard);
 }
 
 #[test]
