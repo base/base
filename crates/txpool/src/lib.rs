@@ -11,7 +11,11 @@ mod validator;
 pub use validator::{OpL1BlockInfo, OpTransactionValidator};
 
 mod transaction;
-pub use transaction::{BasePooledTransaction, OpPooledTx, TimestampedTransaction};
+pub use transaction::{
+    BasePooledTransaction, BundleTransaction, OpPooledTx, TimestampedTransaction,
+    BLOCK_TIME_SECS, MAX_BUNDLE_ADVANCE_BLOCKS, MAX_BUNDLE_ADVANCE_MILLIS,
+    MAX_BUNDLE_ADVANCE_SECS,
+};
 
 mod ordering;
 pub use ordering::{BaseOrdering, TimestampOrdering};
@@ -24,6 +28,11 @@ pub use forwarder::{Forwarder, ForwarderConfig, ForwarderMetrics, SpawnedForward
 
 mod builder;
 pub use builder::{BuilderApiImpl, BuilderApiMetrics, BuilderApiServer};
+
+mod bundle;
+pub use bundle::{
+    SendBundleApiImpl, SendBundleApiServer, SendBundleRequest, maintain_bundle_transactions,
+};
 
 mod wire;
 pub use wire::ValidatedTransaction;

@@ -68,9 +68,12 @@ where
         })?;
         let encoded_len = tx.raw.len();
 
-        // Create recovered transaction without needing signer recovery
         let recovered = Recovered::new_unchecked(consensus_tx, sender);
-        let pool_tx = BasePooledTransaction::new(recovered, encoded_len);
+        let pool_tx = BasePooledTransaction::new(recovered, encoded_len).with_bundle_metadata(
+            tx.target_block_number,
+            tx.min_timestamp,
+            tx.max_timestamp,
+        );
 
         // Insert into the pool
         let start = Instant::now();
@@ -165,6 +168,9 @@ mod tests {
         let tx = ValidatedTransaction {
             sender: Address::repeat_byte(0x01),
             raw: Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+            target_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
         };
 
         let result = handler.insert_validated_transaction(tx).await;
@@ -187,7 +193,13 @@ mod tests {
     async fn decode_empty_bytes_returns_invalid_params() {
         let handler = handler();
 
-        let tx = ValidatedTransaction { sender: Address::ZERO, raw: Bytes::new() };
+        let tx = ValidatedTransaction {
+            sender: Address::ZERO,
+            raw: Bytes::new(),
+            target_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
+        };
 
         let result = handler.insert_validated_transaction(tx).await;
         assert!(result.is_err(), "expected decode error for empty bytes");
@@ -208,7 +220,13 @@ mod tests {
         let (sender, full_raw) = create_deposit_tx();
         let truncated = Bytes::from(full_raw[..full_raw.len() / 2].to_vec());
 
-        let tx = ValidatedTransaction { sender, raw: truncated };
+        let tx = ValidatedTransaction {
+            sender,
+            raw: truncated,
+            target_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
+        };
 
         let result = handler.insert_validated_transaction(tx).await;
         assert!(result.is_err(), "expected decode error for truncated tx");
@@ -229,6 +247,9 @@ mod tests {
         let tx = ValidatedTransaction {
             sender: Address::repeat_byte(0x01),
             raw: Bytes::from_static(&[0xFF, 0x01, 0x02, 0x03]),
+            target_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
         };
 
         let result = handler.insert_validated_transaction(tx).await;
@@ -245,6 +266,9 @@ mod tests {
         let tx = ValidatedTransaction {
             sender: Address::ZERO,
             raw: Bytes::from_static(&[0x02]), // Just type byte, no payload
+            target_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
         };
 
         let result = handler.insert_validated_transaction(tx).await;
@@ -262,6 +286,9 @@ mod tests {
         let tx = ValidatedTransaction {
             sender: Address::ZERO,
             raw: Bytes::from_static(&[0x00, 0x01, 0x02]),
+            target_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
         };
 
         let result = handler.insert_validated_transaction(tx).await;
@@ -274,7 +301,13 @@ mod tests {
         let handler = handler();
 
         let (sender, raw) = create_eip1559_tx();
-        let tx = ValidatedTransaction { sender, raw };
+        let tx = ValidatedTransaction {
+            sender,
+            raw,
+            target_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
+        };
 
         let result = handler.insert_validated_transaction(tx).await;
         let err = result.unwrap_err();
