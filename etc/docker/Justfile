@@ -76,7 +76,7 @@ tests: _install-nextest _build-contracts
 
 # Runs devnet tests with ci profile for minimal disk usage
 tests-ci: _install-nextest _build-contracts
-    cargo nextest run --locked -p devnet --cargo-profile ci
+    cargo nextest run --locked -p devnet --features host-port-exposure --cargo-profile ci
 
 [private]
 _install-nextest:
