@@ -47,7 +47,12 @@ pub(crate) struct Cli {
 
     // ── Signing ───────────────────────────────────────────────────────────────
     /// HTTP signer sidecar URL (production). Mutually exclusive with `--private-key`.
-    #[arg(long, env = "REGISTRAR_SIGNER_ENDPOINT", conflicts_with = "private_key")]
+    #[arg(
+        long,
+        env = "REGISTRAR_SIGNER_ENDPOINT",
+        conflicts_with = "private_key",
+        requires = "signer_address"
+    )]
     signer_endpoint: Option<Url>,
 
     /// Manager address for signing txs (required with `--signer-endpoint`).
@@ -298,9 +303,7 @@ mod tests {
             "--boundless-verifier-program-url",
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ];
-        assert!(
-            Cli::try_parse_from(args).expect("clap should parse these args").into_config().is_err()
-        );
+        assert!(Cli::try_parse_from(args).is_err());
     }
 
     #[test]
