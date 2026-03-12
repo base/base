@@ -13,12 +13,14 @@ workspace = true
 
 [dependencies]
 # alloy
+alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-eips = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # misc
+backon.workspace = true
 thiserror.workspace = true
 tracing = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "time"] }
@@ -28,7 +30,10 @@ rayon.workspace = true
 rstest.workspace = true
 proptest.workspace = true
 humantime.workspace = true
+async-trait.workspace = true
+alloy-signer.workspace = true
 alloy-consensus.workspace = true
+alloy-signer-local.workspace = true
 alloy-node-bindings.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }

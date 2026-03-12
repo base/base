@@ -58,7 +58,17 @@ Transaction lifecycle management for Base onchain components.
   guard after successful signing to release the lock, or call `rollback()` on failure to
   restore the nonce for reuse. Uses `OwnedMutexGuard` so the guard is `Send` and can cross
   task spawn boundaries.
-- **`SimpleTxManager`**: Default `TxManager` implementation.
+- **`SimpleTxManager`**: Default `TxManager` implementation. Holds a `RootProvider`,
+  `EthereumWallet`, `TxManagerConfig`, `NonceManager`, chain ID, and a shutdown flag.
+  `new()` validates the config and cross-checks the chain ID against the provider.
+  `prepare()` wraps `craft_tx()` in a `backon` retry loop (up to 30 attempts, 2-second
+  fixed delay) that retries only on transient errors and exits immediately when closed.
+  `craft_tx()` queries gas price caps, enforces fee limits, builds a `TransactionRequest`
+  with all fields set manually (no alloy fillers), estimates or validates gas, assigns a
+  nonce via `NonceManager`, signs via `NetworkWallet`, and returns RLP-encoded raw bytes.
+  `suggest_gas_price_caps()` queries the provider for tip cap and base fee, enforces
+  configured minimums, and returns a `GasPriceCaps`. Blob transactions are not yet
+  supported and are rejected with an error.
 - **`TxQueue`**: Queue for ordering and batching transactions.
 - **`TxMetrics`**: Metrics collection for transaction operations.
 - **`BlobTxBuilder`**: Builder for EIP-4844 blob-carrying transactions.
@@ -179,8 +189,17 @@ base-tx-manager = { git = "https://github.com/base/base" }
 ```
 
 ```rust,ignore
+use alloy_network::EthereumWallet;
 use alloy_primitives::{bytes, Address, U256};
-use base_tx_manager::{SimpleTxManager, TxCandidate, TxManager};
+use alloy_provider::RootProvider;
+use base_tx_manager::{SimpleTxManager, TxCandidate, TxManager, TxManagerConfig};
+
+// Create a SimpleTxManager with a provider, wallet, and config.
+let provider = RootProvider::new_http("http://localhost:8545".parse()?);
+let wallet = EthereumWallet::from(signer);
+let config = TxManagerConfig::default();
+let chain_id = 1;
+let manager = SimpleTxManager::new(provider, wallet, config, chain_id).await?;
 
 // Build a regular (type-2) transaction candidate.
 let candidate = TxCandidate {
@@ -191,11 +210,12 @@ let candidate = TxCandidate {
     ..Default::default()
 };
 
-// Blob (type-3) candidates set the `blobs` field instead.
-// let blob_candidate = TxCandidate { blobs: vec![blob], ..Default::default() };
+// Construct and sign the transaction (with automatic retry on transient errors).
+// Returns RLP-encoded raw transaction bytes ready for submission.
+let raw_tx = manager.prepare(&candidate).await?;
 
-// Submit through the manager trait.
-let receipt = manager.send(candidate).await?;
+// Or use craft_tx() directly for a single attempt without retry.
+let raw_tx = manager.craft_tx(&candidate).await?;
 ```
 
 ## License
