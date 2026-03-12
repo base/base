@@ -245,6 +245,7 @@ base-comp = { path = "crates/batcher/comp", default-features = false }
 
 # Utilities
 base-jwt = { path = "crates/utilities/jwt" }
+base-health = { path = "crates/utilities/health" }
 base-cli-utils = { path = "crates/utilities/cli" }
 base-test-utils = { path = "crates/utilities/test-utils" }
 base-tx-manager = { path = "crates/utilities/tx-manager" }

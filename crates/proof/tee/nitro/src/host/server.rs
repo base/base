@@ -1,11 +1,12 @@
-use std::{fmt, net::SocketAddr, sync::Arc};
+use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 
+use base_health::{HealthzApiServer, HealthzRpc};
 use base_proof_host::{ProverConfig, ProverService};
 use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
 use jsonrpsee::{
     RpcModule,
     core::{RpcResult, async_trait},
-    server::{Server, ServerHandle},
+    server::{Server, ServerHandle, middleware::http::ProxyGetRequestLayer},
 };
 use tracing::info;
 
@@ -36,13 +37,20 @@ impl NitroProverServer {
 
     /// Start the JSON-RPC HTTP server on the given address.
     pub async fn run(self, addr: SocketAddr) -> eyre::Result<ServerHandle> {
-        let server = Server::builder().build(addr).await?;
+        let middleware = tower::ServiceBuilder::new()
+            .layer(
+                ProxyGetRequestLayer::new([("/healthz", "healthz")])
+                    .expect("valid healthz proxy layer"),
+            )
+            .timeout(Duration::from_secs(2));
+        let server = Server::builder().set_http_middleware(middleware).build(addr).await?;
         let addr = server.local_addr()?;
         info!(addr = %addr, "nitro rpc server started");
 
         let mut module = RpcModule::new(());
         module.merge(NitroProverRpc { service: self.service }.into_rpc())?;
         module.merge(NitroSignerRpc { transport: self.transport }.into_rpc())?;
+        module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc())?;
 
         Ok(server.start(module))
     }
@@ -111,6 +119,13 @@ mod tests {
         assert_eq!(result, expected);
         assert_eq!(result.len(), 65);
         assert_eq!(result[0], 0x04);
+    }
+
+    #[tokio::test]
+    async fn healthz_returns_version() {
+        let rpc = HealthzRpc::new(env!("CARGO_PKG_VERSION"));
+        let result = HealthzApiServer::healthz(&rpc).await.unwrap();
+        assert_eq!(result.version, env!("CARGO_PKG_VERSION"));
     }
 
     #[tokio::test]
