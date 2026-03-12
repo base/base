@@ -289,7 +289,8 @@ impl LoadRunner {
         }
 
         const METRICS_CHANNEL_BUFFER: usize = 2000;
-        let (metrics_tx, mut metrics_rx) = mpsc::channel::<TransactionMetrics>(METRICS_CHANNEL_BUFFER);
+        let (metrics_tx, mut metrics_rx) =
+            mpsc::channel::<TransactionMetrics>(METRICS_CHANNEL_BUFFER);
 
         let sender_addresses: Vec<_> = self.accounts.accounts().iter().map(|a| a.address).collect();
         let confirmer = Confirmer::new(
@@ -344,13 +345,11 @@ impl LoadRunner {
 
             rate_limiter.tick().await;
 
+            let from = account.address;
             let to_idx = (current_account_idx + 1) % account_count;
             let to = self.accounts.accounts()[to_idx].address;
 
-            let tx_request = self.generator.generate_batch(1)?;
-            let tx_request = &tx_request[0];
-
-            let from = account.address;
+            let tx_request = self.generator.generate_payload(from, to)?;
 
             let Some(nonce) = self.nonce_tracker.allocate(&from) else {
                 warn!(address = %from, "failed to allocate nonce");
@@ -362,7 +361,7 @@ impl LoadRunner {
                 from,
                 to,
                 value: tx_request.value,
-                data: tx_request.data.clone(),
+                data: tx_request.data,
                 nonce,
                 gas_limit: tx_request.gas_limit.unwrap_or(21_000),
             });

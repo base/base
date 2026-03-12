@@ -53,16 +53,20 @@ impl ConfirmerHandle {
     /// Records a submitted transaction for confirmation tracking.
     /// Returns false if the confirmer has shut down.
     pub async fn record_submitted(&self, tx_hash: TxHash, from: Address) -> bool {
-        let pending = PendingTx { tx_hash, from, submit_time: Instant::now() };
-
-        if self.pending_tx.send(pending).await.is_err() {
-            return false;
-        }
-
         if let Some(counter) = self.in_flight_per_sender.get(&from) {
             counter.fetch_add(1, Ordering::SeqCst);
         }
         self.total_in_flight.fetch_add(1, Ordering::SeqCst);
+
+        let pending = PendingTx { tx_hash, from, submit_time: Instant::now() };
+
+        if self.pending_tx.send(pending).await.is_err() {
+            if let Some(counter) = self.in_flight_per_sender.get(&from) {
+                counter.fetch_sub(1, Ordering::SeqCst);
+            }
+            self.total_in_flight.fetch_sub(1, Ordering::SeqCst);
+            return false;
+        }
 
         true
     }
@@ -121,17 +125,18 @@ impl Confirmer {
         let client = RpcClient::new(self.rpc_url.clone());
 
         loop {
-            if self.stop_flag.load(Ordering::SeqCst) && self.pending.is_empty() {
-                break;
-            }
-
             while let Ok(pending) = pending_rx.try_recv() {
                 self.pending.insert(pending.tx_hash, pending);
             }
 
+            let stopped = self.stop_flag.load(Ordering::SeqCst);
+            if stopped && self.pending.is_empty() {
+                break;
+            }
+
             self.poll_confirmations(&client).await;
 
-            if !self.stop_flag.load(Ordering::SeqCst) {
+            if !stopped {
                 tokio::time::sleep(self.poll_interval).await;
             }
         }
@@ -194,7 +199,7 @@ impl Confirmer {
                                     block = block_num,
                                     "confirmed via block receipts"
                                 );
-                                let _ = self.metrics_tx.send(metrics);
+                                let _ = self.metrics_tx.send(metrics).await;
                                 confirmed.push((tx_hash, pending.from));
                             }
                         }
@@ -244,9 +249,8 @@ impl Confirmer {
             .map(|(hash, pending)| (*hash, pending.from, pending.submit_time))
             .collect();
 
-        let futures = old_pending
-            .iter()
-            .map(|(tx_hash, _, _)| client.get_transaction_receipt(*tx_hash));
+        let futures =
+            old_pending.iter().map(|(tx_hash, _, _)| client.get_transaction_receipt(*tx_hash));
         let results = join_all(futures).await;
 
         for ((tx_hash, from, submit_time), result) in old_pending.into_iter().zip(results) {
@@ -265,7 +269,7 @@ impl Confirmer {
                         latency_ms = latency.as_millis(),
                         "confirmed via straggler lookup"
                     );
-                    let _ = self.metrics_tx.send(metrics);
+                    let _ = self.metrics_tx.send(metrics).await;
                     confirmed.push((tx_hash, from));
                 }
                 Ok(None) => {}

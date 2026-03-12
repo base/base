@@ -55,6 +55,16 @@ impl WorkloadGenerator {
         Ok(requests)
     }
 
+    /// Generates a single transaction payload with caller-provided addresses.
+    pub fn generate_payload(
+        &mut self,
+        from: alloy_primitives::Address,
+        to: alloy_primitives::Address,
+    ) -> Result<TransactionRequest> {
+        let payload = self.select_payload()?;
+        Ok(payload.generate(&mut self.rng, from, to))
+    }
+
     fn generate_single(&mut self) -> Result<TransactionRequest> {
         let payload = self.select_payload()?;
         let from_account = self.accounts.random_account();
