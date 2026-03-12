@@ -49,7 +49,15 @@ Transaction lifecycle management for Base onchain components.
   to `u128` wei via `alloy_primitives::utils::parse_units`.
 - **`TxManager`**: Trait defining the public API — `send` (blocking), `send_async` (returns
   a `SendHandle`), and `sender_address`. Requires `Send + Sync`.
-- **`NonceManager`**: Manages nonce allocation and tracking.
+- **`NonceManager`**: Manages nonce allocation and tracking with lazy initialization from
+  chain state. Wraps a `tokio::sync::Mutex` around a cached nonce, fetching the initial
+  value via `get_transaction_count()` on first use and incrementing locally on subsequent
+  calls. Returns a [`NonceGuard`] from `next_nonce()` that holds the lock for the duration
+  of signing. `reset()` clears the cache, forcing a fresh chain fetch on the next call.
+- **`NonceGuard`**: RAII guard holding a reserved nonce and the nonce mutex lock. Drop the
+  guard after successful signing to advance the nonce, or call `rollback()` on failure to
+  restore it for reuse. Uses `OwnedMutexGuard` so the guard is `Send` and can cross task
+  spawn boundaries.
 - **`SimpleTxManager`**: Default `TxManager` implementation.
 - **`TxQueue`**: Queue for ordering and batching transactions.
 - **`TxMetrics`**: Metrics collection for transaction operations.
