@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "OP Stack EIP-4844 blob encoding and decoding for the Base batcher"
+description = "EIP-4844 blob encoding and decoding for the Base batcher"
 
 [lints]
 workspace = true

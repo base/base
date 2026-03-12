@@ -1,8 +1,8 @@
-//! OP Stack EIP-4844 blob encoder.
+//! EIP-4844 blob encoder.
 
 use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
 
-/// Blob encoding version used by the OP Stack blob codec.
+/// Blob encoding version used by the Base blob codec.
 const BLOB_ENCODING_VERSION: u8 = 0;
 
 /// Maximum number of data bytes that fit in a single blob.
@@ -27,7 +27,7 @@ pub enum BlobEncodeError {
     },
 }
 
-/// Encodes raw byte payloads into the OP Stack EIP-4844 blob wire format.
+/// Encodes raw byte payloads into the Base EIP-4844 blob wire format.
 ///
 /// The encoded blob can be decoded back to the original payload with
 /// [`BlobDecoder::decode`](super::BlobDecoder::decode).
@@ -55,7 +55,7 @@ impl BlobEncoder {
         //
         // FE0 layout: [high_byte | version | len[1] | len[2] | len[3] | 27 payload bytes]
         //
-        // The OP Stack blob encoding stores payload data across field elements.
+        // The Base blob encoding stores payload data across field elements.
         // Each field element is 32 bytes: [high_byte | 31 payload bytes].
         // Every 4 field elements the 4 high bytes carry 6-bit chunks that
         // reassemble into 3 additional payload bytes (x, y, z).

@@ -1,4 +1,4 @@
-//! OP Stack EIP-4844 blob decoder.
+//! EIP-4844 blob decoder.
 
 use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
 use alloy_primitives::Bytes;
@@ -39,7 +39,7 @@ pub enum BlobDecodeError {
     },
 }
 
-/// Decodes OP Stack EIP-4844 blobs back to raw byte payloads.
+/// Decodes Base EIP-4844 blobs back to raw byte payloads.
 ///
 /// This is the inverse of
 /// [`BlobEncoder::encode`](super::BlobEncoder::encode) and mirrors the
