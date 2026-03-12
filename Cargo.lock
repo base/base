@@ -776,8 +776,8 @@ dependencies = [
  "alloy-primitives",
  "alloy-signer",
  "async-trait",
- "coins-bip32",
- "coins-bip39",
+ "coins-bip32 0.12.0",
+ "coins-bip39 0.12.0",
  "k256",
  "rand 0.8.5",
  "thiserror 2.0.18",
@@ -3711,6 +3711,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-load-tests-core"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types",
+ "alloy-signer-local",
+ "coins-bip39 0.13.0",
+ "eyre",
+ "futures",
+ "humantime",
+ "humantime-serde",
+ "rand 0.9.2",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+ "url",
+]
+
+[[package]]
 name = "base-macros"
 version = "0.0.0"
 
@@ -5485,8 +5511,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2073678591747aed4000dd468b97b14d7007f7936851d3f2f01846899f5ebf08"
 dependencies = [
  "bs58",
- "coins-core",
+ "coins-core 0.12.0",
  "digest 0.10.7",
+ "hmac",
+ "k256",
+ "serde",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "coins-bip32"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "591a62657d4485007d6498be7922a5ef2415dceabb649456c813a8b521c4ba14"
+dependencies = [
+ "bs58",
+ "coins-core 0.13.0",
+ "digest 0.10.7",
+ "getrandom 0.2.17",
+ "getrandom 0.3.4",
  "hmac",
  "k256",
  "serde",
@@ -5501,7 +5545,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74b169b26623ff17e9db37a539fe4f15342080df39f129ef7631df7683d6d9d4"
 dependencies = [
  "bitvec",
- "coins-bip32",
+ "coins-bip32 0.12.0",
  "hmac",
  "once_cell",
  "pbkdf2",
@@ -5511,10 +5555,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "coins-bip39"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57a98df2f583fadfaba6b093112a7f1220ff810ea65e41d2fb7ebbee7c265d33"
+dependencies = [
+ "bitvec",
+ "coins-bip32 0.13.0",
+ "getrandom 0.2.17",
+ "getrandom 0.3.4",
+ "hmac",
+ "pbkdf2",
+ "rand 0.9.2",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "coins-core"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62b962ad8545e43a28e14e87377812ba9ae748dd4fd963f4c10e9fcc6d13475b"
+dependencies = [
+ "base64 0.21.7",
+ "bech32",
+ "bs58",
+ "const-hex",
+ "digest 0.10.7",
+ "generic-array 0.14.7",
+ "ripemd",
+ "serde",
+ "sha2 0.10.9",
+ "sha3",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "coins-core"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0ecf5df86590cea40cf9f7dcacaf60c5407f6d4d3fcc6f1284efab1cbea4771"
 dependencies = [
  "base64 0.21.7",
  "bech32",

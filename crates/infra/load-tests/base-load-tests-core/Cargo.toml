@@ -1,0 +1,36 @@
+[package]
+name = "base-load-tests-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Core library for Base network load testing and benchmarking"
+
+[lints]
+workspace = true
+
+[dependencies]
+url.workspace = true
+rand.workspace = true
+serde.workspace = true
+tokio.workspace = true
+eyre.workspace = true
+futures.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+tracing-subscriber.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+humantime.workspace = true
+humantime-serde.workspace = true
+coins-bip39.workspace = true
+alloy-network.workspace = true
+alloy-provider.workspace = true
+alloy-rpc-types.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives.workspace = true
+alloy-signer-local = { workspace = true, features = ["mnemonic"] }
+
+[dev-dependencies]
