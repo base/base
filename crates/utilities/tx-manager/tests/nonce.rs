@@ -1,7 +1,9 @@
 //! Integration tests for [`NonceManager`] with an Anvil backend.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use alloy_node_bindings::Anvil;
 use alloy_primitives::Address;
@@ -246,10 +248,7 @@ async fn concurrent_next_nonce_and_reset_stress() {
         // sorted nonces must form the contiguous range 0..batch_size.
         nonces.sort();
         let expected: Vec<u64> = (0..batch_size as u64).collect();
-        assert_eq!(
-            nonces, expected,
-            "round {round}: nonces should be contiguous 0..{batch_size}",
-        );
+        assert_eq!(nonces, expected, "round {round}: nonces should be contiguous 0..{batch_size}");
 
         // Reset clears the cache, forcing a fresh chain fetch next round.
         manager.reset().await;

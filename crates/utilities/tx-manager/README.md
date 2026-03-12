@@ -55,9 +55,9 @@ Transaction lifecycle management for Base onchain components.
   calls. Returns a [`NonceGuard`] from `next_nonce()` that holds the lock for the duration
   of signing. `reset()` clears the cache, forcing a fresh chain fetch on the next call.
 - **`NonceGuard`**: RAII guard holding a reserved nonce and the nonce mutex lock. Drop the
-  guard after successful signing to advance the nonce, or call `rollback()` on failure to
-  restore it for reuse. Uses `OwnedMutexGuard` so the guard is `Send` and can cross task
-  spawn boundaries.
+  guard after successful signing to release the lock, or call `rollback()` on failure to
+  restore the nonce for reuse. Uses `OwnedMutexGuard` so the guard is `Send` and can cross
+  task spawn boundaries.
 - **`SimpleTxManager`**: Default `TxManager` implementation.
 - **`TxQueue`**: Queue for ordering and batching transactions.
 - **`TxMetrics`**: Metrics collection for transaction operations.

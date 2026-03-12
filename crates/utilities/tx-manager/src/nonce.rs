@@ -116,9 +116,8 @@ impl NonceManager {
 ///
 /// The lock is held for the duration of transaction signing to prevent
 /// concurrent nonce conflicts. Drop the guard after successful signing
-/// to release the lock and advance the nonce. Call
-/// [`rollback`](Self::rollback) on signing failure to restore the nonce
-/// for reuse.
+/// to release the lock, or call [`rollback`](Self::rollback) on failure
+/// to restore the nonce for reuse.
 #[derive(Debug)]
 pub struct NonceGuard {
     guard: Option<OwnedMutexGuard<Option<u64>>>,
