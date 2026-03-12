@@ -4,6 +4,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+use std::time::Duration;
 
 use alloy_node_bindings::Anvil;
 use alloy_primitives::Address;
@@ -123,6 +124,37 @@ async fn provider_failure_returns_rpc_error() {
 
     let err = manager.next_nonce().await.expect_err("should fail on unreachable provider");
     assert!(matches!(err, TxManagerError::Rpc(_)), "expected TxManagerError::Rpc, got {err:?}");
+}
+
+#[tokio::test]
+async fn rpc_timeout_returns_rpc_error() {
+    // Start a TCP listener that accepts connections but never responds,
+    // simulating a hung RPC endpoint.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        // Accept one connection and hold it open indefinitely.
+        let (_socket, _) = listener.accept().await.unwrap();
+        std::future::pending::<()>().await;
+    });
+
+    let url = format!("http://{addr}").parse().expect("valid url");
+    let provider = RootProvider::new_http(url);
+    let address = Address::ZERO;
+    let manager =
+        NonceManager::with_rpc_timeout(provider, address, Duration::from_millis(1));
+
+    let err = manager.next_nonce().await.expect_err("should time out");
+    match &err {
+        TxManagerError::Rpc(msg) => {
+            assert!(
+                msg.contains("timed out"),
+                "expected 'timed out' in message, got: {msg}",
+            );
+        }
+        other => panic!("expected TxManagerError::Rpc, got {other:?}"),
+    }
 }
 
 #[tokio::test]
