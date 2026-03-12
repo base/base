@@ -252,8 +252,8 @@ pub(crate) mod tests {
     pub(crate) fn default_test_blob_source() -> BlobSource<TestChainProvider, TestBlobProvider> {
         let chain_provider = TestChainProvider::default();
         let blob_fetcher = TestBlobProvider::default();
-        let batcher_address = Address::default();
-        BlobSource::new(chain_provider, blob_fetcher, batcher_address)
+        let batch_inbox_address = Address::default();
+        BlobSource::new(chain_provider, blob_fetcher, batch_inbox_address)
     }
 
     pub(crate) fn valid_blob_txs() -> Vec<TxEnvelope> {
@@ -296,8 +296,9 @@ pub(crate) mod tests {
         let block_info = BlockInfo::default();
         let batcher_address =
             alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
-        source.batcher_address =
+        let batch_inbox_address =
             alloy_primitives::address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064");
+        source.batcher_address = batch_inbox_address;
         let txs = valid_blob_txs();
         source.blob_fetcher.should_error = true;
         source.chain_provider.insert_block_with_transactions(1, block_info, txs);
@@ -313,8 +314,9 @@ pub(crate) mod tests {
         let block_info = BlockInfo::default();
         let batcher_address =
             alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
-        source.batcher_address =
+        let batch_inbox_address =
             alloy_primitives::address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064");
+        source.batcher_address = batch_inbox_address;
         let txs = valid_blob_txs();
         source.chain_provider.insert_block_with_transactions(1, block_info, txs);
         let hashes = [
@@ -384,8 +386,9 @@ pub(crate) mod tests {
         let block_info = BlockInfo::default();
         let batcher_address =
             alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
-        source.batcher_address =
+        let batch_inbox_address =
             alloy_primitives::address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064");
+        source.batcher_address = batch_inbox_address;
         let txs = valid_blob_txs();
         source.blob_fetcher.should_return_extra_blob = true;
         source.chain_provider.insert_block_with_transactions(1, block_info, txs);
@@ -472,8 +475,9 @@ pub(crate) mod tests {
         let block_info = BlockInfo::default();
         let batcher_address =
             alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
-        source.batcher_address =
+        let batch_inbox_address =
             alloy_primitives::address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064");
+        source.batcher_address = batch_inbox_address;
         source.chain_provider.insert_block_with_transactions(1, block_info, valid_blob_txs());
         source.blob_fetcher.should_return_not_found = true;
         let err = source.load_blobs(&BlockInfo::default(), batcher_address).await.unwrap_err();
@@ -492,8 +496,9 @@ pub(crate) mod tests {
         let block_info = BlockInfo::default();
         let batcher_address =
             alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
-        source.batcher_address =
+        let batch_inbox_address =
             alloy_primitives::address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064");
+        source.batcher_address = batch_inbox_address;
         source.chain_provider.insert_block_with_transactions(1, block_info, valid_blob_txs());
         source.blob_fetcher.should_return_not_found = true;
         let err = source.next(&BlockInfo::default(), batcher_address).await.unwrap_err();
@@ -523,29 +528,30 @@ pub(crate) mod tests {
 
     /// Verifies that EIP-4844 blobs from non-batcher transactions are excluded from the pipeline.
     ///
-    /// When `source.batcher_address` does not match the transaction's `to` field, the entire
-    /// transaction is skipped — no blob hashes are collected and `data` remains empty. This tests
-    /// the exclusion path that previously incremented an index counter regardless of the sender.
+    /// When the configured batch inbox address (`source.batcher_address`) does not match the
+    /// transaction's `to` field, the entire transaction is skipped — no blob hashes are collected
+    /// and `data` remains empty. This tests the exclusion path that previously incremented an
+    /// index counter regardless of the sender.
     ///
     /// Two cases are exercised back-to-back to make the contrast explicit:
-    /// 1. Wrong batcher address → no blobs captured.
-    /// 2. Correct batcher address → all 5 blobs from the batcher transaction are captured.
+    /// 1. Wrong batch inbox address → no blobs captured.
+    /// 2. Correct batch inbox address → all 5 blobs from the batcher transaction are captured.
     #[test]
     fn test_extract_blob_data_non_batcher_blobs_excluded() {
-        // Case 1: source.batcher_address = Address::ZERO does not match the tx's `to` field
-        // (0x11E9CA82...), so the transaction is skipped and no blobs are captured.
-        let source = default_test_blob_source(); // batcher_address = Address::ZERO
-        let (data, hashes) = source.extract_blob_data(
-            valid_blob_txs(),
-            alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2"),
-        );
+        // Case 1: source.batcher_address = Address::ZERO does not match the tx's batch inbox
+        // address (`to` = 0x11E9CA82...), so the transaction is skipped and no blobs are captured.
+        let source = default_test_blob_source(); // batch_inbox_address = Address::ZERO
+        let batcher_address =
+            alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
+        let (data, hashes) = source.extract_blob_data(valid_blob_txs(), batcher_address);
         assert!(data.is_empty(), "non-batcher blobs must not be captured (data)");
         assert!(hashes.is_empty(), "non-batcher blob hashes must not be captured");
 
-        // Case 2: correct batcher address → all 5 blobs from the batcher transaction captured.
+        // Case 2: correct batch inbox address → all 5 blobs from the batcher transaction captured.
         let mut source2 = default_test_blob_source();
-        source2.batcher_address =
+        let batch_inbox_address =
             alloy_primitives::address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064");
+        source2.batcher_address = batch_inbox_address;
         let batcher_address =
             alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
         let (data, hashes) = source2.extract_blob_data(valid_blob_txs(), batcher_address);
