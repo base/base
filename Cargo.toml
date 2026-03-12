@@ -228,7 +228,7 @@ base-proof-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-featur
 base-enclave = { path = "crates/proof/tee/core" }
 base-enclave-client = { path = "crates/proof/tee/client" }
 base-proof-tee-nitro = { path = "crates/proof/tee/nitro" }
-base-proof-tee-registrar = { path = "crates/proof/tee/registrar", default-features = false }
+base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }

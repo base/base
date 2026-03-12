@@ -285,28 +285,36 @@ mod tests {
             "--boundless-verifier-program-url",
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ];
-        assert!(Cli::parse_from(args).into_config().is_err());
+        assert!(
+            Cli::try_parse_from(args).expect("clap should parse these args").into_config().is_err()
+        );
     }
 
     #[test]
     fn zero_poll_interval_fails_into_config() {
         let mut args = base_args();
         args.extend(["--poll-interval-secs", "0"]);
-        assert!(Cli::parse_from(args).into_config().is_err());
+        assert!(
+            Cli::try_parse_from(args).expect("clap should parse these args").into_config().is_err()
+        );
     }
 
     #[test]
     fn zero_boundless_timeout_fails_into_config() {
         let mut args = base_args();
         args.extend(["--boundless-timeout-secs", "0"]);
-        assert!(Cli::parse_from(args).into_config().is_err());
+        assert!(
+            Cli::try_parse_from(args).expect("clap should parse these args").into_config().is_err()
+        );
     }
 
     #[test]
     fn inverted_price_bounds_fail_into_config() {
         let mut args = base_args();
         args.extend(["--boundless-min-price", "9999", "--boundless-max-price", "1"]);
-        assert!(Cli::parse_from(args).into_config().is_err());
+        assert!(
+            Cli::try_parse_from(args).expect("clap should parse these args").into_config().is_err()
+        );
     }
 
     #[test]

@@ -101,7 +101,10 @@ impl std::fmt::Debug for RegistrarConfig {
             .field("signing", &self.signing)
             .field("boundless_rpc_url", &url_origin(&self.boundless_rpc_url))
             .field("boundless_signer", &self.boundless_signer.address())
-            .field("boundless_verifier_program_url", &self.boundless_verifier_program_url)
+            .field(
+                "boundless_verifier_program_url",
+                &url_origin(&self.boundless_verifier_program_url),
+            )
             .field("boundless_min_price", &self.boundless_min_price)
             .field("boundless_max_price", &self.boundless_max_price)
             .field("boundless_timeout_secs", &self.boundless_timeout_secs)
