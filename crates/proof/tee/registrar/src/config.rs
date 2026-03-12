@@ -77,7 +77,7 @@ pub struct RegistrarConfig {
     pub signer_endpoint: Option<Url>,
 
     /// Manager address for signing txs (required with `--signer-endpoint`).
-    #[arg(long, env = "REGISTRAR_SIGNER_ADDRESS")]
+    #[arg(long, env = "REGISTRAR_SIGNER_ADDRESS", requires = "signer_endpoint")]
     pub signer_address: Option<Address>,
 
     /// Hex-encoded private key. **Local development only** — use signer sidecar in production.
@@ -123,18 +123,28 @@ pub struct RegistrarConfig {
     pub health_port: u16,
 }
 
+/// Format only the `scheme://host:port` of a URL, dropping the path and query
+/// string to avoid leaking embedded API keys (e.g. Infura/Alchemy paths).
+fn url_origin(url: &Url) -> String {
+    let mut s = format!("{}://{}", url.scheme(), url.host_str().unwrap_or("<unknown>"));
+    if let Some(port) = url.port() {
+        s.push_str(&format!(":{port}"));
+    }
+    s
+}
+
 impl std::fmt::Debug for RegistrarConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RegistrarConfig")
-            .field("l1_rpc_url", &self.l1_rpc_url)
+            .field("l1_rpc_url", &url_origin(&self.l1_rpc_url))
             .field("system_config_global_address", &self.system_config_global_address)
             .field("target_group_arn", &self.target_group_arn)
             .field("aws_region", &self.aws_region)
             .field("prover_port", &self.prover_port)
-            .field("signer_endpoint", &self.signer_endpoint)
+            .field("signer_endpoint", &self.signer_endpoint.as_ref().map(url_origin))
             .field("signer_address", &self.signer_address)
             .field("private_key", &self.private_key.as_ref().map(|_| "<redacted>"))
-            .field("boundless_rpc_url", &self.boundless_rpc_url)
+            .field("boundless_rpc_url", &url_origin(&self.boundless_rpc_url))
             .field("boundless_private_key", &"<redacted>")
             .field("boundless_verifier_program_url", &self.boundless_verifier_program_url)
             .field("boundless_min_price", &self.boundless_min_price)
