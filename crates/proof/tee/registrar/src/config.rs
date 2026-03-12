@@ -31,7 +31,7 @@ impl std::fmt::Debug for SigningConfig {
         match self {
             Self::Remote(config) => f
                 .debug_struct("Remote")
-                .field("endpoint", &config.endpoint)
+                .field("endpoint", &url_origin(&config.endpoint))
                 .field("address", &config.address)
                 .finish(),
             Self::Local(signer) => {
