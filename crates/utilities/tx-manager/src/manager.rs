@@ -91,10 +91,13 @@ impl SimpleTxManager {
 
         // Cross-validate chain_id against the provider to catch
         // misconfiguration early rather than failing at tx submission.
-        let provider_chain_id = provider
-            .get_chain_id()
-            .await
-            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+        let provider_chain_id = tokio::time::timeout(
+            config.network_timeout,
+            provider.get_chain_id(),
+        )
+        .await
+        .map_err(|_| TxManagerError::Rpc("get_chain_id timed out".into()))?
+        .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
 
         if chain_id != provider_chain_id {
             return Err(TxManagerError::InvalidConfig(format!(
@@ -219,19 +222,23 @@ impl SimpleTxManager {
         _candidate: &TxCandidate,
     ) -> TxManagerResult<GasPriceCaps> {
         // Query tip cap.
-        let raw_tip_cap = self
-            .provider
-            .get_max_priority_fee_per_gas()
-            .await
-            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+        let raw_tip_cap = tokio::time::timeout(
+            self.config.network_timeout,
+            self.provider.get_max_priority_fee_per_gas(),
+        )
+        .await
+        .map_err(|_| TxManagerError::Rpc("get_max_priority_fee_per_gas timed out".into()))?
+        .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
 
         // Query latest block for base fee.
-        let latest_block = self
-            .provider
-            .get_block_by_number(BlockNumberOrTag::Latest)
-            .await
-            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?
-            .ok_or_else(|| TxManagerError::Rpc("latest block not found".to_string()))?;
+        let latest_block = tokio::time::timeout(
+            self.config.network_timeout,
+            self.provider.get_block_by_number(BlockNumberOrTag::Latest),
+        )
+        .await
+        .map_err(|_| TxManagerError::Rpc("get_block_by_number timed out".into()))?
+        .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?
+        .ok_or_else(|| TxManagerError::Rpc("latest block not found".to_string()))?;
 
         let raw_base_fee = u128::from(
             latest_block
@@ -325,11 +332,13 @@ impl SimpleTxManager {
         // the 21,000 minimum for plain value transfers). When the caller
         // supplies an explicit gas_limit, it is used as a floor via max()
         // so the transaction never under-provisions gas.
-        let estimated = self
-            .provider
-            .estimate_gas(tx_request.clone())
-            .await
-            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+        let estimated = tokio::time::timeout(
+            self.config.network_timeout,
+            self.provider.estimate_gas(tx_request.clone()),
+        )
+        .await
+        .map_err(|_| TxManagerError::Rpc("estimate_gas timed out".into()))?
+        .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
         let gas_limit = candidate.gas_limit.max(estimated);
         tx_request = tx_request.with_gas_limit(gas_limit);
 
