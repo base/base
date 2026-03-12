@@ -2,7 +2,7 @@
 
 use alloy_node_bindings::Anvil;
 use alloy_provider::RootProvider;
-use base_tx_manager::{NonceGuard, NonceManager};
+use base_tx_manager::{NonceGuard, NonceManager, TxManagerError};
 
 /// Helper: spawns an Anvil instance and returns a [`NonceManager`] wired to
 /// the first default account.
@@ -81,7 +81,7 @@ async fn reset_forces_fresh_chain_fetch() {
     assert_eq!(guard.nonce(), 0);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn concurrent_calls_get_unique_sequential_nonces() {
     let (manager, _anvil) = setup();
 
@@ -104,6 +104,59 @@ async fn concurrent_calls_get_unique_sequential_nonces() {
     nonces.sort();
     let expected: Vec<u64> = (0..10).collect();
     assert_eq!(nonces, expected, "all nonces should be unique and sequential");
+}
+
+#[tokio::test]
+async fn provider_failure_returns_rpc_error() {
+    // Point the provider at a non-listening port so the RPC call fails.
+    let url = "http://127.0.0.1:1".parse().expect("valid url");
+    let provider = RootProvider::new_http(url);
+    let address = alloy_primitives::Address::ZERO;
+    let manager = NonceManager::new(provider, address);
+
+    let err = manager.next_nonce().await.expect_err("should fail on unreachable provider");
+    assert!(matches!(err, TxManagerError::Rpc(_)), "expected TxManagerError::Rpc, got {err:?}");
+}
+
+#[tokio::test]
+async fn drop_without_rollback_advances_nonce() {
+    let (manager, _anvil) = setup();
+
+    // Reserve nonce 0 and drop without rollback — cache should stay at 1.
+    let g0 = manager.next_nonce().await.unwrap();
+    assert_eq!(g0.nonce(), 0);
+    drop(g0);
+
+    // The nonce advanced to 1, confirming drop (not rollback) is the
+    // success path.
+    let g1 = manager.next_nonce().await.unwrap();
+    assert_eq!(g1.nonce(), 1);
+}
+
+#[tokio::test]
+async fn reset_then_rollback_interaction() {
+    let (manager, _anvil) = setup();
+
+    // Advance to nonce 2.
+    let g0 = manager.next_nonce().await.unwrap();
+    drop(g0);
+    let g1 = manager.next_nonce().await.unwrap();
+    drop(g1);
+
+    // Reset forces a fresh fetch from chain (returns 0 since no txs sent).
+    manager.reset().await;
+    let g_fresh = manager.next_nonce().await.unwrap();
+    assert_eq!(g_fresh.nonce(), 0);
+
+    // Roll back the freshly-fetched nonce — next call should reuse 0.
+    g_fresh.rollback();
+    let g_reused = manager.next_nonce().await.unwrap();
+    assert_eq!(g_reused.nonce(), 0);
+    drop(g_reused);
+
+    // After consuming the reused nonce, the next one should be 1.
+    let g_next = manager.next_nonce().await.unwrap();
+    assert_eq!(g_next.nonce(), 1);
 }
 
 #[tokio::test]
