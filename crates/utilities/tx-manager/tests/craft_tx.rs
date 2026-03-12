@@ -65,21 +65,26 @@ async fn craft_tx_produces_valid_signed_eip1559_transaction() {
 }
 
 #[tokio::test]
-async fn craft_tx_with_explicit_gas_limit() {
+async fn craft_tx_with_explicit_gas_limit_above_estimate() {
     let (manager, _anvil) = setup().await;
 
+    // Use a gas_limit well above the 21,000 intrinsic gas for a simple
+    // value transfer.  estimate_gas returns ~21,000, so the
+    // `candidate.gas_limit.max(estimated)` floor logic must produce
+    // 100,000 — not the estimate.
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
         value: U256::from(1_000u64),
-        gas_limit: 21_000, // standard ETH transfer gas
+        gas_limit: 100_000,
         ..Default::default()
     };
 
     let raw_tx = manager.craft_tx(&candidate).await.expect("should craft tx with explicit gas");
     let tx = decode_eip1559(&raw_tx);
 
-    // Verify the explicit gas limit was used, not an estimated value.
-    assert_eq!(tx.gas_limit, 21_000);
+    // The decoded gas_limit must equal the caller's explicit value,
+    // proving it was used as a floor above the provider estimate.
+    assert_eq!(tx.gas_limit, 100_000);
 }
 
 #[tokio::test]
@@ -335,6 +340,44 @@ async fn new_rejects_invalid_config() {
         }
         other => panic!("expected TxManagerError::InvalidConfig, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn craft_tx_returns_fee_limit_exceeded_when_minimums_inflate_beyond_multiplier() {
+    let anvil = Anvil::new().spawn();
+    let url = anvil.endpoint_url();
+    let provider = RootProvider::new_http(url);
+    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+    let wallet = EthereumWallet::from(signer);
+    let chain_id = anvil.chain_id();
+
+    // fee_limit_multiplier = 1 means the enforced fee cap must not exceed
+    // 1 × raw_gas_fee_cap.  Setting min_tip_cap and min_basefee far above
+    // Anvil's actual values (~1 gwei each) inflates gas_fee_cap well past
+    // that ceiling, triggering FeeLimitExceeded.
+    let config = TxManagerConfig {
+        min_tip_cap: 500_000_000_000,    // 500 gwei
+        min_basefee: 500_000_000_000,    // 500 gwei
+        fee_limit_multiplier: 1,
+        fee_limit_threshold: 0,          // always enforce the limit
+        ..TxManagerConfig::default()
+    };
+
+    let manager = SimpleTxManager::new(provider, wallet, config, chain_id)
+        .await
+        .expect("should create manager");
+
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        value: U256::from(1u64),
+        ..Default::default()
+    };
+
+    let err = manager.craft_tx(&candidate).await.expect_err("should exceed fee limit");
+    assert!(
+        matches!(err, TxManagerError::FeeLimitExceeded { .. }),
+        "expected TxManagerError::FeeLimitExceeded, got {err:?}",
+    );
 }
 
 #[test]
