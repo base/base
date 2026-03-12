@@ -226,6 +226,7 @@ base-enclave-client = { path = "crates/proof/tee/client" }
 base-proof-tee-nitro = { path = "crates/proof/tee/nitro" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-transport = { path = "crates/proof/transport" }
+base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
 base-proof = { path = "crates/proof/proof", default-features = false }
 base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
 base-proof-host = { path = "crates/proof/host", default-features = false }
@@ -237,7 +238,6 @@ base-proof-std-fpvm = { path = "crates/proof/std-fpvm", default-features = false
 base-proof-primitives = { path = "crates/proof/primitives", default-features = false }
 base-proof-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-features = false }
 base-proof-fpvm-precompiles = { path = "crates/proof/fpvm-precompiles", default-features = false }
-base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
 
 # Actions
 base-action-harness = { path = "actions/harness" }
