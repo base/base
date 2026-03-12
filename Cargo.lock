@@ -4201,14 +4201,10 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "async-trait",
- "bytes",
  "clap",
- "eyre",
  "hex",
- "serde",
  "thiserror 2.0.18",
  "tokio",
- "tracing",
  "url",
 ]
 
