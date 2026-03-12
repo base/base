@@ -24,6 +24,7 @@ tracing = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "time"] }
 
 [dev-dependencies]
+rayon.workspace = true
 rstest.workspace = true
 proptest.workspace = true
 humantime.workspace = true

@@ -250,6 +250,32 @@ async fn reset_blocks_while_guard_held() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn rayon_parallel_nonce_acquisition_produces_unique_nonces() {
+    use rayon::prelude::*;
+
+    let (manager, _anvil) = setup();
+    let handle = tokio::runtime::Handle::current();
+
+    let nonces: Vec<u64> = (0..100)
+        .into_par_iter()
+        .map(|_| {
+            let mgr = manager.clone();
+            handle.block_on(async move {
+                let guard = mgr.next_nonce().await.unwrap();
+                let n = guard.nonce();
+                drop(guard);
+                n
+            })
+        })
+        .collect();
+
+    let mut sorted = nonces;
+    sorted.sort();
+    let expected: Vec<u64> = (0..100).collect();
+    assert_eq!(sorted, expected, "all nonces must be unique and contiguous");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn concurrent_next_nonce_and_reset_stress() {
     let (manager, _anvil) = setup();
 

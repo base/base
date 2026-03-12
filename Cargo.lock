@@ -4451,6 +4451,7 @@ dependencies = [
  "clap",
  "humantime",
  "proptest",
+ "rayon",
  "rstest",
  "serde",
  "thiserror 2.0.18",
