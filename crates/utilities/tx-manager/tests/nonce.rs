@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use alloy_node_bindings::Anvil;
 use alloy_primitives::Address;
 use alloy_provider::RootProvider;
 use base_tx_manager::{NonceGuard, NonceManager, TxManagerError};
+use tokio::sync::Notify;
 
 /// Helper: spawns an Anvil instance and returns a [`NonceManager`] wired to
 /// the first default account.
@@ -183,17 +183,22 @@ async fn reset_blocks_while_guard_held() {
 
     let reset_completed = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&reset_completed);
+    let about_to_reset = Arc::new(Notify::new());
+    let notify = Arc::clone(&about_to_reset);
     let mgr = manager.clone();
 
     // Spawn a task that calls reset(). It should block because the
     // guard holds the same mutex.
     let handle = tokio::spawn(async move {
+        notify.notify_one();
         mgr.reset().await;
         flag.store(true, Ordering::SeqCst);
     });
 
-    // Give the spawned task time to contend on the lock.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Wait until the spawned task is about to call reset(), then yield
+    // to let it enter the lock wait.
+    about_to_reset.notified().await;
+    tokio::task::yield_now().await;
     assert!(
         !reset_completed.load(Ordering::SeqCst),
         "reset() must not complete while a NonceGuard is held",
@@ -216,27 +221,38 @@ async fn reset_blocks_while_guard_held() {
 async fn concurrent_next_nonce_and_reset_stress() {
     let (manager, _anvil) = setup();
 
-    // Interleave next_nonce() and reset() calls concurrently to
-    // exercise the retry-loop path where reset() clears the cache
-    // between the peek and lock acquisition in next_nonce().
-    let mut handles = Vec::new();
-    for i in 0u32..100 {
-        let mgr = manager.clone();
-        if i % 10 == 0 {
-            // Sprinkle resets to trigger the retry path.
-            handles.push(tokio::spawn(async move {
-                mgr.reset().await;
-            }));
-        } else {
+    // Run several rounds of concurrent next_nonce() calls separated by
+    // resets. Within each round all assigned nonces must be unique —
+    // concurrent callers must never receive the same slot.
+    for round in 0u32..5 {
+        let batch_size = 20usize;
+        let mut handles = Vec::with_capacity(batch_size);
+        for _ in 0..batch_size {
+            let mgr = manager.clone();
             handles.push(tokio::spawn(async move {
                 let guard = mgr.next_nonce().await.unwrap();
+                let n = guard.nonce();
                 drop(guard);
+                n
             }));
         }
-    }
 
-    // All operations must complete without deadlock or panic.
-    for h in handles {
-        h.await.unwrap();
+        let mut nonces = Vec::with_capacity(batch_size);
+        for h in handles {
+            nonces.push(h.await.unwrap());
+        }
+
+        // All nonces within a round must be unique.
+        nonces.sort();
+        for pair in nonces.windows(2) {
+            assert_ne!(
+                pair[0], pair[1],
+                "round {round}: duplicate nonce {}, full set: {nonces:?}",
+                pair[0],
+            );
+        }
+
+        // Reset clears the cache, forcing a fresh chain fetch next round.
+        manager.reset().await;
     }
 }
