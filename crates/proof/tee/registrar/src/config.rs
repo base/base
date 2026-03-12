@@ -132,6 +132,15 @@ pub struct RegistrarConfig {
     pub health_port: u16,
 }
 
+/// Decode and validate a hex-encoded secp256k1 private key string.
+fn decode_private_key(s: &str) -> Result<SigningKey> {
+    let hex_str = s.strip_prefix("0x").unwrap_or(s);
+    let key_bytes = hex::decode(hex_str)
+        .map_err(|e| RegistrarError::Config(format!("--private-key: invalid hex encoding: {e}")))?;
+    SigningKey::from_slice(&key_bytes)
+        .map_err(|e| RegistrarError::Config(format!("--private-key: invalid secp256k1 key: {e}")))
+}
+
 /// Format only the `scheme://host:port` of a URL, dropping the path and query
 /// string to avoid leaking embedded API keys (e.g. Infura/Alchemy paths).
 fn url_origin(url: &Url) -> String {
@@ -185,13 +194,7 @@ impl RegistrarConfig {
         }
 
         if let Some(pk) = &self.private_key {
-            let hex_str = pk.strip_prefix("0x").unwrap_or(pk);
-            let key_bytes = hex::decode(hex_str).map_err(|_| {
-                RegistrarError::Config("--private-key: invalid hex encoding".into())
-            })?;
-            SigningKey::from_slice(&key_bytes).map_err(|_| {
-                RegistrarError::Config("--private-key: invalid secp256k1 key".into())
-            })?;
+            decode_private_key(pk)?;
         }
 
         let boundless_key_hex =
@@ -223,14 +226,9 @@ impl RegistrarConfig {
     /// configuration is ambiguous. Call [`validate`][Self::validate] first.
     pub fn signing_config(&self) -> Result<SigningConfig> {
         match (&self.private_key, &self.signer_endpoint, &self.signer_address) {
-            (Some(pk), None, None) => {
-                let hex_str = pk.strip_prefix("0x").unwrap_or(pk);
-                let key_bytes = hex::decode(hex_str)
-                    .map_err(|e| RegistrarError::Config(format!("invalid private key hex: {e}")))?;
-                let signing_key = SigningKey::from_slice(&key_bytes)
-                    .map_err(|e| RegistrarError::Config(format!("invalid private key: {e}")))?;
-                Ok(SigningConfig::Local(PrivateKeySigner::from_signing_key(signing_key)))
-            }
+            (Some(pk), None, None) => Ok(SigningConfig::Local(PrivateKeySigner::from_signing_key(
+                decode_private_key(pk)?,
+            ))),
             (None, Some(endpoint), Some(address)) => {
                 Ok(SigningConfig::Remote(RemoteSignerConfig {
                     endpoint: endpoint.clone(),
