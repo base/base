@@ -1,3 +1,5 @@
+use std::net::IpAddr;
+
 use alloy_primitives::{Address, B256, Bytes};
 
 /// A prover instance discovered from the infrastructure layer.
@@ -6,7 +8,7 @@ pub struct ProverInstance {
     /// AWS EC2 instance ID.
     pub instance_id: String,
     /// Private IP address of the instance within the VPC.
-    pub private_ip: String,
+    pub private_ip: IpAddr,
     /// Current health status reported by the ALB target group.
     pub health_status: InstanceHealthStatus,
 }

@@ -175,6 +175,14 @@ impl RegistrarConfig {
             }
         }
 
+        let boundless_key_hex =
+            self.boundless_private_key.strip_prefix("0x").unwrap_or(&self.boundless_private_key);
+        if hex::decode(boundless_key_hex).map(|b| b.len() != 32).unwrap_or(true) {
+            return Err(RegistrarError::Config(
+                "--boundless-private-key must be a 32-byte hex-encoded private key".into(),
+            ));
+        }
+
         if self.boundless_min_price > self.boundless_max_price {
             return Err(RegistrarError::Config(
                 "--boundless-min-price must not exceed --boundless-max-price".into(),
