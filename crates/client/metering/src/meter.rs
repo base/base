@@ -40,15 +40,8 @@ where
     Ok(PendingTrieInput { trie_updates, hashed_state })
 }
 
-/// Converts a pending [`BundleState`] into a [`CacheState`] for execution.
-///
-/// This is intentionally used instead of `with_bundle_prestate()`: revm's
-/// `State::take_bundle()` includes any preloaded bundle prestate in its output.
-/// If we seeded execution that way, the later state-root computation would
-/// rebuild prefix sets for the entire pending state, re-coupling runtime to the
-/// size and contents of pending flashblocks. Loading pending state into the
-/// cache preserves correct reads during execution while ensuring the post-state
-/// output contains only this bundle's incremental delta.
+/// Converts a pending [`BundleState`] into a [`CacheState`] for use with
+/// `with_cached_prestate()`.
 fn cache_state_from_bundle_state(bundle_state: &BundleState) -> CacheState {
     CacheState {
         accounts: bundle_state
@@ -156,10 +149,18 @@ where
     // Create state database
     let state_db = StateProviderDatabase::new(state_provider);
 
-    // Track bundle state changes. When metering on top of pending flashblocks, seed execution from
-    // a cache prestate instead of `with_bundle_prestate()`: revm includes bundle prestate in
-    // `take_bundle()`, which would cause the later state-root calculation to rebuild prefix sets
-    // for the entire pending state instead of just this bundle's delta.
+    // Track bundle state changes. When metering on top of pending flashblocks, seed execution
+    // from a cache prestate instead of `with_bundle_prestate()`. The two approaches produce
+    // identical execution results, but differ in what `take_bundle()` returns:
+    //
+    // - `with_bundle_prestate()`: `take_bundle()` includes the pending prestate in its output,
+    //   so `hashed_post_state()` generates prefix sets for every pending path. The trie walker
+    //   then rebuilds all of them — even though `prepend_cached` already provides those nodes —
+    //   making state root time proportional to pending state size.
+    //
+    // - `with_cached_prestate()`: `take_bundle()` returns only the bundle's delta, so prefix
+    //   sets cover only bundle-changed paths. The trie walker skips pending paths (reusing
+    //   cached nodes) and state root time is proportional to bundle size alone.
     let mut db = if let Some(ref ps) = pending_state {
         State::builder()
             .with_database(state_db)
@@ -306,8 +307,17 @@ where
     let hashed_state = state_provider.hashed_post_state(&bundle_update);
 
     if let Some(cached_trie) = pending_trie {
-        // Prepend cached pending trie so state root calculation only performs I/O
-        // for this bundle's changes, not for pending flashblocks.
+        // Build the trie input so the state root reflects canonical + pending + bundle.
+        //
+        // `from_state` generates prefix sets only for bundle-changed paths.
+        // `prepend_cached` merges the pending state's trie nodes and hashed values
+        // WITHOUT adding prefix sets — so the trie walker reuses cached nodes for
+        // pending-only paths and only rebuilds paths the bundle actually changed.
+        //
+        // Note: `prepend_cached` (not `prepend_self`) is essential here.
+        // `prepend_self` would merge prefix sets from the pending state, causing the
+        // walker to redundantly rebuild every pending path and defeating the
+        // optimization.
         let mut trie_input = TrieInput::from_state(hashed_state);
         trie_input.prepend_cached(cached_trie.trie_updates, cached_trie.hashed_state);
         let _ = state_provider.state_root_from_nodes_with_updates(trie_input)?;
