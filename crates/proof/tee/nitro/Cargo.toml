@@ -14,7 +14,6 @@ base-proof-client.workspace = true
 base-proof-preimage = { workspace = true, features = ["serde"] }
 base-proof-primitives = { workspace = true, features = ["std", "serde"] }
 base-proof-host = { workspace = true, optional = true }
-base-proof-transport = { workspace = true, features = ["frame"] }
 jsonrpsee = { workspace = true, optional = true, features = ["server", "macros"] }
 
 # Alloy
@@ -34,6 +33,7 @@ aws-nitro-enclaves-nsm-api.workspace = true
 
 # Encoding
 base64.workspace = true
+bincode = { workspace = true, features = ["serde"] }
 ciborium.workspace = true
 serde_bytes.workspace = true
 serde = { workspace = true, features = ["derive"] }
@@ -41,7 +41,7 @@ zip = { workspace = true, features = ["deflate"] }
 
 # Async
 async-trait.workspace = true
-tokio = { workspace = true, features = ["rt", "time"] }
+tokio = { workspace = true, features = ["rt", "time", "io-util"] }
 
 # Error
 eyre.workspace = true

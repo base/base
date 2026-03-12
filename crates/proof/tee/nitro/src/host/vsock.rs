@@ -2,7 +2,7 @@ use std::{io, time::Duration};
 
 use base_proof_preimage::PreimageKey;
 use base_proof_primitives::ProofResult;
-use base_proof_transport::Frame;
+use crate::transport::Frame;
 use tokio_vsock::{VsockAddr, VsockStream};
 
 use crate::{

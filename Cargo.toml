@@ -28,7 +28,6 @@ members = [
   "crates/proof/tee/nitro",
   "crates/proof/tee/client",
   "crates/proof/zk/client",
-  "crates/proof/transport",
   "crates/proof/contracts",
   "crates/proof/rpc",
   "crates/proof/proposer",
@@ -223,7 +222,6 @@ base-challenger = { path = "crates/proof/challenge" }
 base-enclave-client = { path = "crates/proof/tee/client" }
 base-proof-tee-nitro = { path = "crates/proof/tee/nitro" }
 base-proof-contracts = { path = "crates/proof/contracts" }
-base-proof-transport = { path = "crates/proof/transport" }
 base-proof = { path = "crates/proof/proof", default-features = false }
 base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
 base-proof-host = { path = "crates/proof/host", default-features = false }

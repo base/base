@@ -4187,8 +4187,8 @@ dependencies = [
  "base-proof-host",
  "base-proof-preimage",
  "base-proof-primitives",
- "base-proof-transport",
  "base64 0.22.1",
+ "bincode 2.0.1",
  "ciborium",
  "eyre",
  "jsonrpsee",
@@ -4205,16 +4205,6 @@ dependencies = [
  "tracing",
  "x509-cert",
  "zip",
-]
-
-[[package]]
-name = "base-proof-transport"
-version = "0.0.0"
-dependencies = [
- "bincode 2.0.1",
- "serde",
- "thiserror 2.0.18",
- "tokio",
 ]
 
 [[package]]
