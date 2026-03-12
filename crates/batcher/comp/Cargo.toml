@@ -14,8 +14,10 @@ workspace = true
 [dependencies]
 thiserror.workspace = true
 alloy-rlp.workspace = true
+alloy-eips.workspace = true
 miniz_oxide.workspace = true
 base-protocol.workspace = true
+base-alloy-consensus.workspace = true
 base-consensus-genesis.workspace = true
 rand = { workspace = true, features = ["small_rng"] }
 
@@ -23,6 +25,7 @@ brotli = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
 
 [dev-dependencies]
+rstest.workspace = true
 spin.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
@@ -36,6 +39,8 @@ tracing-subscriber = { workspace = true, features = ["fmt"] }
 [features]
 default = []
 std = [
+	"alloy-eips/std",
+	"base-alloy-consensus/std",
 	"base-consensus-genesis/std",
 	"base-protocol/std",
 	"brotli?/std",

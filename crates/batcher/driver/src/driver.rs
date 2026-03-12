@@ -7,10 +7,15 @@ use crate::{ChannelDriverConfig, ChannelDriverError};
 
 /// Minimal batch encoding pipeline.
 ///
-/// `ChannelDriver` accumulates [`SingleBatch`]es, then on [`flush`] compresses
+/// `ChannelDriver` accumulates [`Batch`]es, then on [`flush`] compresses
 /// them all into a single channel using [`ChannelOut`] with
 /// [`BrotliCompressor`] at [`BrotliLevel::Brotli10`] (the compression level
 /// Base uses in production) and returns the resulting [`Frame`]s.
+///
+/// Both [`SingleBatch`] and [`SpanBatch`](base_protocol::SpanBatch) are
+/// supported. Use [`add_batch`] for single batches and [`add_raw_batch`] when
+/// the batch type is already determined (e.g. when building a span batch in
+/// the action harness).
 ///
 /// # Single-frame limitation
 ///
@@ -30,12 +35,14 @@ use crate::{ChannelDriverConfig, ChannelDriverError};
 /// ```
 ///
 /// [`flush`]: ChannelDriver::flush
+/// [`add_batch`]: ChannelDriver::add_batch
+/// [`add_raw_batch`]: ChannelDriver::add_raw_batch
 #[derive(Debug)]
 pub struct ChannelDriver {
     rollup_config: RollupConfig,
     config: ChannelDriverConfig,
     /// Accumulated batches waiting to be encoded.
-    pending: Vec<SingleBatch>,
+    pending: Vec<Batch>,
 }
 
 impl ChannelDriver {
@@ -49,6 +56,14 @@ impl ChannelDriver {
     ///
     /// [`flush`]: ChannelDriver::flush
     pub fn add_batch(&mut self, batch: SingleBatch) {
+        self.pending.push(Batch::Single(batch));
+    }
+
+    /// Queue any [`Batch`] variant (Single or Span) for encoding.
+    ///
+    /// Use this when building span batches externally and submitting them
+    /// as a single `Batch::Span(span_batch)`.
+    pub fn add_raw_batch(&mut self, batch: Batch) {
         self.pending.push(batch);
     }
 
@@ -86,8 +101,8 @@ impl ChannelDriver {
             ChannelOut::new(ChannelId::default(), &self.rollup_config, compressor);
 
         for batch in &self.pending {
-            let timestamp = batch.timestamp;
-            channel_out.add_batch(Batch::Single(batch.clone()))?;
+            let timestamp = batch.timestamp();
+            channel_out.add_batch(batch.clone())?;
             debug!(timestamp, "encoded batch into channel");
         }
 
@@ -204,5 +219,14 @@ mod tests {
         let frames = d.flush().unwrap();
         assert_eq!(frames.len(), 1);
         assert!(frames[0].is_last);
+    }
+
+    #[test]
+    fn add_raw_batch_queues_span_batch() {
+        use base_protocol::SpanBatch;
+        let mut d = driver();
+        let batch = Batch::Span(SpanBatch::default());
+        d.add_raw_batch(batch);
+        assert_eq!(d.pending_count(), 1);
     }
 }
