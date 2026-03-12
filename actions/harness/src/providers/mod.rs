@@ -5,4 +5,4 @@ mod l2;
 pub use l2::{ActionL2ChainProvider, L2ProviderError};
 
 mod blob;
-pub use blob::{ActionBlobDataSource, ActionBlobProvider, decode_blob, frames_to_blob};
+pub use blob::{ActionBlobDataSource, ActionBlobProvider};

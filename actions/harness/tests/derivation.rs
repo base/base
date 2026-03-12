@@ -7,8 +7,9 @@ use alloy_primitives::{Address, B256, Bytes, LogData};
 use base_action_harness::{
     ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, ActionL2Source,
     ActionTestHarness, BatchType, BatcherConfig, ChannelDriverConfig, GarbageKind, L1MinerConfig,
-    L2Sequencer, L2Verifier, PendingTx, SharedL1Chain, block_info_from, frames_to_blob,
+    L2Sequencer, L2Verifier, PendingTx, SharedL1Chain, block_info_from,
 };
+use base_blobs::BlobEncoder;
 use base_consensus_genesis::{
     CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, ChainGenesis, HardForkConfig,
     L1ChainConfig, RollupConfig, SystemConfig,
@@ -1656,7 +1657,7 @@ async fn single_l2_block_derived_from_blob() {
     }
 
     // Encode frame data into a blob and enqueue it for the next L1 block.
-    let blob = frames_to_blob(&frame_data);
+    let blob = BlobEncoder::encode(&frame_data).expect("blob encoding failed");
     let versioned_hash = B256::repeat_byte(0xAB);
     h.l1.enqueue_blob(versioned_hash, blob);
     h.l1.mine_block();
@@ -1704,7 +1705,7 @@ async fn multiple_l2_blocks_derived_from_blob() {
         frame_data.extend_from_slice(&frame.encode());
     }
 
-    let blob = frames_to_blob(&frame_data);
+    let blob = BlobEncoder::encode(&frame_data).expect("blob encoding failed");
     let versioned_hash = B256::repeat_byte(0xBB);
     h.l1.enqueue_blob(versioned_hash, blob);
     h.l1.mine_block();

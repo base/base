@@ -25,8 +25,7 @@ pub use batcher::{
 mod providers;
 pub use providers::{
     ActionBlobDataSource, ActionBlobProvider, ActionDataSource, ActionL1ChainProvider,
-    ActionL2ChainProvider, L1ProviderError, L2ProviderError, SharedL1Chain, decode_blob,
-    frames_to_blob,
+    ActionL2ChainProvider, L1ProviderError, L2ProviderError, SharedL1Chain,
 };
 
 mod verifier;
