@@ -1,6 +1,5 @@
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
 use thiserror::Error;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Result type for proof transport operations.
 pub type TransportResult<T> = Result<T, TransportError>;

@@ -2,12 +2,12 @@ use std::{io, time::Duration};
 
 use base_proof_preimage::PreimageKey;
 use base_proof_primitives::ProofResult;
-use crate::transport::Frame;
 use tokio_vsock::{VsockAddr, VsockStream};
 
 use crate::{
     NitroError,
     enclave::{EnclaveRequest, EnclaveResponse},
+    transport::Frame,
 };
 
 const PROVE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
