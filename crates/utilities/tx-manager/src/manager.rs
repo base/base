@@ -43,18 +43,37 @@ impl SimpleTxManager {
     /// Creates a new [`SimpleTxManager`].
     ///
     /// Internally creates a [`NonceManager`] using the wallet's default
-    /// signer address and the config's `network_timeout`.
+    /// signer address and the config's `network_timeout`. Fetches the
+    /// chain ID from the provider and validates it against the supplied
+    /// `chain_id` to prevent constructing transactions with the wrong
+    /// chain ID.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError`](crate::ConfigError) if the config fails validation.
-    pub fn new(
+    /// Returns [`TxManagerError::Rpc`] if the provider is unreachable or
+    /// the chain ID does not match. Returns a config validation error
+    /// (mapped to [`TxManagerError::Rpc`]) if the config is invalid.
+    pub async fn new(
         provider: RootProvider,
         wallet: EthereumWallet,
         config: TxManagerConfig,
         chain_id: u64,
-    ) -> Result<Self, crate::ConfigError> {
-        config.validate()?;
+    ) -> TxManagerResult<Self> {
+        config.validate().map_err(|e| TxManagerError::Rpc(e.to_string()))?;
+
+        // Cross-validate chain_id against the provider to catch
+        // misconfiguration early rather than failing at tx submission.
+        let provider_chain_id = provider
+            .get_chain_id()
+            .await
+            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+
+        if chain_id != provider_chain_id {
+            return Err(TxManagerError::Rpc(format!(
+                "chain_id mismatch: supplied {chain_id}, provider returned {provider_chain_id}"
+            )));
+        }
+
         let address = <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(&wallet);
         let nonce_manager = NonceManager::new(provider.clone(), address, config.network_timeout);
         Ok(Self {
@@ -121,13 +140,21 @@ impl SimpleTxManager {
             return Err(TxManagerError::ChannelClosed);
         }
 
-        (|| async { self.craft_tx(candidate).await })
-            .retry(ConstantBuilder::default().with_delay(Duration::from_secs(2)).with_max_times(30))
-            .when(|e: &TxManagerError| e.is_retryable())
-            .notify(|err, dur| {
-                warn!(error = %err, delay = ?dur, "retrying craft_tx");
-            })
-            .await
+        (|| async {
+            // Re-check closed flag on each retry attempt to avoid up to
+            // 60 s of wasted RPC calls after shutdown. ChannelClosed is
+            // non-retryable, so backon exits the loop immediately.
+            if self.is_closed() {
+                return Err(TxManagerError::ChannelClosed);
+            }
+            self.craft_tx(candidate).await
+        })
+        .retry(ConstantBuilder::default().with_delay(Duration::from_secs(2)).with_max_times(30))
+        .when(|e: &TxManagerError| e.is_retryable())
+        .notify(|err, dur| {
+            warn!(error = %err, delay = ?dur, "retrying craft_tx");
+        })
+        .await
     }
 
     /// Queries the provider for current gas price estimates.

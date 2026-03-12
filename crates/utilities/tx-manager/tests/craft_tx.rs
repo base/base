@@ -10,7 +10,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::{SimpleTxManager, TxCandidate, TxManager, TxManagerConfig, TxManagerError};
 
 /// Helper: spawns an Anvil instance and returns a [`SimpleTxManager`].
-fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
+async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
     let anvil = Anvil::new().spawn();
     let url = anvil.endpoint_url();
     let provider = RootProvider::new_http(url);
@@ -18,14 +18,15 @@ fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
     let wallet = EthereumWallet::from(signer);
     let chain_id = anvil.chain_id();
     let config = TxManagerConfig::default();
-    let manager =
-        SimpleTxManager::new(provider, wallet, config, chain_id).expect("should create manager");
+    let manager = SimpleTxManager::new(provider, wallet, config, chain_id)
+        .await
+        .expect("should create manager");
     (manager, anvil)
 }
 
 #[tokio::test]
 async fn craft_tx_produces_valid_signed_eip1559_transaction() {
-    let (manager, _anvil) = setup();
+    let (manager, _anvil) = setup().await;
 
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
@@ -46,7 +47,7 @@ async fn craft_tx_produces_valid_signed_eip1559_transaction() {
 
 #[tokio::test]
 async fn craft_tx_with_explicit_gas_limit() {
-    let (manager, _anvil) = setup();
+    let (manager, _anvil) = setup().await;
 
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
@@ -65,7 +66,7 @@ async fn craft_tx_with_explicit_gas_limit() {
 
 #[tokio::test]
 async fn prepare_produces_valid_signed_transaction() {
-    let (manager, _anvil) = setup();
+    let (manager, _anvil) = setup().await;
 
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
@@ -84,7 +85,7 @@ async fn prepare_produces_valid_signed_transaction() {
 
 #[tokio::test]
 async fn prepare_returns_channel_closed_when_manager_is_closed() {
-    let (manager, _anvil) = setup();
+    let (manager, _anvil) = setup().await;
 
     manager.close();
 
@@ -100,7 +101,7 @@ async fn prepare_returns_channel_closed_when_manager_is_closed() {
 
 #[tokio::test]
 async fn sender_address_matches_wallet() {
-    let (manager, anvil) = setup();
+    let (manager, anvil) = setup().await;
 
     let expected_address = anvil.addresses()[0];
     assert_eq!(manager.sender_address(), expected_address);
@@ -108,7 +109,7 @@ async fn sender_address_matches_wallet() {
 
 #[tokio::test]
 async fn is_closed_reflects_manager_state() {
-    let (manager, _anvil) = setup();
+    let (manager, _anvil) = setup().await;
 
     assert!(!manager.is_closed());
     manager.close();
@@ -117,7 +118,7 @@ async fn is_closed_reflects_manager_state() {
 
 #[tokio::test]
 async fn sequential_craft_tx_increments_nonce() {
-    let (manager, _anvil) = setup();
+    let (manager, _anvil) = setup().await;
 
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
@@ -145,6 +146,32 @@ async fn sequential_craft_tx_increments_nonce() {
 
     assert_eq!(nonce1, 0);
     assert_eq!(nonce2, 1);
+}
+
+#[tokio::test]
+async fn new_rejects_chain_id_mismatch() {
+    let anvil = Anvil::new().spawn();
+    let url = anvil.endpoint_url();
+    let provider = RootProvider::new_http(url);
+    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+    let wallet = EthereumWallet::from(signer);
+    let config = TxManagerConfig::default();
+
+    // Anvil uses chain_id 31337 by default; supply a wrong one.
+    let wrong_chain_id = 999;
+    let err = SimpleTxManager::new(provider, wallet, config, wrong_chain_id)
+        .await
+        .expect_err("should reject mismatched chain_id");
+
+    match &err {
+        TxManagerError::Rpc(msg) => {
+            assert!(
+                msg.contains("chain_id mismatch"),
+                "expected chain_id mismatch error, got: {msg}",
+            );
+        }
+        other => panic!("expected TxManagerError::Rpc, got {other:?}"),
+    }
 }
 
 #[test]
