@@ -63,10 +63,10 @@ pub struct SimpleTxManager {
 
 impl SimpleTxManager {
     /// Maximum number of retry attempts for [`Self::prepare`].
-    const PREPARE_MAX_RETRIES: usize = 30;
+    pub const PREPARE_MAX_RETRIES: usize = 30;
 
     /// Fixed delay between retry attempts in [`Self::prepare`].
-    const PREPARE_RETRY_DELAY: Duration = Duration::from_secs(2);
+    pub const PREPARE_RETRY_DELAY: Duration = Duration::from_secs(2);
 
     /// Creates a new [`SimpleTxManager`].
     ///
