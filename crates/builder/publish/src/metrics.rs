@@ -1,3 +1,25 @@
+/// Trait for observing WebSocket publisher events.
+///
+/// Implementors receive callbacks for key lifecycle events so that
+/// metrics, logging, or test assertions can be injected without coupling
+/// the publisher internals to a specific metrics library.
+pub trait PublisherMetrics: Send + Sync {
+    /// Called when a message is successfully sent to a subscriber.
+    fn on_message_sent(&self);
+    /// Called when a new WebSocket connection is accepted.
+    fn on_connection_opened(&self);
+    /// Called when a WebSocket connection closes, with its total duration.
+    fn on_connection_closed(&self, duration: std::time::Duration);
+    /// Called when the broadcast channel lags and `skipped` messages are dropped.
+    fn on_lagged(&self, skipped: u64);
+    /// Called after serialising a payload, with the byte size.
+    fn on_payload_size(&self, size: usize);
+    /// Called when a WebSocket send operation fails.
+    fn on_send_error(&self);
+    /// Called when a WebSocket handshake fails.
+    fn on_handshake_error(&self);
+}
+
 base_metrics::define_metrics! {
     base_builder,
     struct = PublishingMetrics,
@@ -15,6 +37,37 @@ base_metrics::define_metrics! {
     ws_handshake_error_count: counter,
     #[describe("WebSocket connection duration")]
     ws_connection_duration: histogram,
+}
+
+impl PublisherMetrics for PublishingMetrics {
+    fn on_message_sent(&self) {
+        Self::messages_sent_count().increment(1);
+    }
+
+    fn on_connection_opened(&self) {
+        Self::ws_connections_active().increment(1.0);
+    }
+
+    fn on_connection_closed(&self, duration: std::time::Duration) {
+        Self::ws_connections_active().decrement(1.0);
+        Self::ws_connection_duration().record(duration.as_secs_f64());
+    }
+
+    fn on_lagged(&self, skipped: u64) {
+        Self::ws_lagged_count().increment(skipped);
+    }
+
+    fn on_payload_size(&self, size: usize) {
+        Self::ws_payload_byte_size().record(size as f64);
+    }
+
+    fn on_send_error(&self) {
+        Self::ws_send_error_count().increment(1);
+    }
+
+    fn on_handshake_error(&self) {
+        Self::ws_handshake_error_count().increment(1);
+    }
 }
 
 #[cfg(test)]
