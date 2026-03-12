@@ -44,20 +44,20 @@ impl RegistryChecker {
 
     /// Returns `true` if `signer` is currently registered on-chain.
     pub async fn is_registered(&self, signer: Address) -> Result<bool> {
-        self.contract
-            .isValidSigner(signer)
-            .call()
-            .await
-            .map_err(|e| RegistrarError::Registry(Box::new(e)))
+        self.contract.isValidSigner(signer).call().await.map_err(|e| {
+            RegistrarError::Registry(format!("isValidSigner({signer}) failed: {e}").into())
+        })
     }
 
     /// Fetches the complete set of registered signer addresses in a single view call.
+    ///
+    /// The signer set is expected to be small (bounded by the prover ASG size, typically 4),
+    /// so returning the full array in one call is appropriate. This assumption holds as long
+    /// as the ASG is configured with a fixed, small instance count.
     pub async fn get_registered_signers(&self) -> Result<Vec<Address>> {
-        self.contract
-            .getRegisteredSigners()
-            .call()
-            .await
-            .map_err(|e| RegistrarError::Registry(Box::new(e)))
+        self.contract.getRegisteredSigners().call().await.map_err(|e| {
+            RegistrarError::Registry(format!("getRegisteredSigners() failed: {e}").into())
+        })
     }
 }
 
