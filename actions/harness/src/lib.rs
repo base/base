@@ -11,20 +11,22 @@ pub use miner::{L1Block, L1Miner, L1MinerConfig, PendingTx, ReorgError, block_in
 
 mod l2;
 pub use l2::{
-    ActionL2Source, L2BlockBuilder, L2BuilderError, TEST_ACCOUNT_ADDRESS, TEST_ACCOUNT_KEY,
+    ActionL2Source, L2Sequencer, L2SequencerError, TEST_ACCOUNT_ADDRESS, TEST_ACCOUNT_KEY,
 };
 
 mod harness;
 pub use harness::ActionTestHarness;
 
 mod batcher;
-pub use batcher::{Batcher, BatcherConfig, BatcherError, ChannelDriverConfig};
+pub use batcher::{
+    BatchType, Batcher, BatcherConfig, BatcherError, ChannelDriverConfig, GarbageKind,
+};
 
 mod providers;
 pub use providers::{
-    ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, L1ProviderError,
-    L2ProviderError, SharedL1Chain,
+    ActionBlobDataSource, ActionBlobProvider, ActionDataSource, ActionL1ChainProvider,
+    ActionL2ChainProvider, L1ProviderError, L2ProviderError, SharedL1Chain,
 };
 
 mod verifier;
-pub use verifier::{L2Verifier, VerifierError, VerifierPipeline};
+pub use verifier::{BlobVerifierPipeline, L2Verifier, VerifierError, VerifierPipeline};

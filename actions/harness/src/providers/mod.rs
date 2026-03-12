@@ -3,3 +3,6 @@ pub use l1::{ActionDataSource, ActionL1ChainProvider, L1ProviderError, SharedL1C
 
 mod l2;
 pub use l2::{ActionL2ChainProvider, L2ProviderError};
+
+mod blob;
+pub use blob::{ActionBlobDataSource, ActionBlobProvider};

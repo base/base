@@ -13,6 +13,9 @@ extern crate alloc;
 mod channel_out;
 pub use channel_out::{ChannelOut, ChannelOutError};
 
+mod composer;
+pub use composer::{BatchComposeError, BatchComposer};
+
 mod traits;
 pub use traits::{ChannelCompressor, CompressorWriter};
 
