@@ -10,7 +10,7 @@ use clap::{ArgGroup, Parser};
 use url::Url;
 
 /// Prover Registrar — automated TEE signer registration service.
-#[derive(Clone, Parser)]
+#[derive(Parser)]
 #[command(
     name = "prover-registrar",
     version,
@@ -97,12 +97,12 @@ pub(crate) struct Cli {
 }
 
 /// Decode and validate a hex-encoded secp256k1 private key string.
-fn decode_private_key(s: &str) -> Result<SigningKey, RegistrarError> {
+fn decode_private_key(field: &str, s: &str) -> Result<SigningKey, RegistrarError> {
     let hex_str = s.strip_prefix("0x").unwrap_or(s);
     let key_bytes = hex::decode(hex_str)
-        .map_err(|e| RegistrarError::Config(format!("--private-key: invalid hex encoding: {e}")))?;
+        .map_err(|e| RegistrarError::Config(format!("{field}: invalid hex encoding: {e}")))?;
     SigningKey::from_slice(&key_bytes)
-        .map_err(|e| RegistrarError::Config(format!("--private-key: invalid secp256k1 key: {e}")))
+        .map_err(|e| RegistrarError::Config(format!("{field}: invalid secp256k1 key: {e}")))
 }
 
 impl Cli {
@@ -110,9 +110,9 @@ impl Cli {
     pub(crate) fn into_config(self) -> Result<RegistrarConfig, RegistrarError> {
         // Validate signing config and resolve to SigningConfig.
         let signing = match (&self.private_key, &self.signer_endpoint, &self.signer_address) {
-            (Some(pk), None, None) => {
-                SigningConfig::Local(PrivateKeySigner::from_signing_key(decode_private_key(pk)?))
-            }
+            (Some(pk), None, None) => SigningConfig::Local(PrivateKeySigner::from_signing_key(
+                decode_private_key("--private-key", pk)?,
+            )),
             (None, Some(endpoint), Some(address)) => SigningConfig::Remote(RemoteSignerConfig {
                 endpoint: endpoint.clone(),
                 address: *address,
@@ -127,13 +127,7 @@ impl Cli {
         };
 
         // Validate boundless private key.
-        let boundless_key_hex =
-            self.boundless_private_key.strip_prefix("0x").unwrap_or(&self.boundless_private_key);
-        if hex::decode(boundless_key_hex).map(|b| b.len() != 32).unwrap_or(true) {
-            return Err(RegistrarError::Config(
-                "--boundless-private-key must be a 32-byte hex-encoded private key".into(),
-            ));
-        }
+        decode_private_key("--boundless-private-key", &self.boundless_private_key)?;
 
         if self.boundless_min_price > self.boundless_max_price {
             return Err(RegistrarError::Config(
