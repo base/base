@@ -37,3 +37,4 @@ base-batcher-driver.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
+base-consensus-registry.workspace = true

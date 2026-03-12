@@ -4,7 +4,8 @@ use alloy_primitives::B256;
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain, block_info_from,
 };
-use base_consensus_genesis::{ChainGenesis, HardForkConfig, RollupConfig, SystemConfig};
+use base_consensus_genesis::RollupConfig;
+use base_consensus_registry::Registry;
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -12,28 +13,26 @@ use base_consensus_genesis::{ChainGenesis, HardForkConfig, RollupConfig, SystemC
 
 /// Build a [`RollupConfig`] with tight `max_sequencer_drift` for drift tests.
 ///
-/// - `block_time = 2` (L2 block interval)
-/// - `max_sequencer_drift = 8` (4 L2 blocks before drift is exceeded)
-/// - L1 `block_time = 4` (via [`L1MinerConfig`])
-/// - All other windows are generous so only drift matters.
+/// Starts from the real Base mainnet config. Overrides:
+/// - `max_sequencer_drift = 8` so drift is exceeded after 4 L2 blocks
+///   when pinned to a stale L1 origin with `block_time = 2`.
+/// - Batcher actor fields, genesis, and hardfork times as in all test configs.
+///
+/// L1 `block_time = 4` is controlled via [`L1MinerConfig`] at the call site.
 fn drift_rollup_config(batcher: &BatcherConfig) -> RollupConfig {
-    RollupConfig {
-        batch_inbox_address: batcher.inbox_address,
-        block_time: 2,
-        max_sequencer_drift: 8,
-        seq_window_size: 3600,
-        channel_timeout: 300,
-        genesis: ChainGenesis {
-            system_config: Some(SystemConfig {
-                batcher_address: batcher.batcher_address,
-                gas_limit: 30_000_000,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
-        ..Default::default()
-    }
+    let mut rc = Registry::rollup_config(8453).expect("mainnet config").clone();
+    rc.batch_inbox_address = batcher.inbox_address;
+    rc.genesis.system_config.as_mut().unwrap().batcher_address = batcher.batcher_address;
+    rc.genesis.l2_time = 0;
+    rc.genesis.l1 = Default::default();
+    rc.genesis.l2 = Default::default();
+    rc.hardforks.canyon_time = Some(0);
+    rc.hardforks.delta_time = Some(0);
+    rc.hardforks.ecotone_time = Some(0);
+    rc.hardforks.fjord_time = Some(0);
+    // Tight drift: 4 L2 blocks (at block_time=2) before the boundary is crossed.
+    rc.max_sequencer_drift = 8;
+    rc
 }
 
 // ---------------------------------------------------------------------------
