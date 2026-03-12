@@ -231,10 +231,10 @@ impl L2Verifier {
             .find(|(_, l1_origin_number)| *l1_origin_number <= self.finalized_l1_number)
             .map(|(l2_info, _)| *l2_info);
 
-        if let Some(l2) = candidate {
-            if l2.block_info.number > self.finalized_head.block_info.number {
-                self.finalized_head = l2;
-            }
+        if let Some(l2) = candidate
+            && l2.block_info.number > self.finalized_head.block_info.number
+        {
+            self.finalized_head = l2;
         }
         Ok(())
     }

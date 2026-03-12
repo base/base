@@ -1182,7 +1182,7 @@ fn gas_config_update_log(
 /// - `topics[1]` = `CONFIG_UPDATE_EVENT_VERSION_0`
 /// - `topics[2]` = `B256` encoding `UpdateType::GasLimit = 2`
 /// - `data`      = 96 bytes: pointer(32=0x20) + length(32=0x20) +
-///   gas_limit(U256, 32 bytes)
+///   `gas_limit` (U256, 32 bytes)
 fn gas_limit_update_log(l1_sys_cfg_addr: Address, gas_limit: u64) -> alloy_primitives::Log {
     let mut data = [0u8; 96];
     data[31] = 0x20; // pointer = 32
@@ -1207,7 +1207,7 @@ fn gas_limit_update_log(l1_sys_cfg_addr: Address, gas_limit: u64) -> alloy_primi
 ///
 /// Flow:
 ///   L1 block 1: batch for L2 block 1 → 1 derived
-///   L1 block 2: GasConfig update log only → 0 derived, config updated
+///   L1 block 2: `GasConfig` update log only → 0 derived, config updated
 ///   L1 block 3: batch for L2 block 2 → 1 derived (pipeline not stuck)
 #[tokio::test]
 async fn gpo_params_change_does_not_disrupt_derivation() {
@@ -1269,7 +1269,7 @@ async fn gpo_params_change_does_not_disrupt_derivation() {
 ///
 /// Flow:
 ///   L1 block 1: batch for L2 block 1 → 1 derived
-///   L1 block 2: GasLimit update log only → 0 derived, gas limit updated
+///   L1 block 2: `GasLimit` update log only → 0 derived, gas limit updated
 ///   L1 block 3: batch for L2 block 2 → 1 derived (pipeline not stuck)
 #[tokio::test]
 async fn gas_limit_change_does_not_disrupt_derivation() {

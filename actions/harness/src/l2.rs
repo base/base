@@ -195,12 +195,12 @@ impl L2Sequencer {
     /// the same epoch until the pin is cleared.
     ///
     /// [`build_next_block`]: L2Sequencer::build_next_block
-    pub fn pin_l1_origin(&mut self, origin: BlockInfo) {
+    pub const fn pin_l1_origin(&mut self, origin: BlockInfo) {
         self.l1_origin_pin = Some(origin);
     }
 
     /// Clear the pinned L1 origin, restoring automatic epoch selection.
-    pub fn clear_l1_origin_pin(&mut self) {
+    pub const fn clear_l1_origin_pin(&mut self) {
         self.l1_origin_pin = None;
     }
 
@@ -235,28 +235,23 @@ impl L2Sequencer {
                 .l1_chain
                 .get_block(pin.number)
                 .ok_or(L2SequencerError::MissingL1Block(pin.number))?;
-            (block.number(), block.header.clone())
-        } else {
-            if let Some(next_l1) = self.l1_chain.get_block(current_epoch + 1) {
-                if next_l1.timestamp() <= next_timestamp {
-                    let hdr = next_l1.header.clone();
-                    (next_l1.number(), hdr)
-                } else {
-                    let cur = self
-                        .l1_chain
-                        .get_block(current_epoch)
-                        .ok_or(L2SequencerError::MissingL1Block(current_epoch))?;
-                    let hdr = cur.header.clone();
-                    (cur.number(), hdr)
-                }
+            (block.number(), block.header)
+        } else if let Some(next_l1) = self.l1_chain.get_block(current_epoch + 1) {
+            if next_l1.timestamp() <= next_timestamp {
+                (next_l1.number(), next_l1.header)
             } else {
                 let cur = self
                     .l1_chain
                     .get_block(current_epoch)
                     .ok_or(L2SequencerError::MissingL1Block(current_epoch))?;
-                let hdr = cur.header.clone();
-                (cur.number(), hdr)
+                (cur.number(), cur.header)
             }
+        } else {
+            let cur = self
+                .l1_chain
+                .get_block(current_epoch)
+                .ok_or(L2SequencerError::MissingL1Block(current_epoch))?;
+            (cur.number(), cur.header)
         };
 
         let seq_num =

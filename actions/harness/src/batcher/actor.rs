@@ -44,9 +44,6 @@ pub struct BatcherConfig {
     pub driver: ChannelDriverConfig,
     /// Whether to encode blocks as [`SingleBatch`]es or a [`SpanBatch`].
     pub batch_type: BatchType,
-    /// When `true`, submit frames as blob transactions (stored in
-    /// [`L1Block::blob_sidecars`](crate::L1Block)) rather than calldata.
-    pub use_blobs: bool,
 }
 
 impl Default for BatcherConfig {
@@ -56,7 +53,6 @@ impl Default for BatcherConfig {
             inbox_address: Address::repeat_byte(0xCA),
             driver: ChannelDriverConfig::default(),
             batch_type: BatchType::Single,
-            use_blobs: false,
         }
     }
 }

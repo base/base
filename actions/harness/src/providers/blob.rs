@@ -42,9 +42,7 @@ impl BlobProvider for ActionBlobProvider {
             .get_block(block_ref.number)
             .filter(|b| b.hash() == block_ref.hash)
             .ok_or_else(|| {
-            BlobProviderError::Backend(
-                format!("block {} not found in chain", block_ref.number).into(),
-            )
+            BlobProviderError::Backend(format!("block {} not found in chain", block_ref.number))
         })?;
 
         let mut blobs = Vec::new();
@@ -55,9 +53,10 @@ impl BlobProvider for ActionBlobProvider {
                 .find(|(h, _)| h == hash)
                 .map(|(_, b)| b.clone())
                 .ok_or_else(|| {
-                    BlobProviderError::Backend(
-                        format!("blob {hash} not found in block {}", block_ref.number).into(),
-                    )
+                    BlobProviderError::Backend(format!(
+                        "blob {hash} not found in block {}",
+                        block_ref.number
+                    ))
                 })?;
             blobs.push(blob);
         }

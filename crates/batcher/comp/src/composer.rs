@@ -22,6 +22,7 @@ pub enum BatchComposeError {
 ///
 /// This is the Rust equivalent of `BlockToSingularBatch` from op-batcher's
 /// `channel_out.go`.
+#[derive(Debug)]
 pub struct BatchComposer;
 
 impl BatchComposer {
