@@ -215,10 +215,7 @@ impl SimpleTxManager {
     /// # Errors
     ///
     /// Returns [`TxManagerError::Rpc`] if any provider call fails.
-    pub async fn suggest_gas_price_caps(
-        &self,
-        _candidate: &TxCandidate,
-    ) -> TxManagerResult<GasPriceCaps> {
+    pub async fn suggest_gas_price_caps(&self) -> TxManagerResult<GasPriceCaps> {
         // Query tip cap and latest block concurrently.
         let (tip_result, block_result) = tokio::join!(
             tokio::time::timeout(
@@ -292,7 +289,7 @@ impl SimpleTxManager {
         }
 
         // Step 1: Get fee estimates.
-        let caps = self.suggest_gas_price_caps(candidate).await?;
+        let caps = self.suggest_gas_price_caps().await?;
 
         // Step 2: Check fee limits.
         //

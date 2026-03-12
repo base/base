@@ -142,9 +142,8 @@ async fn craft_tx_contract_creation() {
 async fn suggest_gas_price_caps_returns_valid_estimates() {
     let (manager, _anvil) = setup().await;
 
-    let candidate = TxCandidate::default();
     let caps: GasPriceCaps =
-        manager.suggest_gas_price_caps(&candidate).await.expect("should return gas price caps");
+        manager.suggest_gas_price_caps().await.expect("should return gas price caps");
 
     // On an Anvil instance, tip and fee cap should be non-zero.
     assert!(caps.gas_tip_cap > 0, "tip_cap should be non-zero");
@@ -292,8 +291,7 @@ async fn suggest_gas_price_caps_enforces_min_tip_cap_and_min_basefee() {
 
     let (manager, _anvil) = setup_with_config(config).await;
 
-    let candidate = TxCandidate::default();
-    let caps = manager.suggest_gas_price_caps(&candidate).await.expect("should return caps");
+    let caps = manager.suggest_gas_price_caps().await.expect("should return caps");
 
     // Tip cap should be at least the configured minimum.
     assert!(
