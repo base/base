@@ -394,12 +394,23 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     /// [`act_l2_pipeline_full`]: L2Verifier::act_l2_pipeline_full
     pub async fn act_l2_pipeline_step(&mut self) -> Result<StepResult, VerifierError> {
         let result = self.pipeline.step(self.safe_head).await;
-        if matches!(result, StepResult::PreparedAttributes) {
-            if let Some(attrs) = self.pipeline.next() {
-                self.apply_attributes(attrs);
+        match result {
+            StepResult::PreparedAttributes => {
+                if let Some(attrs) = self.pipeline.next() {
+                    self.apply_attributes(attrs);
+                }
+                Ok(StepResult::PreparedAttributes)
             }
+            StepResult::AdvancedOrigin => Ok(StepResult::AdvancedOrigin),
+            StepResult::StepFailed(PipelineErrorKind::Temporary(e)) => {
+                Ok(StepResult::StepFailed(PipelineErrorKind::Temporary(e)))
+            }
+            StepResult::OriginAdvanceErr(PipelineErrorKind::Temporary(e)) => {
+                Ok(StepResult::OriginAdvanceErr(PipelineErrorKind::Temporary(e)))
+            }
+            StepResult::StepFailed(err) => Err(VerifierError::Pipeline(err)),
+            StepResult::OriginAdvanceErr(err) => Err(VerifierError::Pipeline(err)),
         }
-        Ok(result)
     }
 
     /// Step the pipeline until `condition` returns `true` for a [`StepResult`],
@@ -463,7 +474,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
             let result = self.pipeline.step(self.safe_head).await;
             steps += 1;
             if matches!(result, StepResult::PreparedAttributes) {
-                no_progress = 0;
                 if let Some(attrs) = self.pipeline.next() {
                     self.apply_attributes(attrs);
                 }
