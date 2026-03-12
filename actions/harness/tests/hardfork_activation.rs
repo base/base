@@ -54,7 +54,10 @@ fn each_hardfork_activates_at_its_mainnet_timestamp() {
     assert!(rc.is_delta_active(delta_time), "Delta must be active at its timestamp");
 
     // Ecotone
-    assert!(!rc.is_ecotone_active(ecotone_time - 1), "Ecotone must be inactive before its timestamp");
+    assert!(
+        !rc.is_ecotone_active(ecotone_time - 1),
+        "Ecotone must be inactive before its timestamp"
+    );
     assert!(rc.is_ecotone_active(ecotone_time), "Ecotone must be active at its timestamp");
 
     // Fjord
@@ -62,15 +65,24 @@ fn each_hardfork_activates_at_its_mainnet_timestamp() {
     assert!(rc.is_fjord_active(fjord_time), "Fjord must be active at its timestamp");
 
     // Granite
-    assert!(!rc.is_granite_active(granite_time - 1), "Granite must be inactive before its timestamp");
+    assert!(
+        !rc.is_granite_active(granite_time - 1),
+        "Granite must be inactive before its timestamp"
+    );
     assert!(rc.is_granite_active(granite_time), "Granite must be active at its timestamp");
 
     // Holocene
-    assert!(!rc.is_holocene_active(holocene_time - 1), "Holocene must be inactive before its timestamp");
+    assert!(
+        !rc.is_holocene_active(holocene_time - 1),
+        "Holocene must be inactive before its timestamp"
+    );
     assert!(rc.is_holocene_active(holocene_time), "Holocene must be active at its timestamp");
 
     // Isthmus
-    assert!(!rc.is_isthmus_active(isthmus_time - 1), "Isthmus must be inactive before its timestamp");
+    assert!(
+        !rc.is_isthmus_active(isthmus_time - 1),
+        "Isthmus must be inactive before its timestamp"
+    );
     assert!(rc.is_isthmus_active(isthmus_time), "Isthmus must be active at its timestamp");
 
     // Jovian
@@ -99,10 +111,7 @@ fn mainnet_hardfork_timestamps_are_strictly_ordered() {
     for pair in ordered.windows(2) {
         let (name_a, ts_a) = pair[0];
         let (name_b, ts_b) = pair[1];
-        assert!(
-            ts_a < ts_b,
-            "{name_a} ({ts_a}) must activate strictly before {name_b} ({ts_b})"
-        );
+        assert!(ts_a < ts_b, "{name_a} ({ts_a}) must activate strictly before {name_b} ({ts_b})");
     }
 }
 
@@ -373,11 +382,7 @@ async fn single_batch_derives_with_fjord() {
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
 
-    assert_eq!(
-        verifier.l2_safe().block_info.number,
-        2,
-        "safe head should advance to block 2"
-    );
+    assert_eq!(verifier.l2_safe().block_info.number, 2, "safe head should advance to block 2");
 }
 
 /// Derivation must succeed across the Jovian activation boundary.
