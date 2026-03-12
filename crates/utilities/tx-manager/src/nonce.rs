@@ -19,10 +19,15 @@ use crate::TxManagerError;
 #[derive(Debug)]
 pub struct NonceState {
     /// The cached nonce value, or `None` if uninitialized / reset.
-    pub nonce: Option<u64>,
+    nonce: Option<u64>,
     /// Monotonically increasing counter bumped on every
     /// [`NonceManager::reset`].
-    pub generation: u64,
+    ///
+    /// Uses [`u64::wrapping_add`] so the counter cannot panic. A
+    /// generation collision (wrapping all the way around to the same
+    /// snapshot value) would require 2^64 calls to `reset()`, which
+    /// is infeasible in practice.
+    generation: u64,
 }
 
 impl NonceState {
@@ -30,6 +35,17 @@ impl NonceState {
     /// zero.
     pub const fn new() -> Self {
         Self { nonce: None, generation: 0 }
+    }
+
+    /// Returns the cached nonce value, or `None` if uninitialized /
+    /// reset.
+    pub const fn nonce(&self) -> Option<u64> {
+        self.nonce
+    }
+
+    /// Returns the current generation counter.
+    pub const fn generation(&self) -> u64 {
+        self.generation
     }
 }
 
@@ -205,6 +221,8 @@ impl NonceManager {
     pub async fn reset(&self) {
         let mut guard = self.inner.lock().await;
         guard.nonce = None;
+        // Wrapping add is intentional: a full u64 wrap-around (2^64 resets)
+        // is infeasible, and wrapping avoids a panic on overflow.
         guard.generation = guard.generation.wrapping_add(1);
         info!(address = %self.address, "nonce cache reset");
     }
