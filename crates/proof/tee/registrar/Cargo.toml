@@ -9,20 +9,14 @@ workspace = true
 
 [dependencies]
 # Alloy
-alloy-signer.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 
 # Async
 async-trait.workspace = true
 
-# CLI / Config
-url.workspace = true
-clap = { workspace = true, features = ["derive", "env"] }
-
 # Error
 thiserror.workspace = true
 
 # Misc
-hex.workspace = true
-
+url.workspace = true

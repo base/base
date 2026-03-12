@@ -56,6 +56,7 @@ default-members = [
   "bin/mempool-rebroadcaster",
   "bin/proposer",
   "bin/prover",
+  "bin/prover-registrar",
 ]
 
 [workspace.metadata.cargo-udeps.ignore]

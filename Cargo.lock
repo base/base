@@ -4198,12 +4198,24 @@ name = "base-proof-tee-registrar"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "alloy-signer",
  "alloy-signer-local",
  "async-trait",
- "clap",
- "hex",
  "thiserror 2.0.18",
+ "url",
+]
+
+[[package]]
+name = "base-proof-tee-registrar-bin"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
+ "base-proof-tee-registrar",
+ "clap",
+ "eyre",
+ "hex",
+ "tokio",
  "url",
 ]
 
