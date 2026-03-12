@@ -163,14 +163,13 @@ impl NonceManager {
             // concurrent callers are not blocked by the RPC round-trip.
             // Multiple concurrent callers may fetch redundantly; only
             // the first writer's value is used.
-            let fetched =
-                self.provider.get_transaction_count(self.address).await.map_err(|e| {
-                    warn!(
-                        error = %e, address = %self.address,
-                        "failed to fetch nonce from chain",
-                    );
-                    TxManagerError::Rpc(e.to_string())
-                })?;
+            let fetched = self.provider.get_transaction_count(self.address).await.map_err(|e| {
+                warn!(
+                    error = %e, address = %self.address,
+                    "failed to fetch nonce from chain",
+                );
+                TxManagerError::Rpc(e.to_string())
+            })?;
 
             // Test hook: pause between Phase 2 and Phase 3 so tests
             // can deterministically call reset() during this window.
