@@ -40,6 +40,7 @@ members = [
   "crates/alloy/*",
   "crates/execution/*",
   "crates/txpool",
+  "etc/tools/*",
   "devnet",
   "actions/harness",
 ]
