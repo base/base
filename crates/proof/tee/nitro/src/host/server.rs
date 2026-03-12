@@ -1,4 +1,4 @@
-use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
+use std::{fmt, net::SocketAddr, sync::Arc};
 
 use base_health::{HealthzApiServer, HealthzRpc};
 use base_proof_host::{ProverConfig, ProverService};

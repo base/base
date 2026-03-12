@@ -15,7 +15,6 @@ workspace = true
 # Core
 base-alloy-evm.workspace = true
 base-proof-client.workspace = true
-tower = { workspace = true, optional = true }
 base-health = { workspace = true, optional = true }
 base-proof-host = { workspace = true, optional = true }
 base-proof-preimage = { workspace = true, features = ["serde"] }
@@ -57,6 +56,7 @@ thiserror.workspace = true
 tracing.workspace = true
 rand_08.workspace = true
 parking_lot.workspace = true
+tower = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-vsock.workspace = true
