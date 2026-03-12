@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bytes};
 use async_trait::async_trait;
+use base_blobs::BlobDecoder;
 use base_consensus_derive::{
     BlobProvider, BlobProviderError, DataAvailabilityProvider, PipelineError, PipelineResult,
 };
@@ -68,11 +69,15 @@ impl BlobProvider for ActionBlobProvider {
 /// [`SharedL1Chain`].
 ///
 /// Implements [`DataAvailabilityProvider`] for action tests that submit batch
-/// data as EIP-4844 blobs rather than calldata. The blob bytes are delivered
-/// raw (the full 128-KiB blob field).
+/// data as EIP-4844 blobs rather than calldata. Each blob is decoded via
+/// [`BlobDecoder::decode`](base_blobs::BlobDecoder::decode) before being emitted so the downstream [`FrameQueue`]
+/// receives the same format it gets from the real [`BlobSource`] pipeline.
 ///
 /// This source also reads calldata `batcher_txs` so a single source can serve
 /// tests that mix calldata and blob submissions.
+///
+/// [`FrameQueue`]: base_consensus_derive::FrameQueue
+/// [`BlobSource`]: base_consensus_derive::BlobSource
 #[derive(Debug, Clone)]
 pub struct ActionBlobDataSource {
     chain: SharedL1Chain,
@@ -106,9 +111,9 @@ impl ActionBlobDataSource {
                 self.pending.push_back(tx.input.clone());
             }
         }
-        // Blob path: emit raw blob bytes for each sidecar.
+        // Blob path: decode the blob and emit the frame bytes.
         for (_, blob) in &block.blob_sidecars {
-            self.pending.push_back(Bytes::copy_from_slice(blob.as_slice()));
+            self.pending.push_back(BlobDecoder::decode(blob).unwrap_or_default());
         }
         self.open = true;
     }

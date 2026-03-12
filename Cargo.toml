@@ -237,6 +237,7 @@ base-proof-transport = { path = "crates/proof/transport" }
 base-action-harness = { path = "actions/harness" }
 
 # Batcher
+base-blobs = { path = "crates/batcher/blobs" }
 base-batcher-driver = { path = "crates/batcher/driver" }
 
 # Utilities

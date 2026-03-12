@@ -2275,6 +2275,7 @@ dependencies = [
  "async-trait",
  "base-alloy-consensus",
  "base-batcher-driver",
+ "base-blobs",
  "base-comp",
  "base-consensus-derive",
  "base-consensus-genesis",
@@ -2468,6 +2469,16 @@ dependencies = [
  "base-protocol",
  "thiserror 2.0.18",
  "tracing",
+]
+
+[[package]]
+name = "base-blobs"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "rstest",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

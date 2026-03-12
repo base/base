@@ -1,13 +1,12 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use alloy_rlp::Decodable;
 use base_alloy_consensus::TxDeposit;
 use base_consensus_derive::{
-    ActivationSignal, IndexedAttributesQueueStage, OriginProvider, Pipeline, PipelineBuilder,
-    PipelineError, PipelineErrorKind, ResetSignal, Signal, SignalReceiver,
-    StatefulAttributesBuilder, StepResult,
+    ActivationSignal, IndexedAttributesQueueStage, Pipeline, PipelineBuilder, PipelineError,
+    PipelineErrorKind, ResetSignal, Signal, SignalReceiver, StatefulAttributesBuilder, StepResult,
 };
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo, OpAttributesWithParent};
@@ -63,10 +62,13 @@ pub enum VerifierError {
 /// There is no P2P, no background async task, and no real EVM execution.
 /// The "engine" is a simple in-memory state that accepts derived
 /// [`OpAttributesWithParent`] and advances `l2_safe` accordingly.
+///
+/// The type parameter `P` is the derivation pipeline. Use [`VerifierPipeline`]
+/// for calldata DA or [`BlobVerifierPipeline`] for blob DA.
 #[derive(Debug)]
-pub struct L2Verifier {
+pub struct L2Verifier<P: Pipeline + SignalReceiver + Debug> {
     /// The real derivation pipeline wired to in-memory providers.
-    pipeline: VerifierPipeline,
+    pipeline: P,
     /// The current L2 safe head (advances as attributes are consumed).
     safe_head: L2BlockInfo,
     /// The current L2 finalized head.
@@ -98,8 +100,8 @@ pub struct L2Verifier {
     block_hashes: HashMap<u64, B256>,
 }
 
-impl L2Verifier {
-    /// Construct an [`L2Verifier`] from the given providers and config.
+impl L2Verifier<VerifierPipeline> {
+    /// Construct an [`L2Verifier`] with a calldata DA pipeline.
     ///
     /// `origin` is the L1 genesis block the pipeline starts from. Pass the
     /// genesis block from [`L1Miner`](crate::L1Miner) so parent-hash chaining
@@ -129,6 +131,47 @@ impl L2Verifier {
             .builder(attrs_builder)
             .build_indexed();
 
+        Self::from_pipeline(pipeline, safe_head)
+    }
+}
+
+impl L2Verifier<BlobVerifierPipeline> {
+    /// Construct an [`L2Verifier`] with a blob DA pipeline.
+    ///
+    /// Identical to [`L2Verifier::new`] but wired to [`ActionBlobDataSource`]
+    /// instead of [`ActionDataSource`].
+    pub fn new_blob(
+        rollup_config: Arc<RollupConfig>,
+        l1_chain_config: Arc<L1ChainConfig>,
+        l1_provider: ActionL1ChainProvider,
+        dap_source: ActionBlobDataSource,
+        l2_provider: ActionL2ChainProvider,
+        safe_head: L2BlockInfo,
+        origin: BlockInfo,
+    ) -> Self {
+        let attrs_builder = StatefulAttributesBuilder::new(
+            Arc::clone(&rollup_config),
+            l1_chain_config,
+            l2_provider.clone(),
+            l1_provider.clone(),
+        );
+
+        let pipeline = PipelineBuilder::new()
+            .rollup_config(Arc::clone(&rollup_config))
+            .origin(origin)
+            .chain_provider(l1_provider)
+            .dap_source(dap_source)
+            .l2_chain_provider(l2_provider)
+            .builder(attrs_builder)
+            .build_indexed();
+
+        Self::from_pipeline(pipeline, safe_head)
+    }
+}
+
+impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
+    /// Construct an [`L2Verifier`] from an already-built pipeline.
+    pub fn from_pipeline(pipeline: P, safe_head: L2BlockInfo) -> Self {
         Self {
             pipeline,
             safe_head,

@@ -9,6 +9,7 @@ use base_action_harness::{
     ActionTestHarness, BatchType, BatcherConfig, ChannelDriverConfig, GarbageKind, L1MinerConfig,
     L2Sequencer, L2Verifier, PendingTx, SharedL1Chain, block_info_from,
 };
+use base_blobs::BlobEncoder;
 use base_consensus_genesis::{
     CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, ChainGenesis, HardForkConfig,
     L1ChainConfig, RollupConfig, SystemConfig,
@@ -1625,5 +1626,105 @@ async fn derive_chain_from_near_l1_genesis() {
         verifier.l2_safe().block_info.number,
         2,
         "both L2 blocks derived when genesis is anchored to L1 block #5"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Blob DA derivation tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn single_l2_block_derived_from_blob() {
+    let batcher_cfg = BatcherConfig::default();
+    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    // Build L2 block 1.
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_sequencer(l1_chain);
+    let mut source = ActionL2Source::new();
+    source.push(builder.build_next_block().expect("build L2 block 1"));
+
+    // Encode the L2 block into frames (without submitting to L1 as calldata).
+    let mut batcher = h.create_batcher(source, batcher_cfg);
+    let frames = batcher.encode_frames().expect("batcher should encode the block");
+    drop(batcher);
+
+    // Build the frame data payload: [DERIVATION_VERSION_0] ++ encoded frames.
+    let mut frame_data = vec![DERIVATION_VERSION_0];
+    for frame in &frames {
+        frame_data.extend_from_slice(&frame.encode());
+    }
+
+    // Encode frame data into a blob and enqueue it for the next L1 block.
+    let blob = BlobEncoder::encode(&frame_data).expect("blob encoding failed");
+    let versioned_hash = B256::repeat_byte(0xAB);
+    h.l1.enqueue_blob(versioned_hash, blob);
+    h.l1.mine_block();
+
+    // Create the blob verifier AFTER mining so the snapshot contains the blob.
+    let (mut verifier, _chain) = h.create_blob_verifier();
+    let l1_block_1 = block_info_from(h.l1.tip());
+
+    verifier.initialize().await.expect("initialize should succeed");
+    verifier.act_l1_head_signal(l1_block_1).await.expect("signal should succeed");
+    let derived = verifier.act_l2_pipeline_full().await.expect("pipeline step should succeed");
+
+    assert_eq!(derived, 1, "expected exactly one L2 block to be derived");
+    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head should be L2 block 1");
+}
+
+#[tokio::test]
+async fn multiple_l2_blocks_derived_from_blob() {
+    const L2_BLOCK_COUNT: u64 = 3;
+
+    let batcher_cfg = BatcherConfig::default();
+    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    // Build L2 blocks 1-3 from genesis.
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_sequencer(l1_chain);
+
+    let mut all_source = ActionL2Source::new();
+    let mut block_hashes = Vec::new();
+    for _ in 1..=L2_BLOCK_COUNT {
+        all_source.push(builder.build_next_block().expect("build block"));
+        let head = builder.head();
+        block_hashes.push((head.block_info.number, head.block_info.hash));
+    }
+
+    // Encode all 3 blocks into a single channel and get the frames.
+    let mut batcher = h.create_batcher(all_source, batcher_cfg);
+    let frames = batcher.encode_frames().expect("batcher should encode blocks");
+    drop(batcher);
+
+    // Build frame data and encode into a blob.
+    let mut frame_data = vec![DERIVATION_VERSION_0];
+    for frame in &frames {
+        frame_data.extend_from_slice(&frame.encode());
+    }
+
+    let blob = BlobEncoder::encode(&frame_data).expect("blob encoding failed");
+    let versioned_hash = B256::repeat_byte(0xBB);
+    h.l1.enqueue_blob(versioned_hash, blob);
+    h.l1.mine_block();
+
+    // Create the blob verifier.
+    let (mut verifier, _chain) = h.create_blob_verifier();
+    for (number, hash) in &block_hashes {
+        verifier.register_block_hash(*number, *hash);
+    }
+    let l1_block_1 = block_info_from(h.l1.tip());
+
+    verifier.initialize().await.expect("initialize should succeed");
+    verifier.act_l1_head_signal(l1_block_1).await.expect("signal should succeed");
+    let derived = verifier.act_l2_pipeline_full().await.expect("pipeline step should succeed");
+
+    assert_eq!(derived, L2_BLOCK_COUNT as usize, "expected 3 L2 blocks to be derived");
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        L2_BLOCK_COUNT,
+        "safe head should be L2 block 3"
     );
 }
