@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 mod config;
-pub use config::{RegistrarConfig, SigningConfig};
+pub use config::{RegistrarConfig, RemoteSignerConfig, SigningConfig};
 
 mod error;
 pub use error::{RegistrarError, Result};

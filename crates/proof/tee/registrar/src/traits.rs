@@ -4,11 +4,9 @@ use crate::{AttestationProof, ProverInstance, Result};
 
 /// Discovers active prover instances from the infrastructure layer.
 ///
-/// The primary implementation is [`AwsTargetGroupDiscovery`], which queries
+/// The primary implementation is `AwsTargetGroupDiscovery`, which queries
 /// an ALB target group via the AWS SDK. Other implementations (e.g., a static
 /// list for local testing) can be substituted.
-///
-/// [`AwsTargetGroupDiscovery`]: crate::AwsTargetGroupDiscovery
 #[async_trait]
 pub trait InstanceDiscovery: Send + Sync {
     /// Return the current set of prover instances with their health status.

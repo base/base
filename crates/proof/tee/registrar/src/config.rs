@@ -8,32 +8,33 @@ use url::Url;
 
 use crate::{RegistrarError, Result};
 
+/// HTTP signer sidecar configuration (production).
+#[derive(Debug, Clone)]
+pub struct RemoteSignerConfig {
+    /// Signer sidecar JSON-RPC endpoint URL.
+    pub endpoint: Url,
+    /// Manager address for signing registration transactions.
+    pub address: Address,
+}
+
 /// Signing configuration for L1 transaction submission.
 #[derive(Clone)]
 pub enum SigningConfig {
     /// HTTP signer sidecar (production).
-    Remote {
-        /// Signer sidecar JSON-RPC endpoint URL.
-        endpoint: Url,
-        /// Manager address for signing registration transactions.
-        address: Address,
-    },
+    Remote(RemoteSignerConfig),
     /// Direct in-process private key. **Development / testing only.**
-    Local {
-        /// Private key signer.
-        signer: PrivateKeySigner,
-    },
+    Local(PrivateKeySigner),
 }
 
 impl std::fmt::Debug for SigningConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Remote { endpoint, address } => f
+            Self::Remote(config) => f
                 .debug_struct("Remote")
-                .field("endpoint", endpoint)
-                .field("address", address)
+                .field("endpoint", &config.endpoint)
+                .field("address", &config.address)
                 .finish(),
-            Self::Local { signer } => {
+            Self::Local(signer) => {
                 f.debug_struct("Local").field("address", &signer.address()).finish()
             }
         }
@@ -45,7 +46,7 @@ impl std::fmt::Debug for SigningConfig {
 /// After [`clap::Parser::parse`], call [`RegistrarConfig::validate`] to check
 /// for logical conflicts. Use [`RegistrarConfig::signing_config`] to obtain the
 /// resolved [`SigningConfig`].
-#[derive(Debug, Clone, Parser)]
+#[derive(Clone, Parser)]
 #[command(name = "prover-registrar", version, about)]
 pub struct RegistrarConfig {
     // ── L1 ────────────────────────────────────────────────────────────────────
@@ -122,6 +123,30 @@ pub struct RegistrarConfig {
     pub health_port: u16,
 }
 
+impl std::fmt::Debug for RegistrarConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegistrarConfig")
+            .field("l1_rpc_url", &self.l1_rpc_url)
+            .field("system_config_global_address", &self.system_config_global_address)
+            .field("target_group_arn", &self.target_group_arn)
+            .field("aws_region", &self.aws_region)
+            .field("prover_port", &self.prover_port)
+            .field("signer_endpoint", &self.signer_endpoint)
+            .field("signer_address", &self.signer_address)
+            .field("private_key", &self.private_key.as_ref().map(|_| "<redacted>"))
+            .field("boundless_rpc_url", &self.boundless_rpc_url)
+            .field("boundless_private_key", &"<redacted>")
+            .field("boundless_verifier_program_url", &self.boundless_verifier_program_url)
+            .field("boundless_min_price", &self.boundless_min_price)
+            .field("boundless_max_price", &self.boundless_max_price)
+            .field("boundless_timeout_secs", &self.boundless_timeout_secs)
+            .field("nitro_verifier_address", &self.nitro_verifier_address)
+            .field("poll_interval_secs", &self.poll_interval_secs)
+            .field("health_port", &self.health_port)
+            .finish()
+    }
+}
+
 impl RegistrarConfig {
     /// Validate the configuration for logical conflicts and missing required fields.
     ///
@@ -129,15 +154,15 @@ impl RegistrarConfig {
     /// inverted, or any required-when-present field is absent.
     pub fn validate(&self) -> Result<()> {
         match (&self.private_key, &self.signer_endpoint, &self.signer_address) {
-            // Remote sidecar requires both endpoint and address.
-            (None, Some(_), None) | (None, None, _) => {
+            // Only two valid signing configurations are accepted.
+            (Some(_), None, None) | (None, Some(_), Some(_)) => {}
+            _ => {
                 return Err(RegistrarError::Config(
                     "provide either --private-key or both --signer-endpoint and \
                      --signer-address"
                         .into(),
                 ));
             }
-            _ => {}
         }
 
         if self.boundless_min_price > self.boundless_max_price {
@@ -167,10 +192,13 @@ impl RegistrarConfig {
                     .map_err(|e| RegistrarError::Config(format!("invalid private key hex: {e}")))?;
                 let signing_key = SigningKey::from_slice(&key_bytes)
                     .map_err(|e| RegistrarError::Config(format!("invalid private key: {e}")))?;
-                Ok(SigningConfig::Local { signer: PrivateKeySigner::from_signing_key(signing_key) })
+                Ok(SigningConfig::Local(PrivateKeySigner::from_signing_key(signing_key)))
             }
             (None, Some(endpoint), Some(address)) => {
-                Ok(SigningConfig::Remote { endpoint: endpoint.clone(), address: *address })
+                Ok(SigningConfig::Remote(RemoteSignerConfig {
+                    endpoint: endpoint.clone(),
+                    address: *address,
+                }))
             }
             _ => Err(RegistrarError::Config(
                 "ambiguous signing config; call validate() before signing_config()".into(),
@@ -239,7 +267,7 @@ mod tests {
     fn signing_config_local_parses_key() {
         let config = RegistrarConfig::parse_from(base_args());
         let signing = config.signing_config().unwrap();
-        assert!(matches!(signing, SigningConfig::Local { .. }));
+        assert!(matches!(signing, SigningConfig::Local(_)));
     }
 
     #[test]
