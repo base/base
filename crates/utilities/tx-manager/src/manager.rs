@@ -255,8 +255,9 @@ impl SimpleTxManager {
 
         tx_request.from = Some(from);
 
-        if let Some(to) = candidate.to {
-            tx_request.set_to(to);
+        match candidate.to {
+            Some(to) => tx_request.set_to(to),
+            None => tx_request = tx_request.into_create(),
         }
 
         // Step 4: Gas estimation / validation.

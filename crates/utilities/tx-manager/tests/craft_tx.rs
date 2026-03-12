@@ -1,13 +1,15 @@
 //! Integration tests for [`SimpleTxManager`] transaction construction with Anvil.
 
 use alloy_consensus::TxEnvelope;
-use alloy_eips::Decodable2718;
+use alloy_eips::{Decodable2718, eip4844::Blob};
 use alloy_network::EthereumWallet;
 use alloy_node_bindings::Anvil;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
-use base_tx_manager::{SimpleTxManager, TxCandidate, TxManager, TxManagerConfig, TxManagerError};
+use base_tx_manager::{
+    GasPriceCaps, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig, TxManagerError,
+};
 
 /// Helper: spawns an Anvil instance and returns a [`SimpleTxManager`].
 async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
@@ -26,11 +28,13 @@ async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
 
 #[tokio::test]
 async fn craft_tx_produces_valid_signed_eip1559_transaction() {
-    let (manager, _anvil) = setup().await;
+    let (manager, anvil) = setup().await;
 
+    let to = Address::with_last_byte(0x42);
+    let value = U256::from(1_000_000_000u64);
     let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        value: U256::from(1_000_000_000u64),
+        to: Some(to),
+        value,
         gas_limit: 0, // auto-estimate
         ..Default::default()
     };
@@ -41,8 +45,15 @@ async fn craft_tx_produces_valid_signed_eip1559_transaction() {
     let envelope =
         TxEnvelope::decode_2718(&mut raw_tx.as_ref()).expect("should decode as valid TxEnvelope");
 
-    // Verify it's an EIP-1559 transaction.
-    assert!(matches!(envelope, TxEnvelope::Eip1559(_)));
+    // Verify it's an EIP-1559 transaction with correct fields.
+    let signed = match &envelope {
+        TxEnvelope::Eip1559(signed) => signed,
+        other => panic!("expected EIP-1559, got {other:?}"),
+    };
+    let tx = signed.tx();
+    assert_eq!(tx.to, TxKind::Call(to));
+    assert_eq!(tx.value, value);
+    assert_eq!(tx.chain_id, anvil.chain_id());
 }
 
 #[tokio::test]
@@ -61,7 +72,74 @@ async fn craft_tx_with_explicit_gas_limit() {
     let envelope =
         TxEnvelope::decode_2718(&mut raw_tx.as_ref()).expect("should decode as valid TxEnvelope");
 
-    assert!(matches!(envelope, TxEnvelope::Eip1559(_)));
+    // Verify the explicit gas limit was used, not an estimated value.
+    let signed = match &envelope {
+        TxEnvelope::Eip1559(signed) => signed,
+        other => panic!("expected EIP-1559, got {other:?}"),
+    };
+    assert_eq!(signed.tx().gas_limit, 21_000);
+}
+
+#[tokio::test]
+async fn craft_tx_rejects_blob_transactions() {
+    let (manager, _anvil) = setup().await;
+
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        blobs: vec![Blob::default()],
+        ..Default::default()
+    };
+
+    let err = manager.craft_tx(&candidate).await.expect_err("should reject blob tx");
+    match &err {
+        TxManagerError::Rpc(msg) => {
+            assert!(
+                msg.contains("blob transactions are not yet supported"),
+                "expected blob rejection message, got: {msg}",
+            );
+        }
+        other => panic!("expected TxManagerError::Rpc, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn craft_tx_contract_creation() {
+    let (manager, _anvil) = setup().await;
+
+    // Minimal valid contract bytecode (STOP opcode).
+    let candidate = TxCandidate {
+        to: None,
+        tx_data: Bytes::from_static(&[0x00]),
+        gas_limit: 0,
+        ..Default::default()
+    };
+
+    let raw_tx = manager.craft_tx(&candidate).await.expect("should craft contract creation tx");
+
+    let envelope =
+        TxEnvelope::decode_2718(&mut raw_tx.as_ref()).expect("should decode as valid TxEnvelope");
+
+    let signed = match &envelope {
+        TxEnvelope::Eip1559(signed) => signed,
+        other => panic!("expected EIP-1559, got {other:?}"),
+    };
+    assert_eq!(signed.tx().to, TxKind::Create);
+}
+
+#[tokio::test]
+async fn suggest_gas_price_caps_returns_valid_estimates() {
+    let (manager, _anvil) = setup().await;
+
+    let candidate = TxCandidate::default();
+    let caps: GasPriceCaps =
+        manager.suggest_gas_price_caps(&candidate).await.expect("should return gas price caps");
+
+    // On an Anvil instance, tip and fee cap should be non-zero.
+    assert!(caps.gas_tip_cap > 0, "tip_cap should be non-zero");
+    // gas_fee_cap = tip + 2 * base_fee, which is always > tip alone.
+    assert!(caps.gas_fee_cap > caps.gas_tip_cap, "fee_cap should exceed tip_cap");
+    // Blob fee cap should be None for non-blob transactions.
+    assert!(caps.blob_fee_cap.is_none(), "blob_fee_cap should be None");
 }
 
 #[tokio::test]
