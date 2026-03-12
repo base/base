@@ -178,10 +178,9 @@ impl LoadRunner {
             return Ok(());
         }
 
-        let wallet = EthereumWallet::from(funding_key.clone());
-        let funder_provider = create_wallet_provider(self.config.rpc_url.clone(), wallet);
-
         let funder_address = funding_key.address();
+        let wallet = EthereumWallet::from(funding_key);
+        let funder_provider = create_wallet_provider(self.config.rpc_url.clone(), wallet);
         let mut nonce = funder_provider
             .get_transaction_count(funder_address)
             .await
@@ -289,7 +288,8 @@ impl LoadRunner {
             }
         }
 
-        let (metrics_tx, mut metrics_rx) = mpsc::unbounded_channel::<TransactionMetrics>();
+        const METRICS_CHANNEL_BUFFER: usize = 2000;
+        let (metrics_tx, mut metrics_rx) = mpsc::channel::<TransactionMetrics>(METRICS_CHANNEL_BUFFER);
 
         let sender_addresses: Vec<_> = self.accounts.accounts().iter().map(|a| a.address).collect();
         let confirmer = Confirmer::new(
@@ -388,6 +388,12 @@ impl LoadRunner {
             debug!(submitted, "final batch submitted");
         }
 
+        for account in self.accounts.accounts() {
+            if let Err(e) = self.nonce_tracker.heal(&account.address, &self.client).await {
+                warn!(address = %account.address, error = %e, "failed to heal nonce gaps");
+            }
+        }
+
         self.stop_flag.store(true, Ordering::SeqCst);
 
         let submitted = self.collector.submitted_count();
@@ -461,11 +467,11 @@ impl LoadRunner {
                 .with_from(prepared.from)
                 .with_to(prepared.to)
                 .with_value(prepared.value)
-                .with_input(prepared.data.clone())
+                .with_input(prepared.data)
                 .with_nonce(prepared.nonce)
                 .with_chain_id(chain_id)
                 .with_max_fee_per_gas(max_fee)
-                .with_max_priority_fee_per_gas(self.gas_price / 10)
+                .with_max_priority_fee_per_gas((self.gas_price / 10).max(1))
                 .with_gas_limit(prepared.gas_limit);
 
             let mut attempts = 0;
@@ -475,7 +481,7 @@ impl LoadRunner {
                 match provider.send_transaction(tx.clone()).await {
                     Ok(pending) => {
                         let tx_hash = *pending.tx_hash();
-                        confirmer_handle.record_submitted(tx_hash, prepared.from);
+                        confirmer_handle.record_submitted(tx_hash, prepared.from).await;
                         self.collector.record_submitted(tx_hash);
                         submitted_count += 1;
                         backoff.record_success();

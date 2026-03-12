@@ -4,7 +4,7 @@ use alloy_provider::{
     Identity, Provider, ProviderBuilder, RootProvider,
     fillers::{FillProvider, JoinFill, WalletFiller},
 };
-use alloy_rpc_types::TransactionReceipt;
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionReceipt};
 use tracing::instrument;
 use url::Url;
 
@@ -119,6 +119,18 @@ impl RpcClient {
     #[instrument(skip(self))]
     pub async fn get_gas_price(&self) -> Result<u128> {
         self.provider.get_gas_price().await.map_err(|e| BaselineError::Rpc(e.to_string()))
+    }
+
+    /// Fetches all transaction receipts for a given block number.
+    #[instrument(skip(self), fields(block_number = block_number))]
+    pub async fn get_block_receipts(
+        &self,
+        block_number: u64,
+    ) -> Result<Option<Vec<TransactionReceipt>>> {
+        self.provider
+            .get_block_receipts(BlockId::Number(BlockNumberOrTag::Number(block_number)))
+            .await
+            .map_err(|e| BaselineError::Rpc(e.to_string()))
     }
 }
 

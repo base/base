@@ -11,12 +11,18 @@ pub struct NonceTracker {
     expected: HashMap<Address, u64>,
     pending: HashMap<Address, BTreeSet<u64>>,
     confirmed: HashMap<Address, u64>,
+    reusable: HashMap<Address, BTreeSet<u64>>,
 }
 
 impl NonceTracker {
     /// Creates a new nonce tracker.
     pub fn new() -> Self {
-        Self { expected: HashMap::new(), pending: HashMap::new(), confirmed: HashMap::new() }
+        Self {
+            expected: HashMap::new(),
+            pending: HashMap::new(),
+            confirmed: HashMap::new(),
+            reusable: HashMap::new(),
+        }
     }
 
     /// Initializes an account with its current on-chain nonce.
@@ -24,13 +30,23 @@ impl NonceTracker {
         self.expected.insert(address, nonce);
         self.pending.insert(address, BTreeSet::new());
         self.confirmed.insert(address, nonce);
+        self.reusable.insert(address, BTreeSet::new());
     }
 
     /// Allocates the next nonce for an account.
     pub fn allocate(&mut self, address: &Address) -> Option<u64> {
-        let nonce = self.expected.get_mut(address)?;
-        let allocated = *nonce;
-        *nonce += 1;
+        if let Some(reusable) = self.reusable.get_mut(address)
+            && let Some(reused_nonce) = reusable.pop_first()
+        {
+            if let Some(pending) = self.pending.get_mut(address) {
+                pending.insert(reused_nonce);
+            }
+            return Some(reused_nonce);
+        }
+
+        let expected = self.expected.get_mut(address)?;
+        let allocated = *expected;
+        *expected += 1;
 
         if let Some(pending) = self.pending.get_mut(address) {
             pending.insert(allocated);
@@ -44,6 +60,9 @@ impl NonceTracker {
         if let Some(pending) = self.pending.get_mut(address) {
             pending.remove(&nonce);
         }
+        if let Some(reusable) = self.reusable.get_mut(address) {
+            reusable.remove(&nonce);
+        }
 
         if let Some(confirmed) = self.confirmed.get_mut(address)
             && nonce > *confirmed
@@ -56,6 +75,9 @@ impl NonceTracker {
     pub fn fail(&mut self, address: &Address, nonce: u64) {
         if let Some(pending) = self.pending.get_mut(address) {
             pending.remove(&nonce);
+        }
+        if let Some(reusable) = self.reusable.get_mut(address) {
+            reusable.insert(nonce);
         }
     }
 
@@ -92,14 +114,18 @@ impl NonceTracker {
 
         let expected = self.expected.get_mut(address);
         let pending = self.pending.get_mut(address);
+        let reusable = self.reusable.get_mut(address);
 
-        if let (Some(expected), Some(pending)) = (expected, pending) {
+        if let (Some(expected), Some(pending), Some(reusable)) = (expected, pending, reusable) {
             let stale: Vec<u64> =
                 pending.iter().filter(|&&n| n < on_chain_nonce).copied().collect();
             for nonce in &stale {
                 pending.remove(nonce);
                 debug!(address = %address, nonce, "removed stale pending nonce");
             }
+
+            // Nonces below on-chain nonce are already consumed and should never be retried.
+            reusable.retain(|n| *n >= on_chain_nonce);
 
             if *expected < on_chain_nonce {
                 warn!(
@@ -109,6 +135,12 @@ impl NonceTracker {
                     "nonce jumped ahead, updating"
                 );
                 *expected = on_chain_nonce;
+            }
+
+            for gap in &gaps {
+                if *gap >= on_chain_nonce && !pending.contains(gap) {
+                    reusable.insert(*gap);
+                }
             }
         }
 
@@ -130,5 +162,45 @@ impl NonceTracker {
 impl Default for NonceTracker {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::Address;
+
+    use super::NonceTracker;
+
+    #[test]
+    fn failed_nonce_is_reused_before_new_nonce() {
+        let mut tracker = NonceTracker::new();
+        let address = Address::repeat_byte(1);
+        tracker.init_account(address, 10);
+
+        let first = tracker.allocate(&address).expect("first nonce");
+        let second = tracker.allocate(&address).expect("second nonce");
+        assert_eq!(first, 10);
+        assert_eq!(second, 11);
+
+        tracker.fail(&address, first);
+
+        let reused = tracker.allocate(&address).expect("reused nonce");
+        let next_new = tracker.allocate(&address).expect("next fresh nonce");
+        assert_eq!(reused, 10);
+        assert_eq!(next_new, 12);
+    }
+
+    #[test]
+    fn reusable_nonce_is_cleared_after_confirm() {
+        let mut tracker = NonceTracker::new();
+        let address = Address::repeat_byte(2);
+        tracker.init_account(address, 1);
+
+        let nonce = tracker.allocate(&address).expect("allocated");
+        tracker.fail(&address, nonce);
+        tracker.confirm(&address, nonce);
+
+        let next = tracker.allocate(&address).expect("next nonce");
+        assert_eq!(next, 2);
     }
 }
