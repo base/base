@@ -1,0 +1,25 @@
+[package]
+name = "base-proof-tee-registrar-bin"
+description = "Automated TEE prover signer registration service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-proof-tee-registrar"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+url.workspace = true
+eyre.workspace = true
+alloy-primitives.workspace = true
+alloy-signer-local.workspace = true
+base-proof-tee-registrar.workspace = true
+tokio = { workspace = true, features = ["full"] }
+clap = { workspace = true, features = ["derive", "env"] }

@@ -27,6 +27,7 @@ members = [
   "crates/proof/tee/core",
   "crates/proof/tee/nitro",
   "crates/proof/tee/client",
+  "crates/proof/tee/registrar",
   "crates/proof/zk/client",
   "crates/proof/contracts",
   "crates/proof/rpc",
@@ -54,6 +55,7 @@ default-members = [
   "bin/mempool-rebroadcaster",
   "bin/proposer",
   "bin/prover",
+  "bin/prover-registrar",
 ]
 
 [workspace.metadata.cargo-udeps.ignore]
@@ -223,6 +225,7 @@ base-challenger = { path = "crates/proof/challenge" }
 base-enclave-client = { path = "crates/proof/tee/client" }
 base-proof-tee-nitro = { path = "crates/proof/tee/nitro" }
 base-proof-contracts = { path = "crates/proof/contracts" }
+base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
 base-proof = { path = "crates/proof/proof", default-features = false }
 base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
 base-proof-host = { path = "crates/proof/host", default-features = false }
