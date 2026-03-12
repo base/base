@@ -240,8 +240,9 @@ where
 pub(crate) mod tests {
     use alloc::vec;
 
-    use alloy_consensus::Blob;
-    use alloy_rlp::Decodable;
+    use alloy_consensus::{Blob, Signed, TxEip4844, TxEip4844Variant};
+    use alloy_primitives::Signature;
+    use base_consensus_registry::Registry;
 
     use super::*;
     use crate::{
@@ -256,11 +257,38 @@ pub(crate) mod tests {
         BlobSource::new(chain_provider, blob_fetcher, batch_inbox_address)
     }
 
+    fn valid_blob_batcher_address() -> Address {
+        valid_blob_txs().into_iter().next().unwrap().recover_signer().unwrap()
+    }
+
     pub(crate) fn valid_blob_txs() -> Vec<TxEnvelope> {
-        // https://sepolia.etherscan.io/getRawTx?tx=0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
-        let raw_tx = alloy_primitives::hex::decode("0x03f9011d83aa36a7820fa28477359400852e90edd0008252089411e9ca82a3a762b4b5bd264d4173a242e7a770648080c08504a817c800f8a5a0012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921aa00152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4a0013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7a001148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1a0011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e654901a0c8de4cced43169f9aa3d36506363b2d2c44f6c49fc1fd91ea114c86f3757077ea01e11fdd0d1934eda0492606ee0bb80a7bf8f35cc5f86ec60fe5031ba48bfd544").unwrap();
-        let eip4844 = TxEnvelope::decode(&mut raw_tx.as_slice()).unwrap();
-        vec![eip4844]
+        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
+        let sig = Signature::test_signature();
+        vec![TxEnvelope::Eip4844(Signed::new_unchecked(
+            TxEip4844Variant::TxEip4844(TxEip4844 {
+                to: batch_inbox_address,
+                blob_versioned_hashes: vec![
+                    alloy_primitives::b256!(
+                        "012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921a"
+                    ),
+                    alloy_primitives::b256!(
+                        "0152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4"
+                    ),
+                    alloy_primitives::b256!(
+                        "013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7"
+                    ),
+                    alloy_primitives::b256!(
+                        "01148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1"
+                    ),
+                    alloy_primitives::b256!(
+                        "011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e6549"
+                    ),
+                ],
+                ..Default::default()
+            }),
+            sig,
+            Default::default(),
+        ))]
     }
 
     #[tokio::test]
@@ -294,10 +322,8 @@ pub(crate) mod tests {
     async fn test_load_blobs_chain_provider_4844_txs_blob_fetch_error() {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
-        let batcher_address =
-            alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
-        let batch_inbox_address =
-            alloy_primitives::address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064");
+        let batcher_address = valid_blob_batcher_address();
+        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
         source.batcher_address = batch_inbox_address;
         let txs = valid_blob_txs();
         source.blob_fetcher.should_error = true;
@@ -312,10 +338,8 @@ pub(crate) mod tests {
     async fn test_load_blobs_chain_provider_4844_txs_succeeds() {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
-        let batcher_address =
-            alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
-        let batch_inbox_address =
-            alloy_primitives::address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064");
+        let batcher_address = valid_blob_batcher_address();
+        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
         source.batcher_address = batch_inbox_address;
         let txs = valid_blob_txs();
         source.chain_provider.insert_block_with_transactions(1, block_info, txs);
@@ -384,10 +408,8 @@ pub(crate) mod tests {
     async fn test_load_blobs_overfill_triggers_reset() {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
-        let batcher_address =
-            alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
-        let batch_inbox_address =
-            alloy_primitives::address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064");
+        let batcher_address = valid_blob_batcher_address();
+        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
         source.batcher_address = batch_inbox_address;
         let txs = valid_blob_txs();
         source.blob_fetcher.should_return_extra_blob = true;
@@ -473,10 +495,8 @@ pub(crate) mod tests {
     async fn test_load_blobs_not_found_triggers_reset() {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
-        let batcher_address =
-            alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
-        let batch_inbox_address =
-            alloy_primitives::address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064");
+        let batcher_address = valid_blob_batcher_address();
+        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
         source.batcher_address = batch_inbox_address;
         source.chain_provider.insert_block_with_transactions(1, block_info, valid_blob_txs());
         source.blob_fetcher.should_return_not_found = true;
@@ -494,10 +514,8 @@ pub(crate) mod tests {
     async fn test_missed_beacon_slot_triggers_pipeline_reset() {
         let mut source = default_test_blob_source();
         let block_info = BlockInfo::default();
-        let batcher_address =
-            alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
-        let batch_inbox_address =
-            alloy_primitives::address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064");
+        let batcher_address = valid_blob_batcher_address();
+        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
         source.batcher_address = batch_inbox_address;
         source.chain_provider.insert_block_with_transactions(1, block_info, valid_blob_txs());
         source.blob_fetcher.should_return_not_found = true;
@@ -539,21 +557,19 @@ pub(crate) mod tests {
     #[test]
     fn test_extract_blob_data_non_batcher_blobs_excluded() {
         // Case 1: source.batcher_address = Address::ZERO does not match the tx's batch inbox
-        // address (`to` = 0x11E9CA82...), so the transaction is skipped and no blobs are captured.
+        // address from `Registry::rollup_config(8453)`, so the transaction is skipped and no
+        // blobs are captured.
         let source = default_test_blob_source(); // batch_inbox_address = Address::ZERO
-        let batcher_address =
-            alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
+        let batcher_address = valid_blob_batcher_address();
         let (data, hashes) = source.extract_blob_data(valid_blob_txs(), batcher_address);
         assert!(data.is_empty(), "non-batcher blobs must not be captured (data)");
         assert!(hashes.is_empty(), "non-batcher blob hashes must not be captured");
 
         // Case 2: correct batch inbox address → all 5 blobs from the batcher transaction captured.
         let mut source2 = default_test_blob_source();
-        let batch_inbox_address =
-            alloy_primitives::address!("11E9CA82A3a762b4B5bd264d4173a242e7a77064");
+        let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
         source2.batcher_address = batch_inbox_address;
-        let batcher_address =
-            alloy_primitives::address!("A83C816D4f9b2783761a22BA6FADB0eB0606D7B2");
+        let batcher_address = valid_blob_batcher_address();
         let (data, hashes) = source2.extract_blob_data(valid_blob_txs(), batcher_address);
         assert_eq!(data.len(), 5, "all 5 batcher blobs must be captured");
         assert_eq!(hashes.len(), 5, "all 5 batcher blob hashes must be captured");
