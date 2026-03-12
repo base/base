@@ -5,12 +5,21 @@ use alloy_signer_local::PrivateKeySigner;
 use url::Url;
 
 /// HTTP signer sidecar configuration (production).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RemoteSignerConfig {
     /// Signer sidecar JSON-RPC endpoint URL.
     pub endpoint: Url,
     /// Manager address for signing registration transactions.
     pub address: Address,
+}
+
+impl std::fmt::Debug for RemoteSignerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteSignerConfig")
+            .field("endpoint", &url_origin(&self.endpoint))
+            .field("address", &self.address)
+            .finish()
+    }
 }
 
 /// Resolved signing configuration for L1 transaction submission.
@@ -61,7 +70,7 @@ impl std::fmt::Debug for BoundlessConfig {
         f.debug_struct("BoundlessConfig")
             .field("rpc_url", &url_origin(&self.rpc_url))
             .field("signer", &self.signer.address())
-            .field("verifier_program_url", &url_origin(&self.verifier_program_url))
+            .field("verifier_program_url", &self.verifier_program_url)
             .field("min_price", &self.min_price)
             .field("max_price", &self.max_price)
             .field("timeout", &self.timeout)
