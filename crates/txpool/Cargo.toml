@@ -21,6 +21,8 @@ alloy-primitives.workspace = true
 reth-evm.workspace = true
 reth-tasks.workspace = true
 reth-metrics.workspace = true
+reth-node-api.workspace = true
+reth-provider.workspace = true
 reth-chainspec.workspace = true
 reth-storage-api.workspace = true
 reth-primitives-traits.workspace = true
@@ -46,6 +48,7 @@ tokio-util.workspace = true
 async-trait.workspace = true
 derive_more.workspace = true
 parking_lot.workspace = true
+tokio-stream.workspace = true
 metrics-derive.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
