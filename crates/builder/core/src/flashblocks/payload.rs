@@ -280,6 +280,12 @@ where
         );
 
         // not emitting flashblock if no_tx_pool in FCU, it's just syncing
+        //
+        // Published at flashblock_index 0. Regular flashblocks start at
+        // index 1, so a client resuming from (block_number, 0) will skip
+        // this fallback via the strictly-greater-than comparison in
+        // `RingBuffer::entries_after`, but still receive all subsequent
+        // flashblocks for the same block.
         if !ctx.attributes().no_tx_pool {
             let flashblock_byte_size = self
                 .ws_pub
