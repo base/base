@@ -219,24 +219,26 @@ impl SimpleTxManager {
         &self,
         _candidate: &TxCandidate,
     ) -> TxManagerResult<GasPriceCaps> {
-        // Query tip cap.
-        let raw_tip_cap = tokio::time::timeout(
-            self.config.network_timeout,
-            self.provider.get_max_priority_fee_per_gas(),
-        )
-        .await
-        .map_err(|_| TxManagerError::Rpc("get_max_priority_fee_per_gas timed out".into()))?
-        .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+        // Query tip cap and latest block concurrently.
+        let (tip_result, block_result) = tokio::join!(
+            tokio::time::timeout(
+                self.config.network_timeout,
+                self.provider.get_max_priority_fee_per_gas(),
+            ),
+            tokio::time::timeout(
+                self.config.network_timeout,
+                self.provider.get_block_by_number(BlockNumberOrTag::Latest),
+            ),
+        );
 
-        // Query latest block for base fee.
-        let latest_block = tokio::time::timeout(
-            self.config.network_timeout,
-            self.provider.get_block_by_number(BlockNumberOrTag::Latest),
-        )
-        .await
-        .map_err(|_| TxManagerError::Rpc("get_block_by_number timed out".into()))?
-        .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?
-        .ok_or_else(|| TxManagerError::Rpc("latest block not found".to_string()))?;
+        let raw_tip_cap = tip_result
+            .map_err(|_| TxManagerError::Rpc("get_max_priority_fee_per_gas timed out".into()))?
+            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+
+        let latest_block = block_result
+            .map_err(|_| TxManagerError::Rpc("get_block_by_number timed out".into()))?
+            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?
+            .ok_or_else(|| TxManagerError::Rpc("latest block not found".to_string()))?;
 
         let raw_base_fee = u128::from(
             latest_block
