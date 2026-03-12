@@ -12,7 +12,7 @@ repository.workspace = true
 workspace = true
 
 [features]
-host-port-exposure = ["testcontainers/host-port-exposure"]
+host-port-exposure = [ "testcontainers/host-port-exposure" ]
 
 [dependencies]
 # workspace

@@ -21,11 +21,11 @@
 //! let container_builder = with_host_port_if_needed(container_builder, port);
 //! ```
 
+#[cfg(any(target_os = "macos", feature = "host-port-exposure"))]
+use testcontainers::ImageExt as _;
 #[cfg(target_os = "macos")]
 use testcontainers::core::Host;
 use testcontainers::{ContainerRequest, Image};
-#[cfg(any(target_os = "macos", feature = "host-port-exposure"))]
-use testcontainers::ImageExt as _;
 
 /// Returns the address containers should use to reach the host machine.
 ///
