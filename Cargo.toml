@@ -29,7 +29,6 @@ members = [
   "crates/proof/tee/client",
   "crates/proof/tee/registrar",
   "crates/proof/zk/client",
-  "crates/proof/transport",
   "crates/proof/contracts",
   "crates/proof/rpc",
   "crates/proof/proposer",
@@ -167,6 +166,7 @@ base-builder-metering = { path = "crates/builder/metering" }
 # Client
 base-client-cli = { path = "crates/client/cli" }
 base-metering = { path = "crates/client/metering" }
+base-tx-forwarding = { path = "crates/client/tx-forwarding" }
 base-proofs-extension = { path = "crates/client/proofs" }
 base-txpool-tracing = { path = "crates/client/txpool-tracing" }
 base-flashblocks-node = { path = "crates/client/flashblocks-node" }
@@ -225,7 +225,6 @@ base-challenger = { path = "crates/proof/challenge" }
 base-enclave-client = { path = "crates/proof/tee/client" }
 base-proof-tee-nitro = { path = "crates/proof/tee/nitro" }
 base-proof-contracts = { path = "crates/proof/contracts" }
-base-proof-transport = { path = "crates/proof/transport" }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
 base-proof = { path = "crates/proof/proof", default-features = false }
 base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
@@ -282,6 +281,7 @@ alloy-sol-types = { version = "1.5.0", default-features = false }
 alloy-sol-macro = "1.5.0"
 alloy-rpc-client = "1.5.2"
 alloy-signer-local = "1.5.2"
+alloy-node-bindings = "1.5.2"
 alloy-rpc-types-eth = { version = "1.5.2", default-features = false }
 alloy-transport-http = "1.5.2"
 alloy-rpc-types-debug = { version = "1.6.3", default-features = false }

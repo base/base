@@ -40,6 +40,7 @@ tracing-subscriber = { workspace = true, features = ["fmt"] }
 default = []
 std = [
 	"alloy-eips/std",
+	"alloy-primitives?/std",
 	"base-alloy-consensus/std",
 	"base-consensus-genesis/std",
 	"base-protocol/std",
@@ -51,9 +52,14 @@ std = [
 ]
 test-utils = [ "base-protocol/test-utils", "dep:alloy-primitives" ]
 serde = [
+	"alloy-primitives?/serde",
 	"base-consensus-genesis/serde",
 	"base-protocol/serde",
 	"miniz_oxide/serde",
 	"rand/serde",
 ]
-arbitrary = [ "base-consensus-genesis/arbitrary", "base-protocol/arbitrary" ]
+arbitrary = [
+	"alloy-primitives?/arbitrary",
+	"base-consensus-genesis/arbitrary",
+	"base-protocol/arbitrary",
+]
