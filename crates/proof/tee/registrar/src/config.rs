@@ -211,6 +211,12 @@ impl RegistrarConfig {
             ));
         }
 
+        if self.boundless_timeout_secs == 0 {
+            return Err(RegistrarError::Config(
+                "--boundless-timeout-secs must be greater than 0".into(),
+            ));
+        }
+
         if self.poll_interval_secs == 0 {
             return Err(RegistrarError::Config(
                 "--poll-interval-secs must be greater than 0".into(),
