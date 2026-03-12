@@ -31,6 +31,7 @@ exclude = [
 
     # Internal / staging sites not meant for link checking
     'https://rustup\.rs/',
+    'https://github\.com/base/node/pkgs/container/node-reth', # GitHub container registry pages return intermittent 502s
     'https://base\.mirror\.xyz/',
     'https://specs\.base\.org',
 
