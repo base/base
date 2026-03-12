@@ -99,8 +99,8 @@ impl NonceManager {
     }
 
     /// Maximum number of retry attempts when `reset()` races with
-    /// `next_nonce()`, clearing the cache between the peek and lock
-    /// acquisition.
+    /// `next_nonce()`, clearing the cache between the RPC fetch and
+    /// lock re-acquisition.
     const MAX_RETRY_ATTEMPTS: u8 = 5;
 
     /// Reserves the next nonce for transaction signing.
@@ -129,60 +129,11 @@ impl NonceManager {
     /// exceeds `u64::MAX`.
     pub async fn next_nonce(&self) -> Result<NonceGuard, TxManagerError> {
         for attempt in 0..Self::MAX_RETRY_ATTEMPTS {
-            // Phase 1: peek under the lock to check whether init is needed
-            // and snapshot the current generation.
-            let (needs_init, generation) = {
-                let state = self.inner.lock().await;
-                (state.nonce.is_none(), state.generation)
-            };
-
-            // Phase 2: if uninitialized, fetch from chain *without* holding
-            // the lock so concurrent callers are not blocked by the RPC
-            // round-trip. Multiple concurrent callers may fetch redundantly;
-            // only the first writer's value is used.
-            if needs_init {
-                let fetched =
-                    self.provider.get_transaction_count(self.address).await.map_err(|e| {
-                        warn!(
-                            error = %e, address = %self.address,
-                            "failed to fetch nonce from chain",
-                        );
-                        TxManagerError::Rpc(e.to_string())
-                    })?;
-
-                // Test hook: pause between Phase 2 and Phase 3 so tests
-                // can deterministically call reset() during this window.
-                #[cfg(test)]
-                if let Some(barrier) = &self.test_barrier {
-                    barrier.fetch_completed.notify_one();
-                    barrier.may_proceed.notified().await;
-                }
-
-                // Phase 3: re-acquire the lock and populate only if still
-                // unset AND the generation has not changed. If reset()
-                // was called mid-flight the generation will have been
-                // bumped — discard the stale fetch and retry.
-                let mut guard = Arc::clone(&self.inner).lock_owned().await;
-
-                if guard.generation != generation {
-                    drop(guard);
-                    debug!(attempt, "nonce cache reset during RPC fetch, retrying");
-                    continue;
-                }
-
-                let nonce = *guard.nonce.get_or_insert_with(|| {
-                    debug!(nonce = fetched, "nonce fetched from chain");
-                    fetched
-                });
-                let next = nonce.checked_add(1).ok_or(TxManagerError::NonceOverflow)?;
-                guard.nonce = Some(next);
-                debug!(nonce, "nonce reserved");
-                return Ok(NonceGuard { guard: Some(guard), nonce });
-            }
-
-            // Steady-state fast path: cache is populated. Acquire the
-            // owned lock for the read-and-increment.
+            // Acquire the owned lock once upfront.
             let mut guard = Arc::clone(&self.inner).lock_owned().await;
+
+            // Fast path: cache is populated — read-and-increment in a
+            // single lock round-trip.
             if let Some(n) = guard.nonce {
                 let next = n.checked_add(1).ok_or(TxManagerError::NonceOverflow)?;
                 guard.nonce = Some(next);
@@ -190,10 +141,52 @@ impl NonceManager {
                 return Ok(NonceGuard { guard: Some(guard), nonce: n });
             }
 
-            // Rare: reset() cleared the cache between our peek and lock
-            // acquisition. Drop the lock and retry.
+            // Cache miss: snapshot the generation, then drop the lock so
+            // the RPC fetch doesn't block concurrent callers.
+            let generation = guard.generation;
             drop(guard);
-            debug!(attempt, "nonce cache cleared during acquisition, retrying");
+
+            // Phase 2: fetch from chain *without* holding the lock so
+            // concurrent callers are not blocked by the RPC round-trip.
+            // Multiple concurrent callers may fetch redundantly; only
+            // the first writer's value is used.
+            let fetched =
+                self.provider.get_transaction_count(self.address).await.map_err(|e| {
+                    warn!(
+                        error = %e, address = %self.address,
+                        "failed to fetch nonce from chain",
+                    );
+                    TxManagerError::Rpc(e.to_string())
+                })?;
+
+            // Test hook: pause between Phase 2 and Phase 3 so tests
+            // can deterministically call reset() during this window.
+            #[cfg(test)]
+            if let Some(barrier) = &self.test_barrier {
+                barrier.fetch_completed.notify_one();
+                barrier.may_proceed.notified().await;
+            }
+
+            // Phase 3: re-acquire the lock and populate only if still
+            // unset AND the generation has not changed. If reset()
+            // was called mid-flight the generation will have been
+            // bumped — discard the stale fetch and retry.
+            let mut guard = Arc::clone(&self.inner).lock_owned().await;
+
+            if guard.generation != generation {
+                drop(guard);
+                debug!(attempt, "nonce cache reset during RPC fetch, retrying");
+                continue;
+            }
+
+            let nonce = *guard.nonce.get_or_insert_with(|| {
+                debug!(nonce = fetched, "nonce fetched from chain");
+                fetched
+            });
+            let next = nonce.checked_add(1).ok_or(TxManagerError::NonceOverflow)?;
+            guard.nonce = Some(next);
+            debug!(nonce, "nonce reserved");
+            return Ok(NonceGuard { guard: Some(guard), nonce });
         }
 
         warn!(attempts = Self::MAX_RETRY_ATTEMPTS, "nonce acquisition failed after max retries",);
