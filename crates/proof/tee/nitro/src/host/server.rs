@@ -91,7 +91,12 @@ mod tests {
     use crate::enclave::{EnclaveConfig, Server as EnclaveServer};
 
     fn test_config() -> EnclaveConfig {
-        EnclaveConfig { vsock_port: 0, config_hash: B256::ZERO, tee_image_hash: B256::ZERO }
+        EnclaveConfig {
+            vsock_cid: 0,
+            vsock_port: 0,
+            config_hash: B256::ZERO,
+            tee_image_hash: B256::ZERO,
+        }
     }
 
     #[tokio::test]

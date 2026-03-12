@@ -39,7 +39,7 @@ impl NitroTransport {
         match self {
             #[cfg(target_os = "linux")]
             Self::Vsock(t) => t.prove(preimages).await,
-            Self::Local(s) => s.prove(preimages).await,
+            Self::Local(s) => Box::pin(s.prove(preimages)).await,
         }
     }
 

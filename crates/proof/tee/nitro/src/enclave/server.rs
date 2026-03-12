@@ -248,7 +248,12 @@ mod tests {
     use super::*;
 
     fn test_config() -> EnclaveConfig {
-        EnclaveConfig { vsock_port: 1234, config_hash: B256::ZERO, tee_image_hash: B256::ZERO }
+        EnclaveConfig {
+            vsock_cid: 0,
+            vsock_port: 1234,
+            config_hash: B256::ZERO,
+            tee_image_hash: B256::ZERO,
+        }
     }
 
     #[test]

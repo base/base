@@ -83,8 +83,8 @@ struct ProverServerArgs {
     l2_chain_id: u64,
 
     /// Socket address to listen on for JSON-RPC.
-    #[arg(long, env = "RPC_ADDR", default_value = "0.0.0.0:7300")]
-    rpc_addr: SocketAddr,
+    #[arg(long, env = "LISTEN_ADDR")]
+    listen_addr: SocketAddr,
 
     /// Enable experimental `debug_executePayload` witness endpoint.
     #[arg(long, env = "ENABLE_EXPERIMENTAL_WITNESS_ENDPOINT")]
@@ -99,19 +99,23 @@ struct NitroServerArgs {
     server: ProverServerArgs,
 
     /// Vsock CID of the enclave.
-    #[arg(long, env = "VSOCK_CID", default_value_t = 16)]
+    #[arg(long, env = "VSOCK_CID")]
     vsock_cid: u32,
 
     /// Vsock port to connect to the enclave.
-    #[arg(long, env = "VSOCK_PORT", default_value_t = 1234)]
+    #[arg(long, env = "VSOCK_PORT")]
     vsock_port: u32,
 }
 
 /// Arguments for the `nitro enclave` subcommand.
 #[derive(Parser)]
 struct NitroEnclaveArgs {
+    /// Vsock CID to bind.
+    #[arg(long, env = "VSOCK_CID")]
+    vsock_cid: u32,
+
     /// Vsock port to listen on.
-    #[arg(long, env = "VSOCK_PORT", default_value_t = 1234)]
+    #[arg(long, env = "VSOCK_PORT")]
     vsock_port: u32,
 
     /// Per-chain configuration hash.
@@ -169,8 +173,8 @@ impl NitroServerArgs {
         let transport = Arc::new(NitroTransport::vsock(self.vsock_cid, self.vsock_port));
         let server = NitroProverServer::new(config, transport);
 
-        info!(addr = %self.server.rpc_addr, "starting nitro prover server");
-        let handle = server.run(self.server.rpc_addr).await?;
+        info!(addr = %self.server.listen_addr, "starting nitro prover server");
+        let handle = server.run(self.server.listen_addr).await?;
         handle.stopped().await;
         Ok(())
     }
@@ -179,6 +183,7 @@ impl NitroServerArgs {
 impl NitroEnclaveArgs {
     async fn run(self) -> eyre::Result<()> {
         let config = EnclaveConfig {
+            vsock_cid: self.vsock_cid,
             vsock_port: self.vsock_port,
             config_hash: self.config_hash,
             tee_image_hash: self.tee_image_hash,
@@ -226,6 +231,7 @@ impl NitroLocalArgs {
             .clone();
 
         let enclave_config = EnclaveConfig {
+            vsock_cid: 0,
             vsock_port: 0,
             config_hash: self.config_hash,
             tee_image_hash: self.tee_image_hash,
@@ -245,8 +251,8 @@ impl NitroLocalArgs {
         let transport = Arc::new(NitroTransport::local(enclave_server));
         let server = NitroProverServer::new(prover_config, transport);
 
-        info!(addr = %self.server.rpc_addr, "starting nitro prover server (local mode)");
-        let handle = server.run(self.server.rpc_addr).await?;
+        info!(addr = %self.server.listen_addr, "starting nitro prover server (local mode)");
+        let handle = server.run(self.server.listen_addr).await?;
         handle.stopped().await;
         Ok(())
     }
