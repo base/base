@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::PathBuf,
+};
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_provider::{Provider, RootProvider};
@@ -78,11 +82,17 @@ pub fn build_nibble_address_lookup(
 }
 
 /// Look up an address by matching `prefix_hex` as a suffix of the hashed key.
+///
+/// Tries an O(1) direct lookup first (works when `prefix_hex` is the full
+/// 64-nibble path). Falls back to an O(n) suffix scan for partial paths.
 pub fn resolve_address(
     nibble_lookup: &HashMap<String, Address>,
     prefix_hex: &str,
 ) -> Option<Address> {
-    nibble_lookup.iter().find(|(nibbles, _)| nibbles.ends_with(prefix_hex)).map(|(_, a)| *a)
+    if let Some(&addr) = nibble_lookup.get(prefix_hex) {
+        return Some(addr);
+    }
+    nibble_lookup.iter().find(|(k, _)| k.ends_with(prefix_hex)).map(|(_, a)| *a)
 }
 
 /// Extract leaf nodes from a set of trie node preimages.
@@ -267,15 +277,13 @@ pub async fn run(local: PathBuf, rpc_url: String, block: u64) -> Result<()> {
     }
 
     // 6. Count leaves only in one side (created/deleted accounts or storage slots).
-    let rpc_prefixes: HashMap<&Nibbles, &Bytes> =
-        rpc_leaves.iter().map(|l| (&l.prefix, &l.value)).collect();
-    let local_prefixes: HashMap<&Nibbles, &Bytes> =
-        local_leaves.iter().map(|l| (&l.prefix, &l.value)).collect();
+    let rpc_prefixes: HashSet<&Nibbles> = rpc_leaves.iter().map(|l| &l.prefix).collect();
+    let local_prefixes: HashSet<&Nibbles> = local_leaves.iter().map(|l| &l.prefix).collect();
 
     let leaves_only_local: Vec<_> =
-        local_leaves.iter().filter(|l| !rpc_prefixes.contains_key(&l.prefix)).collect();
+        local_leaves.iter().filter(|l| !rpc_prefixes.contains(&l.prefix)).collect();
     let leaves_only_rpc: Vec<_> =
-        rpc_leaves.iter().filter(|l| !local_prefixes.contains_key(&l.prefix)).collect();
+        rpc_leaves.iter().filter(|l| !local_prefixes.contains(&l.prefix)).collect();
 
     if !leaves_only_local.is_empty() || !leaves_only_rpc.is_empty() {
         println!("=== Leaves Only in One Witness ===");
