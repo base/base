@@ -1,7 +1,6 @@
 //! Nonce allocation and tracking.
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};

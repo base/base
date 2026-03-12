@@ -1,10 +1,12 @@
 //! Integration tests for [`NonceManager`] with an Anvil backend.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
-use std::time::Duration;
 
 use alloy_node_bindings::Anvil;
 use alloy_primitives::Address;
@@ -142,16 +144,12 @@ async fn rpc_timeout_returns_rpc_error() {
     let url = format!("http://{addr}").parse().expect("valid url");
     let provider = RootProvider::new_http(url);
     let address = Address::ZERO;
-    let manager =
-        NonceManager::with_rpc_timeout(provider, address, Duration::from_millis(1));
+    let manager = NonceManager::with_rpc_timeout(provider, address, Duration::from_millis(1));
 
     let err = manager.next_nonce().await.expect_err("should time out");
     match &err {
         TxManagerError::Rpc(msg) => {
-            assert!(
-                msg.contains("timed out"),
-                "expected 'timed out' in message, got: {msg}",
-            );
+            assert!(msg.contains("timed out"), "expected 'timed out' in message, got: {msg}",);
         }
         other => panic!("expected TxManagerError::Rpc, got {other:?}"),
     }
