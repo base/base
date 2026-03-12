@@ -356,10 +356,10 @@ async fn craft_tx_returns_fee_limit_exceeded_when_minimums_inflate_beyond_multip
     // Anvil's actual values (~1 gwei each) inflates gas_fee_cap well past
     // that ceiling, triggering FeeLimitExceeded.
     let config = TxManagerConfig {
-        min_tip_cap: 500_000_000_000,    // 500 gwei
-        min_basefee: 500_000_000_000,    // 500 gwei
+        min_tip_cap: 500_000_000_000, // 500 gwei
+        min_basefee: 500_000_000_000, // 500 gwei
         fee_limit_multiplier: 1,
-        fee_limit_threshold: 0,          // always enforce the limit
+        fee_limit_threshold: 0, // always enforce the limit
         ..TxManagerConfig::default()
     };
 

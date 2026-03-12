@@ -259,7 +259,7 @@ impl SimpleTxManager {
     /// 1. Query gas price caps via [`suggest_gas_price_caps`](Self::suggest_gas_price_caps)
     /// 2. Check fee limits via [`FeeCalculator::check_limits`]
     /// 3. Build a [`TransactionRequest`] with all fields set manually
-    /// 4. Estimate gas (if `gas_limit == 0`) or use `max(estimate, candidate.gas_limit)`
+    /// 4. Estimate gas via the provider; use `max(estimate, candidate.gas_limit)` as floor
     /// 5. Assign nonce via [`NonceManager::next_nonce`]
     /// 6. Sign and RLP-encode to raw transaction bytes
     ///
@@ -319,24 +319,18 @@ impl SimpleTxManager {
             None => tx_request = tx_request.into_create(),
         }
 
-        // Step 4: Gas estimation / validation.
-        let gas_limit = if candidate.gas_limit == 0 {
-            self.provider
-                .estimate_gas(tx_request.clone())
-                .await
-                .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?
-        } else {
-            // Use estimate_gas to enforce intrinsic gas checks (e.g. the
-            // 21 000 minimum for plain value transfers that eth_call would
-            // not catch), then take the max so the caller's explicit gas
-            // limit is honoured as a floor.
-            let estimated = self
-                .provider
-                .estimate_gas(tx_request.clone())
-                .await
-                .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
-            candidate.gas_limit.max(estimated)
-        };
+        // Step 4: Gas estimation.
+        //
+        // Always call estimate_gas to enforce intrinsic gas checks (e.g.
+        // the 21,000 minimum for plain value transfers). When the caller
+        // supplies an explicit gas_limit, it is used as a floor via max()
+        // so the transaction never under-provisions gas.
+        let estimated = self
+            .provider
+            .estimate_gas(tx_request.clone())
+            .await
+            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+        let gas_limit = candidate.gas_limit.max(estimated);
         tx_request = tx_request.with_gas_limit(gas_limit);
 
         // Step 5: Assign nonce.
