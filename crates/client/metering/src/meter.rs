@@ -12,17 +12,17 @@ use eyre::{Result as EyreResult, eyre};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_primitives_traits::{Account, SealedHeader};
 use reth_revm::{database::StateProviderDatabase, db::State, primitives::KECCAK_EMPTY};
-use reth_trie_common::TrieInput;
-use revm_database::states::{BundleState, bundle_state::BundleRetention};
+use reth_trie_common::{HashedPostState, TrieInput};
+use revm_database::states::{BundleState, CacheState, bundle_state::BundleRetention};
 
 use crate::{metrics::Metrics, transaction::validate_tx};
 
-/// Computes the pending trie input from the bundle state.
+/// Computes the pending trie input from a pre-built [`HashedPostState`].
 ///
 /// This function records metrics for cache misses and compute duration.
 pub(crate) fn compute_pending_trie_input<SP>(
     state_provider: &SP,
-    bundle_state: &BundleState,
+    hashed_state: HashedPostState,
     metrics: &Metrics,
 ) -> EyreResult<PendingTrieInput>
 where
@@ -31,13 +31,31 @@ where
     metrics.pending_trie_cache_misses.increment(1);
     let start = Instant::now();
 
-    let hashed = state_provider.hashed_post_state(bundle_state);
-    let (_state_root, trie_updates) = state_provider.state_root_with_updates(hashed.clone())?;
+    let (_state_root, trie_updates) =
+        state_provider.state_root_with_updates(hashed_state.clone())?;
 
     let elapsed = start.elapsed();
     metrics.pending_trie_compute_duration.record(elapsed.as_secs_f64());
 
-    Ok(PendingTrieInput { trie_updates, hashed_state: hashed })
+    Ok(PendingTrieInput { trie_updates, hashed_state })
+}
+
+/// Converts a pending [`BundleState`] into a [`CacheState`] for use with
+/// `with_cached_prestate()`.
+fn cache_state_from_bundle_state(bundle_state: &BundleState) -> CacheState {
+    CacheState {
+        accounts: bundle_state
+            .state
+            .iter()
+            .map(|(&address, account)| (address, account.into()))
+            .collect(),
+        contracts: bundle_state
+            .contracts
+            .iter()
+            .map(|(&hash, code)| (hash, code.clone()))
+            .collect(),
+        ..Default::default()
+    }
 }
 
 /// Pre-computed trie input from pending state for efficient state root calculation.
@@ -122,7 +140,8 @@ where
                 metrics.pending_trie_cache_hits.increment(1);
                 Ok(cached.clone())
             } else {
-                compute_pending_trie_input(&state_provider, &ps.bundle_state, &metrics)
+                let hashed = state_provider.hashed_post_state(&ps.bundle_state);
+                compute_pending_trie_input(&state_provider, hashed, &metrics)
             }
         })
         .transpose()?;
@@ -130,20 +149,31 @@ where
     // Create state database
     let state_db = StateProviderDatabase::new(state_provider);
 
-    // Track bundle state changes. If metering with pending state, include it as bundle prestate.
+    // Track bundle state changes. When metering on top of pending flashblocks, seed execution
+    // from a cache prestate instead of `with_bundle_prestate()`. The two approaches produce
+    // identical execution results, but differ in what `take_bundle()` returns:
+    //
+    // - `with_bundle_prestate()`: `take_bundle()` includes the pending prestate in its output,
+    //   so `hashed_post_state()` generates prefix sets for every pending path. The trie walker
+    //   then rebuilds all of them — even though `prepend_cached` already provides those nodes —
+    //   making state root time proportional to pending state size.
+    //
+    // - `with_cached_prestate()`: `take_bundle()` returns only the bundle's delta, so prefix
+    //   sets cover only bundle-changed paths. The trie walker skips pending paths (reusing
+    //   cached nodes) and state root time is proportional to bundle size alone.
     let mut db = if let Some(ref ps) = pending_state {
         State::builder()
             .with_database(state_db)
             .with_bundle_update()
-            .with_bundle_prestate(ps.bundle_state.clone())
+            .with_cached_prestate(cache_state_from_bundle_state(&ps.bundle_state))
             .build()
     } else {
         State::builder().with_database(state_db).with_bundle_update().build()
     };
 
     // Override sender nonces to match their first transaction's nonce and collect
-    // account info for pre-flight validation. load_cache_account reads from bundle
-    // prestate (pending flashblocks) when available, so balances reflect pending state.
+    // account info for pre-flight validation. `load_cache_account` reads from the
+    // cached pending prestate when available, so balances reflect pending state.
     let mut first_nonces: HashMap<Address, u64> = HashMap::new();
     for tx in bundle.transactions() {
         first_nonces.entry(tx.signer()).or_insert_with(|| tx.nonce());
@@ -256,8 +286,9 @@ where
         }
     }
 
-    // Calculate state root and measure its calculation time. The bundle already includes
-    // pending state if it was provided via with_bundle_prestate.
+    // Calculate state root and measure its calculation time. If pending flashblocks were present,
+    // `bundle_update` now contains only this bundle's delta; the cached pending trie is prepended
+    // below so state-root work stays incremental.
     db.merge_transitions(BundleRetention::Reverts);
     let bundle_update = db.take_bundle();
 
@@ -276,8 +307,17 @@ where
     let hashed_state = state_provider.hashed_post_state(&bundle_update);
 
     if let Some(cached_trie) = pending_trie {
-        // Prepend cached pending trie so state root calculation only performs I/O
-        // for this bundle's changes, not for pending flashblocks.
+        // Build the trie input so the state root reflects canonical + pending + bundle.
+        //
+        // `from_state` generates prefix sets only for bundle-changed paths.
+        // `prepend_cached` merges the pending state's trie nodes and hashed values
+        // WITHOUT adding prefix sets — so the trie walker reuses cached nodes for
+        // pending-only paths and only rebuilds paths the bundle actually changed.
+        //
+        // Note: `prepend_cached` (not `prepend_self`) is essential here.
+        // `prepend_self` would merge prefix sets from the pending state, causing the
+        // walker to redundantly rebuild every pending path and defeating the
+        // optimization.
         let mut trie_input = TrieInput::from_state(hashed_state);
         trie_input.prepend_cached(cached_trie.trie_updates, cached_trie.hashed_state);
         let _ = state_provider.state_root_from_nodes_with_updates(trie_input)?;
@@ -775,6 +815,56 @@ mod tests {
         Ok(())
     }
 
+    /// Verifies pending flashblock prestate is loaded into the execution cache, not the output
+    /// bundle. This keeps later trie prefix invalidation scoped to the simulated bundle delta.
+    #[test]
+    fn cached_prestate_does_not_leak_into_bundle_output() -> eyre::Result<()> {
+        let pending_bundle = BundleState::new(
+            [(
+                Account::Alice.address(),
+                Some(AccountInfo {
+                    balance: U256::from(1_000_000_000_000_000_000u128),
+                    nonce: 0,
+                    code_hash: KECCAK_EMPTY,
+                    code: None,
+                    account_id: None,
+                }),
+                Some(AccountInfo {
+                    balance: U256::from(1_000_000_000_000_000_000u128),
+                    nonce: 5,
+                    code_hash: KECCAK_EMPTY,
+                    code: None,
+                    account_id: None,
+                }),
+                Default::default(),
+            )],
+            Vec::<Vec<(Address, Option<Option<AccountInfo>>, Vec<(U256, U256)>)>>::new(),
+            Vec::<(B256, Bytecode)>::new(),
+        );
+
+        let mut db = State::builder()
+            .with_bundle_update()
+            .with_cached_prestate(cache_state_from_bundle_state(&pending_bundle))
+            .build();
+
+        let pending_account = db.load_cache_account(Account::Alice.address())?;
+        assert_eq!(
+            pending_account.account.as_ref().expect("pending account").info.nonce,
+            5,
+            "execution must read the pending prestate nonce from the cache"
+        );
+
+        db.merge_transitions(BundleRetention::Reverts);
+        let bundle_update = db.take_bundle();
+
+        assert!(
+            bundle_update.state().is_empty(),
+            "cached prestate must not be included in the simulated bundle output"
+        );
+
+        Ok(())
+    }
+
     /// Verifies that nonce overrides are rejected when too far ahead of on-chain state.
     #[tokio::test]
     async fn meter_bundle_err_nonce_too_far_ahead() -> eyre::Result<()> {
@@ -931,6 +1021,100 @@ mod tests {
         assert!(
             result.unwrap_err().to_string().contains("Insufficient funds"),
             "Expected insufficient funds error"
+        );
+
+        Ok(())
+    }
+
+    /// Exercises the full optimized path: pending state with a cached trie input.
+    ///
+    /// Computes a real [`PendingTrieInput`] from pending state, then meters a bundle
+    /// on top of it. This covers the `prepend_cached` code path with the
+    /// `with_cached_prestate` change, verifying the two work correctly together.
+    #[tokio::test]
+    async fn meter_bundle_with_pending_state_and_cached_trie() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        // Build pending state: Alice sent a tx (nonce advanced to 1, balance decreased)
+        let pending_balance = U256::from(999_999_999_999_000_000_000_000u128);
+        let bundle_state = BundleState::new(
+            [(
+                Account::Alice.address(),
+                Some(AccountInfo {
+                    balance: U256::from(1_000_000u128) * U256::from(10u128).pow(U256::from(18)),
+                    nonce: 0,
+                    code_hash: KECCAK_EMPTY,
+                    code: None,
+                    account_id: None,
+                }),
+                Some(AccountInfo {
+                    balance: pending_balance,
+                    nonce: 1,
+                    code_hash: KECCAK_EMPTY,
+                    code: None,
+                    account_id: None,
+                }),
+                Default::default(),
+            )],
+            Vec::<Vec<(Address, Option<Option<AccountInfo>>, Vec<(U256, U256)>)>>::new(),
+            Vec::<(B256, Bytecode)>::new(),
+        );
+
+        // Compute the pending trie input
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider for trie")?;
+        let hashed = state_provider.hashed_post_state(&bundle_state);
+        let trie_input = compute_pending_trie_input(&state_provider, hashed, &Metrics::default())?;
+        drop(state_provider);
+
+        let pending_state = PendingState { bundle_state, trie_input: Some(trie_input) };
+
+        // Create a bundle tx: Alice (nonce=1 from pending) sends to a random address
+        let to = Address::random();
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(1)
+            .to(to)
+            .value(1_000)
+            .gas_limit(21_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .into_eip1559();
+
+        let tx = OpTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let output = meter_bundle(
+            state_provider,
+            harness.chain_spec(),
+            parsed_bundle,
+            &header,
+            header.parent_beacon_block_root(),
+            Some(pending_state),
+            L1BlockInfo::default(),
+        )?;
+
+        assert_eq!(output.results.len(), 1);
+        assert_eq!(output.total_gas_used, 21_000);
+        assert!(output.total_time_us > 0);
+        assert!(output.state_root_time_us > 0);
+        assert!(
+            output.total_time_us >= output.state_root_time_us,
+            "total_time_us ({}) should be >= state_root_time_us ({})",
+            output.total_time_us,
+            output.state_root_time_us
         );
 
         Ok(())

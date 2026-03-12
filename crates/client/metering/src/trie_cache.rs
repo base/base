@@ -10,8 +10,9 @@ use alloy_rpc_types_engine::PayloadId;
 use arc_swap::ArcSwap;
 use eyre::Result as EyreResult;
 use reth_provider::StateProvider;
+use revm_database::states::BundleState;
 
-use crate::{PendingState, PendingTrieInput, meter::compute_pending_trie_input, metrics::Metrics};
+use crate::{PendingTrieInput, meter::compute_pending_trie_input, metrics::Metrics};
 
 /// Internal cache entry for a single flashblock's pending trie input.
 #[derive(Debug, Clone)]
@@ -51,7 +52,7 @@ impl PendingTrieCache {
         &self,
         payload_id: PayloadId,
         flashblock_index: u64,
-        pending_state: &PendingState,
+        bundle_state: &BundleState,
         canonical_state_provider: &dyn StateProvider,
     ) -> EyreResult<PendingTrieInput> {
         let cached_entry = self.cache.load();
@@ -64,11 +65,9 @@ impl PendingTrieCache {
         }
 
         // Cache miss - compute the trie input with metrics
-        let trie_input = compute_pending_trie_input(
-            canonical_state_provider,
-            &pending_state.bundle_state,
-            &self.metrics,
-        )?;
+        let hashed = canonical_state_provider.hashed_post_state(bundle_state);
+        let trie_input =
+            compute_pending_trie_input(canonical_state_provider, hashed, &self.metrics)?;
 
         // Store the new entry, replacing any previous cached entry
         self.cache.store(Arc::new(Some(CachedEntry {
@@ -91,7 +90,7 @@ impl Default for PendingTrieCache {
 mod tests {
     use alloy_primitives::{Address, B256, U256};
     use base_node_runner::test_utils::{Account, TestHarness};
-    use reth_provider::StateProviderFactory;
+    use reth_provider::{HashedPostStateProvider, StateProviderFactory};
     use reth_revm::{bytecode::Bytecode, primitives::KECCAK_EMPTY, state::AccountInfo};
     use revm_database::states::BundleState;
 
@@ -134,22 +133,21 @@ mod tests {
         let payload_a = PayloadId::new([1; 8]);
         let payload_b = PayloadId::new([2; 8]);
 
-        let state_a =
-            PendingState { bundle_state: bundle_with_nonce(alice, 0, 1), trie_input: None };
-        let state_b =
-            PendingState { bundle_state: bundle_with_nonce(alice, 0, 2), trie_input: None };
+        let bundle_a = bundle_with_nonce(alice, 0, 1);
+        let bundle_b = bundle_with_nonce(alice, 0, 2);
 
+        let hashed_b = state_provider.hashed_post_state(&bundle_b);
         let expected = crate::meter::compute_pending_trie_input(
             &*state_provider,
-            &state_b.bundle_state,
+            hashed_b,
             &Metrics::default(),
         )?;
 
         let cache = PendingTrieCache::new();
-        cache.ensure_cached(payload_a, flashblock_index, &state_a, &*state_provider)?;
+        cache.ensure_cached(payload_a, flashblock_index, &bundle_a, &*state_provider)?;
 
         let result =
-            cache.ensure_cached(payload_b, flashblock_index, &state_b, &*state_provider)?;
+            cache.ensure_cached(payload_b, flashblock_index, &bundle_b, &*state_provider)?;
 
         assert_eq!(
             result.hashed_state, expected.hashed_state,
