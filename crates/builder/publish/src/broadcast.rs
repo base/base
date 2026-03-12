@@ -193,7 +193,7 @@ impl BroadcastLoop {
             .await
             .map_err(|_| ReplayError::SendTimeout)?
             .map_err(ReplayError::WebSocket)?;
-        self.metrics.on_message_sent();
+        self.metrics.on_replay_message_sent();
         Ok(())
     }
 }
@@ -217,12 +217,19 @@ enum ReplayError {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::{
+        num::NonZeroUsize,
+        sync::atomic::{AtomicU64, Ordering},
+    };
 
     use tokio::net::TcpListener;
     use tokio_tungstenite::{accept_async, connect_async};
 
     use super::*;
+
+    fn cap(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).unwrap()
+    }
 
     struct MockMetrics {
         sent: AtomicU64,
@@ -256,7 +263,7 @@ mod tests {
         let (tx, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics: Arc<dyn crate::PublisherMetrics> = Arc::new(MockMetrics::new());
-        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(16)));
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(16))));
 
         let server_handle = tokio::spawn({
             let metrics = Arc::clone(&metrics);
@@ -286,7 +293,7 @@ mod tests {
         let (_tx, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics: Arc<dyn crate::PublisherMetrics> = Arc::new(MockMetrics::new());
-        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(16)));
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(16))));
 
         let server_handle = tokio::spawn({
             let cancel = cancel.clone();
@@ -310,7 +317,7 @@ mod tests {
         let (_tx, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics: Arc<dyn crate::PublisherMetrics> = Arc::new(MockMetrics::new());
-        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(16)));
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(16))));
 
         let server_handle = tokio::spawn({
             async move {
@@ -337,7 +344,7 @@ mod tests {
         let metrics = Arc::new(MockMetrics::new());
         let metrics_clone: Arc<dyn crate::PublisherMetrics> =
             Arc::clone(&metrics) as Arc<dyn crate::PublisherMetrics>;
-        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(16)));
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(16))));
 
         let server_handle = tokio::spawn({
             let cancel = cancel.clone();
@@ -367,7 +374,7 @@ mod tests {
         let (tx, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics: Arc<dyn crate::PublisherMetrics> = Arc::new(MockMetrics::new());
-        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(16)));
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(16))));
 
         let server_handle = tokio::spawn({
             async move {

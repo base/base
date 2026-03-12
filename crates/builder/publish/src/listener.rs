@@ -148,6 +148,7 @@ fn parse_resume_position(request: &http::Request<()>) -> Option<FlashblockPositi
 mod tests {
     use std::{
         net::SocketAddr,
+        num::NonZeroUsize,
         sync::atomic::{AtomicU64, Ordering},
         time::Duration,
     };
@@ -157,6 +158,10 @@ mod tests {
     use tokio_tungstenite::{connect_async, tungstenite::Message};
 
     use super::*;
+
+    fn cap(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).unwrap()
+    }
 
     struct MockMetrics {
         opened: AtomicU64,
@@ -198,7 +203,7 @@ mod tests {
         let (tx, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics = Arc::new(MockMetrics::new());
-        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(16)));
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(16))));
 
         let handle = tokio::spawn({
             let metrics = Arc::clone(&metrics) as Arc<dyn PublisherMetrics>;
@@ -229,7 +234,7 @@ mod tests {
         let (_, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics: Arc<dyn PublisherMetrics> = Arc::new(MockMetrics::new());
-        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(16)));
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(16))));
 
         let handle = tokio::spawn({
             let cancel = cancel.clone();
@@ -248,7 +253,7 @@ mod tests {
         let (tx, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics = Arc::new(MockMetrics::new());
-        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(16)));
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(16))));
 
         let handle = tokio::spawn({
             let metrics = Arc::clone(&metrics) as Arc<dyn PublisherMetrics>;
@@ -320,7 +325,7 @@ mod tests {
         let (_tx, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics = Arc::new(MockMetrics::new());
-        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(16)));
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(16))));
 
         // Pre-populate the ring buffer with entries.
         {

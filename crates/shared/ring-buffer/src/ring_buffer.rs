@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, num::NonZeroUsize};
 
 /// A bounded ring buffer that maps optional positions to values.
 ///
@@ -16,13 +16,9 @@ pub struct RingBuffer<I, V> {
 
 impl<I, V> RingBuffer<I, V> {
     /// Creates a new ring buffer with the given capacity.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `capacity` is zero.
-    pub fn new(capacity: usize) -> Self {
-        assert!(capacity > 0, "ring buffer capacity must be non-zero");
-        Self { entries: VecDeque::with_capacity(capacity), capacity }
+    pub fn new(capacity: NonZeroUsize) -> Self {
+        let cap = capacity.get();
+        Self { entries: VecDeque::with_capacity(cap), capacity: cap }
     }
 
     /// Appends an entry to the buffer.
@@ -78,11 +74,17 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
+
     use super::*;
+
+    fn cap(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).unwrap()
+    }
 
     #[test]
     fn push_and_iterate() {
-        let mut rb = RingBuffer::new(4);
+        let mut rb = RingBuffer::new(cap(4));
         rb.push(Some(1u64), "a");
         rb.push(Some(2), "b");
         rb.push(Some(3), "c");
@@ -93,7 +95,7 @@ mod tests {
 
     #[test]
     fn eviction_at_capacity() {
-        let mut rb = RingBuffer::new(3);
+        let mut rb = RingBuffer::new(cap(3));
         rb.push(Some(1u64), "a");
         rb.push(Some(2), "b");
         rb.push(Some(3), "c");
@@ -106,7 +108,7 @@ mod tests {
 
     #[test]
     fn sentinels_always_included() {
-        let mut rb = RingBuffer::new(4);
+        let mut rb = RingBuffer::new(cap(4));
         rb.push(Some(1u64), "a");
         rb.push(None, "sentinel");
         rb.push(Some(3), "c");
@@ -117,7 +119,7 @@ mod tests {
 
     #[test]
     fn positioned_entries_after() {
-        let mut rb = RingBuffer::new(4);
+        let mut rb = RingBuffer::new(cap(4));
         rb.push(Some(1u64), "a");
         rb.push(None, "sentinel");
         rb.push(Some(3), "c");
@@ -128,7 +130,7 @@ mod tests {
 
     #[test]
     fn tuple_positions() {
-        let mut rb = RingBuffer::<(u64, u64), &str>::new(4);
+        let mut rb = RingBuffer::<(u64, u64), &str>::new(cap(4));
         rb.push(Some((1, 0)), "a");
         rb.push(Some((1, 1)), "b");
         rb.push(Some((2, 0)), "c");
@@ -140,21 +142,15 @@ mod tests {
 
     #[test]
     fn empty_buffer() {
-        let rb = RingBuffer::<u64, &str>::new(4);
+        let rb = RingBuffer::<u64, &str>::new(cap(4));
         assert!(rb.is_empty());
         let vals: Vec<_> = rb.entries_after(&0).collect();
         assert!(vals.is_empty());
     }
 
     #[test]
-    #[should_panic(expected = "capacity must be non-zero")]
-    fn zero_capacity_panics() {
-        let _ = RingBuffer::<u64, &str>::new(0);
-    }
-
-    #[test]
     fn cutoff_at_exact_boundary() {
-        let mut rb = RingBuffer::new(4);
+        let mut rb = RingBuffer::new(cap(4));
         rb.push(Some(5u64), "a");
         rb.push(Some(10), "b");
         rb.push(Some(15), "c");
@@ -166,7 +162,7 @@ mod tests {
 
     #[test]
     fn full_eviction_cycle() {
-        let mut rb = RingBuffer::new(2);
+        let mut rb = RingBuffer::new(cap(2));
         rb.push(Some(1u64), "a");
         rb.push(Some(2), "b");
         rb.push(Some(3), "c");

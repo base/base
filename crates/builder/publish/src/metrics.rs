@@ -10,6 +10,14 @@ pub trait PublisherMetrics: Send + Sync + 'static {
     /// Called each time a message is successfully sent to a subscriber.
     fn on_message_sent(&self);
 
+    /// Called each time a replay message is sent during reconnection replay.
+    ///
+    /// Defaults to calling [`on_message_sent`](Self::on_message_sent) for
+    /// backwards compatibility.
+    fn on_replay_message_sent(&self) {
+        self.on_message_sent();
+    }
+
     /// Called when a new WebSocket connection is accepted.
     fn on_connection_opened(&self);
 
@@ -53,6 +61,7 @@ impl PublisherMetrics for NoopPublisherMetrics {
 /// [`WebSocketPublisher::new`](crate::WebSocketPublisher::new).
 pub struct PublishingMetrics {
     messages_sent_count: metrics::Counter,
+    replay_messages_sent_count: metrics::Counter,
     ws_connections_active: metrics::Gauge,
     ws_lagged_count: metrics::Counter,
     ws_payload_byte_size: metrics::Histogram,
@@ -65,6 +74,9 @@ impl Default for PublishingMetrics {
     fn default() -> Self {
         Self {
             messages_sent_count: metrics::counter!("base_builder_messages_sent_count"),
+            replay_messages_sent_count: metrics::counter!(
+                "base_builder_replay_messages_sent_count"
+            ),
             ws_connections_active: metrics::gauge!("base_builder_ws_connections_active"),
             ws_lagged_count: metrics::counter!("base_builder_ws_lagged_count"),
             ws_payload_byte_size: metrics::histogram!("base_builder_ws_payload_byte_size"),
@@ -84,6 +96,10 @@ impl Debug for PublishingMetrics {
 impl PublisherMetrics for PublishingMetrics {
     fn on_message_sent(&self) {
         self.messages_sent_count.increment(1);
+    }
+
+    fn on_replay_message_sent(&self) {
+        self.replay_messages_sent_count.increment(1);
     }
 
     fn on_connection_opened(&self) {
@@ -120,6 +136,7 @@ mod tests {
     fn noop_publisher_metrics_can_be_constructed_and_called() {
         let metrics = NoopPublisherMetrics;
         metrics.on_message_sent();
+        metrics.on_replay_message_sent();
         metrics.on_connection_opened();
         metrics.on_connection_closed(Duration::from_secs(10));
         metrics.on_lagged(42);
@@ -132,6 +149,7 @@ mod tests {
     fn publishing_metrics_can_be_constructed_and_called() {
         let metrics = PublishingMetrics::default();
         metrics.on_message_sent();
+        metrics.on_replay_message_sent();
         metrics.on_connection_opened();
         metrics.on_connection_closed(Duration::from_secs(10));
         metrics.on_lagged(42);
