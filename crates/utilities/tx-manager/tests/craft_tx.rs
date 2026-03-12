@@ -1,6 +1,6 @@
 //! Integration tests for [`SimpleTxManager`] transaction construction with Anvil.
 
-use alloy_consensus::TxEnvelope;
+use alloy_consensus::{TxEip1559, TxEnvelope};
 use alloy_eips::{Decodable2718, eip4844::Blob};
 use alloy_network::EthereumWallet;
 use alloy_node_bindings::Anvil;
@@ -26,6 +26,19 @@ async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
     (manager, anvil)
 }
 
+/// Decodes raw RLP-encoded transaction bytes into the inner [`TxEip1559`].
+///
+/// Panics if the bytes are not a valid EIP-2718 envelope or the
+/// transaction type is not EIP-1559.
+fn decode_eip1559(raw: &Bytes) -> TxEip1559 {
+    let envelope =
+        TxEnvelope::decode_2718(&mut raw.as_ref()).expect("should decode as valid TxEnvelope");
+    match envelope {
+        TxEnvelope::Eip1559(signed) => signed.strip_signature(),
+        other => panic!("expected EIP-1559, got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn craft_tx_produces_valid_signed_eip1559_transaction() {
     let (manager, anvil) = setup().await;
@@ -40,20 +53,13 @@ async fn craft_tx_produces_valid_signed_eip1559_transaction() {
     };
 
     let raw_tx = manager.craft_tx(&candidate).await.expect("should craft tx");
+    let tx = decode_eip1559(&raw_tx);
 
-    // Decode the raw bytes back to a TxEnvelope.
-    let envelope =
-        TxEnvelope::decode_2718(&mut raw_tx.as_ref()).expect("should decode as valid TxEnvelope");
-
-    // Verify it's an EIP-1559 transaction with correct fields.
-    let signed = match &envelope {
-        TxEnvelope::Eip1559(signed) => signed,
-        other => panic!("expected EIP-1559, got {other:?}"),
-    };
-    let tx = signed.tx();
     assert_eq!(tx.to, TxKind::Call(to));
     assert_eq!(tx.value, value);
     assert_eq!(tx.chain_id, anvil.chain_id());
+    assert!(tx.max_fee_per_gas > 0, "max_fee_per_gas should be non-zero");
+    assert!(tx.max_priority_fee_per_gas > 0, "max_priority_fee_per_gas should be non-zero");
 }
 
 #[tokio::test]
@@ -68,16 +74,10 @@ async fn craft_tx_with_explicit_gas_limit() {
     };
 
     let raw_tx = manager.craft_tx(&candidate).await.expect("should craft tx with explicit gas");
-
-    let envelope =
-        TxEnvelope::decode_2718(&mut raw_tx.as_ref()).expect("should decode as valid TxEnvelope");
+    let tx = decode_eip1559(&raw_tx);
 
     // Verify the explicit gas limit was used, not an estimated value.
-    let signed = match &envelope {
-        TxEnvelope::Eip1559(signed) => signed,
-        other => panic!("expected EIP-1559, got {other:?}"),
-    };
-    assert_eq!(signed.tx().gas_limit, 21_000);
+    assert_eq!(tx.gas_limit, 21_000);
 }
 
 #[tokio::test]
@@ -115,15 +115,9 @@ async fn craft_tx_contract_creation() {
     };
 
     let raw_tx = manager.craft_tx(&candidate).await.expect("should craft contract creation tx");
+    let tx = decode_eip1559(&raw_tx);
 
-    let envelope =
-        TxEnvelope::decode_2718(&mut raw_tx.as_ref()).expect("should decode as valid TxEnvelope");
-
-    let signed = match &envelope {
-        TxEnvelope::Eip1559(signed) => signed,
-        other => panic!("expected EIP-1559, got {other:?}"),
-    };
-    assert_eq!(signed.tx().to, TxKind::Create);
+    assert_eq!(tx.to, TxKind::Create);
 }
 
 #[tokio::test]
@@ -146,19 +140,19 @@ async fn suggest_gas_price_caps_returns_valid_estimates() {
 async fn prepare_produces_valid_signed_transaction() {
     let (manager, _anvil) = setup().await;
 
+    let to = Address::with_last_byte(0x42);
     let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
+        to: Some(to),
         value: U256::from(1_000u64),
         gas_limit: 0,
         ..Default::default()
     };
 
     let raw_tx = manager.prepare(&candidate).await.expect("should prepare tx");
+    let tx = decode_eip1559(&raw_tx);
 
-    let envelope =
-        TxEnvelope::decode_2718(&mut raw_tx.as_ref()).expect("should decode as valid TxEnvelope");
-
-    assert!(matches!(envelope, TxEnvelope::Eip1559(_)));
+    // Confirm the candidate's fields survive the retry wrapper.
+    assert_eq!(tx.to, TxKind::Call(to));
 }
 
 #[tokio::test]
@@ -209,21 +203,8 @@ async fn sequential_craft_tx_increments_nonce() {
     let raw_tx1 = manager.craft_tx(&candidate).await.expect("first tx");
     let raw_tx2 = manager.craft_tx(&candidate).await.expect("second tx");
 
-    let env1 = TxEnvelope::decode_2718(&mut raw_tx1.as_ref()).expect("decode first");
-    let env2 = TxEnvelope::decode_2718(&mut raw_tx2.as_ref()).expect("decode second");
-
-    // Extract nonces from the EIP-1559 transactions.
-    let nonce1 = match &env1 {
-        TxEnvelope::Eip1559(signed) => signed.tx().nonce,
-        other => panic!("expected EIP-1559, got {other:?}"),
-    };
-    let nonce2 = match &env2 {
-        TxEnvelope::Eip1559(signed) => signed.tx().nonce,
-        other => panic!("expected EIP-1559, got {other:?}"),
-    };
-
-    assert_eq!(nonce1, 0);
-    assert_eq!(nonce2, 1);
+    assert_eq!(decode_eip1559(&raw_tx1).nonce, 0);
+    assert_eq!(decode_eip1559(&raw_tx2).nonce, 1);
 }
 
 #[tokio::test]
