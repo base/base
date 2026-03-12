@@ -1,6 +1,7 @@
 //! Nonce allocation and tracking.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};
@@ -95,20 +96,40 @@ pub struct NonceManager {
     inner: Arc<Mutex<NonceState>>,
     provider: RootProvider,
     address: Address,
+    rpc_timeout: Duration,
     #[cfg(test)]
     test_barrier: Option<Arc<TestBarrier>>,
 }
 
 impl NonceManager {
-    /// Creates a new [`NonceManager`] with no cached nonce.
+    /// Default timeout for the `get_transaction_count` RPC call.
+    const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// Creates a new [`NonceManager`] with no cached nonce and the
+    /// [`default RPC timeout`](Self::DEFAULT_RPC_TIMEOUT).
     ///
     /// The first call to [`next_nonce`](Self::next_nonce) will fetch the
     /// current transaction count from the provider.
     pub fn new(provider: RootProvider, address: Address) -> Self {
+        Self::with_rpc_timeout(provider, address, Self::DEFAULT_RPC_TIMEOUT)
+    }
+
+    /// Creates a new [`NonceManager`] with no cached nonce and a custom
+    /// RPC timeout.
+    ///
+    /// The timeout bounds the `get_transaction_count` RPC call performed
+    /// during lazy nonce initialization. See [`new`](Self::new) for the
+    /// default.
+    pub fn with_rpc_timeout(
+        provider: RootProvider,
+        address: Address,
+        rpc_timeout: Duration,
+    ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(NonceState::new())),
             provider,
             address,
+            rpc_timeout,
             #[cfg(test)]
             test_barrier: None,
         }
@@ -163,7 +184,20 @@ impl NonceManager {
             // concurrent callers are not blocked by the RPC round-trip.
             // Multiple concurrent callers may fetch redundantly; only
             // the first writer's value is used.
-            let fetched = self.provider.get_transaction_count(self.address).await.map_err(|e| {
+            let fetched = tokio::time::timeout(
+                self.rpc_timeout,
+                self.provider.get_transaction_count(self.address),
+            )
+            .await
+            .map_err(|_| {
+                warn!(
+                    address = %self.address,
+                    timeout = ?self.rpc_timeout,
+                    "nonce fetch timed out",
+                );
+                TxManagerError::Rpc("nonce fetch timed out".into())
+            })?
+            .map_err(|e| {
                 warn!(
                     error = %e, address = %self.address,
                     "failed to fetch nonce from chain",
@@ -191,10 +225,14 @@ impl NonceManager {
                 continue;
             }
 
-            let nonce = *guard.nonce.get_or_insert_with(|| {
+            // If `nonce` is still `None`, we are the first writer —
+            // populate the cache with the fetched value. If `Some`,
+            // a concurrent caller that won the race already set it.
+            if guard.nonce.is_none() {
                 debug!(nonce = fetched, "nonce fetched from chain");
-                fetched
-            });
+                guard.nonce = Some(fetched);
+            }
+            let nonce = guard.nonce.expect("always Some: set above or by concurrent caller");
             return Self::reserve_nonce(guard, nonce);
         }
 
@@ -292,6 +330,7 @@ mod tests {
                 inner: Arc::new(Mutex::new(NonceState { nonce: Some(nonce), generation: 0 })),
                 provider,
                 address,
+                rpc_timeout: Self::DEFAULT_RPC_TIMEOUT,
                 test_barrier: None,
             }
         }
@@ -310,6 +349,7 @@ mod tests {
                 inner: Arc::new(Mutex::new(NonceState::new())),
                 provider,
                 address,
+                rpc_timeout: Self::DEFAULT_RPC_TIMEOUT,
                 test_barrier: Some(barrier),
             }
         }
