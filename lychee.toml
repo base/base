@@ -1,25 +1,41 @@
 verbose = "debug"
 no_progress = false
 exclude_all_private = false
-max_concurrency = 48
+max_concurrency = 16
 max_retries = 3
 retry_wait_time = 5
 accept = [200, 403, 429, 503] # 403 is often returned by private repos instead of 404; 429 is rate limiting; 503 is transient GitHub unavailability
 exclude_path = [
     "crates/utilities/test-utils/contracts/",
-    "package-lock\\.json",
+    "**/package-lock.json",
 ]
 exclude = [
+    # Internal / placeholder
     'foo.bar',
     'localhost',
+
+    # Shields.io badges that query live GitHub stats (flaky, not real links)
     'https://img.shields.io/github/commit-activity/w/base/base',
     'https://img.shields.io/github/issues-pr-raw/base/base',
-    'https://rustup.rs/',
-    'https://base.mirror.xyz/',
-    'https://www.man7.org/',
-    'https://tidelift.com/',
-    'https://specs.base.org',
-    'https://patreon.com',
-    'https://www.patreon.com',
-    'https://www.linux-mips.org',
+
+    # Sites that block automated HTTP clients / scrapers
+    'https://.*etherscan\.io',         # Block explorer; returns 403/429 for bots
+    'https://medium\.com',             # Medium blocks crawlers
+    'https://.*\.medium\.com',
+    'https://twitter\.com',            # Returns 4xx without a browser UA
+    'https://www\.man7\.org',          # Linux man pages, blocks crawlers
+    'https://www\.linux-mips\.org',
+    'https://patreon\.com',
+    'https://www\.patreon\.com',
+    'https://tidelift\.com',
+
+    # Internal / staging sites not meant for link checking
+    'https://rustup\.rs/',
+    'https://base\.mirror\.xyz/',
+    'https://specs\.base\.org',
+
+    # High-volume npm registry URLs from lockfiles (belt-and-suspenders alongside
+    # the package-lock.json exclude_path; registry URLs are not meaningful doc links)
+    'https://registry\.npmjs\.org',
+    'https://opencollective\.com',     # Funding pages; rate-limits and redirects heavily
 ]

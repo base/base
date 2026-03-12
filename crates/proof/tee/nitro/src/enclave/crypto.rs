@@ -2,7 +2,7 @@
 ///
 /// Provides key generation, parsing, and address derivation using
 /// `alloy-signer-local::PrivateKeySigner`.
-use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+use alloy_primitives::{Address, Bytes, keccak256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_proof_primitives::ECDSA_SIGNATURE_LENGTH;
@@ -10,10 +10,6 @@ use k256::ecdsa::{Signature, SigningKey, VerifyingKey, signature::hazmat::Prehas
 use rand_08::CryptoRng;
 
 use crate::error::{CryptoError, ProposalError, Result};
-
-/// Base length of the signing data without intermediate roots:
-/// address(20) + 7 x bytes32(32) = 244 bytes.
-pub const SIGNING_DATA_BASE_LENGTH: usize = 244;
 
 /// ECDSA secp256k1 operations.
 #[derive(Debug)]
@@ -58,67 +54,11 @@ impl Ecdsa {
     }
 }
 
-/// Proposal signing and verification (`AggregateVerifier` journal format).
+/// Proposal signing and verification.
 #[derive(Debug)]
 pub struct Signing;
 
 impl Signing {
-    /// Build the signing data for a proposal.
-    ///
-    /// The format matches the `AggregateVerifier` contract's journal:
-    /// ```text
-    /// prover(20) || l1OriginHash(32) || prevOutputRoot(32)
-    ///   || startingL2Block(32) || outputRoot(32) || endingL2Block(32)
-    ///   || intermediateRoots(32*N) || configHash(32) || imageHash(32)
-    /// ```
-    #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn build_data(
-        proposer: Address,
-        l1_origin_hash: B256,
-        prev_output_root: B256,
-        starting_l2_block: U256,
-        output_root: B256,
-        ending_l2_block: U256,
-        intermediate_roots: &[B256],
-        config_hash: B256,
-        tee_image_hash: B256,
-    ) -> Vec<u8> {
-        let len = SIGNING_DATA_BASE_LENGTH + 32 * intermediate_roots.len();
-        let mut data = vec![0u8; len];
-        let mut offset = 0;
-
-        data[offset..offset + 20].copy_from_slice(proposer.as_slice());
-        offset += 20;
-
-        data[offset..offset + 32].copy_from_slice(l1_origin_hash.as_slice());
-        offset += 32;
-
-        data[offset..offset + 32].copy_from_slice(prev_output_root.as_slice());
-        offset += 32;
-
-        data[offset..offset + 32].copy_from_slice(&starting_l2_block.to_be_bytes::<32>());
-        offset += 32;
-
-        data[offset..offset + 32].copy_from_slice(output_root.as_slice());
-        offset += 32;
-
-        data[offset..offset + 32].copy_from_slice(&ending_l2_block.to_be_bytes::<32>());
-        offset += 32;
-
-        for root in intermediate_roots {
-            data[offset..offset + 32].copy_from_slice(root.as_slice());
-            offset += 32;
-        }
-
-        data[offset..offset + 32].copy_from_slice(config_hash.as_slice());
-        offset += 32;
-
-        data[offset..offset + 32].copy_from_slice(tee_image_hash.as_slice());
-
-        data
-    }
-
     /// Sign data with keccak256 hash, returns 65-byte signature (r || s || v).
     pub fn sign(signer: &PrivateKeySigner, data: &[u8]) -> Result<Bytes> {
         let hash = keccak256(data);
@@ -151,24 +91,31 @@ impl Signing {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{address, b256};
+    use alloy_primitives::{U256, address, b256};
+    use base_proof_primitives::{PROOF_JOURNAL_BASE_LENGTH, ProofJournal};
     use rand_08::rngs::OsRng;
 
     use super::*;
     use crate::NitroError;
 
-    fn test_signing_data() -> Vec<u8> {
-        Signing::build_data(
-            address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
-            b256!("2222222222222222222222222222222222222222222222222222222222222222"),
-            b256!("3333333333333333333333333333333333333333333333333333333333333333"),
-            U256::from(999),
-            b256!("4444444444444444444444444444444444444444444444444444444444444444"),
-            U256::from(1000),
-            &[],
-            b256!("1111111111111111111111111111111111111111111111111111111111111111"),
-            b256!("5555555555555555555555555555555555555555555555555555555555555555"),
-        )
+    fn test_journal() -> ProofJournal {
+        ProofJournal {
+            proposer: address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+            l1_origin_hash: b256!(
+                "2222222222222222222222222222222222222222222222222222222222222222"
+            ),
+            prev_output_root: b256!(
+                "3333333333333333333333333333333333333333333333333333333333333333"
+            ),
+            starting_l2_block: U256::from(999),
+            output_root: b256!("4444444444444444444444444444444444444444444444444444444444444444"),
+            ending_l2_block: U256::from(1000),
+            intermediate_roots: vec![],
+            config_hash: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
+            tee_image_hash: b256!(
+                "5555555555555555555555555555555555555555555555555555555555555555"
+            ),
+        }
     }
 
     #[test]
@@ -213,89 +160,11 @@ mod tests {
     }
 
     #[test]
-    fn test_build_signing_data_length() {
-        let data = test_signing_data();
-        assert_eq!(data.len(), SIGNING_DATA_BASE_LENGTH);
-        assert_eq!(data.len(), 244);
-    }
-
-    #[test]
-    fn test_build_signing_data_components() {
-        let proposer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-        let l1_origin_hash =
-            b256!("2222222222222222222222222222222222222222222222222222222222222222");
-        let prev_output_root =
-            b256!("3333333333333333333333333333333333333333333333333333333333333333");
-        let starting_l2_block = U256::from(999);
-        let output_root = b256!("4444444444444444444444444444444444444444444444444444444444444444");
-        let ending_l2_block = U256::from(1000);
-        let config_hash = b256!("1111111111111111111111111111111111111111111111111111111111111111");
-        let tee_image_hash =
-            b256!("5555555555555555555555555555555555555555555555555555555555555555");
-
-        let data = Signing::build_data(
-            proposer,
-            l1_origin_hash,
-            prev_output_root,
-            starting_l2_block,
-            output_root,
-            ending_l2_block,
-            &[],
-            config_hash,
-            tee_image_hash,
-        );
-
-        let mut off = 0;
-        assert_eq!(&data[off..off + 20], proposer.as_slice());
-        off += 20;
-        assert_eq!(&data[off..off + 32], l1_origin_hash.as_slice());
-        off += 32;
-        assert_eq!(&data[off..off + 32], prev_output_root.as_slice());
-        off += 32;
-        assert_eq!(&data[off..off + 32], &starting_l2_block.to_be_bytes::<32>());
-        off += 32;
-        assert_eq!(&data[off..off + 32], output_root.as_slice());
-        off += 32;
-        assert_eq!(&data[off..off + 32], &ending_l2_block.to_be_bytes::<32>());
-        off += 32;
-        assert_eq!(&data[off..off + 32], config_hash.as_slice());
-        off += 32;
-        assert_eq!(&data[off..off + 32], tee_image_hash.as_slice());
-    }
-
-    #[test]
-    fn test_build_signing_data_with_intermediate_roots() {
-        let proposer = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-        let intermediate_roots = vec![
-            b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-            b256!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
-        ];
-
-        let data = Signing::build_data(
-            proposer,
-            B256::ZERO,
-            B256::ZERO,
-            U256::ZERO,
-            B256::ZERO,
-            U256::ZERO,
-            &intermediate_roots,
-            B256::ZERO,
-            B256::ZERO,
-        );
-
-        assert_eq!(data.len(), SIGNING_DATA_BASE_LENGTH + 64);
-
-        let ir_offset = 20 + 5 * 32;
-        assert_eq!(&data[ir_offset..ir_offset + 32], intermediate_roots[0].as_slice());
-        assert_eq!(&data[ir_offset + 32..ir_offset + 64], intermediate_roots[1].as_slice());
-    }
-
-    #[test]
     fn test_sign_and_verify_roundtrip() {
         let mut rng = OsRng;
         let signer = Ecdsa::generate(&mut rng).expect("failed to generate signer");
 
-        let data = test_signing_data();
+        let data = test_journal().encode();
         let signature = Signing::sign(&signer, &data).expect("signing failed");
         assert_eq!(signature.len(), ECDSA_SIGNATURE_LENGTH);
 
@@ -310,7 +179,7 @@ mod tests {
         let signer1 = Ecdsa::generate(&mut rng).expect("failed to generate signer");
         let signer2 = Ecdsa::generate(&mut rng).expect("failed to generate signer");
 
-        let data = test_signing_data();
+        let data = test_journal().encode();
         let signature = Signing::sign(&signer1, &data).expect("signing failed");
 
         let wrong_public_key = Ecdsa::public_key_bytes(&signer2);
@@ -324,19 +193,13 @@ mod tests {
         let mut rng = OsRng;
         let signer = Ecdsa::generate(&mut rng).expect("failed to generate signer");
 
-        let data1 = test_signing_data();
+        let data1 = test_journal().encode();
 
-        let data2 = Signing::build_data(
-            address!("0000000000000000000000000000000000000001"),
-            b256!("2222222222222222222222222222222222222222222222222222222222222222"),
-            b256!("3333333333333333333333333333333333333333333333333333333333333333"),
-            U256::from(999),
-            b256!("4444444444444444444444444444444444444444444444444444444444444444"),
-            U256::from(1000),
-            &[],
-            b256!("1111111111111111111111111111111111111111111111111111111111111111"),
-            b256!("5555555555555555555555555555555555555555555555555555555555555555"),
-        );
+        let journal2 = ProofJournal {
+            proposer: address!("0000000000000000000000000000000000000001"),
+            ..test_journal()
+        };
+        let data2 = journal2.encode();
 
         let signature = Signing::sign(&signer, &data1).expect("signing failed");
 
@@ -348,7 +211,7 @@ mod tests {
     #[test]
     fn test_invalid_signature_length() {
         let public_key = vec![0x04; 65];
-        let data = [0u8; SIGNING_DATA_BASE_LENGTH];
+        let data = [0u8; PROOF_JOURNAL_BASE_LENGTH];
         let short_sig = vec![0u8; 64];
 
         let result = Signing::verify(&public_key, &data, &short_sig);

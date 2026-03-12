@@ -4423,8 +4423,11 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "alloy-rpc-types-eth",
+ "clap",
+ "humantime",
  "proptest",
  "rstest",
+ "serde",
  "thiserror 2.0.18",
  "tokio",
 ]
