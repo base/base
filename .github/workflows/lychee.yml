@@ -29,3 +29,5 @@ jobs:
         with:
           args: --config ./lychee.toml --cache-exclude-status 429 --root-dir ${{ github.workspace }}/docs/specs/public --exclude-path 'crates/shared/primitives/contracts/' '**/README.md' './docs/**/*.md' './docs/**/*.mdx' './docs/**/*.html' './docs/**/*.json'
           fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
