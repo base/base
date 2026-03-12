@@ -91,13 +91,11 @@ impl SimpleTxManager {
 
         // Cross-validate chain_id against the provider to catch
         // misconfiguration early rather than failing at tx submission.
-        let provider_chain_id = tokio::time::timeout(
-            config.network_timeout,
-            provider.get_chain_id(),
-        )
-        .await
-        .map_err(|_| TxManagerError::Rpc("get_chain_id timed out".into()))?
-        .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+        let provider_chain_id =
+            tokio::time::timeout(config.network_timeout, provider.get_chain_id())
+                .await
+                .map_err(|_| TxManagerError::Rpc("get_chain_id timed out".into()))?
+                .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
 
         if chain_id != provider_chain_id {
             return Err(TxManagerError::InvalidConfig(format!(
