@@ -50,8 +50,8 @@ impl BaseNodeExtension for TxForwardingExtension {
             executor.spawn_with_graceful_shutdown_signal(|signal| {
                 Box::pin(async move {
                     let _guard = signal.await;
-                    forwarder.shutdown().await;
                     consumer.shutdown();
+                    forwarder.shutdown().await;
                 })
             });
 
