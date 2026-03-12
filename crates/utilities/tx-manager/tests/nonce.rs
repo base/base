@@ -1,6 +1,11 @@
 //! Integration tests for [`NonceManager`] with an Anvil backend.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
 use alloy_node_bindings::Anvil;
+use alloy_primitives::Address;
 use alloy_provider::RootProvider;
 use base_tx_manager::{NonceGuard, NonceManager, TxManagerError};
 
@@ -111,7 +116,7 @@ async fn provider_failure_returns_rpc_error() {
     // Point the provider at a non-listening port so the RPC call fails.
     let url = "http://127.0.0.1:1".parse().expect("valid url");
     let provider = RootProvider::new_http(url);
-    let address = alloy_primitives::Address::ZERO;
+    let address = Address::ZERO;
     let manager = NonceManager::new(provider, address);
 
     let err = manager.next_nonce().await.expect_err("should fail on unreachable provider");
@@ -166,4 +171,72 @@ async fn nonce_guard_is_send() {
     /// Asserts that `T` implements [`Send`].
     fn assert_send<T: Send>() {}
     assert_send::<NonceGuard>();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reset_blocks_while_guard_held() {
+    let (manager, _anvil) = setup();
+
+    // Reserve nonce 0 — the guard holds the lock.
+    let guard = manager.next_nonce().await.unwrap();
+    assert_eq!(guard.nonce(), 0);
+
+    let reset_completed = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&reset_completed);
+    let mgr = manager.clone();
+
+    // Spawn a task that calls reset(). It should block because the
+    // guard holds the same mutex.
+    let handle = tokio::spawn(async move {
+        mgr.reset().await;
+        flag.store(true, Ordering::SeqCst);
+    });
+
+    // Give the spawned task time to contend on the lock.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !reset_completed.load(Ordering::SeqCst),
+        "reset() must not complete while a NonceGuard is held",
+    );
+
+    // Drop the guard — reset() should now complete.
+    drop(guard);
+    handle.await.unwrap();
+    assert!(
+        reset_completed.load(Ordering::SeqCst),
+        "reset() should have completed after guard was dropped",
+    );
+
+    // After the reset, next nonce should re-fetch from chain (0).
+    let g = manager.next_nonce().await.unwrap();
+    assert_eq!(g.nonce(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_next_nonce_and_reset_stress() {
+    let (manager, _anvil) = setup();
+
+    // Interleave next_nonce() and reset() calls concurrently to
+    // exercise the retry-loop path where reset() clears the cache
+    // between the peek and lock acquisition in next_nonce().
+    let mut handles = Vec::new();
+    for i in 0u32..100 {
+        let mgr = manager.clone();
+        if i % 10 == 0 {
+            // Sprinkle resets to trigger the retry path.
+            handles.push(tokio::spawn(async move {
+                mgr.reset().await;
+            }));
+        } else {
+            handles.push(tokio::spawn(async move {
+                let guard = mgr.next_nonce().await.unwrap();
+                drop(guard);
+            }));
+        }
+    }
+
+    // All operations must complete without deadlock or panic.
+    for h in handles {
+        h.await.unwrap();
+    }
 }
