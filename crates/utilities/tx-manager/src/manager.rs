@@ -202,9 +202,17 @@ impl SimpleTxManager {
         let caps = self.suggest_gas_price_caps(candidate).await?;
 
         // Step 2: Check fee limits.
+        //
+        // The `suggested` parameter is the raw tip_cap (the network's
+        // recommendation before our minimums were applied). Using
+        // tip_cap rather than gas_fee_cap makes the ceiling meaningful
+        // for initial transactions: the guard rejects a gas_fee_cap that
+        // exceeds `fee_limit_multiplier × tip_cap`. During fee bumps
+        // (future ticket) the caller passes the previous fee as
+        // `suggested` instead.
         FeeCalculator::check_limits(
             caps.gas_fee_cap,
-            caps.gas_fee_cap,
+            caps.gas_tip_cap,
             self.config.fee_limit_multiplier,
             self.config.fee_limit_threshold,
         )?;
