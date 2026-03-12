@@ -38,8 +38,7 @@ impl NitroProverServer {
     /// Start the JSON-RPC HTTP server on the given address.
     pub async fn run(self, addr: SocketAddr) -> eyre::Result<ServerHandle> {
         let middleware = tower::ServiceBuilder::new()
-            .layer(ProxyGetRequestLayer::new([("/healthz", "healthz")])?)
-            .timeout(Duration::from_secs(2));
+            .layer(ProxyGetRequestLayer::new([("/healthz", "healthz")])?);
         let server = Server::builder().set_http_middleware(middleware).build(addr).await?;
         let addr = server.local_addr()?;
         info!(addr = %addr, "nitro rpc server started");
