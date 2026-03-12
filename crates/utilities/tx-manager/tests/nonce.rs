@@ -21,7 +21,7 @@ fn setup() -> (NonceManager, alloy_node_bindings::AnvilInstance) {
     let url = anvil.endpoint_url();
     let provider = RootProvider::new_http(url);
     let address = anvil.addresses()[0];
-    let manager = NonceManager::new(provider, address);
+    let manager = NonceManager::new(provider, address, Duration::from_secs(10));
     (manager, anvil)
 }
 
@@ -122,7 +122,7 @@ async fn provider_failure_returns_rpc_error() {
     let url = "http://127.0.0.1:1".parse().expect("valid url");
     let provider = RootProvider::new_http(url);
     let address = Address::ZERO;
-    let manager = NonceManager::new(provider, address);
+    let manager = NonceManager::new(provider, address, Duration::from_secs(10));
 
     let err = manager.next_nonce().await.expect_err("should fail on unreachable provider");
     assert!(matches!(err, TxManagerError::Rpc(_)), "expected TxManagerError::Rpc, got {err:?}");
@@ -144,7 +144,7 @@ async fn rpc_timeout_returns_rpc_error() {
     let url = format!("http://{addr}").parse().expect("valid url");
     let provider = RootProvider::new_http(url);
     let address = Address::ZERO;
-    let manager = NonceManager::with_rpc_timeout(provider, address, Duration::from_millis(1));
+    let manager = NonceManager::new(provider, address, Duration::from_millis(1));
 
     let err = manager.next_nonce().await.expect_err("should time out");
     match &err {

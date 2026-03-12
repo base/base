@@ -66,29 +66,14 @@ pub struct NonceManager {
 }
 
 impl NonceManager {
-    /// Default timeout for the `get_transaction_count` RPC call.
-    const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(10);
-
-    /// Creates a new [`NonceManager`] with no cached nonce and the
-    /// default RPC timeout (10 seconds).
+    /// Creates a new [`NonceManager`] with no cached nonce.
+    ///
+    /// The `rpc_timeout` bounds the `get_transaction_count` RPC call
+    /// performed during lazy nonce initialization.
     ///
     /// The first call to [`next_nonce`](Self::next_nonce) will fetch the
     /// current transaction count from the provider.
-    pub fn new(provider: RootProvider, address: Address) -> Self {
-        Self::with_rpc_timeout(provider, address, Self::DEFAULT_RPC_TIMEOUT)
-    }
-
-    /// Creates a new [`NonceManager`] with no cached nonce and a custom
-    /// RPC timeout.
-    ///
-    /// The timeout bounds the `get_transaction_count` RPC call performed
-    /// during lazy nonce initialization. See [`new`](Self::new) for the
-    /// default.
-    pub fn with_rpc_timeout(
-        provider: RootProvider,
-        address: Address,
-        rpc_timeout: Duration,
-    ) -> Self {
+    pub fn new(provider: RootProvider, address: Address, rpc_timeout: Duration) -> Self {
         Self { inner: Arc::new(Mutex::new(NonceState::new())), provider, address, rpc_timeout }
     }
 
@@ -279,7 +264,7 @@ mod tests {
                 inner: Arc::new(Mutex::new(NonceState { nonce: Some(nonce), generation: 0 })),
                 provider,
                 address,
-                rpc_timeout: Self::DEFAULT_RPC_TIMEOUT,
+                rpc_timeout: Duration::from_secs(10),
             }
         }
     }
