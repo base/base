@@ -3,7 +3,7 @@ use std::time::Duration;
 use alloy_primitives::Address;
 use alloy_signer::k256::ecdsa::SigningKey;
 use alloy_signer_local::PrivateKeySigner;
-use clap::Parser;
+use clap::{ArgGroup, Parser};
 use url::Url;
 
 use crate::{RegistrarError, Result};
@@ -47,7 +47,16 @@ impl std::fmt::Debug for SigningConfig {
 /// for logical conflicts. Use [`RegistrarConfig::signing_config`] to obtain the
 /// resolved [`SigningConfig`].
 #[derive(Clone, Parser)]
-#[command(name = "prover-registrar", version, about)]
+#[command(
+    name = "prover-registrar",
+    version,
+    about,
+    group(
+        ArgGroup::new("signing_method")
+            .required(true)
+            .args(["private_key", "signer_endpoint"])
+    )
+)]
 pub struct RegistrarConfig {
     // ── L1 ────────────────────────────────────────────────────────────────────
     /// L1 Ethereum RPC endpoint.
@@ -175,6 +184,16 @@ impl RegistrarConfig {
             }
         }
 
+        if let Some(pk) = &self.private_key {
+            let hex_str = pk.strip_prefix("0x").unwrap_or(pk);
+            let key_bytes = hex::decode(hex_str).map_err(|_| {
+                RegistrarError::Config("--private-key: invalid hex encoding".into())
+            })?;
+            SigningKey::from_slice(&key_bytes).map_err(|_| {
+                RegistrarError::Config("--private-key: invalid secp256k1 key".into())
+            })?;
+        }
+
         let boundless_key_hex =
             self.boundless_private_key.strip_prefix("0x").unwrap_or(&self.boundless_private_key);
         if hex::decode(boundless_key_hex).map(|b| b.len() != 32).unwrap_or(true) {
@@ -292,5 +311,85 @@ mod tests {
     fn poll_interval_returns_duration() {
         let config = RegistrarConfig::parse_from(base_args());
         assert_eq!(config.poll_interval(), Duration::from_secs(30));
+    }
+
+    fn remote_args() -> Vec<&'static str> {
+        vec![
+            "prover-registrar",
+            "--l1-rpc-url",
+            "http://localhost:8545",
+            "--system-config-global-address",
+            "0x0000000000000000000000000000000000000001",
+            "--target-group-arn",
+            "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/test/abc",
+            "--signer-endpoint",
+            "http://localhost:8546",
+            "--signer-address",
+            "0x0000000000000000000000000000000000000002",
+            "--boundless-rpc-url",
+            "http://localhost:9545",
+            "--boundless-private-key",
+            "0202020202020202020202020202020202020202020202020202020202020202",
+            "--boundless-verifier-program-url",
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ]
+    }
+
+    #[test]
+    fn valid_remote_signer_config_passes_validate() {
+        let config = RegistrarConfig::parse_from(remote_args());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn signing_config_remote_returns_remote_variant() {
+        let config = RegistrarConfig::parse_from(remote_args());
+        let signing = config.signing_config().unwrap();
+        assert!(matches!(signing, SigningConfig::Remote(_)));
+    }
+
+    #[test]
+    fn no_signing_method_fails_clap_parse() {
+        // Omit both --private-key and --signer-endpoint; clap ArgGroup requires one.
+        let args = vec![
+            "prover-registrar",
+            "--l1-rpc-url",
+            "http://localhost:8545",
+            "--system-config-global-address",
+            "0x0000000000000000000000000000000000000001",
+            "--target-group-arn",
+            "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/test/abc",
+            "--boundless-rpc-url",
+            "http://localhost:9545",
+            "--boundless-private-key",
+            "0202020202020202020202020202020202020202020202020202020202020202",
+            "--boundless-verifier-program-url",
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ];
+        assert!(RegistrarConfig::try_parse_from(args).is_err());
+    }
+
+    #[test]
+    fn signer_endpoint_without_address_fails_validate() {
+        // --signer-endpoint alone satisfies the ArgGroup but lacks --signer-address.
+        let args = vec![
+            "prover-registrar",
+            "--l1-rpc-url",
+            "http://localhost:8545",
+            "--system-config-global-address",
+            "0x0000000000000000000000000000000000000001",
+            "--target-group-arn",
+            "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/test/abc",
+            "--signer-endpoint",
+            "http://localhost:8546",
+            "--boundless-rpc-url",
+            "http://localhost:9545",
+            "--boundless-private-key",
+            "0202020202020202020202020202020202020202020202020202020202020202",
+            "--boundless-verifier-program-url",
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ];
+        let config = RegistrarConfig::parse_from(args);
+        assert!(config.validate().is_err());
     }
 }
