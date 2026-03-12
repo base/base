@@ -179,6 +179,12 @@ pub struct GasPriceCaps {
     pub gas_tip_cap: u128,
     /// Maximum total fee per gas (base fee + tip).
     pub gas_fee_cap: u128,
+    /// Gas fee cap computed from the raw provider values before enforcing
+    /// configured minimums (`min_tip_cap`, `min_basefee`).
+    ///
+    /// Used as the `suggested` baseline in [`FeeCalculator::check_limits`]
+    /// so the fee ceiling reflects inflation caused by our enforced minimums.
+    pub raw_gas_fee_cap: u128,
     /// Maximum blob fee per gas (for EIP-4844 txs). `None` for non-blob txs.
     pub blob_fee_cap: Option<u128>,
 }
@@ -198,6 +204,7 @@ mod tests {
 
         assert_eq!(caps.gas_tip_cap, 0);
         assert_eq!(caps.gas_fee_cap, 0);
+        assert_eq!(caps.raw_gas_fee_cap, 0);
         assert!(caps.blob_fee_cap.is_none());
     }
 

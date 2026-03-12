@@ -72,16 +72,16 @@ impl SimpleTxManager {
     ///
     /// # Errors
     ///
-    /// Returns [`TxManagerError::Rpc`] if the provider is unreachable or
-    /// the chain ID does not match. Returns a config validation error
-    /// (mapped to [`TxManagerError::Rpc`]) if the config is invalid.
+    /// Returns [`TxManagerError::InvalidConfig`] if config validation
+    /// fails or the chain ID does not match the provider. Returns
+    /// [`TxManagerError::Rpc`] if the provider is unreachable.
     pub async fn new(
         provider: RootProvider,
         wallet: EthereumWallet,
         config: TxManagerConfig,
         chain_id: u64,
     ) -> TxManagerResult<Self> {
-        config.validate().map_err(|e| TxManagerError::Rpc(e.to_string()))?;
+        config.validate().map_err(|e| TxManagerError::InvalidConfig(e.to_string()))?;
 
         // Cross-validate chain_id against the provider to catch
         // misconfiguration early rather than failing at tx submission.
@@ -91,7 +91,7 @@ impl SimpleTxManager {
             .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
 
         if chain_id != provider_chain_id {
-            return Err(TxManagerError::Rpc(format!(
+            return Err(TxManagerError::InvalidConfig(format!(
                 "chain_id mismatch: supplied {chain_id}, provider returned {provider_chain_id}"
             )));
         }
@@ -184,6 +184,9 @@ impl SimpleTxManager {
     /// Returns a [`GasPriceCaps`] containing:
     /// - `gas_tip_cap`: maximum priority fee (enforced >= `config.min_tip_cap`)
     /// - `gas_fee_cap`: `tip + 2 * base_fee` via [`FeeCalculator::calc_gas_fee_cap`]
+    /// - `raw_gas_fee_cap`: fee cap from the raw provider values before
+    ///   enforcing minimums, used as the `suggested` baseline in
+    ///   [`FeeCalculator::check_limits`]
     /// - `blob_fee_cap`: `None` (blob transactions not yet supported)
     ///
     /// # Errors
@@ -194,14 +197,11 @@ impl SimpleTxManager {
         _candidate: &TxCandidate,
     ) -> TxManagerResult<GasPriceCaps> {
         // Query tip cap.
-        let tip_cap = self
+        let raw_tip_cap = self
             .provider
             .get_max_priority_fee_per_gas()
             .await
             .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
-
-        // Enforce minimum tip cap.
-        let tip_cap = tip_cap.max(self.config.min_tip_cap);
 
         // Query latest block for base fee.
         let latest_block = self
@@ -211,20 +211,24 @@ impl SimpleTxManager {
             .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?
             .ok_or_else(|| TxManagerError::Rpc("latest block not found".to_string()))?;
 
-        let base_fee = u128::from(
+        let raw_base_fee = u128::from(
             latest_block
                 .header
                 .base_fee_per_gas
                 .ok_or_else(|| TxManagerError::Rpc("base fee not available".to_string()))?,
         );
 
-        // Enforce minimum base fee.
-        let base_fee = base_fee.max(self.config.min_basefee);
+        // Compute raw gas fee cap from provider values before enforcing minimums.
+        let raw_gas_fee_cap = FeeCalculator::calc_gas_fee_cap(raw_base_fee, raw_tip_cap);
 
-        // Compute gas fee cap.
+        // Enforce minimum tip cap and base fee.
+        let tip_cap = raw_tip_cap.max(self.config.min_tip_cap);
+        let base_fee = raw_base_fee.max(self.config.min_basefee);
+
+        // Compute gas fee cap with enforced minimums.
         let gas_fee_cap = FeeCalculator::calc_gas_fee_cap(base_fee, tip_cap);
 
-        Ok(GasPriceCaps { gas_tip_cap: tip_cap, gas_fee_cap, blob_fee_cap: None })
+        Ok(GasPriceCaps { gas_tip_cap: tip_cap, gas_fee_cap, raw_gas_fee_cap, blob_fee_cap: None })
     }
 
     /// Constructs and signs a single transaction from a [`TxCandidate`].
@@ -244,7 +248,9 @@ impl SimpleTxManager {
     pub async fn craft_tx(&self, candidate: &TxCandidate) -> TxManagerResult<Bytes> {
         // Blob transactions are not yet supported.
         if !candidate.blobs.is_empty() {
-            return Err(TxManagerError::Rpc("blob transactions are not yet supported".to_string()));
+            return Err(TxManagerError::Unsupported(
+                "blob transactions are not yet supported".to_string(),
+            ));
         }
 
         // Step 1: Get fee estimates.
@@ -252,16 +258,16 @@ impl SimpleTxManager {
 
         // Step 2: Check fee limits.
         //
-        // The `suggested` parameter is the raw tip_cap (the network's
-        // recommendation before our minimums were applied). Using
-        // tip_cap rather than gas_fee_cap makes the ceiling meaningful
-        // for initial transactions: the guard rejects a gas_fee_cap that
-        // exceeds `fee_limit_multiplier × tip_cap`. During fee bumps
+        // The `suggested` parameter is the raw gas_fee_cap computed from
+        // the provider's values before enforcing our configured minimums
+        // (`min_tip_cap`, `min_basefee`). This detects when enforced
+        // minimums inflate the fee cap beyond
+        // `fee_limit_multiplier × raw_provider_fee_cap`. During fee bumps
         // (future ticket) the caller passes the previous fee as
         // `suggested` instead.
         FeeCalculator::check_limits(
             caps.gas_fee_cap,
-            caps.gas_tip_cap,
+            caps.raw_gas_fee_cap,
             self.config.fee_limit_multiplier,
             self.config.fee_limit_threshold,
         )?;
@@ -306,9 +312,9 @@ impl SimpleTxManager {
 
         info!(
             nonce = guard.nonce(),
-            gas_limit,
-            tip_cap = caps.gas_tip_cap,
-            fee_cap = caps.gas_fee_cap,
+            gas_limit = %gas_limit,
+            tip_cap = %caps.gas_tip_cap,
+            fee_cap = %caps.gas_fee_cap,
             "transaction crafted",
         );
 
@@ -326,7 +332,7 @@ impl SimpleTxManager {
             Err(e) => {
                 // Roll back nonce on sign failure.
                 guard.rollback();
-                Err(TxManagerError::Rpc(format!("signing failed: {e}")))
+                Err(TxManagerError::Sign(e.to_string()))
             }
         }
     }

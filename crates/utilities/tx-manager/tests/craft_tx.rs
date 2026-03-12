@@ -92,13 +92,13 @@ async fn craft_tx_rejects_blob_transactions() {
 
     let err = manager.craft_tx(&candidate).await.expect_err("should reject blob tx");
     match &err {
-        TxManagerError::Rpc(msg) => {
+        TxManagerError::Unsupported(msg) => {
             assert!(
                 msg.contains("blob transactions are not yet supported"),
                 "expected blob rejection message, got: {msg}",
             );
         }
-        other => panic!("expected TxManagerError::Rpc, got {other:?}"),
+        other => panic!("expected TxManagerError::Unsupported, got {other:?}"),
     }
 }
 
@@ -223,13 +223,13 @@ async fn new_rejects_chain_id_mismatch() {
         .expect_err("should reject mismatched chain_id");
 
     match &err {
-        TxManagerError::Rpc(msg) => {
+        TxManagerError::InvalidConfig(msg) => {
             assert!(
                 msg.contains("chain_id mismatch"),
                 "expected chain_id mismatch error, got: {msg}",
             );
         }
-        other => panic!("expected TxManagerError::Rpc, got {other:?}"),
+        other => panic!("expected TxManagerError::InvalidConfig, got {other:?}"),
     }
 }
 
