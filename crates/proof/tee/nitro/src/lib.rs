@@ -6,6 +6,9 @@ pub use error::{AttestationError, CryptoError, NitroError, NsmError, ProposalErr
 mod oracle;
 pub use oracle::Oracle;
 
+mod transport;
+pub use transport::{Frame, TransportError, TransportResult};
+
 mod enclave;
 #[cfg(target_os = "linux")]
 pub use enclave::NitroEnclave;

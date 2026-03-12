@@ -3,13 +3,14 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 #[cfg(target_os = "linux")]
-use base_proof_transport::Frame;
-#[cfg(target_os = "linux")]
 use tokio::time::{Duration, timeout};
 #[cfg(target_os = "linux")]
 use tokio_vsock::{VsockAddr, VsockListener};
 #[cfg(target_os = "linux")]
 use tracing::{debug, info, warn};
+
+#[cfg(target_os = "linux")]
+use crate::transport::Frame;
 
 mod attestation;
 pub use attestation::{
