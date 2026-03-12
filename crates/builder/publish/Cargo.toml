@@ -16,6 +16,7 @@ http.workspace = true
 serde.workspace = true
 futures.workspace = true
 tracing.workspace = true
+thiserror.workspace = true
 tokio-util.workspace = true
 base-metrics.workspace = true
 parking_lot.workspace = true
