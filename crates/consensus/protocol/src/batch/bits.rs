@@ -132,7 +132,7 @@ impl SpanBatchBits {
     }
 
     /// Resizes an array from the right. Useful for big-endian zero extension.
-    fn resize_from_right<T: Default + Clone>(vec: &mut Vec<T>, new_size: usize) {
+    fn resize_from_right<T: Default + Copy>(vec: &mut Vec<T>, new_size: usize) {
         let current_size = vec.len();
         match new_size.cmp(&current_size) {
             Ordering::Less => {
@@ -144,8 +144,8 @@ impl SpanBatchBits {
                 // Calculate how many new elements to add.
                 let additional = new_size - current_size;
                 // Prepend new elements with default values.
-                let mut prepend_elements = vec![T::default(); additional];
-                prepend_elements.append(vec);
+                let mut prepend_elements = vec![T::default(); new_size];
+                prepend_elements[additional..].copy_from_slice(vec.as_ref());
                 *vec = prepend_elements;
             }
             Ordering::Equal => { /* If new_size == current_size, do nothing. */ }
@@ -156,6 +156,7 @@ impl SpanBatchBits {
 #[cfg(test)]
 mod test {
     use proptest::{collection::vec, prelude::any, proptest};
+    use rstest::rstest;
 
     use super::*;
 
@@ -233,5 +234,21 @@ mod test {
         assert_eq!(bits.get_bit(17), Some(1));
         assert_eq!(bits.get_bit(32), None);
         assert_eq!(bits.0.len(), 3);
+    }
+
+    #[rstest]
+    #[case::bitlist_bitlen_empty_extend(vec![], 7)]
+    #[case::bitlist_bitlen_extend(vec![0b0100_0010, 0b1000_0001], 16)]
+    #[case::bitlist_bitlen_same(vec![0b0100_0010, 0b1000_0001, 0b0101_0011], 23)]
+    fn test_span_bitlist_resize(#[case] init: Vec<u8>, #[case] idx: usize) {
+        let mut bits = SpanBatchBits(init);
+        bits.set_bit(idx, true);
+
+        let byte_idx = idx / 8;
+        let bit_idx = idx % 8 + 1;
+        let expected_len = (byte_idx * 8) + bit_idx;
+
+        assert_eq!(bits.get_bit(idx), Some(1));
+        assert_eq!(bits.bit_len(), expected_len);
     }
 }
