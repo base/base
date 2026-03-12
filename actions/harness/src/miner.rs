@@ -1,4 +1,5 @@
 use alloy_consensus::{Header, Receipt};
+use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bytes, Log};
 use base_protocol::BlockInfo;
 use tracing::info;
@@ -81,6 +82,12 @@ pub struct L1Block {
     ///
     /// [`SystemConfig`]: base_consensus_genesis::SystemConfig
     pub receipts: Vec<Receipt>,
+    /// EIP-4844 blob sidecars attached to this block.
+    ///
+    /// Each entry is a `(versioned_hash, blob_data)` pair. Action tests store
+    /// blobs here rather than in a separate beacon chain, and
+    /// [`ActionBlobProvider`](crate::ActionBlobProvider) looks them up by hash.
+    pub blob_sidecars: Vec<(B256, Box<Blob>)>,
 }
 
 impl L1Block {
@@ -109,9 +116,9 @@ impl L1Block {
 /// (or [`Action::act`]) advances the chain by one block, draining any
 /// pending batcher transactions into the new block's body.
 ///
-/// The miner also tracks safe and finalized head pointers using fixed
-/// offsets that approximate Ethereum's post-merge consensus behaviour:
-/// safe lags 32 blocks behind the latest head, and finalized lags 64.
+/// The miner tracks safe and finalized head pointers via explicit movable
+/// numbers. Tests advance them with [`act_l1_safe_next`],
+/// [`act_l1_finalize_next`], [`act_l1_safe`], and [`act_l1_finalize`].
 ///
 /// # Reorgs
 ///
@@ -130,6 +137,10 @@ impl L1Block {
 ///
 /// [`mine_block`]: L1Miner::mine_block
 /// [`reorg_to`]: L1Miner::reorg_to
+/// [`act_l1_safe_next`]: L1Miner::act_l1_safe_next
+/// [`act_l1_finalize_next`]: L1Miner::act_l1_finalize_next
+/// [`act_l1_safe`]: L1Miner::act_l1_safe
+/// [`act_l1_finalize`]: L1Miner::act_l1_finalize
 #[derive(Debug)]
 pub struct L1Miner {
     /// All blocks produced so far, indexed by block number.
@@ -138,11 +149,27 @@ pub struct L1Miner {
     pending: Vec<PendingTx>,
     /// Logs to be wrapped into a single receipt in the next mined block.
     pending_logs: Vec<Log>,
+    /// EIP-4844 blob sidecars to be attached to the next mined block.
+    pending_blobs: Vec<(B256, Box<Blob>)>,
     /// Configuration.
     config: L1MinerConfig,
     /// Monotonically increasing fork counter, stamped into every block's
     /// `extra_data` to ensure distinct hashes across forks.
     fork_id: u64,
+    /// The L1 block number that is considered safe.
+    ///
+    /// Advanced explicitly via [`act_l1_safe_next`] or [`act_l1_safe`].
+    ///
+    /// [`act_l1_safe_next`]: L1Miner::act_l1_safe_next
+    /// [`act_l1_safe`]: L1Miner::act_l1_safe
+    safe_number: u64,
+    /// The L1 block number that is considered finalized.
+    ///
+    /// Advanced explicitly via [`act_l1_finalize_next`] or [`act_l1_finalize`].
+    ///
+    /// [`act_l1_finalize_next`]: L1Miner::act_l1_finalize_next
+    /// [`act_l1_finalize`]: L1Miner::act_l1_finalize
+    finalized_number: u64,
 }
 
 impl L1Miner {
@@ -152,8 +179,18 @@ impl L1Miner {
             header: Header { number: 0, timestamp: 0, ..Default::default() },
             batcher_txs: vec![],
             receipts: vec![],
+            blob_sidecars: vec![],
         };
-        Self { blocks: vec![genesis], pending: vec![], pending_logs: vec![], config, fork_id: 0 }
+        Self {
+            blocks: vec![genesis],
+            pending: vec![],
+            pending_logs: vec![],
+            pending_blobs: vec![],
+            config,
+            fork_id: 0,
+            safe_number: 0,
+            finalized_number: 0,
+        }
     }
 
     /// Queue a [`Log`] to be included in a synthetic receipt in the next
@@ -168,6 +205,15 @@ impl L1Miner {
         self.pending_logs.push(log);
     }
 
+    /// Queue an EIP-4844 blob sidecar for inclusion in the next mined block.
+    ///
+    /// The `(hash, blob)` pair is stored in [`L1Block::blob_sidecars`] when
+    /// the next block is mined. [`ActionBlobProvider`](crate::ActionBlobProvider)
+    /// looks blobs up from this sidecar by versioned hash.
+    pub fn enqueue_blob(&mut self, hash: B256, blob: Box<Blob>) {
+        self.pending_blobs.push((hash, blob));
+    }
+
     /// Return the most recently mined block.
     pub fn latest(&self) -> &L1Block {
         // Safety: `blocks` always contains at least the genesis block.
@@ -179,20 +225,64 @@ impl L1Miner {
         self.latest().number()
     }
 
-    /// Return the safe head, lagging 32 blocks behind the latest head.
-    ///
-    /// If the chain is shorter than 32 blocks, returns the genesis block.
+    /// Return the safe head block.
     pub fn safe_head(&self) -> &L1Block {
-        let idx = self.blocks.len().saturating_sub(33);
-        &self.blocks[idx]
+        self.blocks.get(self.safe_number as usize).expect("safe block must exist in chain")
     }
 
-    /// Return the finalized head, lagging 64 blocks behind the latest head.
-    ///
-    /// If the chain is shorter than 64 blocks, returns the genesis block.
+    /// Return the finalized head block.
     pub fn finalized_head(&self) -> &L1Block {
-        let idx = self.blocks.len().saturating_sub(65);
-        &self.blocks[idx]
+        self.blocks
+            .get(self.finalized_number as usize)
+            .expect("finalized block must exist in chain")
+    }
+
+    /// Return the current safe block number.
+    pub const fn safe_number(&self) -> u64 {
+        self.safe_number
+    }
+
+    /// Return the current finalized block number.
+    pub const fn finalized_number(&self) -> u64 {
+        self.finalized_number
+    }
+
+    /// Advance the safe pointer to the next block (capped at the latest head).
+    pub fn act_l1_safe_next(&mut self) {
+        self.safe_number = (self.safe_number + 1).min(self.latest_number());
+    }
+
+    /// Advance the finalized pointer to the next block (capped at `safe_number`).
+    pub fn act_l1_finalize_next(&mut self) {
+        self.finalized_number = (self.finalized_number + 1).min(self.safe_number);
+    }
+
+    /// Set the safe pointer to `number`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `number > latest_number()`.
+    pub fn act_l1_safe(&mut self, number: u64) {
+        assert!(
+            number <= self.latest_number(),
+            "safe number {number} exceeds latest {}",
+            self.latest_number()
+        );
+        self.safe_number = number;
+    }
+
+    /// Set the finalized pointer to `number`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `number > safe_number`.
+    pub fn act_l1_finalize(&mut self, number: u64) {
+        assert!(
+            number <= self.safe_number,
+            "finalized number {number} exceeds safe {}",
+            self.safe_number
+        );
+        self.finalized_number = number;
     }
 
     /// Return the block at `number`, or `None` if it has not been mined yet.
@@ -216,6 +306,9 @@ impl L1Miner {
     /// the `fork_id` is incremented, new blocks will have different hashes
     /// than the original blocks at the same heights.
     ///
+    /// Safe and finalized pointers are clamped to `number` if they were
+    /// pointing at discarded blocks.
+    ///
     /// # Errors
     ///
     /// Returns [`ReorgError::BeyondTip`] if `number` is greater than the
@@ -228,6 +321,9 @@ impl L1Miner {
         }
 
         self.fork_id += 1;
+        // Clamp safe/finalized to reorg target so they never point past the tip.
+        self.safe_number = self.safe_number.min(number);
+        self.finalized_number = self.finalized_number.min(self.safe_number);
         let discarded: Vec<L1Block> = self.blocks.drain((number as usize + 1)..).collect();
 
         info!(reorg_to = number, fork_id = self.fork_id, discarded = discarded.len(), "L1 reorg");
@@ -261,7 +357,8 @@ impl L1Miner {
     ///
     /// The new block's `parent_hash` is set to the previous block's hash,
     /// and its timestamp advances by `block_time` seconds. All currently
-    /// pending batcher transactions are drained into the block body.
+    /// pending batcher transactions, logs, and blob sidecars are drained
+    /// into the block body.
     pub fn mine_block(&mut self) -> &L1Block {
         let parent = self.latest();
         let parent_hash = parent.hash();
@@ -270,6 +367,7 @@ impl L1Miner {
 
         let batcher_txs = core::mem::take(&mut self.pending);
         let logs = core::mem::take(&mut self.pending_logs);
+        let blob_sidecars = core::mem::take(&mut self.pending_blobs);
         let receipts = if logs.is_empty() {
             vec![]
         } else {
@@ -292,6 +390,7 @@ impl L1Miner {
             },
             batcher_txs,
             receipts,
+            blob_sidecars,
         };
 
         info!(
@@ -362,10 +461,86 @@ mod tests {
     }
 
     #[test]
-    fn safe_and_finalized_head_clamp_at_genesis() {
+    fn safe_and_finalized_head_start_at_genesis() {
         let m = miner();
         assert_eq!(m.safe_head().number(), 0);
         assert_eq!(m.finalized_head().number(), 0);
+        assert_eq!(m.safe_number(), 0);
+        assert_eq!(m.finalized_number(), 0);
+    }
+
+    #[test]
+    fn explicit_safe_next_advances_pointer() {
+        let mut m = miner();
+        m.mine_block(); // 1
+        m.mine_block(); // 2
+        m.act_l1_safe_next();
+        assert_eq!(m.safe_number(), 1);
+        assert_eq!(m.safe_head().number(), 1);
+    }
+
+    #[test]
+    fn explicit_finalize_next_advances_pointer() {
+        let mut m = miner();
+        m.mine_block();
+        m.act_l1_safe_next();
+        m.act_l1_finalize_next();
+        assert_eq!(m.finalized_number(), 1);
+        assert_eq!(m.finalized_head().number(), 1);
+    }
+
+    #[test]
+    fn act_l1_safe_sets_exactly() {
+        let mut m = miner();
+        for _ in 0..5 {
+            m.mine_block();
+        }
+        m.act_l1_safe(3);
+        assert_eq!(m.safe_number(), 3);
+    }
+
+    #[test]
+    fn act_l1_finalize_sets_exactly() {
+        let mut m = miner();
+        for _ in 0..5 {
+            m.mine_block();
+        }
+        m.act_l1_safe(4);
+        m.act_l1_finalize(2);
+        assert_eq!(m.finalized_number(), 2);
+    }
+
+    #[test]
+    fn safe_clamped_to_latest_on_act_safe_next() {
+        let mut m = miner();
+        m.mine_block(); // 1
+        m.act_l1_safe_next(); // 1
+        m.act_l1_safe_next(); // would be 2, but latest=1
+        assert_eq!(m.safe_number(), 1);
+    }
+
+    #[test]
+    fn finalized_clamped_to_safe_on_act_finalize_next() {
+        let mut m = miner();
+        m.mine_block();
+        m.act_l1_safe_next(); // safe=1
+        m.act_l1_finalize_next(); // finalized=1
+        m.act_l1_finalize_next(); // clamped to safe=1
+        assert_eq!(m.finalized_number(), 1);
+    }
+
+    #[test]
+    fn reorg_clamps_safe_and_finalized() {
+        let mut m = miner();
+        for _ in 0..5 {
+            m.mine_block();
+        }
+        m.act_l1_safe(4);
+        m.act_l1_finalize(3);
+
+        m.reorg_to(2).unwrap();
+        assert_eq!(m.safe_number(), 2);
+        assert_eq!(m.finalized_number(), 2);
     }
 
     #[test]
@@ -396,6 +571,20 @@ mod tests {
         let mut m = miner();
         assert_eq!(m.act().unwrap(), 1);
         assert_eq!(m.act().unwrap(), 2);
+    }
+
+    #[test]
+    fn blob_sidecars_drained_into_block() {
+        let mut m = miner();
+        let hash = B256::repeat_byte(0xAA);
+        let blob = Box::new(Blob::default());
+        m.enqueue_blob(hash, blob);
+        m.mine_block();
+        assert_eq!(m.latest().blob_sidecars.len(), 1);
+        assert_eq!(m.latest().blob_sidecars[0].0, hash);
+        // Next block has no blobs.
+        m.mine_block();
+        assert!(m.latest().blob_sidecars.is_empty());
     }
 
     // ── reorg tests ──────────────────────────────────────────────────────────
@@ -498,24 +687,5 @@ mod tests {
         let discarded = m.reorg_to(0).expect("reorg to genesis should succeed");
         assert_eq!(discarded.len(), 2, "blocks 1 and 2 should be discarded");
         assert_eq!(m.latest_number(), 0, "only genesis remains");
-    }
-
-    #[test]
-    fn safe_head_adjusts_after_reorg() {
-        let mut m = miner();
-        // Mine enough blocks for safe head to advance.
-        for _ in 0..40 {
-            m.mine_block();
-        }
-        assert!(m.safe_head().number() > 0);
-
-        // Reorg back to block 5 — safe head must recalculate.
-        m.reorg_to(5).unwrap();
-        assert_eq!(
-            m.safe_head().number(),
-            0,
-            "safe head should clamp to genesis after short reorg"
-        );
-        assert_eq!(m.latest_number(), 5);
     }
 }

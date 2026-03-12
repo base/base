@@ -5,9 +5,9 @@ use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 use base_protocol::{BlockInfo, L2BlockInfo};
 
 use crate::{
-    ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, Batcher, BatcherConfig,
-    L1Miner, L1MinerConfig, L2BlockBuilder, L2BlockProvider, L2Verifier, SharedL1Chain,
-    block_info_from,
+    ActionBlobDataSource, ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, Batcher,
+    BatcherConfig, BlobVerifierPipeline, L1Miner, L1MinerConfig, L2BlockProvider, L2Sequencer,
+    L2Verifier, SharedL1Chain, VerifierPipeline, block_info_from,
 };
 
 /// Top-level test harness that owns all actors for a single action test.
@@ -16,11 +16,11 @@ use crate::{
 /// the [`L1Miner`] and the [`RollupConfig`] shared by all actors. Tests drive
 /// the harness step-by-step using the public actor APIs.
 ///
-/// L2 blocks are produced by an [`L2BlockBuilder`] obtained via
-/// [`create_l2_builder`]. Blocks contain real L1-info deposit transactions and
-/// real signed EIP-1559 user transactions — no simplified mock types.
+/// L2 blocks are produced by an [`L2Sequencer`] obtained via
+/// [`create_l2_sequencer`]. Blocks contain real L1-info deposit transactions
+/// and real signed EIP-1559 user transactions — no simplified mock types.
 ///
-/// [`create_l2_builder`]: ActionTestHarness::create_l2_builder
+/// [`create_l2_sequencer`]: ActionTestHarness::create_l2_sequencer
 ///
 /// # Example
 ///
@@ -95,16 +95,17 @@ impl ActionTestHarness {
         Batcher::new(&mut self.l1, source, &self.rollup_config, config)
     }
 
-    /// Create an [`L2BlockBuilder`] starting from L2 genesis, wired to a
+    /// Create an [`L2Sequencer`] starting from L2 genesis, wired to a
     /// snapshot of the current L1 chain.
     ///
-    /// The returned builder generates real [`OpBlock`]s with a proper L1-info
-    /// deposit transaction (first tx) and signed EIP-1559 user transactions.
-    /// Call `build_next_block()` once per L2 block to advance the builder.
+    /// The returned sequencer generates real [`OpBlock`]s with a proper
+    /// L1-info deposit transaction (first tx) and signed EIP-1559 user
+    /// transactions. Call `build_next_block()` once per L2 block to advance
+    /// the sequencer.
     ///
     /// After mining new L1 blocks, push them to the [`SharedL1Chain`] returned
-    /// alongside the verifier so the builder sees the updated epochs.
-    pub fn create_l2_builder(&self, l1_chain: SharedL1Chain) -> L2BlockBuilder {
+    /// alongside the verifier so the sequencer sees the updated epochs.
+    pub fn create_l2_sequencer(&self, l1_chain: SharedL1Chain) -> L2Sequencer {
         let l1_genesis_hash = l1_chain.get_block(0).map(|b| b.hash()).unwrap_or_default();
 
         let genesis_head = L2BlockInfo {
@@ -120,7 +121,7 @@ impl ActionTestHarness {
 
         let system_config = self.rollup_config.genesis.system_config.unwrap_or_default();
 
-        L2BlockBuilder::new(genesis_head, l1_chain, self.rollup_config.clone(), system_config)
+        L2Sequencer::new(genesis_head, l1_chain, self.rollup_config.clone(), system_config)
     }
 
     /// Create an [`L2Verifier`] wired to the harness's L1 chain.
@@ -130,7 +131,7 @@ impl ActionTestHarness {
     /// then call `chain.push(l1.tip().clone())` and
     /// `verifier.act_l1_head_signal(block_info).await` to feed them into the
     /// pipeline.
-    pub fn create_verifier(&self) -> (L2Verifier, SharedL1Chain) {
+    pub fn create_verifier(&self) -> (L2Verifier<VerifierPipeline>, SharedL1Chain) {
         let l2_provider = ActionL2ChainProvider::from_genesis(&self.rollup_config);
         self.create_verifier_with_l2_provider(l2_provider)
     }
@@ -144,7 +145,7 @@ impl ActionTestHarness {
     pub fn create_verifier_with_l2_provider(
         &self,
         l2_provider: ActionL2ChainProvider,
-    ) -> (L2Verifier, SharedL1Chain) {
+    ) -> (L2Verifier<VerifierPipeline>, SharedL1Chain) {
         let chain = SharedL1Chain::from_blocks(self.l1.chain().to_vec());
         let rollup_config = Arc::new(self.rollup_config.clone());
         let l1_chain_config = Arc::new(L1ChainConfig::default());
@@ -173,6 +174,48 @@ impl ActionTestHarness {
             l1_provider,
             dap_source,
             l2_provider,
+            safe_head,
+            genesis_l1,
+        );
+
+        (verifier, chain)
+    }
+
+    /// Create an [`L2Verifier`] wired to blob DA.
+    ///
+    /// Identical to [`create_verifier`] but uses [`ActionBlobDataSource`] so
+    /// the pipeline reads blobs from the L1 chain instead of calldata.
+    ///
+    /// [`create_verifier`]: ActionTestHarness::create_verifier
+    pub fn create_blob_verifier(&self) -> (L2Verifier<BlobVerifierPipeline>, SharedL1Chain) {
+        let chain = SharedL1Chain::from_blocks(self.l1.chain().to_vec());
+        let rollup_config = Arc::new(self.rollup_config.clone());
+        let l1_chain_config = Arc::new(L1ChainConfig::default());
+
+        let l1_provider = ActionL1ChainProvider::new(chain.clone());
+        let dap_source =
+            ActionBlobDataSource::new(chain.clone(), self.rollup_config.batch_inbox_address);
+
+        let genesis_l1_block = self.l1.chain().first().expect("genesis always present");
+        let genesis_l1 = block_info_from(genesis_l1_block);
+
+        let safe_head = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: self.rollup_config.genesis.l2.hash,
+                number: self.rollup_config.genesis.l2.number,
+                parent_hash: Default::default(),
+                timestamp: self.rollup_config.genesis.l2_time,
+            },
+            l1_origin: BlockNumHash { number: genesis_l1.number, hash: genesis_l1.hash },
+            seq_num: 0,
+        };
+
+        let verifier = L2Verifier::new_blob(
+            rollup_config,
+            l1_chain_config,
+            l1_provider,
+            dap_source,
+            ActionL2ChainProvider::from_genesis(&self.rollup_config),
             safe_head,
             genesis_l1,
         );

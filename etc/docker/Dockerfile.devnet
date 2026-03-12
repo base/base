@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine AS builder
+FROM public.ecr.aws/docker/library/golang:1.25-alpine AS builder
 
 # Install build dependencies for CGO (required for BLS library)
 RUN apk add --no-cache git make gcc g++ musl-dev linux-headers curl ca-certificates
@@ -26,7 +26,7 @@ WORKDIR /build2
 RUN git clone --depth 1 https://github.com/protolambda/eth2-val-tools.git .
 RUN go build -o /go/bin/eth2-val-tools .
 
-FROM alpine:3.21
+FROM public.ecr.aws/docker/library/alpine:3.21
 
 RUN apk add --no-cache bash jq openssl curl gettext
 

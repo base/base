@@ -1,0 +1,417 @@
+#![doc = "TDD action test skeletons for channel timeout and interleaving scenarios."]
+
+use base_action_harness::{
+    ActionL2Source, ActionTestHarness, BatcherConfig, ChannelDriverConfig, L1MinerConfig,
+    SharedL1Chain, block_info_from,
+};
+use base_consensus_genesis::{ChainGenesis, HardForkConfig, RollupConfig, SystemConfig};
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+/// Build a [`RollupConfig`] with tight `channel_timeout` for timeout tests.
+///
+/// - `channel_timeout = 2` so a channel whose first frame lands in L1 block N
+///   expires if no more frames arrive by block N+2.
+/// - All other windows are generous so only the timeout matters.
+fn timeout_rollup_config(batcher: &BatcherConfig) -> RollupConfig {
+    RollupConfig {
+        batch_inbox_address: batcher.inbox_address,
+        block_time: 2,
+        max_sequencer_drift: 600,
+        seq_window_size: 3600,
+        channel_timeout: 2,
+        genesis: ChainGenesis {
+            system_config: Some(SystemConfig {
+                batcher_address: batcher.batcher_address,
+                gas_limit: 30_000_000,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
+        ..Default::default()
+    }
+}
+
+/// Build a standard [`RollupConfig`] for interleaving tests.
+///
+/// Uses generous windows; the test exercises the channel bank's ability to
+/// track multiple open channels rather than any timeout logic.
+fn interleave_rollup_config(batcher: &BatcherConfig) -> RollupConfig {
+    RollupConfig {
+        batch_inbox_address: batcher.inbox_address,
+        block_time: 2,
+        max_sequencer_drift: 600,
+        seq_window_size: 3600,
+        channel_timeout: 300,
+        genesis: ChainGenesis {
+            system_config: Some(SystemConfig {
+                batcher_address: batcher.batcher_address,
+                gas_limit: 30_000_000,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
+        ..Default::default()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// A. Channel timeout — first frame's inclusion span exceeds channel_timeout
+// ---------------------------------------------------------------------------
+
+/// When a channel's frames are spread across L1 blocks separated by more than
+/// `channel_timeout` blocks, the derivation pipeline discards the entire
+/// channel. The batcher must detect this and resubmit the affected L2 blocks
+/// in a new channel.
+///
+/// ## Setup
+///
+/// - `channel_timeout = 2` (very tight: channel expires if span > 2 blocks)
+/// - Force a multi-frame channel by setting `max_frame_size = 80`
+/// - Build L2 blocks and encode them into a multi-frame channel
+/// - Submit frame 0 in L1 block N
+/// - Advance L1 by `channel_timeout + 1` empty blocks (no remaining frames)
+/// - Submit remaining frames — they arrive too late
+///
+/// ## Expected behaviour
+///
+/// The derivation pipeline:
+/// 1. Receives frame 0 in L1 block N, opens the channel
+/// 2. After `channel_timeout` L1 blocks pass without the channel completing,
+///    the channel is pruned from the channel bank
+/// 3. Remaining frames arrive but the channel ID is unknown → silently dropped
+/// 4. Safe head does NOT advance for the timed-out channel's L2 blocks
+///
+/// ## Recovery
+///
+/// After the timeout, the batcher resubmits all L2 blocks in a fresh channel
+/// (new `ChannelDriver` instance = new channel ID) within the timeout window.
+/// The pipeline derives the L2 blocks from the new channel.
+///
+/// ## Harness requirements
+///
+/// This test uses `Batcher::encode_frames()` + `Batcher::submit_frames()`
+/// (selective frame submission) which ALREADY EXIST. No new harness methods
+/// are needed for the basic scenario.
+///
+/// NOTE: The `ChannelDriver` currently uses `ChannelId::default()` ([0u8; 16])
+/// for every flush. When the batcher resubmits in a "new" channel, it will
+/// have the same channel ID as the timed-out one. This is acceptable if the
+/// channel bank has already pruned the old channel (the new frames start at
+/// frame 0 again, so the bank treats it as a new channel). If this causes
+/// issues, `ChannelDriver` needs a `with_channel_id(id)` builder or random
+/// ID generation.
+#[tokio::test]
+#[ignore = "channel timeout semantics in the IndexedTraversal mode need verification; \
+            the indexed traversal clears the ChannelBank per L1 block, which may mean \
+            multi-block channel timeout is not exercisable in the current harness — \
+            the test skeleton documents the expected flow for when the harness supports it"]
+async fn channel_timeout_triggers_channel_invalidation() {
+    let batcher_cfg = BatcherConfig {
+        driver: ChannelDriverConfig { max_frame_size: 80 },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = timeout_rollup_config(&batcher_cfg);
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    // Build 1 L2 block and encode it into multiple frames.
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let block = sequencer.build_next_block().expect("build L2 block 1");
+    let hash1 = sequencer.head().block_info.hash;
+
+    let mut source = ActionL2Source::new();
+    source.push(block.clone());
+    let mut batcher = h.create_batcher(source, batcher_cfg.clone());
+    let frames = batcher.encode_frames().expect("encode multi-frame channel");
+    assert!(
+        frames.len() >= 2,
+        "expected multi-frame channel with max_frame_size=80, got {} frames",
+        frames.len()
+    );
+
+    // Submit ONLY frame 0 in L1 block 1.
+    batcher.submit_frames(&frames[..1]);
+    drop(batcher);
+
+    let (mut verifier, chain) = h.create_verifier();
+    verifier.register_block_hash(1, hash1);
+
+    h.mine_and_push(&chain); // L1 block 1: frame 0 only
+
+    verifier.initialize().await.expect("initialize");
+    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
+    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.act_l2_pipeline_full().await.expect("step block 1");
+
+    // Nothing derived yet — channel incomplete (only frame 0).
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        0,
+        "incomplete channel should not advance safe head"
+    );
+
+    // Mine `channel_timeout + 1 = 3` empty L1 blocks to expire the channel.
+    // L1 blocks 2, 3, 4 are empty.
+    for _ in 0..3 {
+        h.mine_and_push(&chain);
+    }
+
+    // Signal empty blocks to the pipeline.
+    for i in 2..=4 {
+        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
+        verifier.act_l1_head_signal(blk).await.expect("signal empty block");
+        verifier.act_l2_pipeline_full().await.expect("step empty block");
+    }
+
+    // The channel should now be timed out. Submit the remaining frames —
+    // they should be silently ignored.
+    {
+        let empty_source = ActionL2Source::new();
+        let mut late_batcher = h.create_batcher(empty_source, batcher_cfg.clone());
+        late_batcher.submit_frames(&frames[1..]);
+        drop(late_batcher);
+    }
+    h.mine_and_push(&chain); // L1 block 5: late frames
+
+    let l1_block_5 = block_info_from(h.l1.block_by_number(5).expect("block 5"));
+    verifier.act_l1_head_signal(l1_block_5).await.expect("signal block 5");
+    let derived = verifier.act_l2_pipeline_full().await.expect("step block 5");
+    assert_eq!(derived, 0, "late frames after channel timeout must be ignored");
+
+    // --- Recovery: resubmit in a new channel ---
+    // Create a fresh batcher (new ChannelDriver = new channel) and resubmit.
+    let mut source2 = ActionL2Source::new();
+    source2.push(block);
+    let mut batcher2 = h.create_batcher(source2, batcher_cfg);
+    batcher2.advance().expect("resubmit in new channel");
+    drop(batcher2);
+    h.mine_and_push(&chain); // L1 block 6: fresh channel, all frames
+
+    let l1_block_6 = block_info_from(h.l1.block_by_number(6).expect("block 6"));
+    verifier.act_l1_head_signal(l1_block_6).await.expect("signal block 6");
+    let recovered = verifier.act_l2_pipeline_full().await.expect("step block 6");
+
+    assert_eq!(recovered, 1, "resubmitted channel should derive L2 block 1");
+    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head should recover to 1");
+}
+
+// ---------------------------------------------------------------------------
+// B. Channel timeout with recovery
+// ---------------------------------------------------------------------------
+
+/// After a channel times out, the batcher creates a fresh channel containing
+/// the same L2 blocks and submits it within the timeout window. The pipeline
+/// derives the blocks from the recovery channel.
+///
+/// This is a simpler variant of [`channel_timeout_triggers_channel_invalidation`]
+/// that focuses purely on the recovery path without verifying the timeout
+/// expiration itself. It can be implemented without the multi-block channel
+/// bank limitation since the recovery channel fits in a single L1 block.
+///
+/// ## Harness requirements
+///
+/// No new methods needed — uses existing `Batcher::advance()` with a fresh
+/// `ChannelDriver` instance for the recovery submission.
+#[tokio::test]
+#[ignore = "blocked on channel timeout test infrastructure; once the channel bank \
+            correctly prunes timed-out channels in the IndexedTraversal path, \
+            this recovery test can be enabled"]
+async fn channel_timeout_recovery_resubmits_successfully() {
+    let batcher_cfg = BatcherConfig::default();
+    let rollup_cfg = timeout_rollup_config(&batcher_cfg);
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    // Build L2 block 1.
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let block = sequencer.build_next_block().expect("build block 1");
+    let hash1 = sequencer.head().block_info.hash;
+
+    // First attempt: submit batch in L1 block 1.
+    let mut source = ActionL2Source::new();
+    source.push(block.clone());
+    let mut batcher = h.create_batcher(source, batcher_cfg.clone());
+    batcher.advance().expect("first submit");
+    drop(batcher);
+
+    let (mut verifier, chain) = h.create_verifier();
+    verifier.register_block_hash(1, hash1);
+
+    h.mine_and_push(&chain); // L1 block 1
+
+    verifier.initialize().await.expect("initialize");
+
+    // Mine enough empty blocks to expire the channel.
+    // channel_timeout = 2, so after 3 more empty blocks the channel is gone.
+    for _ in 0..3 {
+        h.mine_and_push(&chain);
+    }
+
+    // Step through all L1 blocks so far.
+    for i in 1..=h.l1.latest_number() {
+        let blk = block_info_from(h.l1.block_by_number(i).expect("block"));
+        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l2_pipeline_full().await.expect("step");
+    }
+
+    // Safe head should still be at genesis (channel timed out).
+    // NOTE: The pipeline may generate deposit-only default blocks instead,
+    // in which case the safe head advances past genesis. Both outcomes are
+    // valid — the key assertion is that the ORIGINAL batch content was not
+    // derived.
+
+    // Recovery: resubmit in a new channel (all frames in one L1 block).
+    let mut source2 = ActionL2Source::new();
+    source2.push(block);
+    let mut batcher2 = h.create_batcher(source2, batcher_cfg);
+    batcher2.advance().expect("recovery submit");
+    drop(batcher2);
+    h.mine_and_push(&chain);
+
+    let recovery_blk =
+        block_info_from(h.l1.block_by_number(h.l1.latest_number()).expect("recovery block"));
+    verifier.act_l1_head_signal(recovery_blk).await.expect("signal recovery");
+    let recovered = verifier.act_l2_pipeline_full().await.expect("step recovery");
+
+    // The recovery channel should derive L2 block 1.
+    assert!(recovered >= 1, "recovery channel should derive at least 1 L2 block");
+}
+
+// ---------------------------------------------------------------------------
+// C. Channel interleaving — frames from two channels interleaved in L1
+// ---------------------------------------------------------------------------
+
+/// Frames from two different channels are submitted to L1 in interleaved
+/// order (A0, B0, A1, B1). The derivation pipeline's channel bank must
+/// correctly track both channels simultaneously and reassemble them
+/// independently.
+///
+/// ## Setup
+///
+/// - Build 2 sets of L2 blocks, each encoded into a separate multi-frame
+///   channel (using small `max_frame_size` to force multi-frame output)
+/// - Submit frames in alternating order across L1 transactions within the
+///   same L1 block
+///
+/// ## Expected behaviour
+///
+/// Both channels are correctly reassembled and all L2 blocks are derived
+/// in the correct order (channel A's blocks first, then channel B's).
+///
+/// ## Harness requirements
+///
+/// This test requires distinct channel IDs for the two channels. Currently
+/// `ChannelDriver` always uses `ChannelId::default()` ([0u8; 16]). Two
+/// options:
+///
+/// 1. **Add `ChannelDriverConfig::channel_id`** — allow tests to specify
+///    the channel ID explicitly:
+///    ```rust
+///    pub struct ChannelDriverConfig {
+///        pub max_frame_size: usize,
+///        pub channel_id: Option<ChannelId>,
+///    }
+///    ```
+///
+/// 2. **Randomize by default** — have `ChannelDriver::flush()` generate a
+///    random `ChannelId` per flush call (matches op-batcher behaviour).
+///
+/// Additionally, the `IndexedTraversal` mode clears the `ChannelBank` on
+/// each `ProvideBlock` signal. For interleaving to work, all interleaved
+/// frames must be in the SAME L1 block (as separate transactions). This
+/// is already supported by the harness: call `submit_frames` for each
+/// frame individually, then mine one block.
+///
+/// ## NOTE on `IndexedTraversal` limitation
+///
+/// The current `IndexedTraversal` mode processes one L1 block at a time
+/// and clears the channel bank between blocks. This means multi-block
+/// interleaving (frames from different channels in different L1 blocks)
+/// is NOT supported. All interleaved frames must land in the same L1
+/// block. This is a known limitation of the test harness, not the
+/// derivation pipeline itself.
+#[tokio::test]
+#[ignore = "requires ChannelDriver to support distinct channel IDs per flush; \
+            currently ChannelId::default() is hardcoded, so two channels produce \
+            frames with the same ID and the channel bank cannot distinguish them"]
+async fn interleaved_channels_correctly_reassembled() {
+    let batcher_cfg = BatcherConfig {
+        // Small frame size to force multi-frame channels.
+        driver: ChannelDriverConfig { max_frame_size: 80 },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = interleave_rollup_config(&batcher_cfg);
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+
+    // Build 2 L2 blocks — one for each channel.
+    let block_a = sequencer.build_next_block().expect("build block A");
+    let hash_a = sequencer.head().block_info.hash;
+    let block_b = sequencer.build_next_block().expect("build block B");
+    let hash_b = sequencer.head().block_info.hash;
+
+    // Encode channel A (L2 block 1).
+    let mut source_a = ActionL2Source::new();
+    source_a.push(block_a);
+    let mut batcher_a = h.create_batcher(source_a, batcher_cfg.clone());
+    let frames_a = batcher_a.encode_frames().expect("encode channel A");
+    assert!(frames_a.len() >= 2, "channel A should have 2+ frames, got {}", frames_a.len());
+    drop(batcher_a);
+
+    // Encode channel B (L2 block 2).
+    // TODO: This will produce frames with the SAME channel ID as channel A
+    // because ChannelDriver uses ChannelId::default(). Once ChannelDriver
+    // supports configurable or random channel IDs, update this section.
+    let mut source_b = ActionL2Source::new();
+    source_b.push(block_b);
+    let mut batcher_b = h.create_batcher(source_b, batcher_cfg.clone());
+    let frames_b = batcher_b.encode_frames().expect("encode channel B");
+    assert!(frames_b.len() >= 2, "channel B should have 2+ frames, got {}", frames_b.len());
+    drop(batcher_b);
+
+    // Verify channels have distinct IDs (will fail until ChannelDriver is updated).
+    assert_ne!(
+        frames_a[0].id, frames_b[0].id,
+        "channels A and B must have distinct IDs for interleaving"
+    );
+
+    // Submit frames interleaved: A0, B0, A1, B1, ...
+    // All frames go into the same L1 block (separate txs within the block).
+    let max_len = frames_a.len().max(frames_b.len());
+    {
+        let empty_source = ActionL2Source::new();
+        let mut submitter = h.create_batcher(empty_source, batcher_cfg);
+        for i in 0..max_len {
+            if i < frames_a.len() {
+                submitter.submit_frames(&frames_a[i..i + 1]);
+            }
+            if i < frames_b.len() {
+                submitter.submit_frames(&frames_b[i..i + 1]);
+            }
+        }
+        drop(submitter);
+    }
+
+    // Mine one L1 block containing all interleaved frames.
+    h.l1.mine_block();
+
+    let (mut verifier, _chain) = h.create_verifier();
+    verifier.register_block_hash(1, hash_a);
+    verifier.register_block_hash(2, hash_b);
+    verifier.initialize().await.expect("initialize");
+
+    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
+    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    let derived = verifier.act_l2_pipeline_full().await.expect("step block 1");
+
+    // Both channels should be reassembled and both L2 blocks derived.
+    assert_eq!(derived, 2, "expected 2 L2 blocks derived from interleaved channels");
+    assert_eq!(verifier.l2_safe().block_info.number, 2);
+}

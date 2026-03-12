@@ -1,7 +1,7 @@
 //! Docker image constants for devnet containers.
 
 /// Docker image for Reth.
-pub const RETH_IMAGE: &str = "ghcr.io/paradigmxyz/reth:v1.10.2";
+pub const RETH_IMAGE: &str = "ghcr.io/paradigmxyz/reth:v1.11.3";
 /// Docker image for op-batcher.
 pub const OP_BATCHER_IMAGE: &str =
     "us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.3";
