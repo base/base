@@ -256,6 +256,11 @@ impl L2Verifier {
             .await
             .map_err(VerifierError::Signal)?;
         self.safe_head = l2_safe_head;
+        // Clear stale finalization state so a subsequent act_l1_finalized_signal
+        // cannot promote an L2 block that no longer exists on the canonical chain.
+        self.safe_head_history.clear();
+        self.finalized_head = l2_safe_head;
+        self.finalized_l1_number = 0;
         Ok(())
     }
 
