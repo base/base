@@ -108,6 +108,14 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
                 warn!("target group entry missing instance ID, skipping");
                 continue;
             };
+            if !instance_id.starts_with("i-") {
+                warn!(
+                    id = %instance_id,
+                    "target group entry is not an instance-type target (id does not start with \
+                     'i-'); is the target group type set to 'instance'? skipping"
+                );
+                continue;
+            }
             let health_status = desc
                 .target_health()
                 .and_then(|h| h.state())
