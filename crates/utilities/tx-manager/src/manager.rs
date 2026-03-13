@@ -226,10 +226,6 @@ impl SimpleTxManager {
         candidate: &TxCandidate,
         fee_overrides: Option<(u128, u128)>,
     ) -> TxManagerResult<PreparedTx> {
-        if self.is_closed() {
-            return Err(TxManagerError::ChannelClosed);
-        }
-
         (|| async {
             // Re-check closed flag on each retry attempt to avoid wasted
             // RPC calls after shutdown. ChannelClosed is non-retryable,
@@ -389,7 +385,7 @@ impl SimpleTxManager {
             .with_value(candidate.value)
             .with_chain_id(self.chain_id);
 
-        tx_request.from = Some(from);
+        tx_request.set_from(from);
 
         match candidate.to {
             Some(to) => tx_request.set_to(to),
