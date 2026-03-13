@@ -63,7 +63,7 @@ impl AwsTargetGroupDiscovery {
                 }
             };
             let health_status =
-                health_map.get(&instance_id).cloned().unwrap_or(InstanceHealthStatus::Unhealthy);
+                health_map.get(&instance_id).copied().unwrap_or(InstanceHealthStatus::Unhealthy);
 
             debug!(
                 instance_id = %instance_id,
@@ -127,6 +127,11 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
             {
                 e.insert(health_status);
                 instance_ids.push(instance_id.to_string());
+            } else {
+                debug!(
+                    instance_id = %instance_id,
+                    "instance registered on multiple ports; keeping first-seen health status"
+                );
             }
         }
 
@@ -135,6 +140,9 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
         }
 
         // Step 3: Resolve private IPs for all instance IDs in a single EC2 call.
+        // describe_instances returns up to 1000 results per page. Pagination is intentionally
+        // omitted here: the instance count is bounded by the ASG size (typically ≤ 10), so
+        // truncation cannot occur in practice.
         let instances_output = self
             .ec2_client
             .describe_instances()

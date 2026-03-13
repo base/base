@@ -14,7 +14,7 @@ pub struct ProverInstance {
 }
 
 /// Health status of a prover instance in the ALB target group.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstanceHealthStatus {
     /// Health checks are in progress; instance is not yet receiving traffic.
     Initial,
