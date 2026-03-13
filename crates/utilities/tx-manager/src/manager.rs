@@ -316,7 +316,7 @@ impl SimpleTxManager {
             .with_value(candidate.value)
             .with_chain_id(self.chain_id);
 
-        tx_request.from = Some(from);
+        tx_request.set_from(from);
 
         match candidate.to {
             Some(to) => tx_request.set_to(to),
