@@ -566,6 +566,7 @@ impl SimpleTxManager {
     ) -> Option<TransactionReceipt> {
         let deadline = Instant::now() + config.confirmation_timeout;
         let mut poll_interval = tokio::time::interval(config.receipt_query_interval);
+        poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         loop {
             poll_interval.tick().await;
