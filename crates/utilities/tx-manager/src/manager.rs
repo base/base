@@ -1,14 +1,24 @@
 //! Core transaction manager implementation.
 //!
 //! [`SimpleTxManager`] takes a [`TxCandidate`] through the full construction
-//! pipeline: gas price estimation via [`suggest_gas_price_caps`], fee limit
-//! enforcement via [`FeeCalculator::check_limits`], gas estimation or
-//! validation against the provider, nonce assignment via [`NonceManager`],
-//! and signing via alloy's [`NetworkWallet`] trait.
+//! pipeline: gas price estimation via [`suggest_gas_price_caps`], optional fee
+//! override enforcement, fee limit checks via [`FeeCalculator::check_limits`],
+//! gas estimation or validation against the provider, nonce assignment via
+//! [`NonceManager`], and signing via alloy's [`NetworkWallet`] trait.
 //!
 //! The outer [`prepare`] method wraps [`craft_tx`] in a `backon` retry loop
 //! (up to 30 attempts, 2-second fixed delay) that retries only on transient
-//! errors and exits immediately on shutdown.
+//! errors and exits immediately on shutdown. Both methods accept optional fee
+//! overrides and return a [`PreparedTx`] containing the raw transaction bytes
+//! and the actual fees that were applied, eliminating the need for callers to
+//! re-query gas prices after transaction construction.
+//!
+//! The `send_tx` method drives a signed transaction from publication through
+//! mempool to onchain confirmation via a `tokio::select!` event loop that
+//! coordinates fee bumping, receipt polling, and critical error detection.
+//! The `select!` block only determines which event fired; fee bump logic
+//! (including [`prepare`]) always runs to completion outside the `select!`
+//! block to preserve cancellation safety.
 //!
 //! All transaction fields are set manually on [`TransactionRequest`] — no
 //! alloy fillers or `PendingTransactionBuilder` are used.
@@ -23,22 +33,42 @@
 //! [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
 
 use std::{
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
 use alloy_eips::{BlockNumberOrTag, Encodable2718};
 use alloy_network::{Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder};
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::TransactionRequest;
 use backon::{ConstantBuilder, Retryable};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::{
     FeeCalculator, GasPriceCaps, NonceManager, RpcErrorClassifier, SendHandle, SendResponse,
-    TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult,
+    SendState, TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult,
 };
+
+/// A signed transaction together with the fee values that were applied
+/// during construction.
+///
+/// Returned by [`SimpleTxManager::prepare`] and
+/// [`SimpleTxManager::craft_tx`] so that callers can track the actual
+/// on-wire fees without a redundant gas price query.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct PreparedTx {
+    /// RLP-encoded signed transaction bytes.
+    pub raw_tx: Bytes,
+    /// Maximum priority fee per gas (tip) used in the signed transaction.
+    pub gas_tip_cap: u128,
+    /// Maximum total fee per gas used in the signed transaction.
+    pub gas_fee_cap: u128,
+}
 
 /// Default transaction manager implementation.
 ///
@@ -57,8 +87,11 @@ pub struct SimpleTxManager {
     nonce_manager: NonceManager,
     /// Chain ID for transaction construction.
     chain_id: u64,
-    /// Shutdown flag. Set to `true` to close the manager.
-    closed: AtomicBool,
+    /// Shutdown flag shared across the manager and any spawned background
+    /// tasks. Wrapped in [`Arc`] so that calling [`close`](Self::close)
+    /// on the original manager is observed by tasks spawned via
+    /// [`send_async`](Self::send_async) and `wait_for_tx`.
+    closed: Arc<AtomicBool>,
 }
 
 impl SimpleTxManager {
@@ -111,7 +144,7 @@ impl SimpleTxManager {
             config,
             nonce_manager,
             chain_id,
-            closed: AtomicBool::new(false),
+            closed: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -144,6 +177,9 @@ impl SimpleTxManager {
     ///
     /// After calling `close()`, any subsequent call to [`prepare`](Self::prepare)
     /// will immediately return `Err(TxManagerError::ChannelClosed)`.
+    /// Background tasks spawned by [`send_async`](Self::send_async) and
+    /// receipt polling tasks will also observe the shutdown and exit
+    /// gracefully, since `closed` is shared via [`Arc`].
     pub fn close(&self) {
         self.closed.store(true, Ordering::Release);
     }
@@ -159,6 +195,13 @@ impl SimpleTxManager {
     /// [`Self::PREPARE_MAX_RETRIES`] attempts and a [`Self::PREPARE_RETRY_DELAY`]
     /// fixed delay between retries. Only errors where
     /// [`TxManagerError::is_retryable`] returns `true` trigger a retry.
+    ///
+    /// When `fee_overrides` is `Some((tip, fee_cap))`, the provided values
+    /// are used as a floor — `craft_tx` takes `max(network_fee, override)`
+    /// so the resulting transaction is guaranteed to meet the override
+    /// thresholds. Pass `None` for the initial send; pass the bumped fees
+    /// during fee-bump iterations to ensure replacement transactions
+    /// satisfy geth's replacement rules.
     ///
     /// # Cancellation safety
     ///
@@ -176,7 +219,11 @@ impl SimpleTxManager {
     /// Returns immediately with [`TxManagerError::ChannelClosed`] if the
     /// manager is closed. Otherwise returns the first non-retryable error,
     /// or the last retryable error after exhausting all retry attempts.
-    pub async fn prepare(&self, candidate: &TxCandidate) -> TxManagerResult<Bytes> {
+    pub async fn prepare(
+        &self,
+        candidate: &TxCandidate,
+        fee_overrides: Option<(u128, u128)>,
+    ) -> TxManagerResult<PreparedTx> {
         (|| async {
             // Re-check closed flag on each retry attempt to avoid wasted
             // RPC calls after shutdown. ChannelClosed is non-retryable,
@@ -184,7 +231,7 @@ impl SimpleTxManager {
             if self.is_closed() {
                 return Err(TxManagerError::ChannelClosed);
             }
-            self.craft_tx(candidate).await
+            self.craft_tx(candidate, fee_overrides).await
         })
         .retry(
             ConstantBuilder::default()
@@ -257,16 +304,24 @@ impl SimpleTxManager {
     ///
     /// Steps:
     /// 1. Query gas price caps via [`suggest_gas_price_caps`](Self::suggest_gas_price_caps)
-    /// 2. Check fee limits via [`FeeCalculator::check_limits`]
-    /// 3. Build a [`TransactionRequest`] with all fields set manually
-    /// 4. Estimate gas via the provider; use `max(estimate, candidate.gas_limit)` as floor
-    /// 5. Assign nonce via [`NonceManager::next_nonce`]
-    /// 6. Sign and RLP-encode to raw transaction bytes
+    /// 2. Apply fee overrides as a floor (`max(network_fee, override)`)
+    /// 3. Check fee limits via [`FeeCalculator::check_limits`]
+    /// 4. Build a [`TransactionRequest`] with all fields set manually
+    /// 5. Estimate gas via the provider; use `max(estimate, candidate.gas_limit)` as floor
+    /// 6. Assign nonce via [`NonceManager::next_nonce`]
+    /// 7. Sign and RLP-encode to raw transaction bytes
+    ///
+    /// When `fee_overrides` is `Some((tip, fee_cap))`, the provided values
+    /// are used as a floor — the transaction will use
+    /// `max(network_fee, override)` for each component. This ensures that
+    /// replacement transactions always meet the bumped fee thresholds
+    /// required by geth's tx-replacement rules, even if network fees have
+    /// dropped since the bump was calculated.
     ///
     /// # Cancellation safety
     ///
     /// This future is **not** cancellation-safe. If dropped after nonce
-    /// acquisition (step 5) but before signing completes (step 6), the
+    /// acquisition (step 6) but before signing completes (step 7), the
     /// nonce is consumed without producing a transaction, creating a
     /// permanent nonce gap. Callers must not wrap this future in
     /// `tokio::select!`, `tokio::time::timeout`, or similar combinators
@@ -276,7 +331,11 @@ impl SimpleTxManager {
     ///
     /// Returns classified RPC errors, [`TxManagerError::FeeLimitExceeded`],
     /// nonce errors, or signing errors.
-    pub async fn craft_tx(&self, candidate: &TxCandidate) -> TxManagerResult<Bytes> {
+    pub async fn craft_tx(
+        &self,
+        candidate: &TxCandidate,
+        fee_overrides: Option<(u128, u128)>,
+    ) -> TxManagerResult<PreparedTx> {
         // Blob transactions are not yet supported.
         if !candidate.blobs.is_empty() {
             return Err(TxManagerError::Unsupported(
@@ -287,28 +346,40 @@ impl SimpleTxManager {
         // Step 1: Get fee estimates.
         let caps = self.suggest_gas_price_caps().await?;
 
-        // Step 2: Check fee limits.
+        // Step 2: Apply fee overrides as a floor.
+        //
+        // During fee bumps the caller passes the bumped (tip, fee_cap)
+        // as overrides. We take the max of the fresh network estimate
+        // and the override so the replacement transaction is guaranteed
+        // to satisfy geth's replacement rules even if network fees have
+        // dropped since the bump was calculated.
+        let (tip_cap, fee_cap) = match fee_overrides {
+            Some((override_tip, override_fee_cap)) => {
+                (caps.gas_tip_cap.max(override_tip), caps.gas_fee_cap.max(override_fee_cap))
+            }
+            None => (caps.gas_tip_cap, caps.gas_fee_cap),
+        };
+
+        // Step 3: Check fee limits.
         //
         // The `suggested` parameter is the raw gas_fee_cap computed from
         // the provider's values before enforcing our configured minimums
         // (`min_tip_cap`, `min_basefee`). This detects when enforced
-        // minimums inflate the fee cap beyond
-        // `fee_limit_multiplier × raw_provider_fee_cap`. During fee bumps
-        // (future ticket) the caller passes the previous fee as
-        // `suggested` instead.
+        // minimums or fee overrides inflate the fee cap beyond
+        // `fee_limit_multiplier × raw_provider_fee_cap`.
         FeeCalculator::check_limits(
-            caps.gas_fee_cap,
+            fee_cap,
             caps.raw_gas_fee_cap,
             self.config.fee_limit_multiplier,
             self.config.fee_limit_threshold,
         )?;
 
-        // Step 3: Build TransactionRequest.
+        // Step 4: Build TransactionRequest.
         let from = self.sender_address();
         let mut tx_request = TransactionRequest::default()
             .with_input(candidate.tx_data.clone())
-            .with_max_fee_per_gas(caps.gas_fee_cap)
-            .with_max_priority_fee_per_gas(caps.gas_tip_cap)
+            .with_max_fee_per_gas(fee_cap)
+            .with_max_priority_fee_per_gas(tip_cap)
             .with_value(candidate.value)
             .with_chain_id(self.chain_id);
 
@@ -319,7 +390,7 @@ impl SimpleTxManager {
             None => tx_request = tx_request.into_create(),
         }
 
-        // Step 4: Gas estimation.
+        // Step 5: Gas estimation.
         //
         // Always call estimate_gas to enforce intrinsic gas checks (e.g.
         // the 21,000 minimum for plain value transfers). When the caller
@@ -335,19 +406,19 @@ impl SimpleTxManager {
         let gas_limit = candidate.gas_limit.max(estimated);
         tx_request = tx_request.with_gas_limit(gas_limit);
 
-        // Step 5: Assign nonce.
+        // Step 6: Assign nonce.
         let guard = self.nonce_manager.next_nonce().await?;
         tx_request = tx_request.with_nonce(guard.nonce());
 
         info!(
             nonce = guard.nonce(),
             gas_limit = %gas_limit,
-            tip_cap = %caps.gas_tip_cap,
-            fee_cap = %caps.gas_fee_cap,
+            tip_cap = %tip_cap,
+            fee_cap = %fee_cap,
             "transaction crafted",
         );
 
-        // Step 6: Sign and encode.
+        // Step 7: Sign and encode.
         let sign_result =
             <TransactionRequest as TransactionBuilder<Ethereum>>::build(tx_request, &self.wallet)
                 .await;
@@ -356,12 +427,84 @@ impl SimpleTxManager {
             Ok(envelope) => {
                 // Consume the nonce (drop guard).
                 drop(guard);
-                Ok(Bytes::from(Encodable2718::encoded_2718(&envelope)))
+                Ok(PreparedTx {
+                    raw_tx: Bytes::from(Encodable2718::encoded_2718(&envelope)),
+                    gas_tip_cap: tip_cap,
+                    gas_fee_cap: fee_cap,
+                })
             }
             Err(e) => {
                 // Roll back nonce on sign failure.
                 guard.rollback();
                 Err(TxManagerError::Sign(e.to_string()))
+            }
+        }
+    }
+
+    /// Broadcasts a raw transaction to the network.
+    ///
+    /// On success, records a successful publish on the [`SendState`] and
+    /// returns the transaction hash. On [`TxManagerError::AlreadyKnown`]
+    /// after a prior successful publish, treats it as success — records
+    /// another successful publish and returns `Ok(last_tx_hash)` so
+    /// callers do not need to special-case this variant. All other errors
+    /// are forwarded to [`SendState::process_send_error`] for state tracking.
+    ///
+    /// The `last_tx_hash` parameter is the hash from the most recent
+    /// successful publish. When the network returns `AlreadyKnown` on
+    /// resubmission, this hash is returned as the successful result.
+    ///
+    /// # Errors
+    ///
+    /// Returns the classified error on publication failure.
+    pub async fn publish_tx(
+        &self,
+        send_state: &SendState,
+        raw_tx: &Bytes,
+        last_tx_hash: Option<B256>,
+    ) -> TxManagerResult<B256> {
+        let result = tokio::time::timeout(
+            self.config.network_timeout,
+            self.provider.send_raw_transaction(raw_tx),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(pending)) => {
+                let tx_hash = *pending.tx_hash();
+                send_state.record_successful_publish();
+                info!(tx_hash = %tx_hash, "transaction published");
+                Ok(tx_hash)
+            }
+            Ok(Err(e)) => {
+                let classified = RpcErrorClassifier::classify_rpc_error(&e.to_string());
+
+                // AlreadyKnown on resubmission is a success — the tx is in
+                // the mempool from a prior publish. Return the previous hash.
+                if classified.is_already_known() && send_state.successful_publish_count() > 0 {
+                    let hash = last_tx_hash.ok_or_else(|| {
+                        TxManagerError::Rpc("AlreadyKnown but no prior tx hash available".into())
+                    })?;
+                    send_state.record_successful_publish();
+                    info!(tx_hash = %hash, "transaction already known in mempool, treating as success");
+                    return Ok(hash);
+                }
+
+                send_state.process_send_error(&classified);
+
+                if classified.is_retryable() {
+                    warn!(error = %classified, "publish failed, will retry");
+                } else {
+                    error!(error = %classified, "publish failed with non-retryable error");
+                }
+
+                Err(classified)
+            }
+            Err(_) => {
+                let err = TxManagerError::Rpc("send_raw_transaction timed out".into());
+                send_state.process_send_error(&err);
+                warn!("publish timed out");
+                Err(err)
             }
         }
     }

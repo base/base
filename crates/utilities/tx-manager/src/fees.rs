@@ -334,6 +334,33 @@ mod tests {
         }
     }
 
+    // ── calc_gas_fee_cap roundtrip ───────────────────────────────────────
+
+    /// Verifies that the reverse calculation `(fee_cap - tip) / 2`
+    /// recovers the original `base_fee` from a fee cap produced by
+    /// `calc_gas_fee_cap`. This roundtrip is relied upon by
+    /// `handle_fee_bump` in the manager to derive the effective base
+    /// fee from a `GasPriceCaps` result.
+    #[rstest]
+    #[case::one_gwei(1_000_000_000, 500_000_000)]
+    #[case::zeroes(0, 0)]
+    #[case::tip_only(0, 100)]
+    #[case::base_only(100, 0)]
+    #[case::large(5_000_000_000_000, 1_000_000_000_000)]
+    fn calc_gas_fee_cap_roundtrip_recovers_base_fee(#[case] base_fee: u128, #[case] tip: u128) {
+        let fee_cap = FeeCalculator::calc_gas_fee_cap(base_fee, tip);
+        // fee_cap = tip + 2 * base_fee, so (fee_cap - tip) / 2 == base_fee
+        // (only exact when no saturation occurs).
+        if fee_cap < u128::MAX {
+            let recovered = (fee_cap - tip) / 2;
+            assert_eq!(
+                recovered, base_fee,
+                "roundtrip should recover the base fee: \
+                 fee_cap={fee_cap}, tip={tip}, recovered={recovered}",
+            );
+        }
+    }
+
     // ── Property tests ──────────────────────────────────────────────────
 
     proptest! {
@@ -412,6 +439,20 @@ mod tests {
                 final_fee_cap >= final_tip,
                 "EIP-1559 invariant violated: fee_cap {final_fee_cap} < tip {final_tip}",
             );
+        }
+
+        #[test]
+        fn calc_gas_fee_cap_roundtrip(
+            base_fee in 0..u64::MAX as u128,
+            tip in 0..u64::MAX as u128,
+        ) {
+            let fee_cap = FeeCalculator::calc_gas_fee_cap(base_fee, tip);
+            // fee_cap = tip + 2 * base_fee ⇒ (fee_cap - tip) / 2 == base_fee.
+            // Only exact when no saturation occurred.
+            if fee_cap < u128::MAX {
+                let recovered = fee_cap.saturating_sub(tip) / 2;
+                prop_assert_eq!(recovered, base_fee);
+            }
         }
 
         #[test]

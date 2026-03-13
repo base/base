@@ -31,7 +31,7 @@ mod nonce;
 pub use nonce::{NonceGuard, NonceManager, NonceState};
 
 mod manager;
-pub use manager::SimpleTxManager;
+pub use manager::{PreparedTx, SimpleTxManager};
 
 mod queue;
 pub use queue::TxQueue;
