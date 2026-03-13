@@ -909,7 +909,7 @@ impl SimpleTxManager {
         receipt_tx: mpsc::Sender<TransactionReceipt>,
         closed: Arc<AtomicBool>,
     ) {
-        tokio::spawn(async move {
+        let poller = tokio::spawn(async move {
             debug!(tx_hash = %tx_hash, "starting receipt polling");
 
             let receipt = Self::wait_mined(&send_state, &provider, tx_hash, &config, &closed).await;
@@ -920,6 +920,16 @@ impl SimpleTxManager {
             }
 
             debug!(tx_hash = %tx_hash, "receipt polling ended");
+        });
+
+        tokio::spawn(async move {
+            if let Err(join_err) = poller.await {
+                if join_err.is_panic() {
+                    error!(tx_hash = %tx_hash, error = %join_err, "receipt polling task panicked");
+                } else {
+                    debug!(tx_hash = %tx_hash, error = %join_err, "receipt polling task ended early");
+                }
+            }
         });
     }
 
