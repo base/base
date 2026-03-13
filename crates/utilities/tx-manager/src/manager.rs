@@ -492,7 +492,7 @@ impl SimpleTxManager {
             // ReplacementUnderpriced), rather than waiting for the next
             // resubmission timer tick.
             if send_state.should_bump_fees() {
-                match self
+                let result = self
                     .handle_fee_bump(
                         candidate,
                         send_state,
@@ -501,46 +501,34 @@ impl SimpleTxManager {
                         current_fee_cap,
                         last_tx_hash,
                     )
-                    .await
-                {
-                    Ok((new_tip, new_fee_cap, new_hash)) => {
-                        current_tip = new_tip;
-                        current_fee_cap = new_fee_cap;
-                        last_tx_hash = new_hash;
-                        // Reset the bump ticker so we get a full interval
-                        // before the next timer-driven bump.
-                        bump_ticker.reset();
-                    }
-                    Err(e) if !e.is_retryable() => {
-                        error!(error = %e, "non-retryable error during fee bump");
-                        return Err(e);
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "fee bump failed, will retry next tick");
-                    }
+                    .await;
+                if let Some(abort) = Self::apply_bump_result(
+                    result,
+                    &mut current_tip,
+                    &mut current_fee_cap,
+                    &mut last_tx_hash,
+                ) {
+                    return Err(abort);
                 }
+                // Reset the bump ticker so we get a full interval
+                // before the next timer-driven bump.
+                bump_ticker.reset();
                 continue;
             }
 
             tokio::select! {
                 _ = bump_ticker.tick() => {
                     // Fee bump: query fresh gas prices and apply bump logic.
-                    let bump_result = self
+                    let result = self
                         .handle_fee_bump(candidate, send_state, &receipt_tx, current_tip, current_fee_cap, last_tx_hash)
                         .await;
-                    match bump_result {
-                        Ok((new_tip, new_fee_cap, new_hash)) => {
-                            current_tip = new_tip;
-                            current_fee_cap = new_fee_cap;
-                            last_tx_hash = new_hash;
-                        }
-                        Err(e) if !e.is_retryable() => {
-                            error!(error = %e, "non-retryable error during fee bump");
-                            return Err(e);
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "fee bump failed, will retry next tick");
-                        }
+                    if let Some(abort) = Self::apply_bump_result(
+                        result,
+                        &mut current_tip,
+                        &mut current_fee_cap,
+                        &mut last_tx_hash,
+                    ) {
+                        return Err(abort);
                     }
                 }
                 result = receipt_rx.recv() => {
@@ -642,6 +630,36 @@ impl SimpleTxManager {
         );
 
         Ok((tracked_tip, tracked_fee_cap, new_hash))
+    }
+
+    /// Applies the result of a fee bump attempt, updating the tracked fee
+    /// state on success or logging the error on failure.
+    ///
+    /// Returns `Some(error)` when the caller must abort the send loop
+    /// (non-retryable error), or `None` when the loop should continue
+    /// (success or retryable error).
+    fn apply_bump_result(
+        result: TxManagerResult<(u128, u128, B256)>,
+        current_tip: &mut u128,
+        current_fee_cap: &mut u128,
+        last_tx_hash: &mut B256,
+    ) -> Option<TxManagerError> {
+        match result {
+            Ok((new_tip, new_fee_cap, new_hash)) => {
+                *current_tip = new_tip;
+                *current_fee_cap = new_fee_cap;
+                *last_tx_hash = new_hash;
+                None
+            }
+            Err(e) if !e.is_retryable() => {
+                error!(error = %e, "non-retryable error during fee bump");
+                Some(e)
+            }
+            Err(e) => {
+                warn!(error = %e, "fee bump failed, will retry next tick");
+                None
+            }
+        }
     }
 
     /// Broadcasts a raw transaction to the network.
