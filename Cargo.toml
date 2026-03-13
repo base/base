@@ -401,8 +401,10 @@ metrics-exporter-prometheus = { version = "0.18.1", default-features = false }
 aws-nitro-enclaves-cose = "0.5"
 aws-nitro-enclaves-nsm-api = "0.4"
 aws-config = { version = "1.1.7", default-features = false }
+aws-sdk-ec2 = { version = "1", default-features = false }
 aws-sdk-s3 = { version = "1.106.0", default-features = false }
 aws-credential-types = { version = "1.1.7", default-features = false }
+aws-sdk-elasticloadbalancingv2 = { version = "1", default-features = false }
 
 # crypto
 sha3 = "0.10"

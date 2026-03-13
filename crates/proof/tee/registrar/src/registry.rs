@@ -8,6 +8,8 @@ use url::Url;
 
 use crate::{RegistrarError, Result};
 
+// Interface mirrored from the canonical contract source:
+// https://github.com/base/contracts/blob/96b132077b86bdc77f3f96dd40e09dad363df32e/src/multiproof/tee/TEEProverRegistry.sol
 sol! {
     /// `TEEProverRegistry` contract interface.
     #[sol(rpc)]
