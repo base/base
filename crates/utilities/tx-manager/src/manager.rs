@@ -1000,9 +1000,8 @@ impl TxManager for SimpleTxManager {
 mod tests {
     use alloy_primitives::B256;
 
-    use crate::TxManagerError;
-
     use super::SimpleTxManager;
+    use crate::TxManagerError;
 
     // ── apply_bump_result ─────────────────────────────────────────────
 
