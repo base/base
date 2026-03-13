@@ -374,6 +374,146 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         Ok(derived)
     }
 
+    /// Execute exactly one derivation step and return the raw [`StepResult`].
+    ///
+    /// Unlike [`act_l2_pipeline_full`], this does **not** loop. The caller
+    /// decides whether and when to step again, making it possible to assert on
+    /// intermediate pipeline state between steps or to stop as soon as a
+    /// specific outcome is observed.
+    ///
+    /// When the step returns [`StepResult::PreparedAttributes`] the attributes
+    /// are consumed and applied to the safe head automatically, identical to
+    /// the behaviour inside [`act_l2_pipeline_full`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifierError::Pipeline`] if the pipeline returns a critical
+    /// error. Transient results (`Eof`, `NotEnoughData`) are returned as-is so
+    /// the caller can decide how to handle them.
+    ///
+    /// [`act_l2_pipeline_full`]: L2Verifier::act_l2_pipeline_full
+    pub async fn act_l2_pipeline_step(&mut self) -> Result<StepResult, VerifierError> {
+        let result = self.pipeline.step(self.safe_head).await;
+        match result {
+            StepResult::PreparedAttributes => {
+                if let Some(attrs) = self.pipeline.next() {
+                    self.apply_attributes(attrs);
+                }
+                Ok(StepResult::PreparedAttributes)
+            }
+            StepResult::AdvancedOrigin => Ok(StepResult::AdvancedOrigin),
+            StepResult::StepFailed(PipelineErrorKind::Temporary(e)) => {
+                Ok(StepResult::StepFailed(PipelineErrorKind::Temporary(e)))
+            }
+            StepResult::OriginAdvanceErr(PipelineErrorKind::Temporary(e)) => {
+                Ok(StepResult::OriginAdvanceErr(PipelineErrorKind::Temporary(e)))
+            }
+            StepResult::StepFailed(err) | StepResult::OriginAdvanceErr(err) => {
+                Err(VerifierError::Pipeline(err))
+            }
+        }
+    }
+
+    /// Step the pipeline until `condition` returns `true` for a [`StepResult`],
+    /// or until the pipeline reaches EOF (goes idle), or until `max_steps` is
+    /// exhausted.
+    ///
+    /// This is the Rust equivalent of op-e2e's `ActL2EventsUntil`. It drives
+    /// the pipeline forward step-by-step and hands each raw [`StepResult`] to
+    /// the caller's predicate. Use it when a test needs to stop at a specific
+    /// derivation outcome without knowing in advance how many steps it takes to
+    /// get there.
+    ///
+    /// Attributes are consumed and applied automatically on each
+    /// [`StepResult::PreparedAttributes`] step, just as in
+    /// [`act_l2_pipeline_full`].
+    ///
+    /// Returns `(steps_taken, condition_met)`. `condition_met` is `false` when
+    /// the pipeline reached EOF or `max_steps` before the predicate fired.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifierError::Pipeline`] on any non-transient pipeline error,
+    /// or when `NotEnoughData` is returned more than 1 000 consecutive times
+    /// without progress (indicating a stuck pipeline).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // Drive the pipeline until the L1 origin advances past genesis.
+    /// let (steps, hit) = verifier
+    ///     .act_l2_pipeline_until(
+    ///         |r| matches!(r, StepResult::AdvancedOrigin),
+    ///         500,
+    ///     )
+    ///     .await?;
+    /// assert!(hit, "pipeline idled before advancing the L1 origin");
+    ///
+    /// // Drive until exactly one L2 block is derived, then inspect state.
+    /// let (_, hit) = verifier
+    ///     .act_l2_pipeline_until(
+    ///         |r| matches!(r, StepResult::PreparedAttributes),
+    ///         500,
+    ///     )
+    ///     .await?;
+    /// assert!(hit);
+    /// assert_eq!(verifier.l2_safe().block_info.number, 1);
+    /// ```
+    ///
+    /// [`act_l2_pipeline_full`]: L2Verifier::act_l2_pipeline_full
+    pub async fn act_l2_pipeline_until(
+        &mut self,
+        condition: impl Fn(&StepResult) -> bool,
+        max_steps: usize,
+    ) -> Result<(usize, bool), VerifierError> {
+        let mut steps = 0;
+        let mut no_progress = 0usize;
+        loop {
+            if steps >= max_steps {
+                return Ok((steps, false));
+            }
+            let result = self.pipeline.step(self.safe_head).await;
+            steps += 1;
+            if matches!(result, StepResult::PreparedAttributes)
+                && let Some(attrs) = self.pipeline.next()
+            {
+                self.apply_attributes(attrs);
+            }
+            if condition(&result) {
+                return Ok((steps, true));
+            }
+            match result {
+                StepResult::PreparedAttributes | StepResult::AdvancedOrigin => {
+                    no_progress = 0;
+                }
+                StepResult::StepFailed(err) => match err {
+                    PipelineErrorKind::Temporary(PipelineError::Eof) => {
+                        return Ok((steps, false));
+                    }
+                    PipelineErrorKind::Temporary(PipelineError::NotEnoughData) => {
+                        no_progress += 1;
+                        if no_progress > 1_000 {
+                            return Err(VerifierError::Pipeline(
+                                PipelineError::Provider(
+                                    "pipeline stuck: 1000 consecutive NotEnoughData without progress"
+                                        .into(),
+                                )
+                                .temp(),
+                            ));
+                        }
+                    }
+                    err => return Err(VerifierError::Pipeline(err)),
+                },
+                StepResult::OriginAdvanceErr(err) => match err {
+                    PipelineErrorKind::Temporary(PipelineError::Eof) => {
+                        return Ok((steps, false));
+                    }
+                    err => return Err(VerifierError::Pipeline(err)),
+                },
+            }
+        }
+    }
+
     /// Return the current L1 origin the pipeline is positioned at.
     pub fn l1_origin(&self) -> Option<BlockInfo> {
         self.pipeline.origin()
