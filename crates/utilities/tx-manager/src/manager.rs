@@ -1094,10 +1094,9 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
     use alloy_provider::RootProvider;
     use alloy_signer_local::PrivateKeySigner;
-
-    use super::SimpleTxManager;
     use rstest::rstest;
 
+    use super::SimpleTxManager;
     use crate::{GasPriceCaps, TxCandidate, TxManagerConfig, TxManagerError};
 
     async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
