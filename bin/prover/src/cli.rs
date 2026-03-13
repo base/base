@@ -221,11 +221,8 @@ impl NitroLocalArgs {
             .ok_or_else(|| eyre!("unknown L1 chain ID: {}", rollup_config.l1_chain_id))?
             .clone();
 
-        let enclave_config = EnclaveConfig {
-            vsock_cid: 0,
-            vsock_port: 0,
-            config_hash: self.config_hash,
-        };
+        let enclave_config =
+            EnclaveConfig { vsock_cid: 0, vsock_port: 0, config_hash: self.config_hash };
 
         let prover_config = ProverConfig {
             l1_eth_url: self.server.l1_eth_url,
