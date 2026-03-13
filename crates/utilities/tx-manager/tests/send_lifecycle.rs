@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use base_tx_manager::{
     SendState, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig, TxManagerError,
 };
+use rstest::rstest;
 
 /// Helper: spawns an Anvil instance and returns a [`SimpleTxManager`]
 /// configured with the given [`TxManagerConfig`].
@@ -143,17 +144,12 @@ async fn send_async_confirms_simple_value_transfer() {
     assert!(receipt.block_number.is_some(), "receipt should have a block number");
 }
 
+#[rstest]
+#[case::timeout_disabled(Duration::ZERO)]
+#[case::timeout_enabled(Duration::from_secs(5))]
 #[tokio::test]
-async fn send_resets_nonce_manager_when_send_timeout_is_disabled() {
-    let config = TxManagerConfig { tx_send_timeout: Duration::ZERO, ..fast_send_config() };
-
-    assert_send_error_resets_nonce(config).await;
-}
-
-#[tokio::test]
-async fn send_resets_nonce_manager_when_send_timeout_is_enabled() {
-    let config = TxManagerConfig { tx_send_timeout: Duration::from_secs(5), ..fast_send_config() };
-
+async fn send_resets_nonce_manager_on_pre_publish_failure(#[case] tx_send_timeout: Duration) {
+    let config = TxManagerConfig { tx_send_timeout, ..fast_send_config() };
     assert_send_error_resets_nonce(config).await;
 }
 

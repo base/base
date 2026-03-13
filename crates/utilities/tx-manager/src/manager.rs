@@ -1096,6 +1096,8 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
 
     use super::SimpleTxManager;
+    use rstest::rstest;
+
     use crate::{GasPriceCaps, TxCandidate, TxManagerConfig, TxManagerError};
 
     async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
@@ -1122,99 +1124,56 @@ mod tests {
 
     // ── apply_bump_result ─────────────────────────────────────────────
 
-    #[test]
-    fn apply_bump_result_success_updates_state() {
-        let mut tip = 100u128;
-        let mut fee_cap = 1000u128;
-        let mut hash = B256::ZERO;
-        let new_hash = B256::with_last_byte(0x42);
-
-        let abort = SimpleTxManager::apply_bump_result(
-            Ok((200, 2000, new_hash)),
-            &mut tip,
-            &mut fee_cap,
-            &mut hash,
-        );
-
-        assert!(abort.is_none(), "success should not abort");
-        assert_eq!(tip, 200);
-        assert_eq!(fee_cap, 2000);
-        assert_eq!(hash, new_hash);
-    }
-
-    #[test]
-    fn apply_bump_result_non_retryable_returns_abort() {
-        let mut tip = 100u128;
-        let mut fee_cap = 1000u128;
-        let mut hash = B256::ZERO;
-
-        let abort = SimpleTxManager::apply_bump_result(
-            Err(TxManagerError::FeeLimitExceeded { fee: 500, ceiling: 100 }),
-            &mut tip,
-            &mut fee_cap,
-            &mut hash,
-        );
-
-        assert!(abort.is_some(), "non-retryable error should abort");
-        assert!(matches!(abort.unwrap(), TxManagerError::FeeLimitExceeded { .. }));
-        // State should not be updated on error.
-        assert_eq!(tip, 100);
-        assert_eq!(fee_cap, 1000);
-        assert_eq!(hash, B256::ZERO);
-    }
-
-    #[test]
-    fn apply_bump_result_retryable_continues() {
+    #[rstest]
+    #[case::success_updates_state(
+        Ok((200, 2000, B256::with_last_byte(0x42))),
+        false, 200, 2000, B256::with_last_byte(0x42),
+    )]
+    #[case::non_retryable_returns_abort(
+        Err(TxManagerError::FeeLimitExceeded { fee: 500, ceiling: 100 }),
+        true, 100, 1000, B256::ZERO,
+    )]
+    #[case::retryable_continues(
+        Err(TxManagerError::Rpc("transient error".to_string())),
+        false, 100, 1000, B256::ZERO,
+    )]
+    fn apply_bump_result(
+        #[case] input: Result<(u128, u128, B256), TxManagerError>,
+        #[case] abort_expected: bool,
+        #[case] expected_tip: u128,
+        #[case] expected_fee_cap: u128,
+        #[case] expected_hash: B256,
+    ) {
         let mut tip = 100u128;
         let mut fee_cap = 1000u128;
         let mut hash = B256::ZERO;
 
-        let abort = SimpleTxManager::apply_bump_result(
-            Err(TxManagerError::Rpc("transient error".to_string())),
-            &mut tip,
-            &mut fee_cap,
-            &mut hash,
+        let abort = SimpleTxManager::apply_bump_result(input, &mut tip, &mut fee_cap, &mut hash);
+
+        assert_eq!(abort.is_some(), abort_expected);
+        assert_eq!(tip, expected_tip);
+        assert_eq!(fee_cap, expected_fee_cap);
+        assert_eq!(hash, expected_hash);
+    }
+
+    #[rstest]
+    #[case::error_before_first_publish(false, Err(TxManagerError::SendTimeout), true)]
+    #[case::non_timeout_error_after_publish(true, Err(TxManagerError::ChannelClosed), false)]
+    #[case::timeout_after_publish(true, Err(TxManagerError::SendTimeout), true)]
+    #[case::success(false, Ok(()), false)]
+    fn should_reset_nonce_on_send_error(
+        #[case] has_publish: bool,
+        #[case] result: crate::TxManagerResult<()>,
+        #[case] expected: bool,
+    ) {
+        let send_state = crate::SendState::new(3).expect("should create send state");
+        if has_publish {
+            send_state.record_successful_publish();
+        }
+        assert_eq!(
+            SimpleTxManager::should_reset_nonce_on_send_error(&result, &send_state),
+            expected,
         );
-
-        assert!(abort.is_none(), "retryable error should not abort");
-        // State should not be updated on error.
-        assert_eq!(tip, 100);
-        assert_eq!(fee_cap, 1000);
-        assert_eq!(hash, B256::ZERO);
-    }
-
-    #[test]
-    fn should_reset_nonce_on_send_error_before_first_publish() {
-        let send_state = crate::SendState::new(3).expect("should create send state");
-        let result: crate::TxManagerResult<()> = Err(TxManagerError::SendTimeout);
-
-        assert!(SimpleTxManager::should_reset_nonce_on_send_error(&result, &send_state));
-    }
-
-    #[test]
-    fn should_not_reset_nonce_after_successful_publish() {
-        let send_state = crate::SendState::new(3).expect("should create send state");
-        send_state.record_successful_publish();
-        let result: crate::TxManagerResult<()> = Err(TxManagerError::ChannelClosed);
-
-        assert!(!SimpleTxManager::should_reset_nonce_on_send_error(&result, &send_state));
-    }
-
-    #[test]
-    fn should_reset_nonce_on_timeout_even_after_successful_publish() {
-        let send_state = crate::SendState::new(3).expect("should create send state");
-        send_state.record_successful_publish();
-        let result: crate::TxManagerResult<()> = Err(TxManagerError::SendTimeout);
-
-        assert!(SimpleTxManager::should_reset_nonce_on_send_error(&result, &send_state));
-    }
-
-    #[test]
-    fn should_not_reset_nonce_on_success() {
-        let send_state = crate::SendState::new(3).expect("should create send state");
-        let result: crate::TxManagerResult<()> = Ok(());
-
-        assert!(!SimpleTxManager::should_reset_nonce_on_send_error(&result, &send_state));
     }
 
     #[tokio::test]
