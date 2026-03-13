@@ -505,7 +505,7 @@ async fn craft_tx_rolls_back_nonce_on_sign_failure() {
     drop(guard);
 }
 
-/// When fee overrides are above network fees, the PreparedTx must use the
+/// When fee overrides are above network fees, the [`PreparedTx`] must use the
 /// overrides (since `craft_tx` takes `max(network_fee, override)`).
 #[tokio::test]
 async fn craft_tx_with_fee_overrides_uses_overrides_when_above_network() {
@@ -544,7 +544,7 @@ async fn craft_tx_with_fee_overrides_uses_overrides_when_above_network() {
     assert_eq!(tx.max_fee_per_gas, override_fee_cap);
 }
 
-/// When fee overrides are below network fees, the PreparedTx must use the
+/// When fee overrides are below network fees, the [`PreparedTx`] must use the
 /// network fees (since `craft_tx` takes `max(network_fee, override)`).
 #[tokio::test]
 async fn craft_tx_with_fee_overrides_uses_network_when_overrides_below() {
@@ -580,9 +580,9 @@ async fn craft_tx_with_fee_overrides_uses_network_when_overrides_below() {
     );
 }
 
-/// Verifies that the PreparedTx fee fields are always consistent with the
+/// Verifies that the [`PreparedTx`] fee fields are always consistent with the
 /// fees encoded in the signed transaction — the core invariant that
-/// PreparedTx is designed to guarantee.
+/// [`PreparedTx`] is designed to guarantee.
 #[tokio::test]
 async fn prepared_tx_fees_match_decoded_transaction_with_overrides() {
     let (manager, _anvil) = setup().await;
