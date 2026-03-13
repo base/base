@@ -425,7 +425,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                 Ok(StepResult::OriginAdvanceErr(PipelineErrorKind::Temporary(e)))
             }
             StepResult::StepFailed(err) | StepResult::OriginAdvanceErr(err) => {
-                Err(VerifierError::Pipeline(err))
+                Err(VerifierError::Pipeline(Box::new(err)))
             }
         }
     }
@@ -509,22 +509,22 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                     PipelineErrorKind::Temporary(PipelineError::NotEnoughData) => {
                         no_progress += 1;
                         if no_progress > 1_000 {
-                            return Err(VerifierError::Pipeline(
+                            return Err(VerifierError::Pipeline(Box::new(
                                 PipelineError::Provider(
                                     "pipeline stuck: 1000 consecutive NotEnoughData without progress"
                                         .into(),
                                 )
                                 .temp(),
-                            ));
+                            )));
                         }
                     }
-                    err => return Err(VerifierError::Pipeline(err)),
+                    err => return Err(VerifierError::Pipeline(Box::new(err))),
                 },
                 StepResult::OriginAdvanceErr(err) => match err {
                     PipelineErrorKind::Temporary(PipelineError::Eof) => {
                         return Ok((steps, false));
                     }
-                    err => return Err(VerifierError::Pipeline(err)),
+                    err => return Err(VerifierError::Pipeline(Box::new(err))),
                 },
             }
         }
