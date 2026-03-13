@@ -227,6 +227,11 @@ impl Drop for NonceGuard {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        future::{Future, poll_fn},
+        task::Poll,
+    };
+
     use alloy_node_bindings::Anvil;
 
     use super::*;
@@ -264,5 +269,34 @@ mod tests {
 
         let err = manager.next_nonce().await.expect_err("should overflow");
         assert_eq!(err, TxManagerError::NonceOverflow);
+    }
+
+    #[tokio::test]
+    async fn reset_stays_pending_while_nonce_guard_holds_mutex() {
+        let anvil = Anvil::new().spawn();
+        let url = anvil.endpoint_url();
+        let provider = RootProvider::new_http(url);
+        let address = anvil.addresses()[0];
+
+        let manager = NonceManager::new_with_nonce(provider, address, 0);
+
+        let guard = manager.next_nonce().await.expect("should reserve nonce");
+        assert_eq!(guard.nonce(), 0);
+
+        let mut reset = std::pin::pin!(manager.reset());
+        let reset_is_pending = poll_fn(|cx| {
+            Poll::Ready(matches!(reset.as_mut().poll(cx), Poll::Pending))
+        })
+        .await;
+        assert!(
+            reset_is_pending,
+            "reset() must stay pending while a NonceGuard holds the mutex",
+        );
+
+        drop(guard);
+        reset.await;
+
+        let guard = manager.next_nonce().await.expect("should re-fetch after reset");
+        assert_eq!(guard.nonce(), 0);
     }
 }
