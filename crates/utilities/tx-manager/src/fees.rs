@@ -169,6 +169,32 @@ impl FeeCalculator {
     }
 }
 
+/// Caller-supplied fee floor for transaction construction.
+///
+/// Used by [`crate::SimpleTxManager::prepare`] and
+/// [`crate::SimpleTxManager::craft_tx`] to enforce minimum fees during
+/// fee-bump iterations. The manager takes `max(network_fee, override)`
+/// for each component so the resulting transaction is guaranteed to meet
+/// the override thresholds even if network fees have dropped.
+///
+/// Field names mirror [`GasPriceCaps`] for consistency.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FeeOverride {
+    /// Minimum acceptable maximum priority fee per gas (tip).
+    pub gas_tip_cap: u128,
+    /// Minimum acceptable maximum total fee per gas (base fee + tip).
+    pub gas_fee_cap: u128,
+}
+
+impl FeeOverride {
+    /// Creates a new [`FeeOverride`] with the given tip and fee cap floors.
+    #[must_use]
+    pub const fn new(gas_tip_cap: u128, gas_fee_cap: u128) -> Self {
+        Self { gas_tip_cap, gas_fee_cap }
+    }
+}
+
 /// Intermediate fee estimates computed during gas price suggestion.
 ///
 /// Used between fee calculation and transaction construction to carry
