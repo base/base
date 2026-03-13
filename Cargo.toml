@@ -29,6 +29,9 @@ members = [
   "crates/proof/tee/client",
   "crates/proof/tee/registrar",
   "crates/proof/zk/client",
+  "crates/proof/zk/db",
+  "crates/proof/zk/outbox",
+  "crates/proof/zk/service",
   "crates/proof/contracts",
   "crates/proof/rpc",
   "crates/proof/proposer",
@@ -217,26 +220,29 @@ websocket-proxy = { path = "crates/infra/websocket-proxy" }
 mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 
 # Proof
-base-proof-rpc = { path = "crates/proof/rpc" }
-base-enclave = { path = "crates/proof/tee/core" }
-base-proposer = { path = "crates/proof/proposer" }
-base-zk-client = { path = "crates/proof/zk/client" }
 base-challenger = { path = "crates/proof/challenge" }
+base-enclave = { path = "crates/proof/tee/core" }
 base-enclave-client = { path = "crates/proof/tee/client" }
-base-proof-tee-nitro = { path = "crates/proof/tee/nitro" }
-base-proof-contracts = { path = "crates/proof/contracts" }
-base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
 base-proof = { path = "crates/proof/proof", default-features = false }
-base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
-base-proof-host = { path = "crates/proof/host", default-features = false }
 base-proof-client = { path = "crates/proof/client", default-features = false }
+base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-driver = { path = "crates/proof/driver", default-features = false }
 base-proof-executor = { path = "crates/proof/executor", default-features = false }
-base-proof-preimage = { path = "crates/proof/preimage", default-features = false }
-base-proof-std-fpvm = { path = "crates/proof/std-fpvm", default-features = false }
-base-proof-primitives = { path = "crates/proof/primitives", default-features = false }
-base-proof-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-features = false }
 base-proof-fpvm-precompiles = { path = "crates/proof/fpvm-precompiles", default-features = false }
+base-proof-host = { path = "crates/proof/host", default-features = false }
+base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
+base-proof-preimage = { path = "crates/proof/preimage", default-features = false }
+base-proof-primitives = { path = "crates/proof/primitives", default-features = false }
+base-proof-rpc = { path = "crates/proof/rpc" }
+base-proof-std-fpvm = { path = "crates/proof/std-fpvm", default-features = false }
+base-proof-std-fpvm-proc = { path = "crates/proof/std-fpvm-proc", default-features = false }
+base-proof-tee-nitro = { path = "crates/proof/tee/nitro" }
+base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
+base-proposer = { path = "crates/proof/proposer" }
+base-zk-client = { path = "crates/proof/zk/client" }
+base-zk-db = { path = "crates/proof/zk/db" }
+base-zk-outbox = { path = "crates/proof/zk/outbox" }
+base-zk-service = { path = "crates/proof/zk/service" }
 
 # Actions
 base-action-harness = { path = "actions/harness" }
@@ -454,7 +460,7 @@ httpmock = "0.8.2"
 serial_test = "3"
 proptest = "1.10.0"
 similar-asserts = "1"
-testcontainers = "0.27"
+testcontainers = { version = "0.27", default-features = false }
 proptest-arbitrary-interop = "0.1.0"
 arbitrary = { version = "1", default-features = false }
 wiremock = { version = "0.6.2", default-features = false }
@@ -517,6 +523,12 @@ either = { version = "1.15.0", default-features = false }
 dotenvy = { version = "0.15.7", default-features = false }
 derive_more = { version = "2.1.0", default-features = false }
 
+# database
+sqlx = { version = "0.8", default-features = false }
+
+# rate limiting
+governor = "0.7"
+nonzero_ext = "0.3"
 
 # transitive deps
 syn = "2.0"
