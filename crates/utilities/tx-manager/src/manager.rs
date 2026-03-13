@@ -396,6 +396,14 @@ impl SimpleTxManager {
     /// 4. Enter a `tokio::select!` loop that monitors the resubmission timer
     ///    (for fee bumping), the receipt channel, and critical errors.
     ///
+    /// # Receipt status
+    ///
+    /// The returned receipt is **not** inspected for EVM execution status.
+    /// A reverted transaction that reaches the required confirmation depth
+    /// is returned as `Ok(receipt)`. Callers must check
+    /// `receipt.inner.status()` to distinguish successful execution from
+    /// reverts.
+    ///
     /// # Errors
     ///
     /// Returns the confirmed [`TransactionReceipt`] on success, or a
@@ -677,8 +685,10 @@ impl SimpleTxManager {
                 // AlreadyKnown on resubmission is a success — the tx is in
                 // the mempool from a prior publish. Return the previous hash.
                 if classified.is_already_known() && send_state.successful_publish_count() > 0 {
+                    let hash = last_tx_hash.ok_or_else(|| {
+                        TxManagerError::Rpc("AlreadyKnown but no prior tx hash available".into())
+                    })?;
                     send_state.record_successful_publish();
-                    let hash = last_tx_hash.unwrap_or(B256::ZERO);
                     info!(tx_hash = %hash, "transaction already known in mempool, treating as success");
                     return Ok(hash);
                 }
@@ -708,6 +718,20 @@ impl SimpleTxManager {
     /// The task calls [`wait_mined`](Self::wait_mined) in a loop, checking
     /// both confirmation status and manager shutdown via the shared `closed`
     /// flag.
+    ///
+    /// # Task accumulation
+    ///
+    /// Each fee bump spawns a new polling task for the replacement tx hash
+    /// without cancelling the previous one. This is intentional: any
+    /// previously-published variant may still confirm (the original or an
+    /// earlier bump), and we want to detect whichever is mined first.
+    /// Accumulated tasks are bounded by three mechanisms:
+    /// - The `closed` flag causes all pollers to exit on shutdown.
+    /// - Each poller exits once it delivers a receipt through the mpsc
+    ///   channel (or finds the channel closed because a different poller
+    ///   already delivered).
+    /// - Polling frequency is governed by `receipt_query_interval`, so
+    ///   RPC load is proportional to `bump_count × 1/interval`.
     fn wait_for_tx(
         send_state: Arc<SendState>,
         provider: RootProvider,
