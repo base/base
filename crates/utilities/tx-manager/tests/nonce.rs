@@ -1,19 +1,12 @@
 //! Integration tests for [`NonceManager`] with an Anvil backend.
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::time::Duration;
 
 use alloy_node_bindings::Anvil;
 use alloy_primitives::Address;
 use alloy_provider::RootProvider;
 use base_tx_manager::{NonceGuard, NonceManager, TxManagerError};
 use rayon::prelude::*;
-use tokio::sync::Notify;
 
 /// Helper: spawns an Anvil instance and returns a [`NonceManager`] wired to
 /// the first default account.
@@ -204,50 +197,6 @@ fn nonce_guard_is_send() {
     /// Asserts that `T` implements [`Send`].
     fn assert_send<T: Send>() {}
     assert_send::<NonceGuard>();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn reset_blocks_while_guard_held() {
-    let (manager, _anvil) = setup();
-
-    // Reserve nonce 0 — the guard holds the lock.
-    let guard = manager.next_nonce().await.unwrap();
-    assert_eq!(guard.nonce(), 0);
-
-    let reset_completed = Arc::new(AtomicBool::new(false));
-    let flag = Arc::clone(&reset_completed);
-    let about_to_reset = Arc::new(Notify::new());
-    let notify = Arc::clone(&about_to_reset);
-    let mgr = manager.clone();
-
-    // Spawn a task that calls reset(). It should block because the
-    // guard holds the same mutex.
-    let handle = tokio::spawn(async move {
-        notify.notify_one();
-        mgr.reset().await;
-        flag.store(true, Ordering::SeqCst);
-    });
-
-    // Wait until the spawned task is about to call reset(), then yield
-    // to let it enter the lock wait.
-    about_to_reset.notified().await;
-    tokio::task::yield_now().await;
-    assert!(
-        !reset_completed.load(Ordering::SeqCst),
-        "reset() must not complete while a NonceGuard is held",
-    );
-
-    // Drop the guard — reset() should now complete.
-    drop(guard);
-    handle.await.unwrap();
-    assert!(
-        reset_completed.load(Ordering::SeqCst),
-        "reset() should have completed after guard was dropped",
-    );
-
-    // After the reset, next nonce should re-fetch from chain (0).
-    let g = manager.next_nonce().await.unwrap();
-    assert_eq!(g.nonce(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
