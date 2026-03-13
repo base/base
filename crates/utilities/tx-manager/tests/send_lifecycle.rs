@@ -4,7 +4,10 @@
 //! [`SimpleTxManager::query_receipt`] — the methods that drive a transaction
 //! from publication through confirmation.
 
-use std::time::Duration;
+use std::{
+    sync::{Arc, atomic::AtomicBool},
+    time::Duration,
+};
 
 use alloy_consensus::SignableTransaction;
 use alloy_network::{EthereumWallet, TxSigner};

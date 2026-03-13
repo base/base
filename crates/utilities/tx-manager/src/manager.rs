@@ -47,7 +47,7 @@ use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use backon::{ConstantBuilder, Retryable};
-use tokio::{sync::mpsc, oneshot, time::Instant};
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -922,7 +922,7 @@ impl SimpleTxManager {
     ///   already delivered).
     /// - Polling frequency is governed by `receipt_query_interval`, so
     ///   RPC load is proportional to `bump_count × 1/interval`.
-    fn wait_for_tx(
+    pub fn wait_for_tx(
         send_state: Arc<SendState>,
         provider: RootProvider,
         tx_hash: B256,
@@ -950,7 +950,7 @@ impl SimpleTxManager {
     /// Returns `Some(receipt)` when the transaction reaches
     /// `num_confirmations` depth, or `None` if the manager is closed or
     /// the `confirmation_timeout` deadline is exceeded.
-    async fn wait_mined(
+    pub async fn wait_mined(
         send_state: &SendState,
         provider: &RootProvider,
         tx_hash: B256,
