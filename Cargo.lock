@@ -4487,7 +4487,6 @@ dependencies = [
  "proptest",
  "rayon",
  "rstest",
- "serde",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

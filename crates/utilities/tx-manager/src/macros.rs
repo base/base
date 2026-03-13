@@ -21,16 +21,15 @@
 ///
 /// # Required downstream dependencies
 ///
-/// The macro expands to code that references `::clap::Parser`,
-/// `::humantime::parse_duration`, and `::serde::{Serialize, Deserialize}` via
-/// absolute paths. Consumer crates that invoke `define_tx_manager_cli!` must
-/// add these dependencies to their own `Cargo.toml`:
+/// The macro expands to code that references `::clap::Parser` and
+/// `::humantime::parse_duration` via absolute paths. Consumer crates that
+/// invoke `define_tx_manager_cli!` must add these dependencies to their own
+/// `Cargo.toml`:
 ///
 /// ```toml
 /// [dependencies]
 /// clap = { version = "...", features = ["derive", "env"] }
 /// humantime = "..."
-/// serde = { version = "...", features = ["derive"] }
 /// ```
 #[rustfmt::skip]
 #[macro_export]
@@ -41,7 +40,7 @@ macro_rules! define_tx_manager_cli {
         /// Designed to be `#[command(flatten)]`-ed into parent CLI structs
         /// (proposer, challenger, batcher binaries). All fields use environment
         /// variable fallbacks with the configured prefix.
-        #[derive(Debug, Clone, ::clap::Parser, ::serde::Serialize, ::serde::Deserialize)]
+        #[derive(Debug, Clone, ::clap::Parser)]
         #[command(next_help_heading = "Tx Manager")]
         pub struct TxManagerCli {
             /// Number of block confirmations to wait before considering a
