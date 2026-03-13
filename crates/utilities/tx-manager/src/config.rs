@@ -111,6 +111,8 @@ pub struct TxManagerConfig {
     pub tx_send_timeout: Duration,
     /// Mempool appearance timeout (zero = disabled).
     pub tx_not_in_mempool_timeout: Duration,
+    /// Maximum time to poll for confirmation before giving up.
+    pub confirmation_timeout: Duration,
 }
 
 impl Default for TxManagerConfig {
@@ -127,6 +129,7 @@ impl Default for TxManagerConfig {
             receipt_query_interval: Duration::from_secs(12),
             tx_send_timeout: Duration::ZERO,
             tx_not_in_mempool_timeout: Duration::from_secs(120),
+            confirmation_timeout: Duration::from_secs(300),
         }
     }
 }
@@ -143,6 +146,7 @@ impl TxManagerConfig {
     /// - `network_timeout` must be > 0
     /// - `resubmission_timeout` must be > 0
     /// - `receipt_query_interval` must be > 0
+    /// - `confirmation_timeout` must be > 0
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.num_confirmations == 0 {
             return Err(ConfigError::OutOfRange {
@@ -182,6 +186,13 @@ impl TxManagerConfig {
         if self.receipt_query_interval.is_zero() {
             return Err(ConfigError::OutOfRange {
                 field: "receipt_query_interval",
+                constraint: "> 0",
+                value: "0s".to_string(),
+            });
+        }
+        if self.confirmation_timeout.is_zero() {
+            return Err(ConfigError::OutOfRange {
+                field: "confirmation_timeout",
                 constraint: "> 0",
                 value: "0s".to_string(),
             });
@@ -272,5 +283,16 @@ mod tests {
     #[test]
     fn default_passes_validation() {
         TxManagerConfig::default().validate().expect("default config should be valid");
+    }
+
+    #[test]
+    fn validation_rejects_zero_confirmation_timeout() {
+        let config =
+            TxManagerConfig { confirmation_timeout: Duration::ZERO, ..TxManagerConfig::default() };
+        let err = config.validate().unwrap_err();
+        assert!(
+            matches!(err, ConfigError::OutOfRange { field: "confirmation_timeout", .. }),
+            "expected OutOfRange for confirmation_timeout, got: {err}"
+        );
     }
 }

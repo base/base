@@ -30,7 +30,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy_eips::{BlockNumberOrTag, Encodable2718};
@@ -526,7 +526,7 @@ impl SimpleTxManager {
     ///   already delivered).
     /// - Polling frequency is governed by `receipt_query_interval`, so
     ///   RPC load is proportional to `bump_count × 1/interval`.
-    fn wait_for_tx(
+    pub fn wait_for_tx(
         send_state: Arc<SendState>,
         provider: RootProvider,
         tx_hash: B256,
@@ -552,18 +552,29 @@ impl SimpleTxManager {
     /// the transaction is mined and confirmed to the required depth.
     ///
     /// Returns `Some(receipt)` when the transaction reaches
-    /// `num_confirmations` depth, or `None` if the manager is closed.
-    async fn wait_mined(
+    /// `num_confirmations` depth, or `None` if the manager is closed or
+    /// the `confirmation_timeout` deadline is exceeded.
+    pub async fn wait_mined(
         send_state: &SendState,
         provider: &RootProvider,
         tx_hash: B256,
         config: &TxManagerConfig,
         closed: &AtomicBool,
     ) -> Option<TransactionReceipt> {
+        let deadline = Instant::now() + config.confirmation_timeout;
         let mut poll_interval = tokio::time::interval(config.receipt_query_interval);
 
         loop {
             poll_interval.tick().await;
+
+            if Instant::now() >= deadline {
+                warn!(
+                    tx_hash = %tx_hash,
+                    timeout = ?config.confirmation_timeout,
+                    "confirmation timeout exceeded",
+                );
+                return None;
+            }
 
             // Check shutdown state each iteration to support cancellation.
             if closed.load(Ordering::Acquire) {
@@ -611,6 +622,13 @@ impl SimpleTxManager {
         num_confirmations: u64,
         network_timeout: Duration,
     ) -> TxManagerResult<Option<TransactionReceipt>> {
+        // Fetch tip *before* the receipt so that a reorg between the two
+        // calls can only undercount confirmations (safe), never overcount.
+        let tip_height = tokio::time::timeout(network_timeout, provider.get_block_number())
+            .await
+            .map_err(|_| TxManagerError::Rpc("get_block_number timed out".into()))?
+            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+
         let receipt_opt =
             tokio::time::timeout(network_timeout, provider.get_transaction_receipt(tx_hash))
                 .await
@@ -638,11 +656,6 @@ impl SimpleTxManager {
         };
 
         // Check confirmation depth: tx_block + num_confirmations <= tip + 1
-        let tip_height = tokio::time::timeout(network_timeout, provider.get_block_number())
-            .await
-            .map_err(|_| TxManagerError::Rpc("get_block_number timed out".into()))?
-            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
-
         if tx_block.saturating_add(num_confirmations) <= tip_height.saturating_add(1) {
             info!(
                 tx_hash = %tx_hash,
