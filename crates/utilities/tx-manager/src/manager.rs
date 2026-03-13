@@ -526,21 +526,18 @@ impl SimpleTxManager {
         let result = if self.config.tx_send_timeout.is_zero() {
             self.send_tx_inner(&candidate, &send_state).await
         } else {
-            match tokio::time::timeout(
+            tokio::time::timeout(
                 self.config.tx_send_timeout,
                 self.send_tx_inner(&candidate, &send_state),
             )
             .await
-            {
-                Ok(inner) => inner,
-                Err(_) => {
-                    warn!(
-                        timeout = ?self.config.tx_send_timeout,
-                        "send timed out",
-                    );
-                    Err(TxManagerError::SendTimeout)
-                }
-            }
+            .unwrap_or_else(|_| {
+                warn!(
+                    timeout = ?self.config.tx_send_timeout,
+                    "send timed out",
+                );
+                Err(TxManagerError::SendTimeout)
+            })
         };
 
         if Self::should_reset_nonce_on_send_error(&result, &send_state) {
