@@ -8,7 +8,7 @@ use std::{
 use alloy_network::EthereumWallet;
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Address, B256, U256};
-use alloy_provider::RootProvider;
+use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::{SendState, SimpleTxManager, TxCandidate, TxManagerConfig};
 use tokio::sync::mpsc;
@@ -111,8 +111,17 @@ async fn query_receipt_returns_confirmed_receipt() {
     let tx_hash =
         manager.publish_tx(&send_state, &prepared.raw_tx, None).await.expect("should publish tx");
 
-    // With num_confirmations = 1 and Anvil auto-mining at the same block,
-    // the formula tx_block + 1 <= tip + 1 is satisfied immediately.
+    // Mine an extra block so tip_height is strictly ahead of the tx block.
+    // query_receipt fetches tip_height before the receipt (for reorg safety),
+    // so under CI load the tip may be stale on a single-call test.
+    manager
+        .provider()
+        .raw_request::<(), String>("evm_mine".into(), ())
+        .await
+        .expect("evm_mine should succeed");
+
+    // With num_confirmations = 1 and the extra block mined above,
+    // the formula tx_block + 1 <= tip + 1 is satisfied.
     let result = SimpleTxManager::query_receipt(
         &send_state,
         manager.provider(),
