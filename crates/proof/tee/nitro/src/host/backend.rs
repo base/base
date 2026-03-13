@@ -42,16 +42,11 @@ impl ProverBackend for NitroBackend {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::B256;
     use base_proof_preimage::{PreimageKey, WitnessOracle};
     use base_proof_primitives::ProverBackend;
 
     use super::*;
-    use crate::enclave::{EnclaveConfig, Server};
-
-    fn test_config() -> EnclaveConfig {
-        EnclaveConfig { vsock_cid: 0, vsock_port: 0, config_hash: B256::ZERO }
-    }
+    use crate::enclave::Server;
 
     #[tokio::test]
     async fn into_preimages_extracts_all_entries() {
@@ -67,8 +62,7 @@ mod tests {
 
     #[tokio::test]
     async fn backend_create_oracle_returns_empty() {
-        let config = test_config();
-        let server = Arc::new(Server::new(&config).unwrap());
+        let server = Arc::new(Server::new().unwrap());
         let transport = Arc::new(NitroTransport::local(server));
         let backend = NitroBackend::new(transport);
 

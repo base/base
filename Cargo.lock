@@ -3286,6 +3286,7 @@ dependencies = [
  "alloy-trie",
  "base-alloy-consensus",
  "base-consensus-genesis",
+ "base-consensus-registry",
  "base-proof-primitives",
  "base-protocol",
  "hex",
@@ -4465,7 +4466,6 @@ dependencies = [
 name = "base-prover"
 version = "0.0.0"
 dependencies = [
- "alloy-primitives",
  "base-consensus-registry",
  "base-proof-host",
  "base-proof-tee-nitro",

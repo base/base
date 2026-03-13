@@ -259,6 +259,7 @@ impl PerChainConfig {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, b256};
+    use base_consensus_registry::Registry;
 
     use super::*;
 
@@ -456,5 +457,41 @@ mod tests {
         assert_eq!(rollup_config.hardforks.holocene_time, Some(0));
         assert_eq!(rollup_config.hardforks.isthmus_time, Some(0));
         assert_eq!(rollup_config.hardforks.regolith_time, Some(0));
+    }
+
+    /// Print config hashes for supported chains so they can be hardcoded in the
+    /// enclave server. Run with:
+    /// `cargo test -p base-enclave print_real_config_hashes -- --nocapture --ignored`
+    #[test]
+    #[ignore]
+    fn print_real_config_hashes() {
+        let chains: &[(u64, &str)] =
+            &[(8453, "Base Mainnet"), (84532, "Base Sepolia"), (11763072, "Sepolia Alpha")];
+
+        for &(chain_id, name) in chains {
+            let rollup = Registry::rollup_config(chain_id)
+                .unwrap_or_else(|| panic!("missing rollup config for {name} ({chain_id})"));
+
+            let sc = rollup.genesis.system_config.as_ref().expect("missing system_config");
+            let mut per_chain = PerChainConfig {
+                chain_id: U256::from(rollup.l2_chain_id.id()),
+                genesis: Genesis {
+                    l1: BlockId { hash: rollup.genesis.l1.hash, number: rollup.genesis.l1.number },
+                    l2: BlockId { hash: rollup.genesis.l2.hash, number: rollup.genesis.l2.number },
+                    l2_time: rollup.genesis.l2_time,
+                    system_config: GenesisSystemConfig {
+                        batcher_addr: sc.batcher_address,
+                        overhead: B256::ZERO,
+                        scalar: B256::from(sc.scalar.to_be_bytes::<32>()),
+                        gas_limit: sc.gas_limit,
+                    },
+                },
+                block_time: rollup.block_time,
+                deposit_contract_address: rollup.deposit_contract_address,
+                l1_system_config_address: rollup.l1_system_config_address,
+            };
+            per_chain.force_defaults();
+            println!("{name} ({chain_id}): {:?}", per_chain.hash());
+        }
     }
 }
