@@ -1,0 +1,37 @@
+[package]
+name = "base-zk-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+base-zk-db.workspace = true
+base-zk-outbox.workspace = true
+base-zk-client = { workspace = true, features = ["server"] }
+
+async-trait.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+tonic.workspace = true
+
+axum = { workspace = true, features = ["tokio", "http1"] }
+tower = { workspace = true, features = ["limit", "timeout"] }
+tower-http = { workspace = true, features = ["trace"] }
+reqwest = { workspace = true, features = ["json"] }
+
+governor.workspace = true
+nonzero_ext.workspace = true
+
+uuid = { workspace = true, features = ["v4", "serde"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+anyhow.workspace = true
+
+tracing.workspace = true
+
+[lints]
+workspace = true

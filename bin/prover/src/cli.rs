@@ -1,4 +1,4 @@
-//! CLI definition for the TEE prover binary.
+//! CLI definition for the prover binary (TEE + ZK backends).
 
 use std::net::SocketAddr;
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -21,7 +21,9 @@ use eyre::eyre;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use tracing::info;
 
-/// TEE prover.
+use crate::zk;
+
+/// Prover binary (TEE + ZK backends).
 #[derive(Parser)]
 #[command(author, version)]
 pub(crate) struct Cli {
@@ -34,6 +36,9 @@ pub(crate) struct Cli {
 enum Command {
     /// AWS Nitro Enclave proving backend.
     Nitro(NitroArgs),
+
+    /// ZK prover service.
+    Zk(Box<zk::ZkArgs>),
 }
 
 /// Arguments for the `nitro` subcommand.
@@ -121,10 +126,6 @@ struct NitroEnclaveArgs {
     /// Per-chain configuration hash.
     #[arg(long, env = "CONFIG_HASH")]
     config_hash: B256,
-
-    /// Expected PCR0 measurement of the enclave image.
-    #[arg(long, env = "TEE_IMAGE_HASH")]
-    tee_image_hash: B256,
 }
 
 impl Cli {
@@ -133,6 +134,7 @@ impl Cli {
         tracing_subscriber::fmt::init();
         match self.command {
             Command::Nitro(args) => args.run().await,
+            Command::Zk(args) => (*args).run().await,
         }
     }
 }
@@ -186,7 +188,6 @@ impl NitroEnclaveArgs {
             vsock_cid: self.vsock_cid,
             vsock_port: self.vsock_port,
             config_hash: self.config_hash,
-            tee_image_hash: self.tee_image_hash,
         };
 
         #[cfg(not(target_os = "linux"))]
@@ -213,10 +214,6 @@ struct NitroLocalArgs {
     /// Per-chain configuration hash.
     #[arg(long, env = "CONFIG_HASH")]
     config_hash: B256,
-
-    /// Expected PCR0 measurement of the enclave image.
-    #[arg(long, env = "TEE_IMAGE_HASH")]
-    tee_image_hash: B256,
 }
 
 #[cfg(feature = "local")]
@@ -230,12 +227,8 @@ impl NitroLocalArgs {
             .ok_or_else(|| eyre!("unknown L1 chain ID: {}", rollup_config.l1_chain_id))?
             .clone();
 
-        let enclave_config = EnclaveConfig {
-            vsock_cid: 0,
-            vsock_port: 0,
-            config_hash: self.config_hash,
-            tee_image_hash: self.tee_image_hash,
-        };
+        let enclave_config =
+            EnclaveConfig { vsock_cid: 0, vsock_port: 0, config_hash: self.config_hash };
 
         let prover_config = ProverConfig {
             l1_eth_url: self.server.l1_eth_url,

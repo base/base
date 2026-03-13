@@ -27,7 +27,6 @@ nitro-local *args:
         --l2-chain-id "${L2_CHAIN_ID:-8453}" \
         --listen-addr "${LISTEN_ADDR:-0.0.0.0:7300}" \
         --config-hash "${CONFIG_HASH:-0x0000000000000000000000000000000000000000000000000000000000000000}" \
-        --tee-image-hash "${TEE_IMAGE_HASH:-0x0000000000000000000000000000000000000000000000000000000000000000}" \
         --enable-experimental-witness-endpoint \
         {{ args }}
 
