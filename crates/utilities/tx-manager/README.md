@@ -38,8 +38,8 @@ Transaction lifecycle management for Base onchain components.
   pre-publish nonce-too-low, threshold nonce-too-low, and mempool deadline expiry.
 - **`TxManagerCli`**: Clap-based CLI argument struct with environment variable fallbacks
   (prefix `BASE_TX_MANAGER`). Captures all tunable tx-manager parameters and is designed
-  to be `#[command(flatten)]`-ed into parent CLI structs. Derives `Serialize`/`Deserialize`
-  and generates `Default` and `TryFrom<TxManagerCli> for TxManagerConfig` impls.
+  to be `#[command(flatten)]`-ed into parent CLI structs. Generates `Default` and
+  `TryFrom<TxManagerCli> for TxManagerConfig` impls.
 - **`TxManagerConfig`**: Validated runtime configuration with public fields. Can be
   constructed directly and validated via `validate()`, or converted from `TxManagerCli`
   via `TryFrom`.
@@ -159,10 +159,9 @@ struct Cli {
 let config = TxManagerConfig::try_from(cli.tx)?;
 ```
 
-> **Note:** The macro expands to absolute paths (`::clap::Parser`,
-> `::humantime::parse_duration`, `::serde::{Serialize, Deserialize}`),
-> so consumer crates must add `clap` (with `derive` + `env` features),
-> `humantime`, and `serde` (with `derive` feature) to their own
+> **Note:** The macro expands to absolute paths (`::clap::Parser` and
+> `::humantime::parse_duration`), so consumer crates must add `clap`
+> (with `derive` + `env` features) and `humantime` to their own
 > `Cargo.toml`.
 
 ### Fee limit checks

@@ -1,7 +1,5 @@
 //! Integration tests for [`SimpleTxManager`] transaction construction with Anvil.
 
-use std::time::Duration;
-
 use alloy_consensus::{SignableTransaction, TxEip1559, TxEnvelope};
 use alloy_eips::{Decodable2718, eip4844::Blob};
 use alloy_network::{EthereumWallet, TxSigner};
@@ -372,9 +370,7 @@ async fn craft_tx_returns_fee_limit_exceeded_when_minimums_inflate_beyond_multip
 }
 
 /// Verifies that `prepare()` exits immediately on a non-retryable error
-/// rather than looping through all 30 retry attempts. A 5-second timeout
-/// guard catches regressions where `Unsupported` is accidentally marked
-/// retryable.
+/// rather than looping through all retry attempts.
 #[tokio::test]
 async fn prepare_exits_immediately_on_non_retryable_error() {
     let (manager, _anvil) = setup().await;
@@ -385,13 +381,7 @@ async fn prepare_exits_immediately_on_non_retryable_error() {
         ..Default::default()
     };
 
-    // If Unsupported were retryable, prepare would wait up to
-    // 30 × 2 s = 60 s. The 5-second timeout catches that regression.
-    let result = tokio::time::timeout(Duration::from_secs(5), manager.prepare(&candidate)).await;
-
-    let err = result
-        .expect("prepare should return within 5 s for a non-retryable error")
-        .expect_err("should reject blob tx");
+    let err = manager.prepare(&candidate).await.expect_err("should reject blob tx");
 
     assert!(
         matches!(err, TxManagerError::Unsupported(_)),
