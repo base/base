@@ -168,7 +168,7 @@ mod tests {
     use alloc::vec;
 
     use alloy_consensus::Receipt;
-    use alloy_primitives::{B256, Bytes, Log, LogData, U256, address, b256, hex};
+    use alloy_primitives::{B256, Bytes, Log, LogData, U256, address, b256};
     use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
 
     use super::*;
@@ -176,18 +176,24 @@ mod tests {
 
     const L1_SYS_CONFIG_ADDR: Address = address!("1337000000000000000000000000000000000000");
 
-    fn new_update_batcher_log() -> Log {
+    fn new_update_batcher_log_with_addr(addr: Address) -> Log {
+        let mut addr_word = [0u8; 32];
+        addr_word[12..32].copy_from_slice(addr.as_slice());
+        let mut data = alloc::vec::Vec::with_capacity(96);
+        data.extend_from_slice(U256::from(0x20).to_be_bytes::<32>().as_slice());
+        data.extend_from_slice(U256::from(0x20).to_be_bytes::<32>().as_slice());
+        data.extend_from_slice(&addr_word);
         Log {
             address: L1_SYS_CONFIG_ADDR,
             data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO, // Update type
-                ],
-                hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into()
-            )
+                vec![CONFIG_UPDATE_TOPIC, CONFIG_UPDATE_EVENT_VERSION_0, B256::ZERO],
+                data.into(),
+            ),
         }
+    }
+
+    fn new_update_batcher_log() -> Log {
+        new_update_batcher_log_with_addr(address!("000000000000000000000000000000000000beef"))
     }
 
     fn new_receipts() -> alloc::vec::Vec<Receipt> {
@@ -353,29 +359,6 @@ mod tests {
         assert!(traversal.provide_next_block(next_block).await.is_ok());
         let expected = address!("000000000000000000000000000000000000bEEF");
         assert_eq!(traversal.system_config.batcher_address, expected);
-    }
-
-    /// After a batcher address `ConfigUpdate` log is processed, the traversal stage's
-    /// `batcher_addr()` method (used by `L1Retrieval`) returns the updated address.
-    #[tokio::test]
-    async fn test_batcher_address_change_accepted_by_derivation() {
-        let blocks = vec![BlockInfo::default(), BlockInfo::default()];
-        let receipts = new_receipts();
-        let mut traversal = new_test_managed(blocks, receipts);
-
-        // Before the update, batcher_addr returns the default (zero) address.
-        assert_eq!(traversal.batcher_addr(), Address::ZERO);
-
-        // Consume the current block so provide_next_block will process.
-        assert!(traversal.next_l1_block().await.is_ok());
-        assert!(traversal.next_l1_block().await.is_err());
-
-        // Provide the next L1 block which carries the batcher update receipts.
-        let next_block = BlockInfo { number: 1, ..BlockInfo::default() };
-        assert!(traversal.provide_next_block(next_block).await.is_ok());
-
-        // After the update, batcher_addr() returns the new address from the log.
-        let expected = address!("000000000000000000000000000000000000bEEF");
         assert_eq!(traversal.batcher_addr(), expected);
     }
 
@@ -447,34 +430,14 @@ mod tests {
     async fn test_batcher_address_update_applied_on_l1_epoch_change() {
         let new_batcher = address!("00000000000000000000000000000000DeaDBeef");
 
-        // Build a batcher update log targeting the new address.
-        // Re-use the same ABI encoding as new_update_batcher_log but with custom address.
-        let mut data = alloc::vec::Vec::with_capacity(96);
-        data.extend_from_slice(U256::from(0x20).to_be_bytes::<32>().as_slice());
-        data.extend_from_slice(U256::from(0x20).to_be_bytes::<32>().as_slice());
-        // Address is left-padded to 32 bytes (right-aligned in the word).
-        let mut addr_word = [0u8; 32];
-        addr_word[12..32].copy_from_slice(new_batcher.as_slice());
-        data.extend_from_slice(&addr_word);
-
-        let batcher_log = Log {
-            address: L1_SYS_CONFIG_ADDR,
-            data: LogData::new_unchecked(
-                vec![CONFIG_UPDATE_TOPIC, CONFIG_UPDATE_EVENT_VERSION_0, B256::ZERO],
-                data.into(),
-            ),
-        };
-
         let receipt = Receipt {
             status: alloy_consensus::Eip658Value::Eip658(true),
-            logs: vec![batcher_log],
+            logs: vec![new_update_batcher_log_with_addr(new_batcher)],
             ..Receipt::default()
         };
 
-        let epoch0_hash =
-            b256!("1111111111111111111111111111111111111111111111111111111111111111");
-        let epoch1_hash =
-            b256!("2222222222222222222222222222222222222222222222222222222222222222");
+        let epoch0_hash = b256!("1111111111111111111111111111111111111111111111111111111111111111");
+        let epoch1_hash = b256!("2222222222222222222222222222222222222222222222222222222222222222");
         let block0 = BlockInfo { number: 10, hash: epoch0_hash, ..BlockInfo::default() };
         let block1 =
             BlockInfo { number: 11, hash: epoch1_hash, parent_hash: epoch0_hash, timestamp: 100 };
@@ -533,10 +496,8 @@ mod tests {
 
         // Simulate L1 reorg: send a Reset signal with a SystemConfig that has ADDR_A.
         let reset_config = SystemConfig { batcher_address: addr_a, ..SystemConfig::default() };
-        let signal = Signal::Reset(ResetSignal {
-            system_config: Some(reset_config),
-            ..Default::default()
-        });
+        let signal =
+            Signal::Reset(ResetSignal { system_config: Some(reset_config), ..Default::default() });
         assert!(traversal.signal(signal).await.is_ok());
 
         // After reset, batcher_addr() must be restored to ADDR_A.

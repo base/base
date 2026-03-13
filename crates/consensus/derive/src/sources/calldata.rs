@@ -309,9 +309,7 @@ mod tests {
         let mut source = default_test_calldata_source();
         source.batch_inbox_address = batch_inbox_address;
         let block_info = BlockInfo::default();
-        source
-            .chain_provider
-            .insert_block_with_transactions(0, block_info, vec![tx.clone()]);
+        source.chain_provider.insert_block_with_transactions(0, block_info, vec![tx.clone()]);
 
         // With the original batcher address, calldata is accepted.
         assert!(source.load_calldata(&block_info, original_batcher).await.is_ok());
