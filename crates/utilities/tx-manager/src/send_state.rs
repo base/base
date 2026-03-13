@@ -578,6 +578,21 @@ mod tests {
         assert!(!state.should_bump_fees());
     }
 
+    // ── successful_publish_count ─────────────────────────────────────────
+
+    #[test]
+    fn successful_publish_count_tracks_publications() {
+        let state = SendState::new(3).unwrap();
+        assert_eq!(state.successful_publish_count(), 0);
+
+        state.record_successful_publish();
+        assert_eq!(state.successful_publish_count(), 1);
+
+        state.record_successful_publish();
+        state.record_successful_publish();
+        assert_eq!(state.successful_publish_count(), 3);
+    }
+
     // ── is_waiting_for_confirmation ─────────────────────────────────────
 
     #[test]

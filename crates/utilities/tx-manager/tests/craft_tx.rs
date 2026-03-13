@@ -78,6 +78,15 @@ async fn craft_tx_produces_valid_signed_eip1559_transaction() {
         prepared.gas_fee_cap > prepared.gas_tip_cap,
         "PreparedTx gas_fee_cap should exceed gas_tip_cap",
     );
+    // PreparedTx fees must match the fees encoded in the signed transaction.
+    assert_eq!(
+        prepared.gas_tip_cap, tx.max_priority_fee_per_gas,
+        "PreparedTx gas_tip_cap should match decoded max_priority_fee_per_gas",
+    );
+    assert_eq!(
+        prepared.gas_fee_cap, tx.max_fee_per_gas,
+        "PreparedTx gas_fee_cap should match decoded max_fee_per_gas",
+    );
 }
 
 #[tokio::test]
@@ -494,6 +503,115 @@ async fn craft_tx_rolls_back_nonce_on_sign_failure() {
     assert_eq!(guard.nonce(), 0, "nonce should be 0 — rollback must have restored it");
     // Drop the guard so the nonce is consumed (prevents test pollution).
     drop(guard);
+}
+
+/// When fee overrides are above network fees, the PreparedTx must use the
+/// overrides (since `craft_tx` takes `max(network_fee, override)`).
+#[tokio::test]
+async fn craft_tx_with_fee_overrides_uses_overrides_when_above_network() {
+    let (manager, _anvil) = setup().await;
+
+    // Learn current network fees so we can set overrides above them.
+    let caps = manager.suggest_gas_price_caps().await.expect("should get caps");
+    let override_tip = caps.gas_tip_cap + 50_000_000_000; // +50 gwei
+    let override_fee_cap = caps.gas_fee_cap + 100_000_000_000; // +100 gwei
+
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        value: U256::from(1_000u64),
+        gas_limit: 0,
+        ..Default::default()
+    };
+
+    let prepared = manager
+        .craft_tx(&candidate, Some((override_tip, override_fee_cap)))
+        .await
+        .expect("should craft tx with fee overrides");
+
+    // PreparedTx must reflect the overrides since they exceed network fees.
+    assert_eq!(
+        prepared.gas_tip_cap, override_tip,
+        "gas_tip_cap should equal the override when it exceeds the network fee",
+    );
+    assert_eq!(
+        prepared.gas_fee_cap, override_fee_cap,
+        "gas_fee_cap should equal the override when it exceeds the network fee",
+    );
+
+    // The signed transaction must also carry the override fees.
+    let tx = decode_eip1559(&prepared.raw_tx);
+    assert_eq!(tx.max_priority_fee_per_gas, override_tip);
+    assert_eq!(tx.max_fee_per_gas, override_fee_cap);
+}
+
+/// When fee overrides are below network fees, the PreparedTx must use the
+/// network fees (since `craft_tx` takes `max(network_fee, override)`).
+#[tokio::test]
+async fn craft_tx_with_fee_overrides_uses_network_when_overrides_below() {
+    let (manager, _anvil) = setup().await;
+
+    // Learn current network fees.
+    let caps = manager.suggest_gas_price_caps().await.expect("should get caps");
+
+    // Set overrides well below network fees (1 wei each).
+    let override_tip = 1u128;
+    let override_fee_cap = 1u128;
+
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        value: U256::from(1_000u64),
+        gas_limit: 0,
+        ..Default::default()
+    };
+
+    let prepared = manager
+        .craft_tx(&candidate, Some((override_tip, override_fee_cap)))
+        .await
+        .expect("should craft tx with low fee overrides");
+
+    // PreparedTx must use network fees since they exceed the overrides.
+    assert_eq!(
+        prepared.gas_tip_cap, caps.gas_tip_cap,
+        "gas_tip_cap should use network fee, not the low override",
+    );
+    assert_eq!(
+        prepared.gas_fee_cap, caps.gas_fee_cap,
+        "gas_fee_cap should use network fee, not the low override",
+    );
+}
+
+/// Verifies that the PreparedTx fee fields are always consistent with the
+/// fees encoded in the signed transaction — the core invariant that
+/// PreparedTx is designed to guarantee.
+#[tokio::test]
+async fn prepared_tx_fees_match_decoded_transaction_with_overrides() {
+    let (manager, _anvil) = setup().await;
+
+    let caps = manager.suggest_gas_price_caps().await.expect("should get caps");
+    let override_tip = caps.gas_tip_cap + 10_000_000_000;
+    let override_fee_cap = caps.gas_fee_cap + 20_000_000_000;
+
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        value: U256::from(1_000u64),
+        gas_limit: 0,
+        ..Default::default()
+    };
+
+    let prepared = manager
+        .craft_tx(&candidate, Some((override_tip, override_fee_cap)))
+        .await
+        .expect("should craft tx");
+    let tx = decode_eip1559(&prepared.raw_tx);
+
+    assert_eq!(
+        prepared.gas_tip_cap, tx.max_priority_fee_per_gas,
+        "PreparedTx gas_tip_cap must match decoded max_priority_fee_per_gas",
+    );
+    assert_eq!(
+        prepared.gas_fee_cap, tx.max_fee_per_gas,
+        "PreparedTx gas_fee_cap must match decoded max_fee_per_gas",
+    );
 }
 
 #[test]

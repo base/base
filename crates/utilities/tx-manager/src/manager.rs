@@ -991,3 +991,75 @@ impl TxManager for SimpleTxManager {
         <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(&self.wallet)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::B256;
+
+    use crate::TxManagerError;
+
+    use super::SimpleTxManager;
+
+    // ── apply_bump_result ─────────────────────────────────────────────
+
+    #[test]
+    fn apply_bump_result_success_updates_state() {
+        let mut tip = 100u128;
+        let mut fee_cap = 1000u128;
+        let mut hash = B256::ZERO;
+        let new_hash = B256::with_last_byte(0x42);
+
+        let abort = SimpleTxManager::apply_bump_result(
+            Ok((200, 2000, new_hash)),
+            &mut tip,
+            &mut fee_cap,
+            &mut hash,
+        );
+
+        assert!(abort.is_none(), "success should not abort");
+        assert_eq!(tip, 200);
+        assert_eq!(fee_cap, 2000);
+        assert_eq!(hash, new_hash);
+    }
+
+    #[test]
+    fn apply_bump_result_non_retryable_returns_abort() {
+        let mut tip = 100u128;
+        let mut fee_cap = 1000u128;
+        let mut hash = B256::ZERO;
+
+        let abort = SimpleTxManager::apply_bump_result(
+            Err(TxManagerError::FeeLimitExceeded { fee: 500, ceiling: 100 }),
+            &mut tip,
+            &mut fee_cap,
+            &mut hash,
+        );
+
+        assert!(abort.is_some(), "non-retryable error should abort");
+        assert!(matches!(abort.unwrap(), TxManagerError::FeeLimitExceeded { .. }));
+        // State should not be updated on error.
+        assert_eq!(tip, 100);
+        assert_eq!(fee_cap, 1000);
+        assert_eq!(hash, B256::ZERO);
+    }
+
+    #[test]
+    fn apply_bump_result_retryable_continues() {
+        let mut tip = 100u128;
+        let mut fee_cap = 1000u128;
+        let mut hash = B256::ZERO;
+
+        let abort = SimpleTxManager::apply_bump_result(
+            Err(TxManagerError::Rpc("transient error".to_string())),
+            &mut tip,
+            &mut fee_cap,
+            &mut hash,
+        );
+
+        assert!(abort.is_none(), "retryable error should not abort");
+        // State should not be updated on error.
+        assert_eq!(tip, 100);
+        assert_eq!(fee_cap, 1000);
+        assert_eq!(hash, B256::ZERO);
+    }
+}
