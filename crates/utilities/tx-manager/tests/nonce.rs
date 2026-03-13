@@ -12,6 +12,7 @@ use alloy_node_bindings::Anvil;
 use alloy_primitives::Address;
 use alloy_provider::RootProvider;
 use base_tx_manager::{NonceGuard, NonceManager, TxManagerError};
+use rayon::prelude::*;
 use tokio::sync::Notify;
 
 /// Helper: spawns an Anvil instance and returns a [`NonceManager`] wired to
@@ -251,8 +252,6 @@ async fn reset_blocks_while_guard_held() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn rayon_parallel_nonce_acquisition_produces_unique_nonces() {
-    use rayon::prelude::*;
-
     let (manager, _anvil) = setup();
     let handle = tokio::runtime::Handle::current();
 
