@@ -6,12 +6,16 @@
 
 use std::time::Duration;
 
-use alloy_network::EthereumWallet;
+use alloy_consensus::SignableTransaction;
+use alloy_network::{EthereumWallet, TxSigner};
 use alloy_node_bindings::Anvil;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Signature, U256};
 use alloy_provider::RootProvider;
+use async_trait::async_trait;
 use alloy_signer_local::PrivateKeySigner;
-use base_tx_manager::{SendState, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig};
+use base_tx_manager::{
+    SendState, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig, TxManagerError,
+};
 
 /// Helper: spawns an Anvil instance and returns a [`SimpleTxManager`]
 /// configured with the given [`TxManagerConfig`].
@@ -40,6 +44,60 @@ fn fast_send_config() -> TxManagerConfig {
         resubmission_timeout: Duration::from_secs(60),
         ..TxManagerConfig::default()
     }
+}
+
+/// A signer that always fails so `send()` exits before any publish.
+struct FailingSigner {
+    address: Address,
+}
+
+#[async_trait]
+impl TxSigner<Signature> for FailingSigner {
+    fn address(&self) -> Address {
+        self.address
+    }
+
+    async fn sign_transaction(
+        &self,
+        _tx: &mut dyn SignableTransaction<Signature>,
+    ) -> alloy_signer::Result<Signature> {
+        Err(alloy_signer::Error::other("deliberately failing signer"))
+    }
+}
+
+async fn setup_with_failing_signer_config(
+    config: TxManagerConfig,
+) -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
+    let anvil = Anvil::new().spawn();
+    let url = anvil.endpoint_url();
+    let provider = RootProvider::new_http(url);
+    let address = anvil.addresses()[0];
+    let wallet = EthereumWallet::from(FailingSigner { address });
+    let chain_id = anvil.chain_id();
+    let manager = SimpleTxManager::new(provider, wallet, config, chain_id)
+        .await
+        .expect("should create manager with failing signer");
+    (manager, anvil)
+}
+
+async fn assert_send_error_resets_nonce(config: TxManagerConfig) {
+    let (manager, _anvil) = setup_with_failing_signer_config(config).await;
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        value: U256::from(1u64),
+        gas_limit: 0,
+        ..Default::default()
+    };
+
+    let err = manager.send(candidate).await.expect_err("send should fail before publish");
+    assert!(matches!(err, TxManagerError::Sign(_)), "expected sign error, got {err:?}");
+
+    let guard = manager.nonce_manager().next_nonce().await.expect("should reserve nonce");
+    assert_eq!(
+        guard.nonce(),
+        0,
+        "nonce manager should be reset after a pre-publish send failure",
+    );
 }
 
 // ── send() ────────────────────────────────────────────────────────────
@@ -87,6 +145,26 @@ async fn send_async_confirms_simple_value_transfer() {
         .expect("send_async should succeed");
 
     assert!(receipt.block_number.is_some(), "receipt should have a block number");
+}
+
+#[tokio::test]
+async fn send_resets_nonce_manager_when_send_timeout_is_disabled() {
+    let config = TxManagerConfig {
+        tx_send_timeout: Duration::ZERO,
+        ..fast_send_config()
+    };
+
+    assert_send_error_resets_nonce(config).await;
+}
+
+#[tokio::test]
+async fn send_resets_nonce_manager_when_send_timeout_is_enabled() {
+    let config = TxManagerConfig {
+        tx_send_timeout: Duration::from_secs(5),
+        ..fast_send_config()
+    };
+
+    assert_send_error_resets_nonce(config).await;
 }
 
 // ── publish_tx() ──────────────────────────────────────────────────────
