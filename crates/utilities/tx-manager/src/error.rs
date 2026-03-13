@@ -88,6 +88,12 @@ pub enum TxManagerError {
     #[error("signing failed: {0}")]
     Sign(String),
 
+    /// The outer send timeout elapsed before the transaction was confirmed.
+    ///
+    /// Non-retryable because the caller's deadline has already been exceeded.
+    #[error("send timed out")]
+    SendTimeout,
+
     /// Configuration is invalid.
     ///
     /// Returned when config validation fails or a chain ID mismatch is
@@ -308,6 +314,7 @@ mod tests {
     #[case::unsupported(TxManagerError::Unsupported("test".to_string()), false)]
     #[case::sign(TxManagerError::Sign("test".to_string()), false)]
     #[case::invalid_config(TxManagerError::InvalidConfig("test".to_string()), false)]
+    #[case::send_timeout(TxManagerError::SendTimeout, false)]
     #[case::underpriced(TxManagerError::Underpriced, true)]
     #[case::replacement_underpriced(TxManagerError::ReplacementUnderpriced, true)]
     #[case::fee_too_low(TxManagerError::FeeTooLow, true)]
@@ -363,6 +370,7 @@ mod tests {
         TxManagerError::NonceAcquisitionFailed,
         "nonce acquisition failed"
     )]
+    #[case::send_timeout(TxManagerError::SendTimeout, "send timed out")]
     #[case::rpc(TxManagerError::Rpc("test".to_string()), "rpc error: test")]
     #[case::unsupported(TxManagerError::Unsupported("blob tx".to_string()), "unsupported: blob tx")]
     #[case::sign(TxManagerError::Sign("key error".to_string()), "signing failed: key error")]

@@ -507,7 +507,7 @@ impl SimpleTxManager {
                     // cancelled prepare() that acquired a nonce but
                     // never published the transaction.
                     self.nonce_manager.reset().await;
-                    Err(TxManagerError::Rpc("send timed out".into()))
+                    Err(TxManagerError::SendTimeout)
                 }
             }
         }
@@ -710,9 +710,9 @@ impl SimpleTxManager {
         info!(
             bump_count = %send_state.bump_count(),
             old_tip = %old_tip,
-            new_tip = %bumped_tip,
+            new_tip = %prepared.gas_tip_cap,
             old_fee_cap = %old_fee_cap,
-            new_fee_cap = %bumped_fee_cap,
+            new_fee_cap = %prepared.gas_fee_cap,
             "fee bump applied",
         );
 
@@ -866,6 +866,8 @@ impl SimpleTxManager {
                 // send loop has already exited (e.g., another tx confirmed).
                 let _ = receipt_tx.send(receipt).await;
             }
+
+            debug!(tx_hash = %tx_hash, "receipt polling ended");
         });
     }
 
