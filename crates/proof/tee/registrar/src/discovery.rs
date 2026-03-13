@@ -18,6 +18,13 @@ use crate::{InstanceDiscovery, InstanceHealthStatus, ProverInstance, RegistrarEr
 ///
 /// Private IP addresses are resolved from the EC2 instance IDs returned by the
 /// target group via a `describe_instances` call.
+///
+/// # Assumptions
+///
+/// The target group must be configured with **instance-type** targets (IDs of the
+/// form `i-xxxxxxxxxxxxxxxxx`). IP-type target groups return IP address strings
+/// from `target.id()`, which would cause `describe_instances` to return an
+/// `InvalidParameterValue` error at runtime.
 #[derive(Debug)]
 pub struct AwsTargetGroupDiscovery {
     elb_client: ElbClient,
@@ -91,6 +98,8 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
         }
 
         // Step 2: Build an instance_id → health_status map and collect instance IDs for EC2 lookup.
+        // Uses entry().or_insert() so that if the same instance is registered on multiple ports,
+        // the first-seen port's health status wins and the instance ID is not duplicated.
         let mut health_map: HashMap<String, InstanceHealthStatus> = HashMap::new();
         let mut instance_ids: Vec<String> = Vec::new();
 
@@ -105,8 +114,12 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
                 .map(|s| InstanceHealthStatus::from_aws_state(s.as_str()))
                 .unwrap_or(InstanceHealthStatus::Unhealthy);
 
-            health_map.insert(instance_id.to_string(), health_status);
-            instance_ids.push(instance_id.to_string());
+            if let std::collections::hash_map::Entry::Vacant(e) =
+                health_map.entry(instance_id.to_string())
+            {
+                e.insert(health_status);
+                instance_ids.push(instance_id.to_string());
+            }
         }
 
         if instance_ids.is_empty() {
