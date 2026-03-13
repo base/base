@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use alloy_rlp::Decodable;
-use base_alloy_consensus::TxDeposit;
+use base_alloy_consensus::{OpBlock, OpTxEnvelope, TxDeposit};
 use base_consensus_derive::{
     ActivationSignal, IndexedAttributesQueueStage, Pipeline, PipelineBuilder, PipelineError,
     PipelineErrorKind, ResetSignal, Signal, SignalReceiver, StatefulAttributesBuilder, StepResult,
@@ -43,10 +43,13 @@ pub type BlobVerifierPipeline = base_consensus_derive::DerivationPipeline<
 pub enum VerifierError {
     /// The pipeline returned a critical error.
     #[error("pipeline error: {0}")]
-    Pipeline(PipelineErrorKind),
+    Pipeline(Box<PipelineErrorKind>),
     /// A pipeline signal failed.
     #[error("signal error: {0}")]
-    Signal(PipelineErrorKind),
+    Signal(Box<PipelineErrorKind>),
+    /// The gossiped block has no L1 info deposit as its first transaction.
+    #[error("gossip receive: missing or invalid L1 info deposit in block")]
+    GossipDecodeFailed,
 }
 
 /// In-process rollup node for action tests.
@@ -71,6 +74,14 @@ pub struct L2Verifier<P: Pipeline + SignalReceiver + Debug> {
     pipeline: P,
     /// The current L2 safe head (advances as attributes are consumed).
     safe_head: L2BlockInfo,
+    /// The current L2 unsafe head.
+    ///
+    /// In a verifier-only setup this equals `safe_head`. When unsafe blocks are
+    /// injected via [`act_l2_unsafe_gossip_receive`], it advances independently
+    /// and ahead of `safe_head` until derivation catches up.
+    ///
+    /// [`act_l2_unsafe_gossip_receive`]: L2Verifier::act_l2_unsafe_gossip_receive
+    unsafe_head: L2BlockInfo,
     /// The current L2 finalized head.
     ///
     /// Updated via [`act_l1_finalized_signal`] by scanning [`safe_head_history`]
@@ -175,6 +186,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         Self {
             pipeline,
             safe_head,
+            unsafe_head: safe_head,
             finalized_head: safe_head,
             finalized_l1_number: 0,
             safe_head_history: Vec::new(),
@@ -209,7 +221,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                     .signal(),
             )
             .await
-            .map_err(VerifierError::Signal)?;
+            .map_err(|e| VerifierError::Signal(Box::new(e)))?;
 
         // Drain the genesis L1 block (no batcher data; sets IndexedTraversal::done = true).
         self.act_l2_pipeline_full().await?;
@@ -224,12 +236,13 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     /// Return the current L2 unsafe head.
     ///
     /// In a verifier-only setup the unsafe head is the same as the safe head
-    /// since no sequencer is operating. When paired with an [`L2Sequencer`]
-    /// actor this will diverge.
+    /// since no sequencer is operating. When unsafe blocks are injected via
+    /// [`act_l2_unsafe_gossip_receive`], this advances ahead of `safe_head`
+    /// until derivation catches up.
     ///
-    /// [`L2Sequencer`]: crate::L2Sequencer
+    /// [`act_l2_unsafe_gossip_receive`]: L2Verifier::act_l2_unsafe_gossip_receive
     pub const fn l2_unsafe(&self) -> L2BlockInfo {
-        self.safe_head
+        self.unsafe_head
     }
 
     /// Return the current L2 finalized head.
@@ -245,7 +258,10 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     ///
     /// [`IndexedTraversal`]: base_consensus_derive::IndexedTraversal
     pub async fn act_l1_head_signal(&mut self, head: BlockInfo) -> Result<(), VerifierError> {
-        self.pipeline.signal(Signal::ProvideBlock(head)).await.map_err(VerifierError::Signal)
+        self.pipeline
+            .signal(Signal::ProvideBlock(head))
+            .await
+            .map_err(|e| VerifierError::Signal(Box::new(e)))
     }
 
     /// Signal the pipeline that a new L1 safe head is available.
@@ -297,7 +313,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                     .signal(),
             )
             .await
-            .map_err(VerifierError::Signal)?;
+            .map_err(|e| VerifierError::Signal(Box::new(e)))?;
         self.safe_head = l2_safe_head;
         // Clear stale finalization state so a subsequent act_l1_finalized_signal
         // cannot promote an L2 block that no longer exists on the canonical chain.
@@ -350,14 +366,14 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                             // This is a transient state — step again immediately.
                             no_progress += 1;
                             if no_progress > 1_000 {
-                                return Err(VerifierError::Pipeline(
+                                return Err(VerifierError::Pipeline(Box::new(
                                     PipelineError::Provider(
                                         "pipeline stuck: 1000 consecutive NotEnoughData without progress".into()
                                     ).temp()
-                                ));
+                                )));
                             }
                         }
-                        _ => return Err(VerifierError::Pipeline(err)),
+                        _ => return Err(VerifierError::Pipeline(Box::new(err))),
                     }
                 }
                 StepResult::OriginAdvanceErr(err) => {
@@ -366,7 +382,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                             // Traversal exhausted — no more L1 blocks to advance to.
                             break;
                         }
-                        _ => return Err(VerifierError::Pipeline(err)),
+                        _ => return Err(VerifierError::Pipeline(Box::new(err))),
                     }
                 }
             }
@@ -409,7 +425,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                 Ok(StepResult::OriginAdvanceErr(PipelineErrorKind::Temporary(e)))
             }
             StepResult::StepFailed(err) | StepResult::OriginAdvanceErr(err) => {
-                Err(VerifierError::Pipeline(err))
+                Err(VerifierError::Pipeline(Box::new(err)))
             }
         }
     }
@@ -493,22 +509,22 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                     PipelineErrorKind::Temporary(PipelineError::NotEnoughData) => {
                         no_progress += 1;
                         if no_progress > 1_000 {
-                            return Err(VerifierError::Pipeline(
+                            return Err(VerifierError::Pipeline(Box::new(
                                 PipelineError::Provider(
                                     "pipeline stuck: 1000 consecutive NotEnoughData without progress"
                                         .into(),
                                 )
                                 .temp(),
-                            ));
+                            )));
                         }
                     }
-                    err => return Err(VerifierError::Pipeline(err)),
+                    err => return Err(VerifierError::Pipeline(Box::new(err))),
                 },
                 StepResult::OriginAdvanceErr(err) => match err {
                     PipelineErrorKind::Temporary(PipelineError::Eof) => {
                         return Ok((steps, false));
                     }
-                    err => return Err(VerifierError::Pipeline(err)),
+                    err => return Err(VerifierError::Pipeline(Box::new(err))),
                 },
             }
         }
@@ -529,6 +545,65 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     /// [`L2Sequencer::build_next_block`]: crate::L2Sequencer::build_next_block
     pub fn register_block_hash(&mut self, number: u64, hash: B256) {
         self.block_hashes.insert(number, hash);
+    }
+
+    /// Inject an unsafe L2 block as if received via P2P gossip.
+    ///
+    /// Equivalent to op-e2e's `ActL2UnsafeGossipReceive`. The block's header is
+    /// used to advance `unsafe_head`; the block hash is also registered in
+    /// `block_hashes` so that subsequent derivation can build a consistent
+    /// `parent_hash` chain without a separate [`register_block_hash`] call.
+    ///
+    /// Only advances `unsafe_head` if `block.header.number` is exactly
+    /// `unsafe_head.number + 1` — gaps and out-of-order gossip are silently dropped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VerifierError::GossipDecodeFailed`] if the first transaction is
+    /// not a valid L1 info deposit (i.e. the block was not produced by a
+    /// well-formed sequencer).
+    ///
+    /// [`register_block_hash`]: L2Verifier::register_block_hash
+    pub fn act_l2_unsafe_gossip_receive(&mut self, block: &OpBlock) -> Result<(), VerifierError> {
+        // Only accept the strictly next block; gaps and duplicates are dropped silently.
+        if block.header.number != self.unsafe_head.block_info.number + 1 {
+            return Ok(());
+        }
+        let hash = block.header.hash_slow();
+        // Auto-register so parent_hash chaining works in later derivation.
+        self.block_hashes.insert(block.header.number, hash);
+
+        let l1_origin =
+            self.l1_origin_from_block(block).ok_or(VerifierError::GossipDecodeFailed)?;
+        let seq_num =
+            if l1_origin == self.unsafe_head.l1_origin { self.unsafe_head.seq_num + 1 } else { 0 };
+        self.unsafe_head = L2BlockInfo {
+            block_info: BlockInfo {
+                number: block.header.number,
+                hash,
+                parent_hash: block.header.parent_hash,
+                timestamp: block.header.timestamp,
+            },
+            l1_origin,
+            seq_num,
+        };
+        Ok(())
+    }
+
+    /// Decode the L1 epoch from the first deposit transaction in an [`OpBlock`].
+    ///
+    /// Mirrors [`l1_origin_from_attrs`] but operates on a fully-formed block
+    /// (received via gossip) rather than on derived [`OpAttributesWithParent`].
+    ///
+    /// [`l1_origin_from_attrs`]: L2Verifier::l1_origin_from_attrs
+    fn l1_origin_from_block(&self, block: &OpBlock) -> Option<BlockNumHash> {
+        let first = block.body.transactions.first()?;
+        let deposit = match first {
+            OpTxEnvelope::Deposit(d) => d,
+            _ => return None,
+        };
+        let l1_info = L1BlockInfoTx::decode_calldata(deposit.inner().input.as_ref()).ok()?;
+        Some(l1_info.id())
     }
 
     /// Apply derived attributes to the in-memory L2 chain, advancing the safe head.
