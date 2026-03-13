@@ -8,10 +8,10 @@ use std::sync::Arc;
 use base_consensus_registry::Registry;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_host::ProverConfig;
-#[cfg(target_os = "linux")]
-use base_proof_tee_nitro::NitroEnclave;
 #[cfg(feature = "local")]
 use base_proof_tee_nitro::Server;
+#[cfg(target_os = "linux")]
+use base_proof_tee_nitro::{NitroEnclave, VSOCK_PORT};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_tee_nitro::{NitroProverServer, NitroTransport};
 use clap::{Parser, Subcommand};
@@ -105,10 +105,6 @@ struct NitroServerArgs {
     /// Vsock CID of the enclave.
     #[arg(long, env = "VSOCK_CID")]
     vsock_cid: u32,
-
-    /// Vsock port to connect to the enclave.
-    #[arg(long, env = "VSOCK_PORT")]
-    vsock_port: u32,
 }
 
 impl Cli {
@@ -156,7 +152,7 @@ impl NitroServerArgs {
             enable_experimental_witness_endpoint: self.server.enable_experimental_witness_endpoint,
         };
 
-        let transport = Arc::new(NitroTransport::vsock(self.vsock_cid, self.vsock_port));
+        let transport = Arc::new(NitroTransport::vsock(self.vsock_cid, VSOCK_PORT));
         let server = NitroProverServer::new(config, transport);
 
         info!(addr = %self.server.listen_addr, "starting nitro prover server");

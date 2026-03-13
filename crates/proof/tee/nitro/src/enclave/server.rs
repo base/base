@@ -243,17 +243,13 @@ impl Server {
 
         Ok(ProofResult::Tee { aggregate_proposal, proposals })
     }
-
-    /// Create a server for testing (no NSM, no PCR0 verification).
-    #[cfg(test)]
-    pub fn new_for_testing() -> Result<Self> {
-        let signer_key = Ecdsa::generate(&mut rand_08::rngs::OsRng)?;
-        Ok(Self { pcr0: Vec::new(), signer_key, tee_image_hash: B256::ZERO })
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use base_consensus_registry::Registry;
+    use base_enclave::{BlockId, Genesis, GenesisSystemConfig, PerChainConfig};
+
     use super::*;
 
     #[test]
@@ -282,10 +278,43 @@ mod tests {
     }
 
     #[test]
-    fn config_hash_known_chains() {
-        assert!(config_hash_for_chain(8453).is_ok());
-        assert!(config_hash_for_chain(84532).is_ok());
-        assert!(config_hash_for_chain(11763072).is_ok());
+    fn config_hash_unknown_chain() {
         assert!(config_hash_for_chain(999999).is_err());
+    }
+
+    #[test]
+    fn config_hashes_match_registry() {
+        let chains: &[(u64, B256)] = &[
+            (8453, CONFIG_HASH_BASE_MAINNET),
+            (84532, CONFIG_HASH_BASE_SEPOLIA),
+            (11763072, CONFIG_HASH_SEPOLIA_ALPHA),
+        ];
+
+        for &(chain_id, expected) in chains {
+            let rollup = Registry::rollup_config(chain_id)
+                .unwrap_or_else(|| panic!("missing rollup config for chain {chain_id}"));
+            let sc = rollup.genesis.system_config.as_ref().expect("missing system_config");
+
+            let mut per_chain = PerChainConfig {
+                chain_id: U256::from(rollup.l2_chain_id.id()),
+                genesis: Genesis {
+                    l1: BlockId { hash: rollup.genesis.l1.hash, number: rollup.genesis.l1.number },
+                    l2: BlockId { hash: rollup.genesis.l2.hash, number: rollup.genesis.l2.number },
+                    l2_time: rollup.genesis.l2_time,
+                    system_config: GenesisSystemConfig {
+                        batcher_addr: sc.batcher_address,
+                        overhead: B256::ZERO,
+                        scalar: B256::from(sc.scalar.to_be_bytes::<32>()),
+                        gas_limit: sc.gas_limit,
+                    },
+                },
+                block_time: rollup.block_time,
+                deposit_contract_address: rollup.deposit_contract_address,
+                l1_system_config_address: rollup.l1_system_config_address,
+            };
+            per_chain.force_defaults();
+
+            assert_eq!(per_chain.hash(), expected, "config hash mismatch for chain {chain_id}");
+        }
     }
 }

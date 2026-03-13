@@ -4288,6 +4288,8 @@ dependencies = [
  "aws-nitro-enclaves-cose",
  "aws-nitro-enclaves-nsm-api",
  "base-alloy-evm",
+ "base-consensus-registry",
+ "base-enclave",
  "base-health",
  "base-proof-client",
  "base-proof-host",

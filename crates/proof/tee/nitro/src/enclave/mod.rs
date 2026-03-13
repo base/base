@@ -34,8 +34,7 @@ pub use server::Server;
 const VSOCK_CID: u32 = VMADDR_CID_ANY;
 
 /// Fixed vsock port the enclave listens on.
-#[cfg(target_os = "linux")]
-const VSOCK_PORT: u32 = 8000;
+pub const VSOCK_PORT: u32 = 8000;
 
 /// Nitro Enclave runtime.
 #[cfg(target_os = "linux")]
