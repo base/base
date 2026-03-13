@@ -21,7 +21,6 @@ local = []
 [dependencies]
 # Workspace – TEE
 base-proof-host.workspace = true
-alloy-primitives.workspace = true
 base-consensus-registry.workspace = true
 base-proof-tee-nitro = { workspace = true, features = ["host"] }
 
