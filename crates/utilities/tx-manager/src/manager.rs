@@ -66,8 +66,11 @@ pub struct SimpleTxManager {
     nonce_manager: NonceManager,
     /// Chain ID for transaction construction.
     chain_id: u64,
-    /// Shutdown flag. Set to `true` to close the manager.
-    closed: AtomicBool,
+    /// Shutdown flag shared across the manager and any spawned background
+    /// tasks. Wrapped in [`Arc`] so that calling [`close`](Self::close)
+    /// on the original manager is observed by tasks spawned via
+    /// [`send_async`](Self::send_async) and [`wait_for_tx`](Self::wait_for_tx).
+    closed: Arc<AtomicBool>,
 }
 
 impl SimpleTxManager {
@@ -120,7 +123,7 @@ impl SimpleTxManager {
             config,
             nonce_manager,
             chain_id,
-            closed: AtomicBool::new(false),
+            closed: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -153,6 +156,9 @@ impl SimpleTxManager {
     ///
     /// After calling `close()`, any subsequent call to [`prepare`](Self::prepare)
     /// will immediately return `Err(TxManagerError::ChannelClosed)`.
+    /// Background tasks spawned by [`send_async`](Self::send_async) and
+    /// receipt polling tasks will also observe the shutdown and exit
+    /// gracefully, since `closed` is shared via [`Arc`].
     pub fn close(&self) {
         self.closed.store(true, Ordering::Release);
     }
@@ -442,7 +448,7 @@ impl SimpleTxManager {
         let raw_tx = self.prepare(candidate).await?;
 
         // Publish initial transaction.
-        let tx_hash = self.publish_tx(send_state, &raw_tx).await?;
+        let mut last_tx_hash = self.publish_tx(send_state, &raw_tx, None).await?;
 
         // Receipt delivery channel — mpsc because fee bumps may spawn
         // new wait tasks with different tx hashes.
@@ -452,9 +458,10 @@ impl SimpleTxManager {
         Self::wait_for_tx(
             Arc::clone(send_state),
             self.provider.clone(),
-            tx_hash,
+            last_tx_hash,
             self.config.clone(),
             receipt_tx.clone(),
+            Arc::clone(&self.closed),
         );
 
         // Resubmission timer for fee bumping.
@@ -472,16 +479,52 @@ impl SimpleTxManager {
                 return Err(err);
             }
 
+            // Respond immediately to the should_bump_fees flag set by
+            // process_send_error on retryable errors (e.g. Underpriced,
+            // ReplacementUnderpriced), rather than waiting for the next
+            // resubmission timer tick.
+            if send_state.should_bump_fees() {
+                match self
+                    .handle_fee_bump(
+                        candidate,
+                        send_state,
+                        &receipt_tx,
+                        current_tip,
+                        current_fee_cap,
+                        last_tx_hash,
+                    )
+                    .await
+                {
+                    Ok((new_tip, new_fee_cap, new_hash)) => {
+                        current_tip = new_tip;
+                        current_fee_cap = new_fee_cap;
+                        last_tx_hash = new_hash;
+                        // Reset the bump ticker so we get a full interval
+                        // before the next timer-driven bump.
+                        bump_ticker.reset();
+                    }
+                    Err(e) if !e.is_retryable() => {
+                        error!(error = %e, "non-retryable error during fee bump");
+                        return Err(e);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "fee bump failed, will retry next tick");
+                    }
+                }
+                continue;
+            }
+
             tokio::select! {
                 _ = bump_ticker.tick() => {
                     // Fee bump: query fresh gas prices and apply bump logic.
                     let bump_result = self
-                        .handle_fee_bump(candidate, send_state, &receipt_tx, current_tip, current_fee_cap)
+                        .handle_fee_bump(candidate, send_state, &receipt_tx, current_tip, current_fee_cap, last_tx_hash)
                         .await;
                     match bump_result {
-                        Ok((new_tip, new_fee_cap)) => {
+                        Ok((new_tip, new_fee_cap, new_hash)) => {
                             current_tip = new_tip;
                             current_fee_cap = new_fee_cap;
+                            last_tx_hash = new_hash;
                         }
                         Err(e) if !e.is_retryable() => {
                             error!(error = %e, "non-retryable error during fee bump");
@@ -518,7 +561,7 @@ impl SimpleTxManager {
     /// checks fee limits, resets the nonce manager, rebuilds and re-publishes
     /// the transaction, and spawns a new receipt polling task.
     ///
-    /// Returns the updated `(tip, fee_cap)` on success.
+    /// Returns the updated `(tip, fee_cap, tx_hash)` on success.
     async fn handle_fee_bump(
         &self,
         candidate: &TxCandidate,
@@ -526,7 +569,8 @@ impl SimpleTxManager {
         receipt_tx: &mpsc::Sender<TransactionReceipt>,
         old_tip: u128,
         old_fee_cap: u128,
-    ) -> TxManagerResult<(u128, u128)> {
+        last_tx_hash: B256,
+    ) -> TxManagerResult<(u128, u128, B256)> {
         let caps = self.suggest_gas_price_caps().await?;
 
         // Derive the effective base fee from the fee cap and tip.
@@ -560,34 +604,33 @@ impl SimpleTxManager {
         // return values at or above the bumped thresholds in normal conditions.
         let raw_tx = self.prepare(candidate).await?;
 
-        match self.publish_tx(send_state, &raw_tx).await {
-            Ok(new_hash) => {
-                // Spawn a new receipt polling task for the bumped tx.
-                Self::wait_for_tx(
-                    Arc::clone(send_state),
-                    self.provider.clone(),
-                    new_hash,
-                    self.config.clone(),
-                    receipt_tx.clone(),
-                );
-            }
-            Err(e) if e.is_already_known() => {
-                // Transaction with same nonce+fees already in mempool.
-                debug!("bumped transaction already known in mempool");
-            }
-            Err(e) => return Err(e),
-        }
+        let new_hash = self.publish_tx(send_state, &raw_tx, Some(last_tx_hash)).await?;
 
-        Ok((bumped_tip, bumped_fee_cap))
+        // Spawn a new receipt polling task for the bumped tx.
+        Self::wait_for_tx(
+            Arc::clone(send_state),
+            self.provider.clone(),
+            new_hash,
+            self.config.clone(),
+            receipt_tx.clone(),
+            Arc::clone(&self.closed),
+        );
+
+        Ok((bumped_tip, bumped_fee_cap, new_hash))
     }
 
     /// Broadcasts a raw transaction to the network.
     ///
     /// On success, records a successful publish on the [`SendState`] and
     /// returns the transaction hash. On [`TxManagerError::AlreadyKnown`]
-    /// after a prior successful publish, treats it as success (the tx is
-    /// already in the mempool). All other errors are forwarded to
-    /// [`SendState::process_send_error`] for state tracking.
+    /// after a prior successful publish, treats it as success — records
+    /// another successful publish and returns `Ok(last_tx_hash)` so
+    /// callers do not need to special-case this variant. All other errors
+    /// are forwarded to [`SendState::process_send_error`] for state tracking.
+    ///
+    /// The `last_tx_hash` parameter is the hash from the most recent
+    /// successful publish. When the network returns `AlreadyKnown` on
+    /// resubmission, this hash is returned as the successful result.
     ///
     /// # Errors
     ///
@@ -596,6 +639,7 @@ impl SimpleTxManager {
         &self,
         send_state: &SendState,
         raw_tx: &Bytes,
+        last_tx_hash: Option<B256>,
     ) -> TxManagerResult<B256> {
         let result = tokio::time::timeout(
             self.config.network_timeout,
@@ -614,13 +658,12 @@ impl SimpleTxManager {
                 let classified = RpcErrorClassifier::classify_rpc_error(&e.to_string());
 
                 // AlreadyKnown on resubmission is a success — the tx is in
-                // the mempool from a prior publish.
+                // the mempool from a prior publish. Return the previous hash.
                 if classified.is_already_known() && send_state.successful_publish_count() > 0 {
                     send_state.record_successful_publish();
-                    info!("transaction already known in mempool, treating as success");
-                    // Return an error so the caller knows no NEW hash was produced,
-                    // but it's not a real failure. The original tx hash is still valid.
-                    return Err(classified);
+                    let hash = last_tx_hash.unwrap_or(B256::ZERO);
+                    info!(tx_hash = %hash, "transaction already known in mempool, treating as success");
+                    return Ok(hash);
                 }
 
                 send_state.process_send_error(&classified);
@@ -646,18 +689,20 @@ impl SimpleTxManager {
     /// sends it through the provided channel once confirmed.
     ///
     /// The task calls [`wait_mined`](Self::wait_mined) in a loop, checking
-    /// both confirmation status and manager shutdown.
+    /// both confirmation status and manager shutdown via the shared `closed`
+    /// flag.
     fn wait_for_tx(
         send_state: Arc<SendState>,
         provider: RootProvider,
         tx_hash: B256,
         config: TxManagerConfig,
         receipt_tx: mpsc::Sender<TransactionReceipt>,
+        closed: Arc<AtomicBool>,
     ) {
         tokio::spawn(async move {
             debug!(tx_hash = %tx_hash, "starting receipt polling");
 
-            let receipt = Self::wait_mined(&send_state, &provider, tx_hash, &config).await;
+            let receipt = Self::wait_mined(&send_state, &provider, tx_hash, &config, &closed).await;
             if let Some(receipt) = receipt {
                 // Best-effort send — if the receiver is dropped, the
                 // send loop has already exited (e.g., another tx confirmed).
@@ -676,11 +721,18 @@ impl SimpleTxManager {
         provider: &RootProvider,
         tx_hash: B256,
         config: &TxManagerConfig,
+        closed: &AtomicBool,
     ) -> Option<TransactionReceipt> {
         let mut poll_interval = tokio::time::interval(config.receipt_query_interval);
 
         loop {
             poll_interval.tick().await;
+
+            // Check shutdown state each iteration to support cancellation.
+            if closed.load(Ordering::Acquire) {
+                debug!(tx_hash = %tx_hash, "manager closed, stopping receipt polling");
+                return None;
+            }
 
             match Self::query_receipt(
                 send_state,
@@ -784,41 +836,20 @@ impl TxManager for SimpleTxManager {
     async fn send_async(&self, candidate: TxCandidate) -> SendHandle {
         let (tx, rx) = oneshot::channel();
 
-        // The provider, wallet, config, etc. are behind Arc/AtomicBool
-        // internally, but SimpleTxManager itself is not Clone. We need to
-        // capture a reference. Since the trait returns impl Future + Send
-        // and SimpleTxManager is Send + Sync, we can spawn a task that
-        // calls send_tx on a shared reference via Arc.
-        //
-        // However, SimpleTxManager is not wrapped in Arc by default.
-        // Instead, we prepare everything we need on the current task and
-        // spawn the blocking work.
-        //
-        // Since `self` is &Self with a 'static-compatible lifetime
-        // (required by the trait), we construct all needed params here.
+        // Clone all fields needed to construct a SimpleTxManager on the
+        // spawned task. The `closed` flag is Arc-wrapped, so the spawned
+        // task shares the same shutdown signal as the original manager —
+        // calling `close()` on the original will be observed by the
+        // background task.
         let provider = self.provider.clone();
         let wallet = self.wallet.clone();
         let config = self.config.clone();
         let chain_id = self.chain_id;
-        let closed = self.is_closed();
+        let closed = Arc::clone(&self.closed);
         let nonce_manager = self.nonce_manager.clone();
 
         tokio::spawn(async move {
-            if closed {
-                let _ = tx.send(Err(TxManagerError::ChannelClosed));
-                return;
-            }
-
-            // Construct a temporary SimpleTxManager on the spawned task.
-            // This is necessary because SimpleTxManager is not Clone (AtomicBool).
-            let manager = Self {
-                provider,
-                wallet,
-                config,
-                nonce_manager,
-                chain_id,
-                closed: AtomicBool::new(closed),
-            };
+            let manager = Self { provider, wallet, config, nonce_manager, chain_id, closed };
 
             let result = manager.send_tx(candidate).await;
             let _ = tx.send(result);
