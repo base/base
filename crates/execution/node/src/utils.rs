@@ -7,6 +7,7 @@ use base_execution_chainspec::OpChainSpecBuilder;
 use reth_e2e_test_utils::{
     NodeHelperType, TmpDB, transaction::TransactionTestContext, wallet::Wallet,
 };
+use reth_tasks::TaskManager;
 use reth_node_api::NodeTypesWithDBAdapter;
 use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
@@ -19,7 +20,7 @@ pub(crate) type OpNode =
     NodeHelperType<OtherOpNode, BlockchainProvider<NodeTypesWithDBAdapter<OtherOpNode, TmpDB>>>;
 
 /// Creates the initial setup with `num_nodes` of the node config, started and connected.
-pub async fn setup(num_nodes: usize) -> eyre::Result<(Vec<OpNode>, Wallet)> {
+pub async fn setup(num_nodes: usize) -> eyre::Result<(Vec<OpNode>, TaskManager, Wallet)> {
     let genesis: Genesis =
         serde_json::from_str(include_str!("../tests/assets/genesis.json")).unwrap();
     reth_e2e_test_utils::setup_engine(

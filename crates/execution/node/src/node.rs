@@ -36,6 +36,7 @@ use reth_node_api::{
     AddOnsContext, BuildNextEnv, EngineTypes, FullNodeComponents, HeaderTy, NodeAddOns,
     NodePrimitives, PayloadAttributesBuilder, PayloadTypes, PrimitivesTy, TxTy,
 };
+use reth_node_builder::components::spawn_maintenance_tasks;
 use reth_node_builder::{
     BuilderContext, DebugNode, Node, NodeAdapter, NodeComponentsBuilder,
     components::{
@@ -56,7 +57,7 @@ use reth_rpc_api::{DebugApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{
-    EthPoolTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
+    EthPoolTransaction, Pool, PoolPooledTx, PoolTransaction, TransactionPool,
     TransactionValidationTaskExecutor, blobstore::DiskFileBlobStore,
 };
 use reth_trie_common::KeccakKeyHasher;
@@ -229,8 +230,8 @@ impl OpNode {
             self.args;
         ComponentsBuilder::default()
             .node_types::<Node>()
-            .executor(OpExecutorBuilder::default())
             .pool(OpPoolBuilder::default())
+            .executor(OpExecutorBuilder::default())
             .payload(BasicPayloadServiceBuilder::new(
                 OpPayloadBuilder::new(compute_pending_block)
                     .with_da_config(self.da_config.clone())
@@ -870,24 +871,19 @@ impl<T> OpPoolBuilder<T> {
     }
 }
 
-impl<Node, T, Evm> PoolBuilder<Node, Evm> for OpPoolBuilder<T>
+impl<Node, T> PoolBuilder<Node> for OpPoolBuilder<T>
 where
     Node: FullNodeTypes<Types: NodeTypes<ChainSpec: OpHardforks>>,
     T: EthPoolTransaction<Consensus = TxTy<Node::Types>> + OpPooledTx + TimestampedTransaction,
-    Evm: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + Clone + 'static,
 {
-    type Pool = OpTransactionPool<Node::Provider, DiskFileBlobStore, Evm, T, BaseOrdering<T>>;
+    type Pool = OpTransactionPool<Node::Provider, DiskFileBlobStore, T, BaseOrdering<T>>;
 
-    async fn build_pool(
-        self,
-        ctx: &BuilderContext<Node>,
-        evm_config: Evm,
-    ) -> eyre::Result<Self::Pool> {
+    async fn build_pool(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Pool> {
         let Self { pool_config_overrides, ordering, .. } = self;
 
         let blob_store = reth_node_builder::components::create_blob_store(ctx)?;
         let validator =
-            TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
+            TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone())
                 .no_eip4844()
                 .with_max_tx_input_bytes(ctx.config().txpool.max_tx_input_bytes)
                 .kzg_settings(ctx.kzg_settings()?)
@@ -909,13 +905,9 @@ where
 
         let final_pool_config = pool_config_overrides.apply(ctx.pool_config());
 
-        let transaction_pool = TxPoolBuilder::new(ctx)
-            .with_validator(validator)
-            .build_with_ordering_and_spawn_maintenance_task(
-                ordering,
-                blob_store,
-                final_pool_config,
-            )?;
+        let transaction_pool =
+            Pool::new(validator, ordering, blob_store, final_pool_config);
+        spawn_maintenance_tasks(ctx, transaction_pool.clone(), transaction_pool.config())?;
 
         info!(target: "reth::cli", "Transaction pool initialized");
         debug!(target: "reth::cli", "Spawned txpool maintenance task");

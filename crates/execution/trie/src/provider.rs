@@ -192,15 +192,10 @@ impl<'a, Storage: OpProofsStore> AccountReader for OpProofsStateProviderRef<'a, 
     }
 }
 
-impl<'a, Storage> StateProvider for OpProofsStateProviderRef<'a, Storage>
+impl<'a, Storage> OpProofsStateProviderRef<'a, Storage>
 where
     Storage: OpProofsStore + Clone,
 {
-    fn storage(&self, address: Address, storage_key: B256) -> ProviderResult<Option<StorageValue>> {
-        let hashed_key = keccak256(storage_key);
-        self.storage_by_hashed_key(address, hashed_key)
-    }
-
     fn storage_by_hashed_key(
         &self,
         address: Address,
@@ -213,6 +208,16 @@ where
             .seek(hashed_key)
             .map_err(Into::<ProviderError>::into)?
             .and_then(|(key, storage)| (key == hashed_key).then_some(storage)))
+    }
+}
+
+impl<'a, Storage> StateProvider for OpProofsStateProviderRef<'a, Storage>
+where
+    Storage: OpProofsStore + Clone,
+{
+    fn storage(&self, address: Address, storage_key: B256) -> ProviderResult<Option<StorageValue>> {
+        let hashed_key = keccak256(storage_key);
+        self.storage_by_hashed_key(address, hashed_key)
     }
 }
 

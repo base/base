@@ -1094,10 +1094,10 @@ impl reth_db::database_metrics::DatabaseMetrics for MdbxProofsStorage {
             .view(|tx| {
                 for table in Tables::ALL.iter().map(Tables::name) {
                     let table_db =
-                        tx.inner().open_db(Some(table)).wrap_err("Could not open db.")?;
+                        tx.inner.open_db(Some(table)).wrap_err("Could not open db.")?;
 
                     let stats = tx
-                        .inner()
+                        .inner
                         .db_stat(table_db.dbi())
                         .wrap_err(format!("Could not find table: {table}"))?;
 

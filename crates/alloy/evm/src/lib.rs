@@ -28,8 +28,11 @@ pub use receipt_builder::{OpAlloyReceiptBuilder, OpReceiptBuilder};
 
 mod canyon;
 
+mod tx_result;
+pub use tx_result::OpTxResult;
+
 mod executor;
-pub use executor::{OpBlockExecutor, OpTxResult};
+pub use executor::OpBlockExecutor;
 
 mod executor_factory;
 pub use executor_factory::OpBlockExecutorFactory;
