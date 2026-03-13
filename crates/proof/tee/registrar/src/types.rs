@@ -14,7 +14,7 @@ pub struct ProverInstance {
 }
 
 /// Health status of a prover instance in the ALB target group.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstanceHealthStatus {
     /// Health checks are in progress; instance is not yet receiving traffic.
     Initial,
@@ -27,6 +27,19 @@ pub enum InstanceHealthStatus {
 }
 
 impl InstanceHealthStatus {
+    /// Maps an AWS ALB target health state string to [`InstanceHealthStatus`].
+    ///
+    /// Unknown or unrecognised states are treated as [`Self::Unhealthy`] to avoid
+    /// routing work to targets whose status cannot be determined.
+    pub fn from_aws_state(state: &str) -> Self {
+        match state {
+            "initial" => Self::Initial,
+            "healthy" => Self::Healthy,
+            "draining" => Self::Draining,
+            _ => Self::Unhealthy,
+        }
+    }
+
     /// Returns `true` if the instance should be registered (initial or healthy).
     pub const fn should_register(&self) -> bool {
         matches!(self, Self::Initial | Self::Healthy)

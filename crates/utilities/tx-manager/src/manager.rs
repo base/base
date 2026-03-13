@@ -51,7 +51,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    FeeCalculator, GasPriceCaps, NonceManager, RpcErrorClassifier, SendHandle, SendResponse,
+    FeeCalculator, FeeOverride, GasPriceCaps, NonceManager, RpcErrorClassifier, SendHandle, SendResponse,
     SendState, TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult,
 };
 
@@ -198,7 +198,7 @@ impl SimpleTxManager {
     /// fixed delay between retries. Only errors where
     /// [`TxManagerError::is_retryable`] returns `true` trigger a retry.
     ///
-    /// When `fee_overrides` is `Some((tip, fee_cap))`, the provided values
+    /// When `fee_overrides` is `Some`, the provided [`FeeOverride`] values
     /// are used as a floor — `craft_tx` takes `max(network_fee, override)`
     /// so the resulting transaction is guaranteed to meet the override
     /// thresholds. Pass `None` for the initial send; pass the bumped fees
@@ -224,7 +224,7 @@ impl SimpleTxManager {
     pub async fn prepare(
         &self,
         candidate: &TxCandidate,
-        fee_overrides: Option<(u128, u128)>,
+        fee_overrides: Option<FeeOverride>,
     ) -> TxManagerResult<PreparedTx> {
         (|| async {
             // Re-check closed flag on each retry attempt to avoid wasted
@@ -313,7 +313,7 @@ impl SimpleTxManager {
     /// 6. Assign nonce via [`NonceManager::next_nonce`]
     /// 7. Sign and RLP-encode to raw transaction bytes
     ///
-    /// When `fee_overrides` is `Some((tip, fee_cap))`, the provided values
+    /// When `fee_overrides` is `Some`, the provided [`FeeOverride`] values
     /// are used as a floor — the transaction will use
     /// `max(network_fee, override)` for each component. This ensures that
     /// replacement transactions always meet the bumped fee thresholds
@@ -336,7 +336,7 @@ impl SimpleTxManager {
     pub async fn craft_tx(
         &self,
         candidate: &TxCandidate,
-        fee_overrides: Option<(u128, u128)>,
+        fee_overrides: Option<FeeOverride>,
     ) -> TxManagerResult<PreparedTx> {
         // Blob transactions are not yet supported.
         if !candidate.blobs.is_empty() {
@@ -356,8 +356,8 @@ impl SimpleTxManager {
         // to satisfy geth's replacement rules even if network fees have
         // dropped since the bump was calculated.
         let (tip_cap, fee_cap) = match fee_overrides {
-            Some((override_tip, override_fee_cap)) => {
-                (caps.gas_tip_cap.max(override_tip), caps.gas_fee_cap.max(override_fee_cap))
+            Some(FeeOverride { gas_tip_cap, gas_fee_cap }) => {
+                (caps.gas_tip_cap.max(gas_tip_cap), caps.gas_fee_cap.max(gas_fee_cap))
             }
             None => (caps.gas_tip_cap, caps.gas_fee_cap),
         };
@@ -778,7 +778,9 @@ impl SimpleTxManager {
                 // the mempool from a prior publish. Return the previous hash.
                 if classified.is_already_known() && send_state.successful_publish_count() > 0 {
                     let hash = last_tx_hash.ok_or_else(|| {
-                        TxManagerError::Rpc("AlreadyKnown but no prior tx hash available".into())
+                        TxManagerError::InvalidConfig(
+                            "AlreadyKnown but no prior tx hash available — caller must track the hash from publish_tx".into(),
+                        )
                     })?;
                     send_state.record_successful_publish();
                     info!(tx_hash = %hash, "transaction already known in mempool, treating as success");

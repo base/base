@@ -9,7 +9,8 @@ use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
 use base_tx_manager::{
-    GasPriceCaps, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig, TxManagerError,
+    FeeOverride, GasPriceCaps, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig,
+    TxManagerError,
 };
 
 /// Helper: spawns an Anvil instance and returns a [`SimpleTxManager`]
@@ -512,8 +513,9 @@ async fn craft_tx_with_fee_overrides_uses_overrides_when_above_network() {
         ..Default::default()
     };
 
+    let overrides = FeeOverride::new(override_tip, override_fee_cap);
     let prepared = manager
-        .craft_tx(&candidate, Some((override_tip, override_fee_cap)))
+        .craft_tx(&candidate, Some(overrides))
         .await
         .expect("should craft tx with fee overrides");
 
@@ -553,8 +555,9 @@ async fn craft_tx_with_fee_overrides_uses_network_when_overrides_below() {
         ..Default::default()
     };
 
+    let overrides = FeeOverride::new(override_tip, override_fee_cap);
     let prepared = manager
-        .craft_tx(&candidate, Some((override_tip, override_fee_cap)))
+        .craft_tx(&candidate, Some(overrides))
         .await
         .expect("should craft tx with low fee overrides");
 
@@ -587,10 +590,8 @@ async fn prepared_tx_fees_match_decoded_transaction_with_overrides() {
         ..Default::default()
     };
 
-    let prepared = manager
-        .craft_tx(&candidate, Some((override_tip, override_fee_cap)))
-        .await
-        .expect("should craft tx");
+    let overrides = FeeOverride::new(override_tip, override_fee_cap);
+    let prepared = manager.craft_tx(&candidate, Some(overrides)).await.expect("should craft tx");
     let tx = decode_eip1559(&prepared.raw_tx);
 
     assert_eq!(

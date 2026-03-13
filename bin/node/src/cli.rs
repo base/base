@@ -53,7 +53,7 @@ pub struct Args {
     #[arg(
         long = "enable-tx-forwarding",
         value_name = "ENABLE_TX_FORWARDING",
-        requires = "builder-rpc-urls"
+        requires = "builder_rpc_urls"
     )]
     pub enable_tx_forwarding: bool,
 
@@ -61,7 +61,7 @@ pub struct Args {
     #[arg(
         long = "builder-rpc-urls",
         value_name = "BUILDER_RPC_URLS",
-        requires = "enable-tx-forwarding"
+        requires = "enable_tx_forwarding"
     )]
     pub builder_rpc_urls: Vec<Url>,
 
@@ -70,7 +70,7 @@ pub struct Args {
         long = "tx-forwarding-resend-after-ms",
         value_name = "TX_FORWARDING_RESEND_AFTER_MS",
         default_value_t = DEFAULT_RESEND_AFTER_MS,
-        requires = "enable-tx-forwarding"
+        requires = "enable_tx_forwarding"
     )]
     pub tx_forwarding_resend_after_ms: u64,
 
@@ -79,7 +79,7 @@ pub struct Args {
         long = "tx-forwarding-batch-size",
         value_name = "TX_FORWARDING_BATCH_SIZE",
         default_value_t = DEFAULT_MAX_BATCH_SIZE,
-        requires = "enable-tx-forwarding"
+        requires = "enable_tx_forwarding"
     )]
     pub tx_forwarding_batch_size: usize,
 
@@ -88,7 +88,7 @@ pub struct Args {
         long = "tx-forwarding-max-rps",
         value_name = "TX_FORWARDING_MAX_RPS",
         default_value_t = DEFAULT_MAX_RPS,
-        requires = "enable-tx-forwarding"
+        requires = "enable_tx_forwarding"
     )]
     pub tx_forwarding_max_rps: u32,
 }
