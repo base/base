@@ -43,10 +43,10 @@ pub type BlobVerifierPipeline = base_consensus_derive::DerivationPipeline<
 pub enum VerifierError {
     /// The pipeline returned a critical error.
     #[error("pipeline error: {0}")]
-    Pipeline(PipelineErrorKind),
+    Pipeline(Box<PipelineErrorKind>),
     /// A pipeline signal failed.
     #[error("signal error: {0}")]
-    Signal(PipelineErrorKind),
+    Signal(Box<PipelineErrorKind>),
     /// The gossiped block has no L1 info deposit as its first transaction.
     #[error("gossip receive: missing or invalid L1 info deposit in block")]
     GossipDecodeFailed,
@@ -221,7 +221,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                     .signal(),
             )
             .await
-            .map_err(VerifierError::Signal)?;
+            .map_err(|e| VerifierError::Signal(Box::new(e)))?;
 
         // Drain the genesis L1 block (no batcher data; sets IndexedTraversal::done = true).
         self.act_l2_pipeline_full().await?;
@@ -258,7 +258,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     ///
     /// [`IndexedTraversal`]: base_consensus_derive::IndexedTraversal
     pub async fn act_l1_head_signal(&mut self, head: BlockInfo) -> Result<(), VerifierError> {
-        self.pipeline.signal(Signal::ProvideBlock(head)).await.map_err(VerifierError::Signal)
+        self.pipeline.signal(Signal::ProvideBlock(head)).await.map_err(|e| VerifierError::Signal(Box::new(e)))
     }
 
     /// Signal the pipeline that a new L1 safe head is available.
@@ -310,7 +310,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                     .signal(),
             )
             .await
-            .map_err(VerifierError::Signal)?;
+            .map_err(|e| VerifierError::Signal(Box::new(e)))?;
         self.safe_head = l2_safe_head;
         // Clear stale finalization state so a subsequent act_l1_finalized_signal
         // cannot promote an L2 block that no longer exists on the canonical chain.
@@ -363,14 +363,14 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                             // This is a transient state — step again immediately.
                             no_progress += 1;
                             if no_progress > 1_000 {
-                                return Err(VerifierError::Pipeline(
+                                return Err(VerifierError::Pipeline(Box::new(
                                     PipelineError::Provider(
                                         "pipeline stuck: 1000 consecutive NotEnoughData without progress".into()
                                     ).temp()
-                                ));
+                                )));
                             }
                         }
-                        _ => return Err(VerifierError::Pipeline(err)),
+                        _ => return Err(VerifierError::Pipeline(Box::new(err))),
                     }
                 }
                 StepResult::OriginAdvanceErr(err) => {
@@ -379,7 +379,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                             // Traversal exhausted — no more L1 blocks to advance to.
                             break;
                         }
-                        _ => return Err(VerifierError::Pipeline(err)),
+                        _ => return Err(VerifierError::Pipeline(Box::new(err))),
                     }
                 }
             }
