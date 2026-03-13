@@ -4306,6 +4306,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-ec2",
  "aws-sdk-elasticloadbalancingv2",
+ "rstest",
  "thiserror 2.0.18",
  "tracing",
  "url",

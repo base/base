@@ -34,3 +34,6 @@ tracing.workspace = true
 
 # Misc
 url.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true

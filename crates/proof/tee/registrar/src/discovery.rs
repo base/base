@@ -175,42 +175,20 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
 mod tests {
     use std::net::IpAddr;
 
+    use rstest::rstest;
+
     use super::*;
 
-    #[test]
-    fn from_aws_state_initial() {
-        assert_eq!(InstanceHealthStatus::from_aws_state("initial"), InstanceHealthStatus::Initial);
-    }
-
-    #[test]
-    fn from_aws_state_healthy() {
-        assert_eq!(InstanceHealthStatus::from_aws_state("healthy"), InstanceHealthStatus::Healthy);
-    }
-
-    #[test]
-    fn from_aws_state_draining() {
-        assert_eq!(
-            InstanceHealthStatus::from_aws_state("draining"),
-            InstanceHealthStatus::Draining
-        );
-    }
-
-    #[test]
-    fn from_aws_state_unhealthy() {
-        assert_eq!(
-            InstanceHealthStatus::from_aws_state("unhealthy"),
-            InstanceHealthStatus::Unhealthy
-        );
-    }
-
-    #[test]
-    fn from_aws_state_unknown_maps_to_unhealthy() {
-        assert_eq!(
-            InstanceHealthStatus::from_aws_state("unavailable"),
-            InstanceHealthStatus::Unhealthy
-        );
-        assert_eq!(InstanceHealthStatus::from_aws_state(""), InstanceHealthStatus::Unhealthy);
-        assert_eq!(InstanceHealthStatus::from_aws_state("bogus"), InstanceHealthStatus::Unhealthy);
+    #[rstest]
+    #[case::initial("initial", InstanceHealthStatus::Initial)]
+    #[case::healthy("healthy", InstanceHealthStatus::Healthy)]
+    #[case::draining("draining", InstanceHealthStatus::Draining)]
+    #[case::unhealthy("unhealthy", InstanceHealthStatus::Unhealthy)]
+    #[case::unknown_unavailable("unavailable", InstanceHealthStatus::Unhealthy)]
+    #[case::unknown_empty("", InstanceHealthStatus::Unhealthy)]
+    #[case::unknown_bogus("bogus", InstanceHealthStatus::Unhealthy)]
+    fn from_aws_state(#[case] input: &str, #[case] expected: InstanceHealthStatus) {
+        assert_eq!(InstanceHealthStatus::from_aws_state(input), expected);
     }
 
     #[test]
