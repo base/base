@@ -42,7 +42,6 @@ use reth_node_builder::{
     components::{
         BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder,
         NetworkBuilder, PayloadBuilderBuilder, PoolBuilder, PoolBuilderConfigOverrides,
-        TxPoolBuilder,
     },
     node::{FullNodeTypes, NodeTypes},
     rpc::{

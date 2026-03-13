@@ -12,7 +12,6 @@ use alloy_evm::{
     },
     eth::receipt_builder::ReceiptBuilderCtx,
 };
-use alloy_primitives::Address;
 use base_alloy_consensus::OpDepositReceipt;
 use base_alloy_hardforks::OpHardforks;
 use base_revm::{
