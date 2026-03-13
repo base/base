@@ -466,10 +466,11 @@ impl SimpleTxManager {
     /// # Send timeout
     ///
     /// When `tx_send_timeout` is configured, the inner send loop is wrapped
-    /// in a [`tokio::time::timeout`]. If the timeout fires, the nonce
-    /// manager is reset before returning the error. This prevents nonce gaps
-    /// that would otherwise occur if `prepare()` was cancelled mid-flight
-    /// after acquiring a nonce but before the transaction was published.
+    /// in a [`tokio::time::timeout`]. If the send exits with an error before
+    /// any successful publish, the nonce manager is reset before returning.
+    /// This prevents nonce gaps from pre-publish failures, including
+    /// cancellation of `prepare()` after nonce acquisition but before the
+    /// transaction reached the mempool.
     ///
     /// # Errors
     ///
@@ -488,29 +489,41 @@ impl SimpleTxManager {
         }
 
         // Wrap the inner loop in a send timeout if configured.
-        if self.config.tx_send_timeout.is_zero() {
+        let result = if self.config.tx_send_timeout.is_zero() {
             self.send_tx_inner(&candidate, &send_state).await
         } else {
-            let result = tokio::time::timeout(
+            match tokio::time::timeout(
                 self.config.tx_send_timeout,
                 self.send_tx_inner(&candidate, &send_state),
             )
-            .await;
-            match result {
+            .await
+            {
                 Ok(inner) => inner,
                 Err(_) => {
                     warn!(
                         timeout = ?self.config.tx_send_timeout,
                         "send timed out",
                     );
-                    // Reset the nonce manager to avoid gaps from a
-                    // cancelled prepare() that acquired a nonce but
-                    // never published the transaction.
-                    self.nonce_manager.reset().await;
                     Err(TxManagerError::SendTimeout)
                 }
             }
+        };
+
+        if Self::should_reset_nonce_on_send_error(&result, &send_state) {
+            // Reset only if nothing was ever published. Once a transaction may
+            // be pending, reusing the latest nonce could conflict with the
+            // in-flight transaction.
+            self.nonce_manager.reset().await;
         }
+
+        result
+    }
+
+    fn should_reset_nonce_on_send_error<T>(
+        result: &TxManagerResult<T>,
+        send_state: &SendState,
+    ) -> bool {
+        result.is_err() && send_state.successful_publish_count() == 0
     }
 
     /// Inner send loop extracted from [`send_tx`](Self::send_tx) to allow
@@ -1083,5 +1096,30 @@ mod tests {
         assert_eq!(tip, 100);
         assert_eq!(fee_cap, 1000);
         assert_eq!(hash, B256::ZERO);
+    }
+
+    #[test]
+    fn should_reset_nonce_on_send_error_before_first_publish() {
+        let send_state = crate::SendState::new(3).expect("should create send state");
+        let result: crate::TxManagerResult<()> = Err(TxManagerError::SendTimeout);
+
+        assert!(SimpleTxManager::should_reset_nonce_on_send_error(&result, &send_state));
+    }
+
+    #[test]
+    fn should_not_reset_nonce_after_successful_publish() {
+        let send_state = crate::SendState::new(3).expect("should create send state");
+        send_state.record_successful_publish();
+        let result: crate::TxManagerResult<()> = Err(TxManagerError::SendTimeout);
+
+        assert!(!SimpleTxManager::should_reset_nonce_on_send_error(&result, &send_state));
+    }
+
+    #[test]
+    fn should_not_reset_nonce_on_success() {
+        let send_state = crate::SendState::new(3).expect("should create send state");
+        let result: crate::TxManagerResult<()> = Ok(());
+
+        assert!(!SimpleTxManager::should_reset_nonce_on_send_error(&result, &send_state));
     }
 }
