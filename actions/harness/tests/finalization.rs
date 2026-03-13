@@ -90,10 +90,12 @@ async fn finalization_advances_with_multiple_l2_blocks_per_epoch() {
 
 /// L2 finalization advances incrementally as successive L1 epochs are finalized.
 ///
-/// Produce L2 blocks across two L1 epochs (epoch 0 and epoch 1), derive all of
-/// them, then finalize epoch 0 first and assert only epoch 0 L2 blocks are
-/// finalized. Then finalize epoch 1 and assert epoch 1 L2 blocks become
-/// finalized too.
+/// Produces L2 blocks across two L1 epochs (epoch 0 and epoch 1). Finalizing the
+/// epoch-0 L1 block first advances the finalized head only through the last L2 block
+/// whose `l1_origin` is 0, leaving the epoch-1 block pending. Finalizing the epoch-1
+/// L1 block then advances it through the remaining block — demonstrating that the
+/// finalized L2 head advances one epoch at a time as each successive L1 epoch is
+/// finalized.
 #[tokio::test]
 async fn finalization_advances_incrementally_with_l1_epochs() {
     let batcher_cfg = BatcherConfig::default();
@@ -122,12 +124,9 @@ async fn finalization_advances_incrementally_with_l1_epochs() {
             last_epoch_0_number = i;
         }
     }
-    // Verify epoch boundary was crossed.
     assert_eq!(sequencer.head().l1_origin.number, 1, "last L2 block should reference epoch 1");
     assert!(last_epoch_0_number > 0, "at least one L2 block should reference epoch 0");
 
-    // Submit each L2 block in a separate L1 inclusion block.
-    // First, create the verifier chain after the epoch-providing L1 block.
     let (mut verifier, chain) = h.create_verifier();
     for (number, hash) in &block_hashes {
         verifier.register_block_hash(*number, *hash);
@@ -153,26 +152,28 @@ async fn finalization_advances_incrementally_with_l1_epochs() {
     }
     assert_eq!(verifier.l2_safe().block_info.number, 6, "safe head should reach L2 block 6");
 
-    // Finalize the epoch-providing L1 block 1 (which carries epoch 0 data).
-    // This should only finalize L2 blocks whose l1_origin <= 1.
-    // L2 blocks 1 through last_epoch_0_number have l1_origin = 0.
-    // L2 block 6 has l1_origin = 1, which is also <= 1, so it finalizes too.
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("L1 block 1"));
-    verifier.act_l1_finalized_signal(l1_block_1).await.expect("finalized epoch 0");
+    // First finalization signal: L1 block 0 (epoch 0). The `L2Finalizer` tracks
+    // each L2 block by its `derived_from` L1 origin, so only blocks with
+    // `l1_origin = 0` are covered. Block 6 (`l1_origin = 1`) must stay pending.
+    let l1_epoch_0 = block_info_from(h.l1.block_by_number(0).expect("genesis"));
+    verifier.act_l1_finalized_signal(l1_epoch_0).await.expect("finalize epoch 0");
+    assert_eq!(
+        verifier.l2_finalized().block_info.number,
+        last_epoch_0_number,
+        "first signal (epoch 0): only epoch-0 blocks should finalize"
+    );
+    assert!(
+        verifier.l2_finalized().block_info.number < 6,
+        "epoch-1 block (L2 block 6) must not yet be finalized"
+    );
 
-    // All blocks up to 6 have l1_origin <= 1, so all finalize.
+    // Second finalization signal: L1 block 1 (epoch 1). Now block 6 finalizes.
+    let l1_epoch_1 = block_info_from(h.l1.block_by_number(1).expect("L1 block 1"));
+    verifier.act_l1_finalized_signal(l1_epoch_1).await.expect("finalize epoch 1");
     assert_eq!(
         verifier.l2_finalized().block_info.number,
         6,
-        "all L2 blocks with l1_origin <= 1 should be finalized"
-    );
-
-    // Now produce one more L2 block in epoch 1 to have an un-finalized block,
-    // then show that further finalization signals can still advance things.
-    // We'll verify the incremental nature by checking no regression occurred.
-    assert!(
-        verifier.l2_finalized().block_info.number <= verifier.l2_safe().block_info.number,
-        "finalized head must not exceed safe head"
+        "second signal (epoch 1): block 6 should now be finalized"
     );
 }
 
