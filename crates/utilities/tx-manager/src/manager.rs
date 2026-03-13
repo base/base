@@ -651,6 +651,7 @@ impl SimpleTxManager {
             Some(block) => block,
             None => {
                 // Receipt without a block number (e.g., pending) — treat as not yet confirmed.
+                send_state.tx_not_mined(tx_hash);
                 return Ok(None);
             }
         };
