@@ -408,8 +408,9 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
             StepResult::OriginAdvanceErr(PipelineErrorKind::Temporary(e)) => {
                 Ok(StepResult::OriginAdvanceErr(PipelineErrorKind::Temporary(e)))
             }
-            StepResult::StepFailed(err) => Err(VerifierError::Pipeline(err)),
-            StepResult::OriginAdvanceErr(err) => Err(VerifierError::Pipeline(err)),
+            StepResult::StepFailed(err) | StepResult::OriginAdvanceErr(err) => {
+                Err(VerifierError::Pipeline(err))
+            }
         }
     }
 
@@ -473,10 +474,10 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
             }
             let result = self.pipeline.step(self.safe_head).await;
             steps += 1;
-            if matches!(result, StepResult::PreparedAttributes) {
-                if let Some(attrs) = self.pipeline.next() {
-                    self.apply_attributes(attrs);
-                }
+            if matches!(result, StepResult::PreparedAttributes)
+                && let Some(attrs) = self.pipeline.next()
+            {
+                self.apply_attributes(attrs);
             }
             if condition(&result) {
                 return Ok((steps, true));
