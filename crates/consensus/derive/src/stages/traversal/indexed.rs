@@ -355,8 +355,8 @@ mod tests {
         assert_eq!(traversal.system_config.batcher_address, expected);
     }
 
-    /// After a batcher address ConfigUpdate log is processed, the traversal stage's
-    /// `batcher_addr()` method (used by L1Retrieval) returns the updated address.
+    /// After a batcher address `ConfigUpdate` log is processed, the traversal stage's
+    /// `batcher_addr()` method (used by `L1Retrieval`) returns the updated address.
     #[tokio::test]
     async fn test_batcher_address_change_accepted_by_derivation() {
         let blocks = vec![BlockInfo::default(), BlockInfo::default()];
@@ -379,7 +379,7 @@ mod tests {
         assert_eq!(traversal.batcher_addr(), expected);
     }
 
-    /// Helper to create a ConfigUpdate log for TYPE_GAS_LIMIT (update type 0x02).
+    /// Helper to create a `ConfigUpdate` log for `TYPE_GAS_LIMIT` (update type 0x02).
     fn new_update_gas_limit_log(gas_limit: u64) -> Log {
         let mut update_type = B256::ZERO;
         update_type.0[31] = 0x02;
@@ -400,7 +400,7 @@ mod tests {
         }
     }
 
-    /// A gas limit ConfigUpdate log is processed without error and the pipeline
+    /// A gas limit `ConfigUpdate` log is processed without error and the pipeline
     /// continues normally.
     #[tokio::test]
     async fn test_gas_limit_update_does_not_disrupt_derivation() {
@@ -441,8 +441,8 @@ mod tests {
         assert!(!traversal.done);
     }
 
-    /// The batcher_address field on SystemConfig is mutated after a CONFIG_UPDATE
-    /// log is processed during an L1 epoch change (provide_next_block).
+    /// The `batcher_address` field on `SystemConfig` is mutated after a `CONFIG_UPDATE`
+    /// log is processed during an L1 epoch change (`provide_next_block`).
     #[tokio::test]
     async fn test_batcher_address_update_applied_on_l1_epoch_change() {
         let new_batcher = address!("00000000000000000000000000000000DeaDBeef");
@@ -477,7 +477,7 @@ mod tests {
             b256!("2222222222222222222222222222222222222222222222222222222222222222");
         let block0 = BlockInfo { number: 10, hash: epoch0_hash, ..BlockInfo::default() };
         let block1 =
-            BlockInfo { number: 11, hash: epoch1_hash, parent_hash: epoch0_hash, timestamp: 100, ..BlockInfo::default() };
+            BlockInfo { number: 11, hash: epoch1_hash, parent_hash: epoch0_hash, timestamp: 100 };
 
         let mut provider = TestChainProvider::default();
         let rollup_config = RollupConfig {
@@ -505,8 +505,8 @@ mod tests {
         assert_eq!(traversal.system_config.batcher_address, new_batcher);
     }
 
-    /// After a ConfigUpdate log changes batcher_address from A → B, sending a
-    /// `Signal::Reset` with a SystemConfig containing address A restores the
+    /// After a `ConfigUpdate` log changes `batcher_address` from A → B, sending a
+    /// `Signal::Reset` with a `SystemConfig` containing address A restores the
     /// batcher address back to A. This models L1 reorg rollback behavior.
     #[tokio::test]
     async fn test_reorg_signal_restores_batcher_address() {

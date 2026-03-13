@@ -296,7 +296,7 @@ mod tests {
         ));
     }
 
-    /// After a SystemConfig batcher address update (modeled as changing the
+    /// After a `SystemConfig` batcher address update (modeled as changing the
     /// `batcher_address` passed to `load_calldata`), transactions signed by the
     /// OLD batcher are rejected while transactions signed by the NEW batcher
     /// are accepted.
