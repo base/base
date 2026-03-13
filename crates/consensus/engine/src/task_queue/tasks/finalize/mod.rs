@@ -5,3 +5,6 @@ pub use task::FinalizeTask;
 
 mod error;
 pub use error::FinalizeTaskError;
+
+#[cfg(test)]
+mod task_test;
