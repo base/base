@@ -28,6 +28,15 @@ impl FeeCalculator {
         tip.saturating_add(base_fee.saturating_mul(2))
     }
 
+    /// Recovers the effective base fee from an EIP-1559 fee cap and tip.
+    ///
+    /// This is the inverse of [`calc_gas_fee_cap`](Self::calc_gas_fee_cap):
+    /// given `fee_cap = tip + 2 × base_fee`, returns `(fee_cap - tip) / 2`.
+    #[must_use]
+    pub const fn base_fee_from_caps(gas_fee_cap: u128, gas_tip_cap: u128) -> u128 {
+        gas_fee_cap.saturating_sub(gas_tip_cap) / 2
+    }
+
     /// Computes the blob fee cap: `2 × blob_base_fee`.
     ///
     /// Mirrors [`calc_gas_fee_cap`](Self::calc_gas_fee_cap) for EIP-4844

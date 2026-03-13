@@ -627,22 +627,17 @@ impl SimpleTxManager {
             // error occurs later, process_send_error will re-set the flag.
             if send_state.should_bump_fees() {
                 send_state.clear_bump_fees();
-                let result = self
-                    .handle_fee_bump(
+                if let Some(abort) = self
+                    .try_fee_bump(
                         candidate,
                         send_state,
                         &receipt_tx,
-                        current_tip,
-                        current_fee_cap,
-                        last_tx_hash,
+                        &mut current_tip,
+                        &mut current_fee_cap,
+                        &mut last_tx_hash,
                     )
-                    .await;
-                if let Some(abort) = Self::apply_bump_result(
-                    result,
-                    &mut current_tip,
-                    &mut current_fee_cap,
-                    &mut last_tx_hash,
-                ) {
+                    .await
+                {
                     return Err(abort);
                 }
                 // Reset the bump ticker so we get a full interval
@@ -656,8 +651,8 @@ impl SimpleTxManager {
             // must not run inside tokio::select!. The select block only
             // captures which arm won; fee bump work runs to completion
             // outside the select block.
-            let is_bump_tick = tokio::select! {
-                _ = bump_ticker.tick() => true,
+            tokio::select! {
+                _ = bump_ticker.tick() => {}
                 result = receipt_rx.recv() => {
                     match result {
                         Some(receipt) => {
@@ -676,31 +671,47 @@ impl SimpleTxManager {
                 }
             };
 
-            if is_bump_tick {
-                let result = self
-                    .handle_fee_bump(
-                        candidate,
-                        send_state,
-                        &receipt_tx,
-                        current_tip,
-                        current_fee_cap,
-                        last_tx_hash,
-                    )
-                    .await;
-                if let Some(abort) = Self::apply_bump_result(
-                    result,
+            // Bump tick fired — run fee bump logic.
+            if let Some(abort) = self
+                .try_fee_bump(
+                    candidate,
+                    send_state,
+                    &receipt_tx,
                     &mut current_tip,
                     &mut current_fee_cap,
                     &mut last_tx_hash,
-                ) {
-                    return Err(abort);
-                }
-                // Reset the bump ticker so we get a full interval before
-                // the next timer-driven bump, even if handle_fee_bump took
-                // longer than resubmission_timeout.
-                bump_ticker.reset();
+                )
+                .await
+            {
+                return Err(abort);
             }
+            bump_ticker.reset();
         }
+    }
+
+    /// Performs a fee bump attempt and applies the result to the tracked state.
+    ///
+    /// Returns `Some(error)` if the send loop must abort, `None` to continue.
+    async fn try_fee_bump(
+        &self,
+        candidate: &TxCandidate,
+        send_state: &Arc<SendState>,
+        receipt_tx: &mpsc::Sender<TransactionReceipt>,
+        current_tip: &mut u128,
+        current_fee_cap: &mut u128,
+        last_tx_hash: &mut B256,
+    ) -> Option<TxManagerError> {
+        let result = self
+            .handle_fee_bump(
+                candidate,
+                send_state,
+                receipt_tx,
+                *current_tip,
+                *current_fee_cap,
+                *last_tx_hash,
+            )
+            .await;
+        Self::apply_bump_result(result, current_tip, current_fee_cap, last_tx_hash)
     }
 
     /// Handles a single fee bump iteration.
@@ -733,7 +744,7 @@ impl SimpleTxManager {
         let caps = self.suggest_gas_price_caps().await?;
 
         // Derive the effective base fee from the fee cap and tip.
-        let new_base_fee = caps.gas_fee_cap.saturating_sub(caps.gas_tip_cap) / 2;
+        let new_base_fee = FeeCalculator::base_fee_from_caps(caps.gas_fee_cap, caps.gas_tip_cap);
 
         let (bumped_tip, bumped_fee_cap) =
             FeeCalculator::update_fees(old_tip, old_fee_cap, caps.gas_tip_cap, new_base_fee, false);
@@ -916,7 +927,7 @@ impl SimpleTxManager {
         receipt_tx: mpsc::Sender<TransactionReceipt>,
         closed: Arc<AtomicBool>,
     ) {
-        let poller = tokio::spawn(async move {
+        tokio::spawn(async move {
             debug!(tx_hash = %tx_hash, "starting receipt polling");
 
             let receipt = Self::wait_mined(&send_state, &provider, tx_hash, &config, &closed).await;
@@ -927,16 +938,6 @@ impl SimpleTxManager {
             }
 
             debug!(tx_hash = %tx_hash, "receipt polling ended");
-        });
-
-        tokio::spawn(async move {
-            if let Err(join_err) = poller.await {
-                if join_err.is_panic() {
-                    error!(tx_hash = %tx_hash, error = %join_err, "receipt polling task panicked");
-                } else {
-                    debug!(tx_hash = %tx_hash, error = %join_err, "receipt polling task ended early");
-                }
-            }
         });
     }
 
