@@ -37,9 +37,10 @@ use alloy_eips::{BlockNumberOrTag, Encodable2718};
 use alloy_network::{Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types_eth::TransactionRequest;
+use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use backon::{ConstantBuilder, Retryable};
-use tracing::{error, info, warn};
+use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
 
 use crate::{
     FeeCalculator, FeeOverride, GasPriceCaps, NonceManager, RpcErrorClassifier, SendHandle,
@@ -502,6 +503,164 @@ impl SimpleTxManager {
                 warn!("publish timed out");
                 Err(err)
             }
+        }
+    }
+
+    /// Spawns a background task that polls for a transaction receipt and
+    /// sends it through the provided channel once confirmed.
+    ///
+    /// The task calls [`wait_mined`](Self::wait_mined) in a loop, checking
+    /// both confirmation status and manager shutdown via the shared `closed`
+    /// flag.
+    ///
+    /// # Task accumulation
+    ///
+    /// Each fee bump spawns a new polling task for the replacement tx hash
+    /// without cancelling the previous one. This is intentional: any
+    /// previously-published variant may still confirm (the original or an
+    /// earlier bump), and we want to detect whichever is mined first.
+    /// Accumulated tasks are bounded by three mechanisms:
+    /// - The `closed` flag causes all pollers to exit on shutdown.
+    /// - Each poller exits once it delivers a receipt through the mpsc
+    ///   channel (or finds the channel closed because a different poller
+    ///   already delivered).
+    /// - Polling frequency is governed by `receipt_query_interval`, so
+    ///   RPC load is proportional to `bump_count × 1/interval`.
+    fn wait_for_tx(
+        send_state: Arc<SendState>,
+        provider: RootProvider,
+        tx_hash: B256,
+        config: TxManagerConfig,
+        receipt_tx: mpsc::Sender<TransactionReceipt>,
+        closed: Arc<AtomicBool>,
+    ) {
+        tokio::spawn(async move {
+            debug!(tx_hash = %tx_hash, "starting receipt polling");
+
+            let receipt = Self::wait_mined(&send_state, &provider, tx_hash, &config, &closed).await;
+            if let Some(receipt) = receipt {
+                // Best-effort send — if the receiver is dropped, the
+                // send loop has already exited (e.g., another tx confirmed).
+                let _ = receipt_tx.send(receipt).await;
+            }
+
+            debug!(tx_hash = %tx_hash, "receipt polling ended");
+        });
+    }
+
+    /// Polls for a transaction receipt at `receipt_query_interval` until
+    /// the transaction is mined and confirmed to the required depth.
+    ///
+    /// Returns `Some(receipt)` when the transaction reaches
+    /// `num_confirmations` depth, or `None` if the manager is closed.
+    async fn wait_mined(
+        send_state: &SendState,
+        provider: &RootProvider,
+        tx_hash: B256,
+        config: &TxManagerConfig,
+        closed: &AtomicBool,
+    ) -> Option<TransactionReceipt> {
+        let mut poll_interval = tokio::time::interval(config.receipt_query_interval);
+
+        loop {
+            poll_interval.tick().await;
+
+            // Check shutdown state each iteration to support cancellation.
+            if closed.load(Ordering::Acquire) {
+                debug!(tx_hash = %tx_hash, "manager closed, stopping receipt polling");
+                return None;
+            }
+
+            match Self::query_receipt(
+                send_state,
+                provider,
+                tx_hash,
+                config.num_confirmations,
+                config.network_timeout,
+            )
+            .await
+            {
+                Ok(Some(receipt)) => return Some(receipt),
+                Ok(None) => {
+                    // Not yet confirmed — continue polling.
+                }
+                Err(e) => {
+                    warn!(tx_hash = %tx_hash, error = %e, "receipt query failed");
+                }
+            }
+        }
+    }
+
+    /// Performs a single receipt check for the given transaction hash.
+    ///
+    /// - If no receipt is found, calls [`SendState::tx_not_mined`] (reorg
+    ///   detection) and returns `Ok(None)`.
+    /// - If a receipt is found, calls [`SendState::tx_mined`] and checks
+    ///   confirmation depth via the formula:
+    ///   `tx_block + num_confirmations <= tip_height + 1`.
+    /// - Returns `Ok(Some(receipt))` when sufficiently confirmed, or
+    ///   `Ok(None)` when the receipt exists but needs more confirmations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TxManagerError::Rpc`] if provider calls fail.
+    pub async fn query_receipt(
+        send_state: &SendState,
+        provider: &RootProvider,
+        tx_hash: B256,
+        num_confirmations: u64,
+        network_timeout: Duration,
+    ) -> TxManagerResult<Option<TransactionReceipt>> {
+        let receipt_opt =
+            tokio::time::timeout(network_timeout, provider.get_transaction_receipt(tx_hash))
+                .await
+                .map_err(|_| TxManagerError::Rpc("get_transaction_receipt timed out".into()))?
+                .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+
+        let receipt = match receipt_opt {
+            Some(r) => r,
+            None => {
+                send_state.tx_not_mined(tx_hash);
+                debug!(tx_hash = %tx_hash, "receipt not found, possible reorg");
+                return Ok(None);
+            }
+        };
+
+        // Receipt exists — record as mined regardless of confirmation depth.
+        send_state.tx_mined(tx_hash);
+
+        let tx_block = match receipt.block_number {
+            Some(block) => block,
+            None => {
+                // Receipt without a block number (e.g., pending) — treat as not yet confirmed.
+                return Ok(None);
+            }
+        };
+
+        // Check confirmation depth: tx_block + num_confirmations <= tip + 1
+        let tip_height = tokio::time::timeout(network_timeout, provider.get_block_number())
+            .await
+            .map_err(|_| TxManagerError::Rpc("get_block_number timed out".into()))?
+            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+
+        if tx_block.saturating_add(num_confirmations) <= tip_height.saturating_add(1) {
+            info!(
+                tx_hash = %tx_hash,
+                tx_block = %tx_block,
+                tip_height = %tip_height,
+                num_confirmations = %num_confirmations,
+                "transaction confirmed to required depth",
+            );
+            Ok(Some(receipt))
+        } else {
+            debug!(
+                tx_hash = %tx_hash,
+                tx_block = %tx_block,
+                tip_height = %tip_height,
+                needed = %num_confirmations,
+                "waiting for more confirmations",
+            );
+            Ok(None)
         }
     }
 }
