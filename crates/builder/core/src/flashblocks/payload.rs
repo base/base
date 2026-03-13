@@ -263,11 +263,17 @@ where
         ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
         ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
 
+        // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
+        let (flashblocks_per_block, first_flashblock_offset) =
+            self.calculate_flashblocks(timestamp);
+
+        let skip_flashblocks_building = ctx.attributes().no_tx_pool || flashblocks_per_block == 0;
+
         let (payload, fb_payload) = build_block(
             &mut state,
             &ctx,
             &mut info,
-            ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+            skip_flashblocks_building, // need to calculate state root for CL sync or if not building flashblocks
         )?;
 
         self.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
@@ -284,16 +290,29 @@ where
             let flashblock_byte_size =
                 self.ws_pub.publish(&fb_payload).map_err(PayloadBuilderError::other)?;
             ctx.metrics.flashblock_byte_size_histogram.record(flashblock_byte_size as f64);
-        }
-
-        if ctx.attributes().no_tx_pool {
-            finalized_cell.set(payload);
-
+        } else {
             info!(
                 target: "payload_builder",
                 "No transaction pool, skipping transaction pool processing",
             );
+        }
 
+        if flashblocks_per_block == 0 {
+            error!(
+                target: "payload_builder",
+                message = "FCU arrived too late or system clock are unsynced, building 0 flashblocks"
+            );
+            ctx.metrics
+                .reduced_flashblocks_number
+                .record(self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block)
+                    as f64);
+            ctx.metrics
+                .first_flashblock_time_offset
+                .record(first_flashblock_offset.as_millis() as f64);
+        }
+
+        if skip_flashblocks_building {
+            finalized_cell.set(payload);
             let total_block_building_time = block_build_start_time.elapsed();
             ctx.metrics.total_block_built_duration.record(total_block_building_time);
             ctx.metrics.total_block_built_gauge.set(total_block_building_time);
@@ -302,9 +321,7 @@ where
 
             return Ok(());
         }
-        // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
-        let (flashblocks_per_block, first_flashblock_offset) =
-            self.calculate_flashblocks(timestamp);
+
         info!(
             target: "payload_builder",
             message = "Performed flashblocks timing derivation",
@@ -312,10 +329,7 @@ where
             first_flashblock_offset = first_flashblock_offset.as_millis(),
             flashblocks_interval = self.config.flashblocks_interval.as_millis(),
         );
-        ctx.metrics.reduced_flashblocks_number.record(
-            self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block) as f64,
-        );
-        ctx.metrics.first_flashblock_time_offset.record(first_flashblock_offset.as_millis() as f64);
+
         let gas_per_batch = ctx.block_gas_limit() / flashblocks_per_block;
         let da_per_batch = ctx
             .builder_config
@@ -794,14 +808,10 @@ where
         let Some(time_drift) =
             target_time.duration_since(now).ok().filter(|duration| duration.as_millis() > 0)
         else {
-            error!(
-                target: "payload_builder",
-                message = "FCU arrived too late or system clock are unsynced",
-                ?target_time,
-                ?now,
-            );
-            return (self.config.flashblocks_per_block(), self.config.flashblocks_interval);
+            // in this case, we have no time to produce any flashblocks
+            return (0, Duration::ZERO);
         };
+
         self.metrics.flashblocks_time_drift.record(
             self.config.block_time.as_millis().saturating_sub(time_drift.as_millis()) as f64,
         );

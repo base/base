@@ -15,7 +15,7 @@ use base_alloy_network::Base;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_rpc::OpEthApiBuilder;
 use base_node_core::{OpEngineValidatorBuilder, args::RollupArgs, node::OpPoolBuilder};
-use base_node_runner::BaseNode;
+use base_node_runner::{BaseNode, test_utils::init_silenced_tracing};
 use base_txpool::BasePooledTransaction;
 use futures::{FutureExt, StreamExt};
 use nanoid::nanoid;
@@ -89,6 +89,7 @@ impl LocalInstance {
         node_config: NodeConfig<OpChainSpec>,
     ) -> eyre::Result<Self> {
         clear_otel_env_vars();
+        init_silenced_tracing();
         let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
         let base_node = BaseNode::new(RollupArgs::default());
 

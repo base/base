@@ -9,6 +9,7 @@ use base_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use base_alloy_network::Base;
 use base_alloy_rpc_types::Transaction;
 use base_node_core::OpPayloadAttributes;
+use chrono::Utc;
 
 use super::{
     DEFAULT_DENOMINATOR, DEFAULT_ELASTICITY, DEFAULT_GAS_LIMIT, EngineApi, ExternalNode, Ipc,
@@ -249,7 +250,10 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         txs: Vec<Bytes>,
     ) -> eyre::Result<Block<Transaction>> {
         let latest = self.latest().await?;
-        let latest_timestamp = Duration::from_secs(latest.header.timestamp);
+        let mut latest_timestamp = Duration::from_secs(latest.header.timestamp);
+        // latest_timestamp must be in the future
+        latest_timestamp =
+            latest_timestamp.max(Duration::from_secs(Utc::now().timestamp() as u64 + 1));
         // Use block_time for timestamp calculation to ensure the payload doesn't expire
         // before we can retrieve it. The sleep in build_new_block_with_txs_timestamp uses
         // block_time, so the timestamp must also be block_time ahead.
