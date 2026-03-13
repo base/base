@@ -263,8 +263,7 @@ async fn unichain_dynamic_with_lag() -> eyre::Result<()> {
 
 #[tokio::test]
 async fn dynamic_with_full_block_lag() -> eyre::Result<()> {
-    let config =
-        BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks_leeway_time_ms(0);
+    let config = BuilderConfig::for_tests().with_block_time_ms(1000);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
