@@ -15,6 +15,7 @@ workspace = true
 # Core
 base-alloy-evm.workspace = true
 base-proof-client.workspace = true
+base-health = { workspace = true, optional = true }
 base-proof-host = { workspace = true, optional = true }
 base-proof-preimage = { workspace = true, features = ["serde"] }
 base-proof-primitives = { workspace = true, features = ["std", "serde"] }
@@ -55,6 +56,7 @@ thiserror.workspace = true
 tracing.workspace = true
 rand_08.workspace = true
 parking_lot.workspace = true
+tower = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-vsock.workspace = true
@@ -67,8 +69,10 @@ tokio = { workspace = true, features = ["macros", "rt"] }
 [features]
 host = [
 	"base-proof-primitives/rpc-server",
+	"dep:base-health",
 	"dep:base-proof-host",
 	"dep:jsonrpsee",
+	"dep:tower",
 	"tokio/net",
 ]
 

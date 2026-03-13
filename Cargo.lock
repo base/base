@@ -3741,6 +3741,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-health"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "jsonrpsee",
+ "serde",
+]
+
+[[package]]
 name = "base-jwt"
 version = "0.0.0"
 dependencies = [
@@ -4219,6 +4228,7 @@ dependencies = [
  "aws-nitro-enclaves-cose",
  "aws-nitro-enclaves-nsm-api",
  "base-alloy-evm",
+ "base-health",
  "base-proof-client",
  "base-proof-host",
  "base-proof-preimage",
@@ -4238,6 +4248,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-vsock",
+ "tower",
  "tracing",
  "x509-cert",
  "zip",
