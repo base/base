@@ -59,7 +59,6 @@ default-members = [
   "bin/proposer",
   "bin/prover",
   "bin/prover-registrar",
-  "bin/zk-prover",
 ]
 
 [workspace.metadata.cargo-udeps.ignore]

@@ -15,6 +15,7 @@ use clap::Parser as _;
 use tracing as _;
 
 mod cli;
+mod zk;
 
 #[tokio::main]
 async fn main() {

@@ -1,4 +1,4 @@
-//! CLI definition for the TEE prover binary.
+//! CLI definition for the prover binary (TEE + ZK backends).
 
 use std::net::SocketAddr;
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -21,7 +21,9 @@ use eyre::eyre;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use tracing::info;
 
-/// TEE prover.
+use crate::zk;
+
+/// Prover binary (TEE + ZK backends).
 #[derive(Parser)]
 #[command(author, version)]
 pub(crate) struct Cli {
@@ -34,6 +36,9 @@ pub(crate) struct Cli {
 enum Command {
     /// AWS Nitro Enclave proving backend.
     Nitro(NitroArgs),
+
+    /// ZK prover service.
+    Zk(Box<zk::ZkArgs>),
 }
 
 /// Arguments for the `nitro` subcommand.
@@ -133,6 +138,7 @@ impl Cli {
         tracing_subscriber::fmt::init();
         match self.command {
             Command::Nitro(args) => args.run().await,
+            Command::Zk(args) => (*args).run().await,
         }
     }
 }

@@ -4399,9 +4399,15 @@ dependencies = [
  "base-consensus-registry",
  "base-proof-host",
  "base-proof-tee-nitro",
+ "base-zk-client",
+ "base-zk-db",
+ "base-zk-outbox",
+ "base-zk-service",
  "clap",
  "eyre",
+ "futures",
  "tokio",
+ "tonic",
  "tracing",
  "tracing-subscriber 0.3.22",
 ]
@@ -4625,23 +4631,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "base-zk-prover"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "base-zk-client",
- "base-zk-db",
- "base-zk-outbox",
- "base-zk-service",
- "clap",
- "futures",
- "tokio",
- "tonic",
- "tracing",
- "tracing-subscriber 0.3.22",
 ]
 
 [[package]]

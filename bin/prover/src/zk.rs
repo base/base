@@ -1,3 +1,5 @@
+//! CLI definition for the ZK prover subcommand.
+
 use std::sync::Arc;
 
 use base_zk_client::prover_service_server::ProverServiceServer as ProtoProverServiceServer;
@@ -9,14 +11,13 @@ use base_zk_service::{
     build_backend, start_all_proxies,
 };
 use clap::Parser;
+use eyre::eyre;
 use tonic::transport::Server;
 use tracing::info;
 
+/// ZK prover service for proving Base blocks.
 #[derive(Parser, Debug)]
-#[command(name = "base-zk-prover")]
-#[command(version)]
-#[command(about = "ZK prover service for proving Base blocks")]
-pub(crate) struct Cli {
+pub(crate) struct ZkArgs {
     #[arg(long, env = "OP_NODE_ADDRESS")]
     op_node_address: String,
 
@@ -96,20 +97,19 @@ pub(crate) struct Cli {
     grpc_listen_addr: String,
 }
 
-impl Cli {
+impl ZkArgs {
     /// Runs the ZK prover service.
-    pub(crate) async fn run(self) -> anyhow::Result<()> {
-        tracing_subscriber::fmt::init();
+    pub(crate) async fn run(self) -> eyre::Result<()> {
         self.validate_config()?;
 
-        info!("Initializing database connection");
-        let db_config = DatabaseConfig::from_env()?;
-        let pool = db_config.init_pool().await?;
+        info!("initializing database connection");
+        let db_config = DatabaseConfig::from_env().map_err(|e| eyre!(e))?;
+        let pool = db_config.init_pool().await.map_err(|e| eyre!(e))?;
         let repo = ProofRequestRepo::new(pool);
-        info!("Database connection initialized successfully");
+        info!("database connection initialized");
 
         let (l1_url, l2_url, beacon_url, proxy_handles) = if self.proxy_enable {
-            info!("Proxy enabled - starting rate-limited RPC proxies");
+            info!("proxy enabled, starting rate-limited RPC proxies");
 
             let rate_limit = RateLimitConfig {
                 requests_per_second: self.rate_limit_rps,
@@ -127,7 +127,7 @@ impl Cli {
                 rate_limit,
             );
 
-            let handles = start_all_proxies(proxy_configs.clone()).await?;
+            let handles = start_all_proxies(proxy_configs.clone()).await.map_err(|e| eyre!(e))?;
 
             (
                 proxy_configs.l1.local_address(),
@@ -136,7 +136,7 @@ impl Cli {
                 handles,
             )
         } else {
-            info!("Proxy disabled - using direct node connections");
+            info!("proxy disabled, using direct node connections");
             (
                 self.l1_node_address.clone(),
                 self.l2_node_address.clone(),
@@ -145,7 +145,7 @@ impl Cli {
             )
         };
 
-        info!(l1_url = %l1_url, l2_url = %l2_url, beacon_url = %beacon_url, "Using RPC URLs");
+        info!(l1_url = %l1_url, l2_url = %l2_url, beacon_url = %beacon_url, "using RPC URLs");
 
         let artifact_storage = self.resolve_artifact_storage()?;
 
@@ -158,18 +158,18 @@ impl Cli {
             cluster_rpc: self
                 .cluster_api_endpoint
                 .clone()
-                .ok_or_else(|| anyhow::anyhow!("CLUSTER_API_ENDPOINT is required"))?,
+                .ok_or_else(|| eyre!("CLUSTER_API_ENDPOINT is required"))?,
             artifact_storage,
             timeout_hours: self.cluster_timeout_hours,
         };
 
-        let backend = build_backend(config).await?;
+        let backend = build_backend(config).await.map_err(|e| eyre!(e))?;
 
         let mut backend_registry = BackendRegistry::new();
         backend_registry.register(backend);
         let backend_registry = Arc::new(backend_registry);
 
-        info!("Starting OutboxProcessor");
+        info!("starting outbox processor");
 
         let outbox_reader = DatabaseOutboxReader::new(repo.clone(), self.outbox_max_retries);
         let prover_worker_pool = ProverWorkerPool::new(repo.clone(), Arc::clone(&backend_registry));
@@ -187,7 +187,7 @@ impl Cli {
 
         let manager = ProofRequestManager::new(repo.clone(), Arc::clone(&backend_registry));
 
-        info!("Starting StatusPoller");
+        info!("starting status poller");
         let status_poller = StatusPoller::new(
             repo.clone(),
             manager.clone(),
@@ -202,7 +202,7 @@ impl Cli {
 
         let addr = self.grpc_listen_addr.parse()?;
 
-        info!(addr = %addr, "Starting prover service");
+        info!(addr = %addr, "starting ZK prover gRPC service");
 
         let grpc_handle = async {
             Server::builder()
@@ -211,44 +211,38 @@ impl Cli {
                 .await
         };
 
-        // Spawn a monitoring task for proxy handles (if any).
-        // If any proxy server exits, the service should shut down.
         let proxy_monitor_handle = tokio::spawn(async move {
             if proxy_handles.is_empty() {
-                // No proxies — park forever so select! ignores this branch.
                 std::future::pending::<()>().await;
                 return;
             }
-            // Wait for the first proxy to exit (any exit is unexpected).
             let (result, _index, _remaining) = futures::future::select_all(proxy_handles).await;
             match result {
-                Ok(()) => tracing::error!("A proxy server exited unexpectedly"),
-                Err(e) => tracing::error!(error = %e, "A proxy server panicked"),
+                Ok(()) => tracing::error!("a proxy server exited unexpectedly"),
+                Err(e) => tracing::error!(error = %e, "a proxy server panicked"),
             }
         });
 
-        // Wait for any task to complete. If any critical background task exits
-        // (due to panic or unexpected return), the whole service shuts down.
         tokio::select! {
             result = outbox_handle => {
                 match result {
-                    Ok(()) => anyhow::bail!("OutboxProcessor exited unexpectedly"),
-                    Err(e) => anyhow::bail!("OutboxProcessor panicked: {e}"),
+                    Ok(()) => eyre::bail!("outbox processor exited unexpectedly"),
+                    Err(e) => eyre::bail!("outbox processor panicked: {e}"),
                 }
             }
             result = status_handle => {
                 match result {
-                    Ok(()) => anyhow::bail!("StatusPoller exited unexpectedly"),
-                    Err(e) => anyhow::bail!("StatusPoller panicked: {e}"),
+                    Ok(()) => eyre::bail!("status poller exited unexpectedly"),
+                    Err(e) => eyre::bail!("status poller panicked: {e}"),
                 }
             }
             result = grpc_handle => {
-                result.map_err(|e| anyhow::anyhow!("gRPC server failed: {e}"))?;
+                result.map_err(|e| eyre!("gRPC server failed: {e}"))?;
             }
             result = proxy_monitor_handle => {
                 match result {
-                    Ok(()) => anyhow::bail!("Proxy server exited unexpectedly"),
-                    Err(e) => anyhow::bail!("Proxy server panicked: {e}"),
+                    Ok(()) => eyre::bail!("proxy server exited unexpectedly"),
+                    Err(e) => eyre::bail!("proxy server panicked: {e}"),
                 }
             }
         }
@@ -256,13 +250,13 @@ impl Cli {
         Ok(())
     }
 
-    fn validate_config(&self) -> anyhow::Result<()> {
+    fn validate_config(&self) -> eyre::Result<()> {
         if self.prover_mode != "cluster" {
-            anyhow::bail!("PROVER_MODE must be set to 'cluster', got '{}'", self.prover_mode);
+            eyre::bail!("PROVER_MODE must be set to 'cluster', got '{}'", self.prover_mode);
         }
 
         if !non_empty(&self.cluster_api_endpoint) {
-            anyhow::bail!("CLUSTER_API_ENDPOINT must be set");
+            eyre::bail!("CLUSTER_API_ENDPOINT must be set");
         }
 
         let has_redis = non_empty(&self.artifact_redis_nodes);
@@ -271,61 +265,61 @@ impl Cli {
         let artifact_store_count = [has_redis, has_s3, has_gcs].iter().filter(|&&x| x).count();
 
         if artifact_store_count == 0 {
-            anyhow::bail!(
-                "Exactly one artifact storage backend must be configured: \
+            eyre::bail!(
+                "exactly one artifact storage backend must be configured: \
                  ARTIFACT_REDIS_NODES, ARTIFACT_S3_BUCKET, or ARTIFACT_GCS_BUCKET"
             );
         }
         if artifact_store_count > 1 {
-            anyhow::bail!("Only one artifact storage backend can be configured at a time");
+            eyre::bail!("only one artifact storage backend can be configured at a time");
         }
 
         if has_s3 && !non_empty(&self.artifact_s3_region) {
-            anyhow::bail!("ARTIFACT_S3_REGION must be set when using S3 artifact storage");
+            eyre::bail!("ARTIFACT_S3_REGION must be set when using S3 artifact storage");
         }
 
-        info!("Configuration validated successfully");
+        info!("configuration validated");
 
         Ok(())
     }
 
-    fn resolve_artifact_storage(&self) -> anyhow::Result<ArtifactStorageConfig> {
+    fn resolve_artifact_storage(&self) -> eyre::Result<ArtifactStorageConfig> {
         if non_empty(&self.artifact_redis_nodes) {
             let nodes: Vec<String> = self
                 .artifact_redis_nodes
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("ARTIFACT_REDIS_NODES is set but empty"))?
+                .ok_or_else(|| eyre!("ARTIFACT_REDIS_NODES is set but empty"))?
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect();
-            info!("Using Redis artifact storage");
+            info!("using Redis artifact storage");
             Ok(ArtifactStorageConfig::Redis { nodes })
         } else if non_empty(&self.artifact_s3_bucket) {
             let bucket = self
                 .artifact_s3_bucket
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("ARTIFACT_S3_BUCKET is set but empty"))?
+                .ok_or_else(|| eyre!("ARTIFACT_S3_BUCKET is set but empty"))?
                 .clone();
             let region = self
                 .artifact_s3_region
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("ARTIFACT_S3_REGION is required for S3 storage"))?
+                .ok_or_else(|| eyre!("ARTIFACT_S3_REGION is required for S3 storage"))?
                 .clone();
-            info!("Using S3 artifact storage");
+            info!("using S3 artifact storage");
             Ok(ArtifactStorageConfig::S3 { bucket, region })
         } else if non_empty(&self.artifact_gcs_bucket) {
             let bucket = self
                 .artifact_gcs_bucket
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("ARTIFACT_GCS_BUCKET is set but empty"))?
+                .ok_or_else(|| eyre!("ARTIFACT_GCS_BUCKET is set but empty"))?
                 .clone();
             let concurrency = self.artifact_gcs_concurrency;
-            info!("Using GCS artifact storage");
+            info!("using GCS artifact storage");
             Ok(ArtifactStorageConfig::Gcs { bucket, concurrency })
         } else {
-            anyhow::bail!(
-                "No artifact storage configured. \
-                 Set ARTIFACT_REDIS_NODES, ARTIFACT_S3_BUCKET, or ARTIFACT_GCS_BUCKET"
+            eyre::bail!(
+                "no artifact storage configured; \
+                 set ARTIFACT_REDIS_NODES, ARTIFACT_S3_BUCKET, or ARTIFACT_GCS_BUCKET"
             );
         }
     }
