@@ -177,10 +177,6 @@ impl SimpleTxManager {
     /// manager is closed. Otherwise returns the first non-retryable error,
     /// or the last retryable error after exhausting all retry attempts.
     pub async fn prepare(&self, candidate: &TxCandidate) -> TxManagerResult<Bytes> {
-        if self.is_closed() {
-            return Err(TxManagerError::ChannelClosed);
-        }
-
         (|| async {
             // Re-check closed flag on each retry attempt to avoid wasted
             // RPC calls after shutdown. ChannelClosed is non-retryable,
