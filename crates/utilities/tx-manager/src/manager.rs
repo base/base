@@ -554,7 +554,17 @@ impl SimpleTxManager {
         result: &TxManagerResult<T>,
         send_state: &SendState,
     ) -> bool {
-        result.is_err() && send_state.successful_publish_count() == 0
+        match result {
+            Ok(_) => false,
+            // Always reset on timeout — the timeout may have cancelled
+            // prepare() mid-flight during a fee bump, leaking a nonce
+            // from the nonce manager's internal counter.
+            Err(TxManagerError::SendTimeout) => true,
+            // For other errors, reset only if nothing was ever published.
+            // Once a transaction is pending, the next send_tx will re-sync
+            // via the chain's pending nonce anyway.
+            Err(_) => send_state.successful_publish_count() == 0,
+        }
     }
 
     /// Inner send loop extracted from [`send_tx`](Self::send_tx) to allow
@@ -1184,9 +1194,18 @@ mod tests {
     fn should_not_reset_nonce_after_successful_publish() {
         let send_state = crate::SendState::new(3).expect("should create send state");
         send_state.record_successful_publish();
-        let result: crate::TxManagerResult<()> = Err(TxManagerError::SendTimeout);
+        let result: crate::TxManagerResult<()> = Err(TxManagerError::ChannelClosed);
 
         assert!(!SimpleTxManager::should_reset_nonce_on_send_error(&result, &send_state));
+    }
+
+    #[test]
+    fn should_reset_nonce_on_timeout_even_after_successful_publish() {
+        let send_state = crate::SendState::new(3).expect("should create send state");
+        send_state.record_successful_publish();
+        let result: crate::TxManagerResult<()> = Err(TxManagerError::SendTimeout);
+
+        assert!(SimpleTxManager::should_reset_nonce_on_send_error(&result, &send_state));
     }
 
     #[test]
