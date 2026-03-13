@@ -284,14 +284,9 @@ mod tests {
         assert_eq!(guard.nonce(), 0);
 
         let mut reset = std::pin::pin!(manager.reset());
-        let reset_is_pending = poll_fn(|cx| {
-            Poll::Ready(matches!(reset.as_mut().poll(cx), Poll::Pending))
-        })
-        .await;
-        assert!(
-            reset_is_pending,
-            "reset() must stay pending while a NonceGuard holds the mutex",
-        );
+        let reset_is_pending =
+            poll_fn(|cx| Poll::Ready(matches!(reset.as_mut().poll(cx), Poll::Pending))).await;
+        assert!(reset_is_pending, "reset() must stay pending while a NonceGuard holds the mutex",);
 
         drop(guard);
         reset.await;
