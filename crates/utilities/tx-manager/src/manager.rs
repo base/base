@@ -78,7 +78,7 @@ pub struct PreparedTx {
 /// Constructs, signs, and submits EIP-1559 transactions. All RPC fields
 /// (nonce, gas, fees) are set manually on [`TransactionRequest`] without
 /// alloy fillers or `PendingTransactionBuilder`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SimpleTxManager {
     /// RPC provider for chain queries and transaction submission.
     provider: RootProvider,
@@ -463,6 +463,14 @@ impl SimpleTxManager {
     /// `receipt.inner.status()` to distinguish successful execution from
     /// reverts.
     ///
+    /// # Send timeout
+    ///
+    /// When `tx_send_timeout` is configured, the inner send loop is wrapped
+    /// in a [`tokio::time::timeout`]. If the timeout fires, the nonce
+    /// manager is reset before returning the error. This prevents nonce gaps
+    /// that would otherwise occur if `prepare()` was cancelled mid-flight
+    /// after acquiring a nonce but before the transaction was published.
+    ///
     /// # Errors
     ///
     /// Returns the confirmed [`TransactionReceipt`] on success, or a
@@ -483,18 +491,25 @@ impl SimpleTxManager {
         if self.config.tx_send_timeout.is_zero() {
             self.send_tx_inner(&candidate, &send_state).await
         } else {
-            tokio::time::timeout(
+            let result = tokio::time::timeout(
                 self.config.tx_send_timeout,
                 self.send_tx_inner(&candidate, &send_state),
             )
-            .await
-            .unwrap_or_else(|_| {
-                warn!(
-                    timeout = ?self.config.tx_send_timeout,
-                    "send timed out",
-                );
-                Err(TxManagerError::Rpc("send timed out".into()))
-            })
+            .await;
+            match result {
+                Ok(inner) => inner,
+                Err(_) => {
+                    warn!(
+                        timeout = ?self.config.tx_send_timeout,
+                        "send timed out",
+                    );
+                    // Reset the nonce manager to avoid gaps from a
+                    // cancelled prepare() that acquired a nonce but
+                    // never published the transaction.
+                    self.nonce_manager.reset().await;
+                    Err(TxManagerError::Rpc("send timed out".into()))
+                }
+            }
         }
     }
 
@@ -626,6 +641,10 @@ impl SimpleTxManager {
                 ) {
                     return Err(abort);
                 }
+                // Reset the bump ticker so we get a full interval before
+                // the next timer-driven bump, even if handle_fee_bump took
+                // longer than resubmission_timeout.
+                bump_ticker.reset();
             }
         }
     }
@@ -672,16 +691,6 @@ impl SimpleTxManager {
             self.config.fee_limit_threshold,
         )?;
 
-        send_state.record_fee_bump();
-        info!(
-            bump_count = %send_state.bump_count(),
-            old_tip = %old_tip,
-            new_tip = %bumped_tip,
-            old_fee_cap = %old_fee_cap,
-            new_fee_cap = %bumped_fee_cap,
-            "fee bump applied",
-        );
-
         // Reset nonce manager so prepare() gets the same pending nonce.
         self.nonce_manager.reset().await;
 
@@ -694,6 +703,18 @@ impl SimpleTxManager {
             self.prepare(candidate, Some(FeeOverride::new(bumped_tip, bumped_fee_cap))).await?;
 
         let new_hash = self.publish_tx(send_state, &prepared.raw_tx, Some(last_tx_hash)).await?;
+
+        // Record the bump and log only after the transaction has been
+        // successfully published to avoid inflating the count on failure.
+        send_state.record_fee_bump();
+        info!(
+            bump_count = %send_state.bump_count(),
+            old_tip = %old_tip,
+            new_tip = %bumped_tip,
+            old_fee_cap = %old_fee_cap,
+            new_fee_cap = %bumped_fee_cap,
+            "fee bump applied",
+        );
 
         // Spawn a new receipt polling task for the bumped tx.
         Self::wait_for_tx(
@@ -973,21 +994,13 @@ impl TxManager for SimpleTxManager {
     async fn send_async(&self, candidate: TxCandidate) -> SendHandle {
         let (tx, rx) = oneshot::channel();
 
-        // Clone all fields needed to construct a SimpleTxManager on the
-        // spawned task. The `closed` flag is Arc-wrapped, so the spawned
-        // task shares the same shutdown signal as the original manager —
-        // calling `close()` on the original will be observed by the
-        // background task.
-        let provider = self.provider.clone();
-        let wallet = self.wallet.clone();
-        let config = self.config.clone();
-        let chain_id = self.chain_id;
-        let closed = Arc::clone(&self.closed);
-        let nonce_manager = self.nonce_manager.clone();
+        // Clone the manager for the spawned task. The `closed` flag is
+        // Arc-wrapped, so the spawned task shares the same shutdown signal
+        // as the original manager — calling `close()` on the original will
+        // be observed by the background task.
+        let manager = self.clone();
 
         tokio::spawn(async move {
-            let manager = Self { provider, wallet, config, nonce_manager, chain_id, closed };
-
             let result = manager.send_tx(candidate).await;
             let _ = tx.send(result);
         });
