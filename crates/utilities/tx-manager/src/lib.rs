@@ -14,7 +14,7 @@ mod candidate;
 pub use candidate::TxCandidate;
 
 mod fees;
-pub use fees::{FeeCalculator, GasPriceCaps};
+pub use fees::{FeeCalculator, FeeOverride, GasPriceCaps};
 
 mod send_state;
 pub use send_state::SendState;
@@ -31,7 +31,7 @@ mod nonce;
 pub use nonce::{NonceGuard, NonceManager, NonceState};
 
 mod manager;
-pub use manager::SimpleTxManager;
+pub use manager::{PreparedTx, SimpleTxManager};
 
 mod queue;
 pub use queue::TxQueue;

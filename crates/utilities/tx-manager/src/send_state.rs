@@ -205,6 +205,23 @@ impl SendState {
         inner.bump_fees
     }
 
+    /// Clears the bump-fees flag without incrementing the bump counter.
+    ///
+    /// Called before attempting a fee bump so that a failed attempt
+    /// (e.g., RPC timeout in [`suggest_gas_price_caps`]) does not
+    /// immediately re-trigger the bump on the next loop iteration. If
+    /// the bump succeeds, [`record_fee_bump`] will also clear the flag
+    /// (a harmless no-op) and increment the counter. If a new retryable
+    /// error occurs later, [`process_send_error`] will re-set the flag.
+    ///
+    /// [`suggest_gas_price_caps`]: crate::SimpleTxManager::suggest_gas_price_caps
+    /// [`record_fee_bump`]: Self::record_fee_bump
+    /// [`process_send_error`]: Self::process_send_error
+    pub fn clear_bump_fees(&self) {
+        let mut inner = self.inner.lock().expect("SendState mutex poisoned");
+        inner.bump_fees = false;
+    }
+
     /// Sets the mempool inclusion deadline.
     pub fn set_mempool_deadline(&self, deadline: Instant) {
         let mut inner = self.inner.lock().expect("SendState mutex poisoned");
@@ -216,6 +233,13 @@ impl SendState {
     pub fn bump_count(&self) -> u64 {
         let inner = self.inner.lock().expect("SendState mutex poisoned");
         inner.bump_count
+    }
+
+    /// Returns the number of successful transaction publications.
+    #[must_use]
+    pub fn successful_publish_count(&self) -> u64 {
+        let inner = self.inner.lock().expect("SendState mutex poisoned");
+        inner.successful_publish_count
     }
 }
 
@@ -569,6 +593,48 @@ mod tests {
         let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::InsufficientFunds);
         assert!(!state.should_bump_fees());
+    }
+
+    #[test]
+    fn clear_bump_fees_clears_flag_without_incrementing_count() {
+        let state = SendState::new(3).unwrap();
+        state.process_send_error(&TxManagerError::Underpriced);
+        assert!(state.should_bump_fees());
+        assert_eq!(state.bump_count(), 0);
+
+        // clear_bump_fees clears the flag but does not touch the counter.
+        state.clear_bump_fees();
+        assert!(!state.should_bump_fees());
+        assert_eq!(state.bump_count(), 0, "bump_count should not increment on clear");
+    }
+
+    #[test]
+    fn clear_bump_fees_allows_flag_to_be_re_set() {
+        let state = SendState::new(3).unwrap();
+        state.process_send_error(&TxManagerError::Underpriced);
+        assert!(state.should_bump_fees());
+
+        state.clear_bump_fees();
+        assert!(!state.should_bump_fees());
+
+        // A new retryable error re-sets the flag.
+        state.process_send_error(&TxManagerError::ReplacementUnderpriced);
+        assert!(state.should_bump_fees());
+    }
+
+    // ── successful_publish_count ─────────────────────────────────────────
+
+    #[test]
+    fn successful_publish_count_tracks_publications() {
+        let state = SendState::new(3).unwrap();
+        assert_eq!(state.successful_publish_count(), 0);
+
+        state.record_successful_publish();
+        assert_eq!(state.successful_publish_count(), 1);
+
+        state.record_successful_publish();
+        state.record_successful_publish();
+        assert_eq!(state.successful_publish_count(), 3);
     }
 
     // ── is_waiting_for_confirmation ─────────────────────────────────────
