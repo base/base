@@ -116,6 +116,31 @@ impl Default for PerChainConfig {
 }
 
 impl PerChainConfig {
+    /// Create a `PerChainConfig` from a [`RollupConfig`].
+    ///
+    /// Returns `None` if the rollup config is missing `genesis.system_config`.
+    #[must_use]
+    pub fn from_rollup_config(cfg: &RollupConfig) -> Option<Self> {
+        let sc = cfg.genesis.system_config.as_ref()?;
+        Some(Self {
+            chain_id: U256::from(cfg.l2_chain_id.id()),
+            genesis: Genesis {
+                l1: BlockId { hash: cfg.genesis.l1.hash, number: cfg.genesis.l1.number },
+                l2: BlockId { hash: cfg.genesis.l2.hash, number: cfg.genesis.l2.number },
+                l2_time: cfg.genesis.l2_time,
+                system_config: GenesisSystemConfig {
+                    batcher_addr: sc.batcher_address,
+                    overhead: B256::ZERO,
+                    scalar: B256::from(sc.scalar.to_be_bytes::<32>()),
+                    gas_limit: sc.gas_limit,
+                },
+            },
+            block_time: cfg.block_time,
+            deposit_contract_address: cfg.deposit_contract_address,
+            l1_system_config_address: cfg.l1_system_config_address,
+        })
+    }
+
     /// Serialize the config to binary format matching Go's `MarshalBinary()`.
     ///
     /// Binary layout (all big-endian, 212 bytes total):
@@ -471,25 +496,8 @@ mod tests {
         for &(chain_id, name) in chains {
             let rollup = Registry::rollup_config(chain_id)
                 .unwrap_or_else(|| panic!("missing rollup config for {name} ({chain_id})"));
-
-            let sc = rollup.genesis.system_config.as_ref().expect("missing system_config");
-            let mut per_chain = PerChainConfig {
-                chain_id: U256::from(rollup.l2_chain_id.id()),
-                genesis: Genesis {
-                    l1: BlockId { hash: rollup.genesis.l1.hash, number: rollup.genesis.l1.number },
-                    l2: BlockId { hash: rollup.genesis.l2.hash, number: rollup.genesis.l2.number },
-                    l2_time: rollup.genesis.l2_time,
-                    system_config: GenesisSystemConfig {
-                        batcher_addr: sc.batcher_address,
-                        overhead: B256::ZERO,
-                        scalar: B256::from(sc.scalar.to_be_bytes::<32>()),
-                        gas_limit: sc.gas_limit,
-                    },
-                },
-                block_time: rollup.block_time,
-                deposit_contract_address: rollup.deposit_contract_address,
-                l1_system_config_address: rollup.l1_system_config_address,
-            };
+            let mut per_chain = PerChainConfig::from_rollup_config(rollup)
+                .unwrap_or_else(|| panic!("missing system_config for {name} ({chain_id})"));
             per_chain.force_defaults();
             println!("{name} ({chain_id}): {:?}", per_chain.hash());
         }

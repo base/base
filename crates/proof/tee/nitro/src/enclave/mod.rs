@@ -29,10 +29,6 @@ pub use protocol::{EnclaveRequest, EnclaveResponse};
 mod server;
 pub use server::Server;
 
-/// Accept connections from any CID (only the host can reach the enclave over vsock).
-#[cfg(target_os = "linux")]
-const VSOCK_CID: u32 = VMADDR_CID_ANY;
-
 /// Fixed vsock port the enclave listens on.
 pub const VSOCK_PORT: u32 = 8000;
 
@@ -54,8 +50,8 @@ impl NitroEnclave {
 
     /// Listen on vsock, prove blocks, return results.
     pub async fn run(self) -> eyre::Result<()> {
-        let listener = VsockListener::bind(VsockAddr::new(VSOCK_CID, VSOCK_PORT))?;
-        info!(cid = VSOCK_CID, port = VSOCK_PORT, "listening on vsock");
+        let listener = VsockListener::bind(VsockAddr::new(VMADDR_CID_ANY, VSOCK_PORT))?;
+        info!(cid = VMADDR_CID_ANY, port = VSOCK_PORT, "listening on vsock");
 
         loop {
             let (stream, peer) = listener.accept().await?;
