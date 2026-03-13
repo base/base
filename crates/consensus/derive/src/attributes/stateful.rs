@@ -9,12 +9,12 @@ use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use tracing::warn;
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 use base_consensus_upgrades::{Hardfork, Hardforks};
 use base_protocol::{
     DEPOSIT_EVENT_ABI_HASH, L1BlockInfoTx, L2BlockInfo, Predeploys, decode_deposit,
 };
+use tracing::warn;
 
 use crate::{
     AttributesBuilder, BuilderError, ChainProvider, L2ChainProvider, PipelineEncodingError,
