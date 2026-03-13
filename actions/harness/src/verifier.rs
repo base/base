@@ -572,11 +572,8 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
 
         let l1_origin =
             self.l1_origin_from_block(block).ok_or(VerifierError::GossipDecodeFailed)?;
-        let seq_num = if l1_origin == self.unsafe_head.l1_origin {
-            self.unsafe_head.seq_num + 1
-        } else {
-            0
-        };
+        let seq_num =
+            if l1_origin == self.unsafe_head.l1_origin { self.unsafe_head.seq_num + 1 } else { 0 };
         self.unsafe_head = L2BlockInfo {
             block_info: BlockInfo {
                 number: block.header.number,

@@ -113,9 +113,7 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
 
     // --- Phase 2: Gossip each block into the verifier. ---
     for block in &blocks {
-        verifier
-            .act_l2_unsafe_gossip_receive(block)
-            .expect("gossip receive should succeed");
+        verifier.act_l2_unsafe_gossip_receive(block).expect("gossip receive should succeed");
     }
 
     assert_eq!(
@@ -131,8 +129,7 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
 
     // --- Phase 3+4: Signal L1 head and run derivation. ---
     verifier.act_l1_head_signal(l1_block_1).await.expect("L1 head signal should succeed");
-    let derived =
-        verifier.act_l2_pipeline_full().await.expect("pipeline full should succeed");
+    let derived = verifier.act_l2_pipeline_full().await.expect("pipeline full should succeed");
 
     assert_eq!(derived, L2_BLOCK_COUNT as usize, "expected {L2_BLOCK_COUNT} L2 blocks derived");
     assert_eq!(
@@ -170,9 +167,7 @@ async fn test_out_of_order_gossip_is_dropped() {
     verifier.initialize().await.expect("initialize should succeed");
 
     // Inject block 3 first — gap-jump; must be dropped.
-    verifier
-        .act_l2_unsafe_gossip_receive(&block3)
-        .expect("out-of-order gossip must not error");
+    verifier.act_l2_unsafe_gossip_receive(&block3).expect("out-of-order gossip must not error");
     assert_eq!(
         verifier.l2_unsafe().block_info.number,
         0,
@@ -180,9 +175,7 @@ async fn test_out_of_order_gossip_is_dropped() {
     );
 
     // Inject block 1 — sequential; must advance.
-    verifier
-        .act_l2_unsafe_gossip_receive(&block1)
-        .expect("in-order gossip must succeed");
+    verifier.act_l2_unsafe_gossip_receive(&block1).expect("in-order gossip must succeed");
     assert_eq!(
         verifier.l2_unsafe().block_info.number,
         1,
@@ -190,9 +183,7 @@ async fn test_out_of_order_gossip_is_dropped() {
     );
 
     // Inject block 3 again — still a gap (unsafe_head=1, next expected=2); must be dropped.
-    verifier
-        .act_l2_unsafe_gossip_receive(&block3)
-        .expect("gap gossip must not error");
+    verifier.act_l2_unsafe_gossip_receive(&block3).expect("gap gossip must not error");
     assert_eq!(
         verifier.l2_unsafe().block_info.number,
         1,
