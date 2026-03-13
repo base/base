@@ -14,7 +14,7 @@ pub mod chainspec;
 /// Optimism CLI commands.
 pub mod commands;
 
-use std::{ffi::OsString, fmt, marker::PhantomData};
+use std::{ffi::OsString, fmt, marker::PhantomData, sync::Arc};
 
 pub use app::CliApp;
 use base_execution_chainspec::OpChainSpec;
@@ -26,8 +26,6 @@ use futures::Future;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::launcher::FnLauncher;
 use reth_cli_runner::CliRunner;
-use std::sync::Arc;
-
 use reth_db::DatabaseEnv;
 use reth_node_builder::{NodeBuilder, WithLaunchContext};
 use reth_node_core::{

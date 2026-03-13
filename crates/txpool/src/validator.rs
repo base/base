@@ -9,8 +9,9 @@ use base_execution_forks::OpHardforks;
 use base_revm::L1BlockInfo;
 use parking_lot::RwLock;
 use reth_chainspec::ChainSpecProvider;
-use reth_primitives_traits::{Block, BlockBody, GotExpected, SealedBlock};
-use reth_primitives_traits::transaction::error::InvalidTransactionError;
+use reth_primitives_traits::{
+    Block, BlockBody, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
+};
 use reth_storage_api::{AccountInfoReader, BlockReaderIdExt, StateProviderFactory};
 use reth_transaction_pool::{
     EthPoolTransaction, EthTransactionValidator, TransactionOrigin, TransactionValidationOutcome,

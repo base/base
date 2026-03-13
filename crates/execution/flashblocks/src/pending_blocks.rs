@@ -12,7 +12,6 @@ use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
 use base_alloy_evm::OpTxResult;
-use revm::context::result::ResultAndState;
 use base_alloy_flashblocks::Flashblock;
 use base_alloy_network::Base;
 use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
@@ -21,8 +20,7 @@ use reth_revm::db::BundleState;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use revm::{
-    context_interface::result::ExecutionResult,
-    state::EvmState,
+    context::result::ResultAndState, context_interface::result::ExecutionResult, state::EvmState,
 };
 
 use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};

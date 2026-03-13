@@ -16,7 +16,10 @@ use reth_evm::{
 use reth_primitives_traits::Recovered;
 use reth_provider::BlockNumReader;
 use reth_revm::State;
-use revm::{Database, context::{TxEnv, result::ResultAndState}};
+use revm::{
+    Database,
+    context::{TxEnv, result::ResultAndState},
+};
 use revm_primitives::B256;
 use tracing::warn;
 
@@ -35,8 +38,7 @@ impl<P> FlashblocksCachedExecutionProvider<P> {
     }
 }
 
-impl<P> CachedExecutionProvider<OpTxResult<OpHaltReason>>
-    for FlashblocksCachedExecutionProvider<P>
+impl<P> CachedExecutionProvider<OpTxResult<OpHaltReason>> for FlashblocksCachedExecutionProvider<P>
 where
     P: BlockNumReader,
 {

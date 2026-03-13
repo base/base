@@ -7,10 +7,10 @@ use base_execution_chainspec::OpChainSpecBuilder;
 use reth_e2e_test_utils::{
     NodeHelperType, TmpDB, transaction::TransactionTestContext, wallet::Wallet,
 };
-use reth_tasks::TaskManager;
 use reth_node_api::NodeTypesWithDBAdapter;
 use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
+use reth_tasks::TaskManager;
 use tokio::sync::Mutex;
 
 use crate::{OpBuiltPayload, OpNode as OtherOpNode, OpPayloadBuilderAttributes};
