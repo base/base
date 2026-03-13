@@ -450,6 +450,8 @@ testcontainers-modules = { version = "0.15", default-features = false }
 # misc
 snap = "1"
 hex = "0.4"
+human_bytes = "0.4"
+comfy-table = "7.0"
 zip = { version = "8.1", default-features = false }
 url = "2.5"
 libc = "0.2"
