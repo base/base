@@ -38,9 +38,10 @@ fn make_genesis_block() -> (RpcBlock<OpTransaction>, B256) {
 
 /// Build a [`RollupConfig`] whose genesis L2 block number is 0 and hash is `hash`.
 fn genesis_rollup_cfg(hash: B256) -> Arc<RollupConfig> {
-    let mut cfg = RollupConfig::default();
-    cfg.genesis = ChainGenesis { l2: BlockNumHash { number: 0, hash }, ..Default::default() };
-    Arc::new(cfg)
+    Arc::new(RollupConfig {
+        genesis: ChainGenesis { l2: BlockNumHash { number: 0, hash }, ..Default::default() },
+        ..Default::default()
+    })
 }
 
 fn valid_fcu(hash: B256) -> ForkchoiceUpdated {
