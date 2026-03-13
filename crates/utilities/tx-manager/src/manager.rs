@@ -51,8 +51,9 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    FeeCalculator, FeeOverride, GasPriceCaps, NonceManager, RpcErrorClassifier, SendHandle, SendResponse,
-    SendState, TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult,
+    FeeCalculator, FeeOverride, GasPriceCaps, NonceManager, RpcErrorClassifier, SendHandle,
+    SendResponse, SendState, TxCandidate, TxManager, TxManagerConfig, TxManagerError,
+    TxManagerResult,
 };
 
 /// A signed transaction together with the fee values that were applied
@@ -689,7 +690,8 @@ impl SimpleTxManager {
         // replacement tx is guaranteed to satisfy geth's replacement
         // thresholds. The returned PreparedTx carries the actual on-wire
         // fees, eliminating the need for a post-hoc reconciliation query.
-        let prepared = self.prepare(candidate, Some((bumped_tip, bumped_fee_cap))).await?;
+        let prepared =
+            self.prepare(candidate, Some(FeeOverride::new(bumped_tip, bumped_fee_cap))).await?;
 
         let new_hash = self.publish_tx(send_state, &prepared.raw_tx, Some(last_tx_hash)).await?;
 
