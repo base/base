@@ -217,6 +217,13 @@ impl SendState {
         let inner = self.inner.lock().expect("SendState mutex poisoned");
         inner.bump_count
     }
+
+    /// Returns the number of successful transaction publications.
+    #[must_use]
+    pub fn successful_publish_count(&self) -> u64 {
+        let inner = self.inner.lock().expect("SendState mutex poisoned");
+        inner.successful_publish_count
+    }
 }
 
 #[cfg(test)]
