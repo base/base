@@ -48,6 +48,9 @@ impl SpanBatchPrefix {
 
     /// Decodes the parent check from a reader.
     pub fn decode_parent_check(&mut self, r: &mut &[u8]) -> Result<(), SpanBatchError> {
+        if r.len() < 20 {
+            return Err(SpanBatchError::Decoding(SpanDecodingError::ParentCheck));
+        }
         let (parent_check, remaining) = r.split_at(20);
         let parent_check = FixedBytes::<20>::from_slice(parent_check);
         *r = remaining;
@@ -57,6 +60,9 @@ impl SpanBatchPrefix {
 
     /// Decodes the L1 origin check from a reader.
     pub fn decode_l1_origin_check(&mut self, r: &mut &[u8]) -> Result<(), SpanBatchError> {
+        if r.len() < 20 {
+            return Err(SpanBatchError::Decoding(SpanDecodingError::L1OriginCheck));
+        }
         let (l1_origin_check, remaining) = r.split_at(20);
         let l1_origin_check = FixedBytes::<20>::from_slice(l1_origin_check);
         *r = remaining;
@@ -81,6 +87,28 @@ mod test {
     use alloy_primitives::address;
 
     use super::*;
+
+    /// Regression: truncated input to decode_parent_check must return an error, not panic.
+    #[test]
+    fn test_decode_parent_check_truncated_input() {
+        let mut prefix = SpanBatchPrefix::default();
+        let short = [0u8; 19];
+        assert_eq!(
+            prefix.decode_parent_check(&mut short.as_ref()),
+            Err(SpanBatchError::Decoding(SpanDecodingError::ParentCheck))
+        );
+    }
+
+    /// Regression: truncated input to decode_l1_origin_check must return an error, not panic.
+    #[test]
+    fn test_decode_l1_origin_check_truncated_input() {
+        let mut prefix = SpanBatchPrefix::default();
+        let short = [0u8; 19];
+        assert_eq!(
+            prefix.decode_l1_origin_check(&mut short.as_ref()),
+            Err(SpanBatchError::Decoding(SpanDecodingError::L1OriginCheck))
+        );
+    }
 
     #[test]
     fn test_span_batch_prefix_encoding_roundtrip() {
