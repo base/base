@@ -13,13 +13,6 @@
 //! and the actual fees that were applied, eliminating the need for callers to
 //! re-query gas prices after transaction construction.
 //!
-//! The `send_tx` method drives a signed transaction from publication through
-//! mempool to onchain confirmation via a `tokio::select!` event loop that
-//! coordinates fee bumping, receipt polling, and critical error detection.
-//! The `select!` block only determines which event fired; fee bump logic
-//! (including [`prepare`]) always runs to completion outside the `select!`
-//! block to preserve cancellation safety.
-//!
 //! All transaction fields are set manually on [`TransactionRequest`] — no
 //! alloy fillers or `PendingTransactionBuilder` are used.
 //!
