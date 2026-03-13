@@ -121,10 +121,6 @@ struct NitroEnclaveArgs {
     /// Per-chain configuration hash.
     #[arg(long, env = "CONFIG_HASH")]
     config_hash: B256,
-
-    /// Expected PCR0 measurement of the enclave image.
-    #[arg(long, env = "TEE_IMAGE_HASH")]
-    tee_image_hash: B256,
 }
 
 impl Cli {
@@ -186,7 +182,6 @@ impl NitroEnclaveArgs {
             vsock_cid: self.vsock_cid,
             vsock_port: self.vsock_port,
             config_hash: self.config_hash,
-            tee_image_hash: self.tee_image_hash,
         };
 
         #[cfg(not(target_os = "linux"))]
@@ -213,10 +208,6 @@ struct NitroLocalArgs {
     /// Per-chain configuration hash.
     #[arg(long, env = "CONFIG_HASH")]
     config_hash: B256,
-
-    /// Expected PCR0 measurement of the enclave image.
-    #[arg(long, env = "TEE_IMAGE_HASH")]
-    tee_image_hash: B256,
 }
 
 #[cfg(feature = "local")]
@@ -234,7 +225,6 @@ impl NitroLocalArgs {
             vsock_cid: 0,
             vsock_port: 0,
             config_hash: self.config_hash,
-            tee_image_hash: self.tee_image_hash,
         };
 
         let prover_config = ProverConfig {

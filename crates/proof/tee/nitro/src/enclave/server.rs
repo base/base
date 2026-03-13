@@ -35,7 +35,7 @@ pub struct Server {
     signer_key: PrivateKeySigner,
     /// Per-chain config hash.
     config_hash: B256,
-    /// TEE image hash (keccak256 of PCR0 in enclave mode, from config in local mode).
+    /// TEE image hash (keccak256 of PCR0 in enclave mode, zero in local mode).
     tee_image_hash: B256,
 }
 
@@ -43,10 +43,9 @@ impl Server {
     /// Create a new server instance.
     ///
     /// In enclave mode (NSM available): reads PCR0, keccak256-hashes it to derive
-    /// `tee_image_hash`, verifies against the configured expected hash, and uses the
-    /// hardware RNG for key generation.
+    /// `tee_image_hash`, and uses the hardware RNG for key generation.
     ///
-    /// In local mode (no NSM): uses the OS RNG and accepts `config.tee_image_hash` as-is.
+    /// In local mode (no NSM): uses the OS RNG and sets `tee_image_hash` to zero.
     pub fn new(config: &EnclaveConfig) -> Result<Self> {
         NsmSession::open()?.map_or_else(
             || {
@@ -68,12 +67,6 @@ impl Server {
         }
 
         let tee_image_hash = keccak256(&pcr0);
-        if tee_image_hash != config.tee_image_hash {
-            return Err(NitroError::Pcr0Mismatch {
-                expected: config.tee_image_hash,
-                actual: tee_image_hash,
-            });
-        }
 
         let mut rng = NsmRng::new()
             .ok_or_else(|| NsmError::SessionOpen("failed to initialize NSM RNG".into()))?;
@@ -95,7 +88,7 @@ impl Server {
             pcr0: Vec::new(),
             signer_key,
             config_hash: config.config_hash,
-            tee_image_hash: config.tee_image_hash,
+            tee_image_hash: B256::ZERO,
         })
     }
 
@@ -238,7 +231,7 @@ impl Server {
             pcr0: Vec::new(),
             signer_key,
             config_hash: config.config_hash,
-            tee_image_hash: config.tee_image_hash,
+            tee_image_hash: B256::ZERO,
         })
     }
 }
@@ -248,12 +241,7 @@ mod tests {
     use super::*;
 
     fn test_config() -> EnclaveConfig {
-        EnclaveConfig {
-            vsock_cid: 0,
-            vsock_port: 1234,
-            config_hash: B256::ZERO,
-            tee_image_hash: B256::ZERO,
-        }
+        EnclaveConfig { vsock_cid: 0, vsock_port: 1234, config_hash: B256::ZERO }
     }
 
     #[test]

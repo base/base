@@ -39,8 +39,6 @@ pub struct EnclaveConfig {
     pub vsock_port: u32,
     /// Per-chain configuration hash.
     pub config_hash: B256,
-    /// Expected TEE image hash. In enclave mode, verified as keccak256(PCR0) against NSM at startup.
-    pub tee_image_hash: B256,
 }
 
 /// Nitro Enclave runtime.
