@@ -21,8 +21,19 @@ alloy-signer-local.workspace = true
 # Async
 async-trait.workspace = true
 
+# AWS
+aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-ec2 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
+aws-sdk-elasticloadbalancingv2 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
+
 # Error
 thiserror.workspace = true
 
+# Tracing
+tracing.workspace = true
+
 # Misc
 url.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true
