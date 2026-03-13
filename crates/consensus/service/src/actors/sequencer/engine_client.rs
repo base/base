@@ -73,7 +73,7 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
             .await
             .inspect(|_| info!(target: "sequencer", "Engine reset successfully."))
             .ok_or_else(|| {
-                error!(target: "block_engine", "Failed to receive built payload");
+                error!(target: "block_engine", "Failed to receive forkchoice reset result");
                 EngineClientError::ResponseError("response channel closed.".to_string())
             })?
     }
