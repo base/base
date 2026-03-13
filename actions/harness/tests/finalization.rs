@@ -3,9 +3,8 @@
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain, block_info_from,
 };
-use base_consensus_registry::Registry;
-
 use base_consensus_genesis::RollupConfig;
+use base_consensus_registry::Registry;
 
 /// Build a [`RollupConfig`] wired to the given [`BatcherConfig`].
 ///
@@ -24,7 +23,7 @@ fn rollup_config_for(batcher: &BatcherConfig) -> RollupConfig {
     rc
 }
 
-/// When multiple L2 blocks share the same L1 epoch (l1_origin), finalizing the
+/// When multiple L2 blocks share the same L1 epoch (`l1_origin`), finalizing the
 /// L1 inclusion block causes ALL L2 blocks in that epoch to become finalized
 /// together. The finalized head should advance to the highest L2 block whose
 /// L1 origin is at or before the finalized L1 number.
@@ -124,11 +123,7 @@ async fn finalization_advances_incrementally_with_l1_epochs() {
         }
     }
     // Verify epoch boundary was crossed.
-    assert_eq!(
-        sequencer.head().l1_origin.number,
-        1,
-        "last L2 block should reference epoch 1"
-    );
+    assert_eq!(sequencer.head().l1_origin.number, 1, "last L2 block should reference epoch 1");
     assert!(last_epoch_0_number > 0, "at least one L2 block should reference epoch 0");
 
     // Submit each L2 block in a separate L1 inclusion block.
