@@ -203,7 +203,7 @@ where
 
                 let (tx, rx) = oneshot::channel();
                 let this = Arc::clone(&self.inner);
-                self.inner.task_spawner.spawn_blocking_task(Box::pin(async move {
+                self.inner.task_spawner.spawn_blocking(Box::pin(async move {
                     let result = async {
                         let parent_hash = parent_header.hash();
                         let attributes = Attrs::try_new(parent_hash, attributes, 3)

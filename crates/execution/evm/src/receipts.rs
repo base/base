@@ -1,6 +1,6 @@
 use alloy_consensus::{Eip658Value, Receipt};
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
-use base_alloy_consensus::OpTxType;
+use base_alloy_consensus::{OpDepositReceipt, OpTxType};
 use base_alloy_evm::OpReceiptBuilder;
 use base_execution_primitives::{OpReceipt, OpTransactionSigned};
 use reth_evm::Evm;
@@ -17,9 +17,9 @@ impl OpReceiptBuilder for OpRethReceiptBuilder {
 
     fn build_receipt<'a, E: Evm>(
         &self,
-        ctx: ReceiptBuilderCtx<'a, OpTxType, E>,
-    ) -> Result<Self::Receipt, ReceiptBuilderCtx<'a, OpTxType, E>> {
-        match ctx.tx_type {
+        ctx: ReceiptBuilderCtx<'a, OpTransactionSigned, E>,
+    ) -> Result<Self::Receipt, ReceiptBuilderCtx<'a, OpTransactionSigned, E>> {
+        match ctx.tx.tx_type() {
             OpTxType::Deposit => Err(ctx),
             ty => {
                 let receipt = Receipt {
@@ -41,10 +41,7 @@ impl OpReceiptBuilder for OpRethReceiptBuilder {
         }
     }
 
-    fn build_deposit_receipt(
-        &self,
-        inner: base_alloy_consensus::OpDepositReceipt,
-    ) -> Self::Receipt {
+    fn build_deposit_receipt(&self, inner: OpDepositReceipt) -> Self::Receipt {
         OpReceipt::Deposit(inner)
     }
 }

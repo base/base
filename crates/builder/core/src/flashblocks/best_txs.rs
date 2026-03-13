@@ -266,7 +266,7 @@ mod tests {
         }
         drop(best_iter);
         assert_eq!(executed_hashes.len(), 3);
-        pool.prune_transactions(executed_hashes);
+        pool.remove_transactions(executed_hashes);
         assert_eq!(pool.pool_size().pending, 0);
 
         // Senders submit nonce-1 txs (arrive between FB1 and FB2)

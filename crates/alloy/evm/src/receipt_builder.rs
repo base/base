@@ -3,7 +3,7 @@
 
 use core::fmt::Debug;
 
-use alloy_consensus::{Eip658Value, TransactionEnvelope};
+use alloy_consensus::Eip658Value;
 use alloy_evm::{Evm, eth::receipt_builder::ReceiptBuilderCtx};
 use base_alloy_consensus::{OpDepositReceipt, OpReceiptEnvelope, OpTxEnvelope, OpTxType};
 
@@ -11,7 +11,7 @@ use base_alloy_consensus::{OpDepositReceipt, OpReceiptEnvelope, OpTxEnvelope, Op
 #[auto_impl::auto_impl(&, Arc)]
 pub trait OpReceiptBuilder: Debug {
     /// Transaction type.
-    type Transaction: TransactionEnvelope;
+    type Transaction;
     /// Receipt type.
     type Receipt;
 
@@ -21,11 +21,8 @@ pub trait OpReceiptBuilder: Debug {
     /// case, the `build_deposit_receipt` method will be called.
     fn build_receipt<'a, E: Evm>(
         &self,
-        ctx: ReceiptBuilderCtx<'a, <Self::Transaction as TransactionEnvelope>::TxType, E>,
-    ) -> Result<
-        Self::Receipt,
-        ReceiptBuilderCtx<'a, <Self::Transaction as TransactionEnvelope>::TxType, E>,
-    >;
+        ctx: ReceiptBuilderCtx<'a, Self::Transaction, E>,
+    ) -> Result<Self::Receipt, ReceiptBuilderCtx<'a, Self::Transaction, E>>;
 
     /// Builds receipt for a deposit transaction.
     fn build_deposit_receipt(&self, inner: OpDepositReceipt) -> Self::Receipt;
@@ -42,9 +39,9 @@ impl OpReceiptBuilder for OpAlloyReceiptBuilder {
 
     fn build_receipt<'a, E: Evm>(
         &self,
-        ctx: ReceiptBuilderCtx<'a, OpTxType, E>,
-    ) -> Result<Self::Receipt, ReceiptBuilderCtx<'a, OpTxType, E>> {
-        match ctx.tx_type {
+        ctx: ReceiptBuilderCtx<'a, OpTxEnvelope, E>,
+    ) -> Result<Self::Receipt, ReceiptBuilderCtx<'a, OpTxEnvelope, E>> {
+        match ctx.tx.tx_type() {
             OpTxType::Deposit => Err(ctx),
             ty => {
                 let receipt = alloy_consensus::Receipt {

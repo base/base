@@ -25,7 +25,7 @@ use reth_node_core::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
     exit::NodeExitFuture,
 };
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
+use reth_tasks::TaskManager;
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use tokio::{sync::oneshot, task::JoinHandle};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -62,7 +62,7 @@ pub fn clear_otel_env_vars() {
 pub struct LocalInstance {
     node_config: NodeConfig<OpChainSpec>,
     builder_config: BuilderConfig,
-    runtime: Option<Runtime>,
+    runtime: Option<TaskManager>,
     exit_future: NodeExitFuture,
     _node_handle: Box<dyn Any + Send>,
     pool_observer: TransactionPoolObserver,
@@ -89,7 +89,8 @@ impl LocalInstance {
         node_config: NodeConfig<OpChainSpec>,
     ) -> eyre::Result<Self> {
         clear_otel_env_vars();
-        let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
+        let runtime = TaskManager::new(tokio::runtime::Handle::current());
+        let exec = runtime.executor();
         let base_node = BaseNode::new(RollupArgs::default());
 
         let (rpc_ready_tx, rpc_ready_rx) = oneshot::channel::<()>();
@@ -109,7 +110,7 @@ impl LocalInstance {
 
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(node_config.clone())
             .with_database(create_test_db(node_config.clone()))
-            .with_launch_context(runtime.clone())
+            .with_launch_context(exec)
             .with_types::<BaseNode>()
             .with_components(
                 base_node

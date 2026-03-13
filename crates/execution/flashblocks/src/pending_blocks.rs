@@ -11,19 +11,16 @@ use alloy_rpc_types::{BlockTransactions, Withdrawal, state::StateOverride};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
-use base_alloy_consensus::OpTxType;
 use base_alloy_evm::OpTxResult;
 use base_alloy_flashblocks::Flashblock;
 use base_alloy_network::Base;
 use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use base_revm::OpHaltReason;
-use reth_evm::eth::EthTxResult;
 use reth_revm::db::BundleState;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use revm::{
-    context::result::ExecResultAndState, context_interface::result::ExecutionResult,
-    state::EvmState,
+    context::result::ResultAndState, context_interface::result::ExecutionResult, state::EvmState,
 };
 
 use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};
@@ -310,7 +307,7 @@ impl PendingBlocks {
     }
 
     /// Returns the receipt and state for a transaction.
-    pub fn get_op_tx_result(&self, tx_hash: &B256) -> Option<OpTxResult<OpHaltReason, OpTxType>> {
+    pub fn get_op_tx_result(&self, tx_hash: &B256) -> Option<OpTxResult<OpHaltReason>> {
         let (((result, state), tx), sender) = self
             .get_transaction_result(tx_hash)
             .zip(self.get_transaction_state(tx_hash))
@@ -320,16 +317,13 @@ impl PendingBlocks {
         let blob_gas_used =
             self.get_receipt(*tx_hash).and_then(|r| r.inner.blob_gas_used).unwrap_or_default();
 
-        let eth_tx_result = EthTxResult {
-            result: ExecResultAndState::new(result.clone(), state),
+        Some(OpTxResult {
+            result: ResultAndState::new(result.clone(), state),
+            is_deposit: tx.inner.inner.is_deposit(),
+            sender,
             blob_gas_used,
             tx_type: tx.inner.inner.tx_type(),
-        };
-
-        let op_tx_result =
-            OpTxResult { inner: eth_tx_result, is_deposit: tx.inner.inner.is_deposit(), sender };
-
-        Some(op_tx_result)
+        })
     }
 
     /// Returns a transaction by its hash.
@@ -662,11 +656,11 @@ mod tests {
 
         let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
 
-        assert_eq!(result.inner.blob_gas_used, da_footprint);
-        assert_eq!(result.inner.tx_type, OpTxType::Legacy);
+        assert_eq!(result.blob_gas_used, da_footprint);
+        assert_eq!(result.tx_type, OpTxType::Legacy);
         assert!(!result.is_deposit);
         assert_eq!(result.sender, test_sender());
-        assert_eq!(result.inner.result.result.gas_used(), 21000);
+        assert_eq!(result.result.result.gas_used(), 21000);
     }
 
     #[test]
@@ -675,11 +669,11 @@ mod tests {
 
         let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
 
-        assert_eq!(result.inner.blob_gas_used, 0);
-        assert_eq!(result.inner.tx_type, OpTxType::Deposit);
+        assert_eq!(result.blob_gas_used, 0);
+        assert_eq!(result.tx_type, OpTxType::Deposit);
         assert!(result.is_deposit);
         assert_eq!(result.sender, test_sender());
-        assert_eq!(result.inner.result.result.gas_used(), 21000);
+        assert_eq!(result.result.result.gas_used(), 21000);
     }
 
     #[test]
@@ -688,7 +682,7 @@ mod tests {
 
         let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
 
-        assert_eq!(result.inner.blob_gas_used, 0);
+        assert_eq!(result.blob_gas_used, 0);
     }
 
     #[test]
@@ -707,6 +701,6 @@ mod tests {
 
         let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
 
-        assert_eq!(result.inner.blob_gas_used, 0);
+        assert_eq!(result.blob_gas_used, 0);
     }
 }

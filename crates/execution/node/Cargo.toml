@@ -143,7 +143,6 @@ test-utils = [
 	"reth-provider/test-utils",
 	"reth-revm/test-utils",
 	"reth-stages-types/test-utils",
-	"reth-tasks/test-utils",
 	"reth-transaction-pool/test-utils",
 	"reth-trie-common/test-utils",
 	"reth-trie-db/test-utils",

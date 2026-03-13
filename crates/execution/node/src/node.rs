@@ -41,7 +41,7 @@ use reth_node_builder::{
     components::{
         BasicPayloadServiceBuilder, ComponentsBuilder, ConsensusBuilder, ExecutorBuilder,
         NetworkBuilder, PayloadBuilderBuilder, PoolBuilder, PoolBuilderConfigOverrides,
-        TxPoolBuilder,
+        spawn_maintenance_tasks,
     },
     node::{FullNodeTypes, NodeTypes},
     rpc::{
@@ -56,7 +56,7 @@ use reth_rpc_api::{DebugApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{
-    EthPoolTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
+    EthPoolTransaction, Pool, PoolPooledTx, PoolTransaction, TransactionPool,
     TransactionValidationTaskExecutor, blobstore::DiskFileBlobStore,
 };
 use reth_trie_common::KeccakKeyHasher;
@@ -229,8 +229,8 @@ impl OpNode {
             self.args;
         ComponentsBuilder::default()
             .node_types::<Node>()
-            .executor(OpExecutorBuilder::default())
             .pool(OpPoolBuilder::default())
+            .executor(OpExecutorBuilder::default())
             .payload(BasicPayloadServiceBuilder::new(
                 OpPayloadBuilder::new(compute_pending_block)
                     .with_da_config(self.da_config.clone())
@@ -870,52 +870,41 @@ impl<T> OpPoolBuilder<T> {
     }
 }
 
-impl<Node, T, Evm> PoolBuilder<Node, Evm> for OpPoolBuilder<T>
+impl<Node, T> PoolBuilder<Node> for OpPoolBuilder<T>
 where
     Node: FullNodeTypes<Types: NodeTypes<ChainSpec: OpHardforks>>,
     T: EthPoolTransaction<Consensus = TxTy<Node::Types>> + OpPooledTx + TimestampedTransaction,
-    Evm: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + Clone + 'static,
 {
-    type Pool = OpTransactionPool<Node::Provider, DiskFileBlobStore, Evm, T, BaseOrdering<T>>;
+    type Pool = OpTransactionPool<Node::Provider, DiskFileBlobStore, T, BaseOrdering<T>>;
 
-    async fn build_pool(
-        self,
-        ctx: &BuilderContext<Node>,
-        evm_config: Evm,
-    ) -> eyre::Result<Self::Pool> {
+    async fn build_pool(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Pool> {
         let Self { pool_config_overrides, ordering, .. } = self;
 
         let blob_store = reth_node_builder::components::create_blob_store(ctx)?;
-        let validator =
-            TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
-                .no_eip4844()
-                .with_max_tx_input_bytes(ctx.config().txpool.max_tx_input_bytes)
-                .kzg_settings(ctx.kzg_settings()?)
-                .set_tx_fee_cap(ctx.config().rpc.rpc_tx_fee_cap)
-                .with_max_tx_gas_limit(ctx.config().txpool.max_tx_gas_limit)
-                .with_minimum_priority_fee(ctx.config().txpool.minimum_priority_fee)
-                .with_additional_tasks(
-                    pool_config_overrides
-                        .additional_validation_tasks
-                        .unwrap_or_else(|| ctx.config().txpool.additional_validation_tasks),
-                )
-                .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
-                .map(|validator| {
-                    OpTransactionValidator::new(validator)
-                        // In --dev mode we can't require gas fees because we're unable to decode
-                        // the L1 block info
-                        .require_l1_data_gas_fee(!ctx.config().dev.dev)
-                });
+        let validator = TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone())
+            .no_eip4844()
+            .with_max_tx_input_bytes(ctx.config().txpool.max_tx_input_bytes)
+            .kzg_settings(ctx.kzg_settings()?)
+            .set_tx_fee_cap(ctx.config().rpc.rpc_tx_fee_cap)
+            .with_max_tx_gas_limit(ctx.config().txpool.max_tx_gas_limit)
+            .with_minimum_priority_fee(ctx.config().txpool.minimum_priority_fee)
+            .with_additional_tasks(
+                pool_config_overrides
+                    .additional_validation_tasks
+                    .unwrap_or_else(|| ctx.config().txpool.additional_validation_tasks),
+            )
+            .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
+            .map(|validator| {
+                OpTransactionValidator::new(validator)
+                    // In --dev mode we can't require gas fees because we're unable to decode
+                    // the L1 block info
+                    .require_l1_data_gas_fee(!ctx.config().dev.dev)
+            });
 
         let final_pool_config = pool_config_overrides.apply(ctx.pool_config());
 
-        let transaction_pool = TxPoolBuilder::new(ctx)
-            .with_validator(validator)
-            .build_with_ordering_and_spawn_maintenance_task(
-                ordering,
-                blob_store,
-                final_pool_config,
-            )?;
+        let transaction_pool = Pool::new(validator, ordering, blob_store, final_pool_config);
+        spawn_maintenance_tasks(ctx, transaction_pool.clone(), transaction_pool.config())?;
 
         info!(target: "reth::cli", "Transaction pool initialized");
         debug!(target: "reth::cli", "Spawned txpool maintenance task");

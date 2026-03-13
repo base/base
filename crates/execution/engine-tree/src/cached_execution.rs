@@ -11,12 +11,15 @@ use base_revm::{OpHaltReason, OpTransaction};
 use reth_errors::BlockExecutionError;
 use reth_evm::{
     Evm, RecoveredTx,
-    block::{BlockExecutor, ExecutableTx, InternalBlockExecutionError, TxResult},
+    block::{BlockExecutor, ExecutableTx, InternalBlockExecutionError},
 };
 use reth_primitives_traits::Recovered;
 use reth_provider::BlockNumReader;
 use reth_revm::State;
-use revm::{Database, context::TxEnv};
+use revm::{
+    Database,
+    context::{TxEnv, result::ResultAndState},
+};
 use revm_primitives::B256;
 use tracing::warn;
 
@@ -35,8 +38,7 @@ impl<P> FlashblocksCachedExecutionProvider<P> {
     }
 }
 
-impl<P> CachedExecutionProvider<OpTxResult<OpHaltReason, OpTxType>>
-    for FlashblocksCachedExecutionProvider<P>
+impl<P> CachedExecutionProvider<OpTxResult<OpHaltReason>> for FlashblocksCachedExecutionProvider<P>
 where
     P: BlockNumReader,
 {
@@ -45,7 +47,7 @@ where
         parent_block_hash: &B256,
         prev_cached_hash: Option<&B256>,
         tx_hash: &B256,
-    ) -> Option<OpTxResult<OpHaltReason, OpTxType>> {
+    ) -> Option<OpTxResult<OpHaltReason>> {
         let flashblocks_state = self.flashblocks_state.as_ref()?;
 
         // if block_number is not found, we can't use cached execution
@@ -143,13 +145,12 @@ impl<E, C> CachedExecutor<E, C> {
 impl<'a, DB, E, C> BlockExecutor for CachedExecutor<E, C>
 where
     DB: Database + alloy_evm::Database + 'a,
-    E: Evm<DB = &'a mut State<DB>, Tx = OpTransaction<TxEnv>>,
-    C: CachedExecutionProvider<OpTxResult<E::HaltReason, OpTxType>>,
+    E: Evm<DB = &'a mut State<DB>, Tx = OpTransaction<TxEnv>, HaltReason = OpHaltReason>,
+    C: CachedExecutionProvider<OpTxResult<OpHaltReason>>,
 {
     type Transaction = OpTxEnvelope;
     type Receipt = OpReceipt;
     type Evm = E;
-    type Result = OpTxResult<E::HaltReason, OpTxType>;
 
     fn receipts(&self) -> &[Self::Receipt] {
         self.executor.receipts()
@@ -158,7 +159,7 @@ where
     fn execute_transaction_without_commit(
         &mut self,
         executing_tx: impl ExecutableTx<Self>,
-    ) -> Result<Self::Result, BlockExecutionError> {
+    ) -> Result<ResultAndState<<Self::Evm as Evm>::HaltReason>, BlockExecutionError> {
         if !self.all_txs_cached {
             return self.executor.execute_transaction_without_commit(executing_tx);
         }
@@ -193,7 +194,7 @@ where
                     BlockExecutionError::Internal(InternalBlockExecutionError::Other(Box::new(err)))
                 })?;
             }
-            return Ok(cached_execution);
+            return Ok(cached_execution.result);
         }
         self.all_txs_cached = false;
         self.executor.execute_transaction_without_commit(Recovered::new_unchecked(
@@ -206,8 +207,12 @@ where
         self.executor.apply_pre_execution_changes()
     }
 
-    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
-        self.executor.commit_transaction(output)
+    fn commit_transaction(
+        &mut self,
+        output: ResultAndState<<Self::Evm as Evm>::HaltReason>,
+        tx: impl ExecutableTx<Self>,
+    ) -> Result<u64, BlockExecutionError> {
+        self.executor.commit_transaction(output, tx)
     }
 
     fn finish(

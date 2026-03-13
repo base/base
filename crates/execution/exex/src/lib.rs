@@ -303,7 +303,7 @@ where
         let task_provider = self.ctx.provider().clone();
         let task_evm_config = self.ctx.evm_config().clone();
 
-        self.ctx.task_executor().spawn_critical_task(
+        self.ctx.task_executor().spawn_critical(
             "optimism::exex::proofs_storage_sync_loop",
             async move {
                 let storage = task_storage.clone();

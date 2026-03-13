@@ -7,7 +7,7 @@ use alloy_evm::Database;
 use alloy_primitives::{BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
-use base_alloy_consensus::{OpDepositReceipt, OpTxType};
+use base_alloy_consensus::OpDepositReceipt;
 use base_alloy_evm::OpReceiptBuilder;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
@@ -331,7 +331,7 @@ impl OpPayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
     pub fn build_receipt<E: Evm>(
         &self,
-        ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
+        ctx: ReceiptBuilderCtx<'_, OpTransactionSigned, E>,
         deposit_nonce: Option<u64>,
     ) -> OpReceipt {
         let receipt_builder = self.evm_config.block_executor_factory().receipt_builder();
@@ -431,7 +431,7 @@ impl OpPayloadBuilderCtx {
             }
 
             let ctx = ReceiptBuilderCtx {
-                tx_type: sequencer_tx.tx_type(),
+                tx: sequencer_tx.inner(),
                 evm: &evm,
                 result,
                 state: &state,
@@ -704,7 +704,7 @@ impl OpPayloadBuilderCtx {
 
             // Push transaction changeset and calculate header bloom filter for receipt.
             let ctx = ReceiptBuilderCtx {
-                tx_type: tx.tx_type(),
+                tx: tx.inner(),
                 evm: &evm,
                 result,
                 state: &state,

@@ -145,7 +145,7 @@ where
                 OpEvmFactory,
             >,
         > + 'static,
-    C: CachedExecutionProvider<OpTxResult<OpHaltReason, OpTxType>> + Clone,
+    C: CachedExecutionProvider<OpTxResult<OpHaltReason>> + Clone,
 {
     /// Creates a new `TreePayloadValidator`.
     #[allow(clippy::too_many_arguments)]
@@ -1487,7 +1487,7 @@ where
             BuiltPayload: BuiltPayload<Primitives = OpPrimitives>,
             ExecutionData = OpExecutionData,
         >,
-    C: CachedExecutionProvider<OpTxResult<OpHaltReason, OpTxType>> + Clone + Send + Sync + 'static,
+    C: CachedExecutionProvider<OpTxResult<OpHaltReason>> + Clone + Send + Sync + 'static,
 {
     fn validate_payload_attributes_against_header(
         &self,

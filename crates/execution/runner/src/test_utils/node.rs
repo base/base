@@ -18,7 +18,7 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_provider::providers::BlockchainProvider;
-use reth_tasks::Runtime;
+use reth_tasks::TaskManager;
 
 use crate::{
     BaseNodeExtension, NodeHooks, OpProvider, node::BaseNode, test_utils::engine::EngineApi,
@@ -35,7 +35,7 @@ pub struct LocalNode {
     provider: LocalNodeProvider,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
-    _runtime: Runtime,
+    _runtime: TaskManager,
     _db_path: PathBuf,
 }
 
@@ -62,7 +62,8 @@ impl LocalNode {
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         chain_spec: Arc<OpChainSpec>,
     ) -> Result<Self> {
-        let exec = Runtime::test();
+        let task_manager = TaskManager::new(tokio::runtime::Handle::current());
+        let exec = task_manager.executor();
 
         let network_config = NetworkArgs {
             discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
@@ -128,18 +129,18 @@ impl LocalNode {
             provider,
             _node_exit_future: node_exit_future,
             _node: Box::new(node_handle),
-            _runtime: exec,
+            _runtime: task_manager,
             _db_path: db_path,
         })
     }
 
     /// Creates a test database with a 100 MB map size (vs reth's default 8 TB).
-    fn create_test_database() -> Result<(DatabaseEnv, PathBuf)> {
+    fn create_test_database() -> Result<(Arc<DatabaseEnv>, PathBuf)> {
         let path = tempdir_path();
         let args = DatabaseArguments::new(ClientVersion::default())
             .with_geometry_max_size(Some(100 * 1024 * 1024));
         let db = init_db(&path, args).expect("Failed to create test database");
-        Ok((db, path))
+        Ok((Arc::new(db), path))
     }
 
     /// Create an HTTP provider pointed at the node's public RPC endpoint.
