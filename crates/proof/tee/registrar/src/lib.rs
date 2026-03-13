@@ -5,7 +5,7 @@ mod config;
 pub use config::{BoundlessConfig, RegistrarConfig, RemoteSignerConfig, SigningConfig};
 
 mod discovery;
-pub use discovery::{AwsTargetGroupDiscovery, health_state_from_str};
+pub use discovery::AwsTargetGroupDiscovery;
 
 mod error;
 pub use error::{RegistrarError, Result};

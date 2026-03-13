@@ -9,19 +9,6 @@ use tracing::{debug, warn};
 
 use crate::{InstanceDiscovery, InstanceHealthStatus, ProverInstance, RegistrarError, Result};
 
-/// Maps an AWS ALB target health state string to [`InstanceHealthStatus`].
-///
-/// Unknown or unrecognised states are treated as [`InstanceHealthStatus::Unhealthy`]
-/// to avoid routing work to targets whose status cannot be determined.
-pub fn health_state_from_str(state: &str) -> InstanceHealthStatus {
-    match state {
-        "initial" => InstanceHealthStatus::Initial,
-        "healthy" => InstanceHealthStatus::Healthy,
-        "draining" => InstanceHealthStatus::Draining,
-        _ => InstanceHealthStatus::Unhealthy,
-    }
-}
-
 /// Discovers prover instances by querying an AWS ALB target group.
 ///
 /// Uses `describe_target_health` to enumerate all registered targets, including
@@ -115,7 +102,7 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
             let health_status = desc
                 .target_health()
                 .and_then(|h| h.state())
-                .map(|s| health_state_from_str(s.as_str()))
+                .map(|s| InstanceHealthStatus::from_aws_state(s.as_str()))
                 .unwrap_or(InstanceHealthStatus::Unhealthy);
 
             health_map.insert(instance_id.to_string(), health_status);
@@ -162,30 +149,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn health_state_initial() {
-        assert_eq!(health_state_from_str("initial"), InstanceHealthStatus::Initial);
+    fn from_aws_state_initial() {
+        assert_eq!(InstanceHealthStatus::from_aws_state("initial"), InstanceHealthStatus::Initial);
     }
 
     #[test]
-    fn health_state_healthy() {
-        assert_eq!(health_state_from_str("healthy"), InstanceHealthStatus::Healthy);
+    fn from_aws_state_healthy() {
+        assert_eq!(InstanceHealthStatus::from_aws_state("healthy"), InstanceHealthStatus::Healthy);
     }
 
     #[test]
-    fn health_state_draining() {
-        assert_eq!(health_state_from_str("draining"), InstanceHealthStatus::Draining);
+    fn from_aws_state_draining() {
+        assert_eq!(
+            InstanceHealthStatus::from_aws_state("draining"),
+            InstanceHealthStatus::Draining
+        );
     }
 
     #[test]
-    fn health_state_unhealthy() {
-        assert_eq!(health_state_from_str("unhealthy"), InstanceHealthStatus::Unhealthy);
+    fn from_aws_state_unhealthy() {
+        assert_eq!(
+            InstanceHealthStatus::from_aws_state("unhealthy"),
+            InstanceHealthStatus::Unhealthy
+        );
     }
 
     #[test]
-    fn health_state_unknown_maps_to_unhealthy() {
-        assert_eq!(health_state_from_str("unavailable"), InstanceHealthStatus::Unhealthy);
-        assert_eq!(health_state_from_str(""), InstanceHealthStatus::Unhealthy);
-        assert_eq!(health_state_from_str("bogus"), InstanceHealthStatus::Unhealthy);
+    fn from_aws_state_unknown_maps_to_unhealthy() {
+        assert_eq!(
+            InstanceHealthStatus::from_aws_state("unavailable"),
+            InstanceHealthStatus::Unhealthy
+        );
+        assert_eq!(InstanceHealthStatus::from_aws_state(""), InstanceHealthStatus::Unhealthy);
+        assert_eq!(InstanceHealthStatus::from_aws_state("bogus"), InstanceHealthStatus::Unhealthy);
     }
 
     #[test]
