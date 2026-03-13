@@ -561,7 +561,12 @@ impl SimpleTxManager {
     /// checks fee limits, resets the nonce manager, rebuilds and re-publishes
     /// the transaction, and spawns a new receipt polling task.
     ///
-    /// Returns the updated `(tip, fee_cap, tx_hash)` on success.
+    /// Returns the updated `(tip, fee_cap, tx_hash)` on success. The
+    /// returned tip and fee cap reflect the *actual* fees used by the
+    /// rebuilt transaction rather than the theoretical bumped values, so
+    /// that subsequent bump iterations use an accurate baseline. This is
+    /// achieved by re-querying gas prices after `prepare()` and taking
+    /// the maximum of the bumped values and the fresh query.
     async fn handle_fee_bump(
         &self,
         candidate: &TxCandidate,
@@ -600,9 +605,21 @@ impl SimpleTxManager {
         self.nonce_manager.reset().await;
 
         // Rebuild transaction with fresh gas prices.
-        // prepare() internally calls suggest_gas_price_caps() which should
-        // return values at or above the bumped thresholds in normal conditions.
         let raw_tx = self.prepare(candidate).await?;
+
+        // Sync tracked fees with what prepare() actually used.
+        //
+        // prepare() internally calls suggest_gas_price_caps() and may use
+        // fees that differ from our bumped values (higher if gas prices
+        // rose, or lower if they fell). To prevent fee tracking drift
+        // across successive bumps, re-query gas prices (a close proxy for
+        // what prepare() saw) and take the max of the bumped values and
+        // the fresh query. This ensures the tracked baseline is always at
+        // least as high as the actual on-wire fees, preserving the
+        // monotonic bump guarantee.
+        let post_caps = self.suggest_gas_price_caps().await?;
+        let tracked_tip = bumped_tip.max(post_caps.gas_tip_cap);
+        let tracked_fee_cap = bumped_fee_cap.max(post_caps.gas_fee_cap);
 
         let new_hash = self.publish_tx(send_state, &raw_tx, Some(last_tx_hash)).await?;
 
@@ -616,7 +633,7 @@ impl SimpleTxManager {
             Arc::clone(&self.closed),
         );
 
-        Ok((bumped_tip, bumped_fee_cap, new_hash))
+        Ok((tracked_tip, tracked_fee_cap, new_hash))
     }
 
     /// Broadcasts a raw transaction to the network.
