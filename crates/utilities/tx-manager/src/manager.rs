@@ -30,7 +30,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use alloy_eips::{BlockNumberOrTag, Encodable2718};
@@ -39,7 +39,7 @@ use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use backon::{ConstantBuilder, Retryable};
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -509,9 +509,12 @@ impl SimpleTxManager {
     /// Spawns a background task that polls for a transaction receipt and
     /// sends it through the provided channel once confirmed.
     ///
-    /// The task calls [`wait_mined`](Self::wait_mined) in a loop, checking
-    /// both confirmation status and manager shutdown via the shared `closed`
-    /// flag.
+    /// The task delegates to [`wait_mined`](Self::wait_mined), which polls
+    /// internally until the transaction is confirmed or the manager shuts
+    /// down.
+    ///
+    /// Returns the [`JoinHandle`](tokio::task::JoinHandle) of the spawned
+    /// task so callers can await its completion if needed.
     ///
     /// # Task accumulation
     ///
@@ -533,7 +536,7 @@ impl SimpleTxManager {
         config: TxManagerConfig,
         receipt_tx: mpsc::Sender<TransactionReceipt>,
         closed: Arc<AtomicBool>,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             debug!(tx_hash = %tx_hash, "starting receipt polling");
 
@@ -545,7 +548,7 @@ impl SimpleTxManager {
             }
 
             debug!(tx_hash = %tx_hash, "receipt polling ended");
-        });
+        })
     }
 
     /// Polls for a transaction receipt at `receipt_query_interval` until
@@ -567,21 +570,6 @@ impl SimpleTxManager {
         loop {
             poll_interval.tick().await;
 
-            if Instant::now() >= deadline {
-                warn!(
-                    tx_hash = %tx_hash,
-                    timeout = ?config.confirmation_timeout,
-                    "confirmation timeout exceeded",
-                );
-                return None;
-            }
-
-            // Check shutdown state each iteration to support cancellation.
-            if closed.load(Ordering::Acquire) {
-                debug!(tx_hash = %tx_hash, "manager closed, stopping receipt polling");
-                return None;
-            }
-
             match Self::query_receipt(
                 send_state,
                 provider,
@@ -598,6 +586,21 @@ impl SimpleTxManager {
                 Err(e) => {
                     warn!(tx_hash = %tx_hash, error = %e, "receipt query failed");
                 }
+            }
+
+            if Instant::now() >= deadline {
+                warn!(
+                    tx_hash = %tx_hash,
+                    timeout = ?config.confirmation_timeout,
+                    "confirmation timeout exceeded",
+                );
+                return None;
+            }
+
+            // Check shutdown state each iteration to support cancellation.
+            if closed.load(Ordering::Acquire) {
+                debug!(tx_hash = %tx_hash, "manager closed, stopping receipt polling");
+                return None;
             }
         }
     }
@@ -644,9 +647,6 @@ impl SimpleTxManager {
             }
         };
 
-        // Receipt exists — record as mined regardless of confirmation depth.
-        send_state.tx_mined(tx_hash);
-
         let tx_block = match receipt.block_number {
             Some(block) => block,
             None => {
@@ -654,6 +654,9 @@ impl SimpleTxManager {
                 return Ok(None);
             }
         };
+
+        // Receipt exists with a block number — record as mined.
+        send_state.tx_mined(tx_hash);
 
         // Check confirmation depth: tx_block + num_confirmations <= tip + 1
         if tx_block.saturating_add(num_confirmations) <= tip_height.saturating_add(1) {
@@ -670,7 +673,7 @@ impl SimpleTxManager {
                 tx_hash = %tx_hash,
                 tx_block = %tx_block,
                 tip_height = %tip_height,
-                needed = %num_confirmations,
+                num_confirmations = %num_confirmations,
                 "waiting for more confirmations",
             );
             Ok(None)

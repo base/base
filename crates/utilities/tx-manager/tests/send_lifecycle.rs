@@ -208,7 +208,11 @@ async fn wait_mined_returns_confirmed_receipt() {
 /// `wait_mined` returns `None` when the manager is shut down.
 #[tokio::test]
 async fn wait_mined_returns_none_on_shutdown() {
-    let config = fast_polling_config();
+    let config = TxManagerConfig {
+        num_confirmations: 100,
+        receipt_query_interval: Duration::from_millis(50),
+        ..TxManagerConfig::default()
+    };
     let (manager, _anvil) = setup_with_config(config.clone()).await;
     let (tx_hash, send_state) = publish_simple_tx(&manager).await;
     let closed = AtomicBool::new(true);
@@ -251,7 +255,7 @@ async fn wait_for_tx_delivers_receipt() {
     let closed = Arc::new(AtomicBool::new(false));
     let (receipt_tx, mut receipt_rx) = mpsc::channel(1);
 
-    SimpleTxManager::wait_for_tx(
+    let _handle = SimpleTxManager::wait_for_tx(
         Arc::new(send_state),
         manager.provider().clone(),
         tx_hash,
@@ -277,23 +281,75 @@ async fn wait_for_tx_closes_channel_on_shutdown() {
     };
     let (manager, _anvil) = setup_with_config(config.clone()).await;
     let (tx_hash, send_state) = publish_simple_tx(&manager).await;
-    let closed = Arc::new(AtomicBool::new(false));
+    let closed = Arc::new(AtomicBool::new(true));
     let (receipt_tx, mut receipt_rx) = mpsc::channel(1);
 
-    SimpleTxManager::wait_for_tx(
+    let _handle = SimpleTxManager::wait_for_tx(
         Arc::new(send_state),
         manager.provider().clone(),
         tx_hash,
         config,
         receipt_tx,
-        Arc::clone(&closed),
+        closed,
     );
-
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    closed.store(true, Ordering::Release);
 
     let result = tokio::time::timeout(Duration::from_secs(5), receipt_rx.recv())
         .await
         .expect("should not time out");
     assert!(result.is_none(), "channel should close without delivering a receipt");
+}
+
+/// `wait_for_tx` exits cleanly without panicking when the receiver is
+/// dropped before the task delivers a receipt.
+#[tokio::test]
+async fn wait_for_tx_does_not_panic_on_dropped_receiver() {
+    let config = fast_polling_config();
+    let (manager, _anvil) = setup_with_config(config.clone()).await;
+    let (tx_hash, send_state) = publish_simple_tx(&manager).await;
+    let closed = Arc::new(AtomicBool::new(false));
+    let (receipt_tx, receipt_rx) = mpsc::channel(1);
+
+    let handle = SimpleTxManager::wait_for_tx(
+        Arc::new(send_state),
+        manager.provider().clone(),
+        tx_hash,
+        config,
+        receipt_tx,
+        closed,
+    );
+
+    // Drop receiver immediately — task should exit cleanly.
+    drop(receipt_rx);
+
+    // Await the handle to confirm the task exits without panic.
+    tokio::time::timeout(Duration::from_secs(5), handle)
+        .await
+        .expect("task should not time out")
+        .expect("task should not panic");
+}
+
+// ── query_receipt() error paths ───────────────────────────────────────
+
+/// `query_receipt` returns `Err` when the provider is unreachable.
+#[tokio::test]
+async fn query_receipt_returns_error_on_unreachable_provider() {
+    // Spawn Anvil to get a valid endpoint, then drop it to close the port.
+    let anvil = Anvil::new().spawn();
+    let url = anvil.endpoint_url();
+    let provider = RootProvider::new_http(url);
+    drop(anvil);
+
+    let send_state = SendState::new(3).expect("should create send state");
+    let fake_hash = B256::with_last_byte(0xFF);
+
+    let result = SimpleTxManager::query_receipt(
+        &send_state,
+        &provider,
+        fake_hash,
+        1,
+        Duration::from_secs(2),
+    )
+    .await;
+
+    assert!(result.is_err(), "query_receipt should fail when provider is unreachable");
 }
