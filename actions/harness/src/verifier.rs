@@ -258,7 +258,10 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     ///
     /// [`IndexedTraversal`]: base_consensus_derive::IndexedTraversal
     pub async fn act_l1_head_signal(&mut self, head: BlockInfo) -> Result<(), VerifierError> {
-        self.pipeline.signal(Signal::ProvideBlock(head)).await.map_err(|e| VerifierError::Signal(Box::new(e)))
+        self.pipeline
+            .signal(Signal::ProvideBlock(head))
+            .await
+            .map_err(|e| VerifierError::Signal(Box::new(e)))
     }
 
     /// Signal the pipeline that a new L1 safe head is available.
