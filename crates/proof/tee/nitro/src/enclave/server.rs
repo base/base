@@ -41,7 +41,7 @@ const CONFIG_HASH_SEPOLIA_ALPHA: B256 =
     b256!("4600cdaa81262bf5f124bd9276f605264e2ded951e34923bc838e81c442f0fa4");
 
 /// Look up the hardcoded config hash for a supported chain.
-fn config_hash_for_chain(chain_id: u64) -> Result<B256> {
+const fn config_hash_for_chain(chain_id: u64) -> Result<B256> {
     match chain_id {
         8453 => Ok(CONFIG_HASH_BASE_MAINNET),
         84532 => Ok(CONFIG_HASH_BASE_SEPOLIA),
