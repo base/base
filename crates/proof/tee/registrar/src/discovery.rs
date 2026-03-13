@@ -27,14 +27,14 @@ pub struct AwsTargetGroupDiscovery {
 
 impl AwsTargetGroupDiscovery {
     /// Creates a new discovery client for the given target group ARN and AWS region.
-    pub async fn new(target_group_arn: String, aws_region: String) -> Result<Self> {
+    pub async fn new(target_group_arn: String, aws_region: String) -> Self {
         let sdk_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
             .region(aws_sdk_ec2::config::Region::new(aws_region))
             .load()
             .await;
         let elb_client = ElbClient::new(&sdk_config);
         let ec2_client = Ec2Client::new(&sdk_config);
-        Ok(Self { elb_client, ec2_client, target_group_arn })
+        Self { elb_client, ec2_client, target_group_arn }
     }
 
     /// Builds a [`ProverInstance`] list from a health map and raw `(instance_id, private_ip_str)`
