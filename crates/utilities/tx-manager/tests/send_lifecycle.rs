@@ -11,8 +11,8 @@ use alloy_network::{EthereumWallet, TxSigner};
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Address, B256, Signature, U256};
 use alloy_provider::RootProvider;
-use async_trait::async_trait;
 use alloy_signer_local::PrivateKeySigner;
+use async_trait::async_trait;
 use base_tx_manager::{
     SendState, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig, TxManagerError,
 };
@@ -93,11 +93,7 @@ async fn assert_send_error_resets_nonce(config: TxManagerConfig) {
     assert!(matches!(err, TxManagerError::Sign(_)), "expected sign error, got {err:?}");
 
     let guard = manager.nonce_manager().next_nonce().await.expect("should reserve nonce");
-    assert_eq!(
-        guard.nonce(),
-        0,
-        "nonce manager should be reset after a pre-publish send failure",
-    );
+    assert_eq!(guard.nonce(), 0, "nonce manager should be reset after a pre-publish send failure",);
 }
 
 // ── send() ────────────────────────────────────────────────────────────
@@ -149,20 +145,14 @@ async fn send_async_confirms_simple_value_transfer() {
 
 #[tokio::test]
 async fn send_resets_nonce_manager_when_send_timeout_is_disabled() {
-    let config = TxManagerConfig {
-        tx_send_timeout: Duration::ZERO,
-        ..fast_send_config()
-    };
+    let config = TxManagerConfig { tx_send_timeout: Duration::ZERO, ..fast_send_config() };
 
     assert_send_error_resets_nonce(config).await;
 }
 
 #[tokio::test]
 async fn send_resets_nonce_manager_when_send_timeout_is_enabled() {
-    let config = TxManagerConfig {
-        tx_send_timeout: Duration::from_secs(5),
-        ..fast_send_config()
-    };
+    let config = TxManagerConfig { tx_send_timeout: Duration::from_secs(5), ..fast_send_config() };
 
     assert_send_error_resets_nonce(config).await;
 }

@@ -227,14 +227,34 @@ impl SimpleTxManager {
         candidate: &TxCandidate,
         fee_overrides: Option<FeeOverride>,
     ) -> TxManagerResult<PreparedTx> {
-        (|| async {
-            // Re-check closed flag on each retry attempt to avoid wasted
-            // RPC calls after shutdown. ChannelClosed is non-retryable,
-            // so backon exits the loop immediately.
-            if self.is_closed() {
-                return Err(TxManagerError::ChannelClosed);
+        self.prepare_with_initial_caps(candidate, fee_overrides, None).await
+    }
+
+    /// Internal variant of [`prepare`](Self::prepare) that optionally reuses
+    /// caller-supplied fee caps on the first attempt only.
+    ///
+    /// This is used by the fee-bump path to avoid a redundant
+    /// `suggest_gas_price_caps()` round-trip after it has already fetched caps
+    /// to compute bump thresholds. Retries intentionally fall back to fresh fee
+    /// estimation so transient failures do not pin stale network conditions.
+    async fn prepare_with_initial_caps(
+        &self,
+        candidate: &TxCandidate,
+        fee_overrides: Option<FeeOverride>,
+        initial_caps: Option<GasPriceCaps>,
+    ) -> TxManagerResult<PreparedTx> {
+        let mut initial_caps = initial_caps;
+        (|| {
+            let caps = initial_caps.take();
+            async move {
+                // Re-check closed flag on each retry attempt to avoid wasted
+                // RPC calls after shutdown. ChannelClosed is non-retryable,
+                // so backon exits the loop immediately.
+                if self.is_closed() {
+                    return Err(TxManagerError::ChannelClosed);
+                }
+                self.craft_tx_with_caps(candidate, fee_overrides, caps).await
             }
-            self.craft_tx(candidate, fee_overrides).await
         })
         .retry(
             ConstantBuilder::default()
@@ -339,6 +359,17 @@ impl SimpleTxManager {
         candidate: &TxCandidate,
         fee_overrides: Option<FeeOverride>,
     ) -> TxManagerResult<PreparedTx> {
+        self.craft_tx_with_caps(candidate, fee_overrides, None).await
+    }
+
+    /// Internal variant of [`craft_tx`](Self::craft_tx) that optionally uses
+    /// pre-fetched fee caps instead of querying the provider again.
+    async fn craft_tx_with_caps(
+        &self,
+        candidate: &TxCandidate,
+        fee_overrides: Option<FeeOverride>,
+        caps: Option<GasPriceCaps>,
+    ) -> TxManagerResult<PreparedTx> {
         // Blob transactions are not yet supported.
         if !candidate.blobs.is_empty() {
             return Err(TxManagerError::Unsupported(
@@ -347,7 +378,10 @@ impl SimpleTxManager {
         }
 
         // Step 1: Get fee estimates.
-        let caps = self.suggest_gas_price_caps().await?;
+        let caps = match caps {
+            Some(caps) => caps,
+            None => self.suggest_gas_price_caps().await?,
+        };
 
         // Step 2: Apply fee overrides as a floor.
         //
@@ -712,8 +746,13 @@ impl SimpleTxManager {
         // replacement tx is guaranteed to satisfy geth's replacement
         // thresholds. The returned PreparedTx carries the actual on-wire
         // fees, eliminating the need for a post-hoc reconciliation query.
-        let prepared =
-            self.prepare(candidate, Some(FeeOverride::new(bumped_tip, bumped_fee_cap))).await?;
+        let prepared = self
+            .prepare_with_initial_caps(
+                candidate,
+                Some(FeeOverride::new(bumped_tip, bumped_fee_cap)),
+                Some(caps),
+            )
+            .await?;
 
         let new_hash = self.publish_tx(send_state, &prepared.raw_tx, Some(last_tx_hash)).await?;
 
@@ -1030,10 +1069,38 @@ impl TxManager for SimpleTxManager {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::B256;
+    use alloy_consensus::{TxEip1559, TxEnvelope};
+    use alloy_eips::Decodable2718;
+    use alloy_network::EthereumWallet;
+    use alloy_node_bindings::Anvil;
+    use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+    use alloy_provider::RootProvider;
+    use alloy_signer_local::PrivateKeySigner;
 
     use super::SimpleTxManager;
-    use crate::TxManagerError;
+    use crate::{GasPriceCaps, TxCandidate, TxManagerConfig, TxManagerError};
+
+    async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
+        let anvil = Anvil::new().spawn();
+        let url = anvil.endpoint_url();
+        let provider = RootProvider::new_http(url);
+        let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+        let wallet = EthereumWallet::from(signer);
+        let chain_id = anvil.chain_id();
+        let manager = SimpleTxManager::new(provider, wallet, TxManagerConfig::default(), chain_id)
+            .await
+            .expect("should create manager");
+        (manager, anvil)
+    }
+
+    fn decode_eip1559(raw: &Bytes) -> TxEip1559 {
+        let envelope =
+            TxEnvelope::decode_2718(&mut raw.as_ref()).expect("should decode as valid TxEnvelope");
+        match envelope {
+            TxEnvelope::Eip1559(signed) => signed.strip_signature(),
+            other => panic!("expected EIP-1559, got {other:?}"),
+        }
+    }
 
     // ── apply_bump_result ─────────────────────────────────────────────
 
@@ -1121,5 +1188,34 @@ mod tests {
         let result: crate::TxManagerResult<()> = Ok(());
 
         assert!(!SimpleTxManager::should_reset_nonce_on_send_error(&result, &send_state));
+    }
+
+    #[tokio::test]
+    async fn prepare_with_initial_caps_uses_supplied_caps_on_first_attempt() {
+        let (manager, _anvil) = setup().await;
+        let candidate = TxCandidate {
+            to: Some(Address::with_last_byte(0x42)),
+            value: U256::from(1_000u64),
+            gas_limit: 0,
+            ..Default::default()
+        };
+        let caps = GasPriceCaps {
+            gas_tip_cap: 5_000_000_000_000,
+            gas_fee_cap: 15_000_000_000_000,
+            raw_gas_fee_cap: 15_000_000_000_000,
+            blob_fee_cap: None,
+        };
+
+        let prepared = manager
+            .prepare_with_initial_caps(&candidate, None, Some(caps.clone()))
+            .await
+            .expect("should prepare tx using supplied caps");
+        let tx = decode_eip1559(&prepared.raw_tx);
+
+        assert_eq!(tx.to, TxKind::Call(Address::with_last_byte(0x42)));
+        assert_eq!(prepared.gas_tip_cap, caps.gas_tip_cap);
+        assert_eq!(prepared.gas_fee_cap, caps.gas_fee_cap);
+        assert_eq!(tx.max_priority_fee_per_gas, caps.gas_tip_cap);
+        assert_eq!(tx.max_fee_per_gas, caps.gas_fee_cap);
     }
 }
