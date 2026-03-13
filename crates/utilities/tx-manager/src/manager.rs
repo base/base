@@ -241,9 +241,8 @@ impl SimpleTxManager {
         &self,
         candidate: &TxCandidate,
         fee_overrides: Option<FeeOverride>,
-        initial_caps: Option<GasPriceCaps>,
+        mut initial_caps: Option<GasPriceCaps>,
     ) -> TxManagerResult<PreparedTx> {
-        let mut initial_caps = initial_caps;
         (|| {
             let caps = initial_caps.take();
             async move {
@@ -497,14 +496,20 @@ impl SimpleTxManager {
     /// `receipt.inner.status()` to distinguish successful execution from
     /// reverts.
     ///
-    /// # Send timeout
+    /// # Nonce reset on error
     ///
-    /// When `tx_send_timeout` is configured, the inner send loop is wrapped
-    /// in a [`tokio::time::timeout`]. If the send exits with an error before
-    /// any successful publish, the nonce manager is reset before returning.
-    /// This prevents nonce gaps from pre-publish failures, including
-    /// cancellation of `prepare()` after nonce acquisition but before the
-    /// transaction reached the mempool.
+    /// When `send_tx` exits with an error, the nonce manager may be reset
+    /// to prevent stale-counter gaps on the next call:
+    ///
+    /// * **Pre-publish errors** (no tx was ever sent): the nonce is always
+    ///   reset so the next attempt re-fetches from the chain.
+    /// * **`SendTimeout`**: the nonce is always reset — even after a
+    ///   successful publish — because the timeout may have cancelled
+    ///   `prepare()` mid-flight during a fee bump, leaking a nonce from
+    ///   the nonce manager's internal counter.
+    /// * **Post-publish errors** (other than timeout): the nonce is *not*
+    ///   reset, because a transaction may still be pending and re-fetching
+    ///   the `latest` nonce could conflict with it.
     ///
     /// # Errors
     ///
@@ -541,9 +546,13 @@ impl SimpleTxManager {
         };
 
         if Self::should_reset_nonce_on_send_error(&result, &send_state) {
-            // Reset only if nothing was ever published. Once a transaction may
-            // be pending, reusing the latest nonce could conflict with the
-            // in-flight transaction.
+            // Two policies (see should_reset_nonce_on_send_error):
+            // • SendTimeout — always reset. The timeout may have cancelled
+            //   prepare() after it reserved a nonce but before the tx reached
+            //   the mempool, leaking the nonce manager's internal counter.
+            // • Other errors — reset only when no tx was ever published.
+            //   Once a tx may be pending, re-fetching the latest nonce could
+            //   conflict with the in-flight transaction.
             self.nonce_manager.reset().await;
         }
 
@@ -614,6 +623,17 @@ impl SimpleTxManager {
                 return Err(err);
             }
 
+            // If a receipt is already waiting, return it immediately
+            // instead of performing a wasted fee bump.
+            if let Ok(receipt) = receipt_rx.try_recv() {
+                info!(
+                    tx_hash = %receipt.transaction_hash,
+                    block = ?receipt.block_number,
+                    "transaction confirmed",
+                );
+                return Ok(receipt);
+            }
+
             // Respond immediately to the should_bump_fees flag set by
             // process_send_error on retryable errors (e.g. Underpriced,
             // ReplacementUnderpriced), rather than waiting for the next
@@ -652,7 +672,7 @@ impl SimpleTxManager {
             // captures which arm won; fee bump work runs to completion
             // outside the select block.
             tokio::select! {
-                _ = bump_ticker.tick() => {}
+                biased;
                 result = receipt_rx.recv() => {
                     match result {
                         Some(receipt) => {
@@ -669,6 +689,7 @@ impl SimpleTxManager {
                         }
                     }
                 }
+                _ = bump_ticker.tick() => {}
             };
 
             // Bump tick fired — run fee bump logic.
@@ -756,7 +777,7 @@ impl SimpleTxManager {
             self.config.fee_limit_threshold,
         )?;
 
-        // Reset nonce manager so prepare() gets the same pending nonce.
+        // Reset nonce manager so prepare() gets the same latest nonce.
         self.nonce_manager.reset().await;
 
         // Rebuild transaction with bumped fees as overrides. craft_tx()

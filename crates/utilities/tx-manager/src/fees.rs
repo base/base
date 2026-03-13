@@ -33,7 +33,8 @@ impl FeeCalculator {
     /// This is the inverse of [`calc_gas_fee_cap`](Self::calc_gas_fee_cap):
     /// given `fee_cap = tip + 2 × base_fee`, returns `(fee_cap - tip) / 2`.
     #[must_use]
-    pub const fn base_fee_from_caps(gas_fee_cap: u128, gas_tip_cap: u128) -> u128 {
+    pub fn base_fee_from_caps(gas_fee_cap: u128, gas_tip_cap: u128) -> u128 {
+        debug_assert!(gas_fee_cap >= gas_tip_cap);
         gas_fee_cap.saturating_sub(gas_tip_cap) / 2
     }
 
