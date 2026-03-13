@@ -276,7 +276,7 @@ async fn rayon_parallel_nonce_acquisition_produces_unique_nonces() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn concurrent_next_nonce_and_reset_stress() {
+async fn concurrent_next_nonce_uniqueness_across_resets() {
     let (manager, _anvil) = setup();
 
     // Run several rounds of concurrent next_nonce() calls separated by
