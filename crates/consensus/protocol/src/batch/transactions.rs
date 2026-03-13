@@ -366,7 +366,7 @@ mod tests {
 
     use super::*;
 
-    /// Regression: truncated input to decode_tx_sigs must return an error, not panic.
+    /// Regression: truncated input to `decode_tx_sigs` must return an error, not panic.
     /// A dishonest batcher can craft a span batch with fewer bytes than the declared tx count
     /// requires, which previously caused an out-of-bounds slice panic.
     #[test]
@@ -381,7 +381,7 @@ mod tests {
         );
     }
 
-    /// Regression: truncated input to decode_tx_tos must return an error, not panic.
+    /// Regression: truncated input to `decode_tx_tos` must return an error, not panic.
     /// A dishonest batcher can craft a span batch with fewer bytes than the declared non-contract
     /// tx count requires, which previously caused an out-of-bounds slice panic.
     #[test]

@@ -88,7 +88,7 @@ mod test {
 
     use super::*;
 
-    /// Regression: truncated input to decode_parent_check must return an error, not panic.
+    /// Regression: truncated input to `decode_parent_check` must return an error, not panic.
     #[test]
     fn test_decode_parent_check_truncated_input() {
         let mut prefix = SpanBatchPrefix::default();
@@ -99,7 +99,7 @@ mod test {
         );
     }
 
-    /// Regression: truncated input to decode_l1_origin_check must return an error, not panic.
+    /// Regression: truncated input to `decode_l1_origin_check` must return an error, not panic.
     #[test]
     fn test_decode_l1_origin_check_truncated_input() {
         let mut prefix = SpanBatchPrefix::default();
