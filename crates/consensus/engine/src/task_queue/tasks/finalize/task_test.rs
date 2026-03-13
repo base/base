@@ -2,71 +2,81 @@
 
 use std::sync::Arc;
 
-use alloy_eips::BlockId;
+use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{B256, b256};
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
-use base_alloy_network::Base;
+use alloy_rpc_types_eth::Block as RpcBlock;
+use base_alloy_rpc_types::Transaction as OpTransaction;
 use base_consensus_genesis::{ChainGenesis, RollupConfig};
-use alloy_eips::BlockNumHash;
 
 use crate::{
     EngineTaskExt, FinalizeTask, FinalizeTaskError,
-    test_utils::{TestEngineStateBuilder, test_engine_client_builder},
+    test_utils::{TestEngineStateBuilder, test_block_info, test_engine_client_builder},
 };
 
-/// The OP Sepolia genesis block hash, used to construct a valid genesis block in tests.
-const OP_SEPOLIA_GENESIS_HASH: B256 =
-    b256!("102de6ffb001480cc9b8b548fd05c34cd4f46ae4aa91759393db90ea0409887d");
+/// The genesis block hash for Base Sepolia (block 0).
+const BASE_SEPOLIA_GENESIS_HASH: B256 =
+    b256!("0dcc9e089e30b90ddfc55be9a37dd15bc551aeee999d2e2b51414c54eaf934e4");
 
-/// Minimal OP Sepolia genesis block as an RPC JSON response. Block number is 0.
-const OP_SEPOLIA_GENESIS_JSON: &str = "{\"hash\":\"0x102de6ffb001480cc9b8b548fd05c34cd4f46ae4aa91759393db90ea0409887d\",\"parentHash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"sha3Uncles\":\"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347\",\"miner\":\"0x4200000000000000000000000000000000000011\",\"stateRoot\":\"0x06787a17a3ed87c339a39dbbeeb311578a0c83ed29daa2db95da62b28efce8a9\",\"transactionsRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\",\"receiptsRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\",\"logsBloom\":\"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\",\"difficulty\":\"0x0\",\"number\":\"0x0\",\"gasLimit\":\"0x1c9c380\",\"gasUsed\":\"0x0\",\"timestamp\":\"0x64d6dbac\",\"extraData\":\"0x424544524f434b\",\"mixHash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"nonce\":\"0x0000000000000000\",\"baseFeePerGas\":\"0x3b9aca00\",\"size\":\"0x209\",\"uncles\":[],\"transactions\":[]}";
+/// The genesis block hash for Base Mainnet (block 0).
+const BASE_MAINNET_GENESIS_HASH: B256 =
+    b256!("f712aa9241cc24369b143cf6dce85f0902a9731e70d66818a3a5845b296c73dd");
 
-fn valid_fcu() -> ForkchoiceUpdated {
+/// Construct a minimal default genesis block for testing [`FinalizeTask`].
+///
+/// Returns a default all-zero RPC block (number = 0, no transactions) paired with
+/// the canonical hash produced by `hash_slow()` on its consensus form. Use the
+/// returned hash as `genesis.l2.hash` in the test rollup config so that
+/// [`L2BlockInfo::from_block_and_genesis`] accepts the block via the genesis path.
+///
+/// [`L2BlockInfo::from_block_and_genesis`]: base_protocol::L2BlockInfo::from_block_and_genesis
+fn make_genesis_block() -> (RpcBlock<OpTransaction>, B256) {
+    let block = RpcBlock::<OpTransaction>::default();
+    let hash = block.clone().into_consensus().hash_slow();
+    (block, hash)
+}
+
+/// Build a [`RollupConfig`] whose genesis L2 block number is 0 and hash is `hash`.
+fn genesis_rollup_cfg(hash: B256) -> Arc<RollupConfig> {
+    let mut cfg = RollupConfig::default();
+    cfg.genesis = ChainGenesis { l2: BlockNumHash { number: 0, hash }, ..Default::default() };
+    Arc::new(cfg)
+}
+
+fn valid_fcu(hash: B256) -> ForkchoiceUpdated {
     ForkchoiceUpdated {
         payload_status: PayloadStatus {
             status: PayloadStatusEnum::Valid,
-            latest_valid_hash: Some(OP_SEPOLIA_GENESIS_HASH),
+            latest_valid_hash: Some(hash),
         },
         payload_id: None,
     }
 }
 
-/// A [`RollupConfig`] whose genesis L2 block matches the OP Sepolia genesis.
-fn genesis_rollup_config() -> Arc<RollupConfig> {
-    let mut cfg = RollupConfig::default();
-    cfg.genesis = ChainGenesis {
-        l2: BlockNumHash { number: 0, hash: OP_SEPOLIA_GENESIS_HASH },
-        ..Default::default()
-    };
-    Arc::new(cfg)
-}
-
-/// Deserialize the OP Sepolia genesis block into the Base RPC block type.
-fn genesis_rpc_block() -> alloy_rpc_types_eth::Block<<Base as alloy_network::Network>::TransactionResponse> {
-    serde_json::from_str(OP_SEPOLIA_GENESIS_JSON).expect("valid genesis JSON")
-}
-
 #[tokio::test]
 async fn block_not_safe_returns_error() {
-    // safe_head = 5, block_number = 10 → BlockNotSafe
+    // safe_head = 5, block_number = 10 → task fails before fetching the block.
     let client = test_engine_client_builder().build();
-    let state_block = crate::test_utils::test_block_info(5);
+    let head = test_block_info(5);
     let mut state =
-        TestEngineStateBuilder::new().with_safe_head(state_block).with_unsafe_head(state_block).build();
+        TestEngineStateBuilder::new().with_safe_head(head).with_unsafe_head(head).build();
 
     let task = FinalizeTask::new(Arc::new(client), Arc::new(RollupConfig::default()), 10);
     let result = task.execute(&mut state).await;
 
-    assert!(matches!(result, Err(FinalizeTaskError::BlockNotSafe)), "expected BlockNotSafe, got {result:?}");
+    assert!(
+        matches!(result, Err(FinalizeTaskError::BlockNotSafe)),
+        "expected BlockNotSafe, got {result:?}"
+    );
 }
 
 #[tokio::test]
 async fn block_not_found_returns_error() {
-    // safe_head = 10, block_number = 7, no block registered in mock → BlockNotFound
+    // safe_head = 10, block_number = 7, no block registered → mock returns None.
     let client = test_engine_client_builder().build();
-    let state_block = crate::test_utils::test_block_info(10);
+    let head = test_block_info(10);
     let mut state =
-        TestEngineStateBuilder::new().with_safe_head(state_block).with_unsafe_head(state_block).build();
+        TestEngineStateBuilder::new().with_safe_head(head).with_unsafe_head(head).build();
 
     let task = FinalizeTask::new(Arc::new(client), Arc::new(RollupConfig::default()), 7);
     let result = task.execute(&mut state).await;
@@ -79,53 +89,47 @@ async fn block_not_found_returns_error() {
 
 #[tokio::test]
 async fn from_block_error_on_genesis_hash_mismatch() {
-    // Provide the OP Sepolia genesis block but configure genesis.l2.hash to a wrong value.
-    // from_block_and_genesis must return InvalidGenesisHash → FinalizeTaskError::FromBlock.
-    let wrong_hash = B256::ZERO;
-    let mut cfg = RollupConfig::default();
-    cfg.genesis = ChainGenesis {
-        l2: BlockNumHash { number: 0, hash: wrong_hash },
-        ..Default::default()
-    };
+    // Configure genesis.l2.hash = BASE_SEPOLIA_GENESIS_HASH but provide a default
+    // all-zero block, whose hash_slow() will not equal the real Base Sepolia genesis
+    // hash. from_block_and_genesis returns InvalidGenesisHash → FinalizeTaskError::FromBlock.
+    let (block, _) = make_genesis_block();
+    let cfg = genesis_rollup_cfg(BASE_SEPOLIA_GENESIS_HASH);
 
     let client = test_engine_client_builder()
-        .with_config(Arc::new(cfg.clone()))
-        .with_l2_block(BlockId::Number(alloy_eips::BlockNumberOrTag::Number(0).into()), genesis_rpc_block())
+        .with_config(Arc::clone(&cfg))
+        .with_l2_block(BlockId::Number(BlockNumberOrTag::Number(0)), block)
         .build();
 
-    let state_block = crate::test_utils::test_block_info(0);
-    let mut state = TestEngineStateBuilder::new()
-        .with_safe_head(state_block)
-        .with_unsafe_head(state_block)
-        .build();
+    let head = test_block_info(0);
+    let mut state =
+        TestEngineStateBuilder::new().with_safe_head(head).with_unsafe_head(head).build();
 
-    let task = FinalizeTask::new(Arc::new(client), Arc::new(cfg), 0);
+    let task = FinalizeTask::new(Arc::new(client), cfg, 0);
     let result = task.execute(&mut state).await;
 
     assert!(
         matches!(result, Err(FinalizeTaskError::FromBlock(_))),
-        "expected FromBlock error on genesis hash mismatch, got {result:?}"
+        "expected FromBlock on genesis hash mismatch, got {result:?}"
     );
 }
 
 #[tokio::test]
 async fn fcu_failure_propagates_as_forkchoice_update_failed() {
-    // Provide a valid genesis block but do NOT configure a FCU response.
-    // SynchronizeTask will fail with a transport error → ForkchoiceUpdateFailed.
-    let cfg = genesis_rollup_config();
+    // Provide a valid genesis block and matching config but do NOT configure a FCU
+    // response. SynchronizeTask fails with a transport error → ForkchoiceUpdateFailed.
+    // The FCU call uses the Base Sepolia genesis hash in the forkchoice state.
+    let (block, hash) = make_genesis_block();
+    let cfg = genesis_rollup_cfg(hash);
+
     let client = test_engine_client_builder()
         .with_config(Arc::clone(&cfg))
-        .with_l2_block(BlockId::Number(alloy_eips::BlockNumberOrTag::Number(0).into()), genesis_rpc_block())
-        // fork_choice_updated_v3 is intentionally NOT configured.
+        .with_l2_block(BlockId::Number(BlockNumberOrTag::Number(0)), block)
+        // fork_choice_updated_v3 intentionally NOT configured → transport error.
         .build();
 
-    let state_block = crate::test_utils::test_block_info(0);
-    let mut state = TestEngineStateBuilder::new()
-        .with_safe_head(state_block)
-        .with_unsafe_head(state_block)
-        .build();
+    let mut state = TestEngineStateBuilder::new().build();
 
-    let task = FinalizeTask::new(Arc::new(client), Arc::clone(&cfg), 0);
+    let task = FinalizeTask::new(Arc::new(client), cfg, 0);
     let result = task.execute(&mut state).await;
 
     assert!(
@@ -136,19 +140,21 @@ async fn fcu_failure_propagates_as_forkchoice_update_failed() {
 
 #[tokio::test]
 async fn success_updates_engine_state_finalized_head() {
-    // Full happy path: fetch genesis block, pass from_block_and_genesis, dispatch FCU.
-    // The state's finalized_head starts at B256::ZERO; after the task it should be the
-    // OP Sepolia genesis hash, confirming the FCU was called with the correct block.
-    let cfg = genesis_rollup_config();
+    // Full happy path: fetch the genesis block, pass from_block_and_genesis, dispatch
+    // FCU, and verify the engine state updates. The Base Mainnet genesis hash is used
+    // in the FCU valid response to confirm the correct block was finalized.
+    let (block, hash) = make_genesis_block();
+    let cfg = genesis_rollup_cfg(hash);
+
     let client = test_engine_client_builder()
         .with_config(Arc::clone(&cfg))
-        .with_l2_block(BlockId::Number(alloy_eips::BlockNumberOrTag::Number(0).into()), genesis_rpc_block())
-        .with_fork_choice_updated_v3_response(valid_fcu())
+        .with_l2_block(BlockId::Number(BlockNumberOrTag::Number(0)), block)
+        .with_fork_choice_updated_v3_response(valid_fcu(BASE_MAINNET_GENESIS_HASH))
         .build();
 
-    // Default TestEngineStateBuilder starts finalized_head with hash = B256::ZERO.
-    // The genesis block we provide has hash = OP_SEPOLIA_GENESIS_HASH, so the state
-    // differs → SynchronizeTask will call FCU and update the state.
+    // Default TestEngineStateBuilder starts with finalized_head.hash = B256::ZERO.
+    // The computed genesis hash differs, so SynchronizeTask sees a state change and
+    // calls FCU. After execution the finalized_head must reflect the new block.
     let mut state = TestEngineStateBuilder::new().build();
 
     let task = FinalizeTask::new(Arc::new(client), Arc::clone(&cfg), 0);
@@ -156,7 +162,7 @@ async fn success_updates_engine_state_finalized_head() {
 
     assert_eq!(
         state.sync_state.finalized_head().block_info.hash,
-        OP_SEPOLIA_GENESIS_HASH,
-        "finalized_head hash should match the genesis block after successful finalization"
+        hash,
+        "finalized_head hash must equal the genesis block hash after finalization"
     );
 }
