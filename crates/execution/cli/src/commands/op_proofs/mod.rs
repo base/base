@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::CliNodeTypes;
 
+pub mod db;
 pub mod init;
 pub mod prune;
 pub mod unwind;
@@ -28,6 +29,7 @@ impl<C: ChainSpecParser<ChainSpec = OpChainSpec>> Command<C> {
             Subcommands::Init(cmd) => cmd.execute::<N>().await,
             Subcommands::Prune(cmd) => cmd.execute::<N>().await,
             Subcommands::Unwind(cmd) => cmd.execute::<N>().await,
+            Subcommands::Db(cmd) => cmd.execute(),
         }
     }
 }
@@ -39,6 +41,7 @@ impl<C: ChainSpecParser> Command<C> {
             Subcommands::Init(cmd) => cmd.chain_spec(),
             Subcommands::Prune(cmd) => cmd.chain_spec(),
             Subcommands::Unwind(cmd) => cmd.chain_spec(),
+            Subcommands::Db(_) => None,
         }
     }
 }
@@ -55,4 +58,7 @@ pub enum Subcommands<C: ChainSpecParser> {
     /// Unwind the proofs storage to a specific block
     #[command(name = "unwind")]
     Unwind(unwind::UnwindCommand<C>),
+    /// Inspect the proofs database
+    #[command(name = "db")]
+    Db(db::DbCommand),
 }

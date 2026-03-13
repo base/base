@@ -77,6 +77,11 @@ impl MdbxProofsStorage {
         Ok(Self { env })
     }
 
+    /// Returns a reference to the underlying database environment.
+    pub fn db_ref(&self) -> &DatabaseEnv {
+        &self.env
+    }
+
     fn inner_get_latest_block_number_hash(
         &self,
         tx: &impl DbTx,
