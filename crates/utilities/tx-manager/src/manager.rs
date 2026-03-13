@@ -1,18 +1,24 @@
 //! Core transaction manager implementation.
 //!
 //! [`SimpleTxManager`] takes a [`TxCandidate`] through the full construction
-//! pipeline: gas price estimation via [`suggest_gas_price_caps`], fee limit
-//! enforcement via [`FeeCalculator::check_limits`], gas estimation or
-//! validation against the provider, nonce assignment via [`NonceManager`],
-//! and signing via alloy's [`NetworkWallet`] trait.
+//! pipeline: gas price estimation via [`suggest_gas_price_caps`], optional fee
+//! override enforcement, fee limit checks via [`FeeCalculator::check_limits`],
+//! gas estimation or validation against the provider, nonce assignment via
+//! [`NonceManager`], and signing via alloy's [`NetworkWallet`] trait.
 //!
 //! The outer [`prepare`] method wraps [`craft_tx`] in a `backon` retry loop
 //! (up to 30 attempts, 2-second fixed delay) that retries only on transient
-//! errors and exits immediately on shutdown.
+//! errors and exits immediately on shutdown. Both methods accept optional fee
+//! overrides and return a [`PreparedTx`] containing the raw transaction bytes
+//! and the actual fees that were applied, eliminating the need for callers to
+//! re-query gas prices after transaction construction.
 //!
 //! The [`send_tx`] method drives a signed transaction from publication through
 //! mempool to onchain confirmation via a `tokio::select!` event loop that
 //! coordinates fee bumping, receipt polling, and critical error detection.
+//! The `select!` block only determines which event fired; fee bump logic
+//! (including [`prepare`]) always runs to completion outside the `select!`
+//! block to preserve cancellation safety.
 //!
 //! All transaction fields are set manually on [`TransactionRequest`] — no
 //! alloy fillers or `PendingTransactionBuilder` are used.
@@ -48,6 +54,23 @@ use crate::{
     FeeCalculator, GasPriceCaps, NonceManager, RpcErrorClassifier, SendHandle, SendResponse,
     SendState, TxCandidate, TxManager, TxManagerConfig, TxManagerError, TxManagerResult,
 };
+
+/// A signed transaction together with the fee values that were applied
+/// during construction.
+///
+/// Returned by [`SimpleTxManager::prepare`] and
+/// [`SimpleTxManager::craft_tx`] so that callers can track the actual
+/// on-wire fees without a redundant gas price query.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct PreparedTx {
+    /// RLP-encoded signed transaction bytes.
+    pub raw_tx: Bytes,
+    /// Maximum priority fee per gas (tip) used in the signed transaction.
+    pub gas_tip_cap: u128,
+    /// Maximum total fee per gas used in the signed transaction.
+    pub gas_fee_cap: u128,
+}
 
 /// Default transaction manager implementation.
 ///
@@ -175,6 +198,13 @@ impl SimpleTxManager {
     /// fixed delay between retries. Only errors where
     /// [`TxManagerError::is_retryable`] returns `true` trigger a retry.
     ///
+    /// When `fee_overrides` is `Some((tip, fee_cap))`, the provided values
+    /// are used as a floor — `craft_tx` takes `max(network_fee, override)`
+    /// so the resulting transaction is guaranteed to meet the override
+    /// thresholds. Pass `None` for the initial send; pass the bumped fees
+    /// during fee-bump iterations to ensure replacement transactions
+    /// satisfy geth's replacement rules.
+    ///
     /// # Cancellation safety
     ///
     /// This future is **not** cancellation-safe. Each retry iteration
@@ -191,7 +221,11 @@ impl SimpleTxManager {
     /// Returns immediately with [`TxManagerError::ChannelClosed`] if the
     /// manager is closed. Otherwise returns the first non-retryable error,
     /// or the last retryable error after exhausting all retry attempts.
-    pub async fn prepare(&self, candidate: &TxCandidate) -> TxManagerResult<Bytes> {
+    pub async fn prepare(
+        &self,
+        candidate: &TxCandidate,
+        fee_overrides: Option<(u128, u128)>,
+    ) -> TxManagerResult<PreparedTx> {
         if self.is_closed() {
             return Err(TxManagerError::ChannelClosed);
         }
@@ -203,7 +237,7 @@ impl SimpleTxManager {
             if self.is_closed() {
                 return Err(TxManagerError::ChannelClosed);
             }
-            self.craft_tx(candidate).await
+            self.craft_tx(candidate, fee_overrides).await
         })
         .retry(
             ConstantBuilder::default()
@@ -276,16 +310,24 @@ impl SimpleTxManager {
     ///
     /// Steps:
     /// 1. Query gas price caps via [`suggest_gas_price_caps`](Self::suggest_gas_price_caps)
-    /// 2. Check fee limits via [`FeeCalculator::check_limits`]
-    /// 3. Build a [`TransactionRequest`] with all fields set manually
-    /// 4. Estimate gas via the provider; use `max(estimate, candidate.gas_limit)` as floor
-    /// 5. Assign nonce via [`NonceManager::next_nonce`]
-    /// 6. Sign and RLP-encode to raw transaction bytes
+    /// 2. Apply fee overrides as a floor (`max(network_fee, override)`)
+    /// 3. Check fee limits via [`FeeCalculator::check_limits`]
+    /// 4. Build a [`TransactionRequest`] with all fields set manually
+    /// 5. Estimate gas via the provider; use `max(estimate, candidate.gas_limit)` as floor
+    /// 6. Assign nonce via [`NonceManager::next_nonce`]
+    /// 7. Sign and RLP-encode to raw transaction bytes
+    ///
+    /// When `fee_overrides` is `Some((tip, fee_cap))`, the provided values
+    /// are used as a floor — the transaction will use
+    /// `max(network_fee, override)` for each component. This ensures that
+    /// replacement transactions always meet the bumped fee thresholds
+    /// required by geth's tx-replacement rules, even if network fees have
+    /// dropped since the bump was calculated.
     ///
     /// # Cancellation safety
     ///
     /// This future is **not** cancellation-safe. If dropped after nonce
-    /// acquisition (step 5) but before signing completes (step 6), the
+    /// acquisition (step 6) but before signing completes (step 7), the
     /// nonce is consumed without producing a transaction, creating a
     /// permanent nonce gap. Callers must not wrap this future in
     /// `tokio::select!`, `tokio::time::timeout`, or similar combinators
@@ -295,7 +337,11 @@ impl SimpleTxManager {
     ///
     /// Returns classified RPC errors, [`TxManagerError::FeeLimitExceeded`],
     /// nonce errors, or signing errors.
-    pub async fn craft_tx(&self, candidate: &TxCandidate) -> TxManagerResult<Bytes> {
+    pub async fn craft_tx(
+        &self,
+        candidate: &TxCandidate,
+        fee_overrides: Option<(u128, u128)>,
+    ) -> TxManagerResult<PreparedTx> {
         // Blob transactions are not yet supported.
         if !candidate.blobs.is_empty() {
             return Err(TxManagerError::Unsupported(
@@ -306,28 +352,40 @@ impl SimpleTxManager {
         // Step 1: Get fee estimates.
         let caps = self.suggest_gas_price_caps().await?;
 
-        // Step 2: Check fee limits.
+        // Step 2: Apply fee overrides as a floor.
+        //
+        // During fee bumps the caller passes the bumped (tip, fee_cap)
+        // as overrides. We take the max of the fresh network estimate
+        // and the override so the replacement transaction is guaranteed
+        // to satisfy geth's replacement rules even if network fees have
+        // dropped since the bump was calculated.
+        let (tip_cap, fee_cap) = match fee_overrides {
+            Some((override_tip, override_fee_cap)) => {
+                (caps.gas_tip_cap.max(override_tip), caps.gas_fee_cap.max(override_fee_cap))
+            }
+            None => (caps.gas_tip_cap, caps.gas_fee_cap),
+        };
+
+        // Step 3: Check fee limits.
         //
         // The `suggested` parameter is the raw gas_fee_cap computed from
         // the provider's values before enforcing our configured minimums
         // (`min_tip_cap`, `min_basefee`). This detects when enforced
-        // minimums inflate the fee cap beyond
-        // `fee_limit_multiplier × raw_provider_fee_cap`. During fee bumps
-        // (future ticket) the caller passes the previous fee as
-        // `suggested` instead.
+        // minimums or fee overrides inflate the fee cap beyond
+        // `fee_limit_multiplier × raw_provider_fee_cap`.
         FeeCalculator::check_limits(
-            caps.gas_fee_cap,
+            fee_cap,
             caps.raw_gas_fee_cap,
             self.config.fee_limit_multiplier,
             self.config.fee_limit_threshold,
         )?;
 
-        // Step 3: Build TransactionRequest.
+        // Step 4: Build TransactionRequest.
         let from = self.sender_address();
         let mut tx_request = TransactionRequest::default()
             .with_input(candidate.tx_data.clone())
-            .with_max_fee_per_gas(caps.gas_fee_cap)
-            .with_max_priority_fee_per_gas(caps.gas_tip_cap)
+            .with_max_fee_per_gas(fee_cap)
+            .with_max_priority_fee_per_gas(tip_cap)
             .with_value(candidate.value)
             .with_chain_id(self.chain_id);
 
@@ -338,7 +396,7 @@ impl SimpleTxManager {
             None => tx_request = tx_request.into_create(),
         }
 
-        // Step 4: Gas estimation.
+        // Step 5: Gas estimation.
         //
         // Always call estimate_gas to enforce intrinsic gas checks (e.g.
         // the 21,000 minimum for plain value transfers). When the caller
@@ -354,19 +412,19 @@ impl SimpleTxManager {
         let gas_limit = candidate.gas_limit.max(estimated);
         tx_request = tx_request.with_gas_limit(gas_limit);
 
-        // Step 5: Assign nonce.
+        // Step 6: Assign nonce.
         let guard = self.nonce_manager.next_nonce().await?;
         tx_request = tx_request.with_nonce(guard.nonce());
 
         info!(
             nonce = guard.nonce(),
             gas_limit = %gas_limit,
-            tip_cap = %caps.gas_tip_cap,
-            fee_cap = %caps.gas_fee_cap,
+            tip_cap = %tip_cap,
+            fee_cap = %fee_cap,
             "transaction crafted",
         );
 
-        // Step 6: Sign and encode.
+        // Step 7: Sign and encode.
         let sign_result =
             <TransactionRequest as TransactionBuilder<Ethereum>>::build(tx_request, &self.wallet)
                 .await;
@@ -375,7 +433,11 @@ impl SimpleTxManager {
             Ok(envelope) => {
                 // Consume the nonce (drop guard).
                 drop(guard);
-                Ok(Bytes::from(Encodable2718::encoded_2718(&envelope)))
+                Ok(PreparedTx {
+                    raw_tx: Bytes::from(Encodable2718::encoded_2718(&envelope)),
+                    gas_tip_cap: tip_cap,
+                    gas_fee_cap: fee_cap,
+                })
             }
             Err(e) => {
                 // Roll back nonce on sign failure.
@@ -446,17 +508,16 @@ impl SimpleTxManager {
         candidate: &TxCandidate,
         send_state: &Arc<SendState>,
     ) -> SendResponse {
-        // Get initial gas price estimates for fee tracking.
-        let caps = self.suggest_gas_price_caps().await?;
-        let mut current_tip = caps.gas_tip_cap;
-        let mut current_fee_cap = caps.gas_fee_cap;
-
         // Initial transaction preparation. prepare() is NOT cancellation-safe,
         // so it runs to completion before entering the select loop.
-        let raw_tx = self.prepare(candidate).await?;
+        // The returned PreparedTx carries the actual on-wire fees, eliminating
+        // the need for a separate suggest_gas_price_caps() call.
+        let prepared = self.prepare(candidate, None).await?;
+        let mut current_tip = prepared.gas_tip_cap;
+        let mut current_fee_cap = prepared.gas_fee_cap;
 
         // Publish initial transaction.
-        let mut last_tx_hash = self.publish_tx(send_state, &raw_tx, None).await?;
+        let mut last_tx_hash = self.publish_tx(send_state, &prepared.raw_tx, None).await?;
 
         // Receipt delivery channel — mpsc because fee bumps may spawn
         // new wait tasks with different tx hashes.
@@ -516,21 +577,13 @@ impl SimpleTxManager {
                 continue;
             }
 
-            tokio::select! {
-                _ = bump_ticker.tick() => {
-                    // Fee bump: query fresh gas prices and apply bump logic.
-                    let result = self
-                        .handle_fee_bump(candidate, send_state, &receipt_tx, current_tip, current_fee_cap, last_tx_hash)
-                        .await;
-                    if let Some(abort) = Self::apply_bump_result(
-                        result,
-                        &mut current_tip,
-                        &mut current_fee_cap,
-                        &mut last_tx_hash,
-                    ) {
-                        return Err(abort);
-                    }
-                }
+            // Determine which event fired. handle_fee_bump (and
+            // transitively prepare()) is NOT cancellation-safe, so it
+            // must not run inside tokio::select!. The select block only
+            // captures which arm won; fee bump work runs to completion
+            // outside the select block.
+            let is_bump_tick = tokio::select! {
+                _ = bump_ticker.tick() => true,
                 result = receipt_rx.recv() => {
                     match result {
                         Some(receipt) => {
@@ -547,6 +600,27 @@ impl SimpleTxManager {
                         }
                     }
                 }
+            };
+
+            if is_bump_tick {
+                let result = self
+                    .handle_fee_bump(
+                        candidate,
+                        send_state,
+                        &receipt_tx,
+                        current_tip,
+                        current_fee_cap,
+                        last_tx_hash,
+                    )
+                    .await;
+                if let Some(abort) = Self::apply_bump_result(
+                    result,
+                    &mut current_tip,
+                    &mut current_fee_cap,
+                    &mut last_tx_hash,
+                ) {
+                    return Err(abort);
+                }
             }
         }
     }
@@ -557,12 +631,18 @@ impl SimpleTxManager {
     /// checks fee limits, resets the nonce manager, rebuilds and re-publishes
     /// the transaction, and spawns a new receipt polling task.
     ///
+    /// The bumped `(tip, fee_cap)` values are passed as fee overrides to
+    /// [`prepare`](Self::prepare), which forwards them to
+    /// [`craft_tx`](Self::craft_tx). There, each override is used as a
+    /// floor via `max(network_fee, override)`, guaranteeing the replacement
+    /// transaction meets geth's replacement thresholds even if network fees
+    /// have dropped since the bump was calculated.
+    ///
     /// Returns the updated `(tip, fee_cap, tx_hash)` on success. The
-    /// returned tip and fee cap reflect the *actual* fees used by the
-    /// rebuilt transaction rather than the theoretical bumped values, so
-    /// that subsequent bump iterations use an accurate baseline. This is
-    /// achieved by re-querying gas prices after `prepare()` and taking
-    /// the maximum of the bumped values and the fresh query.
+    /// returned tip and fee cap are taken directly from the [`PreparedTx`]
+    /// returned by `prepare()`, reflecting the *actual* on-wire fees
+    /// (which are guaranteed >= the bumped values) so that subsequent bump
+    /// iterations use an accurate baseline.
     async fn handle_fee_bump(
         &self,
         candidate: &TxCandidate,
@@ -600,24 +680,14 @@ impl SimpleTxManager {
         // Reset nonce manager so prepare() gets the same pending nonce.
         self.nonce_manager.reset().await;
 
-        // Rebuild transaction with fresh gas prices.
-        let raw_tx = self.prepare(candidate).await?;
+        // Rebuild transaction with bumped fees as overrides. craft_tx()
+        // takes max(network_fee, override) for each component, so the
+        // replacement tx is guaranteed to satisfy geth's replacement
+        // thresholds. The returned PreparedTx carries the actual on-wire
+        // fees, eliminating the need for a post-hoc reconciliation query.
+        let prepared = self.prepare(candidate, Some((bumped_tip, bumped_fee_cap))).await?;
 
-        // Sync tracked fees with what prepare() actually used.
-        //
-        // prepare() internally calls suggest_gas_price_caps() and may use
-        // fees that differ from our bumped values (higher if gas prices
-        // rose, or lower if they fell). To prevent fee tracking drift
-        // across successive bumps, re-query gas prices (a close proxy for
-        // what prepare() saw) and take the max of the bumped values and
-        // the fresh query. This ensures the tracked baseline is always at
-        // least as high as the actual on-wire fees, preserving the
-        // monotonic bump guarantee.
-        let post_caps = self.suggest_gas_price_caps().await?;
-        let tracked_tip = bumped_tip.max(post_caps.gas_tip_cap);
-        let tracked_fee_cap = bumped_fee_cap.max(post_caps.gas_fee_cap);
-
-        let new_hash = self.publish_tx(send_state, &raw_tx, Some(last_tx_hash)).await?;
+        let new_hash = self.publish_tx(send_state, &prepared.raw_tx, Some(last_tx_hash)).await?;
 
         // Spawn a new receipt polling task for the bumped tx.
         Self::wait_for_tx(
@@ -629,7 +699,7 @@ impl SimpleTxManager {
             Arc::clone(&self.closed),
         );
 
-        Ok((tracked_tip, tracked_fee_cap, new_hash))
+        Ok((prepared.gas_tip_cap, prepared.gas_fee_cap, new_hash))
     }
 
     /// Applies the result of a fee bump attempt, updating the tracked fee

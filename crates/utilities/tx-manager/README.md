@@ -15,6 +15,10 @@ Transaction lifecycle management for Base onchain components.
 - **`TxCandidate`**: Input to the send pipeline. With empty `blobs` it produces a regular
   EIP-1559 (type-2) transaction; with non-empty `blobs` it produces an EIP-4844 (type-3)
   blob-carrying transaction. Carries calldata, optional recipient, gas limit, and value.
+- **`PreparedTx`**: A signed transaction together with the fee values (`gas_tip_cap`,
+  `gas_fee_cap`) that were applied during construction. Returned by `prepare()` and
+  `craft_tx()` so callers can track the actual on-wire fees without a redundant gas price
+  query.
 - **`GasPriceCaps`**: Intermediate fee estimates (tip cap, base fee cap, optional blob fee cap)
   passed between fee calculation and transaction construction.
 - **`FeeCalculator`**: Pure, deterministic fee arithmetic engine operating on `u128` values
@@ -63,9 +67,12 @@ Transaction lifecycle management for Base onchain components.
   `new()` validates the config and cross-checks the chain ID against the provider.
   `prepare()` wraps `craft_tx()` in a `backon` retry loop (up to 30 attempts, 2-second
   fixed delay) that retries only on transient errors and exits immediately when closed.
-  `craft_tx()` queries gas price caps, enforces fee limits, builds a `TransactionRequest`
-  with all fields set manually (no alloy fillers), estimates or validates gas, assigns a
-  nonce via `NonceManager`, signs via `NetworkWallet`, and returns RLP-encoded raw bytes.
+  Both methods accept optional fee overrides `(tip, fee_cap)` and return a `PreparedTx`
+  containing the RLP-encoded raw bytes and the actual fees applied. `craft_tx()` queries
+  gas price caps, applies fee overrides as a floor via `max(network_fee, override)`,
+  enforces fee limits, builds a `TransactionRequest` with all fields set manually (no
+  alloy fillers), estimates or validates gas, assigns a nonce via `NonceManager`, and
+  signs via `NetworkWallet`.
   `suggest_gas_price_caps()` queries the provider for tip cap and base fee, enforces
   configured minimums, and returns a `GasPriceCaps`. Blob transactions are not yet
   supported and are rejected with an error.
@@ -211,11 +218,13 @@ let candidate = TxCandidate {
 };
 
 // Construct and sign the transaction (with automatic retry on transient errors).
-// Returns RLP-encoded raw transaction bytes ready for submission.
-let raw_tx = manager.prepare(&candidate).await?;
+// Returns a PreparedTx containing the raw bytes and the fees that were applied.
+let prepared = manager.prepare(&candidate, None).await?;
+let raw_tx = prepared.raw_tx;
 
 // Or use craft_tx() directly for a single attempt without retry.
-let raw_tx = manager.craft_tx(&candidate).await?;
+let prepared = manager.craft_tx(&candidate, None).await?;
+let raw_tx = prepared.raw_tx;
 ```
 
 ## License

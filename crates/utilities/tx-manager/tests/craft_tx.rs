@@ -63,8 +63,8 @@ async fn craft_tx_produces_valid_signed_eip1559_transaction() {
         ..Default::default()
     };
 
-    let raw_tx = manager.craft_tx(&candidate).await.expect("should craft tx");
-    let tx = decode_eip1559(&raw_tx);
+    let prepared = manager.craft_tx(&candidate, None).await.expect("should craft tx");
+    let tx = decode_eip1559(&prepared.raw_tx);
 
     assert_eq!(tx.to, TxKind::Call(to));
     assert_eq!(tx.value, value);
@@ -73,6 +73,11 @@ async fn craft_tx_produces_valid_signed_eip1559_transaction() {
     assert_eq!(tx.gas_limit, 21_000, "plain value transfer intrinsic gas should be 21,000");
     assert!(tx.max_fee_per_gas > 0, "max_fee_per_gas should be non-zero");
     assert!(tx.max_priority_fee_per_gas > 0, "max_priority_fee_per_gas should be non-zero");
+    assert!(prepared.gas_tip_cap > 0, "PreparedTx gas_tip_cap should be non-zero");
+    assert!(
+        prepared.gas_fee_cap > prepared.gas_tip_cap,
+        "PreparedTx gas_fee_cap should exceed gas_tip_cap",
+    );
 }
 
 #[tokio::test]
@@ -90,8 +95,9 @@ async fn craft_tx_with_explicit_gas_limit_above_estimate() {
         ..Default::default()
     };
 
-    let raw_tx = manager.craft_tx(&candidate).await.expect("should craft tx with explicit gas");
-    let tx = decode_eip1559(&raw_tx);
+    let prepared =
+        manager.craft_tx(&candidate, None).await.expect("should craft tx with explicit gas");
+    let tx = decode_eip1559(&prepared.raw_tx);
 
     // The decoded gas_limit must equal the caller's explicit value,
     // proving it was used as a floor above the provider estimate.
@@ -108,7 +114,7 @@ async fn craft_tx_rejects_blob_transactions() {
         ..Default::default()
     };
 
-    let err = manager.craft_tx(&candidate).await.expect_err("should reject blob tx");
+    let err = manager.craft_tx(&candidate, None).await.expect_err("should reject blob tx");
     match &err {
         TxManagerError::Unsupported(msg) => {
             assert!(
@@ -132,8 +138,9 @@ async fn craft_tx_contract_creation() {
         ..Default::default()
     };
 
-    let raw_tx = manager.craft_tx(&candidate).await.expect("should craft contract creation tx");
-    let tx = decode_eip1559(&raw_tx);
+    let prepared =
+        manager.craft_tx(&candidate, None).await.expect("should craft contract creation tx");
+    let tx = decode_eip1559(&prepared.raw_tx);
 
     assert_eq!(tx.to, TxKind::Create);
 }
@@ -172,8 +179,8 @@ async fn prepare_produces_valid_signed_transaction() {
         ..Default::default()
     };
 
-    let raw_tx = manager.prepare(&candidate).await.expect("should prepare tx");
-    let tx = decode_eip1559(&raw_tx);
+    let prepared = manager.prepare(&candidate, None).await.expect("should prepare tx");
+    let tx = decode_eip1559(&prepared.raw_tx);
 
     // Confirm the candidate's fields survive the retry wrapper.
     assert_eq!(tx.to, TxKind::Call(to));
@@ -192,7 +199,7 @@ async fn prepare_returns_channel_closed_when_manager_is_closed() {
         ..Default::default()
     };
 
-    let err = manager.prepare(&candidate).await.expect_err("should fail");
+    let err = manager.prepare(&candidate, None).await.expect_err("should fail");
     assert_eq!(err, TxManagerError::ChannelClosed);
 }
 
@@ -225,11 +232,11 @@ async fn sequential_craft_tx_increments_nonce() {
     };
 
     // Craft two transactions — nonces should be sequential.
-    let raw_tx1 = manager.craft_tx(&candidate).await.expect("first tx");
-    let raw_tx2 = manager.craft_tx(&candidate).await.expect("second tx");
+    let prepared1 = manager.craft_tx(&candidate, None).await.expect("first tx");
+    let prepared2 = manager.craft_tx(&candidate, None).await.expect("second tx");
 
-    assert_eq!(decode_eip1559(&raw_tx1).nonce, 0);
-    assert_eq!(decode_eip1559(&raw_tx2).nonce, 1);
+    assert_eq!(decode_eip1559(&prepared1.raw_tx).nonce, 0);
+    assert_eq!(decode_eip1559(&prepared2.raw_tx).nonce, 1);
 }
 
 #[tokio::test]
@@ -271,8 +278,8 @@ async fn craft_tx_preserves_calldata() {
         ..Default::default()
     };
 
-    let raw_tx = manager.craft_tx(&candidate).await.expect("should craft tx with calldata");
-    let tx = decode_eip1559(&raw_tx);
+    let prepared = manager.craft_tx(&candidate, None).await.expect("should craft tx with calldata");
+    let tx = decode_eip1559(&prepared.raw_tx);
 
     assert_eq!(tx.input, calldata, "calldata should be preserved in the decoded transaction");
 }
@@ -364,7 +371,7 @@ async fn craft_tx_returns_fee_limit_exceeded_when_minimums_inflate_beyond_multip
         ..Default::default()
     };
 
-    let err = manager.craft_tx(&candidate).await.expect_err("should exceed fee limit");
+    let err = manager.craft_tx(&candidate, None).await.expect_err("should exceed fee limit");
     assert!(
         matches!(err, TxManagerError::FeeLimitExceeded { .. }),
         "expected TxManagerError::FeeLimitExceeded, got {err:?}",
@@ -387,7 +394,8 @@ async fn prepare_exits_immediately_on_non_retryable_error() {
 
     // If Unsupported were retryable, prepare would wait up to
     // 30 × 2 s = 60 s. The 5-second timeout catches that regression.
-    let result = tokio::time::timeout(Duration::from_secs(5), manager.prepare(&candidate)).await;
+    let result =
+        tokio::time::timeout(Duration::from_secs(5), manager.prepare(&candidate, None)).await;
 
     let err = result
         .expect("prepare should return within 5 s for a non-retryable error")
@@ -476,7 +484,7 @@ async fn craft_tx_rolls_back_nonce_on_sign_failure() {
     };
 
     // First call: signing fails, nonce should be rolled back.
-    let err = failing_manager.craft_tx(&candidate).await.expect_err("should fail to sign");
+    let err = failing_manager.craft_tx(&candidate, None).await.expect_err("should fail to sign");
     assert!(matches!(err, TxManagerError::Sign(_)), "expected TxManagerError::Sign, got {err:?}",);
 
     // Query the same NonceManager directly. If rollback worked the
