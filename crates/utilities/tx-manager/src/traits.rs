@@ -70,7 +70,7 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::*;
-    use crate::{test_utils::stub_receipt, TxManagerError};
+    use crate::{TxManagerError, test_utils::stub_receipt};
 
     #[tokio::test]
     async fn send_handle_yields_ok_on_success() {

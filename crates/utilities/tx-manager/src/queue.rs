@@ -7,7 +7,7 @@
 
 use std::{num::NonZeroUsize, sync::Arc};
 
-use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 use tracing::debug;
 
 use crate::{SendResponse, TxCandidate, TxManager};
@@ -65,14 +65,9 @@ impl<M: TxManager + 'static> TxQueue<M> {
         candidate: TxCandidate,
         result_tx: mpsc::Sender<SendResult<T>>,
     ) {
-        debug!(
-            available = self.semaphore.available_permits(),
-            "acquiring send permit",
-        );
-        let permit = Arc::clone(&self.semaphore)
-            .acquire_owned()
-            .await
-            .expect("semaphore is never closed");
+        debug!(available = self.semaphore.available_permits(), "acquiring send permit",);
+        let permit =
+            Arc::clone(&self.semaphore).acquire_owned().await.expect("semaphore is never closed");
         debug!("send permit acquired");
         self.dispatch(permit, id, candidate, result_tx).await;
     }
@@ -138,15 +133,15 @@ impl<M: TxManager + 'static> TxQueue<M> {
 #[cfg(test)]
 mod tests {
     use std::sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     };
 
     use alloy_primitives::Address;
-    use tokio::sync::{mpsc, Notify};
+    use tokio::sync::{Notify, mpsc};
 
     use super::*;
-    use crate::{test_utils::stub_receipt, SendHandle, TxManagerError};
+    use crate::{SendHandle, TxManagerError, test_utils::stub_receipt};
 
     fn stub_candidate() -> TxCandidate {
         TxCandidate::default()
@@ -281,11 +276,8 @@ mod tests {
 
         // On current_thread, yield_now deterministically advances the spawned
         // task to its semaphore await. Use a short timeout as a safety net.
-        let timeout_result = tokio::time::timeout(
-            std::time::Duration::from_millis(50),
-            &mut blocked,
-        )
-        .await;
+        let timeout_result =
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut blocked).await;
         assert!(timeout_result.is_err(), "third send should be blocked");
 
         // Complete the first transaction — frees a permit.
@@ -397,5 +389,4 @@ mod tests {
         assert_eq!(second.id, 2);
         assert_eq!(second.result.unwrap_err(), TxManagerError::NonceTooLow);
     }
-
 }
