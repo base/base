@@ -437,7 +437,8 @@ async fn reorg_flip_flop_empty_middle_fork() {
         let derived = verifier.act_l2_pipeline_full().await.expect("fork A: step");
         assert_eq!(derived, 1, "fork A: L2 block {i} derived");
         assert_eq!(
-            verifier.l2_safe().l1_origin.number, 0,
+            verifier.l2_safe().l1_origin.number,
+            0,
             "fork A: L2 block {i} l1_origin = genesis"
         );
     }
@@ -500,8 +501,10 @@ async fn reorg_flip_flop_empty_middle_fork() {
         let derived = verifier.act_l2_pipeline_full().await.expect("fork C: step");
         assert_eq!(derived, 1, "fork C: L2 block {} re-derived", i + 1);
         assert_eq!(
-            verifier.l2_safe().l1_origin.number, 0,
-            "fork C: L2 block {} l1_origin = genesis", i + 1
+            verifier.l2_safe().l1_origin.number,
+            0,
+            "fork C: L2 block {} l1_origin = genesis",
+            i + 1
         );
     }
     assert_eq!(verifier.l2_safe().block_info.number, 2, "fork C: safe head = 2 after flip-flop");
