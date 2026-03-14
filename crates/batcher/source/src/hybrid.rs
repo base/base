@@ -79,13 +79,13 @@ where
             }
             Some(existing_hash) if *existing_hash == hash => {
                 // Duplicate — already seen this exact block.
-                tracing::debug!(block = number, "duplicate block, skipping");
+                tracing::debug!(block = %number, "duplicate block, skipping");
                 None
             }
             Some(_) => {
                 // Same number, different hash — reorg detected.
                 tracing::warn!(
-                    block = number,
+                    block = %number,
                     "reorg detected: different hash for same block number"
                 );
                 self.seen.insert(number, hash);

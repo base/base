@@ -260,7 +260,7 @@ where
                         TxOutcome::Confirmed { l1_block } => {
                             self.pipeline.confirm(id, l1_block);
                             self.pipeline.advance_l1_head(l1_block);
-                            debug!(id = %id.0, l1_block, "submission confirmed");
+                            debug!(id = %id.0, l1_block = %l1_block, "submission confirmed");
                         }
                         TxOutcome::Failed => {
                             self.pipeline.requeue(id);
