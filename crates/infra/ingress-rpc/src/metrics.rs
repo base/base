@@ -48,6 +48,10 @@ pub struct Metrics {
     #[metric(describe = "Duration of meter_bundle")]
     pub meter_bundle_duration: Histogram,
 
+    /// State root calculation time reported by metering.
+    #[metric(describe = "State root calculation time from meter_bundle (microseconds)")]
+    pub meter_bundle_state_root_time_us: Histogram,
+
     /// Duration of send raw transaction.
     #[metric(describe = "Duration of send_raw_transaction")]
     pub send_raw_transaction_duration: Histogram,
