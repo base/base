@@ -195,6 +195,11 @@ impl Cli {
                         "--prover-replicas is required for k8s discovery mode".into(),
                     )
                 })?;
+                if replicas == 0 {
+                    return Err(RegistrarError::Config(
+                        "--prover-replicas must be greater than 0".into(),
+                    ));
+                }
                 DiscoveryConfig::K8s {
                     statefulset_name,
                     service_name,
@@ -523,6 +528,17 @@ mod tests {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ];
         assert!(Cli::try_parse_from(args).is_err());
+    }
+
+    #[test]
+    fn zero_replicas_fails_into_config() {
+        let mut args = base_args();
+        // Replace the existing --prover-replicas value with 0.
+        let idx = args.iter().position(|a| *a == "--prover-replicas").unwrap();
+        args[idx + 1] = "0";
+        assert!(
+            Cli::try_parse_from(args).expect("clap should parse these args").into_config().is_err()
+        );
     }
 
     #[test]
