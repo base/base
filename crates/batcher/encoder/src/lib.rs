@@ -14,6 +14,7 @@ mod pipeline;
 pub use pipeline::BatchPipeline;
 
 mod channel;
+pub use channel::{OpenChannel, PendingRef, ReadyChannel};
 
 mod encoder;
 pub use encoder::BatchEncoder;
