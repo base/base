@@ -1,0 +1,5 @@
+rpc: http://localhost:8545
+funder_key: "<your key here>"
+sender_count: 10
+target_tps: 10
+duration: "30s"
