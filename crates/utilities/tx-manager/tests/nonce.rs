@@ -349,9 +349,117 @@ async fn reserve_nonce_protects_against_reset_collision() {
     // After reset, chain returns 0. But high-water mark (2) ensures
     // next_nonce() returns >= 2, avoiding collision with reserved 0 and 1.
     let guard = manager.next_nonce().await.expect("should get nonce after reset");
-    assert!(
-        guard.nonce() >= 2,
-        "nonce after reset must be >= 2 to avoid collision with reserved nonces, got {}",
+    assert_eq!(
         guard.nonce(),
+        2,
+        "nonce after reset must be exactly 2 to avoid collision with reserved nonces 0 and 1",
     );
+}
+
+// ── returned nonce (gap recovery) tests ───────────────────────────
+
+#[tokio::test]
+async fn return_reserved_nonce_enables_reuse() {
+    let (manager, _anvil) = setup();
+
+    // Reserve nonces 0, 1, 2.
+    let n0 = manager.reserve_nonce().await.unwrap();
+    let n1 = manager.reserve_nonce().await.unwrap();
+    let n2 = manager.reserve_nonce().await.unwrap();
+    assert_eq!((n0, n1, n2), (0, 1, 2));
+
+    // Simulate failure of task with nonce 1.
+    manager.return_reserved_nonce(1).await;
+
+    // next_nonce should reissue 1 before allocating 3.
+    let guard = manager.next_nonce().await.unwrap();
+    assert_eq!(guard.nonce(), 1, "returned nonce should be reissued");
+    drop(guard);
+
+    // After reissue, next nonce should be 3 (fresh).
+    let guard = manager.next_nonce().await.unwrap();
+    assert_eq!(guard.nonce(), 3, "next nonce should be fresh after returned nonce consumed");
+}
+
+#[tokio::test]
+async fn returned_nonces_survive_reset() {
+    let (manager, _anvil) = setup();
+
+    let n = manager.reserve_nonce().await.unwrap();
+    assert_eq!(n, 0);
+
+    // Return it then reset — returned nonce must persist.
+    manager.return_reserved_nonce(0).await;
+    manager.reset().await;
+
+    let guard = manager.next_nonce().await.unwrap();
+    assert_eq!(guard.nonce(), 0, "returned nonce should survive reset");
+}
+
+#[tokio::test]
+async fn rollback_recycled_nonce_re_inserts() {
+    let (manager, _anvil) = setup();
+
+    // Reserve 0 and 1, return 0.
+    let _ = manager.reserve_nonce().await.unwrap();
+    let _ = manager.reserve_nonce().await.unwrap();
+    manager.return_reserved_nonce(0).await;
+
+    // Get recycled nonce 0.
+    let guard = manager.next_nonce().await.unwrap();
+    assert_eq!(guard.nonce(), 0);
+
+    // Roll it back — should re-insert into returned_nonces.
+    guard.rollback();
+
+    // Next nonce should be 0 again.
+    let guard = manager.next_nonce().await.unwrap();
+    assert_eq!(guard.nonce(), 0, "rolled-back recycled nonce should be reissued");
+}
+
+#[tokio::test]
+async fn multiple_returned_nonces_reissued_in_order() {
+    let (manager, _anvil) = setup();
+
+    // Reserve 0, 1, 2, 3.
+    for _ in 0..4 {
+        manager.reserve_nonce().await.unwrap();
+    }
+
+    // Return 3 and 1 (out of order).
+    manager.return_reserved_nonce(3).await;
+    manager.return_reserved_nonce(1).await;
+
+    // Should reissue smallest first: 1, then 3.
+    let g1 = manager.next_nonce().await.unwrap();
+    assert_eq!(g1.nonce(), 1);
+    drop(g1);
+
+    let g3 = manager.next_nonce().await.unwrap();
+    assert_eq!(g3.nonce(), 3);
+    drop(g3);
+
+    // Next fresh nonce should be 4.
+    let g4 = manager.next_nonce().await.unwrap();
+    assert_eq!(g4.nonce(), 4, "next fresh nonce after returned nonces should be 4");
+}
+
+#[tokio::test]
+async fn reserve_nonce_reuses_returned_nonce() {
+    let (manager, _anvil) = setup();
+
+    // Reserve 0 and 1.
+    let _ = manager.reserve_nonce().await.unwrap();
+    let _ = manager.reserve_nonce().await.unwrap();
+
+    // Return 0.
+    manager.return_reserved_nonce(0).await;
+
+    // reserve_nonce should reissue 0 (via next_nonce → advance_nonce).
+    let n = manager.reserve_nonce().await.unwrap();
+    assert_eq!(n, 0, "reserve_nonce should reuse returned nonce");
+
+    // Next fresh should be 2.
+    let n = manager.reserve_nonce().await.unwrap();
+    assert_eq!(n, 2, "next reserve after reuse should be fresh nonce 2");
 }

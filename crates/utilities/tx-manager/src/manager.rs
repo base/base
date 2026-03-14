@@ -685,6 +685,15 @@ impl SimpleTxManager {
             self.nonce_manager.reset().await;
         }
 
+        // Return pre-reserved nonces that were never published so they can
+        // be reissued by subsequent send/send_async calls, preventing
+        // irrecoverable nonce gaps.
+        if let Some(n) = nonce_override {
+            if Self::should_return_reserved_nonce(&result, &send_state) {
+                self.nonce_manager.return_reserved_nonce(n).await;
+            }
+        }
+
         result
     }
 
@@ -710,6 +719,24 @@ impl SimpleTxManager {
             // via the chain's pending nonce anyway.
             Err(_) => send_state.successful_publish_count() == 0,
         }
+    }
+
+    /// Returns `true` when a pre-reserved nonce should be returned to the
+    /// nonce manager's reuse pool.
+    ///
+    /// A nonce is eligible for return when BOTH of these hold:
+    /// 1. The send failed (`result.is_err()`).
+    /// 2. No transaction was ever successfully published — if a tx was
+    ///    published, the nonce may be in the mempool and must not be
+    ///    reused.
+    ///
+    /// The caller is responsible for checking that a nonce override exists
+    /// (i.e. the send came from `send_async`, not `send`).
+    fn should_return_reserved_nonce<T>(
+        result: &TxManagerResult<T>,
+        send_state: &SendState,
+    ) -> bool {
+        result.is_err() && send_state.successful_publish_count() == 0
     }
 
     /// Inner send loop extracted from [`send_tx`](Self::send_tx) to allow
@@ -1330,6 +1357,30 @@ mod tests {
                 &result,
                 &send_state,
                 nonce_override,
+            ),
+            expected,
+        );
+    }
+
+    #[rstest]
+    #[case::pre_publish_error(false, Err(TxManagerError::Sign("fail".into())), true)]
+    #[case::after_publish(true, Err(TxManagerError::Sign("fail".into())), false)]
+    #[case::success(false, Ok(()), false)]
+    #[case::timeout_no_publish(false, Err(TxManagerError::SendTimeout), true)]
+    #[case::timeout_after_publish(true, Err(TxManagerError::SendTimeout), false)]
+    fn should_return_reserved_nonce(
+        #[case] has_publish: bool,
+        #[case] result: crate::TxManagerResult<()>,
+        #[case] expected: bool,
+    ) {
+        let send_state = crate::SendState::new(3).expect("should create send state");
+        if has_publish {
+            send_state.record_successful_publish();
+        }
+        assert_eq!(
+            SimpleTxManager::should_return_reserved_nonce(
+                &result,
+                &send_state,
             ),
             expected,
         );

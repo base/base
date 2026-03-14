@@ -532,3 +532,29 @@ async fn send_async_preserves_call_order_nonces() {
     let expected: Vec<u64> = (0..count as u64).collect();
     assert_eq!(nonces, expected, "send_async nonces should match call order");
 }
+
+/// When `send_async` fails before publishing (e.g., signing failure), the
+/// pre-reserved nonce is returned for reuse by subsequent calls.
+#[tokio::test]
+async fn send_async_failure_returns_nonce_for_reuse() {
+    let (manager, _anvil) = setup_with_failing_signer_config(fast_send_config()).await;
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        value: U256::from(1u64),
+        gas_limit: 0,
+        ..Default::default()
+    };
+
+    // send_async reserves nonce 0, spawned task fails at signing.
+    let handle = manager.send_async(candidate).await;
+    let err = tokio::time::timeout(Duration::from_secs(30), handle)
+        .await
+        .expect("send_async should complete")
+        .expect_err("send_async should fail with signing error");
+
+    assert!(matches!(err, TxManagerError::Sign(_)), "expected sign error, got {err:?}");
+
+    // The nonce should have been returned. Next nonce should be 0, not 1.
+    let guard = manager.nonce_manager().next_nonce().await.expect("should get nonce");
+    assert_eq!(guard.nonce(), 0, "returned nonce should be reused after send_async failure");
+}

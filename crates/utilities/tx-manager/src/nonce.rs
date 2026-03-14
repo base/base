@@ -1,6 +1,6 @@
 //! Nonce allocation and tracking.
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};
@@ -34,6 +34,14 @@ pub struct NonceState {
     /// previously reserved by a concurrent `send_async()` task. The
     /// effective starting nonce after reset is `max(chain_nonce, reserved_high_water)`.
     pub reserved_high_water: u64,
+    /// Nonces that were reserved via [`NonceManager::reserve_nonce`] but
+    /// never published. These are recycled by [`NonceManager::advance_nonce`]
+    /// on subsequent nonce requests, filling gaps left by failed
+    /// `send_async` tasks.
+    ///
+    /// Not cleared by [`NonceManager::reset`] — the nonces were never
+    /// published and must persist for reuse.
+    pub returned_nonces: BTreeSet<u64>,
 }
 
 /// Manages nonce allocation and tracking.
@@ -169,6 +177,14 @@ impl NonceManager {
         mut guard: OwnedMutexGuard<NonceState>,
         nonce: u64,
     ) -> Result<NonceGuard, TxManagerError> {
+        // Priority: reissue a returned nonce before allocating a fresh one.
+        // BTreeSet::pop_first gives the smallest gap, filling holes
+        // left-to-right so the chain can make forward progress.
+        if let Some(returned) = guard.returned_nonces.pop_first() {
+            debug!(nonce = returned, "reissuing returned nonce");
+            return Ok(NonceGuard { guard: Some(guard), nonce: returned, recycled: true });
+        }
+
         // Ensure the nonce is at least as high as the high-water mark set
         // by previous reserve_nonce() calls. After a reset(), the chain
         // may return a nonce below reserved values; skipping past them
@@ -185,7 +201,7 @@ impl NonceManager {
         let next = effective.checked_add(1).ok_or(TxManagerError::NonceOverflow)?;
         guard.nonce = Some(next);
         debug!(nonce = effective, "nonce reserved");
-        Ok(NonceGuard { guard: Some(guard), nonce: effective })
+        Ok(NonceGuard { guard: Some(guard), nonce: effective, recycled: false })
     }
 
     /// Reserves the next nonce and immediately releases the lock, returning
@@ -206,7 +222,7 @@ impl NonceManager {
     /// Returns the same errors as [`next_nonce`](Self::next_nonce).
     pub async fn reserve_nonce(&self) -> Result<u64, TxManagerError> {
         let guard = self.next_nonce().await?;
-        Ok(guard.consume_reserved())
+        guard.consume_reserved()
     }
 
     /// Clears the cached nonce, forcing a fresh chain fetch on the next
@@ -224,7 +240,25 @@ impl NonceManager {
         // Wrapping add is intentional: a full u64 wrap-around (2^64 resets)
         // is infeasible, and wrapping avoids a panic on overflow.
         guard.generation = guard.generation.wrapping_add(1);
+        // `returned_nonces` is intentionally NOT cleared — these nonces
+        // were never published and must persist for reuse.
         info!(address = %self.address, "nonce cache reset");
+    }
+
+    /// Returns a previously reserved nonce for reuse.
+    ///
+    /// Called when a `send_async` task fails before publishing, making the
+    /// pre-reserved nonce available for reissue by the next
+    /// [`next_nonce`](Self::next_nonce) or [`reserve_nonce`](Self::reserve_nonce)
+    /// call.
+    ///
+    /// The returned nonce is stored in [`NonceState::returned_nonces`] and
+    /// is not cleared by [`reset`](Self::reset), since it was never
+    /// published to the network.
+    pub async fn return_reserved_nonce(&self, nonce: u64) {
+        let mut guard = self.inner.lock().await;
+        guard.returned_nonces.insert(nonce);
+        debug!(nonce, "reserved nonce returned for reuse");
     }
 }
 
@@ -238,6 +272,11 @@ impl NonceManager {
 pub struct NonceGuard {
     guard: Option<OwnedMutexGuard<NonceState>>,
     nonce: u64,
+    /// Whether this guard's nonce was recycled from
+    /// [`NonceState::returned_nonces`]. Affects rollback behavior:
+    /// recycled nonces are returned to the set rather than restoring the
+    /// cache.
+    recycled: bool,
 }
 
 impl NonceGuard {
@@ -252,24 +291,38 @@ impl NonceGuard {
     /// [`NonceManager::advance_nonce`] will never re-issue this nonce
     /// after a [`NonceManager::reset`]. The guard is consumed (dropped),
     /// releasing the mutex lock.
-    pub fn consume_reserved(mut self) -> u64 {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TxManagerError::NonceOverflow`] if the high-water mark
+    /// computation would overflow `u64`.
+    pub fn consume_reserved(mut self) -> Result<u64, TxManagerError> {
         let nonce = self.nonce;
         if let Some(ref mut guard) = self.guard {
-            guard.reserved_high_water =
-                guard.reserved_high_water.max(nonce.saturating_add(1));
+            let next = nonce.checked_add(1).ok_or(TxManagerError::NonceOverflow)?;
+            guard.reserved_high_water = guard.reserved_high_water.max(next);
         }
-        nonce
+        Ok(nonce)
     }
 
     /// Rolls back the nonce reservation, restoring the cached nonce to
     /// the value that was reserved.
     ///
+    /// For recycled nonces (from [`NonceState::returned_nonces`]), the
+    /// nonce is re-inserted into the returned set rather than restoring
+    /// the cache, since the cache was never advanced for these nonces.
+    ///
     /// This allows the next call to [`NonceManager::next_nonce`] to reuse
     /// the same nonce value. Consumes the guard, releasing the lock.
     pub fn rollback(mut self) {
         if let Some(mut guard) = self.guard.take() {
-            guard.nonce = Some(self.nonce);
-            debug!(nonce = self.nonce, "nonce rolled back");
+            if self.recycled {
+                guard.returned_nonces.insert(self.nonce);
+                debug!(nonce = self.nonce, "recycled nonce returned to reuse set");
+            } else {
+                guard.nonce = Some(self.nonce);
+                debug!(nonce = self.nonce, "nonce rolled back");
+            }
         }
     }
 }
@@ -316,6 +369,8 @@ mod tests {
         let state = NonceState::default();
         assert_eq!(state.nonce, None);
         assert_eq!(state.generation, 0);
+        assert_eq!(state.reserved_high_water, 0);
+        assert!(state.returned_nonces.is_empty());
     }
 
     #[tokio::test]
