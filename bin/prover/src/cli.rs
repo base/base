@@ -1,19 +1,17 @@
-//! CLI definition for the TEE prover binary.
+//! CLI definition for the prover binary (TEE + ZK backends).
 
 use std::net::SocketAddr;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use std::sync::Arc;
 
-use alloy_primitives::B256;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_consensus_registry::Registry;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_host::ProverConfig;
-use base_proof_tee_nitro::EnclaveConfig;
-#[cfg(target_os = "linux")]
-use base_proof_tee_nitro::NitroEnclave;
 #[cfg(feature = "local")]
 use base_proof_tee_nitro::Server;
+#[cfg(target_os = "linux")]
+use base_proof_tee_nitro::{NitroEnclave, VSOCK_PORT};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_tee_nitro::{NitroProverServer, NitroTransport};
 use clap::{Parser, Subcommand};
@@ -21,7 +19,9 @@ use eyre::eyre;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use tracing::info;
 
-/// TEE prover.
+use crate::zk;
+
+/// Prover binary (TEE + ZK backends).
 #[derive(Parser)]
 #[command(author, version)]
 pub(crate) struct Cli {
@@ -34,6 +34,9 @@ pub(crate) struct Cli {
 enum Command {
     /// AWS Nitro Enclave proving backend.
     Nitro(NitroArgs),
+
+    /// ZK prover service.
+    Zk(Box<zk::ZkArgs>),
 }
 
 /// Arguments for the `nitro` subcommand.
@@ -56,7 +59,8 @@ enum NitroCommand {
     /// Run the proving process inside the Nitro Enclave.
     ///
     /// Listens on vsock for proving requests from the host server.
-    Enclave(NitroEnclaveArgs),
+    #[cfg(target_os = "linux")]
+    Enclave,
 
     /// Run server and enclave in a single process for local development.
     #[cfg(feature = "local")]
@@ -101,30 +105,6 @@ struct NitroServerArgs {
     /// Vsock CID of the enclave.
     #[arg(long, env = "VSOCK_CID")]
     vsock_cid: u32,
-
-    /// Vsock port to connect to the enclave.
-    #[arg(long, env = "VSOCK_PORT")]
-    vsock_port: u32,
-}
-
-/// Arguments for the `nitro enclave` subcommand.
-#[derive(Parser)]
-struct NitroEnclaveArgs {
-    /// Vsock CID to bind.
-    #[arg(long, env = "VSOCK_CID")]
-    vsock_cid: u32,
-
-    /// Vsock port to listen on.
-    #[arg(long, env = "VSOCK_PORT")]
-    vsock_port: u32,
-
-    /// Per-chain configuration hash.
-    #[arg(long, env = "CONFIG_HASH")]
-    config_hash: B256,
-
-    /// Expected PCR0 measurement of the enclave image.
-    #[arg(long, env = "TEE_IMAGE_HASH")]
-    tee_image_hash: B256,
 }
 
 impl Cli {
@@ -133,6 +113,7 @@ impl Cli {
         tracing_subscriber::fmt::init();
         match self.command {
             Command::Nitro(args) => args.run().await,
+            Command::Zk(args) => (*args).run().await,
         }
     }
 }
@@ -142,7 +123,8 @@ impl NitroArgs {
         match self.command {
             #[cfg(target_os = "linux")]
             NitroCommand::Server(args) => args.run().await,
-            NitroCommand::Enclave(args) => args.run().await,
+            #[cfg(target_os = "linux")]
+            NitroCommand::Enclave => NitroEnclave::new()?.run().await,
             #[cfg(feature = "local")]
             NitroCommand::Local(args) => args.run().await,
         }
@@ -170,7 +152,7 @@ impl NitroServerArgs {
             enable_experimental_witness_endpoint: self.server.enable_experimental_witness_endpoint,
         };
 
-        let transport = Arc::new(NitroTransport::vsock(self.vsock_cid, self.vsock_port));
+        let transport = Arc::new(NitroTransport::vsock(self.vsock_cid, VSOCK_PORT));
         let server = NitroProverServer::new(config, transport);
 
         info!(addr = %self.server.listen_addr, "starting nitro prover server");
@@ -180,43 +162,12 @@ impl NitroServerArgs {
     }
 }
 
-impl NitroEnclaveArgs {
-    async fn run(self) -> eyre::Result<()> {
-        let config = EnclaveConfig {
-            vsock_cid: self.vsock_cid,
-            vsock_port: self.vsock_port,
-            config_hash: self.config_hash,
-            tee_image_hash: self.tee_image_hash,
-        };
-
-        #[cfg(not(target_os = "linux"))]
-        {
-            let _ = config;
-            Err(eyre!("enclave subcommand is only supported on Linux"))
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            let enclave = NitroEnclave::new(&config)?;
-            enclave.run().await
-        }
-    }
-}
-
 /// Arguments for the `nitro local` subcommand.
 #[cfg(feature = "local")]
 #[derive(Parser)]
 struct NitroLocalArgs {
     #[command(flatten)]
     server: ProverServerArgs,
-
-    /// Per-chain configuration hash.
-    #[arg(long, env = "CONFIG_HASH")]
-    config_hash: B256,
-
-    /// Expected PCR0 measurement of the enclave image.
-    #[arg(long, env = "TEE_IMAGE_HASH")]
-    tee_image_hash: B256,
 }
 
 #[cfg(feature = "local")]
@@ -230,13 +181,6 @@ impl NitroLocalArgs {
             .ok_or_else(|| eyre!("unknown L1 chain ID: {}", rollup_config.l1_chain_id))?
             .clone();
 
-        let enclave_config = EnclaveConfig {
-            vsock_cid: 0,
-            vsock_port: 0,
-            config_hash: self.config_hash,
-            tee_image_hash: self.tee_image_hash,
-        };
-
         let prover_config = ProverConfig {
             l1_eth_url: self.server.l1_eth_url,
             l2_eth_url: self.server.l2_eth_url,
@@ -247,7 +191,7 @@ impl NitroLocalArgs {
             enable_experimental_witness_endpoint: self.server.enable_experimental_witness_endpoint,
         };
 
-        let enclave_server = Arc::new(Server::new(&enclave_config)?);
+        let enclave_server = Arc::new(Server::new()?);
         let transport = Arc::new(NitroTransport::local(enclave_server));
         let server = NitroProverServer::new(prover_config, transport);
 

@@ -1,6 +1,5 @@
 //! Error types for enclave server operations.
 
-use alloy_primitives::B256;
 use thiserror::Error;
 
 /// Errors that can occur during NSM operations.
@@ -160,14 +159,9 @@ pub enum NitroError {
     /// Internal error.
     #[error("internal error: {0}")]
     Internal(String),
-    /// PCR0 mismatch between config and NSM.
-    #[error("PCR0 mismatch: expected {expected}, actual {actual}")]
-    Pcr0Mismatch {
-        /// Expected PCR0 hash from config.
-        expected: B256,
-        /// Actual PCR0 hash from NSM.
-        actual: B256,
-    },
+    /// Unsupported chain ID.
+    #[error("unsupported chain ID: {0}")]
+    UnsupportedChain(u64),
     /// Proof transport failed.
     #[cfg(feature = "host")]
     #[error("transport error: {0}")]

@@ -64,6 +64,8 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [dev-dependencies]
 rand_08.workspace = true
+base-enclave.workspace = true
+base-consensus-registry.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [features]

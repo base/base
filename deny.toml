@@ -181,6 +181,9 @@ skip = [
     "toml_datetime",
     "toml_edit",
 
+    # etcetera version mismatch: sqlx-mysql uses 0.8.x, testcontainers uses 0.11.x
+    "etcetera",
+
     "half",
     "memoffset",
 ]

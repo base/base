@@ -8,7 +8,7 @@
 /// base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER_TX_MANAGER");
 /// ```
 ///
-/// The generated struct has eleven fields covering confirmations, fee limits,
+/// The generated struct has twelve fields covering confirmations, fee limits,
 /// timeouts, and polling intervals. Each env-backed field uses
 /// `concat!($prefix, "_", "FIELD_NAME")` — e.g., with prefix
 /// `"BASE_CHALLENGER_TX_MANAGER"` the num-confirmations field reads from
@@ -142,6 +142,16 @@ macro_rules! define_tx_manager_cli {
                 value_parser = ::humantime::parse_duration
             )]
             pub tx_not_in_mempool_timeout: ::std::time::Duration,
+
+            /// Maximum time to poll for transaction confirmation before giving
+            /// up (e.g., "5m", "300s").
+            #[arg(
+                long = "tx-manager.confirmation-timeout",
+                env = concat!($prefix, "_", "CONFIRMATION_TIMEOUT"),
+                default_value = "5m",
+                value_parser = ::humantime::parse_duration
+            )]
+            pub confirmation_timeout: ::std::time::Duration,
         }
 
         impl Default for TxManagerCli {
@@ -173,6 +183,7 @@ macro_rules! define_tx_manager_cli {
                     receipt_query_interval: cli.receipt_query_interval,
                     tx_send_timeout: cli.tx_send_timeout,
                     tx_not_in_mempool_timeout: cli.tx_not_in_mempool_timeout,
+                    confirmation_timeout: cli.confirmation_timeout,
                 };
                 config.validate()?;
                 Ok(config)
