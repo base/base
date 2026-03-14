@@ -8,15 +8,10 @@ use jsonrpsee::{
     http_client::{HttpClient, HttpClientBuilder},
     rpc_params,
 };
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use tracing::debug;
 
 use crate::{AttestationResponse, RegistrarError, Result};
-
-/// Length of an uncompressed SEC1 public key (`0x04 || x || y`).
-const UNCOMPRESSED_PUBLIC_KEY_LENGTH: usize = 65;
-
-/// Uncompressed SEC1 public key prefix byte.
-const UNCOMPRESSED_PREFIX: u8 = 0x04;
 
 /// JSON-RPC client for a single prover instance's signer endpoints.
 ///
@@ -75,24 +70,18 @@ impl ProverClient {
         )
     }
 
-    /// Derives an Ethereum [`Address`] from a 65-byte uncompressed SEC1 public key.
+    /// Derives an Ethereum [`Address`] from a SEC1-encoded public key.
     ///
-    /// The public key must be in uncompressed format: `0x04 || x (32 bytes) || y (32 bytes)`.
-    /// The address is `keccak256(public_key[1..65])[12..32]` (last 20 bytes of the hash).
+    /// Validates that the bytes represent a valid point on the secp256k1 curve
+    /// (via [`k256::PublicKey::from_sec1_bytes`]), then computes the address as
+    /// `keccak256(uncompressed_point[1..])[12..]`.
+    ///
+    /// Accepts both compressed (33-byte) and uncompressed (65-byte) SEC1 formats.
     pub fn derive_address(public_key: &[u8]) -> Result<Address> {
-        if public_key.len() != UNCOMPRESSED_PUBLIC_KEY_LENGTH {
-            return Err(RegistrarError::InvalidPublicKey(format!(
-                "expected {UNCOMPRESSED_PUBLIC_KEY_LENGTH} bytes, got {}",
-                public_key.len()
-            )));
-        }
-        if public_key[0] != UNCOMPRESSED_PREFIX {
-            return Err(RegistrarError::InvalidPublicKey(format!(
-                "expected uncompressed prefix 0x{UNCOMPRESSED_PREFIX:02x}, got 0x{:02x}",
-                public_key[0]
-            )));
-        }
-        let hash = keccak256(&public_key[1..]);
+        let key = k256::PublicKey::from_sec1_bytes(public_key)
+            .map_err(|e| RegistrarError::InvalidPublicKey(e.to_string()))?;
+        let uncompressed = key.to_encoded_point(false);
+        let hash = keccak256(&uncompressed.as_bytes()[1..]);
         Ok(Address::from_slice(&hash[12..]))
     }
 
