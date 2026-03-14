@@ -633,9 +633,9 @@ impl SimpleTxManager {
                 // Consume the nonce (drop guard if present).
                 drop(guard);
 
-                // Record tx fee metric: max possible fee in gwei.
-                let fee_gwei = u128::from(gas_limit) as f64 * (fee_cap as f64 / WEI_PER_GWEI);
-                self.metrics.record_tx_fee(fee_gwei);
+                // Record max possible fee metric in gwei.
+                let fee_gwei = gas_limit as f64 * (fee_cap as f64 / WEI_PER_GWEI);
+                self.metrics.record_tx_max_fee(fee_gwei);
 
                 Ok(PreparedTx {
                     raw_tx: Bytes::from(Encodable2718::encoded_2718(&envelope)),
@@ -705,13 +705,15 @@ impl SimpleTxManager {
             send_state.set_mempool_deadline(Instant::now() + self.config.tx_not_in_mempool_timeout);
         }
 
-        // Wrap the inner loop in a send timeout if configured.
+        let start = Instant::now();
+
+        // Wrap the event loop in a send timeout if configured.
         let result = if self.config.tx_send_timeout.is_zero() {
-            self.send_tx_inner(&candidate, &send_state, nonce_override).await
+            self.send_event_loop(&candidate, &send_state, nonce_override).await
         } else {
             tokio::time::timeout(
                 self.config.tx_send_timeout,
-                self.send_tx_inner(&candidate, &send_state, nonce_override),
+                self.send_event_loop(&candidate, &send_state, nonce_override),
             )
             .await
             .unwrap_or_else(|_| {
@@ -722,6 +724,15 @@ impl SimpleTxManager {
                 Err(TxManagerError::SendTimeout)
             })
         };
+
+        let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.metrics.record_send_latency(latency_ms);
+
+        if result.is_ok() {
+            self.metrics.record_tx_confirmed();
+        } else {
+            self.metrics.record_tx_failed();
+        }
 
         if Self::should_reset_nonce_on_send_error(&result, &send_state, nonce_override) {
             // Three policies (see should_reset_nonce_on_send_error):
@@ -799,34 +810,6 @@ impl SimpleTxManager {
             Ok(_) | Err(TxManagerError::NonceTooHigh | TxManagerError::NonceTooLow) => false,
             Err(_) => send_state.successful_publish_count() == 0,
         }
-    }
-
-    /// Inner send loop extracted from [`send_tx`](Self::send_tx) to allow
-    /// optional timeout wrapping.
-    ///
-    /// Records latency, confirmation, and failure metrics on all exit paths.
-    /// The actual event loop lives in [`send_event_loop`](Self::send_event_loop);
-    /// this method is a thin metrics wrapper around it.
-    async fn send_tx_inner(
-        &self,
-        candidate: &TxCandidate,
-        send_state: &Arc<SendState>,
-        nonce_override: Option<u64>,
-    ) -> SendResponse {
-        let start = Instant::now();
-
-        let result = self.send_event_loop(candidate, send_state, nonce_override).await;
-
-        let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-        self.metrics.record_send_latency(latency_ms);
-
-        if result.is_ok() {
-            self.metrics.record_tx_confirmed();
-        } else {
-            self.metrics.record_tx_failed();
-        }
-
-        result
     }
 
     /// Drives a signed transaction from publication through mempool to onchain
@@ -1122,7 +1105,7 @@ impl SimpleTxManager {
                 }
 
                 send_state.process_send_error(&classified);
-                if !classified.is_already_known() {
+                if classified.is_rpc_error() {
                     self.metrics.record_publish_error();
                 }
 
