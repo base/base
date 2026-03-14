@@ -12,16 +12,24 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+http.workspace = true
 serde.workspace = true
 futures.workspace = true
 metrics.workspace = true
 tracing.workspace = true
+thiserror.workspace = true
 tokio-util.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+parking_lot.workspace = true
+base-ring-buffer.workspace = true
 tokio-tungstenite.workspace = true
-tokio = { workspace = true, features = ["net", "sync", "macros", "rt"] }
+tokio = { workspace = true, features = ["net", "sync", "macros", "rt", "time"] }
 
 [dev-dependencies]
-rstest.workspace = true
+criterion.workspace = true
 tokio-tungstenite.workspace = true
-tokio = { workspace = true, features = ["net", "sync", "macros", "rt", "test-util"] }
+tokio = { workspace = true, features = ["net", "sync", "macros", "rt", "rt-multi-thread", "test-util"] }
+
+[[bench]]
+name = "publisher"
+harness = false

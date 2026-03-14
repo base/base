@@ -39,6 +39,7 @@ members = [
   "crates/utilities/*",
   "crates/batcher/*",
   "crates/builder/*",
+  "crates/shared/ring-buffer",
   "crates/infra/*",
   "crates/alloy/*",
   "crates/execution/*",
@@ -261,6 +262,7 @@ base-health = { path = "crates/utilities/health" }
 base-cli-utils = { path = "crates/utilities/cli" }
 base-test-utils = { path = "crates/utilities/test-utils" }
 base-tx-manager = { path = "crates/utilities/tx-manager" }
+base-ring-buffer = { path = "crates/shared/ring-buffer" }
 base-macros = { path = "crates/utilities/macros", default-features = false }
 
 # revm

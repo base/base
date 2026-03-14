@@ -280,9 +280,17 @@ where
         );
 
         // not emitting flashblock if no_tx_pool in FCU, it's just syncing
+        //
+        // Published at flashblock_index 0. Regular flashblocks start at
+        // index 1, so a client resuming from (block_number, 0) will skip
+        // this fallback via the strictly-greater-than comparison in
+        // `RingBuffer::entries_after`, but still receive all subsequent
+        // flashblocks for the same block.
         if !ctx.attributes().no_tx_pool {
-            let flashblock_byte_size =
-                self.ws_pub.publish(&fb_payload).map_err(PayloadBuilderError::other)?;
+            let flashblock_byte_size = self
+                .ws_pub
+                .publish(&fb_payload, ctx.block_number(), 0)
+                .map_err(PayloadBuilderError::other)?;
             ctx.metrics.flashblock_byte_size_histogram.record(flashblock_byte_size as f64);
         }
 
@@ -633,7 +641,7 @@ where
                     } else {
                         let size = self
                             .ws_pub
-                            .publish(&fb_payload)
+                            .publish(&fb_payload, ctx.block_number(), flashblock_index)
                             .wrap_err("failed to publish flashblock via websocket")?;
                         (false, size)
                     }
