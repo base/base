@@ -22,6 +22,9 @@ pub use batcher::{
     BatchType, Batcher, BatcherConfig, BatcherError, ChannelDriverConfig, GarbageKind,
 };
 
+mod test_rollup_config;
+pub use test_rollup_config::TestRollupConfigBuilder;
+
 mod providers;
 pub use providers::{
     ActionBlobDataSource, ActionBlobProvider, ActionDataSource, ActionL1ChainProvider,
