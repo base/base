@@ -28,6 +28,9 @@ const TIPCAP_GWEI: &str = "base_tx_manager_tipcap_gwei";
 /// Metric name for RPC error count.
 const RPC_ERROR_COUNT: &str = "base_tx_manager_rpc_error_count";
 
+/// Metric name for confirmed transaction count.
+const TX_CONFIRMED_COUNT: &str = "base_tx_manager_tx_confirmed_count";
+
 /// Trait abstracting metrics collection for the transaction manager.
 ///
 /// Implement this trait to plug in your own metrics backend. A [`BaseTxMetrics`]
@@ -56,6 +59,9 @@ pub trait TxMetrics: Send + Sync + Debug + 'static {
 
     /// Record an RPC error.
     fn record_rpc_error(&self);
+
+    /// Record a confirmed (successfully mined) transaction.
+    fn record_tx_confirmed(&self);
 }
 
 /// No-op [`TxMetrics`] implementation.
@@ -74,6 +80,7 @@ impl TxMetrics for NoopTxMetrics {
     fn record_basefee(&self, _basefee_gwei: f64) {}
     fn record_tipcap(&self, _tipcap_gwei: f64) {}
     fn record_rpc_error(&self) {}
+    fn record_tx_confirmed(&self) {}
 }
 
 /// Production [`TxMetrics`] implementation backed by the [`metrics`] crate.
@@ -115,6 +122,10 @@ impl TxMetrics for BaseTxMetrics {
     fn record_rpc_error(&self) {
         counter!(RPC_ERROR_COUNT).increment(1);
     }
+
+    fn record_tx_confirmed(&self) {
+        counter!(TX_CONFIRMED_COUNT).increment(1);
+    }
 }
 
 #[cfg(test)]
@@ -132,6 +143,7 @@ mod tests {
         m.record_basefee(30.123);
         m.record_tipcap(2.456);
         m.record_rpc_error();
+        m.record_tx_confirmed();
     }
 
     #[test]
@@ -145,5 +157,6 @@ mod tests {
         m.record_basefee(30.123);
         m.record_tipcap(2.456);
         m.record_rpc_error();
+        m.record_tx_confirmed();
     }
 }
