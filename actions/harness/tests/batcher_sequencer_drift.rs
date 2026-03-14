@@ -2,44 +2,9 @@
 
 use alloy_primitives::B256;
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain, block_info_from,
+    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain,
+    TestRollupConfigBuilder, block_info_from,
 };
-use base_consensus_genesis::RollupConfig;
-use base_consensus_registry::Registry;
-
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
-/// Build a [`RollupConfig`] configured for sequencer-drift tests.
-///
-/// Starts from the real Base mainnet config. Overrides:
-/// - Fjord active from genesis — the batcher uses brotli compression (channel
-///   version byte `0x01`), which the derivation pipeline only accepts after
-///   the Fjord hardfork. Fjord also hard-codes `max_sequencer_drift = 1800 s`.
-/// - `block_time = 300 s` so that exactly 6 L2 blocks fit within the 1800 s
-///   Fjord drift window when the sequencer is pinned to a stale L1 origin.
-///   L2 timestamps: 300, 600, …, 1800 (blocks 1-6 ≤ drift), 2100, 2400 (blocks
-///   7-8 > drift → deposit-only).
-/// - Batcher actor fields and genesis reset as in all test configs.
-///
-/// L1 `block_time = 4` is controlled via [`L1MinerConfig`] at the call site.
-fn drift_rollup_config(batcher: &BatcherConfig) -> RollupConfig {
-    let mut rc = Registry::rollup_config(8453).expect("mainnet config").clone();
-    rc.batch_inbox_address = batcher.inbox_address;
-    rc.genesis.system_config.as_mut().unwrap().batcher_address = batcher.batcher_address;
-    rc.genesis.l2_time = 0;
-    rc.genesis.l1 = Default::default();
-    rc.genesis.l2 = Default::default();
-    rc.hardforks.canyon_time = Some(0);
-    rc.hardforks.delta_time = Some(0);
-    rc.hardforks.ecotone_time = Some(0);
-    rc.hardforks.fjord_time = Some(0);
-    // 300 s blocks: 6 blocks × 300 s = 1800 s == Fjord max_sequencer_drift.
-    // Block 7 (ts=2100) is the first over the boundary.
-    rc.block_time = 300;
-    rc
-}
 
 // ---------------------------------------------------------------------------
 // A. Sequencer drift — L2 timestamp exceeds L1 origin time + max_sequencer_drift
@@ -74,7 +39,8 @@ fn drift_rollup_config(batcher: &BatcherConfig) -> RollupConfig {
 async fn sequencer_drift_produces_deposit_only_blocks() {
     let l1_cfg = L1MinerConfig { block_time: 4 };
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = drift_rollup_config(&batcher_cfg);
+    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    rollup_cfg.block_time = 300;
     let mut h = ActionTestHarness::new(l1_cfg, rollup_cfg.clone());
 
     // Mine L1 block 1 (ts=4) so the sequencer has an epoch to reference,
@@ -170,7 +136,8 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
 async fn sequencer_drift_forced_empty_blocks_accepted() {
     let l1_cfg = L1MinerConfig { block_time: 4 };
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = drift_rollup_config(&batcher_cfg);
+    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    rollup_cfg.block_time = 300;
     let mut h = ActionTestHarness::new(l1_cfg, rollup_cfg);
 
     // Mine 1 L1 block so epoch 1 exists, but pin sequencer to epoch 0.

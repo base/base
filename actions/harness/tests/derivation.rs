@@ -7,49 +7,22 @@ use alloy_primitives::{Address, B256, Bytes, LogData, U256};
 use base_action_harness::{
     ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, ActionL2Source,
     ActionTestHarness, BatchType, BatcherConfig, GarbageKind, L1MinerConfig, L2Sequencer,
-    L2Verifier, PendingTx, SharedL1Chain, StepResult, block_info_from,
+    L2Verifier, PendingTx, SharedL1Chain, StepResult, TestRollupConfigBuilder, block_info_from,
 };
 use base_blobs::BlobEncoder;
 use base_consensus_genesis::{
     CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, L1ChainConfig, RollupConfig,
 };
-use base_consensus_registry::Registry;
 use base_protocol::{
     BlockInfo, DEPOSIT_EVENT_ABI_HASH, DEPOSIT_EVENT_VERSION_0, DERIVATION_VERSION_0, L2BlockInfo,
 };
-
-/// Build a [`RollupConfig`] wired to the given [`BatcherConfig`].
-///
-/// Starts from the real Base mainnet config and overrides only the fields that
-/// must differ for in-memory action tests:
-/// - `batch_inbox_address` and `batcher_address` wire the test actors.
-/// - `genesis` is zeroed so the in-memory L1 miner (which starts at ts=0) is
-///   the chain origin.
-/// - Canyon through Fjord are set to `Some(0)` so the batcher's brotli
-///   compression and span-batch encoding are accepted from genesis.
-/// - Hardforks after Fjord retain their mainnet timestamps, which are
-///   unreachable during tests (L1 miner starts at ts=0), making them
-///   effectively inactive without losing their real config values.
-fn rollup_config_for(batcher: &BatcherConfig) -> RollupConfig {
-    let mut rc = Registry::rollup_config(8453).expect("mainnet config").clone();
-    rc.batch_inbox_address = batcher.inbox_address;
-    rc.genesis.system_config.as_mut().unwrap().batcher_address = batcher.batcher_address;
-    rc.genesis.l2_time = 0;
-    rc.genesis.l1 = Default::default();
-    rc.genesis.l2 = Default::default();
-    rc.hardforks.canyon_time = Some(0);
-    rc.hardforks.delta_time = Some(0);
-    rc.hardforks.ecotone_time = Some(0);
-    rc.hardforks.fjord_time = Some(0);
-    rc
-}
 
 /// The derivation pipeline reads a single batcher frame from L1 and derives
 /// the corresponding L2 block, advancing the safe head from genesis (0) to 1.
 #[tokio::test]
 async fn single_l2_block_derived_from_batcher_frame() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Build L2 block 1 using the L2Sequencer, which automatically computes
@@ -99,7 +72,7 @@ async fn multiple_l1_blocks_each_derive_one_l2_block() {
     const L2_BLOCK_COUNT: u64 = 3;
 
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Build L2 blocks 1-3 from genesis. With block_time=2 and L1 block_time=12,
@@ -146,7 +119,7 @@ async fn multiple_l1_blocks_each_derive_one_l2_block() {
 #[tokio::test]
 async fn batch_in_orphaned_l1_block_is_not_derived() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Encode L2 block 1 and mine L1 block 1 containing the batcher frame.
@@ -184,7 +157,7 @@ async fn batch_in_orphaned_l1_block_is_not_derived() {
 #[tokio::test]
 async fn reorg_reverts_derived_safe_head() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
     // Batch and mine L1 block 1.
@@ -240,7 +213,7 @@ async fn reorg_reverts_derived_safe_head() {
 #[tokio::test]
 async fn reorg_and_resubmit_rederives_l2_block() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
     // --- Pre-reorg: derive L2 block 1 from L1 block 1. ---
@@ -311,7 +284,7 @@ async fn reorg_and_resubmit_rederives_l2_block() {
 #[tokio::test]
 async fn reorg_flip_flop() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
     // Build L2 block 1 once; we re-use (clone) it across all forks since the
@@ -399,7 +372,7 @@ async fn reorg_flip_flop() {
 #[tokio::test]
 async fn reorg_flip_flop_empty_middle_fork() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
     // Build L2 blocks 1-2 against a genesis-only chain so both reference epoch 0
@@ -525,7 +498,7 @@ async fn batch_accepted_at_last_seq_window_block() {
     const SEQ_WINDOW: u64 = 4;
 
     let batcher_cfg = BatcherConfig::default();
-    let mut rollup_cfg = rollup_config_for(&batcher_cfg);
+    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     rollup_cfg.seq_window_size = SEQ_WINDOW;
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -676,7 +649,7 @@ async fn l1_deposit_included_in_derived_l2_block() {
     let batcher_cfg = BatcherConfig::default();
     let rollup_cfg = RollupConfig {
         deposit_contract_address: deposit_contract,
-        ..rollup_config_for(&batcher_cfg)
+        ..TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build()
     };
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -752,7 +725,7 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     let batcher_b =
         BatcherConfig { batcher_address: Address::repeat_byte(0xBB), ..batcher_a.clone() };
 
-    let mut rollup_cfg = rollup_config_for(&batcher_a);
+    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_a).build();
     rollup_cfg.l1_system_config_address = l1_sys_cfg_addr;
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
@@ -843,7 +816,7 @@ async fn batcher_key_rotation_accepts_new_batcher() {
 async fn multi_l2_per_l1_epoch() {
     const L2_COUNT: u64 = 6;
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -900,7 +873,7 @@ async fn multi_l2_per_l1_epoch() {
 async fn batch_past_sequence_window_rejected() {
     const SEQ_WINDOW: u64 = 3;
     let batcher_cfg = BatcherConfig::default();
-    let mut rollup_cfg = rollup_config_for(&batcher_cfg);
+    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     rollup_cfg.seq_window_size = SEQ_WINDOW;
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -962,7 +935,7 @@ async fn batch_past_sequence_window_rejected() {
 #[tokio::test]
 async fn multi_epoch_sequence() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Mine L1 blocks 1 and 2 so the builder can advance epochs.
@@ -1026,7 +999,7 @@ async fn multi_epoch_sequence() {
 #[tokio::test]
 async fn same_epoch_multi_batch_one_l1_block() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -1074,7 +1047,7 @@ async fn same_epoch_multi_batch_one_l1_block() {
 #[tokio::test]
 async fn deep_reorg_multi_block() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -1155,7 +1128,7 @@ async fn deep_reorg_multi_block() {
 #[tokio::test]
 async fn garbage_frame_data_ignored() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -1222,7 +1195,7 @@ async fn multi_frame_channel_reassembled() {
         encoder: EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -1280,7 +1253,7 @@ async fn multi_frame_channel_reassembled() {
 #[tokio::test]
 async fn single_l2_block_derived_from_span_batch() {
     let batcher_cfg = BatcherConfig { batch_type: BatchType::Span, ..BatcherConfig::default() };
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -1316,7 +1289,7 @@ async fn single_l2_block_derived_from_span_batch() {
 #[tokio::test]
 async fn three_l2_blocks_derived_from_span_batch() {
     let batcher_cfg = BatcherConfig { batch_type: BatchType::Span, ..BatcherConfig::default() };
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -1425,7 +1398,7 @@ async fn gpo_params_change_does_not_disrupt_derivation() {
     let batcher_cfg = BatcherConfig::default();
     let rollup_cfg = RollupConfig {
         l1_system_config_address: l1_sys_cfg_addr,
-        ..rollup_config_for(&batcher_cfg)
+        ..TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build()
     };
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -1487,7 +1460,7 @@ async fn gas_limit_change_does_not_disrupt_derivation() {
     let batcher_cfg = BatcherConfig::default();
     let rollup_cfg = RollupConfig {
         l1_system_config_address: l1_sys_cfg_addr,
-        ..rollup_config_for(&batcher_cfg)
+        ..TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build()
     };
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -1546,7 +1519,7 @@ async fn gas_limit_change_does_not_disrupt_derivation() {
 /// variant without crashing or poisoning subsequent channel state.
 async fn garbage_kind_silently_ignored_then_valid_batch_derived(kind: GarbageKind) {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -1626,7 +1599,7 @@ async fn garbage_invalid_brotli_silently_ignored() {
 #[tokio::test]
 async fn l2_finalized_advances_via_l1_finalized_signal() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -1684,7 +1657,7 @@ async fn l2_finalized_advances_via_l1_finalized_signal() {
 #[tokio::test]
 async fn sequencer_pin_l1_origin_keeps_epoch_and_empty_block() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Mine 2 L1 blocks so multiple epochs are available for auto-selection.
@@ -1748,7 +1721,7 @@ async fn sequencer_pin_l1_origin_keeps_epoch_and_empty_block() {
 #[tokio::test]
 async fn derive_chain_from_near_l1_genesis() {
     let batcher_cfg = BatcherConfig::default();
-    let mut rollup_cfg = rollup_config_for(&batcher_cfg);
+    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
     // Mine 5 "pre-history" L1 blocks before L2 genesis.
@@ -1845,7 +1818,7 @@ async fn derive_chain_from_near_l1_genesis() {
 #[tokio::test]
 async fn single_l2_block_derived_from_blob() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Build L2 block 1.
@@ -1888,7 +1861,7 @@ async fn multiple_l2_blocks_derived_from_blob() {
     const L2_BLOCK_COUNT: u64 = 3;
 
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Build L2 blocks 1-3 from genesis.
@@ -1966,7 +1939,7 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     let batcher_b =
         BatcherConfig { batcher_address: Address::repeat_byte(0xBB), ..batcher_a.clone() };
 
-    let mut rollup_cfg = rollup_config_for(&batcher_a);
+    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_a).build();
     rollup_cfg.l1_system_config_address = l1_sys_cfg_addr;
     let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
@@ -2095,7 +2068,7 @@ async fn batcher_config_update_rolled_back_on_reorg() {
 #[tokio::test]
 async fn out_of_order_singular_batches_reordered_by_batch_queue() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -2189,7 +2162,7 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
 #[tokio::test]
 async fn pipeline_idle_before_l1_signal_derives_after() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -2249,7 +2222,7 @@ async fn pipeline_idle_before_l1_signal_derives_after() {
 #[tokio::test]
 async fn pipeline_l1_origin_advance_observable_after_epoch_exhausted() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());

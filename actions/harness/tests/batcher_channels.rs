@@ -1,51 +1,9 @@
 #![doc = "TDD action test skeletons for channel timeout and interleaving scenarios."]
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain, block_info_from,
+    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain,
+    TestRollupConfigBuilder, block_info_from,
 };
-use base_consensus_genesis::RollupConfig;
-use base_consensus_registry::Registry;
-
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
-/// Build a [`RollupConfig`] with tight `channel_timeout` for timeout tests.
-///
-/// Starts from the real Base mainnet config. Overrides:
-/// - `channel_timeout = 2` so a channel whose first frame lands in L1 block N
-///   expires if no more frames arrive by block N+2.
-/// - Batcher actor fields, genesis, and hardfork times as in all test configs.
-fn timeout_rollup_config(batcher: &BatcherConfig) -> RollupConfig {
-    let mut rc = base_rollup_config_for(batcher);
-    rc.channel_timeout = 2;
-    rc
-}
-
-/// Build a standard [`RollupConfig`] for interleaving tests.
-///
-/// Starts from the real Base mainnet config. Uses generous windows; the test
-/// exercises the channel bank's ability to track multiple open channels rather
-/// than any timeout logic.
-fn interleave_rollup_config(batcher: &BatcherConfig) -> RollupConfig {
-    base_rollup_config_for(batcher)
-}
-
-/// Base config for all channel tests: real Base mainnet config with test actor
-/// fields and hardfork times overridden for the in-memory L1 miner.
-fn base_rollup_config_for(batcher: &BatcherConfig) -> RollupConfig {
-    let mut rc = Registry::rollup_config(8453).expect("mainnet config").clone();
-    rc.batch_inbox_address = batcher.inbox_address;
-    rc.genesis.system_config.as_mut().unwrap().batcher_address = batcher.batcher_address;
-    rc.genesis.l2_time = 0;
-    rc.genesis.l1 = Default::default();
-    rc.genesis.l2 = Default::default();
-    rc.hardforks.canyon_time = Some(0);
-    rc.hardforks.delta_time = Some(0);
-    rc.hardforks.ecotone_time = Some(0);
-    rc.hardforks.fjord_time = Some(0);
-    rc
-}
 
 // ---------------------------------------------------------------------------
 // A. Channel timeout — first frame's inclusion span exceeds channel_timeout
@@ -99,9 +57,14 @@ fn base_rollup_config_for(batcher: &BatcherConfig) -> RollupConfig {
             multi-block channel timeout is not exercisable in the current harness — \
             the test skeleton documents the expected flow for when the harness supports it"]
 async fn channel_timeout_triggers_channel_invalidation() {
-    // TODO: configure small target_frame_size via EncoderConfig to force multi-frame output.
-    let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = timeout_rollup_config(&batcher_cfg);
+    use base_batcher_encoder::EncoderConfig;
+
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_channel_timeout(2).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Build 1 L2 block and encode it into multiple frames.
@@ -209,7 +172,8 @@ async fn channel_timeout_triggers_channel_invalidation() {
             this recovery test can be enabled"]
 async fn channel_timeout_recovery_resubmits_successfully() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = timeout_rollup_config(&batcher_cfg);
+    let rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_channel_timeout(2).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Build L2 block 1.
@@ -330,7 +294,7 @@ async fn interleaved_channels_correctly_reassembled() {
         encoder: EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
-    let rollup_cfg = interleave_rollup_config(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());

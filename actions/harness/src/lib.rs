@@ -20,6 +20,9 @@ pub use harness::ActionTestHarness;
 mod batcher;
 pub use batcher::{BatchType, Batcher, BatcherConfig, BatcherError, GarbageKind};
 
+mod test_rollup_config;
+pub use test_rollup_config::TestRollupConfigBuilder;
+
 mod providers;
 pub use providers::{
     ActionBlobDataSource, ActionBlobProvider, ActionDataSource, ActionL1ChainProvider,

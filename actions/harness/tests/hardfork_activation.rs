@@ -2,7 +2,7 @@
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, BatchType, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    block_info_from,
+    TestRollupConfigBuilder, block_info_from,
 };
 use base_consensus_genesis::{HardForkConfig, RollupConfig};
 use base_consensus_registry::Registry;
@@ -252,12 +252,7 @@ fn base_v1_is_standalone_from_jovian() {
 /// with the caller-supplied `hardforks`. This lets derivation tests set exact
 /// hardfork timestamps without spurious cascade activations from unlisted forks.
 fn rollup_config_for(batcher: &BatcherConfig, hardforks: HardForkConfig) -> RollupConfig {
-    let mut rc = Registry::rollup_config(8453).expect("mainnet config").clone();
-    rc.batch_inbox_address = batcher.inbox_address;
-    rc.genesis.system_config.as_mut().unwrap().batcher_address = batcher.batcher_address;
-    rc.genesis.l2_time = 0;
-    rc.genesis.l1 = Default::default();
-    rc.genesis.l2 = Default::default();
+    let mut rc = TestRollupConfigBuilder::base_mainnet(batcher).build();
     rc.hardforks = hardforks;
     rc
 }

@@ -31,11 +31,11 @@ base-alloy-consensus = { workspace = true, features = ["std", "evm"] }
 base-execution-chainspec.workspace = true
 base-consensus-genesis = { workspace = true, features = ["std"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
+base-consensus-registry.workspace = true
 base-blobs.workspace = true
 base-comp = { workspace = true, features = ["std"] }
 base-batcher-encoder.workspace = true
 
 [dev-dependencies]
 base-batcher-core.workspace = true
-base-consensus-registry.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
