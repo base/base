@@ -8,7 +8,7 @@
 use std::{num::NonZeroUsize, sync::Arc};
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::{SendResponse, TxCandidate, TxManager};
 
@@ -119,12 +119,13 @@ impl<M: TxManager + 'static> TxQueue<M> {
         let handle = self.tx_mgr.send_async(candidate).await;
         tokio::spawn(async move {
             let result = handle.await;
+            let success = result.is_ok();
             // Release the permit before sending the result to avoid deadlock:
             // the result channel may be full, blocking this task while holding
             // a permit that the receiver needs freed before it can drain.
             drop(permit);
             if result_tx.send(SendResult { id, result }).await.is_err() {
-                debug!("result receiver dropped, tx receipt lost");
+                warn!(success, "result receiver dropped, tx receipt lost");
             }
         });
     }
