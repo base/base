@@ -51,8 +51,8 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    FeeCalculator, FeeOverride, GasPriceCaps, NonceManager, RpcErrorClassifier, SendHandle,
-    SendResponse, SendState, TxCandidate, TxManager, TxManagerConfig, TxManagerError,
+    BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps, NonceManager, RpcErrorClassifier,
+    SendHandle, SendResponse, SendState, TxCandidate, TxManager, TxManagerConfig, TxManagerError,
     TxManagerResult,
 };
 
@@ -71,6 +71,25 @@ pub struct PreparedTx {
     pub gas_tip_cap: u128,
     /// Maximum total fee per gas used in the signed transaction.
     pub gas_fee_cap: u128,
+    /// Gas limit used in the signed transaction.
+    pub gas_limit: u64,
+}
+
+/// Mutable fee-bump state tracked across iterations in the send loop.
+///
+/// Groups the values that [`SimpleTxManager::try_fee_bump`] and
+/// [`SimpleTxManager::apply_bump_result`] update on each successful
+/// fee bump so they can be passed as a single argument.
+#[derive(Debug)]
+struct BumpState {
+    /// Current maximum priority fee per gas (tip).
+    tip: u128,
+    /// Current maximum total fee per gas (base fee + tip).
+    fee_cap: u128,
+    /// Current gas limit.
+    gas_limit: u64,
+    /// Hash of the most recently published transaction.
+    tx_hash: B256,
 }
 
 /// Default transaction manager implementation.
@@ -322,6 +341,73 @@ impl SimpleTxManager {
         Ok(GasPriceCaps { gas_tip_cap: tip_cap, gas_fee_cap, raw_gas_fee_cap, blob_fee_cap: None })
     }
 
+    /// Computes bumped fee parameters for a replacement transaction.
+    ///
+    /// Given the previous on-wire fees, applies
+    /// [`FeeCalculator::update_fees`] to satisfy geth's tx-replacement
+    /// rules and enforces the configured fee ceiling via
+    /// [`FeeCalculator::check_limits`].
+    ///
+    /// For blob transactions (`old_blob_fee_cap` is `Some`), the blob fee
+    /// cap is bumped separately with a 100 % minimum increase via
+    /// [`FeeCalculator::calc_threshold_value`].
+    ///
+    /// The returned [`BumpedFees`] carries the fresh [`GasPriceCaps`] so
+    /// callers can forward them to
+    /// [`prepare_with_initial_caps`](Self::prepare_with_initial_caps)
+    /// without a redundant provider round-trip. Gas estimation is
+    /// intentionally **not** performed here — callers should rely on
+    /// [`craft_tx`](Self::craft_tx) or
+    /// [`prepare_with_initial_caps`](Self::prepare_with_initial_caps)
+    /// which estimate gas as part of transaction construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TxManagerError::FeeLimitExceeded`] when the bumped fee
+    /// cap exceeds the configured ceiling, or an RPC error if fee
+    /// estimation fails.
+    pub async fn increase_gas_price(
+        &self,
+        candidate: &TxCandidate,
+        old_tip: u128,
+        old_fee_cap: u128,
+        old_blob_fee_cap: Option<u128>,
+    ) -> TxManagerResult<BumpedFees> {
+        // Step 1: Fetch fresh network fees.
+        let caps = self.suggest_gas_price_caps().await?;
+
+        // Step 2: Derive effective base fee from the caps.
+        let new_base_fee = FeeCalculator::base_fee_from_caps(caps.gas_fee_cap, caps.gas_tip_cap);
+
+        // Step 3: Compute bumped tip and fee cap.
+        let is_blob = !candidate.blobs.is_empty();
+        let (bumped_tip, bumped_fee_cap) = FeeCalculator::update_fees(
+            old_tip,
+            old_fee_cap,
+            caps.gas_tip_cap,
+            new_base_fee,
+            is_blob,
+        );
+
+        // Step 4: Enforce fee ceiling.
+        FeeCalculator::check_limits(
+            bumped_fee_cap,
+            caps.raw_gas_fee_cap,
+            self.config.fee_limit_multiplier,
+            self.config.fee_limit_threshold,
+        )?;
+
+        // Step 5: Bump blob fee cap separately with 100% minimum.
+        let blob_fee_cap = old_blob_fee_cap.map(|old_blob| {
+            let threshold = FeeCalculator::calc_threshold_value(old_blob, true);
+            caps.blob_fee_cap.map_or(threshold, |network_blob| threshold.max(network_blob))
+        });
+
+        info!(%old_tip, %old_fee_cap, %bumped_tip, %bumped_fee_cap, "gas price increase computed");
+
+        Ok(BumpedFees { gas_tip_cap: bumped_tip, gas_fee_cap: bumped_fee_cap, blob_fee_cap, caps })
+    }
+
     /// Constructs and signs a single transaction from a [`TxCandidate`].
     ///
     /// Steps:
@@ -467,6 +553,7 @@ impl SimpleTxManager {
                     raw_tx: Bytes::from(Encodable2718::encoded_2718(&envelope)),
                     gas_tip_cap: tip_cap,
                     gas_fee_cap: fee_cap,
+                    gas_limit,
                 })
             }
             Err(e) => {
@@ -588,11 +675,13 @@ impl SimpleTxManager {
         // The returned PreparedTx carries the actual on-wire fees, eliminating
         // the need for a separate suggest_gas_price_caps() call.
         let prepared = self.prepare(candidate, None).await?;
-        let mut current_tip = prepared.gas_tip_cap;
-        let mut current_fee_cap = prepared.gas_fee_cap;
-
-        // Publish initial transaction.
-        let mut last_tx_hash = self.publish_tx(send_state, &prepared.raw_tx, None).await?;
+        let tx_hash = self.publish_tx(send_state, &prepared.raw_tx, None).await?;
+        let mut bump = BumpState {
+            tip: prepared.gas_tip_cap,
+            fee_cap: prepared.gas_fee_cap,
+            gas_limit: prepared.gas_limit,
+            tx_hash,
+        };
 
         // Receipt delivery channel — mpsc because fee bumps may spawn
         // new wait tasks with different tx hashes.
@@ -602,7 +691,7 @@ impl SimpleTxManager {
         Self::wait_for_tx(
             Arc::clone(send_state),
             self.provider.clone(),
-            last_tx_hash,
+            bump.tx_hash,
             self.config.clone(),
             receipt_tx.clone(),
             Arc::clone(&self.closed),
@@ -647,16 +736,8 @@ impl SimpleTxManager {
             // error occurs later, process_send_error will re-set the flag.
             if send_state.should_bump_fees() {
                 send_state.clear_bump_fees();
-                if let Some(abort) = self
-                    .try_fee_bump(
-                        candidate,
-                        send_state,
-                        &receipt_tx,
-                        &mut current_tip,
-                        &mut current_fee_cap,
-                        &mut last_tx_hash,
-                    )
-                    .await
+                if let Some(abort) =
+                    self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await
                 {
                     return Err(abort);
                 }
@@ -693,16 +774,8 @@ impl SimpleTxManager {
             };
 
             // Bump tick fired — run fee bump logic.
-            if let Some(abort) = self
-                .try_fee_bump(
-                    candidate,
-                    send_state,
-                    &receipt_tx,
-                    &mut current_tip,
-                    &mut current_fee_cap,
-                    &mut last_tx_hash,
-                )
-                .await
+            if let Some(abort) =
+                self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await
             {
                 return Err(abort);
             }
@@ -718,92 +791,72 @@ impl SimpleTxManager {
         candidate: &TxCandidate,
         send_state: &Arc<SendState>,
         receipt_tx: &mpsc::Sender<TransactionReceipt>,
-        current_tip: &mut u128,
-        current_fee_cap: &mut u128,
-        last_tx_hash: &mut B256,
+        state: &mut BumpState,
     ) -> Option<TxManagerError> {
-        let result = self
-            .handle_fee_bump(
-                candidate,
-                send_state,
-                receipt_tx,
-                *current_tip,
-                *current_fee_cap,
-                *last_tx_hash,
-            )
-            .await;
-        Self::apply_bump_result(result, current_tip, current_fee_cap, last_tx_hash)
+        let result = self.handle_fee_bump(candidate, send_state, receipt_tx, state).await;
+        Self::apply_bump_result(result, state)
     }
 
     /// Handles a single fee bump iteration.
     ///
-    /// Queries fresh gas prices, applies [`FeeCalculator::update_fees`],
-    /// checks fee limits, resets the nonce manager, rebuilds and re-publishes
-    /// the transaction, and spawns a new receipt polling task.
+    /// Delegates fee computation to [`increase_gas_price`](Self::increase_gas_price),
+    /// resets the nonce manager, rebuilds and re-publishes the transaction,
+    /// and spawns a new receipt polling task.
     ///
-    /// The bumped `(tip, fee_cap)` values are passed as fee overrides to
-    /// [`prepare`](Self::prepare), which forwards them to
-    /// [`craft_tx`](Self::craft_tx). There, each override is used as a
-    /// floor via `max(network_fee, override)`, guaranteeing the replacement
-    /// transaction meets geth's replacement thresholds even if network fees
-    /// have dropped since the bump was calculated.
+    /// The bumped fee values are passed as fee overrides to
+    /// [`prepare_with_initial_caps`](Self::prepare_with_initial_caps),
+    /// which forwards them to [`craft_tx_with_caps`](Self::craft_tx_with_caps).
+    /// There, each override is used as a floor via `max(network_fee, override)`,
+    /// guaranteeing the replacement transaction meets geth's replacement
+    /// thresholds even if network fees have dropped since the bump was
+    /// calculated.
     ///
-    /// Returns the updated `(tip, fee_cap, tx_hash)` on success. The
-    /// returned tip and fee cap are taken directly from the [`PreparedTx`]
-    /// returned by `prepare()`, reflecting the *actual* on-wire fees
-    /// (which are guaranteed >= the bumped values) so that subsequent bump
-    /// iterations use an accurate baseline.
+    /// Returns the updated [`BumpState`] on success. The fee values are
+    /// taken directly from the [`PreparedTx`] returned by `prepare()`,
+    /// reflecting the *actual* on-wire fees (which are guaranteed >= the
+    /// bumped values) so that subsequent bump iterations use an accurate
+    /// baseline.
     async fn handle_fee_bump(
         &self,
         candidate: &TxCandidate,
         send_state: &Arc<SendState>,
         receipt_tx: &mpsc::Sender<TransactionReceipt>,
-        old_tip: u128,
-        old_fee_cap: u128,
-        last_tx_hash: B256,
-    ) -> TxManagerResult<(u128, u128, B256)> {
-        let caps = self.suggest_gas_price_caps().await?;
-
-        // Derive the effective base fee from the fee cap and tip.
-        let new_base_fee = FeeCalculator::base_fee_from_caps(caps.gas_fee_cap, caps.gas_tip_cap);
-
-        let (bumped_tip, bumped_fee_cap) =
-            FeeCalculator::update_fees(old_tip, old_fee_cap, caps.gas_tip_cap, new_base_fee, false);
-
-        FeeCalculator::check_limits(
-            bumped_fee_cap,
-            caps.raw_gas_fee_cap,
-            self.config.fee_limit_multiplier,
-            self.config.fee_limit_threshold,
-        )?;
+        old: &BumpState,
+    ) -> TxManagerResult<BumpState> {
+        let bumped = self.increase_gas_price(candidate, old.tip, old.fee_cap, None).await?;
 
         // Reset nonce manager so prepare() gets the same latest nonce.
         self.nonce_manager.reset().await;
 
-        // Rebuild transaction with bumped fees as overrides. craft_tx()
-        // takes max(network_fee, override) for each component, so the
-        // replacement tx is guaranteed to satisfy geth's replacement
-        // thresholds. The returned PreparedTx carries the actual on-wire
-        // fees, eliminating the need for a post-hoc reconciliation query.
+        // Clone candidate with the previous gas limit as a floor so that
+        // craft_tx_with_caps's `candidate.gas_limit.max(estimated)` logic
+        // ensures the gas limit never decreases across bumps.
+        let mut bump_candidate = candidate.clone();
+        bump_candidate.gas_limit = old.gas_limit;
+
+        // Rebuild transaction with bumped fees as overrides and the fresh
+        // caps to avoid a redundant provider round-trip.
         let prepared = self
             .prepare_with_initial_caps(
-                candidate,
-                Some(FeeOverride::new(bumped_tip, bumped_fee_cap)),
-                Some(caps),
+                &bump_candidate,
+                Some(FeeOverride::new(bumped.gas_tip_cap, bumped.gas_fee_cap)),
+                Some(bumped.caps),
             )
             .await?;
 
-        let new_hash = self.publish_tx(send_state, &prepared.raw_tx, Some(last_tx_hash)).await?;
+        let new_hash = self.publish_tx(send_state, &prepared.raw_tx, Some(old.tx_hash)).await?;
 
         // Record the bump and log only after the transaction has been
         // successfully published to avoid inflating the count on failure.
         send_state.record_fee_bump();
         info!(
             bump_count = %send_state.bump_count(),
-            old_tip = %old_tip,
+            old_tip = %old.tip,
             new_tip = %prepared.gas_tip_cap,
-            old_fee_cap = %old_fee_cap,
+            old_fee_cap = %old.fee_cap,
             new_fee_cap = %prepared.gas_fee_cap,
+            old_gas_limit = %old.gas_limit,
+            new_gas_limit = %prepared.gas_limit,
             "fee bump applied",
         );
 
@@ -817,7 +870,12 @@ impl SimpleTxManager {
             Arc::clone(&self.closed),
         );
 
-        Ok((prepared.gas_tip_cap, prepared.gas_fee_cap, new_hash))
+        Ok(BumpState {
+            tip: prepared.gas_tip_cap,
+            fee_cap: prepared.gas_fee_cap,
+            gas_limit: prepared.gas_limit,
+            tx_hash: new_hash,
+        })
     }
 
     /// Applies the result of a fee bump attempt, updating the tracked fee
@@ -827,16 +885,12 @@ impl SimpleTxManager {
     /// (non-retryable error), or `None` when the loop should continue
     /// (success or retryable error).
     fn apply_bump_result(
-        result: TxManagerResult<(u128, u128, B256)>,
-        current_tip: &mut u128,
-        current_fee_cap: &mut u128,
-        last_tx_hash: &mut B256,
+        result: TxManagerResult<BumpState>,
+        state: &mut BumpState,
     ) -> Option<TxManagerError> {
         match result {
-            Ok((new_tip, new_fee_cap, new_hash)) => {
-                *current_tip = new_tip;
-                *current_fee_cap = new_fee_cap;
-                *last_tx_hash = new_hash;
+            Ok(new_state) => {
+                *state = new_state;
                 None
             }
             Err(e) if !e.is_retryable() => {
@@ -1135,7 +1189,7 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use rstest::rstest;
 
-    use super::SimpleTxManager;
+    use super::{BumpState, SimpleTxManager};
     use crate::{GasPriceCaps, TxCandidate, TxManagerConfig, TxManagerError};
 
     async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
@@ -1164,34 +1218,35 @@ mod tests {
 
     #[rstest]
     #[case::success_updates_state(
-        Ok((200, 2000, B256::with_last_byte(0x42))),
-        false, 200, 2000, B256::with_last_byte(0x42),
+        Ok(BumpState { tip: 200, fee_cap: 2000, gas_limit: 50_000, tx_hash: B256::with_last_byte(0x42) }),
+        false, 200, 2000, 50_000, B256::with_last_byte(0x42),
     )]
     #[case::non_retryable_returns_abort(
         Err(TxManagerError::FeeLimitExceeded { fee: 500, ceiling: 100 }),
-        true, 100, 1000, B256::ZERO,
+        true, 100, 1000, 21_000, B256::ZERO,
     )]
     #[case::retryable_continues(
         Err(TxManagerError::Rpc("transient error".to_string())),
-        false, 100, 1000, B256::ZERO,
+        false, 100, 1000, 21_000, B256::ZERO,
     )]
     fn apply_bump_result(
-        #[case] input: Result<(u128, u128, B256), TxManagerError>,
+        #[case] input: Result<BumpState, TxManagerError>,
         #[case] abort_expected: bool,
         #[case] expected_tip: u128,
         #[case] expected_fee_cap: u128,
+        #[case] expected_gas_limit: u64,
         #[case] expected_hash: B256,
     ) {
-        let mut tip = 100u128;
-        let mut fee_cap = 1000u128;
-        let mut hash = B256::ZERO;
+        let mut state =
+            BumpState { tip: 100, fee_cap: 1000, gas_limit: 21_000, tx_hash: B256::ZERO };
 
-        let abort = SimpleTxManager::apply_bump_result(input, &mut tip, &mut fee_cap, &mut hash);
+        let abort = SimpleTxManager::apply_bump_result(input, &mut state);
 
         assert_eq!(abort.is_some(), abort_expected);
-        assert_eq!(tip, expected_tip);
-        assert_eq!(fee_cap, expected_fee_cap);
-        assert_eq!(hash, expected_hash);
+        assert_eq!(state.tip, expected_tip);
+        assert_eq!(state.fee_cap, expected_fee_cap);
+        assert_eq!(state.gas_limit, expected_gas_limit);
+        assert_eq!(state.tx_hash, expected_hash);
     }
 
     #[rstest]
@@ -1241,5 +1296,10 @@ mod tests {
         assert_eq!(prepared.gas_fee_cap, caps.gas_fee_cap);
         assert_eq!(tx.max_priority_fee_per_gas, caps.gas_tip_cap);
         assert_eq!(tx.max_fee_per_gas, caps.gas_fee_cap);
+        assert!(
+            prepared.gas_limit >= 21_000,
+            "gas_limit should be >= 21,000 for a value transfer, got {}",
+            prepared.gas_limit,
+        );
     }
 }

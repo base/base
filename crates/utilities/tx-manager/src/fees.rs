@@ -205,6 +205,25 @@ impl FeeOverride {
     }
 }
 
+/// Result of [`crate::SimpleTxManager::increase_gas_price`].
+///
+/// Contains bumped fee values that satisfy geth's tx-replacement rules
+/// and the fresh [`GasPriceCaps`] used during computation so that callers
+/// can forward them to avoid a redundant provider round-trip.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct BumpedFees {
+    /// Bumped maximum priority fee per gas (tip).
+    pub gas_tip_cap: u128,
+    /// Bumped maximum total fee per gas (base fee + tip).
+    pub gas_fee_cap: u128,
+    /// Bumped blob fee cap (for EIP-4844 txs). `None` for non-blob txs.
+    pub blob_fee_cap: Option<u128>,
+    /// Fresh [`GasPriceCaps`] from the network, carried so that callers
+    /// can reuse them without a redundant provider query.
+    pub caps: GasPriceCaps,
+}
+
 /// Intermediate fee estimates computed during gas price suggestion.
 ///
 /// Used between fee calculation and transaction construction to carry
@@ -249,6 +268,14 @@ mod tests {
     fn gas_price_caps_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<GasPriceCaps>();
+    }
+
+    // ── BumpedFees ─────────────────────────────────────────────────────
+
+    #[test]
+    fn bumped_fees_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<BumpedFees>();
     }
 
     // ── calc_gas_fee_cap ────────────────────────────────────────────────
