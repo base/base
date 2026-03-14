@@ -49,6 +49,11 @@ impl ProverClient {
     }
 
     /// Fetches the signer's 65-byte uncompressed public key via `enclave_signerPublicKey`.
+    ///
+    /// Uses `Vec<u8>` deserialization to match the server's `RpcResult<Vec<u8>>` return type
+    /// (serialized as a JSON array of numbers by serde). Note: the existing `EnclaveClient`
+    /// in `base-enclave-client` deserializes as `Bytes` (hex string) for the same methods —
+    /// if the wire format is confirmed to differ, this should be updated accordingly.
     pub async fn signer_public_key(&self) -> Result<Vec<u8>> {
         debug!(endpoint = %self.endpoint, "fetching signer public key");
         self.inner.request::<Vec<u8>, _>("enclave_signerPublicKey", rpc_params![]).await.map_err(
@@ -76,24 +81,16 @@ impl ProverClient {
     /// The address is `keccak256(public_key[1..65])[12..32]` (last 20 bytes of the hash).
     pub fn derive_address(public_key: &[u8]) -> Result<Address> {
         if public_key.len() != UNCOMPRESSED_PUBLIC_KEY_LENGTH {
-            return Err(RegistrarError::ProverClient {
-                instance: String::new(),
-                source: format!(
-                    "invalid public key length: expected {UNCOMPRESSED_PUBLIC_KEY_LENGTH}, got {}",
-                    public_key.len()
-                )
-                .into(),
-            });
+            return Err(RegistrarError::InvalidPublicKey(format!(
+                "expected {UNCOMPRESSED_PUBLIC_KEY_LENGTH} bytes, got {}",
+                public_key.len()
+            )));
         }
         if public_key[0] != UNCOMPRESSED_PREFIX {
-            return Err(RegistrarError::ProverClient {
-                instance: String::new(),
-                source: format!(
-                    "invalid public key prefix: expected 0x{UNCOMPRESSED_PREFIX:02x}, got 0x{:02x}",
-                    public_key[0]
-                )
-                .into(),
-            });
+            return Err(RegistrarError::InvalidPublicKey(format!(
+                "expected uncompressed prefix 0x{UNCOMPRESSED_PREFIX:02x}, got 0x{:02x}",
+                public_key[0]
+            )));
         }
         let hash = keccak256(&public_key[1..]);
         Ok(Address::from_slice(&hash[12..]))
@@ -108,9 +105,7 @@ impl ProverClient {
     /// Nitro NSM hardware — only call when registration is needed).
     pub async fn get_attestation_response(&self) -> Result<AttestationResponse> {
         let public_key = self.signer_public_key().await?;
-        let signer_address = Self::derive_address(&public_key).map_err(|e| {
-            RegistrarError::ProverClient { instance: self.endpoint.clone(), source: Box::new(e) }
-        })?;
+        let signer_address = Self::derive_address(&public_key)?;
         let attestation = self.signer_attestation().await?;
 
         debug!(
