@@ -7,7 +7,10 @@ use aws_sdk_ec2::Client as Ec2Client;
 use aws_sdk_elasticloadbalancingv2::Client as ElbClient;
 use tracing::{debug, warn};
 
-use crate::{InstanceDiscovery, InstanceHealthStatus, ProverInstance, RegistrarError, Result};
+use crate::{
+    InstanceDiscovery, InstanceHealthStatus, K8sDiscoveryConfig, ProverInstance, RegistrarError,
+    Result,
+};
 
 /// Discovers prover pods by enumerating a K8s `StatefulSet`'s deterministic DNS names.
 ///
@@ -18,25 +21,17 @@ use crate::{InstanceDiscovery, InstanceHealthStatus, ProverInstance, RegistrarEr
 /// from the `StatefulSet` name, headless service name, namespace, replica count,
 /// and port alone. K8s pod readiness gates proposal traffic independently;
 /// the registrar polls every enumerated pod each cycle regardless.
-#[derive(Debug, Clone)]
+///
+/// Constructed from a [`K8sDiscoveryConfig`] via [`Self::from_config`].
+#[derive(Debug)]
 pub struct K8sStatefulSetDiscovery {
-    statefulset_name: String,
-    service_name: String,
-    namespace: String,
-    replicas: usize,
-    port: u16,
+    config: K8sDiscoveryConfig,
 }
 
 impl K8sStatefulSetDiscovery {
-    /// Creates a new discovery instance for the given `StatefulSet`.
-    pub const fn new(
-        statefulset_name: String,
-        service_name: String,
-        namespace: String,
-        replicas: usize,
-        port: u16,
-    ) -> Self {
-        Self { statefulset_name, service_name, namespace, replicas, port }
+    /// Creates a new discovery instance from the given config.
+    pub const fn from_config(config: K8sDiscoveryConfig) -> Self {
+        Self { config }
     }
 
     /// Returns the pod DNS endpoint for replica index `i`.
@@ -45,7 +40,11 @@ impl K8sStatefulSetDiscovery {
     pub fn pod_endpoint(&self, i: usize) -> String {
         format!(
             "{}-{}.{}.{}.svc.cluster.local:{}",
-            self.statefulset_name, i, self.service_name, self.namespace, self.port
+            self.config.statefulset_name,
+            i,
+            self.config.service_name,
+            self.config.namespace,
+            self.config.port
         )
     }
 }
@@ -60,7 +59,7 @@ impl InstanceDiscovery for K8sStatefulSetDiscovery {
     /// (`ProverClient`) handles unreachable pods by returning connection errors,
     /// which the driver treats as per-instance failures without stopping the cycle.
     async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
-        let instances = (0..self.replicas)
+        let instances = (0..self.config.replicas)
             .map(|i| {
                 let endpoint = self.pod_endpoint(i);
                 debug!(pod = %endpoint, "discovered prover pod");
@@ -236,13 +235,13 @@ mod tests {
     use super::*;
 
     fn four_replica_discovery() -> K8sStatefulSetDiscovery {
-        K8sStatefulSetDiscovery::new(
-            "prover".into(),
-            "prover-headless".into(),
-            "provers".into(),
-            4,
-            8000,
-        )
+        K8sStatefulSetDiscovery::from_config(K8sDiscoveryConfig {
+            statefulset_name: "prover".into(),
+            service_name: "prover-headless".into(),
+            namespace: "provers".into(),
+            replicas: 4,
+            port: 8000,
+        })
     }
 
     #[rstest]
@@ -258,13 +257,13 @@ mod tests {
     #[case::four(4)]
     #[tokio::test]
     async fn discover_instances_returns_one_per_replica(#[case] replicas: usize) {
-        let d = K8sStatefulSetDiscovery::new(
-            "prover".into(),
-            "prover-headless".into(),
-            "provers".into(),
+        let d = K8sStatefulSetDiscovery::from_config(K8sDiscoveryConfig {
+            statefulset_name: "prover".into(),
+            service_name: "prover-headless".into(),
+            namespace: "provers".into(),
             replicas,
-            8000,
-        );
+            port: 8000,
+        });
         let instances = d.discover_instances().await.unwrap();
         assert_eq!(instances.len(), replicas);
     }

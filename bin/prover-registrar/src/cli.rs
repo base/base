@@ -5,7 +5,7 @@ use std::time::Duration;
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use base_proof_tee_registrar::{
-    AwsDiscoveryConfig, BoundlessConfig, DiscoveryConfig, K8sStatefulSetDiscovery, RegistrarConfig,
+    AwsDiscoveryConfig, BoundlessConfig, DiscoveryConfig, K8sDiscoveryConfig, RegistrarConfig,
     RegistrarError, RemoteSignerConfig, SigningConfig,
 };
 use clap::{ArgGroup, Args, Parser, ValueEnum};
@@ -200,13 +200,13 @@ impl Cli {
                         "--prover-replicas must be greater than 0".into(),
                     ));
                 }
-                DiscoveryConfig::K8s(K8sStatefulSetDiscovery::new(
+                DiscoveryConfig::K8s(K8sDiscoveryConfig {
                     statefulset_name,
                     service_name,
                     namespace,
                     replicas,
-                    self.prover_port,
-                ))
+                    port: self.prover_port,
+                })
             }
             DiscoveryMode::Aws => {
                 let target_group_arn = self.target_group_arn.ok_or_else(|| {
@@ -268,7 +268,10 @@ impl Cli {
     /// Run the registrar service.
     pub(crate) async fn run(self) -> eyre::Result<()> {
         let _config = self.into_config()?;
-        // TODO(CHAIN-3455): start RegistrationDriver
+        // TODO(CHAIN-3455): start RegistrationDriver. When wiring up the driver,
+        // this binary crate will need `aws-config` with features
+        // `["default-https-client", "rt-tokio"]` to construct real AWS SDK clients
+        // for AwsTargetGroupDiscovery in `aws` discovery mode.
         Ok(())
     }
 }

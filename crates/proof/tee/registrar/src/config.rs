@@ -46,6 +46,26 @@ impl std::fmt::Debug for SigningConfig {
     }
 }
 
+/// K8s `StatefulSet` discovery configuration.
+///
+/// Contains the parameters needed to construct a [`K8sStatefulSetDiscovery`]
+/// at runtime. The driver builds the discovery implementation from this config.
+///
+/// [`K8sStatefulSetDiscovery`]: crate::K8sStatefulSetDiscovery
+#[derive(Clone, Debug)]
+pub struct K8sDiscoveryConfig {
+    /// K8s `StatefulSet` name (e.g. `"prover"`).
+    pub statefulset_name: String,
+    /// Headless Service name used for pod DNS (e.g. `"prover-headless"`).
+    pub service_name: String,
+    /// Namespace of the prover `StatefulSet` (e.g. `"provers"`).
+    pub namespace: String,
+    /// Number of `StatefulSet` replicas to enumerate.
+    pub replicas: usize,
+    /// JSON-RPC port to poll on each prover pod.
+    pub port: u16,
+}
+
 /// AWS ALB target group discovery configuration.
 ///
 /// Contains the parameters needed to construct an [`AwsTargetGroupDiscovery`]
@@ -66,20 +86,18 @@ pub struct AwsDiscoveryConfig {
 ///
 /// Selected at startup via `--discovery-mode`. Only the active variant's
 /// parameters are required; unused variant fields are never read.
+///
+/// Both variants wrap plain config structs — the runtime discovery
+/// implementations ([`K8sStatefulSetDiscovery`], [`AwsTargetGroupDiscovery`])
+/// are constructed from these by the driver.
+///
+/// [`K8sStatefulSetDiscovery`]: crate::K8sStatefulSetDiscovery
+/// [`AwsTargetGroupDiscovery`]: crate::AwsTargetGroupDiscovery
 #[derive(Clone, Debug)]
 pub enum DiscoveryConfig {
     /// K8s `StatefulSet` DNS enumeration (preferred).
-    ///
-    /// Wraps [`K8sStatefulSetDiscovery`] directly — no duplicate fields.
-    ///
-    /// [`K8sStatefulSetDiscovery`]: crate::K8sStatefulSetDiscovery
-    K8s(crate::K8sStatefulSetDiscovery),
+    K8s(K8sDiscoveryConfig),
     /// AWS ALB target group polling (fallback).
-    ///
-    /// Wraps [`AwsDiscoveryConfig`] with the connection parameters needed to
-    /// construct an [`AwsTargetGroupDiscovery`] at runtime.
-    ///
-    /// [`AwsTargetGroupDiscovery`]: crate::AwsTargetGroupDiscovery
     Aws(AwsDiscoveryConfig),
 }
 

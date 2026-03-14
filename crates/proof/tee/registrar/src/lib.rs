@@ -3,8 +3,8 @@
 
 mod config;
 pub use config::{
-    AwsDiscoveryConfig, BoundlessConfig, DiscoveryConfig, RegistrarConfig, RemoteSignerConfig,
-    SigningConfig,
+    AwsDiscoveryConfig, BoundlessConfig, DiscoveryConfig, K8sDiscoveryConfig, RegistrarConfig,
+    RemoteSignerConfig, SigningConfig,
 };
 
 mod discovery;
