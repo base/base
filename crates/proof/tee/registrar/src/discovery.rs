@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use aws_sdk_ec2::Client as Ec2Client;
 use aws_sdk_elasticloadbalancingv2::Client as ElbClient;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::{InstanceDiscovery, InstanceHealthStatus, ProverInstance, RegistrarError, Result};
 
@@ -52,6 +52,13 @@ impl K8sStatefulSetDiscovery {
 
 #[async_trait]
 impl InstanceDiscovery for K8sStatefulSetDiscovery {
+    /// Returns one [`ProverInstance`] per replica, all marked [`InstanceHealthStatus::Healthy`].
+    ///
+    /// Unlike the AWS path where the ALB provides real health status, K8s discovery
+    /// has no liveness signal — pod DNS names are deterministic regardless of
+    /// whether a pod is actually running. The registrar's downstream poll loop
+    /// (`ProverClient`) handles unreachable pods by returning connection errors,
+    /// which the driver treats as per-instance failures without stopping the cycle.
     async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
         let instances = (0..self.replicas)
             .map(|i| {
@@ -141,16 +148,41 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
             .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
 
         // Extract (instance_id, health_status) pairs from the ELB response.
-        let targets: Vec<(String, InstanceHealthStatus)> = elb_resp
-            .target_health_descriptions()
-            .iter()
-            .filter_map(|t| {
-                let instance_id = t.target()?.id()?.to_string();
-                let state = t.target_health()?.state()?;
-                let health_status = InstanceHealthStatus::from_aws_state(state.as_str());
-                Some((instance_id, health_status))
-            })
-            .collect();
+        // Validates that targets are instance-type (id starts with "i-") and
+        // deduplicates instances registered on multiple ports (first-seen wins).
+        let mut health_map: HashMap<String, InstanceHealthStatus> = HashMap::new();
+        for desc in elb_resp.target_health_descriptions() {
+            let Some(instance_id) = desc.target().and_then(|t| t.id()) else {
+                warn!("target group entry missing instance ID, skipping");
+                continue;
+            };
+            if !instance_id.starts_with("i-") {
+                warn!(
+                    id = %instance_id,
+                    "target is not an instance-type target (id does not start with \
+                     'i-'); is the target group type set to 'instance'? skipping"
+                );
+                continue;
+            }
+            let health_status = desc
+                .target_health()
+                .and_then(|h| h.state())
+                .map(|s| InstanceHealthStatus::from_aws_state(s.as_str()))
+                .unwrap_or(InstanceHealthStatus::Unhealthy);
+
+            if let std::collections::hash_map::Entry::Vacant(e) =
+                health_map.entry(instance_id.to_string())
+            {
+                e.insert(health_status);
+            } else {
+                debug!(
+                    instance_id = %instance_id,
+                    "instance registered on multiple ports; keeping first-seen health status"
+                );
+            }
+        }
+
+        let targets: Vec<(String, InstanceHealthStatus)> = health_map.into_iter().collect();
 
         // Collect IDs for instances that should be registered.
         let registerable_ids: Vec<String> = targets
