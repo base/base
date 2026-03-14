@@ -2,10 +2,13 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod config;
-pub use config::{BoundlessConfig, RegistrarConfig, RemoteSignerConfig, SigningConfig};
+pub use config::{
+    AwsDiscoveryConfig, BoundlessConfig, DiscoveryConfig, K8sDiscoveryConfig, RegistrarConfig,
+    RemoteSignerConfig, SigningConfig,
+};
 
 mod discovery;
-pub use discovery::AwsTargetGroupDiscovery;
+pub use discovery::{AwsTargetGroupDiscovery, K8sStatefulSetDiscovery};
 
 mod error;
 pub use error::{RegistrarError, Result};

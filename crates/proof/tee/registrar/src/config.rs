@@ -46,6 +46,61 @@ impl std::fmt::Debug for SigningConfig {
     }
 }
 
+/// K8s `StatefulSet` discovery configuration.
+///
+/// Contains the parameters needed to construct a [`K8sStatefulSetDiscovery`]
+/// at runtime. The driver builds the discovery implementation from this config.
+///
+/// [`K8sStatefulSetDiscovery`]: crate::K8sStatefulSetDiscovery
+#[derive(Clone, Debug)]
+pub struct K8sDiscoveryConfig {
+    /// K8s `StatefulSet` name (e.g. `"prover"`).
+    pub statefulset_name: String,
+    /// Headless Service name used for pod DNS (e.g. `"prover-headless"`).
+    pub service_name: String,
+    /// Namespace of the prover `StatefulSet` (e.g. `"provers"`).
+    pub namespace: String,
+    /// Number of `StatefulSet` replicas to enumerate.
+    pub replicas: usize,
+    /// JSON-RPC port to poll on each prover pod.
+    pub port: u16,
+}
+
+/// AWS ALB target group discovery configuration.
+///
+/// Contains the parameters needed to construct an [`AwsTargetGroupDiscovery`]
+/// at runtime. The SDK clients are built separately from these values.
+///
+/// [`AwsTargetGroupDiscovery`]: crate::AwsTargetGroupDiscovery
+#[derive(Clone, Debug)]
+pub struct AwsDiscoveryConfig {
+    /// AWS ALB target group ARN for prover instance discovery.
+    pub target_group_arn: String,
+    /// AWS region (e.g. `"us-east-1"`).
+    pub aws_region: String,
+    /// JSON-RPC port to poll on each prover instance.
+    pub port: u16,
+}
+
+/// Discovery backend configuration.
+///
+/// Selected at startup via `--discovery-mode`. Only the active variant's
+/// parameters are required; unused variant fields are never read.
+///
+/// Both variants wrap plain config structs — the runtime discovery
+/// implementations ([`K8sStatefulSetDiscovery`], [`AwsTargetGroupDiscovery`])
+/// are constructed from these by the driver.
+///
+/// [`K8sStatefulSetDiscovery`]: crate::K8sStatefulSetDiscovery
+/// [`AwsTargetGroupDiscovery`]: crate::AwsTargetGroupDiscovery
+#[derive(Clone, Debug)]
+pub enum DiscoveryConfig {
+    /// K8s `StatefulSet` DNS enumeration (preferred).
+    K8s(K8sDiscoveryConfig),
+    /// AWS ALB target group polling (fallback).
+    Aws(AwsDiscoveryConfig),
+}
+
 /// Boundless Network configuration for ZK proof generation.
 #[derive(Clone)]
 pub struct BoundlessConfig {
@@ -90,13 +145,9 @@ pub struct RegistrarConfig {
     pub l1_rpc_url: Url,
     /// `TEEProverRegistry` contract address on L1.
     pub tee_prover_registry_address: Address,
-    // ── AWS ───────────────────────────────────────────────────────────────────
-    /// AWS ALB target group ARN for prover instance discovery.
-    pub target_group_arn: String,
-    /// AWS region.
-    pub aws_region: String,
-    /// JSON-RPC port to poll on each prover instance.
-    pub prover_port: u16,
+    // ── Discovery ─────────────────────────────────────────────────────────────
+    /// Discovery backend configuration.
+    pub discovery: DiscoveryConfig,
     // ── Signing ───────────────────────────────────────────────────────────────
     /// Resolved signing configuration.
     pub signing: SigningConfig,
@@ -125,9 +176,7 @@ impl std::fmt::Debug for RegistrarConfig {
         f.debug_struct("RegistrarConfig")
             .field("l1_rpc_url", &url_origin(&self.l1_rpc_url))
             .field("tee_prover_registry_address", &self.tee_prover_registry_address)
-            .field("target_group_arn", &self.target_group_arn)
-            .field("aws_region", &self.aws_region)
-            .field("prover_port", &self.prover_port)
+            .field("discovery", &self.discovery)
             .field("signing", &self.signing)
             .field("boundless", &self.boundless)
             .field("poll_interval", &self.poll_interval)

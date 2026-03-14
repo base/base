@@ -4326,11 +4326,11 @@ dependencies = [
  "alloy-signer-local",
  "alloy-sol-types",
  "async-trait",
- "aws-config",
  "aws-sdk-ec2",
  "aws-sdk-elasticloadbalancingv2",
  "rstest",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
  "url",
 ]
