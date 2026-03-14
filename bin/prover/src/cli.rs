@@ -1,6 +1,5 @@
 //! CLI definition for the prover binary (TEE + ZK backends).
 
-use eyre::eyre;
 use std::net::SocketAddr;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use std::sync::Arc;
