@@ -72,7 +72,7 @@ impl<M: TxManager + 'static> TxQueue<M> {
         self.dispatch(permit, id, candidate, result_tx).await;
     }
 
-    /// Attempts to queue a transaction without blocking.
+    /// Attempts to queue a transaction if a permit is available.
     ///
     /// Returns `Ok(())` if a permit was available and the transaction was
     /// enqueued. Returns `Err((id, candidate))` if the queue is full, giving
