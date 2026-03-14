@@ -728,7 +728,10 @@ async fn increase_gas_price_bumps_blob_fee_cap() {
         .await
         .expect("should compute bumped fees with blob fee cap");
 
-    assert!(bumped.blob_fee_cap.is_some(), "blob_fee_cap should be Some when old_blob_fee_cap is Some");
+    assert!(
+        bumped.blob_fee_cap.is_some(),
+        "blob_fee_cap should be Some when old_blob_fee_cap is Some"
+    );
 
     let threshold = FeeCalculator::calc_threshold_value(old_blob_fee_cap, true);
     assert!(
