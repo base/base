@@ -4661,6 +4661,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-witness-diff"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-client",
+ "alloy-transport-http",
+ "alloy-trie",
+ "base-alloy-network",
+ "base-proof-mpt",
+ "clap",
+ "eyre",
+ "hex",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "base-x"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
