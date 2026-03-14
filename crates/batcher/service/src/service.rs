@@ -6,19 +6,45 @@ use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_alloy_consensus::OpBlock;
 use base_alloy_network::Base;
-use base_batcher_core::{BatchDriver, ThrottleConfig, ThrottleController, ThrottleStrategy};
+use base_batcher_core::{
+    BatchDriver, NoopThrottleClient, ThrottleClient, ThrottleConfig, ThrottleController,
+    ThrottleStrategy,
+};
 use base_batcher_encoder::BatchEncoder;
 use base_batcher_source::{BlockSubscription, HybridBlockSource, SourceError};
 use base_consensus_genesis::RollupConfig;
-use futures::{StreamExt, stream::BoxStream};
+use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    BatcherConfig, NoopTxManager, NullSubscription, RpcPollingSource, WsBlockSubscription,
+    BatcherConfig, NoopTxManager, NullSubscription, RpcPollingSource, RpcThrottleClient,
+    WsBlockSubscription,
 };
+
+/// Service-internal throttle client variant: either a no-op or an RPC client.
+///
+/// Using a concrete enum avoids heap allocation while still allowing
+/// `start` to return either branch based on config.
+enum ServiceThrottle {
+    Noop(NoopThrottleClient),
+    Rpc(RpcThrottleClient),
+}
+
+impl ThrottleClient for ServiceThrottle {
+    fn set_max_da_size(
+        &self,
+        max_tx_size: u64,
+        max_block_size: u64,
+    ) -> BoxFuture<'_, Result<(), Box<dyn std::error::Error + Send + Sync>>> {
+        match self {
+            Self::Noop(n) => n.set_max_da_size(max_tx_size, max_block_size),
+            Self::Rpc(r) => r.set_max_da_size(max_tx_size, max_block_size),
+        }
+    }
+}
 
 /// Batcher-internal subscription variant: either a live WS subscription or a no-op.
 ///
@@ -174,12 +200,17 @@ impl BatcherService {
         let encoder =
             BatchEncoder::new(Arc::clone(&rollup_config), self.config.encoder_config.clone());
 
-        // Build the throttle controller.
-        let (throttle_config, throttle_strategy) = self.config.throttle.clone().map_or(
-            (
-                ThrottleConfig { threshold_bytes: u64::MAX, max_intensity: 0.0 },
-                ThrottleStrategy::Off,
-            ),
+        // Build the throttle controller and the appropriate client.
+        // When throttling is disabled we use a NoopThrottleClient so the driver
+        // never calls miner_setMaxDASize on the sequencer.
+        let throttle_client = match &self.config.throttle {
+            None => ServiceThrottle::Noop(NoopThrottleClient),
+            Some(_) => {
+                ServiceThrottle::Rpc(RpcThrottleClient::new(self.config.l2_rpc_url.as_str())?)
+            }
+        };
+        let (throttle_config, throttle_strategy) = self.config.throttle.clone().map_or_else(
+            || (ThrottleConfig::default(), ThrottleStrategy::Off),
             |cfg| (cfg, ThrottleStrategy::Linear),
         );
         let throttle = ThrottleController::new(throttle_config, throttle_strategy);
@@ -195,11 +226,11 @@ impl BatcherService {
             rollup_config.batch_inbox_address,
             self.config.max_pending_transactions,
             throttle,
-            cancellation,
+            throttle_client,
         );
 
         info!("batcher service components initialized");
-        driver.run().await?;
+        driver.run(cancellation).await?;
 
         info!("batcher service shutting down");
         Ok(())

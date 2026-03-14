@@ -21,7 +21,7 @@ pub trait BatchPipeline: Send {
     /// current tip, giving the caller back the block so it can be re-fed after
     /// [`reset`](Self::reset). On reorg error the caller must reset the pipeline and
     /// re-add the returned block as the first block of the new chain.
-    fn add_block(&mut self, block: OpBlock) -> Result<(), Box<(ReorgError, OpBlock)>>;
+    fn add_block(&mut self, block: OpBlock) -> Result<(), (ReorgError, Box<OpBlock>)>;
 
     /// Advance the pipeline by one step.
     ///

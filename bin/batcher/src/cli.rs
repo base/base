@@ -153,6 +153,7 @@ impl BatcherArgs {
                 Some(ThrottleConfig {
                     threshold_bytes: self.throttle_threshold,
                     max_intensity: 1.0,
+                    ..Default::default()
                 })
             },
             metrics_port: self.metrics.port,

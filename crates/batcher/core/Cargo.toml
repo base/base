@@ -12,21 +12,21 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+futures.workspace = true
 base-blobs.workspace = true
+tokio-util.workspace = true
 base-tx-manager.workspace = true
 base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
-alloy-primitives = { workspace = true, features = ["std"] }
-futures.workspace = true
-tokio = { workspace = true, features = ["sync", "macros", "rt"] }
-tokio-util.workspace = true
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["sync", "macros", "rt"] }
 
 [dev-dependencies]
+async-trait.workspace = true
 base-protocol = { workspace = true, features = ["std"] }
-base-alloy-consensus = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
-async-trait.workspace = true
+base-alloy-consensus = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt", "time"] }

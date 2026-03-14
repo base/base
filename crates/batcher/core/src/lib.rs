@@ -16,5 +16,10 @@ pub use outcome::TxOutcome;
 mod throttle;
 pub use throttle::{ThrottleConfig, ThrottleController, ThrottleParams, ThrottleStrategy};
 
+mod throttle_client;
+pub use throttle_client::{NoopThrottleClient, ThrottleClient};
+
 mod driver;
 pub use driver::BatchDriver;
+
+pub mod test_utils;

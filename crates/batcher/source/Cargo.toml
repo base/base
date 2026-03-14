@@ -12,14 +12,14 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-base-protocol = { workspace = true, features = ["std"] }
-base-alloy-consensus = { workspace = true, features = ["std"] }
-alloy-primitives = { workspace = true, features = ["std"] }
-async-trait.workspace = true
 futures.workspace = true
-thiserror = { workspace = true, features = ["std"] }
+async-trait.workspace = true
 tracing = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+base-protocol = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "time"] }
+alloy-primitives = { workspace = true, features = ["std"] }
+base-alloy-consensus = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 alloy-consensus.workspace = true

@@ -19,5 +19,8 @@ pub use source::RpcPollingSource;
 mod subscription;
 pub use subscription::{NullSubscription, WsBlockSubscription};
 
+mod throttle;
+pub use throttle::RpcThrottleClient;
+
 mod service;
 pub use service::BatcherService;

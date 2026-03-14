@@ -12,15 +12,15 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-base-comp = { workspace = true, features = ["std"] }
-base-protocol = { workspace = true, features = ["std"] }
-base-consensus-genesis = { workspace = true, features = ["std"] }
-base-alloy-consensus = { workspace = true, features = ["std"] }
-alloy-eips = { workspace = true, features = ["std"] }
-alloy-primitives = { workspace = true, features = ["std"] }
-thiserror = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
+base-comp = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+alloy-eips = { workspace = true, features = ["std"] }
+base-protocol = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["std"] }
 rand = { workspace = true, features = ["std", "small_rng"] }
+base-alloy-consensus = { workspace = true, features = ["std"] }
+base-consensus-genesis = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 alloy-consensus = { workspace = true, features = ["std"] }
