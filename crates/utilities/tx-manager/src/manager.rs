@@ -675,7 +675,10 @@ impl SimpleTxManager {
         };
 
         if Self::should_reset_nonce_on_send_error(&result, &send_state, nonce_override) {
-            // Two policies (see should_reset_nonce_on_send_error):
+            // Three policies (see should_reset_nonce_on_send_error):
+            // • NonceTooHigh — always reset, even with nonce_override.
+            //   No tx entered the mempool; reserved_high_water protects
+            //   concurrent reservations from collision after reset.
             // • SendTimeout — always reset. The timeout may have cancelled
             //   prepare() after it reserved a nonce but before the tx reached
             //   the mempool, leaking the nonce manager's internal counter.
@@ -702,14 +705,16 @@ impl SimpleTxManager {
         send_state: &SendState,
         nonce_override: Option<u64>,
     ) -> bool {
-        // When a nonce_override was used, the nonce was irrevocably
-        // consumed at reserve_nonce() time. Resetting the nonce manager
-        // would corrupt concurrent send_async reservations.
-        if nonce_override.is_some() {
-            return false;
-        }
         match result {
             Ok(_) => false,
+            // Always reset on NonceTooHigh — the publish failed, no tx
+            // entered the mempool, and reserved_high_water protects
+            // concurrent reservations from collision after reset.
+            Err(TxManagerError::NonceTooHigh) => true,
+            // When a nonce_override was used, the nonce was irrevocably
+            // consumed at reserve_nonce() time. Resetting the nonce manager
+            // would corrupt concurrent send_async reservations.
+            _ if nonce_override.is_some() => false,
             // Always reset on timeout — the timeout may have cancelled
             // prepare() mid-flight during a fee bump, leaking a nonce
             // from the nonce manager's internal counter.
@@ -1340,6 +1345,8 @@ mod tests {
     #[case::non_timeout_error_after_publish(true, Err(TxManagerError::ChannelClosed), None, false)]
     #[case::timeout_after_publish(true, Err(TxManagerError::SendTimeout), None, true)]
     #[case::success(false, Ok(()), None, false)]
+    #[case::nonce_too_high_no_override(false, Err(TxManagerError::NonceTooHigh), None, true)]
+    #[case::nonce_too_high_with_override(false, Err(TxManagerError::NonceTooHigh), Some(42), true)]
     #[case::nonce_override_timeout(false, Err(TxManagerError::SendTimeout), Some(42), false)]
     #[case::nonce_override_pre_publish_error(false, Err(TxManagerError::ChannelClosed), Some(42), false)]
     fn should_reset_nonce_on_send_error(

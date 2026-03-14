@@ -2,9 +2,12 @@
 
 use std::time::Duration;
 
+use alloy_network::EthereumWallet;
 use alloy_node_bindings::Anvil;
-use alloy_primitives::Address;
-use alloy_provider::RootProvider;
+use alloy_primitives::{Address, U256};
+use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use alloy_rpc_types_eth::TransactionRequest;
+use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::{NonceGuard, NonceManager, TxManagerError};
 use rayon::prelude::*;
 
@@ -462,4 +465,66 @@ async fn reserve_nonce_reuses_returned_nonce() {
     // Next fresh should be 2.
     let n = manager.reserve_nonce().await.unwrap();
     assert_eq!(n, 2, "next reserve after reuse should be fresh nonce 2");
+}
+
+// ── returned nonce pruning tests ──────────────────────────────────
+
+#[tokio::test]
+async fn returned_nonces_below_chain_count_are_pruned_after_reset() {
+    let anvil = Anvil::new().spawn();
+    let url = anvil.endpoint_url();
+    let address = anvil.addresses()[0];
+
+    // Create a wallet-backed provider to send real transactions.
+    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
+    let wallet = EthereumWallet::from(signer);
+    let sender = ProviderBuilder::new().wallet(wallet).connect_http(url.clone());
+
+    // Send two real transactions to advance the chain nonce to 2.
+    for _ in 0..2 {
+        let tx = TransactionRequest::default().to(address).value(U256::from(1));
+        let _ = sender.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
+    }
+
+    // Verify chain nonce is now 2.
+    let root = RootProvider::new_http(url);
+    let chain_nonce = root.get_transaction_count(address).await.unwrap();
+    assert_eq!(chain_nonce, 2);
+
+    // Create a NonceManager and populate its cache.
+    let manager = NonceManager::new(root, address, Duration::from_secs(10));
+    let guard = manager.next_nonce().await.unwrap();
+    assert_eq!(guard.nonce(), 2);
+    drop(guard);
+
+    // Reserve nonces 3, 4 and return them (simulating failed send_async).
+    let _ = manager.reserve_nonce().await.unwrap(); // 3
+    let _ = manager.reserve_nonce().await.unwrap(); // 4
+    manager.return_reserved_nonce(3).await;
+    manager.return_reserved_nonce(4).await;
+
+    // Also return nonces 0 and 1 — these are below the chain nonce and
+    // should be pruned after a reset + re-fetch.
+    manager.return_reserved_nonce(0).await;
+    manager.return_reserved_nonce(1).await;
+
+    // Reset forces a chain fetch; the pruning logic should remove 0 and 1
+    // (which are < chain_nonce 2) and keep 3 and 4 (which are >= 2).
+    manager.reset().await;
+
+    // The next nonce should be a returned nonce >= chain_nonce.
+    // Since returned_nonces has {3, 4} after pruning, the smallest (3)
+    // should be reissued first.
+    let guard = manager.next_nonce().await.unwrap();
+    assert_eq!(guard.nonce(), 3, "stale nonces 0 and 1 should have been pruned");
+    drop(guard);
+
+    let guard = manager.next_nonce().await.unwrap();
+    assert_eq!(guard.nonce(), 4, "returned nonce 4 should still be available");
+    drop(guard);
+
+    // After both returned nonces are consumed, next should be fresh (5).
+    // high-water mark from reserve_nonce(4) is 5, chain nonce is 2 → effective is 5.
+    let guard = manager.next_nonce().await.unwrap();
+    assert_eq!(guard.nonce(), 5, "next fresh nonce should be 5");
 }

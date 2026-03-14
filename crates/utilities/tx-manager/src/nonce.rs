@@ -160,6 +160,16 @@ impl NonceManager {
                 debug!(nonce = fetched, "nonce fetched from chain");
                 fetched
             });
+
+            // Prune returned nonces that the chain has already confirmed.
+            // `split_off(fetched)` moves elements >= fetched into `kept`;
+            // the original set retains elements < fetched (stale).
+            let kept = guard.returned_nonces.split_off(&fetched);
+            if !guard.returned_nonces.is_empty() {
+                debug!(pruned = guard.returned_nonces.len(), chain_nonce = fetched, "pruned stale returned nonces");
+            }
+            guard.returned_nonces = kept;
+
             return Self::advance_nonce(guard, nonce);
         }
 
@@ -180,6 +190,15 @@ impl NonceManager {
         // Priority: reissue a returned nonce before allocating a fresh one.
         // BTreeSet::pop_first gives the smallest gap, filling holes
         // left-to-right so the chain can make forward progress.
+        //
+        // `reserved_high_water` is NOT updated here because the two call
+        // paths handle it differently:
+        // • `reserve_nonce` path (`send_async`): the caller's
+        //   `consume_reserved()` updates `reserved_high_water`, covering
+        //   recycled nonces.
+        // • `next_nonce` guard path (`send`): the mutex is held for the
+        //   entire signing duration, so concurrent collision is impossible
+        //   and `reserved_high_water` is irrelevant.
         if let Some(returned) = guard.returned_nonces.pop_first() {
             debug!(nonce = returned, "reissuing returned nonce");
             return Ok(NonceGuard { guard: Some(guard), nonce: returned, recycled: true });
@@ -302,6 +321,8 @@ impl NonceGuard {
             let next = nonce.checked_add(1).ok_or(TxManagerError::NonceOverflow)?;
             guard.reserved_high_water = guard.reserved_high_water.max(next);
         }
+        // Clear the guard so Drop sees `guard.is_none()` and takes no action.
+        let _ = self.guard.take();
         Ok(nonce)
     }
 
