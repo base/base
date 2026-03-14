@@ -45,10 +45,10 @@ impl ProverClient {
 
     /// Fetches the signer's 65-byte uncompressed public key via `enclave_signerPublicKey`.
     ///
-    /// Uses `Vec<u8>` deserialization to match the server's `RpcResult<Vec<u8>>` return type
-    /// (serialized as a JSON array of numbers by serde). Note: the existing `EnclaveClient`
-    /// in `base-enclave-client` deserializes as `Bytes` (hex string) for the same methods —
-    /// if the wire format is confirmed to differ, this should be updated accordingly.
+    /// Deserializes as `Vec<u8>` to match the server's canonical `RpcResult<Vec<u8>>` return
+    /// type in `EnclaveApi` (serialized as a JSON array of numbers by serde). Note: the
+    /// existing `EnclaveClient` in `base-enclave-client` deserializes as `Bytes` for the
+    /// same methods — that appears to be a mismatch on the client side, not here.
     pub async fn signer_public_key(&self) -> Result<Vec<u8>> {
         debug!(endpoint = %self.endpoint, "fetching signer public key");
         self.inner.request::<Vec<u8>, _>("enclave_signerPublicKey", rpc_params![]).await.map_err(
@@ -146,17 +146,30 @@ mod tests {
 
     #[rstest]
     #[case::empty(0)]
-    #[case::compressed(33)]
+    #[case::invalid_33_bytes(33)]
     #[case::too_long(66)]
-    fn derive_address_rejects_wrong_length(#[case] len: usize) {
+    fn derive_address_rejects_invalid_bytes(#[case] len: usize) {
         let key = vec![0x04; len];
         assert!(ProverClient::derive_address(&key).is_err());
     }
 
     #[test]
-    fn derive_address_rejects_wrong_prefix() {
+    fn derive_address_rejects_prefix_length_mismatch() {
+        // 0x02 = compressed prefix expects 33 bytes, but key is 65 bytes.
         let mut key = hardhat_public_key();
-        key[0] = 0x02; // compressed prefix
+        key[0] = 0x02;
         assert!(ProverClient::derive_address(&key).is_err());
+    }
+
+    #[test]
+    fn derive_address_compressed_matches_uncompressed() {
+        let signing_key = SigningKey::from_slice(&HARDHAT_PRIVATE_KEY).unwrap();
+        let verifying_key = signing_key.verifying_key();
+        let compressed = verifying_key.to_encoded_point(true).as_bytes().to_vec();
+        let uncompressed = hardhat_public_key();
+
+        let addr_compressed = ProverClient::derive_address(&compressed).unwrap();
+        let addr_uncompressed = ProverClient::derive_address(&uncompressed).unwrap();
+        assert_eq!(addr_compressed, addr_uncompressed);
     }
 }
