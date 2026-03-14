@@ -42,6 +42,8 @@ struct SendStateInner {
     successful_publish_count: u64,
     /// Number of nonce-too-low errors encountered.
     nonce_too_low_count: u64,
+    /// Whether a nonce-too-high error was encountered.
+    nonce_too_high: bool,
     /// Whether the nonce slot was already reserved by another sender.
     already_reserved: bool,
     /// Whether the next send attempt should bump fees.
@@ -70,6 +72,7 @@ impl SendState {
                 mined_txs: HashSet::new(),
                 successful_publish_count: 0,
                 nonce_too_low_count: 0,
+                nonce_too_high: false,
                 already_reserved: false,
                 bump_fees: false,
                 bump_count: 0,
@@ -94,6 +97,9 @@ impl SendState {
         match err {
             TxManagerError::NonceTooLow => {
                 inner.nonce_too_low_count += 1;
+            }
+            TxManagerError::NonceTooHigh => {
+                inner.nonce_too_high = true;
             }
             TxManagerError::AlreadyReserved => {
                 inner.already_reserved = true;
@@ -134,13 +140,16 @@ impl SendState {
     /// 1. If any transaction is mined, returns `None` (wait for confirmation).
     /// 2. If the nonce slot was already reserved, returns
     ///    [`TxManagerError::AlreadyReserved`].
-    /// 3. If no successful publish has occurred and a nonce-too-low error was
+    /// 3. If a nonce-too-high error was seen, returns
+    ///    [`TxManagerError::NonceTooHigh`] (immediate abort — the nonce is
+    ///    ahead of chain state and no tx entered the mempool).
+    /// 4. If no successful publish has occurred and a nonce-too-low error was
     ///    seen, returns [`TxManagerError::NonceTooLow`] (immediate abort).
-    /// 4. If nonce-too-low errors have reached the threshold, returns
+    /// 5. If nonce-too-low errors have reached the threshold, returns
     ///    [`TxManagerError::NonceTooLow`].
-    /// 5. If the mempool deadline has expired, returns
+    /// 6. If the mempool deadline has expired, returns
     ///    [`TxManagerError::MempoolDeadlineExpired`].
-    /// 6. Otherwise, returns `None`.
+    /// 7. Otherwise, returns `None`.
     #[must_use]
     pub fn critical_error(&self) -> Option<TxManagerError> {
         let inner = self.inner.lock().expect("SendState mutex poisoned");
@@ -155,25 +164,31 @@ impl SendState {
             return Some(TxManagerError::AlreadyReserved);
         }
 
-        // 3. Pre-publish immediate abort: nonce consumed before any successful
+        // 3. Nonce too high: the nonce is ahead of chain state. No tx
+        //    entered the mempool, so retry is pointless without a reset.
+        if inner.nonce_too_high {
+            return Some(TxManagerError::NonceTooHigh);
+        }
+
+        // 4. Pre-publish immediate abort: nonce consumed before any successful
         //    publish.
         if inner.successful_publish_count == 0 && inner.nonce_too_low_count > 0 {
             return Some(TxManagerError::NonceTooLow);
         }
 
-        // 4. Nonce-too-low threshold reached after successful publishes.
+        // 5. Nonce-too-low threshold reached after successful publishes.
         if inner.nonce_too_low_count >= self.safe_abort_nonce_too_low_count {
             return Some(TxManagerError::NonceTooLow);
         }
 
-        // 5. Mempool deadline expired.
+        // 6. Mempool deadline expired.
         if let Some(deadline) = inner.mempool_deadline
             && Instant::now() >= deadline
         {
             return Some(TxManagerError::MempoolDeadlineExpired);
         }
 
-        // 6. No critical error — continue sending.
+        // 7. No critical error — continue sending.
         None
     }
 
@@ -502,6 +517,43 @@ mod tests {
         assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
     }
 
+    // ── NonceTooHigh ───────────────────────────────────────────────────
+
+    #[test]
+    fn nonce_too_high_triggers_immediate_abort() {
+        let state = SendState::new(3).unwrap();
+        state.process_send_error(&TxManagerError::NonceTooHigh);
+        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooHigh));
+    }
+
+    #[test]
+    fn mined_tx_suppresses_nonce_too_high_abort() {
+        let state = SendState::new(3).unwrap();
+        state.process_send_error(&TxManagerError::NonceTooHigh);
+        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooHigh));
+
+        state.tx_mined(B256::with_last_byte(1));
+        assert!(state.critical_error().is_none());
+    }
+
+    #[test]
+    fn nonce_too_high_takes_priority_over_nonce_too_low() {
+        let state = SendState::new(3).unwrap();
+        state.process_send_error(&TxManagerError::NonceTooHigh);
+        state.process_send_error(&TxManagerError::NonceTooLow);
+
+        // NonceTooHigh (priority 3) wins over pre-publish NonceTooLow
+        // (priority 4).
+        assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooHigh));
+    }
+
+    #[test]
+    fn nonce_too_high_does_not_set_bump_fees() {
+        let state = SendState::new(3).unwrap();
+        state.process_send_error(&TxManagerError::NonceTooHigh);
+        assert!(!state.should_bump_fees());
+    }
+
     // ── AlreadyReserved ─────────────────────────────────────────────────
 
     #[test]
@@ -520,7 +572,7 @@ mod tests {
         state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
 
         // AlreadyReserved (priority 2) wins over MempoolDeadlineExpired
-        // (priority 5).
+        // (priority 6).
         assert_eq!(state.critical_error(), Some(TxManagerError::AlreadyReserved));
     }
 
@@ -531,8 +583,8 @@ mod tests {
         state.process_send_error(&TxManagerError::NonceTooLow);
         state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
 
-        // Pre-publish NonceTooLow (priority 3) wins over
-        // MempoolDeadlineExpired (priority 5).
+        // Pre-publish NonceTooLow (priority 4) wins over
+        // MempoolDeadlineExpired (priority 6).
         assert_eq!(state.critical_error(), Some(TxManagerError::NonceTooLow));
     }
 
