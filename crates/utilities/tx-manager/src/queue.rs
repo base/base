@@ -26,6 +26,9 @@ pub struct SendResult<T> {
 /// Limits the number of concurrently in-flight transactions via a semaphore.
 /// Nonces are assigned in call order because [`TxManager::send_async`] runs on
 /// the caller's task before the background completion task is spawned.
+///
+/// `Clone` produces a handle to the same queue — clones share the semaphore and
+/// underlying [`TxManager`], so backpressure limits apply across all handles.
 #[derive(Debug, Clone)]
 pub struct TxQueue<M> {
     tx_mgr: Arc<M>,
@@ -58,7 +61,9 @@ impl<M: TxManager + 'static> TxQueue<M> {
     /// `FuturesUnordered`, or any combinator that may drop in-progress
     /// futures. If dropped after [`TxManager::send_async`] has been called
     /// but before the background task is spawned, a nonce is consumed and
-    /// the result will never be delivered to `result_tx`.
+    /// the result will never be delivered to `result_tx`. The underlying
+    /// transaction task will still run to completion (sign, publish, and
+    /// poll), wasting gas on a transaction no caller is awaiting.
     pub async fn send<T: Send + 'static>(
         &self,
         id: T,
@@ -85,7 +90,9 @@ impl<M: TxManager + 'static> TxQueue<M> {
     /// `FuturesUnordered`, or any combinator that may drop in-progress
     /// futures. If dropped after [`TxManager::send_async`] has been called
     /// but before the background task is spawned, a nonce is consumed and
-    /// the result will never be delivered to `result_tx`.
+    /// the result will never be delivered to `result_tx`. The underlying
+    /// transaction task will still run to completion (sign, publish, and
+    /// poll), wasting gas on a transaction no caller is awaiting.
     pub async fn try_send<T: Send + 'static>(
         &self,
         id: T,
