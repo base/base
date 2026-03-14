@@ -106,17 +106,16 @@ impl TransactionPane {
 
     /// Creates a pane with pre-decoded transaction data.
     pub(crate) fn with_data(
-        _block_number: u64,
+        block_number: u64,
         title_prefix: String,
         transactions: Vec<TxSummary>,
-        _l2_rpc: Option<&str>,
         explorer_base_url: Option<&str>,
     ) -> Self {
         let mut table_state = TableState::default();
         table_state.select(Some(0));
 
         Self {
-            block_number: _block_number,
+            block_number,
             title_prefix,
             transactions,
             table_state,

@@ -516,6 +516,16 @@ pub(crate) struct TxSummary {
     pub base_fee_per_gas: Option<u64>,
 }
 
+fn effective_priority_fee_per_gas(
+    base_fee_per_gas: Option<u64>,
+    effective_gas_price: u128,
+    max_priority_fee_per_gas: Option<u128>,
+) -> Option<u128> {
+    base_fee_per_gas
+        .map(|base_fee| effective_gas_price.saturating_sub(u128::from(base_fee)))
+        .or(max_priority_fee_per_gas)
+}
+
 /// Decodes raw EIP-2718 encoded transaction bytes into summaries.
 ///
 /// Used to extract transaction details from flashblock stream data without RPC calls.
@@ -531,11 +541,10 @@ pub(crate) fn decode_flashblock_transactions(
                 .ok()?;
             let hash = envelope.tx_hash();
             let to = envelope.to();
-            let max_priority_fee = envelope.max_priority_fee_per_gas();
-            let effective_priority_fee = Some(
-                envelope
-                    .effective_gas_price(base_fee_per_gas)
-                    .saturating_sub(base_fee_per_gas.map(u128::from).unwrap_or_default()),
+            let effective_priority_fee_per_gas = effective_priority_fee_per_gas(
+                base_fee_per_gas,
+                envelope.effective_gas_price(base_fee_per_gas),
+                envelope.max_priority_fee_per_gas(),
             );
             let recovered = envelope
                 .try_into_recovered()
@@ -545,7 +554,7 @@ pub(crate) fn decode_flashblock_transactions(
                 hash,
                 from: recovered.signer(),
                 to,
-                effective_priority_fee_per_gas: effective_priority_fee.or(max_priority_fee),
+                effective_priority_fee_per_gas,
                 base_fee_per_gas,
             })
         })
@@ -582,11 +591,10 @@ pub(crate) async fn fetch_block_transactions(
                 hash: tx_obj.inner.tx_hash(),
                 from: tx_obj.inner.inner.signer(),
                 to: tx_obj.inner.to(),
-                effective_priority_fee_per_gas: Some(
-                    tx_obj
-                        .inner
-                        .effective_gas_price(base_fee)
-                        .saturating_sub(base_fee.map(u128::from).unwrap_or_default()),
+                effective_priority_fee_per_gas: effective_priority_fee_per_gas(
+                    base_fee,
+                    tx_obj.inner.effective_gas_price(base_fee),
+                    tx_obj.max_priority_fee_per_gas(),
                 ),
                 base_fee_per_gas: base_fee,
             })
@@ -604,5 +612,25 @@ pub(crate) async fn fetch_block_transactions(
             warn!(error = %e, block = block_number, "failed to fetch block transactions");
             let _ = tx.send(Err(e.to_string())).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::effective_priority_fee_per_gas;
+
+    #[test]
+    fn priority_fee_uses_effective_gas_price_when_base_fee_known() {
+        assert_eq!(effective_priority_fee_per_gas(Some(100), 125, Some(50)), Some(25));
+    }
+
+    #[test]
+    fn priority_fee_falls_back_to_declared_max_priority_fee_when_base_fee_unknown() {
+        assert_eq!(effective_priority_fee_per_gas(None, 125, Some(50)), Some(50));
+    }
+
+    #[test]
+    fn priority_fee_is_unknown_for_legacy_txs_when_base_fee_unknown() {
+        assert_eq!(effective_priority_fee_per_gas(None, 125, None), None);
     }
 }

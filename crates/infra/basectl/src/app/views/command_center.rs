@@ -354,7 +354,6 @@ impl View for CommandCenterView {
                                 entry.block_number,
                                 format!("Flashblock {}::{}", entry.block_number, entry.index),
                                 entry.decode_txs(),
-                                Some(resources.config.rpc.as_str()),
                                 resources.config.explorer_base_url(),
                             ));
                             if let Some(pane) = self.tx_pane.as_ref() {
