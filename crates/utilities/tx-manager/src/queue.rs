@@ -51,33 +51,38 @@ impl<M: TxManager + 'static> TxQueue<M> {
     /// 3. Spawns a background task that awaits the [`SendHandle`], delivers the
     ///    result on `result_tx`, and releases the permit.
     ///
-    /// # Cancellation safety
+    /// # Warning: not cancellation-safe
     ///
-    /// This future is **not** cancellation-safe. If dropped after
-    /// [`TxManager::send_async`] has been called but before the background
-    /// task delivers a result, the nonce is managed by the underlying
-    /// `TxManager` (returned to the pool on error), but the result will
-    /// never be delivered to `result_tx`. The semaphore permit is released
-    /// when the spawned task completes or on drop.
+    /// This future **must not** be used inside `tokio::select!`. If dropped
+    /// after [`TxManager::send_async`] has been called but before the
+    /// background task delivers a result, the nonce is managed by the
+    /// underlying `TxManager` (returned to the pool on error), but the
+    /// result will never be delivered to `result_tx`.
     pub async fn send<T: Send + 'static>(
         &self,
         id: T,
         candidate: TxCandidate,
         result_tx: mpsc::Sender<SendResult<T>>,
     ) {
+        debug!(
+            available = self.semaphore.available_permits(),
+            "acquiring send permit",
+        );
         let permit = Arc::clone(&self.semaphore)
             .acquire_owned()
             .await
             .expect("semaphore is never closed");
+        debug!("send permit acquired");
         self.dispatch(permit, id, candidate, result_tx).await;
     }
 
     /// Attempts to queue a transaction without blocking.
     ///
-    /// Returns `true` if a permit was available and the transaction was
-    /// enqueued, `false` if the queue is full.
+    /// Returns `Ok(())` if a permit was available and the transaction was
+    /// enqueued. Returns `Err((id, candidate))` if the queue is full, giving
+    /// ownership of the consumed values back to the caller.
     ///
-    /// # Cancellation safety
+    /// # Warning: not cancellation-safe
     ///
     /// Same as [`send`](Self::send) — not cancellation-safe once dispatch
     /// begins.
@@ -86,13 +91,19 @@ impl<M: TxManager + 'static> TxQueue<M> {
         id: T,
         candidate: TxCandidate,
         result_tx: mpsc::Sender<SendResult<T>>,
-    ) -> bool {
+    ) -> Result<(), (T, TxCandidate)> {
         let permit = match Arc::clone(&self.semaphore).try_acquire_owned() {
             Ok(p) => p,
-            Err(_) => return false,
+            Err(_) => {
+                debug!(
+                    available = self.semaphore.available_permits(),
+                    "try_send rejected, queue full",
+                );
+                return Err((id, candidate));
+            }
         };
         self.dispatch(permit, id, candidate, result_tx).await;
-        true
+        Ok(())
     }
 
     /// Reserves a nonce on the caller's task, then spawns a background task to
@@ -104,13 +115,17 @@ impl<M: TxManager + 'static> TxQueue<M> {
         candidate: TxCandidate,
         result_tx: mpsc::Sender<SendResult<T>>,
     ) {
+        debug!("dispatching send_async");
         let handle = self.tx_mgr.send_async(candidate).await;
         tokio::spawn(async move {
             let result = handle.await;
+            // Release the permit before sending the result to avoid deadlock:
+            // the result channel may be full, blocking this task while holding
+            // a permit that the receiver needs freed before it can drain.
+            drop(permit);
             if result_tx.send(SendResult { id, result }).await.is_err() {
                 debug!("result receiver dropped, tx receipt lost");
             }
-            drop(permit);
         });
     }
 }
@@ -248,24 +263,36 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn try_send_returns_false_when_full() {
+    async fn try_send_returns_err_when_full() {
         let mgr = Arc::new(GatedMockTxManager::new(4));
         let (result_tx, mut result_rx) = mpsc::channel::<SendResult<u64>>(16);
 
         let queue = TxQueue::new(Arc::clone(&mgr), Some(2));
 
-        assert!(queue.try_send(1, stub_candidate(), result_tx.clone()).await);
-        assert!(queue.try_send(2, stub_candidate(), result_tx.clone()).await);
-        assert!(!queue.try_send(3, stub_candidate(), result_tx.clone()).await);
+        assert!(queue.try_send(1, stub_candidate(), result_tx.clone()).await.is_ok());
+        assert!(queue.try_send(2, stub_candidate(), result_tx.clone()).await.is_ok());
+
+        // Queue is full — should return the id and candidate back.
+        let err = queue.try_send(3, stub_candidate(), result_tx.clone()).await;
+        assert!(err.is_err());
+        assert_eq!(err.unwrap_err().0, 3);
 
         // Free a slot.
         mgr.complete(0);
         let _ = result_rx.recv().await;
 
-        // Allow the permit to be released by the spawned task.
-        tokio::task::yield_now().await;
-
-        assert!(queue.try_send(4, stub_candidate(), result_tx.clone()).await);
+        // Wait for the permit to be released by the spawned task.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            tokio::task::yield_now().await;
+            if queue.try_send(4, stub_candidate(), result_tx.clone()).await.is_ok() {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "permit was not released within 1s",
+            );
+        }
 
         // Cleanup.
         mgr.complete(1);
