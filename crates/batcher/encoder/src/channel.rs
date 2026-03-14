@@ -1,4 +1,4 @@
-//! Internal types for the channel state machine.
+//! Channel state machine types.
 
 use std::{fmt, ops::Range};
 
@@ -6,7 +6,7 @@ use base_comp::{ChannelOut, ShadowCompressor};
 use base_protocol::{ChannelId, Frame};
 
 /// A channel currently being built (accepting batches).
-pub(crate) struct OpenChannel {
+pub struct OpenChannel {
     /// The underlying channel writer.
     pub out: ChannelOut<ShadowCompressor>,
     /// L1 block number when this channel was opened (for `MaxChannelDuration`).
@@ -24,7 +24,7 @@ impl fmt::Debug for OpenChannel {
 
 /// A channel that has been closed and is ready for frame submission.
 #[derive(Debug)]
-pub(crate) struct ReadyChannel {
+pub struct ReadyChannel {
     /// The channel identifier.
     pub id: ChannelId,
     /// All frames, in order.
@@ -41,7 +41,7 @@ pub(crate) struct ReadyChannel {
 
 /// Tracks a pending submission back to its channel and frame.
 #[derive(Debug, Clone)]
-pub(crate) struct PendingRef {
+pub struct PendingRef {
     /// Index into the `ready_channels` deque.
     pub channel_idx: usize,
     /// Which frame in the ready channel this submission covers.
