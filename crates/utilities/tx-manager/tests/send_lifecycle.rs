@@ -22,6 +22,18 @@ use base_tx_manager::{
 use rstest::rstest;
 use tokio::sync::mpsc;
 
+/// Force-mine a block on Anvil so receipts are committed before queries.
+///
+/// Under CI load Anvil's auto-mine may not have flushed yet, causing
+/// `query_receipt` to see stale tip heights or missing receipts.
+async fn mine_block(manager: &SimpleTxManager) {
+    manager
+        .provider()
+        .raw_request::<(), String>("evm_mine".into(), ())
+        .await
+        .expect("evm_mine should succeed");
+}
+
 /// Returns a config with fast polling suitable for tests.
 fn fast_polling_config() -> TxManagerConfig {
     TxManagerConfig {
@@ -241,11 +253,7 @@ async fn query_receipt_returns_confirmed_receipt() {
     // Mine an extra block so tip_height is strictly ahead of the tx block.
     // query_receipt fetches tip_height before the receipt (for reorg safety),
     // so under CI load the tip may be stale on a single-call test.
-    manager
-        .provider()
-        .raw_request::<(), String>("evm_mine".into(), ())
-        .await
-        .expect("evm_mine should succeed");
+    mine_block(&manager).await;
 
     // With num_confirmations = 1 and the extra block mined above,
     // the formula tx_block + 1 <= tip + 1 is satisfied.
@@ -284,6 +292,10 @@ async fn query_receipt_returns_none_when_not_enough_confirmations() {
     let send_state = SendState::new(3).expect("should create send state");
     let tx_hash =
         manager.publish_tx(&send_state, &prepared.raw_tx, None).await.expect("should publish tx");
+
+    // Mine an extra block so the receipt is available before we query.
+    // Under CI load Anvil's auto-mine may not have committed yet.
+    mine_block(&manager).await;
 
     // Require 100 confirmations — far more than the single block Anvil
     // has mined. The receipt exists but is not sufficiently confirmed.
