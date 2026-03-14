@@ -1,16 +1,25 @@
-//! Integration tests for [`SimpleTxManager`] send lifecycle with Anvil.
+//! Integration tests for the transaction send lifecycle with Anvil.
+//!
+//! Covers [`SimpleTxManager::send`], [`SimpleTxManager::publish_tx`], and
+//! [`SimpleTxManager::query_receipt`] — the methods that drive a transaction
+//! from publication through confirmation.
 
 use std::{
     sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
 
-use alloy_network::EthereumWallet;
+use alloy_consensus::SignableTransaction;
+use alloy_network::{EthereumWallet, TxSigner};
 use alloy_node_bindings::Anvil;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Signature, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer_local::PrivateKeySigner;
-use base_tx_manager::{SendState, SimpleTxManager, TxCandidate, TxManagerConfig};
+use async_trait::async_trait;
+use base_tx_manager::{
+    SendState, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig, TxManagerError,
+};
+use rstest::rstest;
 use tokio::sync::mpsc;
 
 /// Returns a config with fast polling suitable for tests.
@@ -37,6 +46,124 @@ async fn setup_with_config(
         .await
         .expect("should create manager");
     (manager, anvil)
+}
+
+/// Config optimized for fast test execution: single confirmation, fast
+/// receipt polling, and a long resubmission timeout to prevent fee bumps
+/// during the test.
+fn fast_send_config() -> TxManagerConfig {
+    TxManagerConfig {
+        num_confirmations: 1,
+        receipt_query_interval: Duration::from_millis(100),
+        resubmission_timeout: Duration::from_secs(60),
+        ..TxManagerConfig::default()
+    }
+}
+
+/// A signer that always fails so `send()` exits before any publish.
+struct FailingSigner {
+    address: Address,
+}
+
+#[async_trait]
+impl TxSigner<Signature> for FailingSigner {
+    fn address(&self) -> Address {
+        self.address
+    }
+
+    async fn sign_transaction(
+        &self,
+        _tx: &mut dyn SignableTransaction<Signature>,
+    ) -> alloy_signer::Result<Signature> {
+        Err(alloy_signer::Error::other("deliberately failing signer"))
+    }
+}
+
+async fn setup_with_failing_signer_config(
+    config: TxManagerConfig,
+) -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
+    let anvil = Anvil::new().spawn();
+    let url = anvil.endpoint_url();
+    let provider = RootProvider::new_http(url);
+    let address = anvil.addresses()[0];
+    let wallet = EthereumWallet::from(FailingSigner { address });
+    let chain_id = anvil.chain_id();
+    let manager = SimpleTxManager::new(provider, wallet, config, chain_id)
+        .await
+        .expect("should create manager with failing signer");
+    (manager, anvil)
+}
+
+async fn assert_send_error_resets_nonce(config: TxManagerConfig) {
+    let (manager, _anvil) = setup_with_failing_signer_config(config).await;
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        value: U256::from(1u64),
+        gas_limit: 0,
+        ..Default::default()
+    };
+
+    let err = manager.send(candidate).await.expect_err("send should fail before publish");
+    assert!(matches!(err, TxManagerError::Sign(_)), "expected sign error, got {err:?}");
+
+    let guard = manager.nonce_manager().next_nonce().await.expect("should reserve nonce");
+    assert_eq!(guard.nonce(), 0, "nonce manager should be reset after a pre-publish send failure",);
+}
+
+// ── send() ────────────────────────────────────────────────────────────
+
+/// Happy-path test: send a simple value transfer through the full
+/// `send_tx` event loop and verify the returned receipt.
+#[tokio::test]
+async fn send_confirms_simple_value_transfer() {
+    let (manager, _anvil) = setup_with_config(fast_send_config()).await;
+
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        value: U256::from(1_000u64),
+        gas_limit: 0,
+        ..Default::default()
+    };
+
+    let receipt = tokio::time::timeout(Duration::from_secs(10), manager.send(candidate))
+        .await
+        .expect("send should complete within 10 s")
+        .expect("send should succeed");
+
+    assert!(receipt.block_number.is_some(), "receipt should have a block number");
+    assert_ne!(receipt.transaction_hash, B256::ZERO, "tx hash should be non-zero");
+}
+
+/// Happy-path test for `send_async`: the returned `SendHandle` resolves
+/// to a valid receipt.
+#[tokio::test]
+async fn send_async_confirms_simple_value_transfer() {
+    let (manager, _anvil) = setup_with_config(fast_send_config()).await;
+
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        value: U256::from(1_000u64),
+        gas_limit: 0,
+        ..Default::default()
+    };
+
+    let handle = manager.send_async(candidate).await;
+
+    let receipt = tokio::time::timeout(Duration::from_secs(10), handle)
+        .await
+        .expect("send_async should complete within 10 s")
+        .expect("send_async should succeed");
+
+    assert!(receipt.block_number.is_some(), "receipt should have a block number");
+}
+
+#[rstest]
+#[case::timeout_disabled(Duration::ZERO)]
+#[case::timeout_enabled(Duration::from_secs(5))]
+#[tokio::test]
+async fn send_resets_nonce_manager_on_pre_publish_failure(#[case] tx_send_timeout: Duration) {
+    let config = TxManagerConfig { tx_send_timeout, ..fast_send_config() };
+    assert_send_error_resets_nonce(config).await;
 }
 
 // ── publish_tx() ──────────────────────────────────────────────────────
