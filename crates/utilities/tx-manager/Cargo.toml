@@ -21,6 +21,7 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # misc
 backon.workspace = true
+metrics.workspace = true
 thiserror.workspace = true
 tracing = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "time"] }
