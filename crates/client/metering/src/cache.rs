@@ -3,7 +3,7 @@
 //! Transactions are stored in sequencer order (highest priority fee first) as received
 //! from flashblock events.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, num::NonZeroUsize};
 
 use alloy_primitives::{B256, U256};
 
@@ -128,11 +128,6 @@ impl BlockMetrics {
         Self { block_number, flashblocks: BTreeMap::new(), totals: ResourceTotals::default() }
     }
 
-    /// Returns the number of flashblocks.
-    pub fn flashblock_count(&self) -> usize {
-        self.flashblocks.len()
-    }
-
     /// Iterates over all flashblocks.
     pub fn flashblocks(&self) -> impl Iterator<Item = &FlashblockMetrics> {
         self.flashblocks.values()
@@ -166,19 +161,40 @@ impl BlockMetrics {
 #[derive(Debug)]
 pub struct MeteringCache {
     max_blocks: usize,
+    max_flashblocks_per_block: usize,
     blocks: BTreeMap<u64, BlockMetrics>,
 }
 
 impl MeteringCache {
-    /// Creates a new cache retaining at most `max_blocks` recent blocks.
-    /// A value of zero is clamped to 1.
-    pub fn new(max_blocks: usize) -> Self {
-        Self { max_blocks: max_blocks.max(1), blocks: BTreeMap::new() }
+    /// Creates a new cache retaining at most `max_blocks` recent blocks and
+    /// at most `max_flashblocks_per_block` flashblocks per block.
+    ///
+    /// `max_flashblocks_per_block` counts all flashblocks for a block, including
+    /// the base flashblock at index `0`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `max_blocks` or `max_flashblocks_per_block` is zero.
+    pub const fn new(max_blocks: usize, max_flashblocks_per_block: usize) -> Self {
+        Self {
+            max_blocks: NonZeroUsize::new(max_blocks)
+                .expect("max_blocks must be greater than 0")
+                .get(),
+            max_flashblocks_per_block: NonZeroUsize::new(max_flashblocks_per_block)
+                .expect("max_flashblocks_per_block must be greater than 0")
+                .get(),
+            blocks: BTreeMap::new(),
+        }
     }
 
     /// Returns the maximum number of blocks retained.
     pub const fn max_blocks(&self) -> usize {
         self.max_blocks
+    }
+
+    /// Returns the maximum number of flashblocks retained per block.
+    pub const fn max_flashblocks_per_block(&self) -> usize {
+        self.max_flashblocks_per_block
     }
 
     /// Returns the block metrics for the given block number.
@@ -200,11 +216,16 @@ impl MeteringCache {
         block_number: u64,
         flashblock_index: u64,
         tx: MeteredTransaction,
-    ) {
+    ) -> bool {
+        if flashblock_index >= self.max_flashblocks_per_block as u64 {
+            return false;
+        }
+
         let block = self.block_mut(block_number);
         block.accumulate(&tx);
         let (flashblock, _) = block.flashblock_mut(flashblock_index);
         flashblock.push_transaction(tx);
+        true
     }
 
     /// Returns the number of cached blocks.
@@ -230,12 +251,7 @@ impl MeteringCache {
     /// Clears all blocks with `block_number` >= the specified value.
     /// Returns the number of blocks cleared.
     pub fn clear_blocks_from(&mut self, block_number: u64) -> usize {
-        let to_remove: Vec<u64> = self.blocks.range(block_number..).map(|(&k, _)| k).collect();
-        let cleared = to_remove.len();
-        for key in to_remove {
-            self.blocks.remove(&key);
-        }
-        cleared
+        self.blocks.split_off(&block_number).len()
     }
 
     /// Evicts the oldest block if at capacity. Called before inserting a new block.
@@ -265,7 +281,7 @@ mod tests {
 
     #[test]
     fn insert_and_retrieve_transactions() {
-        let mut cache = MeteringCache::new(12);
+        let mut cache = MeteringCache::new(12, 1);
         let tx1 = test_tx(1, 2);
         cache.push_transaction(100, 0, tx1.clone());
 
@@ -277,7 +293,7 @@ mod tests {
 
     #[test]
     fn transactions_preserve_sequencer_order() {
-        let mut cache = MeteringCache::new(12);
+        let mut cache = MeteringCache::new(12, 1);
         // Insert in sequencer order (highest priority first)
         cache.push_transaction(100, 0, test_tx(1, 30));
         cache.push_transaction(100, 0, test_tx(2, 20));
@@ -293,7 +309,7 @@ mod tests {
 
     #[test]
     fn evicts_old_blocks() {
-        let mut cache = MeteringCache::new(2);
+        let mut cache = MeteringCache::new(2, 1);
         for block_number in 0..3u64 {
             cache.push_transaction(block_number, 0, test_tx(block_number, block_number));
         }
@@ -303,8 +319,20 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "max_blocks must be greater than 0")]
+    fn zero_capacity_panics() {
+        let _ = MeteringCache::new(0, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_flashblocks_per_block must be greater than 0")]
+    fn zero_flashblock_capacity_panics() {
+        let _ = MeteringCache::new(1, 0);
+    }
+
+    #[test]
     fn contains_block_returns_correct_values() {
-        let mut cache = MeteringCache::new(10);
+        let mut cache = MeteringCache::new(10, 1);
         cache.push_transaction(100, 0, test_tx(1, 10));
         cache.push_transaction(101, 0, test_tx(2, 20));
 
@@ -316,7 +344,7 @@ mod tests {
 
     #[test]
     fn clear_blocks_from_clears_subsequent_blocks() {
-        let mut cache = MeteringCache::new(10);
+        let mut cache = MeteringCache::new(10, 1);
         cache.push_transaction(100, 0, test_tx(1, 10));
         cache.push_transaction(101, 0, test_tx(2, 20));
         cache.push_transaction(102, 0, test_tx(3, 30));
@@ -332,7 +360,7 @@ mod tests {
 
     #[test]
     fn clear_blocks_from_returns_zero_when_no_match() {
-        let mut cache = MeteringCache::new(10);
+        let mut cache = MeteringCache::new(10, 1);
         cache.push_transaction(100, 0, test_tx(1, 10));
         cache.push_transaction(101, 0, test_tx(2, 20));
 
@@ -344,7 +372,7 @@ mod tests {
 
     #[test]
     fn clear_blocks_from_clears_all_blocks() {
-        let mut cache = MeteringCache::new(10);
+        let mut cache = MeteringCache::new(10, 1);
         cache.push_transaction(100, 0, test_tx(1, 10));
         cache.push_transaction(101, 0, test_tx(2, 20));
         cache.push_transaction(102, 0, test_tx(3, 30));
@@ -357,11 +385,26 @@ mod tests {
 
     #[test]
     fn clear_blocks_from_handles_empty_cache() {
-        let mut cache = MeteringCache::new(10);
+        let mut cache = MeteringCache::new(10, 1);
 
         let cleared = cache.clear_blocks_from(100);
 
         assert_eq!(cleared, 0);
         assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn ignores_transactions_beyond_flashblock_capacity() {
+        let mut cache = MeteringCache::new(10, 2);
+
+        assert!(cache.push_transaction(100, 0, test_tx(1, 10)));
+        assert!(cache.push_transaction(100, 1, test_tx(2, 20)));
+        assert!(!cache.push_transaction(100, 2, test_tx(3, 30)));
+
+        let block = cache.block(100).unwrap();
+        let flashblock_indexes: Vec<_> =
+            block.flashblocks().map(|flashblock| flashblock.flashblock_index).collect();
+        assert_eq!(flashblock_indexes, vec![0, 1]);
+        assert_eq!(block.totals().gas_used, 20);
     }
 }

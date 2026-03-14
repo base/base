@@ -8,7 +8,9 @@ use base_flashblocks::{FlashblocksConfig, FlashblocksState};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use tracing::info;
 
-use crate::{MeteringApiImpl, MeteringApiServer, ResourceLimits};
+use crate::{
+    MeteringApiImpl, MeteringApiServer, ResourceLimits, estimator::assert_valid_percentile,
+};
 
 /// Resource limits configuration for priority fee estimation.
 #[derive(Debug, Clone, Default)]
@@ -93,6 +95,7 @@ impl MeteringExtension {
 
     /// Sets the priority fee percentile.
     pub const fn with_percentile(mut self, percentile: f64) -> Self {
+        assert_valid_percentile(percentile);
         self.priority_fee_percentile = percentile;
         self
     }
@@ -215,6 +218,7 @@ impl MeteringConfig {
 
     /// Sets the priority fee percentile.
     pub const fn with_percentile(mut self, percentile: f64) -> Self {
+        assert_valid_percentile(percentile);
         self.priority_fee_percentile = percentile;
         self
     }
@@ -230,6 +234,7 @@ impl FromExtensionConfig for MeteringExtension {
     type Config = MeteringConfig;
 
     fn from_config(config: Self::Config) -> Self {
+        assert_valid_percentile(config.priority_fee_percentile);
         Self {
             enabled: config.enabled,
             flashblocks_config: config.flashblocks_config,
