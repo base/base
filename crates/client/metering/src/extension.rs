@@ -8,7 +8,9 @@ use base_flashblocks::{FlashblocksConfig, FlashblocksState};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use tracing::info;
 
-use crate::{MeteringApiImpl, MeteringApiServer, ResourceLimits};
+use crate::{
+    MeteringApiImpl, MeteringApiServer, ResourceLimits, estimator::assert_valid_percentile,
+};
 
 /// Resource limits configuration for priority fee estimation.
 #[derive(Debug, Clone, Default)]
@@ -25,11 +27,17 @@ pub struct MeteringResourceLimits {
 
 impl MeteringResourceLimits {
     /// Converts to the internal [`ResourceLimits`] type.
-    pub fn to_resource_limits(&self) -> ResourceLimits {
+    pub const fn to_resource_limits(&self) -> ResourceLimits {
         ResourceLimits {
             gas_used: self.gas_limit,
-            execution_time_us: self.execution_time_us.map(|v| v as u128),
-            state_root_time_us: self.state_root_time_us.map(|v| v as u128),
+            execution_time_us: match self.execution_time_us {
+                Some(v) => Some(v as u128),
+                None => None,
+            },
+            state_root_time_us: match self.state_root_time_us {
+                Some(v) => Some(v as u128),
+                None => None,
+            },
             data_availability_bytes: self.da_bytes,
         }
     }
@@ -87,6 +95,7 @@ impl MeteringExtension {
 
     /// Sets the priority fee percentile.
     pub const fn with_percentile(mut self, percentile: f64) -> Self {
+        assert_valid_percentile(percentile);
         self.priority_fee_percentile = percentile;
         self
     }
@@ -209,6 +218,7 @@ impl MeteringConfig {
 
     /// Sets the priority fee percentile.
     pub const fn with_percentile(mut self, percentile: f64) -> Self {
+        assert_valid_percentile(percentile);
         self.priority_fee_percentile = percentile;
         self
     }
@@ -224,6 +234,7 @@ impl FromExtensionConfig for MeteringExtension {
     type Config = MeteringConfig;
 
     fn from_config(config: Self::Config) -> Self {
+        assert_valid_percentile(config.priority_fee_percentile);
         Self {
             enabled: config.enabled,
             flashblocks_config: config.flashblocks_config,

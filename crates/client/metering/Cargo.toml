@@ -52,6 +52,7 @@ metrics-derive.workspace = true
 # misc
 eyre.workspace = true
 arc-swap.workspace = true
+parking_lot.workspace = true
 derive_more.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, features = ["std"] }
