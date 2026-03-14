@@ -510,8 +510,10 @@ pub(crate) struct TxSummary {
     pub from: Address,
     /// Recipient address (None for contract creations).
     pub to: Option<Address>,
-    /// Effective priority fee per gas (tip), in wei.
-    pub effective_priority_fee_per_gas: Option<u128>,
+    /// Effective tip per gas (effective gas price minus base fee), in wei.
+    pub effective_tip_per_gas: Option<u128>,
+    /// Effective tip paid by this transaction, in wei.
+    pub effective_tip_paid: Option<u128>,
     /// Block base fee per gas, in wei.
     pub base_fee_per_gas: Option<u64>,
     /// Gas used by this transaction, if available.
@@ -530,6 +532,28 @@ pub(crate) struct TxReceiptFields {
     pub success: bool,
 }
 
+fn effective_tip_per_gas(base_fee_per_gas: Option<u64>, effective_gas_price: u128) -> Option<u128> {
+    base_fee_per_gas.map(|base_fee| effective_gas_price.saturating_sub(u128::from(base_fee)))
+}
+
+fn effective_tip_paid(
+    base_fee_per_gas: Option<u64>,
+    effective_gas_price: u128,
+    gas_used: u64,
+) -> Option<u128> {
+    effective_tip_per_gas(base_fee_per_gas, effective_gas_price)
+        .map(|tip_per_gas| tip_per_gas.saturating_mul(u128::from(gas_used)))
+}
+
+fn ordered_receipt_fields_from_receipt_pairs(
+    tx_hashes: &[B256],
+    receipt_pairs: Vec<(B256, TxReceiptFields)>,
+) -> Option<Vec<Option<TxReceiptFields>>> {
+    (receipt_pairs.len() == tx_hashes.len()).then(|| {
+        receipt_pairs.into_iter().map(|(_, receipt_fields)| Some(receipt_fields)).collect()
+    })
+}
+
 /// Decodes raw EIP-2718 encoded transaction bytes into summaries.
 ///
 /// Used to extract transaction details from flashblock stream data without RPC calls.
@@ -545,11 +569,9 @@ pub(crate) fn decode_flashblock_transactions(
                 .ok()?;
             let hash = envelope.tx_hash();
             let to = envelope.to();
-            let max_priority_fee = envelope.max_priority_fee_per_gas();
-            let effective_priority_fee = Some(
-                envelope
-                    .effective_gas_price(base_fee_per_gas)
-                    .saturating_sub(base_fee_per_gas.map(u128::from).unwrap_or_default()),
+            let effective_tip_per_gas = effective_tip_per_gas(
+                base_fee_per_gas,
+                envelope.effective_gas_price(base_fee_per_gas),
             );
             let recovered = envelope
                 .try_into_recovered()
@@ -559,7 +581,8 @@ pub(crate) fn decode_flashblock_transactions(
                 hash,
                 from: recovered.signer(),
                 to,
-                effective_priority_fee_per_gas: effective_priority_fee.or(max_priority_fee),
+                effective_tip_per_gas,
+                effective_tip_paid: None,
                 base_fee_per_gas,
                 gas_used: None,
                 reverted: None,
@@ -640,6 +663,61 @@ async fn fetch_receipt_fields_by_hashes<P: Provider<Base>>(
     receipt_fields_by_hash
 }
 
+async fn fetch_ordered_receipt_fields<P: Provider<Base>>(
+    provider: Arc<P>,
+    block_number: u64,
+    block_hash: B256,
+    tx_hashes: Vec<B256>,
+) -> Vec<Option<TxReceiptFields>> {
+    match provider.get_block_receipts(block_hash.into()).await {
+        Ok(Some(receipts)) => {
+            let receipt_count = receipts.len();
+            let receipt_pairs: Vec<_> = receipts
+                .into_iter()
+                .map(|receipt| {
+                    (
+                        receipt.transaction_hash(),
+                        TxReceiptFields {
+                            gas_used: receipt.gas_used(),
+                            effective_gas_price: receipt.effective_gas_price(),
+                            success: receipt.status(),
+                        },
+                    )
+                })
+                .collect();
+            if let Some(ordered_receipt_fields) =
+                ordered_receipt_fields_from_receipt_pairs(&tx_hashes, receipt_pairs)
+            {
+                return ordered_receipt_fields;
+            }
+
+            warn!(
+                block = block_number,
+                receipt_count,
+                tx_count = tx_hashes.len(),
+                "block receipts count mismatch; falling back to hash-based receipt matching"
+            );
+        }
+        Ok(None) => {
+            warn!(
+                block = block_number,
+                "block receipts not found; falling back to hash-based receipt matching"
+            );
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                block = block_number,
+                "failed to fetch block receipts; falling back to hash-based receipt matching"
+            );
+        }
+    }
+
+    let receipt_fields_by_hash =
+        fetch_receipt_fields_by_hashes(provider, block_number, block_hash, tx_hashes.clone()).await;
+    tx_hashes.into_iter().map(|hash| receipt_fields_by_hash.get(&hash).copied()).collect()
+}
+
 /// Fetches per-transaction gas used for a block keyed by transaction hash.
 pub(crate) async fn fetch_block_transaction_gas(
     l2_rpc: String,
@@ -685,7 +763,7 @@ pub(crate) async fn fetch_block_transaction_gas(
 pub(crate) async fn fetch_block_transactions(
     l2_rpc: String,
     block_number: u64,
-    tx: mpsc::Sender<Vec<TxSummary>>,
+    tx: mpsc::Sender<Result<Vec<TxSummary>, String>>,
 ) {
     let result = async {
         let provider = Arc::new(
@@ -704,34 +782,27 @@ pub(crate) async fn fetch_block_transactions(
 
         let base_fee = block.header.base_fee_per_gas;
         let tx_hashes = block.transactions.txns().map(|tx| tx.inner.tx_hash()).collect();
-        let receipt_fields_by_hash =
-            fetch_receipt_fields_by_hashes(provider, block_number, block.header.hash, tx_hashes)
+        let ordered_receipt_fields =
+            fetch_ordered_receipt_fields(provider, block_number, block.header.hash, tx_hashes)
                 .await;
 
         let summaries: Vec<TxSummary> = block
             .transactions
             .txns()
+            .zip(ordered_receipt_fields.into_iter())
             .map(|tx_obj| {
+                let (tx_obj, receipt_fields) = tx_obj;
                 let hash = tx_obj.inner.tx_hash();
-                let receipt_fields = receipt_fields_by_hash.get(&hash).copied();
                 TxSummary {
                     hash,
                     from: tx_obj.inner.inner.signer(),
                     to: tx_obj.inner.to(),
-                    effective_priority_fee_per_gas: receipt_fields
-                        .map(|receipt| {
-                            receipt
-                                .effective_gas_price
-                                .saturating_sub(base_fee.map(u128::from).unwrap_or_default())
-                        })
-                        .or_else(|| {
-                            Some(
-                                tx_obj
-                                    .inner
-                                    .effective_gas_price(base_fee)
-                                    .saturating_sub(base_fee.map(u128::from).unwrap_or_default()),
-                            )
-                        }),
+                    effective_tip_per_gas: receipt_fields.and_then(|receipt| {
+                        effective_tip_per_gas(base_fee, receipt.effective_gas_price)
+                    }),
+                    effective_tip_paid: receipt_fields.and_then(|receipt| {
+                        effective_tip_paid(base_fee, receipt.effective_gas_price, receipt.gas_used)
+                    }),
                     base_fee_per_gas: base_fee,
                     gas_used: receipt_fields.map(|receipt| receipt.gas_used),
                     reverted: receipt_fields.map(|receipt| !receipt.success),
@@ -745,11 +816,84 @@ pub(crate) async fn fetch_block_transactions(
 
     match result {
         Ok(summaries) => {
-            let _ = tx.send(summaries).await;
+            let _ = tx.send(Ok(summaries)).await;
         }
         Err(e) => {
             warn!(error = %e, block = block_number, "failed to fetch block transactions");
-            let _ = tx.send(Vec::new()).await;
+            let _ = tx.send(Err(e.to_string())).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::b256;
+    use tokio::sync::mpsc;
+
+    use super::*;
+
+    #[test]
+    fn ordered_receipt_matching_prefers_position_when_counts_match() {
+        let tx_hashes = vec![
+            b256!("0000000000000000000000000000000000000000000000000000000000000001"),
+            b256!("0000000000000000000000000000000000000000000000000000000000000002"),
+        ];
+        let unrelated_receipt_hashes = vec![
+            b256!("00000000000000000000000000000000000000000000000000000000000000aa"),
+            b256!("00000000000000000000000000000000000000000000000000000000000000bb"),
+        ];
+        let receipt_pairs = unrelated_receipt_hashes
+            .into_iter()
+            .zip([
+                TxReceiptFields { gas_used: 21_000, effective_gas_price: 7, success: true },
+                TxReceiptFields { gas_used: 42_000, effective_gas_price: 9, success: false },
+            ])
+            .collect();
+
+        let ordered =
+            ordered_receipt_fields_from_receipt_pairs(&tx_hashes, receipt_pairs).expect("matched");
+
+        assert_eq!(ordered.len(), 2);
+        assert_eq!(ordered[0].expect("first").gas_used, 21_000);
+        assert_eq!(ordered[1].expect("second").gas_used, 42_000);
+    }
+
+    #[test]
+    fn ordered_receipt_matching_rejects_count_mismatch() {
+        let tx_hashes = vec![
+            b256!("0000000000000000000000000000000000000000000000000000000000000001"),
+            b256!("0000000000000000000000000000000000000000000000000000000000000002"),
+        ];
+        let receipt_pairs = vec![(
+            b256!("00000000000000000000000000000000000000000000000000000000000000aa"),
+            TxReceiptFields { gas_used: 21_000, effective_gas_price: 7, success: true },
+        )];
+
+        assert!(ordered_receipt_fields_from_receipt_pairs(&tx_hashes, receipt_pairs).is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "debug network test"]
+    async fn debug_block_43312151_receipt_population() {
+        let (tx, mut rx) = mpsc::channel(1);
+        fetch_block_transactions("https://mainnet.base.org".to_string(), 43_312_151, tx).await;
+        let summaries = rx.recv().await.expect("result").expect("fetch ok");
+        let missing = summaries
+            .iter()
+            .enumerate()
+            .filter(|(_, summary)| {
+                summary.gas_used.is_none()
+                    || summary.effective_tip_per_gas.is_none()
+                    || summary.effective_tip_paid.is_none()
+            })
+            .map(|(idx, summary)| (idx, summary.hash))
+            .collect::<Vec<_>>();
+
+        eprintln!("tx_count={} missing_count={}", summaries.len(), missing.len());
+        for (idx, hash) in missing.iter().take(25) {
+            eprintln!("missing idx={idx} hash={hash:#x}");
+        }
+
+        assert!(missing.is_empty(), "missing {:?}", missing);
     }
 }

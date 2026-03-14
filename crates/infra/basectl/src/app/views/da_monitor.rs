@@ -24,7 +24,8 @@ use crate::{
 const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "Esc", description: "Back to home" },
     Keybinding { key: "?", description: "Toggle help" },
-    Keybinding { key: "↑/k ↓/j", description: "Navigate" },
+    Keybinding { key: "↑/k", description: "Move up" },
+    Keybinding { key: "↓/j", description: "Move down" },
     Keybinding { key: "g/G", description: "Top/Bottom" },
     Keybinding { key: "←/h →/l", description: "Switch panel" },
     Keybinding { key: "Tab", description: "Next panel" },
@@ -184,6 +185,7 @@ impl View for DaMonitorView {
                     self.tx_pane = Some(TransactionPane::for_block(
                         contrib.block_number,
                         resources.config.rpc.as_str(),
+                        resources.flash.completed_block_tx_ranges(contrib.block_number),
                         resources.config.explorer_base_url(),
                     ));
                     if let Some(pane) = self.tx_pane.as_ref() {

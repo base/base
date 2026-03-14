@@ -9,7 +9,7 @@ use ratatui::{
 use tokio::sync::mpsc;
 
 use crate::{
-    commands::common::{COLOR_ACTIVE_BORDER, COLOR_ROW_SELECTED},
+    commands::common::{COLOR_ACTIVE_BORDER, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED},
     rpc::{TxReceiptFields, TxSummary},
     tui::{Toast, ToastState},
 };
@@ -18,7 +18,7 @@ pub(crate) const REVERTED_TX_TOAST_MESSAGE: &str = "\u{26A0} - tx reverted";
 
 #[derive(Debug)]
 enum TransactionPaneUpdate {
-    Transactions(Vec<TxSummary>),
+    Transactions(Result<Vec<TxSummary>, String>),
     ReceiptFields(Vec<(alloy_primitives::B256, TxReceiptFields)>),
 }
 
@@ -35,9 +35,12 @@ pub(crate) struct TransactionPane {
     transactions: Vec<TxSummary>,
     table_state: TableState,
     loading: bool,
+    load_error: Option<String>,
     rx: Option<mpsc::Receiver<TransactionPaneUpdate>>,
     /// Optional range to slice the fetched transactions (for flashblock-specific views).
     tx_range: Option<Range<usize>>,
+    /// Optional flashblock-delimited transaction ranges for completed blocks.
+    flashblock_ranges: Option<Vec<(Range<usize>, u64)>>,
     /// Block explorer base URL for opening transactions in a browser (e.g.
     /// `https://basescan.org`).
     explorer_base_url: Option<String>,
@@ -81,9 +84,11 @@ impl TransactionPane {
         tokio::spawn(async move {
             let (inner_tx, mut inner_rx) = mpsc::channel(1);
             crate::rpc::fetch_block_transactions(rpc, block_number, inner_tx).await;
-            if let Some(txns) = inner_rx.recv().await {
-                let _ = tx.send(TransactionPaneUpdate::Transactions(txns)).await;
-            }
+            let txns = inner_rx
+                .recv()
+                .await
+                .unwrap_or_else(|| Err("Failed to fetch transactions".to_string()));
+            let _ = tx.send(TransactionPaneUpdate::Transactions(txns)).await;
         });
 
         let mut table_state = TableState::default();
@@ -95,8 +100,10 @@ impl TransactionPane {
             transactions: Vec::new(),
             table_state,
             loading: true,
+            load_error: None,
             rx: Some(rx),
             tx_range,
+            flashblock_ranges: None,
             explorer_base_url: explorer_base_url.map(String::from),
         }
     }
@@ -118,10 +125,8 @@ impl TransactionPane {
             tokio::spawn(async move {
                 let (inner_tx, mut inner_rx) = mpsc::channel(1);
                 crate::rpc::fetch_block_transaction_gas(rpc, block_number, inner_tx).await;
-                if let Some(receipt_fields_by_hash) = inner_rx.recv().await {
-                    let _ =
-                        tx.send(TransactionPaneUpdate::ReceiptFields(receipt_fields_by_hash)).await;
-                }
+                let receipt_fields_by_hash = inner_rx.recv().await.unwrap_or_default();
+                let _ = tx.send(TransactionPaneUpdate::ReceiptFields(receipt_fields_by_hash)).await;
             });
             rx
         });
@@ -132,8 +137,10 @@ impl TransactionPane {
             transactions,
             table_state,
             loading: false,
+            load_error: None,
             rx,
             tx_range: None,
+            flashblock_ranges: None,
             explorer_base_url: explorer_base_url.map(String::from),
         }
     }
@@ -145,11 +152,20 @@ impl TransactionPane {
     pub(crate) fn for_block(
         block_number: u64,
         l2_rpc: &str,
+        flashblock_ranges: Option<Vec<(Range<usize>, u64)>>,
         explorer_base_url: Option<&str>,
     ) -> Self {
         // DA block inspection should default to authoritative RPC data.
         // Streamed flashblock caches can be incomplete during reconnects or gaps.
-        Self::new(block_number, format!("Block {block_number}"), l2_rpc, None, explorer_base_url)
+        let mut pane = Self::new(
+            block_number,
+            format!("Block {block_number}"),
+            l2_rpc,
+            None,
+            explorer_base_url,
+        );
+        pane.flashblock_ranges = flashblock_ranges;
+        pane
     }
 
     /// Polls background fetch channels for results.
@@ -159,12 +175,30 @@ impl TransactionPane {
         {
             match update {
                 TransactionPaneUpdate::Transactions(txns) => {
-                    self.transactions = match &self.tx_range {
-                        Some(range) => {
-                            txns.into_iter().skip(range.start).take(range.len()).collect()
+                    match txns {
+                        Ok(txns) => {
+                            self.transactions = match &self.tx_range {
+                                Some(range) => {
+                                    txns.into_iter().skip(range.start).take(range.len()).collect()
+                                }
+                                None => txns,
+                            };
+                            if self.flashblock_ranges.as_ref().is_some_and(|ranges| {
+                                ranges
+                                    .iter()
+                                    .map(|(range, _)| range.end.saturating_sub(range.start))
+                                    .sum::<usize>()
+                                    != self.transactions.len()
+                            }) {
+                                self.flashblock_ranges = None;
+                            }
+                            self.load_error = None;
                         }
-                        None => txns,
-                    };
+                        Err(error) => {
+                            self.transactions.clear();
+                            self.load_error = Some(error);
+                        }
+                    }
                     self.loading = false;
                     self.rx = None;
                 }
@@ -175,13 +209,17 @@ impl TransactionPane {
                         if let Some(receipt) = receipt_fields_by_hash.get(&tx.hash) {
                             tx.gas_used = Some(receipt.gas_used);
                             tx.reverted = Some(!receipt.success);
-                            tx.effective_priority_fee_per_gas = tx
-                                .base_fee_per_gas
-                                .map(u128::from)
-                                .map(|base_fee| {
+                            tx.effective_tip_per_gas =
+                                tx.base_fee_per_gas.map(u128::from).map(|base_fee| {
                                     receipt.effective_gas_price.saturating_sub(base_fee)
-                                })
-                                .or(Some(receipt.effective_gas_price));
+                                });
+                            tx.effective_tip_paid =
+                                tx.base_fee_per_gas.map(u128::from).map(|base_fee| {
+                                    receipt
+                                        .effective_gas_price
+                                        .saturating_sub(base_fee)
+                                        .saturating_mul(u128::from(receipt.gas_used))
+                                });
                         }
                     }
                     self.rx = None;
@@ -312,6 +350,13 @@ impl TransactionPane {
             return;
         }
 
+        if let Some(error) = &self.load_error {
+            let para = Paragraph::new(format!("Failed to fetch transactions: {error}"))
+                .style(Style::default().fg(Color::Red));
+            frame.render_widget(para, inner);
+            return;
+        }
+
         if self.transactions.is_empty() {
             let para =
                 Paragraph::new("No transactions").style(Style::default().fg(Color::DarkGray));
@@ -324,7 +369,8 @@ impl TransactionPane {
             Cell::from("Tx Hash").style(header_style),
             Cell::from("From").style(header_style),
             Cell::from("To").style(header_style),
-            Cell::from("Tip (Mwei)").style(header_style),
+            Cell::from("Tip/Gas (Mwei)").style(header_style),
+            Cell::from("Tip Paid (Gwei)").style(header_style),
             Cell::from("Gas Used").style(header_style),
         ]);
 
@@ -335,7 +381,8 @@ impl TransactionPane {
             Constraint::Fill(3),    // Tx Hash (widest)
             Constraint::Fill(2),    // From
             Constraint::Fill(2),    // To
-            Constraint::Length(20), // Fee
+            Constraint::Length(16), // Tip per gas
+            Constraint::Length(16), // Tip paid
             Constraint::Length(10), // Gas used
         ];
 
@@ -354,6 +401,8 @@ impl TransactionPane {
 
                 let style = if is_selected {
                     Style::default().fg(Color::White).bg(COLOR_ROW_SELECTED)
+                } else if let Some(range_idx) = self.flashblock_range_index(idx) {
+                    Style::default().fg(Color::White).bg(flashblock_range_bg(range_idx))
                 } else {
                     Style::default().fg(Color::White)
                 };
@@ -370,7 +419,8 @@ impl TransactionPane {
                             Cell::from(Text::styled(to_text, style.fg(address_color(a))))
                         },
                     ),
-                    Cell::from(format_mwei(tx_summary.effective_priority_fee_per_gas)),
+                    Cell::from(format_mwei(tx_summary.effective_tip_per_gas)),
+                    Cell::from(format_gwei_value(tx_summary.effective_tip_paid)),
                     Cell::from(format_gas_used(tx_summary.gas_used)),
                 ])
                 .style(style)
@@ -379,6 +429,12 @@ impl TransactionPane {
 
         let table = Table::new(rows, widths).header(header);
         frame.render_stateful_widget(table, inner, &mut self.table_state);
+    }
+
+    fn flashblock_range_index(&self, tx_idx: usize) -> Option<u64> {
+        self.flashblock_ranges.as_ref().and_then(|ranges| {
+            ranges.iter().find(|(range, _)| range.contains(&tx_idx)).map(|(_, index)| *index)
+        })
     }
 }
 
@@ -417,6 +473,18 @@ fn format_gas_used(gas_used: Option<u64>) -> String {
     gas_used.map_or_else(|| "-".to_string(), |g| g.to_string())
 }
 
+fn format_gwei_value(wei: Option<u128>) -> String {
+    match wei {
+        None => "-".to_string(),
+        Some(0) => "0".to_string(),
+        Some(w) => {
+            let gwei_whole = w / 1_000_000_000;
+            let gwei_frac = (w % 1_000_000_000) / 10_000_000;
+            format!("{gwei_whole}.{gwei_frac:02}")
+        }
+    }
+}
+
 fn render_tx_hash_cell(tx_summary: &TxSummary, max_width: usize, style: Style) -> Cell<'static> {
     let hash = format!("{:#x}", tx_summary.hash);
     if tx_summary.reverted == Some(true) && max_width >= 3 {
@@ -434,6 +502,10 @@ fn address_color(address: alloy_primitives::Address) -> Color {
     let bytes = address.as_slice();
     let brighten = |c: u8| c.saturating_add(48).max(80);
     Color::Rgb(brighten(bytes[17]), brighten(bytes[18]), brighten(bytes[19]))
+}
+
+const fn flashblock_range_bg(index: u64) -> Color {
+    if index.is_multiple_of(2) { Color::Reset } else { COLOR_ROW_HIGHLIGHTED }
 }
 
 #[cfg(test)]

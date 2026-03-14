@@ -27,7 +27,8 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "Esc", description: "Back to home" },
     Keybinding { key: "?", description: "Toggle help" },
     Keybinding { key: "←/→/Tab/1-3", description: "Switch panel" },
-    Keybinding { key: "↑/↓/j/k", description: "Navigate" },
+    Keybinding { key: "↑/k", description: "Move up" },
+    Keybinding { key: "↓/j", description: "Move down" },
     Keybinding { key: "g/G", description: "Top/Bottom" },
     Keybinding { key: "Space", description: "Pause flashblocks" },
     Keybinding { key: "y", description: "Copy block number" },
@@ -369,6 +370,7 @@ impl View for CommandCenterView {
                             self.tx_pane = Some(TransactionPane::for_block(
                                 contrib.block_number,
                                 resources.config.rpc.as_str(),
+                                resources.flash.completed_block_tx_ranges(contrib.block_number),
                                 resources.config.explorer_base_url(),
                             ));
                             if let Some(pane) = self.tx_pane.as_ref() {
