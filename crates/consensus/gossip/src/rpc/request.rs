@@ -212,13 +212,13 @@ impl P2pRpcRequest {
                 Ok(dt) => dt.into_iter().map(|e| e.to_string()).collect(),
 
                 Err(e) => {
-                    warn!(target: "p2p_rpc", error = ?e, "Failed to receive peer count");
+                    warn!(target: "p2p_rpc", error = ?e, "Failed to receive discovery table");
                     return;
                 }
             };
 
             if let Err(e) = sender.send(dt) {
-                warn!(target: "p2p_rpc", error = ?e, "Failed to send peer count through response channel");
+                warn!(target: "p2p_rpc", error = ?e, "Failed to send discovery table through response channel");
             }
         });
     }
