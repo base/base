@@ -25,7 +25,8 @@ use crate::{
 /// Constructed from a [`K8sDiscoveryConfig`] via [`Self::from_config`].
 #[derive(Debug)]
 pub struct K8sStatefulSetDiscovery {
-    config: K8sDiscoveryConfig,
+    /// The K8s `StatefulSet` discovery configuration.
+    pub config: K8sDiscoveryConfig,
 }
 
 impl K8sStatefulSetDiscovery {
