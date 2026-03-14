@@ -67,39 +67,10 @@ pub trait TxManager: Send + Sync + Debug {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use alloy_primitives::{Address, B256, Bloom};
-    use alloy_rpc_types_eth::TransactionReceipt;
     use tokio::sync::oneshot;
 
     use super::*;
-    use crate::TxManagerError;
-
-    /// Helper to build a minimal `TransactionReceipt` for tests.
-    fn stub_receipt() -> TransactionReceipt {
-        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
-            receipt: Receipt {
-                status: Eip658Value::Eip658(true),
-                cumulative_gas_used: 21_000,
-                logs: vec![],
-            },
-            logs_bloom: Bloom::ZERO,
-        });
-        TransactionReceipt {
-            inner,
-            transaction_hash: B256::ZERO,
-            transaction_index: Some(0),
-            block_hash: Some(B256::ZERO),
-            block_number: Some(1),
-            gas_used: 21_000,
-            effective_gas_price: 1_000_000_000,
-            blob_gas_used: None,
-            blob_gas_price: None,
-            from: Address::ZERO,
-            to: Some(Address::ZERO),
-            contract_address: None,
-        }
-    }
+    use crate::{test_utils::stub_receipt, TxManagerError};
 
     #[tokio::test]
     async fn send_handle_yields_ok_on_success() {

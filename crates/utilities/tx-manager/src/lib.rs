@@ -34,10 +34,13 @@ mod manager;
 pub use manager::{PreparedTx, SimpleTxManager};
 
 mod queue;
-pub use queue::TxQueue;
+pub use queue::{TxQueue, TxReceipt};
 
 mod metrics;
 pub use metrics::TxMetrics;
 
 mod blob;
 pub use blob::BlobTxBuilder;
+
+#[cfg(test)]
+pub mod test_utils;
