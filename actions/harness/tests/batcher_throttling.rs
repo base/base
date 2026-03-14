@@ -27,7 +27,7 @@ async fn test_throttle_activates_when_frames_accumulate() {
         rc.hardforks.fjord_time = Some(0);
         rc
     };
-    let mut h = ActionTestHarness::new(l1_cfg, rollup_cfg.clone());
+    let mut h = ActionTestHarness::new(l1_cfg, rollup_cfg);
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
@@ -39,7 +39,7 @@ async fn test_throttle_activates_when_frames_accumulate() {
     }
 
     // Encode frames but do NOT submit them — simulates unsubmitted DA backlog.
-    let mut batcher = h.create_batcher(source, batcher_cfg.clone());
+    let mut batcher = h.create_batcher(source, batcher_cfg);
     let frames = batcher.encode_frames().unwrap();
 
     // Compute total encoded bytes as a proxy for DA backlog.

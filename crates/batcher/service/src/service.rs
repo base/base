@@ -80,27 +80,27 @@ impl BatcherService {
         Self { config }
     }
 
-    /// Build a block subscription for the given L2 RPC URL.
+    /// Build a block subscription for the given optional L2 WebSocket URL.
     ///
-    /// For `ws://` or `wss://` URLs, connects a dedicated WS provider, subscribes
-    /// to new block headers, and builds a stream that fetches the full block for
+    /// When `url` is `Some`, connects a dedicated WS provider, subscribes to
+    /// new block headers, and builds a stream that fetches the full block for
     /// each header. The provider is wrapped in a [`WsBlockSubscription`] so its
     /// lifetime is tied to the returned subscription — and therefore to the
     /// [`HybridBlockSource`] that consumes it — rather than to this function's
     /// stack frame.
     ///
-    /// For non-WS URLs, returns a [`NullSubscription`] so that
-    /// [`HybridBlockSource`] falls back entirely to polling.
+    /// When `url` is `None`, or if the WS connection fails, returns a
+    /// [`NullSubscription`] so that [`HybridBlockSource`] falls back entirely
+    /// to polling.
     ///
     /// [`HybridBlockSource`]: base_batcher_source::HybridBlockSource
     async fn build_subscription(
-        url: &Url,
+        url: Option<&Url>,
         fetch_provider: Arc<dyn Provider<Base> + Send + Sync>,
     ) -> Subscription {
-        if !matches!(url.scheme(), "ws" | "wss") {
-            warn!(l2_rpc = %url, "L2 RPC is not a WebSocket URL; using polling only");
+        let Some(url) = url else {
             return Subscription::Null(NullSubscription);
-        }
+        };
 
         let ws_provider = match ProviderBuilder::new().connect(url.as_str()).await {
             Ok(p) => Arc::new(p),
@@ -149,6 +149,7 @@ impl BatcherService {
         info!(
             l1_rpc = %self.config.l1_rpc_url,
             l2_rpc = %self.config.l2_rpc_url,
+            l2_ws = self.config.l2_ws_url.as_ref().map(|u| u.as_str()),
             "starting batcher service"
         );
 
@@ -164,12 +165,13 @@ impl BatcherService {
         // Build the polling source.
         let poller = RpcPollingSource::new(Arc::clone(&l2_provider));
 
-        // Build a block subscription. For WS/WSS URLs the subscription owns its
-        // provider Arc, so the connection stays live for the full driver run.
-        // For non-WS URLs a NullSubscription is returned and HybridBlockSource
-        // relies entirely on the polling path.
+        // Build a block subscription. When l2_ws_url is configured the
+        // subscription owns its provider Arc so the connection stays live for
+        // the full driver run. Without a WS URL a NullSubscription is returned
+        // and HybridBlockSource relies entirely on the polling path.
         let subscription =
-            Self::build_subscription(&self.config.l2_rpc_url, Arc::clone(&l2_provider)).await;
+            Self::build_subscription(self.config.l2_ws_url.as_ref(), Arc::clone(&l2_provider))
+                .await;
 
         // Assemble the hybrid block source.
         let source = HybridBlockSource::new(subscription, poller, self.config.poll_interval);

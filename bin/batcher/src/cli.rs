@@ -42,9 +42,16 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "l1-rpc-url", env = "BATCHER_L1_RPC_URL")]
     pub l1_rpc_url: Url,
 
-    /// L2 RPC endpoint.
+    /// L2 HTTP RPC endpoint (used for all JSON-RPC calls including throttle control).
     #[arg(long = "l2-rpc-url", env = "BATCHER_L2_RPC_URL")]
     pub l2_rpc_url: Url,
+
+    /// Optional L2 WebSocket endpoint for new-block subscriptions.
+    ///
+    /// When provided, the batcher subscribes to new block headers over this
+    /// WebSocket connection. Without it, polling is used exclusively.
+    #[arg(long = "l2-ws-url", env = "BATCHER_L2_WS_URL")]
+    pub l2_ws_url: Option<Url>,
 
     /// Rollup node RPC endpoint.
     #[arg(long = "rollup-rpc-url", env = "BATCHER_ROLLUP_RPC_URL")]
@@ -140,6 +147,7 @@ impl BatcherArgs {
         Ok(BatcherConfig {
             l1_rpc_url: self.l1_rpc_url,
             l2_rpc_url: self.l2_rpc_url,
+            l2_ws_url: self.l2_ws_url,
             rollup_rpc_url: self.rollup_rpc_url,
             batcher_private_key: self.private_key,
             poll_interval: Duration::from_secs(self.poll_interval_secs),

@@ -35,8 +35,15 @@ impl FromStr for SecretKey {
 pub struct BatcherConfig {
     /// L1 RPC endpoint.
     pub l1_rpc_url: Url,
-    /// L2 RPC endpoint.
+    /// L2 HTTP RPC endpoint. Used for all JSON-RPC calls including throttle
+    /// control (`miner_setMaxDASize`). Must be an HTTP or HTTPS URL.
     pub l2_rpc_url: Url,
+    /// Optional L2 WebSocket endpoint for new-block subscriptions.
+    ///
+    /// When set, the batcher subscribes to new block headers over this
+    /// connection and falls back to polling [`l2_rpc_url`] only on failure.
+    /// When absent, the batcher uses polling exclusively.
+    pub l2_ws_url: Option<Url>,
     /// Rollup node RPC endpoint.
     pub rollup_rpc_url: Url,
     /// Private key for signing L1 transactions.
@@ -62,6 +69,7 @@ impl Default for BatcherConfig {
         Self {
             l1_rpc_url: "http://localhost:8545".parse().expect("valid default URL"),
             l2_rpc_url: "http://localhost:9545".parse().expect("valid default URL"),
+            l2_ws_url: None,
             rollup_rpc_url: "http://localhost:7545".parse().expect("valid default URL"),
             batcher_private_key: SecretKey(B256::ZERO),
             poll_interval: Duration::from_secs(1),
