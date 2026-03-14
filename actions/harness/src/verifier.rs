@@ -101,6 +101,12 @@ pub struct L2Verifier<P: Pipeline + SignalReceiver + Debug> {
     /// [`apply_attributes`]: L2Verifier::apply_attributes
     /// [`act_l1_finalized_signal`]: L2Verifier::act_l1_finalized_signal
     safe_head_history: Vec<(L2BlockInfo, u64)>,
+    /// Per-block transaction counts recorded as attributes are applied.
+    ///
+    /// Each entry is `(l2_block_number, tx_count)`. A count of 1 means the
+    /// block is deposit-only (only the L1 info deposit transaction). Counts
+    /// greater than 1 include user transactions.
+    derived_tx_counts: Vec<(u64, usize)>,
     /// Block hashes by L2 block number, registered externally from the
     /// [`L2Sequencer`](crate::L2Sequencer). Used by [`apply_attributes`]
     /// so the verifier's safe-head hash matches the sequencer's real block
@@ -207,6 +213,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
             finalized_l1_number: 0,
             safe_head_history: Vec::new(),
             block_hashes: HashMap::new(),
+            derived_tx_counts: Vec::new(),
             derived_user_tx_counts: Vec::new(),
             derived_l1_info_txs: Vec::new(),
         }
@@ -555,6 +562,15 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         self.pipeline.origin()
     }
 
+    /// Return the transaction counts for each derived L2 block.
+    ///
+    /// Each entry is `(l2_block_number, tx_count)`. A count of `1` means the
+    /// block is deposit-only (only the L1 info deposit transaction). Blocks
+    /// with user transactions have a count greater than `1`.
+    pub fn derived_tx_counts(&self) -> &[(u64, usize)] {
+        &self.derived_tx_counts
+    }
+
     /// Register the block hash for a given L2 block number.
     ///
     /// Call this after [`L2Sequencer::build_next_block`] to record the real
@@ -703,6 +719,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
             self.derived_l1_info_txs.push((new_number, l1_info));
         }
         let hash = self.block_hashes.get(&new_number).copied().unwrap_or_default();
+        let tx_count = attrs.attributes.transactions.as_ref().map_or(0, |v| v.len());
         self.safe_head = L2BlockInfo {
             block_info: BlockInfo {
                 number: new_number,
@@ -715,6 +732,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         };
         // Track history for finalization scanning.
         self.safe_head_history.push((self.safe_head, l1_origin.number));
+        self.derived_tx_counts.push((new_number, tx_count));
     }
 
     /// Decode the L1 epoch (`l1_origin`) from the L1 info deposit transaction

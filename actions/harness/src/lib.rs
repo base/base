@@ -18,9 +18,7 @@ mod harness;
 pub use harness::ActionTestHarness;
 
 mod batcher;
-pub use batcher::{
-    BatchType, Batcher, BatcherConfig, BatcherError, ChannelDriverConfig, GarbageKind,
-};
+pub use batcher::{BatchType, Batcher, BatcherConfig, BatcherError, GarbageKind};
 
 mod providers;
 pub use providers::{

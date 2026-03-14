@@ -1,8 +1,17 @@
+use std::sync::Arc;
+
 use alloy_primitives::{Address, Bytes};
-use base_batcher_driver::{ChannelDriver, ChannelDriverConfig, ChannelDriverError};
-use base_comp::{BatchComposeError, BatchComposer};
+use base_batcher_encoder::{
+    BatchEncoder, BatchPipeline, EncoderConfig, ReorgError, StepError, StepResult,
+};
+use base_comp::{
+    BatchComposeError, BatchComposer, BrotliCompressor, BrotliLevel, ChannelOut, ChannelOutError,
+};
 use base_consensus_genesis::RollupConfig;
-use base_protocol::{Batch, DERIVATION_VERSION_0, Frame, SingleBatch, SpanBatch, SpanBatchError};
+use base_protocol::{
+    Batch, ChannelId, DERIVATION_VERSION_0, Frame, MAX_FRAME_LEN, SingleBatch, SpanBatch,
+    SpanBatchError,
+};
 use tracing::info;
 
 use crate::{Action, L1Miner, L2BlockProvider, PendingTx};
@@ -40,10 +49,10 @@ pub struct BatcherConfig {
     pub batcher_address: Address,
     /// Batch inbox address on L1. Used as the `to` field on L1 transactions.
     pub inbox_address: Address,
-    /// [`ChannelDriverConfig`] passed through to the underlying encoder.
-    pub driver: ChannelDriverConfig,
     /// Whether to encode blocks as [`SingleBatch`]es or a [`SpanBatch`].
     pub batch_type: BatchType,
+    /// Encoder configuration forwarded to [`BatchEncoder`].
+    pub encoder: EncoderConfig,
 }
 
 impl Default for BatcherConfig {
@@ -51,8 +60,8 @@ impl Default for BatcherConfig {
         Self {
             batcher_address: Address::repeat_byte(0xBA),
             inbox_address: Address::repeat_byte(0xCA),
-            driver: ChannelDriverConfig::default(),
             batch_type: BatchType::Single,
+            encoder: EncoderConfig::default(),
         }
     }
 }
@@ -66,26 +75,32 @@ pub enum BatcherError {
     /// Conversion from L2 block to single batch failed.
     #[error("batch compose error: {0}")]
     Compose(#[from] BatchComposeError),
-    /// The channel driver failed to encode or compress the batches.
-    #[error("channel driver error: {0}")]
-    Driver(#[from] ChannelDriverError),
+    /// An L2 reorg was detected during block ingestion.
+    #[error("reorg: {0}")]
+    Reorg(#[from] ReorgError),
+    /// Channel encoding or compression failed.
+    #[error("channel error: {0}")]
+    Channel(#[from] ChannelOutError),
     /// Span batch construction failed.
     #[error("span batch error: {0}")]
     SpanBatch(#[from] SpanBatchError),
 }
 
+impl From<StepError> for BatcherError {
+    fn from(e: StepError) -> Self {
+        match e {
+            StepError::CompositionFailed { source, .. } => Self::Compose(source),
+        }
+    }
+}
+
 /// Batcher actor for action tests.
 ///
 /// `Batcher` drains [`OpBlock`]s from an [`L2BlockProvider`], encodes each
-/// one as a [`SingleBatch`] or groups them into a [`SpanBatch`] depending on
-/// [`BatcherConfig::batch_type`], compresses batches into a channel via
-/// [`ChannelDriver`] (Brotli-10), and submits the resulting frame data to the
+/// one as a [`SingleBatch`] via [`BatchEncoder`] or groups them into a
+/// [`SpanBatch`] depending on [`BatcherConfig::batch_type`], compresses
+/// batches into a channel, and submits the resulting frame data to the
 /// [`L1Miner`] as a [`PendingTx`].
-///
-/// The translation from `OpBlock` to `SingleBatch` mirrors op-batcher:
-/// 1. Decode the L1 info from the first (deposit) transaction to get the epoch.
-/// 2. Filter out all deposit transactions.
-/// 3. EIP-2718-encode the remaining user transactions.
 ///
 /// A single call to [`advance`] (or [`Action::act`]) runs one full encode
 /// cycle: drain all available L2 blocks → encode → flush → submit to L1.
@@ -97,9 +112,9 @@ pub enum BatcherError {
 pub struct Batcher<'a, S: L2BlockProvider> {
     l1_miner: &'a mut L1Miner,
     l2_source: S,
-    driver: ChannelDriver,
+    pipeline: BatchEncoder,
+    rollup_config: Arc<RollupConfig>,
     config: BatcherConfig,
-    rollup_config: RollupConfig,
 }
 
 impl<'a, S: L2BlockProvider> Batcher<'a, S> {
@@ -107,23 +122,23 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
     ///
     /// The batcher borrows `l1_miner` mutably so it can submit transactions
     /// directly. `l2_source` is moved in so the batcher owns the block queue.
-    /// `rollup_config` is cloned into the [`ChannelDriver`].
     pub fn new(
         l1_miner: &'a mut L1Miner,
         l2_source: S,
         rollup_config: &RollupConfig,
         config: BatcherConfig,
     ) -> Self {
-        let driver = ChannelDriver::new(rollup_config.clone(), config.driver.clone());
-        Self { l1_miner, l2_source, driver, config, rollup_config: rollup_config.clone() }
+        let rollup_config = Arc::new(rollup_config.clone());
+        let pipeline = BatchEncoder::new(Arc::clone(&rollup_config), config.encoder.clone());
+        Self { l1_miner, l2_source, pipeline, rollup_config, config }
     }
 
     /// Drain all available L2 blocks and encode them into frames without
     /// submitting to L1.
     ///
-    /// For [`BatchType::Single`], each block is encoded as a [`SingleBatch`].
-    /// For [`BatchType::Span`], all blocks are collected and grouped into one
-    /// [`SpanBatch`] before flushing.
+    /// For [`BatchType::Single`], blocks are fed through [`BatchEncoder`].
+    /// For [`BatchType::Span`], all blocks are collected into one [`SpanBatch`]
+    /// and encoded via a fresh [`ChannelOut`].
     ///
     /// Returns the encoded frames so callers can inspect or submit them
     /// selectively. Use [`submit_frames`] to submit a subset of frames to
@@ -135,7 +150,8 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
     ///
     /// Returns [`BatcherError::NoBlocks`] if the L2 source is empty.
     /// Returns [`BatcherError::Compose`] if the first tx is not a valid deposit.
-    /// Returns [`BatcherError::Driver`] if channel encoding fails.
+    /// Returns [`BatcherError::Reorg`] if a block parent hash mismatch is detected.
+    /// Returns [`BatcherError::Channel`] if channel encoding fails.
     /// Returns [`BatcherError::SpanBatch`] if span batch construction fails.
     pub fn encode_frames(&mut self) -> Result<Vec<Frame>, BatcherError> {
         match self.config.batch_type {
@@ -145,20 +161,34 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
     }
 
     fn encode_single_frames(&mut self) -> Result<Vec<Frame>, BatcherError> {
-        let mut batch_count = 0u64;
+        let mut block_count = 0u64;
 
         while let Some(block) = self.l2_source.next_block() {
-            let (batch, _) = BatchComposer::block_to_single_batch(&block)?;
-            self.driver.add_batch(batch);
-            batch_count += 1;
+            self.pipeline.add_block(block)?;
+            block_count += 1;
         }
 
-        if batch_count == 0 {
+        if block_count == 0 {
             return Err(BatcherError::NoBlocks);
         }
 
-        let frames = self.driver.flush()?;
-        info!(batches = batch_count, frames = frames.len(), "batcher encoded single frames");
+        // Step until all blocks are encoded into the current channel.
+        loop {
+            match self.pipeline.step()? {
+                StepResult::Idle => break,
+                StepResult::BlockEncoded | StepResult::ChannelClosed => {}
+            }
+        }
+
+        // Force-close the current channel by advancing the L1 head past the timeout.
+        self.pipeline.advance_l1_head(u64::MAX);
+
+        let mut frames = Vec::new();
+        while let Some(sub) = self.pipeline.next_submission() {
+            frames.extend(sub.frames);
+        }
+
+        info!(blocks = block_count, frames = frames.len(), "batcher encoded single frames");
         Ok(frames)
     }
 
@@ -180,8 +210,19 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
             span_batch.append_singular_batch(single, seq_num)?;
         }
 
-        self.driver.add_raw_batch(Batch::Span(span_batch));
-        let frames = self.driver.flush()?;
+        // Encode the span batch directly via ChannelOut.
+        let compressor = BrotliCompressor::new(BrotliLevel::Brotli10);
+        let mut channel_out =
+            ChannelOut::new(ChannelId::default(), Arc::clone(&self.rollup_config), compressor);
+        channel_out.add_batch(Batch::Span(span_batch))?;
+        channel_out.flush()?;
+        channel_out.close();
+
+        let mut frames = Vec::new();
+        while channel_out.ready_bytes() > 0 {
+            frames.push(channel_out.output_frame(MAX_FRAME_LEN)?);
+        }
+
         info!(frames = frames.len(), "batcher encoded span frames");
         Ok(frames)
     }

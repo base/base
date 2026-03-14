@@ -14,6 +14,8 @@
 
 #[cfg(feature = "std")]
 fn main() {
+    use std::sync::Arc;
+
     use alloy_primitives::BlockHash;
     use base_comp::{ChannelOut, CompressionAlgo, VariantCompressor};
     use base_consensus_genesis::RollupConfig;
@@ -32,9 +34,9 @@ fn main() {
 
     // Create a new channel.
     let id = ChannelId::default();
-    let config = RollupConfig::default();
+    let config = Arc::new(RollupConfig::default());
     let compressor: VariantCompressor = CompressionAlgo::Brotli10.into();
-    let mut channel_out = ChannelOut::new(id, &config, compressor);
+    let mut channel_out = ChannelOut::new(id, config, compressor);
 
     // Add the compressed batch to the `ChannelOut`.
     channel_out.add_batch(batch).unwrap();

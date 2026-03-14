@@ -1,5 +1,6 @@
 //! CLI definition for the prover binary (TEE + ZK backends).
 
+use eyre::eyre;
 use std::net::SocketAddr;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use std::sync::Arc;
@@ -15,7 +16,6 @@ use base_proof_tee_nitro::{NitroEnclave, VSOCK_PORT};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_tee_nitro::{NitroProverServer, NitroTransport};
 use clap::{Parser, Subcommand};
-use eyre::eyre;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use tracing::info;
 

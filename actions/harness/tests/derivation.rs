@@ -6,8 +6,8 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::{Address, B256, Bytes, LogData, U256};
 use base_action_harness::{
     ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, ActionL2Source,
-    ActionTestHarness, BatchType, BatcherConfig, ChannelDriverConfig, GarbageKind, L1MinerConfig,
-    L2Sequencer, L2Verifier, PendingTx, SharedL1Chain, StepResult, block_info_from,
+    ActionTestHarness, BatchType, BatcherConfig, GarbageKind, L1MinerConfig, L2Sequencer,
+    L2Verifier, PendingTx, SharedL1Chain, StepResult, block_info_from,
 };
 use base_blobs::BlobEncoder;
 use base_consensus_genesis::{
@@ -1216,10 +1216,10 @@ async fn garbage_frame_data_ignored() {
 /// test harness. All frames must land in the same L1 block.
 #[tokio::test]
 async fn multi_frame_channel_reassembled() {
+    use base_batcher_encoder::EncoderConfig;
     let batcher_cfg = BatcherConfig {
-        // A very small frame size forces the channel to spill across
-        // multiple frames even for a single L2 block's batch data.
-        driver: ChannelDriverConfig { max_frame_size: 80 },
+        // Small max_frame_size forces the channel to spill across multiple frames.
+        encoder: EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
     let rollup_cfg = rollup_config_for(&batcher_cfg);
