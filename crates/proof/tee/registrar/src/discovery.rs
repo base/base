@@ -182,7 +182,8 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
             }
         }
 
-        let targets: Vec<(String, InstanceHealthStatus)> = health_map.into_iter().collect();
+        let mut targets: Vec<(String, InstanceHealthStatus)> = health_map.into_iter().collect();
+        targets.sort_by(|(a, _), (b, _)| a.cmp(b));
 
         // Collect IDs for instances that should be registered.
         let registerable_ids: Vec<String> = targets
