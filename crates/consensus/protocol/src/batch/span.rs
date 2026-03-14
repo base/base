@@ -782,15 +782,6 @@ mod tests {
     }
 
     #[test]
-    fn test_timestamp() {
-        let timestamp = 10;
-        let first_element = SpanBatchElement { timestamp, ..Default::default() };
-        let batch =
-            SpanBatch { batches: vec![first_element, Default::default()], ..Default::default() };
-        assert_eq!(batch.starting_timestamp(), timestamp);
-    }
-
-    #[test]
     fn test_starting_timestamp() {
         let timestamp = 10;
         let first_element = SpanBatchElement { timestamp, ..Default::default() };
