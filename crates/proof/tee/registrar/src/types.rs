@@ -1,36 +1,47 @@
-use std::net::IpAddr;
-
 use alloy_primitives::{Address, B256, Bytes};
 
 /// A prover instance discovered from the infrastructure layer.
 #[derive(Debug, Clone)]
 pub struct ProverInstance {
-    /// AWS EC2 instance ID.
+    /// Unique identifier for the instance.
+    ///
+    /// K8s mode: pod DNS name (`{name}-{i}.{svc}.{ns}.svc.cluster.local:{port}`).
+    /// AWS mode: EC2 instance ID (e.g. `i-0abc123def456`).
     pub instance_id: String,
-    /// Private IP address of the instance within the VPC.
-    pub private_ip: IpAddr,
-    /// Current health status reported by the ALB target group.
+    /// HTTP connection endpoint used to contact the instance.
+    ///
+    /// K8s mode: same as `instance_id` (pod DNS:port).
+    /// AWS mode: private IP and port (e.g. `10.0.1.5:8000`).
+    pub endpoint: String,
+    /// Current health status of the instance.
     pub health_status: InstanceHealthStatus,
 }
 
-/// Health status of a prover instance in the ALB target group.
+/// Health status of a discovered prover instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstanceHealthStatus {
-    /// Health checks are in progress; instance is not yet receiving traffic.
+    /// ALB health checks are in progress (AWS mode only — instance just started).
     Initial,
-    /// Instance is passing health checks and receiving proposal traffic.
+    /// Instance is reachable and passing health checks.
     Healthy,
-    /// Instance is failing health checks.
+    /// Instance did not respond to the poll or is failing health checks.
     Unhealthy,
-    /// Instance is being decommissioned.
+    /// ALB is draining connections from this instance (AWS mode only).
     Draining,
 }
 
 impl InstanceHealthStatus {
-    /// Maps an AWS ALB target health state string to [`InstanceHealthStatus`].
+    /// Returns `true` if the instance should be registered on-chain.
     ///
-    /// Unknown or unrecognised states are treated as [`Self::Unhealthy`] to avoid
-    /// routing work to targets whose status cannot be determined.
+    /// Both `Initial` (AWS warm-up) and `Healthy` instances are candidates for
+    /// registration. `Unhealthy` and `Draining` instances are not.
+    pub const fn should_register(&self) -> bool {
+        matches!(self, Self::Initial | Self::Healthy)
+    }
+
+    /// Maps an AWS ELB target health state string to [`InstanceHealthStatus`].
+    ///
+    /// Used by `AwsTargetGroupDiscovery` to convert `describe_target_health` responses.
     pub fn from_aws_state(state: &str) -> Self {
         match state {
             "initial" => Self::Initial,
@@ -39,10 +50,64 @@ impl InstanceHealthStatus {
             _ => Self::Unhealthy,
         }
     }
+}
 
-    /// Returns `true` if the instance should be registered (initial or healthy).
-    pub const fn should_register(&self) -> bool {
-        matches!(self, Self::Initial | Self::Healthy)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn healthy_should_register() {
+        assert!(InstanceHealthStatus::Healthy.should_register());
+    }
+
+    #[test]
+    fn initial_should_register() {
+        assert!(InstanceHealthStatus::Initial.should_register());
+    }
+
+    #[test]
+    fn unhealthy_should_not_register() {
+        assert!(!InstanceHealthStatus::Unhealthy.should_register());
+    }
+
+    #[test]
+    fn draining_should_not_register() {
+        assert!(!InstanceHealthStatus::Draining.should_register());
+    }
+
+    #[test]
+    fn from_aws_state_initial() {
+        assert_eq!(InstanceHealthStatus::from_aws_state("initial"), InstanceHealthStatus::Initial);
+    }
+
+    #[test]
+    fn from_aws_state_healthy() {
+        assert_eq!(InstanceHealthStatus::from_aws_state("healthy"), InstanceHealthStatus::Healthy);
+    }
+
+    #[test]
+    fn from_aws_state_draining() {
+        assert_eq!(
+            InstanceHealthStatus::from_aws_state("draining"),
+            InstanceHealthStatus::Draining
+        );
+    }
+
+    #[test]
+    fn from_aws_state_unhealthy() {
+        assert_eq!(
+            InstanceHealthStatus::from_aws_state("unhealthy"),
+            InstanceHealthStatus::Unhealthy
+        );
+    }
+
+    #[test]
+    fn from_aws_state_unknown_maps_to_unhealthy() {
+        assert_eq!(
+            InstanceHealthStatus::from_aws_state("unavailable"),
+            InstanceHealthStatus::Unhealthy
+        );
     }
 }
 
