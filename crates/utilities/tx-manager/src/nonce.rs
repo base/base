@@ -321,12 +321,10 @@ impl NonceGuard {
     /// computation would overflow `u64`.
     pub fn consume_reserved(mut self) -> Result<u64, TxManagerError> {
         let nonce = self.nonce;
-        if let Some(ref mut guard) = self.guard {
+        if let Some(mut guard) = self.guard.take() {
             let next = nonce.checked_add(1).ok_or(TxManagerError::NonceOverflow)?;
             guard.reserved_high_water = guard.reserved_high_water.max(next);
         }
-        // Clear the guard so Drop sees `guard.is_none()` and takes no action.
-        let _ = self.guard.take();
         Ok(nonce)
     }
 

@@ -741,7 +741,16 @@ impl SimpleTxManager {
         result: &TxManagerResult<T>,
         send_state: &SendState,
     ) -> bool {
-        result.is_err() && send_state.successful_publish_count() == 0
+        match result {
+            Ok(_) => false,
+            // Nonce errors indicate the nonce is genuinely invalid, not a
+            // transient failure.  Returning it to the reuse pool would
+            // cause an infinite retry loop: after a reset() the chain
+            // nonce is re-fetched, but advance_nonce() pops
+            // returned_nonces first, reissuing the same invalid value.
+            Err(TxManagerError::NonceTooHigh | TxManagerError::NonceTooLow) => false,
+            Err(_) => send_state.successful_publish_count() == 0,
+        }
     }
 
     /// Inner send loop extracted from [`send_tx`](Self::send_tx) to allow
@@ -1376,6 +1385,8 @@ mod tests {
     #[case::success(false, Ok(()), false)]
     #[case::timeout_no_publish(false, Err(TxManagerError::SendTimeout), true)]
     #[case::timeout_after_publish(true, Err(TxManagerError::SendTimeout), false)]
+    #[case::nonce_too_high(false, Err(TxManagerError::NonceTooHigh), false)]
+    #[case::nonce_too_low(false, Err(TxManagerError::NonceTooLow), false)]
     fn should_return_reserved_nonce(
         #[case] has_publish: bool,
         #[case] result: crate::TxManagerResult<()>,
