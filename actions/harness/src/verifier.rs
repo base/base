@@ -109,6 +109,22 @@ pub struct L2Verifier<P: Pipeline + SignalReceiver + Debug> {
     /// [`apply_attributes`]: L2Verifier::apply_attributes
     /// [`BatchQueue`]: base_consensus_derive::BatchQueue
     block_hashes: HashMap<u64, B256>,
+    /// User transaction counts per derived L2 block, recorded in [`apply_attributes`].
+    ///
+    /// Each entry is `(l2_block_number, user_tx_count)`. Deposit-only blocks —
+    /// whether force-included after a dropped batch or generated at hardfork
+    /// upgrade boundaries — have a count of `0`.
+    ///
+    /// [`apply_attributes`]: L2Verifier::apply_attributes
+    derived_user_tx_counts: Vec<(u64, usize)>,
+    /// Decoded L1 info transactions per derived L2 block, recorded in [`apply_attributes`].
+    ///
+    /// Each entry is `(l2_block_number, l1_info_tx)`. The [`L1BlockInfoTx`]
+    /// exposes hardfork-specific fee parameters, including `operator_fee_scalar`
+    /// and `operator_fee_constant` for Isthmus/Jovian blocks.
+    ///
+    /// [`apply_attributes`]: L2Verifier::apply_attributes
+    derived_l1_info_txs: Vec<(u64, L1BlockInfoTx)>,
 }
 
 impl L2Verifier<VerifierPipeline> {
@@ -191,6 +207,8 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
             finalized_l1_number: 0,
             safe_head_history: Vec::new(),
             block_hashes: HashMap::new(),
+            derived_user_tx_counts: Vec::new(),
+            derived_l1_info_txs: Vec::new(),
         }
     }
 
@@ -318,6 +336,8 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         // Clear stale finalization state so a subsequent act_l1_finalized_signal
         // cannot promote an L2 block that no longer exists on the canonical chain.
         self.safe_head_history.clear();
+        self.derived_user_tx_counts.clear();
+        self.derived_l1_info_txs.clear();
         self.finalized_head = l2_safe_head;
         self.finalized_l1_number = 0;
         Ok(())
@@ -547,6 +567,26 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         self.block_hashes.insert(number, hash);
     }
 
+    /// Return the user transaction counts recorded for each derived L2 block.
+    ///
+    /// Each entry is `(l2_block_number, user_tx_count)`. A count of `0` means
+    /// the block is deposit-only — either force-included after a dropped batch
+    /// (e.g. `NonEmptyTransitionBlock` or sequencer-drift violation) or
+    /// generated at a hardfork upgrade boundary.
+    pub fn derived_user_tx_counts(&self) -> &[(u64, usize)] {
+        &self.derived_user_tx_counts
+    }
+
+    /// Return the decoded L1 info transactions for each derived L2 block.
+    ///
+    /// Each entry is `(l2_block_number, l1_info_tx)`. Use this to inspect
+    /// hardfork-specific fee parameters — for example, `operator_fee_scalar`
+    /// and `operator_fee_constant` from Isthmus/Jovian blocks — without
+    /// requiring EVM execution.
+    pub fn derived_l1_info_txs(&self) -> &[(u64, L1BlockInfoTx)] {
+        &self.derived_l1_info_txs
+    }
+
     /// Inject an unsafe L2 block as if received via P2P gossip.
     ///
     /// Equivalent to op-e2e's `ActL2UnsafeGossipReceive`. The block's header is
@@ -606,6 +646,22 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         Some(l1_info.id())
     }
 
+    /// Decode the full [`L1BlockInfoTx`] from the first deposit transaction in
+    /// derived [`OpAttributesWithParent`].
+    ///
+    /// Returns `None` if the first transaction is absent or cannot be decoded.
+    /// This is the same decoding path as [`l1_origin_from_attrs`] but returns
+    /// the full info tx rather than just the epoch identifier.
+    ///
+    /// [`l1_origin_from_attrs`]: L2Verifier::l1_origin_from_attrs
+    fn l1_info_from_attrs(&self, attrs: &OpAttributesWithParent) -> Option<L1BlockInfoTx> {
+        let txs = attrs.attributes.transactions.as_ref()?;
+        let raw = txs.first()?;
+        let rlp_bytes = raw.strip_prefix(&[0x7E])?;
+        let deposit = TxDeposit::decode(&mut &*rlp_bytes).ok()?;
+        L1BlockInfoTx::decode_calldata(deposit.input.as_ref()).ok()
+    }
+
     /// Apply derived attributes to the in-memory L2 chain, advancing the safe head.
     ///
     /// This is the minimal "engine": no EVM execution, no state root computation.
@@ -637,6 +693,15 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         // BatchQueue uses this for batch ordering validation.
         let seq_num =
             if l1_origin == self.safe_head.l1_origin { self.safe_head.seq_num + 1 } else { 0 };
+        // Record user tx count (non-0x7E-prefixed = non-deposit).
+        if let Some(ref txs) = attrs.attributes.transactions {
+            let user_count = txs.iter().filter(|tx| !tx.starts_with(&[0x7E])).count();
+            self.derived_user_tx_counts.push((new_number, user_count));
+        }
+        // Record the decoded L1 info tx for this block.
+        if let Some(l1_info) = self.l1_info_from_attrs(&attrs) {
+            self.derived_l1_info_txs.push((new_number, l1_info));
+        }
         let hash = self.block_hashes.get(&new_number).copied().unwrap_or_default();
         self.safe_head = L2BlockInfo {
             block_info: BlockInfo {
