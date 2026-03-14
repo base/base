@@ -56,8 +56,9 @@ use crate::{
     TxManagerResult, TxMetrics,
 };
 
-/// Number of wei in one gwei (10^9).
-const WEI_PER_GWEI: u128 = 1_000_000_000;
+/// Number of wei in one gwei (10^9), as `f64` for fractional-precision
+/// metric conversions that must not truncate sub-gwei values.
+const WEI_PER_GWEI: f64 = 1_000_000_000.0;
 
 /// A signed transaction together with the fee values that were applied
 /// during construction.
@@ -221,8 +222,8 @@ impl SimpleTxManager {
     }
 
     /// Returns a reference to the metrics collector.
-    pub fn metrics(&self) -> &Arc<dyn TxMetrics> {
-        &self.metrics
+    pub fn metrics(&self) -> &dyn TxMetrics {
+        self.metrics.as_ref()
     }
 
     /// Signals the manager to stop accepting new transactions.
@@ -243,7 +244,7 @@ impl SimpleTxManager {
 
     /// Records an RPC error metric and returns a [`TxManagerError::Rpc`] for a
     /// timed-out RPC call.
-    fn rpc_timeout(&self, msg: &str) -> TxManagerError {
+    fn rpc_timeout_error(&self, msg: &str) -> TxManagerError {
         self.metrics.record_rpc_error();
         TxManagerError::Rpc(msg.into())
     }
@@ -252,7 +253,7 @@ impl SimpleTxManager {
     /// error is an unrecognised transport failure ([`TxManagerError::Rpc`]).
     /// Recognised state errors (e.g. `NonceTooLow`, `ExecutionReverted`) are
     /// returned without inflating the RPC error counter.
-    fn classify_rpc(&self, error_msg: &str) -> TxManagerError {
+    fn classify_and_record_rpc(&self, error_msg: &str) -> TxManagerError {
         let err = RpcErrorClassifier::classify_rpc_error(error_msg);
         if err.is_rpc_error() {
             self.metrics.record_rpc_error();
@@ -367,12 +368,12 @@ impl SimpleTxManager {
         );
 
         let raw_tip_cap = tip_result
-            .map_err(|_| self.rpc_timeout("get_max_priority_fee_per_gas timed out"))?
-            .map_err(|e| self.classify_rpc(&e.to_string()))?;
+            .map_err(|_| self.rpc_timeout_error("get_max_priority_fee_per_gas timed out"))?
+            .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?;
 
         let latest_block = block_result
-            .map_err(|_| self.rpc_timeout("get_block_by_number timed out"))?
-            .map_err(|e| self.classify_rpc(&e.to_string()))?
+            .map_err(|_| self.rpc_timeout_error("get_block_by_number timed out"))?
+            .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?
             .ok_or_else(|| {
                 self.metrics.record_rpc_error();
                 TxManagerError::Rpc("latest block not found".to_string())
@@ -395,9 +396,9 @@ impl SimpleTxManager {
         // Compute gas fee cap with enforced minimums.
         let gas_fee_cap = FeeCalculator::calc_gas_fee_cap(base_fee, tip_cap);
 
-        // Record fee metrics (converted from wei to gwei via integer division).
-        self.metrics.record_basefee((base_fee / WEI_PER_GWEI) as u64);
-        self.metrics.record_tipcap((tip_cap / WEI_PER_GWEI) as u64);
+        // Record fee metrics (converted from wei to gwei with fractional precision).
+        self.metrics.record_basefee(base_fee as f64 / WEI_PER_GWEI);
+        self.metrics.record_tipcap(tip_cap as f64 / WEI_PER_GWEI);
 
         Ok(GasPriceCaps { gas_tip_cap: tip_cap, gas_fee_cap, raw_gas_fee_cap, blob_fee_cap: None })
     }
@@ -589,8 +590,8 @@ impl SimpleTxManager {
             self.provider.estimate_gas(tx_request.clone()),
         )
         .await
-        .map_err(|_| self.rpc_timeout("estimate_gas timed out"))?
-        .map_err(|e| self.classify_rpc(&e.to_string()))?;
+        .map_err(|_| self.rpc_timeout_error("estimate_gas timed out"))?
+        .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?;
         let gas_limit = candidate.gas_limit.max(estimated);
         tx_request = tx_request.with_gas_limit(gas_limit);
 
@@ -629,7 +630,7 @@ impl SimpleTxManager {
                 drop(guard);
 
                 // Record tx fee metric: max possible fee in gwei.
-                let fee_gwei = (u128::from(gas_limit) * fee_cap / WEI_PER_GWEI) as u64;
+                let fee_gwei = u128::from(gas_limit) as f64 * fee_cap as f64 / WEI_PER_GWEI;
                 self.metrics.record_tx_fee(fee_gwei);
 
                 Ok(PreparedTx {
@@ -811,6 +812,7 @@ impl SimpleTxManager {
     ) -> SendResponse {
         let start = Instant::now();
 
+        let result: SendResponse = async {
         // Initial transaction preparation. prepare() is NOT cancellation-safe,
         // so it runs to completion before entering the select loop.
         // The returned PreparedTx carries the actual on-wire fees, eliminating
@@ -852,8 +854,6 @@ impl SimpleTxManager {
             // If a receipt is already waiting, return it immediately
             // instead of performing a wasted fee bump.
             if let Ok(receipt) = receipt_rx.try_recv() {
-                let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-                self.metrics.record_confirmed_latency(latency_ms);
                 info!(
                     tx_hash = %receipt.transaction_hash,
                     block = ?receipt.block_number,
@@ -896,8 +896,6 @@ impl SimpleTxManager {
                 result = receipt_rx.recv() => {
                     match result {
                         Some(receipt) => {
-                            let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-                            self.metrics.record_confirmed_latency(latency_ms);
                             info!(
                                 tx_hash = %receipt.transaction_hash,
                                 block = ?receipt.block_number,
@@ -922,6 +920,12 @@ impl SimpleTxManager {
             }
             bump_ticker.reset();
         }
+        }
+        .await;
+
+        let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.metrics.record_confirmed_latency(latency_ms);
+        result
     }
 
     /// Performs a fee bump attempt and applies the result to the tracked state.
@@ -1079,7 +1083,7 @@ impl SimpleTxManager {
                 Ok(tx_hash)
             }
             Ok(Err(e)) => {
-                let classified = self.classify_rpc(&e.to_string());
+                let classified = self.classify_and_record_rpc(&e.to_string());
 
                 // AlreadyKnown on resubmission is a success — the tx is in
                 // the mempool from a prior publish. Return the previous hash.
@@ -1095,7 +1099,9 @@ impl SimpleTxManager {
                 }
 
                 send_state.process_send_error(&classified);
-                self.metrics.record_publish_error();
+                if !classified.is_already_known() {
+                    self.metrics.record_publish_error();
+                }
 
                 if classified.is_retryable() {
                     warn!(error = %classified, "publish failed, will retry");
@@ -1106,7 +1112,7 @@ impl SimpleTxManager {
                 Err(classified)
             }
             Err(_) => {
-                let err = self.rpc_timeout("send_raw_transaction timed out");
+                let err = self.rpc_timeout_error("send_raw_transaction timed out");
                 send_state.process_send_error(&err);
                 self.metrics.record_publish_error();
                 warn!("publish timed out");

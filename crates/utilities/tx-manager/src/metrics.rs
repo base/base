@@ -33,8 +33,8 @@ const RPC_ERROR_COUNT: &str = "base_tx_manager_rpc_error_count";
 /// Implement this trait to plug in your own metrics backend. A [`BaseTxMetrics`]
 /// implementation backed by the [`metrics`] crate is provided for production use.
 pub trait TxMetrics: Send + Sync + Debug + 'static {
-    /// Record the transaction fee in gwei.
-    fn record_tx_fee(&self, fee_gwei: u64);
+    /// Record the transaction fee in gwei (fractional precision preserved).
+    fn record_tx_fee(&self, fee_gwei: f64);
 
     /// Record a gas bump event.
     fn record_gas_bump(&self);
@@ -48,11 +48,11 @@ pub trait TxMetrics: Send + Sync + Debug + 'static {
     /// Record a transaction publish error.
     fn record_publish_error(&self);
 
-    /// Record the base fee in gwei.
-    fn record_basefee(&self, basefee_gwei: u64);
+    /// Record the base fee in gwei (fractional precision preserved).
+    fn record_basefee(&self, basefee_gwei: f64);
 
-    /// Record the tip cap in gwei.
-    fn record_tipcap(&self, tipcap_gwei: u64);
+    /// Record the tip cap in gwei (fractional precision preserved).
+    fn record_tipcap(&self, tipcap_gwei: f64);
 
     /// Record an RPC error.
     fn record_rpc_error(&self);
@@ -66,13 +66,13 @@ pub trait TxMetrics: Send + Sync + Debug + 'static {
 pub struct NoopTxMetrics;
 
 impl TxMetrics for NoopTxMetrics {
-    fn record_tx_fee(&self, _fee_gwei: u64) {}
+    fn record_tx_fee(&self, _fee_gwei: f64) {}
     fn record_gas_bump(&self) {}
     fn record_confirmed_latency(&self, _latency_ms: u64) {}
     fn record_current_nonce(&self, _nonce: u64) {}
     fn record_publish_error(&self) {}
-    fn record_basefee(&self, _basefee_gwei: u64) {}
-    fn record_tipcap(&self, _tipcap_gwei: u64) {}
+    fn record_basefee(&self, _basefee_gwei: f64) {}
+    fn record_tipcap(&self, _tipcap_gwei: f64) {}
     fn record_rpc_error(&self) {}
 }
 
@@ -84,8 +84,8 @@ impl TxMetrics for NoopTxMetrics {
 pub struct BaseTxMetrics;
 
 impl TxMetrics for BaseTxMetrics {
-    fn record_tx_fee(&self, fee_gwei: u64) {
-        histogram!(TX_FEE_GWEI).record(fee_gwei as f64);
+    fn record_tx_fee(&self, fee_gwei: f64) {
+        histogram!(TX_FEE_GWEI).record(fee_gwei);
     }
 
     fn record_gas_bump(&self) {
@@ -104,12 +104,12 @@ impl TxMetrics for BaseTxMetrics {
         counter!(TX_PUBLISH_ERROR_COUNT).increment(1);
     }
 
-    fn record_basefee(&self, basefee_gwei: u64) {
-        gauge!(BASEFEE_GWEI).set(basefee_gwei as f64);
+    fn record_basefee(&self, basefee_gwei: f64) {
+        gauge!(BASEFEE_GWEI).set(basefee_gwei);
     }
 
-    fn record_tipcap(&self, tipcap_gwei: u64) {
-        gauge!(TIPCAP_GWEI).set(tipcap_gwei as f64);
+    fn record_tipcap(&self, tipcap_gwei: f64) {
+        gauge!(TIPCAP_GWEI).set(tipcap_gwei);
     }
 
     fn record_rpc_error(&self) {
@@ -124,26 +124,26 @@ mod tests {
     #[test]
     fn noop_tx_metrics_can_be_constructed_and_called() {
         let m = NoopTxMetrics;
-        m.record_tx_fee(1);
+        m.record_tx_fee(1.5);
         m.record_gas_bump();
         m.record_confirmed_latency(120);
         m.record_current_nonce(42);
         m.record_publish_error();
-        m.record_basefee(30);
-        m.record_tipcap(2);
+        m.record_basefee(30.123);
+        m.record_tipcap(2.456);
         m.record_rpc_error();
     }
 
     #[test]
     fn base_tx_metrics_can_be_constructed_and_called() {
         let m = BaseTxMetrics;
-        m.record_tx_fee(1);
+        m.record_tx_fee(1.5);
         m.record_gas_bump();
         m.record_confirmed_latency(120);
         m.record_current_nonce(42);
         m.record_publish_error();
-        m.record_basefee(30);
-        m.record_tipcap(2);
+        m.record_basefee(30.123);
+        m.record_tipcap(2.456);
         m.record_rpc_error();
     }
 }
