@@ -278,8 +278,14 @@ where
                 }
             };
 
+        // Use one safe-head snapshot per step to avoid repeated `sync_status` RPCs.
+        let latest_safe = self.latest_safe_block().await?;
+
         // Generate proofs for blocks in the range.
-        if let Err(e) = self.generate_outputs(starting_block_number).await {
+        if let Err(e) = self
+            .generate_outputs_with_safe(starting_block_number, latest_safe.number)
+            .await
+        {
             warn!(error = %e, "Error generating outputs");
             return Err(e);
         }
@@ -293,7 +299,15 @@ where
         let intermediate_roots = self.cached_intermediate_roots.clone();
 
         // Check if we have enough proofs to aggregate and propose.
-        match self.next_output(starting_block_number, starting_root, &intermediate_roots).await {
+        match self
+            .next_output_with_safe(
+                starting_block_number,
+                starting_root,
+                &intermediate_roots,
+                latest_safe,
+            )
+            .await
+        {
             Ok(Some(proposal)) => {
                 self.propose_output(&proposal, parent_index, &intermediate_roots).await;
             }
@@ -341,7 +355,18 @@ where
     }
 
     /// Generates single-block proofs, filling the pending queue.
+    #[cfg(test)]
     async fn generate_outputs(&mut self, starting_block_number: u64) -> Result<(), ProposerError> {
+        let safe_number = self.latest_safe_block_number().await?;
+        self.generate_outputs_with_safe(starting_block_number, safe_number).await
+    }
+
+    /// Generates single-block proofs using a pre-fetched safe block number.
+    async fn generate_outputs_with_safe(
+        &mut self,
+        starting_block_number: u64,
+        safe_number: u64,
+    ) -> Result<(), ProposerError> {
         // Clear pending if not contiguous with starting point.
         if let Some(front) = self.pending.front()
             && front.from.number.saturating_sub(1) != starting_block_number
@@ -390,12 +415,7 @@ where
 
             let proposal = self.prover.generate(&block).await?;
 
-            let blocks_behind = match self.latest_safe_block_number().await {
-                Ok(safe_number) if safe_number > proposal.to.number => {
-                    safe_number - proposal.to.number
-                }
-                _ => 0,
-            };
+            let blocks_behind = safe_number.saturating_sub(proposal.to.number);
 
             info!(
                 block_number = proposal.to.number,
@@ -415,6 +435,7 @@ where
     }
 
     /// Determines the next output to propose, aggregating if needed.
+    #[cfg(test)]
     async fn next_output(
         &mut self,
         starting_block_number: u64,
@@ -422,6 +443,18 @@ where
         intermediate_roots: &[B256],
     ) -> Result<Option<ProverProposal>, ProposerError> {
         let latest_safe = self.latest_safe_block().await?;
+        self.next_output_with_safe(starting_block_number, starting_root, intermediate_roots, latest_safe)
+            .await
+    }
+
+    /// Determines the next output to propose with a pre-fetched safe block.
+    async fn next_output_with_safe(
+        &mut self,
+        starting_block_number: u64,
+        starting_root: B256,
+        intermediate_roots: &[B256],
+        latest_safe: L2BlockRef,
+    ) -> Result<Option<ProverProposal>, ProposerError> {
         let latest_safe_number = latest_safe.number;
 
         // We need exactly block_interval proofs to propose.
@@ -550,6 +583,7 @@ where
     }
 
     /// Returns the latest safe L2 block number.
+    #[cfg(test)]
     async fn latest_safe_block_number(&self) -> Result<u64, ProposerError> {
         self.latest_safe_block().await.map(|b| b.number)
     }
@@ -772,7 +806,7 @@ mod tests {
     use std::{
         sync::{
             Arc,
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         time::Duration,
     };
@@ -844,6 +878,24 @@ mod tests {
                 prev_output_root: last.prev_output_root,
                 config_hash: last.config_hash,
             })
+        }
+    }
+
+    /// Rollup mock with call counter for `sync_status`.
+    struct CountingRollupClient {
+        sync_status: SyncStatus,
+        sync_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl RollupProvider for CountingRollupClient {
+        async fn rollup_config(&self) -> base_proof_rpc::RpcResult<RollupConfig> {
+            unimplemented!()
+        }
+
+        async fn sync_status(&self) -> base_proof_rpc::RpcResult<SyncStatus> {
+            self.sync_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(self.sync_status.clone())
         }
     }
 
@@ -958,6 +1010,47 @@ mod tests {
         let result = driver.next_output(100, B256::ZERO, &[]).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_step_fetches_rollup_sync_status_once_per_tick() {
+        let sync_calls = Arc::new(AtomicUsize::new(0));
+        let canonical_hash = B256::repeat_byte(0x30);
+        let sync_status = test_sync_status(200, canonical_hash);
+
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: Some(canonical_hash) });
+        let prover = Arc::new(Prover::new(
+            test_per_chain_config(),
+            RollupConfig::default(),
+            Arc::clone(&l1),
+            Arc::clone(&l2),
+            MockEnclave,
+            alloy_primitives::Address::ZERO,
+            B256::ZERO,
+        ));
+        let rollup = Arc::new(CountingRollupClient {
+            sync_status,
+            sync_calls: Arc::clone(&sync_calls),
+        });
+        let anchor_registry =
+            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
+        let factory = Arc::new(MockDisputeGameFactory { game_count: 1 });
+        let mut driver = Driver::new(
+            DriverConfig { block_interval: 10, ..Default::default() },
+            prover,
+            l1,
+            l2,
+            rollup,
+            anchor_registry,
+            factory,
+            Arc::new(MockOutputProposer),
+            CancellationToken::new(),
+        );
+
+        let result = driver.step().await;
+        assert!(result.is_ok());
+        assert_eq!(sync_calls.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]
