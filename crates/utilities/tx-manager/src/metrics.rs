@@ -123,7 +123,10 @@ impl BaseTxMetrics {
     /// Called automatically by [`new`](Self::new). Descriptions are idempotent
     /// — calling this multiple times is safe.
     pub fn describe() {
-        describe_histogram!(TX_MAX_FEE_GWEI, "Maximum possible transaction fee in gwei (gas_limit * fee_cap)");
+        describe_histogram!(
+            TX_MAX_FEE_GWEI,
+            "Maximum possible transaction fee in gwei (gas_limit * fee_cap)"
+        );
         describe_counter!(TX_GAS_BUMP_COUNT, "Number of gas bump events");
         describe_histogram!(TX_SEND_LATENCY_MS, "Send-loop latency in milliseconds");
         describe_gauge!(CURRENT_NONCE, "Current nonce value");
