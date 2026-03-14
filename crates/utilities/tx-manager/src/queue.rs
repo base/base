@@ -38,6 +38,9 @@ impl<M: TxManager + 'static> TxQueue<M> {
     /// `max_pending` controls how many transactions may be in-flight at once.
     /// `None` means unlimited (no backpressure).
     pub fn new(tx_mgr: Arc<M>, max_pending: Option<usize>) -> Self {
+        if max_pending == Some(0) {
+            panic!("max_pending must be > 0 or None for unlimited");
+        }
         let permits = max_pending.unwrap_or(Semaphore::MAX_PERMITS);
         debug!(max_pending = permits, "tx queue created");
         Self { tx_mgr, semaphore: Arc::new(Semaphore::new(permits)) }
@@ -141,7 +144,7 @@ mod tests {
     use tokio::sync::{mpsc, Notify};
 
     use super::*;
-    use crate::{test_utils::stub_receipt, SendHandle};
+    use crate::{test_utils::stub_receipt, SendHandle, TxManagerError};
 
     fn stub_candidate() -> TxCandidate {
         TxCandidate::default()
@@ -220,6 +223,37 @@ mod tests {
         fn sender_address(&self) -> Address {
             Address::ZERO
         }
+    }
+
+    // ── ErrorMockTxManager ───────────────────────────────────────────────
+
+    /// A mock whose `send_async` always resolves to an error.
+    #[derive(Debug)]
+    struct ErrorMockTxManager;
+
+    impl TxManager for ErrorMockTxManager {
+        async fn send(&self, _candidate: TxCandidate) -> SendResponse {
+            Err(TxManagerError::NonceTooLow)
+        }
+
+        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            tx.send(Err(TxManagerError::NonceTooLow)).expect("receiver not dropped");
+            SendHandle::new(rx)
+        }
+
+        fn sender_address(&self) -> Address {
+            Address::ZERO
+        }
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    async fn recv_timeout<T>(rx: &mut mpsc::Receiver<T>, secs: u64) -> T {
+        tokio::time::timeout(std::time::Duration::from_secs(secs), rx.recv())
+            .await
+            .expect("should receive within timeout")
+            .expect("channel should not be closed")
     }
 
     // ── Tests ───────────────────────────────────────────────────────────
@@ -313,14 +347,7 @@ mod tests {
 
         let mut received = Vec::new();
         for _ in 0..3 {
-            let receipt = tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                result_rx.recv(),
-            )
-            .await
-            .expect("should receive within timeout")
-            .expect("channel should not be closed");
-
+            let receipt = recv_timeout(&mut result_rx, 2).await;
             assert!(receipt.result.is_ok());
             received.push(receipt.id);
         }
@@ -343,16 +370,40 @@ mod tests {
         }
 
         for _ in 0..100 {
-            let receipt = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                result_rx.recv(),
-            )
-            .await
-            .expect("should receive within timeout")
-            .expect("channel should not be closed");
+            let receipt = recv_timeout(&mut result_rx, 5).await;
             assert!(receipt.result.is_ok());
         }
 
         assert_eq!(mgr.call_count.load(Ordering::SeqCst), 100);
+    }
+
+    #[tokio::test]
+    async fn error_result_propagates_and_releases_permit() {
+        let mgr = Arc::new(ErrorMockTxManager);
+        let (result_tx, mut result_rx) = mpsc::channel::<SendResult<u64>>(16);
+
+        // Only one permit — if the error doesn't release it, the second send hangs.
+        let queue = TxQueue::new(Arc::clone(&mgr), Some(1));
+
+        // First send: should resolve to an error.
+        queue.send(1, stub_candidate(), result_tx.clone()).await;
+        let first = recv_timeout(&mut result_rx, 2).await;
+        assert_eq!(first.id, 1);
+        assert_eq!(first.result.unwrap_err(), TxManagerError::NonceTooLow);
+
+        // Second send on the SAME queue: proves the permit was released despite
+        // the error. With only one permit, this would hang if the first send
+        // leaked it.
+        queue.send(2, stub_candidate(), result_tx.clone()).await;
+        let second = recv_timeout(&mut result_rx, 2).await;
+        assert_eq!(second.id, 2);
+        assert_eq!(second.result.unwrap_err(), TxManagerError::NonceTooLow);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_pending must be > 0")]
+    fn max_pending_zero_panics() {
+        let mgr = Arc::new(MockTxManager::new());
+        let _ = TxQueue::new(mgr, Some(0));
     }
 }
