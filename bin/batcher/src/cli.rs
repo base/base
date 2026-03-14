@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use alloy_primitives::Address;
+use base_batcher_core::ThrottleConfig;
 use base_batcher_service::{BatcherConfig, BatcherService, SecretKey};
 use base_cli_utils::{LogConfig, RuntimeManager};
 use clap::{Args, Parser};
@@ -54,10 +54,6 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "private-key", env = "BATCHER_PRIVATE_KEY")]
     pub private_key: SecretKey,
 
-    /// Batcher inbox address on L1.
-    #[arg(long = "inbox-address", env = "BATCHER_INBOX_ADDRESS")]
-    pub inbox_address: Address,
-
     /// L2 block polling interval in seconds.
     #[arg(long = "poll-interval", default_value = "1", env = "BATCHER_POLL_INTERVAL")]
     pub poll_interval_secs: u64,
@@ -71,7 +67,7 @@ pub(crate) struct BatcherArgs {
     pub max_channel_duration: u64,
 
     /// Safety margin for channel timeout.
-    #[arg(long = "sub-safety-margin", default_value = "4", env = "BATCHER_SUB_SAFETY_MARGIN")]
+    #[arg(long = "sub-safety-margin", default_value = "0", env = "BATCHER_SUB_SAFETY_MARGIN")]
     pub sub_safety_margin: u64,
 
     /// Target compressed frame size in bytes.
@@ -102,6 +98,25 @@ pub(crate) struct BatcherArgs {
     )]
     pub resubmission_timeout_secs: u64,
 
+    /// DA backlog threshold in bytes at which throttling activates.
+    ///
+    /// When the estimated unsubmitted DA backlog exceeds this value, the batcher
+    /// signals the sequencer to reduce block throughput. Matches op-batcher's
+    /// `--throttle-threshold` default of 1 MB.
+    #[arg(
+        long = "throttle-threshold",
+        default_value = "1000000",
+        env = "BATCHER_THROTTLE_THRESHOLD"
+    )]
+    pub throttle_threshold: u64,
+
+    /// Disable DA throttling.
+    ///
+    /// By default throttling is enabled (matching op-batcher behaviour). Pass
+    /// this flag to submit batches at full rate regardless of DA backlog.
+    #[arg(long = "no-throttle", env = "BATCHER_NO_THROTTLE")]
+    pub no_throttle: bool,
+
     /// Logging configuration.
     #[command(flatten)]
     pub logging: LogArgs,
@@ -114,24 +129,32 @@ pub(crate) struct BatcherArgs {
 impl BatcherArgs {
     /// Convert CLI arguments into a [`BatcherConfig`].
     fn into_config(self) -> eyre::Result<BatcherConfig> {
+        let encoder_config = base_batcher_encoder::EncoderConfig {
+            target_frame_size: self.target_frame_size,
+            max_frame_size: self.target_frame_size,
+            max_channel_duration: self.max_channel_duration,
+            sub_safety_margin: self.sub_safety_margin,
+            target_num_frames: self.target_num_frames,
+        };
+        encoder_config.validate()?;
         Ok(BatcherConfig {
             l1_rpc_url: self.l1_rpc_url,
             l2_rpc_url: self.l2_rpc_url,
             rollup_rpc_url: self.rollup_rpc_url,
             batcher_private_key: self.private_key,
-            inbox_address: self.inbox_address,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
-            encoder_config: base_batcher_encoder::EncoderConfig {
-                target_frame_size: self.target_frame_size,
-                max_frame_size: self.target_frame_size,
-                max_channel_duration: self.max_channel_duration,
-                sub_safety_margin: self.sub_safety_margin,
-                target_num_frames: self.target_num_frames,
-            },
+            encoder_config,
             max_pending_transactions: self.max_pending_transactions,
             num_confirmations: self.num_confirmations,
             resubmission_timeout: Duration::from_secs(self.resubmission_timeout_secs),
-            throttle: None,
+            throttle: if self.no_throttle {
+                None
+            } else {
+                Some(ThrottleConfig {
+                    threshold_bytes: self.throttle_threshold,
+                    max_intensity: 1.0,
+                })
+            },
             metrics_port: self.metrics.port,
         })
     }
@@ -140,7 +163,6 @@ impl BatcherArgs {
     async fn exec(self) -> eyre::Result<()> {
         let config = self.into_config()?;
         info!(
-            inbox = %config.inbox_address,
             l1_rpc = %config.l1_rpc_url,
             l2_rpc = %config.l2_rpc_url,
             "batcher configured"

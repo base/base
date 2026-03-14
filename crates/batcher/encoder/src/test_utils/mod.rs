@@ -29,7 +29,7 @@ pub struct MockBatchPipeline {
 }
 
 impl BatchPipeline for MockBatchPipeline {
-    fn add_block(&mut self, block: OpBlock) -> Result<(), ReorgError> {
+    fn add_block(&mut self, block: OpBlock) -> Result<(), Box<(ReorgError, OpBlock)>> {
         self.blocks_added.push(block);
         Ok(())
     }

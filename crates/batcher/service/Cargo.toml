@@ -12,10 +12,22 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+base-tx-manager.workspace = true
 base-batcher-core.workspace = true
+base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
+base-alloy-network.workspace = true
+base-consensus-genesis = { workspace = true, features = ["std", "serde"] }
+serde_json.workspace = true
+base-alloy-consensus = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
-tokio-util.workspace = true
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 tracing = { workspace = true, features = ["std"] }
+tokio-util.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+tokio.workspace = true
 eyre.workspace = true
 url.workspace = true

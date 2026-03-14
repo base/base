@@ -17,10 +17,11 @@ use crate::{BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
 pub trait BatchPipeline: Send {
     /// Add an L2 block to the pipeline's input queue.
     ///
-    /// Returns [`ReorgError`] if the block's parent hash does not match the current tip.
-    /// On reorg error, the caller must call [`reset`](Self::reset) and then re-add blocks
-    /// from the new chain.
-    fn add_block(&mut self, block: OpBlock) -> Result<(), ReorgError>;
+    /// Returns `Err((ReorgError, block))` if the block's parent hash does not match the
+    /// current tip, giving the caller back the block so it can be re-fed after
+    /// [`reset`](Self::reset). On reorg error the caller must reset the pipeline and
+    /// re-add the returned block as the first block of the new chain.
+    fn add_block(&mut self, block: OpBlock) -> Result<(), Box<(ReorgError, OpBlock)>>;
 
     /// Advance the pipeline by one step.
     ///

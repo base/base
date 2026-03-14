@@ -24,3 +24,4 @@ rand = { workspace = true, features = ["std", "small_rng"] }
 
 [dev-dependencies]
 alloy-consensus = { workspace = true, features = ["std"] }
+rstest.workspace = true

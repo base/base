@@ -19,6 +19,9 @@ pub use traits::UnsafeBlockSource;
 mod polling;
 pub use polling::PollingSource;
 
+mod subscription;
+pub use subscription::BlockSubscription;
+
 mod hybrid;
 pub use hybrid::HybridBlockSource;
 

@@ -77,6 +77,8 @@ impl BatchComposer {
 
 #[cfg(test)]
 mod tests {
+    use alloc::{vec, vec::Vec};
+
     use alloy_consensus::{BlockBody, Header, SignableTransaction, TxLegacy};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{B256, Bytes, Sealed, Signature};
