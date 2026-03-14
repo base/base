@@ -73,6 +73,8 @@ pub struct PreparedTx {
     pub gas_fee_cap: u128,
     /// Gas limit used in the signed transaction.
     pub gas_limit: u64,
+    /// Nonce assigned to the signed transaction.
+    pub nonce: u64,
 }
 
 /// Mutable fee-bump state tracked across iterations in the send loop.
@@ -90,6 +92,22 @@ struct BumpState {
     gas_limit: u64,
     /// Hash of the most recently published transaction.
     tx_hash: B256,
+    /// Nonce used in the most recently published transaction.
+    nonce: u64,
+}
+
+impl BumpState {
+    /// Constructs a [`BumpState`] from a [`PreparedTx`] and the hash of the
+    /// published transaction.
+    const fn from_prepared(prepared: &PreparedTx, tx_hash: B256) -> Self {
+        Self {
+            tip: prepared.gas_tip_cap,
+            fee_cap: prepared.gas_fee_cap,
+            gas_limit: prepared.gas_limit,
+            tx_hash,
+            nonce: prepared.nonce,
+        }
+    }
 }
 
 /// Default transaction manager implementation.
@@ -246,7 +264,7 @@ impl SimpleTxManager {
         candidate: &TxCandidate,
         fee_overrides: Option<FeeOverride>,
     ) -> TxManagerResult<PreparedTx> {
-        self.prepare_with_initial_caps(candidate, fee_overrides, None).await
+        self.prepare_with_initial_caps(candidate, fee_overrides, None, None).await
     }
 
     /// Internal variant of [`prepare`](Self::prepare) that optionally reuses
@@ -256,11 +274,16 @@ impl SimpleTxManager {
     /// `suggest_gas_price_caps()` round-trip after it has already fetched caps
     /// to compute bump thresholds. Retries intentionally fall back to fresh fee
     /// estimation so transient failures do not pin stale network conditions.
+    ///
+    /// When `nonce_override` is `Some(n)`, the same pre-assigned nonce is
+    /// forwarded to every retry attempt (the nonce was already consumed from
+    /// the nonce manager, so it must be reused on retries).
     async fn prepare_with_initial_caps(
         &self,
         candidate: &TxCandidate,
         fee_overrides: Option<FeeOverride>,
         mut initial_caps: Option<GasPriceCaps>,
+        nonce_override: Option<u64>,
     ) -> TxManagerResult<PreparedTx> {
         (|| {
             let caps = initial_caps.take();
@@ -271,7 +294,7 @@ impl SimpleTxManager {
                 if self.is_closed() {
                     return Err(TxManagerError::ChannelClosed);
                 }
-                self.craft_tx_with_caps(candidate, fee_overrides, caps).await
+                self.craft_tx_with_caps(candidate, fee_overrides, caps, nonce_override).await
             }
         })
         .retry(
@@ -444,16 +467,21 @@ impl SimpleTxManager {
         candidate: &TxCandidate,
         fee_overrides: Option<FeeOverride>,
     ) -> TxManagerResult<PreparedTx> {
-        self.craft_tx_with_caps(candidate, fee_overrides, None).await
+        self.craft_tx_with_caps(candidate, fee_overrides, None, None).await
     }
 
     /// Internal variant of [`craft_tx`](Self::craft_tx) that optionally uses
     /// pre-fetched fee caps instead of querying the provider again.
+    ///
+    /// When `nonce_override` is `Some(n)`, the provided nonce is used directly
+    /// without acquiring one from the [`NonceManager`]. This is used by
+    /// [`send_async`] to honour pre-assigned nonces for call-order guarantees.
     async fn craft_tx_with_caps(
         &self,
         candidate: &TxCandidate,
         fee_overrides: Option<FeeOverride>,
         caps: Option<GasPriceCaps>,
+        nonce_override: Option<u64>,
     ) -> TxManagerResult<PreparedTx> {
         // Blob transactions are not yet supported.
         if !candidate.blobs.is_empty() {
@@ -529,11 +557,22 @@ impl SimpleTxManager {
         tx_request = tx_request.with_gas_limit(gas_limit);
 
         // Step 6: Assign nonce.
-        let guard = self.nonce_manager.next_nonce().await?;
-        tx_request = tx_request.with_nonce(guard.nonce());
+        //
+        // When a nonce was pre-assigned (via `send_async`), use it directly
+        // without acquiring the nonce manager lock. Otherwise, acquire a
+        // `NonceGuard` so the nonce can be rolled back on sign failure.
+        let (nonce, guard) = match nonce_override {
+            Some(n) => (n, None),
+            None => {
+                let g = self.nonce_manager.next_nonce().await?;
+                let n = g.nonce();
+                (n, Some(g))
+            }
+        };
+        tx_request = tx_request.with_nonce(nonce);
 
         info!(
-            nonce = guard.nonce(),
+            nonce,
             gas_limit = %gas_limit,
             tip_cap = %tip_cap,
             fee_cap = %fee_cap,
@@ -547,18 +586,21 @@ impl SimpleTxManager {
 
         match sign_result {
             Ok(envelope) => {
-                // Consume the nonce (drop guard).
+                // Consume the nonce (drop guard if present).
                 drop(guard);
                 Ok(PreparedTx {
                     raw_tx: Bytes::from(Encodable2718::encoded_2718(&envelope)),
                     gas_tip_cap: tip_cap,
                     gas_fee_cap: fee_cap,
                     gas_limit,
+                    nonce,
                 })
             }
             Err(e) => {
-                // Roll back nonce on sign failure.
-                guard.rollback();
+                // Roll back nonce on sign failure (only when guard-managed).
+                if let Some(g) = guard {
+                    g.rollback();
+                }
                 Err(TxManagerError::Sign(e.to_string()))
             }
         }
@@ -602,7 +644,7 @@ impl SimpleTxManager {
     ///
     /// Returns the confirmed [`TransactionReceipt`] on success, or a
     /// [`TxManagerError`] on critical errors, timeout, or manager shutdown.
-    async fn send_tx(&self, candidate: TxCandidate) -> SendResponse {
+    async fn send_tx(&self, candidate: TxCandidate, nonce_override: Option<u64>) -> SendResponse {
         if self.is_closed() {
             return Err(TxManagerError::ChannelClosed);
         }
@@ -616,11 +658,11 @@ impl SimpleTxManager {
 
         // Wrap the inner loop in a send timeout if configured.
         let result = if self.config.tx_send_timeout.is_zero() {
-            self.send_tx_inner(&candidate, &send_state).await
+            self.send_tx_inner(&candidate, &send_state, nonce_override).await
         } else {
             tokio::time::timeout(
                 self.config.tx_send_timeout,
-                self.send_tx_inner(&candidate, &send_state),
+                self.send_tx_inner(&candidate, &send_state, nonce_override),
             )
             .await
             .unwrap_or_else(|_| {
@@ -632,8 +674,11 @@ impl SimpleTxManager {
             })
         };
 
-        if Self::should_reset_nonce_on_send_error(&result, &send_state) {
-            // Two policies (see should_reset_nonce_on_send_error):
+        if Self::should_reset_nonce_on_send_error(&result, &send_state, nonce_override) {
+            // Three policies (see should_reset_nonce_on_send_error):
+            // • NonceTooHigh — always reset, even with nonce_override.
+            //   No tx entered the mempool; reserved_high_water protects
+            //   concurrent reservations from collision after reset.
             // • SendTimeout — always reset. The timeout may have cancelled
             //   prepare() after it reserved a nonce but before the tx reached
             //   the mempool, leaking the nonce manager's internal counter.
@@ -643,15 +688,33 @@ impl SimpleTxManager {
             self.nonce_manager.reset().await;
         }
 
+        // Return pre-reserved nonces that were never published so they can
+        // be reissued by subsequent send/send_async calls, preventing
+        // irrecoverable nonce gaps.
+        if let Some(n) = nonce_override
+            && Self::should_return_reserved_nonce(&result, &send_state)
+        {
+            self.nonce_manager.return_reserved_nonce(n).await;
+        }
+
         result
     }
 
     fn should_reset_nonce_on_send_error<T>(
         result: &TxManagerResult<T>,
         send_state: &SendState,
+        nonce_override: Option<u64>,
     ) -> bool {
         match result {
             Ok(_) => false,
+            // Always reset on NonceTooHigh — the publish failed, no tx
+            // entered the mempool, and reserved_high_water protects
+            // concurrent reservations from collision after reset.
+            Err(TxManagerError::NonceTooHigh) => true,
+            // When a nonce_override was used, the nonce was irrevocably
+            // consumed at reserve_nonce() time. Resetting the nonce manager
+            // would corrupt concurrent send_async reservations.
+            _ if nonce_override.is_some() => false,
             // Always reset on timeout — the timeout may have cancelled
             // prepare() mid-flight during a fee bump, leaking a nonce
             // from the nonce manager's internal counter.
@@ -663,25 +726,53 @@ impl SimpleTxManager {
         }
     }
 
+    /// Returns `true` when a pre-reserved nonce should be returned to the
+    /// nonce manager's reuse pool.
+    ///
+    /// A nonce is eligible for return when BOTH of these hold:
+    /// 1. The send failed (`result.is_err()`).
+    /// 2. No transaction was ever successfully published — if a tx was
+    ///    published, the nonce may be in the mempool and must not be
+    ///    reused.
+    ///
+    /// The caller is responsible for checking that a nonce override exists
+    /// (i.e. the send came from `send_async`, not `send`).
+    fn should_return_reserved_nonce<T>(
+        result: &TxManagerResult<T>,
+        send_state: &SendState,
+    ) -> bool {
+        match result {
+            // Nonce errors indicate the nonce is genuinely invalid, not a
+            // transient failure.  Returning it to the reuse pool would
+            // cause an infinite retry loop: after a reset() the chain
+            // nonce is re-fetched, but advance_nonce() pops
+            // returned_nonces first, reissuing the same invalid value.
+            Ok(_) | Err(TxManagerError::NonceTooHigh | TxManagerError::NonceTooLow) => false,
+            Err(_) => send_state.successful_publish_count() == 0,
+        }
+    }
+
     /// Inner send loop extracted from [`send_tx`](Self::send_tx) to allow
     /// optional timeout wrapping.
+    ///
+    /// `nonce_override` is forwarded to the **initial**
+    /// [`prepare_with_initial_caps`](Self::prepare_with_initial_caps) call.
+    /// Fee bump paths reuse the original nonce via their own `nonce_override`
+    /// to avoid corrupting concurrent `send_async` reservations.
     async fn send_tx_inner(
         &self,
         candidate: &TxCandidate,
         send_state: &Arc<SendState>,
+        nonce_override: Option<u64>,
     ) -> SendResponse {
         // Initial transaction preparation. prepare() is NOT cancellation-safe,
         // so it runs to completion before entering the select loop.
         // The returned PreparedTx carries the actual on-wire fees, eliminating
         // the need for a separate suggest_gas_price_caps() call.
-        let prepared = self.prepare(candidate, None).await?;
+        let prepared =
+            self.prepare_with_initial_caps(candidate, None, None, nonce_override).await?;
         let tx_hash = self.publish_tx(send_state, &prepared.raw_tx, None).await?;
-        let mut bump = BumpState {
-            tip: prepared.gas_tip_cap,
-            fee_cap: prepared.gas_fee_cap,
-            gas_limit: prepared.gas_limit,
-            tx_hash,
-        };
+        let mut bump = BumpState::from_prepared(&prepared, tx_hash);
 
         // Receipt delivery channel — mpsc because fee bumps may spawn
         // new wait tasks with different tx hashes.
@@ -800,8 +891,8 @@ impl SimpleTxManager {
     /// Handles a single fee bump iteration.
     ///
     /// Delegates fee computation to [`increase_gas_price`](Self::increase_gas_price),
-    /// resets the nonce manager, rebuilds and re-publishes the transaction,
-    /// and spawns a new receipt polling task.
+    /// rebuilds the transaction reusing the same nonce via `nonce_override`,
+    /// re-publishes it, and spawns a new receipt polling task.
     ///
     /// The bumped fee values are passed as fee overrides to
     /// [`prepare_with_initial_caps`](Self::prepare_with_initial_caps),
@@ -825,9 +916,6 @@ impl SimpleTxManager {
     ) -> TxManagerResult<BumpState> {
         let bumped = self.increase_gas_price(candidate, old.tip, old.fee_cap, None).await?;
 
-        // Reset nonce manager so prepare() gets the same latest nonce.
-        self.nonce_manager.reset().await;
-
         // Clone candidate with the previous gas limit as a floor so that
         // craft_tx_with_caps's `candidate.gas_limit.max(estimated)` logic
         // ensures the gas limit never decreases across bumps.
@@ -836,11 +924,16 @@ impl SimpleTxManager {
 
         // Rebuild transaction with bumped fees as overrides and the fresh
         // caps to avoid a redundant provider round-trip.
+        // Reuse the exact nonce from the transaction being replaced via
+        // nonce_override, rather than resetting the nonce manager.
+        // Resetting would corrupt nonces pre-reserved by concurrent
+        // send_async() tasks.
         let prepared = self
             .prepare_with_initial_caps(
                 &bump_candidate,
                 Some(FeeOverride::new(bumped.gas_tip_cap, bumped.gas_fee_cap)),
                 Some(bumped.caps),
+                Some(old.nonce),
             )
             .await?;
 
@@ -870,12 +963,7 @@ impl SimpleTxManager {
             Arc::clone(&self.closed),
         );
 
-        Ok(BumpState {
-            tip: prepared.gas_tip_cap,
-            fee_cap: prepared.gas_fee_cap,
-            gas_limit: prepared.gas_limit,
-            tx_hash: new_hash,
-        })
+        Ok(BumpState::from_prepared(&prepared, new_hash))
     }
 
     /// Applies the result of a fee bump attempt, updating the tracked fee
@@ -1153,11 +1241,22 @@ impl SimpleTxManager {
 
 impl TxManager for SimpleTxManager {
     async fn send(&self, candidate: TxCandidate) -> SendResponse {
-        self.send_tx(candidate).await
+        self.send_tx(candidate, None).await
     }
 
     async fn send_async(&self, candidate: TxCandidate) -> SendHandle {
         let (tx, rx) = oneshot::channel();
+
+        // Reserve nonce BEFORE spawning to guarantee call-order assignment.
+        // Two sequential `send_async()` calls will receive monotonically
+        // increasing nonces regardless of tokio task scheduling order.
+        let nonce = match self.nonce_manager.reserve_nonce().await {
+            Ok(n) => Some(n),
+            Err(e) => {
+                let _ = tx.send(Err(e));
+                return SendHandle::new(rx);
+            }
+        };
 
         // Clone the manager for the spawned task. The `closed` flag is
         // Arc-wrapped, so the spawned task shares the same shutdown signal
@@ -1166,7 +1265,7 @@ impl TxManager for SimpleTxManager {
         let manager = self.clone();
 
         tokio::spawn(async move {
-            let result = manager.send_tx(candidate).await;
+            let result = manager.send_tx(candidate, nonce).await;
             let _ = tx.send(result);
         });
 
@@ -1218,7 +1317,7 @@ mod tests {
 
     #[rstest]
     #[case::success_updates_state(
-        Ok(BumpState { tip: 200, fee_cap: 2000, gas_limit: 50_000, tx_hash: B256::with_last_byte(0x42) }),
+        Ok(BumpState { tip: 200, fee_cap: 2000, gas_limit: 50_000, tx_hash: B256::with_last_byte(0x42), nonce: 0 }),
         false, 200, 2000, 50_000, B256::with_last_byte(0x42),
     )]
     #[case::non_retryable_returns_abort(
@@ -1238,7 +1337,7 @@ mod tests {
         #[case] expected_hash: B256,
     ) {
         let mut state =
-            BumpState { tip: 100, fee_cap: 1000, gas_limit: 21_000, tx_hash: B256::ZERO };
+            BumpState { tip: 100, fee_cap: 1000, gas_limit: 21_000, tx_hash: B256::ZERO, nonce: 0 };
 
         let abort = SimpleTxManager::apply_bump_result(input, &mut state);
 
@@ -1250,11 +1349,44 @@ mod tests {
     }
 
     #[rstest]
-    #[case::error_before_first_publish(false, Err(TxManagerError::SendTimeout), true)]
-    #[case::non_timeout_error_after_publish(true, Err(TxManagerError::ChannelClosed), false)]
-    #[case::timeout_after_publish(true, Err(TxManagerError::SendTimeout), true)]
-    #[case::success(false, Ok(()), false)]
+    #[case::error_before_first_publish(false, Err(TxManagerError::SendTimeout), None, true)]
+    #[case::non_timeout_error_after_publish(true, Err(TxManagerError::ChannelClosed), None, false)]
+    #[case::timeout_after_publish(true, Err(TxManagerError::SendTimeout), None, true)]
+    #[case::success(false, Ok(()), None, false)]
+    #[case::nonce_too_high_no_override(false, Err(TxManagerError::NonceTooHigh), None, true)]
+    #[case::nonce_too_high_with_override(false, Err(TxManagerError::NonceTooHigh), Some(42), true)]
+    #[case::nonce_override_timeout(false, Err(TxManagerError::SendTimeout), Some(42), false)]
+    #[case::nonce_override_pre_publish_error(
+        false,
+        Err(TxManagerError::ChannelClosed),
+        Some(42),
+        false
+    )]
     fn should_reset_nonce_on_send_error(
+        #[case] has_publish: bool,
+        #[case] result: crate::TxManagerResult<()>,
+        #[case] nonce_override: Option<u64>,
+        #[case] expected: bool,
+    ) {
+        let send_state = crate::SendState::new(3).expect("should create send state");
+        if has_publish {
+            send_state.record_successful_publish();
+        }
+        assert_eq!(
+            SimpleTxManager::should_reset_nonce_on_send_error(&result, &send_state, nonce_override,),
+            expected,
+        );
+    }
+
+    #[rstest]
+    #[case::pre_publish_error(false, Err(TxManagerError::Sign("fail".into())), true)]
+    #[case::after_publish(true, Err(TxManagerError::Sign("fail".into())), false)]
+    #[case::success(false, Ok(()), false)]
+    #[case::timeout_no_publish(false, Err(TxManagerError::SendTimeout), true)]
+    #[case::timeout_after_publish(true, Err(TxManagerError::SendTimeout), false)]
+    #[case::nonce_too_high(false, Err(TxManagerError::NonceTooHigh), false)]
+    #[case::nonce_too_low(false, Err(TxManagerError::NonceTooLow), false)]
+    fn should_return_reserved_nonce(
         #[case] has_publish: bool,
         #[case] result: crate::TxManagerResult<()>,
         #[case] expected: bool,
@@ -1263,10 +1395,7 @@ mod tests {
         if has_publish {
             send_state.record_successful_publish();
         }
-        assert_eq!(
-            SimpleTxManager::should_reset_nonce_on_send_error(&result, &send_state),
-            expected,
-        );
+        assert_eq!(SimpleTxManager::should_return_reserved_nonce(&result, &send_state,), expected,);
     }
 
     #[tokio::test]
@@ -1286,7 +1415,7 @@ mod tests {
         };
 
         let prepared = manager
-            .prepare_with_initial_caps(&candidate, None, Some(caps.clone()))
+            .prepare_with_initial_caps(&candidate, None, Some(caps.clone()), None)
             .await
             .expect("should prepare tx using supplied caps");
         let tx = decode_eip1559(&prepared.raw_tx);

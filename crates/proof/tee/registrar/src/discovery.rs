@@ -1,89 +1,148 @@
-//! AWS ALB target group instance discovery.
+//! K8s `StatefulSet` and AWS ALB target group instance discovery.
 
-use std::{collections::HashMap, net::IpAddr};
+use std::collections::HashMap;
 
 use async_trait::async_trait;
 use aws_sdk_ec2::Client as Ec2Client;
 use aws_sdk_elasticloadbalancingv2::Client as ElbClient;
 use tracing::{debug, warn};
 
-use crate::{InstanceDiscovery, InstanceHealthStatus, ProverInstance, RegistrarError, Result};
+use crate::{
+    InstanceDiscovery, InstanceHealthStatus, K8sDiscoveryConfig, ProverInstance, RegistrarError,
+    Result,
+};
 
-/// Discovers prover instances by querying an AWS ALB target group.
+/// Discovers prover pods by enumerating a K8s `StatefulSet`'s deterministic DNS names.
 ///
-/// Uses `describe_target_health` to enumerate all registered targets, including
-/// those in the `Initial` state that have not yet passed the ALB health check.
-/// This allows the registrar to detect and pre-register new instances during the
-/// ALB warm-up window (typically ~1 hour) before they begin receiving traffic.
+/// `StatefulSet` pods receive stable DNS names of the form:
+/// `{name}-{i}.{svc}.{ns}.svc.cluster.local`
 ///
-/// Private IP addresses are resolved from the EC2 instance IDs returned by the
-/// target group via a `describe_instances` call.
+/// Discovery requires no API calls — pod endpoints are fully deterministic
+/// from the `StatefulSet` name, headless service name, namespace, replica count,
+/// and port alone. K8s pod readiness gates proposal traffic independently;
+/// the registrar polls every enumerated pod each cycle regardless.
 ///
-/// # Assumptions
+/// Constructed from a [`K8sDiscoveryConfig`] via [`Self::from_config`].
+#[derive(Debug)]
+pub struct K8sStatefulSetDiscovery {
+    /// The K8s `StatefulSet` discovery configuration.
+    pub config: K8sDiscoveryConfig,
+}
+
+impl K8sStatefulSetDiscovery {
+    /// Creates a new discovery instance from the given config.
+    pub const fn from_config(config: K8sDiscoveryConfig) -> Self {
+        Self { config }
+    }
+
+    /// Returns the pod DNS endpoint for replica index `i`.
+    ///
+    /// Format: `{name}-{i}.{svc}.{ns}.svc.cluster.local:{port}`
+    pub fn pod_endpoint(&self, i: usize) -> String {
+        format!(
+            "{}-{}.{}.{}.svc.cluster.local:{}",
+            self.config.statefulset_name,
+            i,
+            self.config.service_name,
+            self.config.namespace,
+            self.config.port
+        )
+    }
+}
+
+#[async_trait]
+impl InstanceDiscovery for K8sStatefulSetDiscovery {
+    /// Returns one [`ProverInstance`] per replica, all marked [`InstanceHealthStatus::Healthy`].
+    ///
+    /// Unlike the AWS path where the ALB provides real health status, K8s discovery
+    /// has no liveness signal — pod DNS names are deterministic regardless of
+    /// whether a pod is actually running. The registrar's downstream poll loop
+    /// (`ProverClient`) handles unreachable pods by returning connection errors,
+    /// which the driver treats as per-instance failures without stopping the cycle.
+    async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
+        let instances = (0..self.config.replicas)
+            .map(|i| {
+                let endpoint = self.pod_endpoint(i);
+                debug!(pod = %endpoint, "discovered prover pod");
+                ProverInstance {
+                    instance_id: endpoint.clone(),
+                    endpoint,
+                    health_status: InstanceHealthStatus::Healthy,
+                }
+            })
+            .collect();
+        Ok(instances)
+    }
+}
+
+/// Discovers prover instances via AWS Elastic Load Balancing target groups.
 ///
-/// The target group must be configured with **instance-type** targets (IDs of the
-/// form `i-xxxxxxxxxxxxxxxxx`). IP-type target groups return IP address strings
-/// from `target.id()`, which would cause `describe_instances` to return an
-/// `InvalidParameterValue` error at runtime.
+/// Queries `describe_target_health` to enumerate registered targets, then
+/// resolves each EC2 instance's private IP address via `describe_instances`.
+/// Health state is mapped from the ALB target health state, supporting the
+/// `Initial` warm-up window during which new instances should be registered.
 #[derive(Debug)]
 pub struct AwsTargetGroupDiscovery {
     elb_client: ElbClient,
     ec2_client: Ec2Client,
     target_group_arn: String,
+    port: u16,
 }
 
 impl AwsTargetGroupDiscovery {
-    /// Creates a new discovery client for the given target group ARN and AWS region.
-    pub async fn new(target_group_arn: String, aws_region: String) -> Self {
-        let sdk_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-            .region(aws_sdk_ec2::config::Region::new(aws_region))
-            .load()
-            .await;
-        let elb_client = ElbClient::new(&sdk_config);
-        let ec2_client = Ec2Client::new(&sdk_config);
-        Self { elb_client, ec2_client, target_group_arn }
+    /// Creates a new `AwsTargetGroupDiscovery` with the given AWS clients.
+    pub const fn new(
+        elb_client: ElbClient,
+        ec2_client: Ec2Client,
+        target_group_arn: String,
+        port: u16,
+    ) -> Self {
+        Self { elb_client, ec2_client, target_group_arn, port }
     }
 
-    /// Builds a [`ProverInstance`] list from a health map and raw `(instance_id, private_ip_str)`
-    /// pairs that have already been extracted from EC2 reservations.
+    /// Assembles [`ProverInstance`] objects from ELB target data and EC2 IP data.
     ///
-    /// Extracted from [`Self::discover_instances`] so that the IP-parse, health-map lookup,
-    /// and assembly logic can be unit-tested without constructing AWS SDK mock clients.
+    /// Returns **all** discovered instances regardless of health status, matching
+    /// the behavior of `K8sStatefulSetDiscovery` which also returns every replica.
+    /// The caller (registration driver) decides which instances to act on based on
+    /// [`InstanceHealthStatus::should_register`].
+    ///
+    /// Targets with no matching IP entry are silently dropped (this can happen if
+    /// an instance was terminated between the ELB and EC2 calls).
+    ///
+    /// This function is a pure transformation — no AWS SDK calls are made — which
+    /// makes it straightforwardly unit-testable without SDK mocks.
     pub fn assemble_prover_instances(
-        health_map: &HashMap<String, InstanceHealthStatus>,
-        pairs: impl IntoIterator<Item = (String, String)>,
+        targets: &[(String, InstanceHealthStatus)],
+        instance_ips: &HashMap<String, String>,
+        port: u16,
     ) -> Vec<ProverInstance> {
-        let mut instances = Vec::new();
-        for (instance_id, private_ip_str) in pairs {
-            let private_ip: IpAddr = match private_ip_str.parse() {
-                Ok(ip) => ip,
-                Err(e) => {
-                    warn!(instance_id = %instance_id, error = %e, "invalid private IP, skipping");
-                    continue;
-                }
-            };
-            let health_status =
-                health_map.get(&instance_id).copied().unwrap_or(InstanceHealthStatus::Unhealthy);
-
-            debug!(
-                instance_id = %instance_id,
-                private_ip = %private_ip,
-                health = ?health_status,
-                "discovered prover instance"
-            );
-
-            instances.push(ProverInstance { instance_id, private_ip, health_status });
-        }
-        instances
+        targets
+            .iter()
+            .filter_map(|(instance_id, health_status)| {
+                let private_ip = instance_ips.get(instance_id)?;
+                let endpoint = format!("{private_ip}:{port}");
+                debug!(
+                    instance_id = %instance_id,
+                    endpoint = %endpoint,
+                    health = ?health_status,
+                    "discovered AWS prover instance"
+                );
+                Some(ProverInstance {
+                    instance_id: instance_id.clone(),
+                    endpoint,
+                    health_status: *health_status,
+                })
+            })
+            .collect()
     }
 }
 
 #[async_trait]
 impl InstanceDiscovery for AwsTargetGroupDiscovery {
     async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
-        // Step 1: Query the target group for all registered targets and their health status.
-        // This includes instances in the Initial state before the ALB routes traffic to them.
-        let health_output = self
+        // Query ELB for current target health.
+        let elb_resp = self
             .elb_client
             .describe_target_health()
             .target_group_arn(&self.target_group_arn)
@@ -91,19 +150,11 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
             .await
             .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
 
-        let target_descriptions = health_output.target_health_descriptions();
-        if target_descriptions.is_empty() {
-            debug!(target_group = %self.target_group_arn, "no targets in target group");
-            return Ok(vec![]);
-        }
-
-        // Step 2: Build an instance_id → health_status map and collect instance IDs for EC2 lookup.
-        // Uses entry().or_insert() so that if the same instance is registered on multiple ports,
-        // the first-seen port's health status wins and the instance ID is not duplicated.
+        // Extract (instance_id, health_status) pairs from the ELB response.
+        // Validates that targets are instance-type (id starts with "i-") and
+        // deduplicates instances registered on multiple ports (first-seen wins).
         let mut health_map: HashMap<String, InstanceHealthStatus> = HashMap::new();
-        let mut instance_ids: Vec<String> = Vec::new();
-
-        for desc in target_descriptions {
+        for desc in elb_resp.target_health_descriptions() {
             let Some(instance_id) = desc.target().and_then(|t| t.id()) else {
                 warn!("target group entry missing instance ID, skipping");
                 continue;
@@ -111,7 +162,7 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
             if !instance_id.starts_with("i-") {
                 warn!(
                     id = %instance_id,
-                    "target group entry is not an instance-type target (id does not start with \
+                    "target is not an instance-type target (id does not start with \
                      'i-'); is the target group type set to 'instance'? skipping"
                 );
                 continue;
@@ -126,7 +177,6 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
                 health_map.entry(instance_id.to_string())
             {
                 e.insert(health_status);
-                instance_ids.push(instance_id.to_string());
             } else {
                 debug!(
                     instance_id = %instance_id,
@@ -135,118 +185,189 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
             }
         }
 
-        if instance_ids.is_empty() {
+        let mut targets: Vec<(String, InstanceHealthStatus)> = health_map.into_iter().collect();
+        targets.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+        if targets.is_empty() {
             return Ok(vec![]);
         }
 
-        // Step 3: Resolve private IPs for all instance IDs in a single EC2 call.
-        // describe_instances returns up to 1000 results per page. Pagination is intentionally
-        // omitted here: the instance count is bounded by the ASG size (typically ≤ 10), so
-        // truncation cannot occur in practice.
-        let instances_output = self
+        // Collect all instance IDs for EC2 lookup (not just registerable ones),
+        // so that discover_instances returns the full set — consistent with
+        // K8sStatefulSetDiscovery which returns all replicas.
+        let all_ids: Vec<String> = targets.iter().map(|(id, _)| id.clone()).collect();
+
+        // Resolve private IPs for all instances in a single EC2 call.
+        let ec2_resp = self
             .ec2_client
             .describe_instances()
-            .set_instance_ids(Some(instance_ids))
+            .set_instance_ids(Some(all_ids))
             .send()
             .await
             .map_err(|e| RegistrarError::Discovery(Box::new(e)))?;
 
-        // Step 4: Extract (instance_id, private_ip_str) pairs, skipping incomplete entries.
-        let mut pairs: Vec<(String, String)> = Vec::new();
-        for reservation in instances_output.reservations() {
-            for instance in reservation.instances() {
-                let Some(instance_id) = instance.instance_id() else {
-                    warn!("EC2 instance returned with no ID, skipping");
-                    continue;
-                };
-                let Some(private_ip_str) = instance.private_ip_address() else {
-                    warn!(instance_id = %instance_id, "EC2 instance has no private IP, skipping");
-                    continue;
-                };
-                pairs.push((instance_id.to_string(), private_ip_str.to_string()));
+        let instance_ips: HashMap<String, String> = ec2_resp
+            .reservations()
+            .iter()
+            .flat_map(|r| r.instances())
+            .filter_map(|i| {
+                let id = i.instance_id()?.to_string();
+                let ip = i.private_ip_address()?.to_string();
+                Some((id, ip))
+            })
+            .collect();
+
+        // Warn about instances that the EC2 call didn't return
+        // (e.g. terminated between the ELB and EC2 calls, or missing a private IP).
+        for (id, _) in &targets {
+            if !instance_ips.contains_key(id) {
+                warn!(instance_id = %id, "instance missing from EC2 response, skipping");
             }
         }
 
-        Ok(Self::assemble_prover_instances(&health_map, pairs))
+        Ok(Self::assemble_prover_instances(&targets, &instance_ips, self.port))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::net::IpAddr;
-
     use rstest::rstest;
 
     use super::*;
 
+    fn four_replica_discovery() -> K8sStatefulSetDiscovery {
+        K8sStatefulSetDiscovery::from_config(K8sDiscoveryConfig {
+            statefulset_name: "prover".into(),
+            service_name: "prover-headless".into(),
+            namespace: "provers".into(),
+            replicas: 4,
+            port: 8000,
+        })
+    }
+
     #[rstest]
-    #[case::initial("initial", InstanceHealthStatus::Initial)]
-    #[case::healthy("healthy", InstanceHealthStatus::Healthy)]
-    #[case::draining("draining", InstanceHealthStatus::Draining)]
-    #[case::unhealthy("unhealthy", InstanceHealthStatus::Unhealthy)]
-    #[case::unknown_unavailable("unavailable", InstanceHealthStatus::Unhealthy)]
-    #[case::unknown_empty("", InstanceHealthStatus::Unhealthy)]
-    #[case::unknown_bogus("bogus", InstanceHealthStatus::Unhealthy)]
-    fn from_aws_state(#[case] input: &str, #[case] expected: InstanceHealthStatus) {
-        assert_eq!(InstanceHealthStatus::from_aws_state(input), expected);
+    #[case::ordinal_zero(0, "prover-0.prover-headless.provers.svc.cluster.local:8000")]
+    #[case::last_ordinal(3, "prover-3.prover-headless.provers.svc.cluster.local:8000")]
+    fn pod_endpoint_format(#[case] ordinal: usize, #[case] expected: &str) {
+        assert_eq!(four_replica_discovery().pod_endpoint(ordinal), expected);
     }
 
-    #[test]
-    fn assemble_empty_pairs_returns_empty() {
-        let health_map = HashMap::new();
-        assert!(AwsTargetGroupDiscovery::assemble_prover_instances(&health_map, vec![]).is_empty());
+    #[rstest]
+    #[case::zero(0)]
+    #[case::one(1)]
+    #[case::four(4)]
+    #[tokio::test]
+    async fn discover_instances_returns_one_per_replica(#[case] replicas: usize) {
+        let d = K8sStatefulSetDiscovery::from_config(K8sDiscoveryConfig {
+            statefulset_name: "prover".into(),
+            service_name: "prover-headless".into(),
+            namespace: "provers".into(),
+            replicas,
+            port: 8000,
+        });
+        let instances = d.discover_instances().await.unwrap();
+        assert_eq!(instances.len(), replicas);
     }
 
-    #[test]
-    fn assemble_invalid_ip_is_skipped() {
-        let health_map = HashMap::new();
-        let pairs = vec![("i-123".to_string(), "not-an-ip".to_string())];
-        assert!(AwsTargetGroupDiscovery::assemble_prover_instances(&health_map, pairs).is_empty());
+    #[tokio::test]
+    async fn all_discovered_instances_are_healthy() {
+        let instances = four_replica_discovery().discover_instances().await.unwrap();
+        assert!(instances.iter().all(|i| i.health_status == InstanceHealthStatus::Healthy));
     }
 
-    #[test]
-    fn assemble_instance_not_in_health_map_defaults_to_unhealthy() {
-        let health_map = HashMap::new();
-        let pairs = vec![("i-123".to_string(), "10.0.0.1".to_string())];
-        let result = AwsTargetGroupDiscovery::assemble_prover_instances(&health_map, pairs);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].instance_id, "i-123");
-        assert_eq!(result[0].health_status, InstanceHealthStatus::Unhealthy);
+    #[tokio::test]
+    async fn instance_ids_match_pod_endpoints() {
+        let d = four_replica_discovery();
+        let instances = d.discover_instances().await.unwrap();
+        for (i, inst) in instances.iter().enumerate() {
+            assert_eq!(inst.instance_id, d.pod_endpoint(i));
+        }
     }
 
-    #[test]
-    fn assemble_health_status_is_looked_up_from_map() {
-        let mut health_map = HashMap::new();
-        health_map.insert("i-abc".to_string(), InstanceHealthStatus::Healthy);
-        health_map.insert("i-def".to_string(), InstanceHealthStatus::Initial);
-        let pairs = vec![
-            ("i-abc".to_string(), "10.0.0.1".to_string()),
-            ("i-def".to_string(), "10.0.0.2".to_string()),
-        ];
-        let result = AwsTargetGroupDiscovery::assemble_prover_instances(&health_map, pairs);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].health_status, InstanceHealthStatus::Healthy);
-        assert_eq!(result[1].health_status, InstanceHealthStatus::Initial);
+    #[tokio::test]
+    async fn endpoints_match_pod_endpoints() {
+        let d = four_replica_discovery();
+        let instances = d.discover_instances().await.unwrap();
+        for (i, inst) in instances.iter().enumerate() {
+            assert_eq!(inst.endpoint, d.pod_endpoint(i));
+        }
     }
 
-    #[test]
-    fn assemble_parses_ipv4_address() {
-        let health_map = HashMap::new();
-        let pairs = vec![("i-123".to_string(), "192.168.1.100".to_string())];
-        let result = AwsTargetGroupDiscovery::assemble_prover_instances(&health_map, pairs);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].private_ip, "192.168.1.100".parse::<IpAddr>().unwrap());
-    }
+    mod aws {
+        use super::*;
 
-    #[test]
-    fn assemble_invalid_ip_does_not_affect_valid_pairs() {
-        let health_map = HashMap::new();
-        let pairs = vec![
-            ("i-bad".to_string(), "not-an-ip".to_string()),
-            ("i-good".to_string(), "10.0.0.5".to_string()),
-        ];
-        let result = AwsTargetGroupDiscovery::assemble_prover_instances(&health_map, pairs);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].instance_id, "i-good");
+        fn make_ips(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+            pairs.iter().map(|(id, ip)| (id.to_string(), ip.to_string())).collect()
+        }
+
+        fn make_targets(
+            pairs: &[(&str, InstanceHealthStatus)],
+        ) -> Vec<(String, InstanceHealthStatus)> {
+            pairs.iter().map(|(id, s)| (id.to_string(), *s)).collect()
+        }
+
+        #[rstest]
+        #[case::healthy("i-001", "10.0.0.1", InstanceHealthStatus::Healthy)]
+        #[case::initial("i-002", "10.0.0.2", InstanceHealthStatus::Initial)]
+        #[case::unhealthy("i-003", "10.0.0.3", InstanceHealthStatus::Unhealthy)]
+        #[case::draining("i-004", "10.0.0.4", InstanceHealthStatus::Draining)]
+        fn assemble_single_instance_preserves_status(
+            #[case] id: &str,
+            #[case] ip: &str,
+            #[case] status: InstanceHealthStatus,
+        ) {
+            let targets = make_targets(&[(id, status)]);
+            let ips = make_ips(&[(id, ip)]);
+            let instances =
+                AwsTargetGroupDiscovery::assemble_prover_instances(&targets, &ips, 8000);
+            assert_eq!(instances.len(), 1);
+            assert_eq!(instances[0].instance_id, id);
+            assert_eq!(instances[0].endpoint, format!("{ip}:8000"));
+            assert_eq!(instances[0].health_status, status);
+        }
+
+        #[test]
+        fn assemble_drops_instance_missing_from_ip_map() {
+            let targets = make_targets(&[("i-005", InstanceHealthStatus::Healthy)]);
+            let ips = HashMap::new();
+            let instances =
+                AwsTargetGroupDiscovery::assemble_prover_instances(&targets, &ips, 8000);
+            assert!(instances.is_empty());
+        }
+
+        #[test]
+        fn assemble_empty_targets_returns_empty() {
+            let instances =
+                AwsTargetGroupDiscovery::assemble_prover_instances(&[], &HashMap::new(), 8000);
+            assert!(instances.is_empty());
+        }
+
+        #[test]
+        fn assemble_port_appears_in_endpoint() {
+            let targets = make_targets(&[("i-006", InstanceHealthStatus::Healthy)]);
+            let ips = make_ips(&[("i-006", "10.0.0.6")]);
+            let instances =
+                AwsTargetGroupDiscovery::assemble_prover_instances(&targets, &ips, 9999);
+            assert_eq!(instances[0].endpoint, "10.0.0.6:9999");
+        }
+
+        #[test]
+        fn assemble_returns_all_statuses() {
+            let targets = make_targets(&[
+                ("i-010", InstanceHealthStatus::Healthy),
+                ("i-011", InstanceHealthStatus::Initial),
+                ("i-012", InstanceHealthStatus::Unhealthy),
+                ("i-013", InstanceHealthStatus::Draining),
+            ]);
+            let ips = make_ips(&[
+                ("i-010", "10.0.1.0"),
+                ("i-011", "10.0.1.1"),
+                ("i-012", "10.0.1.2"),
+                ("i-013", "10.0.1.3"),
+            ]);
+            let instances =
+                AwsTargetGroupDiscovery::assemble_prover_instances(&targets, &ips, 8000);
+            assert_eq!(instances.len(), 4);
+        }
     }
 }
