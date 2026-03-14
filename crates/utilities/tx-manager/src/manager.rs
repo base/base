@@ -692,9 +692,10 @@ impl SimpleTxManager {
         // be reissued by subsequent send/send_async calls, preventing
         // irrecoverable nonce gaps.
         if let Some(n) = nonce_override
-            && Self::should_return_reserved_nonce(&result, &send_state) {
-                self.nonce_manager.return_reserved_nonce(n).await;
-            }
+            && Self::should_return_reserved_nonce(&result, &send_state)
+        {
+            self.nonce_manager.return_reserved_nonce(n).await;
+        }
 
         result
     }
