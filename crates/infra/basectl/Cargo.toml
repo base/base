@@ -19,17 +19,18 @@ crossterm = { workspace = true }
 serde_yaml = { workspace = true }
 alloy-contract = { workspace = true }
 base-alloy-network = { workspace = true }
-base-alloy-consensus = { workspace = true }
-base-alloy-flashblocks.workspace = true
+base-alloy-flashblocks = { workspace = true }
 url = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
-tracing = { workspace = true, features = ["std"] }
-alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+base-alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
+alloy-consensus = { workspace = true, features = ["std", "k256"] }
 base-consensus-registry = { workspace = true, features = ["std"] }
 base-consensus-genesis = { workspace = true, features = ["serde", "std"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }

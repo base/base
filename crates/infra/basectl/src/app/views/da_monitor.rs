@@ -8,30 +8,37 @@ use ratatui::{
 };
 
 use crate::{
-    app::{Action, Resources, View},
+    app::{
+        Action, Resources, View,
+        views::{REVERTED_TX_TOAST_MESSAGE, TransactionPane},
+    },
     commands::common::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, L1_BLOCK_WINDOW, L1BlockFilter,
         L1BlocksTableParams, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S, format_duration,
         format_rate, render_da_backlog_bar, render_l1_blocks_table, target_usage_color,
         truncate_block_number,
     },
-    tui::Keybinding,
+    tui::{Keybinding, Toast},
 };
 
 const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "Esc", description: "Back to home" },
     Keybinding { key: "?", description: "Toggle help" },
-    Keybinding { key: "↑/k ↓/j", description: "Navigate" },
+    Keybinding { key: "↑/k", description: "Move up" },
+    Keybinding { key: "↓/j", description: "Move down" },
     Keybinding { key: "g/G", description: "Top/Bottom" },
     Keybinding { key: "←/h →/l", description: "Switch panel" },
     Keybinding { key: "Tab", description: "Next panel" },
     Keybinding { key: "f", description: "Filter L1 blocks" },
+    Keybinding { key: "o", description: "Open in explorer" },
+    Keybinding { key: "Enter", description: "View transactions" },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Panel {
     L2Blocks,
     L1Blocks,
+    Txns,
 }
 
 /// View for monitoring data availability backlog and L1 blob submissions.
@@ -41,6 +48,7 @@ pub(crate) struct DaMonitorView {
     l2_table_state: TableState,
     l1_table_state: TableState,
     l1_filter: L1BlockFilter,
+    tx_pane: Option<TransactionPane>,
 }
 
 impl Default for DaMonitorView {
@@ -61,28 +69,97 @@ impl DaMonitorView {
             l2_table_state,
             l1_table_state,
             l1_filter: L1BlockFilter::All,
+            tx_pane: None,
         }
     }
 
     const fn active_table_state(&mut self) -> &mut TableState {
         match self.selected_panel {
-            Panel::L2Blocks => &mut self.l2_table_state,
+            Panel::L2Blocks | Panel::Txns => &mut self.l2_table_state,
             Panel::L1Blocks => &mut self.l1_table_state,
         }
     }
 
     const fn next_panel(&mut self) {
         self.selected_panel = match self.selected_panel {
-            Panel::L2Blocks => Panel::L1Blocks,
+            Panel::L2Blocks => {
+                if self.tx_pane.is_some() {
+                    Panel::Txns
+                } else {
+                    Panel::L1Blocks
+                }
+            }
+            Panel::Txns => Panel::L1Blocks,
             Panel::L1Blocks => Panel::L2Blocks,
         };
-        self.active_table_state().select(Some(0));
+    }
+
+    const fn prev_panel(&mut self) {
+        self.selected_panel = match self.selected_panel {
+            Panel::L2Blocks => Panel::L1Blocks,
+            Panel::Txns => Panel::L2Blocks,
+            Panel::L1Blocks => {
+                if self.tx_pane.is_some() {
+                    Panel::Txns
+                } else {
+                    Panel::L2Blocks
+                }
+            }
+        };
     }
 
     fn panel_len(&self, panel: Panel, resources: &Resources) -> usize {
         match panel {
             Panel::L2Blocks => resources.da.tracker.block_contributions.len(),
             Panel::L1Blocks => resources.da.tracker.filtered_l1_blocks(self.l1_filter).count(),
+            Panel::Txns => 0,
+        }
+    }
+
+    fn open_selected_in_explorer(&self, resources: &mut Resources) {
+        let url = match self.selected_panel {
+            Panel::L2Blocks | Panel::Txns => {
+                resources.config.explorer_base_url().and_then(|base| {
+                    let block_number = match self.selected_panel {
+                        Panel::L2Blocks => self.l2_table_state.selected().and_then(|row| {
+                            resources
+                                .da
+                                .tracker
+                                .block_contributions
+                                .get(row)
+                                .map(|c| c.block_number)
+                        }),
+                        Panel::Txns => self.tx_pane.as_ref().map(|p| p.block_number),
+                        _ => None,
+                    }?;
+                    Some(format!("{base}/block/{block_number}"))
+                })
+            }
+            Panel::L1Blocks => resources.config.l1_explorer_base_url().and_then(|base| {
+                self.l1_table_state.selected().and_then(|row| {
+                    resources
+                        .da
+                        .tracker
+                        .filtered_l1_blocks(self.l1_filter)
+                        .nth(row)
+                        .map(|b| format!("{base}/block/{}", b.block_number))
+                })
+            }),
+        };
+
+        if let Some(url) = url {
+            let cmd = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+            match std::process::Command::new(cmd).arg(&url).spawn() {
+                Ok(mut child) => {
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                    });
+                    resources.toasts.push(Toast::info(format!("Opening {url}")));
+                }
+                Err(e) => {
+                    resources.toasts.push(Toast::warning(format!("Failed to open browser: {e}")));
+                }
+            }
         }
     }
 }
@@ -92,8 +169,53 @@ impl View for DaMonitorView {
         KEYBINDINGS
     }
 
+    fn consumes_esc(&self) -> bool {
+        self.tx_pane.is_some() && self.selected_panel == Panel::Txns
+    }
+
+    fn consumes_quit(&self) -> bool {
+        self.tx_pane.is_some() && self.selected_panel == Panel::Txns
+    }
+
     fn handle_key(&mut self, key: KeyEvent, resources: &mut Resources) -> Action {
         match key.code {
+            KeyCode::Enter if self.selected_panel == Panel::L2Blocks => {
+                let row = self.l2_table_state.selected().unwrap_or(0);
+                if let Some(contrib) = resources.da.tracker.block_contributions.get(row) {
+                    self.tx_pane = Some(TransactionPane::for_block(
+                        contrib.block_number,
+                        resources.config.rpc.as_str(),
+                        resources.config.explorer_base_url(),
+                    ));
+                    if let Some(pane) = self.tx_pane.as_ref() {
+                        pane.sync_hovered_revert_toast(&mut resources.toasts);
+                    }
+                    self.selected_panel = Panel::Txns;
+                }
+                Action::None
+            }
+            KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => {
+                self.next_panel();
+                Action::None
+            }
+            KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
+                self.prev_panel();
+                Action::None
+            }
+            _ if self.selected_panel == Panel::Txns && self.tx_pane.is_some() => {
+                let pane = self.tx_pane.as_mut().unwrap();
+                let should_close = pane.handle_key(key, &mut |toast| {
+                    resources.toasts.push(toast);
+                });
+                if should_close {
+                    self.tx_pane = None;
+                    self.selected_panel = Panel::L2Blocks;
+                    resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
+                } else {
+                    pane.sync_hovered_revert_toast(&mut resources.toasts);
+                }
+                Action::None
+            }
             KeyCode::Up | KeyCode::Char('k') => {
                 let state = self.active_table_state();
                 if let Some(selected) = state.selected()
@@ -113,17 +235,13 @@ impl View for DaMonitorView {
                 }
                 Action::None
             }
-            KeyCode::Left
-            | KeyCode::Char('h')
-            | KeyCode::Right
-            | KeyCode::Char('l')
-            | KeyCode::Tab => {
-                self.next_panel();
-                Action::None
-            }
             KeyCode::Char('f') => {
                 self.l1_filter = self.l1_filter.next();
                 self.l1_table_state.select(Some(0));
+                Action::None
+            }
+            KeyCode::Char('o') => {
+                self.open_selected_in_explorer(resources);
                 Action::None
             }
             KeyCode::Char('g') => {
@@ -137,6 +255,20 @@ impl View for DaMonitorView {
             }
             _ => Action::None,
         }
+    }
+
+    fn tick(&mut self, resources: &mut Resources) -> Action {
+        if let Some(ref mut pane) = self.tx_pane {
+            pane.poll();
+            if self.selected_panel == Panel::Txns {
+                pane.sync_hovered_revert_toast(&mut resources.toasts);
+            } else {
+                resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
+            }
+        } else {
+            resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
+        }
+        Action::None
     }
 
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, resources: &Resources) {
@@ -163,10 +295,21 @@ impl View for DaMonitorView {
 
         render_stats_panel(frame, chunks[1], resources, self.l1_filter);
 
-        let panel_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(chunks[2]);
+        let panel_chunks = if self.tx_pane.is_some() {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(25),
+                    Constraint::Percentage(50),
+                ])
+                .split(chunks[2])
+        } else {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(chunks[2])
+        };
 
         render_blocks_panel(
             frame,
@@ -188,6 +331,10 @@ impl View for DaMonitorView {
                 connection_mode: resources.da.l1_connection_mode,
             },
         );
+
+        if let Some(ref mut pane) = self.tx_pane {
+            pane.render(frame, panel_chunks[2], self.selected_panel == Panel::Txns);
+        }
     }
 }
 
@@ -288,12 +435,13 @@ fn render_blocks_panel(
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let fixed_cols_width = 8 + 6 + 3;
+    let fixed_cols_width = 8 + 5 + 6 + 4;
     let block_col_width = inner.width.saturating_sub(fixed_cols_width).clamp(4, 10) as usize;
 
     let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let header = Row::new(vec![
         Cell::from("Block").style(header_style),
+        Cell::from("Txs").style(header_style),
         Cell::from("DA").style(header_style),
         Cell::from("Age").style(header_style),
     ]);
@@ -320,9 +468,13 @@ fn render_blocks_panel(
                 Style::default().fg(block_color(contrib.block_number))
             };
 
+            let tx_str =
+                if contrib.tx_count > 0 { contrib.tx_count.to_string() } else { "-".to_string() };
+
             Row::new(vec![
                 Cell::from(truncate_block_number(contrib.block_number, block_col_width))
                     .style(block_style),
+                Cell::from(tx_str),
                 Cell::from(fmt_bytes(contrib.da_bytes)),
                 Cell::from(fmt_dur(Duration::from_secs(contrib.age_seconds()))),
             ])
@@ -330,7 +482,8 @@ fn render_blocks_panel(
         })
         .collect();
 
-    let widths = [Constraint::Max(10), Constraint::Length(8), Constraint::Min(6)];
+    let widths =
+        [Constraint::Max(10), Constraint::Length(5), Constraint::Length(8), Constraint::Min(6)];
     let table = Table::new(rows, widths).header(header);
     f.render_stateful_widget(table, inner, &mut table_state.clone());
 }

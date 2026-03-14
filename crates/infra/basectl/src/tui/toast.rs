@@ -109,6 +109,11 @@ impl ToastState {
         self.toasts.push(toast);
     }
 
+    /// Removes all active toasts with the given message.
+    pub(crate) fn dismiss_message(&mut self, message: &str) {
+        self.toasts.retain(|t| t.message != message);
+    }
+
     /// Returns the most recent active toast, if any.
     pub(crate) fn current(&self) -> Option<&Toast> {
         self.toasts.last()

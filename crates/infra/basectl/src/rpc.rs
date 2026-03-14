@@ -1,12 +1,14 @@
 use std::{sync::Arc, time::Duration};
 
-use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::Address;
+use alloy_consensus::{Transaction, transaction::SignerRecoverable};
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionTrait};
+use alloy_rpc_types_eth::BlockNumberOrTag;
 use anyhow::Result;
+use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_flashblocks::Flashblock;
-use base_alloy_network::Base;
+use base_alloy_network::{Base, TransactionResponse};
 use futures::{StreamExt, stream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
@@ -365,6 +367,7 @@ pub(crate) async fn run_l1_blob_watcher(
             .await
     {
         let _ = mode_tx.send(L1ConnectionMode::Polling).await;
+        let _ = toast_tx.try_send(Toast::info("L1 watcher fell back to HTTP polling"));
         run_l1_blob_watcher_poll(&l1_rpc, batcher_address, result_tx, &toast_tx).await;
     }
 }
@@ -495,5 +498,111 @@ fn extract_l1_block_info(
         timestamp: block.header.timestamp,
         total_blobs,
         base_blobs,
+    }
+}
+
+/// Summary of a single transaction within a block.
+#[derive(Debug, Clone)]
+pub(crate) struct TxSummary {
+    /// Transaction hash.
+    pub hash: B256,
+    /// Sender address.
+    pub from: Address,
+    /// Recipient address (None for contract creations).
+    pub to: Option<Address>,
+    /// Effective priority fee per gas (tip), in wei.
+    pub effective_priority_fee_per_gas: Option<u128>,
+    /// Block base fee per gas, in wei.
+    pub base_fee_per_gas: Option<u64>,
+}
+
+/// Decodes raw EIP-2718 encoded transaction bytes into summaries.
+///
+/// Used to extract transaction details from flashblock stream data without RPC calls.
+pub(crate) fn decode_flashblock_transactions(
+    raw_txs: &[Bytes],
+    base_fee_per_gas: Option<u64>,
+) -> Vec<TxSummary> {
+    raw_txs
+        .iter()
+        .filter_map(|tx_bytes| {
+            let envelope = OpTxEnvelope::decode_2718(&mut tx_bytes.as_ref())
+                .inspect_err(|e| warn!(error = %e, "failed to decode transaction"))
+                .ok()?;
+            let hash = envelope.tx_hash();
+            let to = envelope.to();
+            let max_priority_fee = envelope.max_priority_fee_per_gas();
+            let effective_priority_fee = Some(
+                envelope
+                    .effective_gas_price(base_fee_per_gas)
+                    .saturating_sub(base_fee_per_gas.map(u128::from).unwrap_or_default()),
+            );
+            let recovered = envelope
+                .try_into_recovered()
+                .inspect_err(|e| warn!(error = %e, "failed to recover signer"))
+                .ok()?;
+            Some(TxSummary {
+                hash,
+                from: recovered.signer(),
+                to,
+                effective_priority_fee_per_gas: effective_priority_fee.or(max_priority_fee),
+                base_fee_per_gas,
+            })
+        })
+        .collect()
+}
+
+/// Fetches all transactions for a given block and sends summaries through the channel.
+pub(crate) async fn fetch_block_transactions(
+    l2_rpc: String,
+    block_number: u64,
+    tx: mpsc::Sender<Result<Vec<TxSummary>, String>>,
+) {
+    let result = async {
+        let provider = Arc::new(
+            ProviderBuilder::new()
+                .disable_recommended_fillers()
+                .network::<Base>()
+                .connect(&l2_rpc)
+                .await?,
+        );
+
+        let block = provider
+            .get_block_by_number(BlockNumberOrTag::Number(block_number))
+            .full()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Block {block_number} not found"))?;
+
+        let base_fee = block.header.base_fee_per_gas;
+
+        let summaries: Vec<TxSummary> = block
+            .transactions
+            .txns()
+            .map(|tx_obj| TxSummary {
+                hash: tx_obj.inner.tx_hash(),
+                from: tx_obj.inner.inner.signer(),
+                to: tx_obj.inner.to(),
+                effective_priority_fee_per_gas: Some(
+                    tx_obj
+                        .inner
+                        .effective_gas_price(base_fee)
+                        .saturating_sub(base_fee.map(u128::from).unwrap_or_default()),
+                ),
+                base_fee_per_gas: base_fee,
+            })
+            .collect();
+
+        Ok::<_, anyhow::Error>(summaries)
+    }
+    .await;
+
+    match result {
+        Ok(summaries) => {
+            let _ = tx.send(Ok(summaries)).await;
+        }
+        Err(e) => {
+            warn!(error = %e, block = block_number, "failed to fetch block transactions");
+            let _ = tx.send(Err(e.to_string())).await;
+        }
     }
 }

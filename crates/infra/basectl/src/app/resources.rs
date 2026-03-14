@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use base_alloy_flashblocks::Flashblock;
 use base_consensus_genesis::SystemConfig;
@@ -12,6 +12,7 @@ use crate::{
 };
 
 const MAX_FLASH_BLOCKS: usize = 30;
+const MAX_RECENT_DA_FLASHBLOCK_IDS: usize = 512;
 
 /// Shared resources available to all TUI views.
 #[derive(Debug)]
@@ -42,7 +43,8 @@ pub(crate) struct DaState {
     pub l1_connection_mode: Option<L1ConnectionMode>,
     buffered_flashblocks: Vec<Flashblock>,
     buffered_safe_heads: Vec<u64>,
-    buffered_l1_blocks: Vec<L1BlockInfo>,
+    recent_flashblock_ids: VecDeque<(u64, u64)>,
+    recent_flashblock_id_set: HashSet<(u64, u64)>,
     fb_rx: Option<mpsc::Receiver<Flashblock>>,
     sync_rx: Option<mpsc::Receiver<u64>>,
     backlog_rx: Option<mpsc::Receiver<BacklogFetchResult>>,
@@ -120,7 +122,8 @@ impl DaState {
             l1_connection_mode: None,
             buffered_flashblocks: Vec::new(),
             buffered_safe_heads: Vec::new(),
-            buffered_l1_blocks: Vec::new(),
+            recent_flashblock_ids: VecDeque::with_capacity(MAX_RECENT_DA_FLASHBLOCK_IDS),
+            recent_flashblock_id_set: HashSet::with_capacity(MAX_RECENT_DA_FLASHBLOCK_IDS),
             fb_rx: None,
             sync_rx: None,
             backlog_rx: None,
@@ -196,6 +199,9 @@ impl DaState {
             .unwrap_or_default();
 
         for fb in flashblocks {
+            if !self.remember_flashblock_id(fb.metadata.block_number, fb.index) {
+                continue;
+            }
             if self.loaded {
                 self.process_flashblock(&fb);
             } else {
@@ -234,11 +240,7 @@ impl DaState {
             .unwrap_or_default();
 
         for l1_block in l1_blocks {
-            if self.loaded {
-                self.tracker.record_l1_block(l1_block);
-            } else {
-                self.buffered_l1_blocks.push(l1_block);
-            }
+            self.tracker.record_l1_block(l1_block);
         }
 
         if let Some(mode) = self.l1_mode_rx.as_mut().and_then(|rx| rx.try_recv().ok()) {
@@ -253,14 +255,28 @@ impl DaState {
         for safe_block in std::mem::take(&mut self.buffered_safe_heads) {
             self.tracker.update_safe_head(safe_block);
         }
-        for l1_block in std::mem::take(&mut self.buffered_l1_blocks) {
-            self.tracker.record_l1_block(l1_block);
+    }
+
+    fn remember_flashblock_id(&mut self, block_number: u64, index: u64) -> bool {
+        let id = (block_number, index);
+        if !self.recent_flashblock_id_set.insert(id) {
+            return false;
         }
+
+        self.recent_flashblock_ids.push_back(id);
+        if self.recent_flashblock_ids.len() > MAX_RECENT_DA_FLASHBLOCK_IDS
+            && let Some(evicted) = self.recent_flashblock_ids.pop_front()
+        {
+            self.recent_flashblock_id_set.remove(&evicted);
+        }
+
+        true
     }
 
     fn process_flashblock(&mut self, fb: &Flashblock) {
         let block_number = fb.metadata.block_number;
         let da_bytes: u64 = fb.diff.transactions.iter().map(|tx| tx.len() as u64).sum();
+        let tx_count = fb.diff.transactions.len();
         let timestamp = fb.base.as_ref().map(|b| b.timestamp).unwrap_or(0);
 
         if fb.index == 0 {
@@ -273,6 +289,15 @@ impl DaState {
 
             self.tracker.add_block(block_number, da_bytes, timestamp);
 
+            // Set tx_count on the contribution for this specific block.
+            // `add_block` may no-op when the block is already safe, so avoid
+            // mutating the front row unconditionally.
+            if let Some(contrib) =
+                self.tracker.block_contributions.iter_mut().find(|c| c.block_number == block_number)
+            {
+                contrib.tx_count = tx_count;
+            }
+
             if let (Some(prev), Some(tx)) = (prev_block, &self.block_req_tx) {
                 for missing in (prev..block_number).rev() {
                     let _ = tx.try_send(missing);
@@ -282,6 +307,7 @@ impl DaState {
             self.tracker.block_contributions.iter_mut().find(|c| c.block_number == block_number)
         {
             contrib.da_bytes = contrib.da_bytes.saturating_add(da_bytes);
+            contrib.tx_count += tx_count;
             if block_number > self.tracker.safe_l2_block {
                 self.tracker.da_backlog_bytes =
                     self.tracker.da_backlog_bytes.saturating_add(da_bytes);
@@ -359,6 +385,8 @@ impl FlashState {
 
         let block_number = fb.metadata.block_number;
         let index = fb.index;
+        let is_same_block_as_previous =
+            self.last_flashblock.is_some_and(|(last_block, _)| block_number == last_block);
         if let Some((last_block, last_index)) = self.last_flashblock {
             if block_number == last_block && index > last_index + 1 {
                 self.missed_flashblocks += index - last_index - 1;
@@ -368,8 +396,7 @@ impl FlashState {
         }
         self.last_flashblock = Some((block_number, index));
 
-        let base_fee =
-            fb.base.as_ref().map(|base| base.base_fee_per_gas.try_into().unwrap_or(u128::MAX));
+        let base_fee = fb.base.as_ref().and_then(|base| base.base_fee_per_gas.try_into().ok());
 
         let prev_base_fee = self.current_base_fee;
 
@@ -377,6 +404,9 @@ impl FlashState {
             self.current_gas_limit = base.gas_limit;
             self.current_base_fee = base_fee;
         }
+
+        let effective_base_fee =
+            if is_same_block_as_previous { base_fee.or(self.current_base_fee) } else { base_fee };
 
         let time_diff_ms =
             self.entries.front().map(|prev| (received_at - prev.timestamp).num_milliseconds());
@@ -387,13 +417,60 @@ impl FlashState {
             tx_count: fb.diff.transactions.len(),
             gas_used: fb.diff.gas_used,
             gas_limit: self.current_gas_limit,
-            base_fee,
+            base_fee: effective_base_fee,
             prev_base_fee,
             timestamp: received_at,
             time_diff_ms,
+            raw_txs: fb.diff.transactions,
         };
 
         self.entries.push_front(entry);
         self.evict_old_blocks();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc;
+
+    use super::DaState;
+    use crate::rpc::{BacklogFetchResult, BlockDaInfo, L1BlockInfo};
+
+    #[test]
+    fn records_l1_blocks_before_backlog_load_completes() {
+        let (_fb_tx, fb_rx) = mpsc::channel(1);
+        let (_sync_tx, sync_rx) = mpsc::channel(1);
+        let (_backlog_tx, backlog_rx) = mpsc::channel::<BacklogFetchResult>(1);
+        let (block_req_tx, _block_req_rx) = mpsc::channel::<u64>(1);
+        let (_block_res_tx, block_res_rx) = mpsc::channel::<BlockDaInfo>(1);
+        let (l1_block_tx, l1_block_rx) = mpsc::channel(1);
+
+        let mut state = DaState::new();
+        state.set_channels(fb_rx, sync_rx, backlog_rx, block_req_tx, block_res_rx, l1_block_rx);
+
+        l1_block_tx
+            .try_send(L1BlockInfo {
+                block_number: 123,
+                timestamp: 456,
+                total_blobs: 2,
+                base_blobs: 1,
+            })
+            .unwrap();
+
+        state.poll();
+
+        assert!(!state.loaded);
+        assert_eq!(state.tracker.l1_blocks.len(), 1);
+        assert_eq!(state.tracker.l1_blocks.front().unwrap().block_number, 123);
+    }
+
+    #[test]
+    fn deduplicates_replayed_flashblock_ids() {
+        let mut state = DaState::new();
+
+        assert!(state.remember_flashblock_id(100, 0));
+        assert!(!state.remember_flashblock_id(100, 0));
+        assert!(state.remember_flashblock_id(100, 1));
+        assert!(!state.remember_flashblock_id(100, 1));
     }
 }
