@@ -17,6 +17,201 @@ use crate::{BatchDriverError, TxOutcome};
 /// Type alias for the in-flight receipt future collection.
 type InFlight = FuturesUnordered<Pin<Box<dyn Future<Output = (SubmissionId, TxOutcome)> + Send>>>;
 
+/// Async orchestration loop for the batcher.
+///
+/// Combines a [`BatchPipeline`] (encoding), an [`UnsafeBlockSource`] (L2 block delivery),
+/// and a [`TxManager`] (L1 submission) into a single `tokio::select!` task.
+///
+/// Uses [`FuturesUnordered`] for concurrent receipt tracking and a [`Semaphore`]
+/// for pending transaction backpressure.
+#[derive(Debug)]
+pub struct BatchDriver<P, S, TM>
+where
+    P: BatchPipeline,
+    S: UnsafeBlockSource,
+    TM: TxManager,
+{
+    /// The encoding pipeline.
+    pipeline: P,
+    /// The L2 block source.
+    source: S,
+    /// The L1 transaction manager.
+    tx_manager: TM,
+    /// The batcher inbox address on L1.
+    inbox: Address,
+    /// In-flight receipt futures.
+    in_flight: InFlight,
+    /// Limits concurrent in-flight transactions.
+    semaphore: Arc<Semaphore>,
+    /// Cancellation token for graceful shutdown.
+    cancellation: CancellationToken,
+}
+
+/// Maximum number of encoding steps to run synchronously per outer loop iteration
+/// before yielding to the tokio executor. Prevents a large block backlog from
+/// starving receipt processing and cancellation checks.
+const STEP_BUDGET: usize = 128;
+
+impl<P, S, TM> BatchDriver<P, S, TM>
+where
+    P: BatchPipeline,
+    S: UnsafeBlockSource,
+    TM: TxManager,
+{
+    /// Create a new [`BatchDriver`].
+    pub fn new(
+        pipeline: P,
+        source: S,
+        tx_manager: TM,
+        inbox: Address,
+        max_pending_transactions: usize,
+        cancellation: CancellationToken,
+    ) -> Self {
+        Self {
+            pipeline,
+            source,
+            tx_manager,
+            inbox,
+            in_flight: FuturesUnordered::new(),
+            semaphore: Arc::new(Semaphore::new(max_pending_transactions)),
+            cancellation,
+        }
+    }
+
+    /// Run the batch driver loop.
+    ///
+    /// This method drives the full batcher lifecycle:
+    /// 1. Drains encoding steps synchronously.
+    /// 2. Submits any ready frames non-blocking (`try_acquire_owned`).
+    /// 3. Selects on cancellation, block source events, and receipt completion.
+    /// 4. Returns `Ok(())` on cancellation or `Err` on source/encoding failure.
+    pub async fn run(mut self) -> Result<(), BatchDriverError> {
+        loop {
+            // Drain encoding steps synchronously before I/O. A budget prevents
+            // a large block backlog from starving the tokio executor: after
+            // STEP_BUDGET steps we break and yield at the select! below, then
+            // resume encoding on the next outer loop iteration.
+            let mut budget = STEP_BUDGET;
+            loop {
+                match self.pipeline.step() {
+                    Ok(StepResult::Idle) => break,
+                    Ok(StepResult::BlockEncoded | StepResult::ChannelClosed) => {
+                        budget -= 1;
+                        if budget == 0 {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!(error = %e, "fatal encoding step error, batcher halting");
+                        return Err(e.into());
+                    }
+                }
+            }
+
+            // Submit all ready frames without blocking. Using try_acquire_owned
+            // avoids the hot-loop that would occur if acquire_owned were polled
+            // inside select! when there are no submissions ready: the semaphore
+            // would fire immediately on the next iteration, loop forever. It also
+            // keeps next_submission() and send_async out of the select! body,
+            // preventing pipeline state mutation from being interleaved with other
+            // async events mid-select.
+            loop {
+                let Ok(permit) = Arc::clone(&self.semaphore).try_acquire_owned() else {
+                    break; // All slots occupied; wait for a receipt to free one.
+                };
+                let Some(sub) = self.pipeline.next_submission() else {
+                    drop(permit);
+                    break; // Nothing to submit; wait for more encoding work.
+                };
+                let id = sub.id;
+                match BlobEncoder::encode_frames(&sub.frames) {
+                    Ok(blobs) => {
+                        let candidate = TxCandidate {
+                            to: Some(self.inbox),
+                            tx_data: Bytes::new(),
+                            value: U256::ZERO,
+                            gas_limit: 0,
+                            blobs,
+                        };
+                        let handle = self.tx_manager.send_async(candidate).await;
+                        let fut: Pin<Box<dyn Future<Output = (SubmissionId, TxOutcome)> + Send>> =
+                            Box::pin(async move {
+                                let outcome = match handle.await {
+                                    Ok(receipt) => {
+                                        let l1_block = receipt.block_number.unwrap_or_else(|| {
+                                            warn!(id = %id.0, "confirmed receipt missing block number; l1_head will not advance");
+                                            0
+                                        });
+                                        TxOutcome::Confirmed { l1_block }
+                                    }
+                                    Err(e) => {
+                                        warn!(id = %id.0, error = %e, "submission failed");
+                                        TxOutcome::Failed
+                                    }
+                                };
+                                drop(permit);
+                                (id, outcome)
+                            });
+                        self.in_flight.push(fut);
+                    }
+                    Err(e) => {
+                        warn!(id = %id.0, error = %e, "failed to encode frames to blobs, requeueing");
+                        self.pipeline.requeue(id);
+                        drop(permit);
+                    }
+                }
+            }
+
+            // Block on I/O: cancellation, new blocks, or receipt completions.
+            tokio::select! {
+                biased;
+
+                _ = self.cancellation.cancelled() => {
+                    info!("batcher driver cancelled");
+                    return Ok(());
+                }
+
+                event = self.source.next() => {
+                    match event? {
+                        L2BlockEvent::Block(block) => {
+                            let number = block.header.number;
+                            self.pipeline.add_block(*block)?;
+                            debug!(block = %number, "added unsafe block to pipeline");
+                        }
+                        L2BlockEvent::Reorg { new_safe_head } => {
+                            warn!(
+                                head = %new_safe_head.block_info.number,
+                                "L2 reorg detected, resetting pipeline"
+                            );
+                            // Discard in-flight futures before reset. The underlying L1
+                            // transactions are already broadcast and cannot be recalled,
+                            // but we must not let their completions call confirm/requeue
+                            // on the freshly-reset pipeline. Dropping the futures also
+                            // returns their semaphore permits.
+                            self.in_flight = FuturesUnordered::new();
+                            self.pipeline.reset();
+                        }
+                    }
+                }
+
+                Some((id, outcome)) = self.in_flight.next() => {
+                    match outcome {
+                        TxOutcome::Confirmed { l1_block } => {
+                            self.pipeline.confirm(id, l1_block);
+                            self.pipeline.advance_l1_head(l1_block);
+                            debug!(id = %id.0, l1_block, "submission confirmed");
+                        }
+                        TxOutcome::Failed => {
+                            self.pipeline.requeue(id);
+                            warn!(id = %id.0, "submission failed, requeued");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -432,200 +627,5 @@ mod tests {
             vec![7, 7],
             "both submissions must be confirmed once the permit is freed between them"
         );
-    }
-}
-
-/// Async orchestration loop for the batcher.
-///
-/// Combines a [`BatchPipeline`] (encoding), an [`UnsafeBlockSource`] (L2 block delivery),
-/// and a [`TxManager`] (L1 submission) into a single `tokio::select!` task.
-///
-/// Uses [`FuturesUnordered`] for concurrent receipt tracking and a [`Semaphore`]
-/// for pending transaction backpressure.
-#[derive(Debug)]
-pub struct BatchDriver<P, S, TM>
-where
-    P: BatchPipeline,
-    S: UnsafeBlockSource,
-    TM: TxManager,
-{
-    /// The encoding pipeline.
-    pipeline: P,
-    /// The L2 block source.
-    source: S,
-    /// The L1 transaction manager.
-    tx_manager: TM,
-    /// The batcher inbox address on L1.
-    inbox: Address,
-    /// In-flight receipt futures.
-    in_flight: InFlight,
-    /// Limits concurrent in-flight transactions.
-    semaphore: Arc<Semaphore>,
-    /// Cancellation token for graceful shutdown.
-    cancellation: CancellationToken,
-}
-
-/// Maximum number of encoding steps to run synchronously per outer loop iteration
-/// before yielding to the tokio executor. Prevents a large block backlog from
-/// starving receipt processing and cancellation checks.
-const STEP_BUDGET: usize = 128;
-
-impl<P, S, TM> BatchDriver<P, S, TM>
-where
-    P: BatchPipeline,
-    S: UnsafeBlockSource,
-    TM: TxManager,
-{
-    /// Create a new [`BatchDriver`].
-    pub fn new(
-        pipeline: P,
-        source: S,
-        tx_manager: TM,
-        inbox: Address,
-        max_pending_transactions: usize,
-        cancellation: CancellationToken,
-    ) -> Self {
-        Self {
-            pipeline,
-            source,
-            tx_manager,
-            inbox,
-            in_flight: FuturesUnordered::new(),
-            semaphore: Arc::new(Semaphore::new(max_pending_transactions)),
-            cancellation,
-        }
-    }
-
-    /// Run the batch driver loop.
-    ///
-    /// This method drives the full batcher lifecycle:
-    /// 1. Drains encoding steps synchronously.
-    /// 2. Submits any ready frames non-blocking (`try_acquire_owned`).
-    /// 3. Selects on cancellation, block source events, and receipt completion.
-    /// 4. Returns `Ok(())` on cancellation or `Err` on source/encoding failure.
-    pub async fn run(mut self) -> Result<(), BatchDriverError> {
-        loop {
-            // Drain encoding steps synchronously before I/O. A budget prevents
-            // a large block backlog from starving the tokio executor: after
-            // STEP_BUDGET steps we break and yield at the select! below, then
-            // resume encoding on the next outer loop iteration.
-            let mut budget = STEP_BUDGET;
-            loop {
-                match self.pipeline.step() {
-                    Ok(StepResult::Idle) => break,
-                    Ok(StepResult::BlockEncoded | StepResult::ChannelClosed) => {
-                        budget -= 1;
-                        if budget == 0 {
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        error!(error = %e, "fatal encoding step error, batcher halting");
-                        return Err(e.into());
-                    }
-                }
-            }
-
-            // Submit all ready frames without blocking. Using try_acquire_owned
-            // avoids the hot-loop that would occur if acquire_owned were polled
-            // inside select! when there are no submissions ready: the semaphore
-            // would fire immediately on the next iteration, loop forever. It also
-            // keeps next_submission() and send_async out of the select! body,
-            // preventing pipeline state mutation from being interleaved with other
-            // async events mid-select.
-            loop {
-                let Ok(permit) = Arc::clone(&self.semaphore).try_acquire_owned() else {
-                    break; // All slots occupied; wait for a receipt to free one.
-                };
-                let Some(sub) = self.pipeline.next_submission() else {
-                    drop(permit);
-                    break; // Nothing to submit; wait for more encoding work.
-                };
-                let id = sub.id;
-                match BlobEncoder::encode_frames(&sub.frames) {
-                    Ok(blobs) => {
-                        let candidate = TxCandidate {
-                            to: Some(self.inbox),
-                            tx_data: Bytes::new(),
-                            value: U256::ZERO,
-                            gas_limit: 0,
-                            blobs,
-                        };
-                        let handle = self.tx_manager.send_async(candidate).await;
-                        let fut: Pin<Box<dyn Future<Output = (SubmissionId, TxOutcome)> + Send>> =
-                            Box::pin(async move {
-                                let outcome = match handle.await {
-                                    Ok(receipt) => {
-                                        let l1_block = receipt.block_number.unwrap_or_else(|| {
-                                            warn!(id = %id.0, "confirmed receipt missing block number; l1_head will not advance");
-                                            0
-                                        });
-                                        TxOutcome::Confirmed { l1_block }
-                                    }
-                                    Err(e) => {
-                                        warn!(id = %id.0, error = %e, "submission failed");
-                                        TxOutcome::Failed
-                                    }
-                                };
-                                drop(permit);
-                                (id, outcome)
-                            });
-                        self.in_flight.push(fut);
-                    }
-                    Err(e) => {
-                        warn!(id = %id.0, error = %e, "failed to encode frames to blobs, requeueing");
-                        self.pipeline.requeue(id);
-                        drop(permit);
-                    }
-                }
-            }
-
-            // Block on I/O: cancellation, new blocks, or receipt completions.
-            tokio::select! {
-                biased;
-
-                _ = self.cancellation.cancelled() => {
-                    info!("batcher driver cancelled");
-                    return Ok(());
-                }
-
-                event = self.source.next() => {
-                    match event? {
-                        L2BlockEvent::Block(block) => {
-                            let number = block.header.number;
-                            self.pipeline.add_block(*block)?;
-                            debug!(block = %number, "added unsafe block to pipeline");
-                        }
-                        L2BlockEvent::Reorg { new_safe_head } => {
-                            warn!(
-                                head = %new_safe_head.block_info.number,
-                                "L2 reorg detected, resetting pipeline"
-                            );
-                            // Discard in-flight futures before reset. The underlying L1
-                            // transactions are already broadcast and cannot be recalled,
-                            // but we must not let their completions call confirm/requeue
-                            // on the freshly-reset pipeline. Dropping the futures also
-                            // returns their semaphore permits.
-                            self.in_flight = FuturesUnordered::new();
-                            self.pipeline.reset();
-                        }
-                    }
-                }
-
-                Some((id, outcome)) = self.in_flight.next() => {
-                    match outcome {
-                        TxOutcome::Confirmed { l1_block } => {
-                            self.pipeline.confirm(id, l1_block);
-                            self.pipeline.advance_l1_head(l1_block);
-                            debug!(id = %id.0, l1_block, "submission confirmed");
-                        }
-                        TxOutcome::Failed => {
-                            self.pipeline.requeue(id);
-                            warn!(id = %id.0, "submission failed, requeued");
-                        }
-                    }
-                }
-            }
-        }
     }
 }
