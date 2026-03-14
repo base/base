@@ -159,6 +159,9 @@ pub enum NitroError {
     /// Internal error.
     #[error("internal error: {0}")]
     Internal(String),
+    /// Unsupported chain ID.
+    #[error("unsupported chain ID: {0}")]
+    UnsupportedChain(u64),
     /// Proof transport failed.
     #[cfg(feature = "host")]
     #[error("transport error: {0}")]

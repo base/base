@@ -1,5 +1,5 @@
 /// Enclave server — manages keys, attestation, signing, and proof execution.
-use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
 use alloy_signer_local::PrivateKeySigner;
 use base_alloy_evm::OpEvmFactory;
 use base_proof_client::{BootInfo, Prologue};
@@ -10,7 +10,6 @@ use tracing::{info, warn};
 use crate::{
     Oracle,
     enclave::{
-        EnclaveConfig,
         crypto::{Ecdsa, Signing},
         nsm::{NsmRng, NsmSession},
     },
@@ -23,6 +22,34 @@ const SIGNER_KEY_ENV_VAR: &str = "OP_ENCLAVE_SIGNER_KEY";
 /// PCR0 is a SHA-384 hash (48 bytes) per the AWS Nitro Enclaves specification.
 const PCR0_LENGTH: usize = 48;
 
+/// `keccak256(PerChainConfig::marshal_binary())` for Base Mainnet (chain 8453).
+///
+/// Produced by `print_real_config_hashes` in `base-enclave/src/types/config.rs`.
+const CONFIG_HASH_BASE_MAINNET: B256 =
+    b256!("1607709d90d40904f790574404e2ad614eac858f6162faa0ec34c6bf5e5f3c57");
+
+/// `keccak256(PerChainConfig::marshal_binary())` for Base Sepolia (chain 84532).
+///
+/// Produced by `print_real_config_hashes` in `base-enclave/src/types/config.rs`.
+const CONFIG_HASH_BASE_SEPOLIA: B256 =
+    b256!("12e9c45f19f9817c6d4385fad29e7a70c355502cf0883e76a9a7e478a85d1360");
+
+/// `keccak256(PerChainConfig::marshal_binary())` for Sepolia Alpha (chain 11763072).
+///
+/// Produced by `print_real_config_hashes` in `base-enclave/src/types/config.rs`.
+const CONFIG_HASH_SEPOLIA_ALPHA: B256 =
+    b256!("4600cdaa81262bf5f124bd9276f605264e2ded951e34923bc838e81c442f0fa4");
+
+/// Look up the hardcoded config hash for a supported chain.
+const fn config_hash_for_chain(chain_id: u64) -> Result<B256> {
+    match chain_id {
+        8453 => Ok(CONFIG_HASH_BASE_MAINNET),
+        84532 => Ok(CONFIG_HASH_BASE_SEPOLIA),
+        11763072 => Ok(CONFIG_HASH_SEPOLIA_ALPHA),
+        _ => Err(NitroError::UnsupportedChain(chain_id)),
+    }
+}
+
 /// The enclave server.
 ///
 /// Manages cryptographic keys and attestation for the enclave.
@@ -33,8 +60,6 @@ pub struct Server {
     pcr0: Vec<u8>,
     /// ECDSA signing key.
     signer_key: PrivateKeySigner,
-    /// Per-chain config hash.
-    config_hash: B256,
     /// TEE image hash (keccak256 of PCR0 in enclave mode, zero in local mode).
     tee_image_hash: B256,
 }
@@ -46,17 +71,17 @@ impl Server {
     /// `tee_image_hash`, and uses the hardware RNG for key generation.
     ///
     /// In local mode (no NSM): uses the OS RNG and sets `tee_image_hash` to zero.
-    pub fn new(config: &EnclaveConfig) -> Result<Self> {
+    pub fn new() -> Result<Self> {
         NsmSession::open()?.map_or_else(
             || {
                 warn!("running in local mode without NSM");
-                Self::new_local(config)
+                Self::new_local()
             },
-            |session| Self::new_enclave(config, &session),
+            |session| Self::new_enclave(&session),
         )
     }
 
-    fn new_enclave(config: &EnclaveConfig, session: &NsmSession) -> Result<Self> {
+    fn new_enclave(session: &NsmSession) -> Result<Self> {
         let pcr0 = session.describe_pcr0()?;
         if pcr0.len() != PCR0_LENGTH {
             return Err(NsmError::DescribePcr(format!(
@@ -72,10 +97,10 @@ impl Server {
             .ok_or_else(|| NsmError::SessionOpen("failed to initialize NSM RNG".into()))?;
         let signer_key = Ecdsa::generate(&mut rng)?;
 
-        Ok(Self { pcr0, signer_key, config_hash: config.config_hash, tee_image_hash })
+        Ok(Self { pcr0, signer_key, tee_image_hash })
     }
 
-    fn new_local(config: &EnclaveConfig) -> Result<Self> {
+    fn new_local() -> Result<Self> {
         let signer_key = match std::env::var(SIGNER_KEY_ENV_VAR) {
             Ok(hex_key) => {
                 info!("using signer key from environment variable");
@@ -84,12 +109,7 @@ impl Server {
             Err(_) => Ecdsa::generate(&mut NsmRng::default())?,
         };
 
-        Ok(Self {
-            pcr0: Vec::new(),
-            signer_key,
-            config_hash: config.config_hash,
-            tee_image_hash: B256::ZERO,
-        })
+        Ok(Self { pcr0: Vec::new(), signer_key, tee_image_hash: B256::ZERO })
     }
 
     /// Check if the server is running in local mode.
@@ -128,6 +148,7 @@ impl Server {
 
         let boot_info =
             BootInfo::load(&oracle).await.map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
+        let config_hash = config_hash_for_chain(boot_info.chain_id)?;
         let agreed_l2_output_root = boot_info.agreed_l2_output_root;
 
         let prologue = Prologue::new(oracle.clone(), oracle, OpEvmFactory::default());
@@ -162,7 +183,7 @@ impl Server {
                 output_root: *output_root,
                 ending_l2_block: l2_block_number,
                 intermediate_roots: vec![],
-                config_hash: self.config_hash,
+                config_hash,
                 tee_image_hash: self.tee_image_hash,
             };
             let signing_data = journal.encode();
@@ -176,7 +197,7 @@ impl Server {
                 l1_origin_number,
                 l2_block_number,
                 prev_output_root,
-                config_hash: self.config_hash,
+                config_hash,
             });
 
             prev_output_root = *output_root;
@@ -202,7 +223,7 @@ impl Server {
                 output_root: last.output_root,
                 ending_l2_block: last.l2_block_number,
                 intermediate_roots,
-                config_hash: self.config_hash,
+                config_hash,
                 tee_image_hash: self.tee_image_hash,
             };
             let signing_data = journal.encode();
@@ -216,38 +237,24 @@ impl Server {
                 l1_origin_number: last.l1_origin_number,
                 l2_block_number: last.l2_block_number,
                 prev_output_root: agreed_l2_output_root,
-                config_hash: self.config_hash,
+                config_hash,
             }
         };
 
         Ok(ProofResult::Tee { aggregate_proposal, proposals })
     }
-
-    /// Create a server for testing (no NSM, no PCR0 verification).
-    #[cfg(test)]
-    pub fn new_for_testing(config: &EnclaveConfig) -> Result<Self> {
-        let signer_key = Ecdsa::generate(&mut rand_08::rngs::OsRng)?;
-        Ok(Self {
-            pcr0: Vec::new(),
-            signer_key,
-            config_hash: config.config_hash,
-            tee_image_hash: B256::ZERO,
-        })
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use base_consensus_registry::Registry;
+    use base_enclave::PerChainConfig;
 
-    fn test_config() -> EnclaveConfig {
-        EnclaveConfig { vsock_cid: 0, vsock_port: 1234, config_hash: B256::ZERO }
-    }
+    use super::*;
 
     #[test]
     fn test_server_new_local_mode() {
-        let config = test_config();
-        let server = Server::new(&config).expect("failed to create server");
+        let server = Server::new().expect("failed to create server");
 
         #[cfg(not(target_os = "linux"))]
         assert!(server.is_local_mode());
@@ -259,8 +266,7 @@ mod tests {
 
     #[test]
     fn test_signer_address_consistency() {
-        let config = test_config();
-        let server = Server::new(&config).expect("failed to create server");
+        let server = Server::new().expect("failed to create server");
 
         let addr1 = server.signer_address();
         let addr2 = server.signer_address();
@@ -269,5 +275,29 @@ mod tests {
         let pk1 = server.signer_public_key();
         let pk2 = server.signer_public_key();
         assert_eq!(pk1, pk2);
+    }
+
+    #[test]
+    fn config_hash_unknown_chain() {
+        assert!(config_hash_for_chain(999999).is_err());
+    }
+
+    #[test]
+    fn config_hashes_match_registry() {
+        let chains: &[(u64, B256)] = &[
+            (8453, CONFIG_HASH_BASE_MAINNET),
+            (84532, CONFIG_HASH_BASE_SEPOLIA),
+            (11763072, CONFIG_HASH_SEPOLIA_ALPHA),
+        ];
+
+        for &(chain_id, expected) in chains {
+            let rollup = Registry::rollup_config(chain_id)
+                .unwrap_or_else(|| panic!("missing rollup config for chain {chain_id}"));
+            let mut per_chain = PerChainConfig::from_rollup_config(rollup)
+                .unwrap_or_else(|| panic!("missing system_config for chain {chain_id}"));
+            per_chain.force_defaults();
+
+            assert_eq!(per_chain.hash(), expected, "config hash mismatch for chain {chain_id}");
+        }
     }
 }

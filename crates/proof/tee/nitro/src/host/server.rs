@@ -88,20 +88,14 @@ impl EnclaveApiServer for NitroSignerRpc {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::B256;
     use base_proof_primitives::EnclaveApiServer;
 
     use super::*;
-    use crate::enclave::{EnclaveConfig, Server as EnclaveServer};
-
-    fn test_config() -> EnclaveConfig {
-        EnclaveConfig { vsock_cid: 0, vsock_port: 0, config_hash: B256::ZERO }
-    }
+    use crate::enclave::Server as EnclaveServer;
 
     #[tokio::test]
     async fn signer_public_key_routed_to_transport() {
-        let config = test_config();
-        let server = Arc::new(EnclaveServer::new(&config).unwrap());
+        let server = Arc::new(EnclaveServer::new().unwrap());
         let transport = Arc::new(NitroTransport::local(Arc::clone(&server)));
         let expected = server.signer_public_key();
 
@@ -121,8 +115,7 @@ mod tests {
 
     #[tokio::test]
     async fn signer_attestation_routed_to_transport() {
-        let config = test_config();
-        let server = Arc::new(EnclaveServer::new(&config).unwrap());
+        let server = Arc::new(EnclaveServer::new().unwrap());
         let transport = Arc::new(NitroTransport::local(Arc::clone(&server)));
 
         let rpc = NitroSignerRpc { transport };

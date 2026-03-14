@@ -1,11 +1,10 @@
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
 
-use alloy_primitives::B256;
 #[cfg(target_os = "linux")]
 use tokio::time::{Duration, timeout};
 #[cfg(target_os = "linux")]
-use tokio_vsock::{VsockAddr, VsockListener};
+use tokio_vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener};
 #[cfg(target_os = "linux")]
 use tracing::{debug, info, warn};
 
@@ -30,39 +29,29 @@ pub use protocol::{EnclaveRequest, EnclaveResponse};
 mod server;
 pub use server::Server;
 
-/// Enclave runtime configuration.
-#[derive(Debug)]
-pub struct EnclaveConfig {
-    /// Vsock CID to bind.
-    pub vsock_cid: u32,
-    /// Vsock port to listen on.
-    pub vsock_port: u32,
-    /// Per-chain configuration hash.
-    pub config_hash: B256,
-}
+/// Fixed vsock port the enclave listens on.
+pub const VSOCK_PORT: u32 = 8000;
 
 /// Nitro Enclave runtime.
 #[cfg(target_os = "linux")]
 #[derive(Debug)]
 pub struct NitroEnclave {
     server: Arc<Server>,
-    vsock_cid: u32,
-    vsock_port: u32,
 }
 
 #[cfg(target_os = "linux")]
 impl NitroEnclave {
-    /// Create a new enclave runtime from the given configuration.
-    pub fn new(config: &EnclaveConfig) -> eyre::Result<Self> {
-        let server = Arc::new(Server::new(config)?);
+    /// Create a new enclave runtime.
+    pub fn new() -> eyre::Result<Self> {
+        let server = Arc::new(Server::new()?);
         info!(address = %server.signer_address(), "enclave initialized");
-        Ok(Self { server, vsock_cid: config.vsock_cid, vsock_port: config.vsock_port })
+        Ok(Self { server })
     }
 
     /// Listen on vsock, prove blocks, return results.
     pub async fn run(self) -> eyre::Result<()> {
-        let listener = VsockListener::bind(VsockAddr::new(self.vsock_cid, self.vsock_port))?;
-        info!(cid = self.vsock_cid, port = self.vsock_port, "listening on vsock");
+        let listener = VsockListener::bind(VsockAddr::new(VMADDR_CID_ANY, VSOCK_PORT))?;
+        info!(cid = VMADDR_CID_ANY, port = VSOCK_PORT, "listening on vsock");
 
         loop {
             let (stream, peer) = listener.accept().await?;

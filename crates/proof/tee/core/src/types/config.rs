@@ -116,6 +116,31 @@ impl Default for PerChainConfig {
 }
 
 impl PerChainConfig {
+    /// Create a `PerChainConfig` from a [`RollupConfig`].
+    ///
+    /// Returns `None` if the rollup config is missing `genesis.system_config`.
+    #[must_use]
+    pub fn from_rollup_config(cfg: &RollupConfig) -> Option<Self> {
+        let sc = cfg.genesis.system_config.as_ref()?;
+        Some(Self {
+            chain_id: U256::from(cfg.l2_chain_id.id()),
+            genesis: Genesis {
+                l1: BlockId { hash: cfg.genesis.l1.hash, number: cfg.genesis.l1.number },
+                l2: BlockId { hash: cfg.genesis.l2.hash, number: cfg.genesis.l2.number },
+                l2_time: cfg.genesis.l2_time,
+                system_config: GenesisSystemConfig {
+                    batcher_addr: sc.batcher_address,
+                    overhead: B256::ZERO,
+                    scalar: B256::from(sc.scalar.to_be_bytes::<32>()),
+                    gas_limit: sc.gas_limit,
+                },
+            },
+            block_time: cfg.block_time,
+            deposit_contract_address: cfg.deposit_contract_address,
+            l1_system_config_address: cfg.l1_system_config_address,
+        })
+    }
+
     /// Serialize the config to binary format matching Go's `MarshalBinary()`.
     ///
     /// Binary layout (all big-endian, 212 bytes total):
@@ -259,6 +284,7 @@ impl PerChainConfig {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, b256};
+    use base_consensus_registry::Registry;
 
     use super::*;
 
@@ -456,5 +482,24 @@ mod tests {
         assert_eq!(rollup_config.hardforks.holocene_time, Some(0));
         assert_eq!(rollup_config.hardforks.isthmus_time, Some(0));
         assert_eq!(rollup_config.hardforks.regolith_time, Some(0));
+    }
+
+    /// Print config hashes for supported chains so they can be hardcoded in the
+    /// enclave server. Run with:
+    /// `cargo test -p base-enclave print_real_config_hashes -- --nocapture --ignored`
+    #[test]
+    #[ignore]
+    fn print_real_config_hashes() {
+        let chains: &[(u64, &str)] =
+            &[(8453, "Base Mainnet"), (84532, "Base Sepolia"), (11763072, "Sepolia Alpha")];
+
+        for &(chain_id, name) in chains {
+            let rollup = Registry::rollup_config(chain_id)
+                .unwrap_or_else(|| panic!("missing rollup config for {name} ({chain_id})"));
+            let mut per_chain = PerChainConfig::from_rollup_config(rollup)
+                .unwrap_or_else(|| panic!("missing system_config for {name} ({chain_id})"));
+            per_chain.force_defaults();
+            println!("{name} ({chain_id}): {:?}", per_chain.hash());
+        }
     }
 }

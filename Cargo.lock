@@ -3286,6 +3286,7 @@ dependencies = [
  "alloy-trie",
  "base-alloy-consensus",
  "base-consensus-genesis",
+ "base-consensus-registry",
  "base-proof-primitives",
  "base-protocol",
  "hex",
@@ -4287,6 +4288,8 @@ dependencies = [
  "aws-nitro-enclaves-cose",
  "aws-nitro-enclaves-nsm-api",
  "base-alloy-evm",
+ "base-consensus-registry",
+ "base-enclave",
  "base-health",
  "base-proof-client",
  "base-proof-host",
@@ -4465,7 +4468,6 @@ dependencies = [
 name = "base-prover"
 version = "0.0.0"
 dependencies = [
- "alloy-primitives",
  "base-consensus-registry",
  "base-proof-host",
  "base-proof-tee-nitro",
