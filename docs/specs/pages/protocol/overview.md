@@ -455,7 +455,7 @@ graph LR
 
 - [Execution Engine](execution/index.md)
 
-Since the EE uses Geth under the hood, Base uses Geth's built-in peer-to-peer network and transaction pool to
+Since the EE uses Reth under the hood, Base uses Reth's built-in peer-to-peer network and transaction pool to
 propagate transactions. The same network can also be used to propagate submitted blocks and support snap-sync.
 
 Unsubmitted blocks, however, are propagated using a separate peer-to-peer network of Rollup Nodes. This is optional,
