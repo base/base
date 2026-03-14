@@ -742,13 +742,12 @@ impl SimpleTxManager {
         send_state: &SendState,
     ) -> bool {
         match result {
-            Ok(_) => false,
             // Nonce errors indicate the nonce is genuinely invalid, not a
             // transient failure.  Returning it to the reuse pool would
             // cause an infinite retry loop: after a reset() the chain
             // nonce is re-fetched, but advance_nonce() pops
             // returned_nonces first, reissuing the same invalid value.
-            Err(TxManagerError::NonceTooHigh | TxManagerError::NonceTooLow) => false,
+            Ok(_) | Err(TxManagerError::NonceTooHigh | TxManagerError::NonceTooLow) => false,
             Err(_) => send_state.successful_publish_count() == 0,
         }
     }
