@@ -4399,6 +4399,8 @@ dependencies = [
  "async-trait",
  "aws-sdk-ec2",
  "aws-sdk-elasticloadbalancingv2",
+ "jsonrpsee",
+ "k256",
  "rstest",
  "thiserror 2.0.18",
  "tokio",
