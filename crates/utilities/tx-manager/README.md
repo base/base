@@ -207,7 +207,7 @@ let provider = RootProvider::new_http("http://localhost:8545".parse()?);
 let wallet = EthereumWallet::from(signer);
 let config = TxManagerConfig::default();
 let chain_id = 1;
-let manager = SimpleTxManager::new(provider, wallet, config, chain_id, Arc::new(BaseTxMetrics)).await?;
+let manager = SimpleTxManager::new(provider, wallet, config, chain_id, Arc::new(BaseTxMetrics::new("my_service"))).await?;
 
 // Build a regular (type-2) transaction candidate.
 let candidate = TxCandidate {

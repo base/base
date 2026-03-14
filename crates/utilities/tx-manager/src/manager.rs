@@ -58,6 +58,10 @@ use crate::{
 
 /// Number of wei in one gwei (10^9), as `f64` for fractional-precision
 /// metric conversions that must not truncate sub-gwei values.
+///
+/// `u128 as f64` is lossless for values up to 2^53 (~9 × 10^15 wei, or
+/// ~9 million gwei). Realistic per-gas fee values (tip cap, base fee) are
+/// well under this threshold, so the conversion preserves full precision.
 const WEI_PER_GWEI: f64 = 1_000_000_000.0;
 
 /// A signed transaction together with the fee values that were applied
@@ -800,10 +804,9 @@ impl SimpleTxManager {
     /// Inner send loop extracted from [`send_tx`](Self::send_tx) to allow
     /// optional timeout wrapping.
     ///
-    /// `nonce_override` is forwarded to the **initial**
-    /// [`prepare_with_initial_caps`](Self::prepare_with_initial_caps) call.
-    /// Fee bump paths reuse the original nonce via their own `nonce_override`
-    /// to avoid corrupting concurrent `send_async` reservations.
+    /// Records latency, confirmation, and failure metrics on all exit paths.
+    /// The actual event loop lives in [`send_event_loop`](Self::send_event_loop);
+    /// this method is a thin metrics wrapper around it.
     async fn send_tx_inner(
         &self,
         candidate: &TxCandidate,
@@ -812,123 +815,140 @@ impl SimpleTxManager {
     ) -> SendResponse {
         let start = Instant::now();
 
-        let result: SendResponse = async {
-            // Initial transaction preparation. prepare() is NOT cancellation-safe,
-            // so it runs to completion before entering the select loop.
-            // The returned PreparedTx carries the actual on-wire fees, eliminating
-            // the need for a separate suggest_gas_price_caps() call.
-            let prepared =
-                self.prepare_with_initial_caps(candidate, None, None, nonce_override).await?;
-            let tx_hash = self.publish_tx(send_state, &prepared.raw_tx, None).await?;
-            let mut bump = BumpState::from_prepared(&prepared, tx_hash);
+        let result = self.send_event_loop(candidate, send_state, nonce_override).await;
 
-            // Receipt delivery channel — mpsc because fee bumps may spawn
-            // new wait tasks with different tx hashes.
-            let (receipt_tx, mut receipt_rx) = mpsc::channel::<TransactionReceipt>(1);
+        let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.metrics.record_send_latency(latency_ms);
 
-            // Spawn background receipt polling for the initial tx hash.
-            Self::wait_for_tx(
-                Arc::clone(send_state),
-                self.provider.clone(),
-                bump.tx_hash,
-                self.config.clone(),
-                receipt_tx.clone(),
-                Arc::clone(&self.closed),
-            );
+        if result.is_ok() {
+            self.metrics.record_tx_confirmed();
+        } else {
+            self.metrics.record_tx_failed();
+        }
 
-            // Resubmission timer for fee bumping.
-            let mut bump_ticker = tokio::time::interval(self.config.resubmission_timeout);
-            // Consume the first immediate tick.
-            bump_ticker.tick().await;
+        result
+    }
 
-            loop {
-                // Check shutdown and critical errors before blocking.
-                if self.is_closed() {
-                    return Err(TxManagerError::ChannelClosed);
-                }
-                if let Some(err) = send_state.critical_error() {
-                    error!(error = %err, "critical error, aborting send");
-                    return Err(err);
-                }
+    /// Drives a signed transaction from publication through mempool to onchain
+    /// confirmation.
+    ///
+    /// `nonce_override` is forwarded to the **initial**
+    /// [`prepare_with_initial_caps`](Self::prepare_with_initial_caps) call.
+    /// Fee bump paths reuse the original nonce via their own `nonce_override`
+    /// to avoid corrupting concurrent `send_async` reservations.
+    async fn send_event_loop(
+        &self,
+        candidate: &TxCandidate,
+        send_state: &Arc<SendState>,
+        nonce_override: Option<u64>,
+    ) -> SendResponse {
+        // Initial transaction preparation. prepare() is NOT cancellation-safe,
+        // so it runs to completion before entering the select loop.
+        // The returned PreparedTx carries the actual on-wire fees, eliminating
+        // the need for a separate suggest_gas_price_caps() call.
+        let prepared =
+            self.prepare_with_initial_caps(candidate, None, None, nonce_override).await?;
+        let tx_hash = self.publish_tx(send_state, &prepared.raw_tx, None).await?;
+        let mut bump = BumpState::from_prepared(&prepared, tx_hash);
 
-                // If a receipt is already waiting, return it immediately
-                // instead of performing a wasted fee bump.
-                if let Ok(receipt) = receipt_rx.try_recv() {
-                    info!(
-                        tx_hash = %receipt.transaction_hash,
-                        block = ?receipt.block_number,
-                        "transaction confirmed",
-                    );
-                    return Ok(receipt);
-                }
+        // Receipt delivery channel — mpsc because fee bumps may spawn
+        // new wait tasks with different tx hashes.
+        let (receipt_tx, mut receipt_rx) = mpsc::channel::<TransactionReceipt>(1);
 
-                // Respond immediately to the should_bump_fees flag set by
-                // process_send_error on retryable errors (e.g. Underpriced,
-                // ReplacementUnderpriced), rather than waiting for the next
-                // resubmission timer tick.
-                //
-                // Clear the flag before attempting the bump so that a failed
-                // attempt (e.g. RPC timeout) does not immediately re-trigger
-                // on the next loop iteration — instead, the loop falls through
-                // to tokio::select! which waits for the resubmission timer or
-                // a receipt, providing natural backoff. If a new retryable
-                // error occurs later, process_send_error will re-set the flag.
-                if send_state.should_bump_fees() {
-                    send_state.clear_bump_fees();
-                    if let Some(abort) =
-                        self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await
-                    {
-                        return Err(abort);
-                    }
-                    // Reset the bump ticker so we get a full interval
-                    // before the next timer-driven bump.
-                    bump_ticker.reset();
-                    continue;
-                }
+        // Spawn background receipt polling for the initial tx hash.
+        Self::wait_for_tx(
+            Arc::clone(send_state),
+            self.provider.clone(),
+            bump.tx_hash,
+            self.config.clone(),
+            receipt_tx.clone(),
+            Arc::clone(&self.closed),
+        );
 
-                // Determine which event fired. handle_fee_bump (and
-                // transitively prepare()) is NOT cancellation-safe, so it
-                // must not run inside tokio::select!. The select block only
-                // captures which arm won; fee bump work runs to completion
-                // outside the select block.
-                tokio::select! {
-                    biased;
-                    result = receipt_rx.recv() => {
-                        match result {
-                            Some(receipt) => {
-                                info!(
-                                    tx_hash = %receipt.transaction_hash,
-                                    block = ?receipt.block_number,
-                                    "transaction confirmed",
-                                );
-                                return Ok(receipt);
-                            }
-                            None => {
-                                // All senders dropped — should not happen in normal flow.
-                                return Err(TxManagerError::ChannelClosed);
-                            }
-                        }
-                    }
-                    _ = bump_ticker.tick() => {}
-                };
+        // Resubmission timer for fee bumping.
+        let mut bump_ticker = tokio::time::interval(self.config.resubmission_timeout);
+        // Consume the first immediate tick.
+        bump_ticker.tick().await;
 
-                // Bump tick fired — run fee bump logic.
+        loop {
+            // Check shutdown and critical errors before blocking.
+            if self.is_closed() {
+                return Err(TxManagerError::ChannelClosed);
+            }
+            if let Some(err) = send_state.critical_error() {
+                error!(error = %err, "critical error, aborting send");
+                return Err(err);
+            }
+
+            // If a receipt is already waiting, return it immediately
+            // instead of performing a wasted fee bump.
+            if let Ok(receipt) = receipt_rx.try_recv() {
+                info!(
+                    tx_hash = %receipt.transaction_hash,
+                    block = ?receipt.block_number,
+                    "transaction confirmed",
+                );
+                return Ok(receipt);
+            }
+
+            // Respond immediately to the should_bump_fees flag set by
+            // process_send_error on retryable errors (e.g. Underpriced,
+            // ReplacementUnderpriced), rather than waiting for the next
+            // resubmission timer tick.
+            //
+            // Clear the flag before attempting the bump so that a failed
+            // attempt (e.g. RPC timeout) does not immediately re-trigger
+            // on the next loop iteration — instead, the loop falls through
+            // to tokio::select! which waits for the resubmission timer or
+            // a receipt, providing natural backoff. If a new retryable
+            // error occurs later, process_send_error will re-set the flag.
+            if send_state.should_bump_fees() {
+                send_state.clear_bump_fees();
                 if let Some(abort) =
                     self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await
                 {
                     return Err(abort);
                 }
+                // Reset the bump ticker so we get a full interval
+                // before the next timer-driven bump.
                 bump_ticker.reset();
+                continue;
             }
-        }
-        .await;
 
-        if result.is_ok() {
-            let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-            self.metrics.record_confirmed_latency(latency_ms);
-            self.metrics.record_tx_confirmed();
+            // Determine which event fired. handle_fee_bump (and
+            // transitively prepare()) is NOT cancellation-safe, so it
+            // must not run inside tokio::select!. The select block only
+            // captures which arm won; fee bump work runs to completion
+            // outside the select block.
+            tokio::select! {
+                biased;
+                result = receipt_rx.recv() => {
+                    match result {
+                        Some(receipt) => {
+                            info!(
+                                tx_hash = %receipt.transaction_hash,
+                                block = ?receipt.block_number,
+                                "transaction confirmed",
+                            );
+                            return Ok(receipt);
+                        }
+                        None => {
+                            // All senders dropped — should not happen in normal flow.
+                            return Err(TxManagerError::ChannelClosed);
+                        }
+                    }
+                }
+                _ = bump_ticker.tick() => {}
+            };
+
+            // Bump tick fired — run fee bump logic.
+            if let Some(abort) =
+                self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await
+            {
+                return Err(abort);
+            }
+            bump_ticker.reset();
         }
-        result
     }
 
     /// Performs a fee bump attempt and applies the result to the tracked state.
