@@ -1,23 +1,28 @@
 //! Hybrid block source that races a subscription stream against interval-based polling.
 
-use std::{collections::HashMap, pin::Pin};
+use std::collections::HashMap;
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_alloy_consensus::OpBlock;
 use base_protocol::{BlockInfo, L2BlockInfo};
-use futures::{Stream, StreamExt};
+use futures::{StreamExt, stream::BoxStream};
 use tokio::time::{Duration, Interval, interval};
 
-use crate::{L2BlockEvent, PollingSource, SourceError, UnsafeBlockSource};
+use crate::{BlockSubscription, L2BlockEvent, PollingSource, SourceError, UnsafeBlockSource};
 
 /// A block source that races a subscription stream against an interval-based poller.
 ///
 /// Deduplicates blocks by hash and detects reorgs when the same block number
 /// yields different hashes from different sources.
 pub struct HybridBlockSource<S, P> {
-    /// Subscription stream of blocks.
-    sub: Pin<Box<S>>,
+    /// The block stream returned by `S::take_stream`.
+    ///
+    /// Declared before `_subscription` so it is dropped first, ensuring the
+    /// stream's underlying transport is released before the provider is torn down.
+    sub: BoxStream<'static, Result<OpBlock, SourceError>>,
+    /// The original subscription, kept alive so its resources remain open.
+    _subscription: S,
     /// Polling source for fetching the unsafe head.
     poller: P,
     /// Polling interval timer.
@@ -35,15 +40,20 @@ impl<S, P> std::fmt::Debug for HybridBlockSource<S, P> {
 
 impl<S, P> HybridBlockSource<S, P>
 where
-    S: Stream<Item = Result<OpBlock, SourceError>> + Send,
+    S: BlockSubscription,
     P: PollingSource,
 {
     /// Create a new hybrid block source.
     ///
-    /// Combines a subscription stream with a poller that fires at `poll_interval`.
-    pub fn new(sub_stream: S, poller: P, poll_interval: Duration) -> Self {
+    /// Calls [`BlockSubscription::take_stream`] once to obtain the live block
+    /// stream, then retains the subscription to keep any underlying resources
+    /// (e.g. a WebSocket provider) alive. Combines the stream with a poller
+    /// that fires at `poll_interval`.
+    pub fn new(mut subscription: S, poller: P, poll_interval: Duration) -> Self {
+        let sub = subscription.take_stream();
         Self {
-            sub: Box::pin(sub_stream),
+            sub,
+            _subscription: subscription,
             poller,
             interval: interval(poll_interval),
             seen: HashMap::new(),
@@ -100,7 +110,7 @@ where
 #[async_trait]
 impl<S, P> UnsafeBlockSource for HybridBlockSource<S, P>
 where
-    S: Stream<Item = Result<OpBlock, SourceError>> + Send,
+    S: BlockSubscription,
     P: PollingSource,
 {
     async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
@@ -140,7 +150,18 @@ where
 
 #[cfg(test)]
 mod tests {
+    use futures::{StreamExt, stream::BoxStream};
+
     use super::*;
+
+    /// Test helper: wraps a concrete stream as a [`BlockSubscription`].
+    struct StreamSub(BoxStream<'static, Result<OpBlock, SourceError>>);
+
+    impl BlockSubscription for StreamSub {
+        fn take_stream(&mut self) -> BoxStream<'static, Result<OpBlock, SourceError>> {
+            std::mem::replace(&mut self.0, futures::stream::pending().boxed())
+        }
+    }
 
     /// Helper to build a minimal [`OpBlock`] with a given number and parent hash.
     fn make_block(number: u64, parent_hash: B256) -> OpBlock {
@@ -165,7 +186,8 @@ mod tests {
         let block = make_block(1, B256::ZERO);
         let poller = FixedPoller(block.clone());
         let stream = futures::stream::once(async move { Ok(block) });
-        let mut source = HybridBlockSource::new(stream, poller, Duration::from_secs(100));
+        let mut source =
+            HybridBlockSource::new(StreamSub(stream.boxed()), poller, Duration::from_secs(100));
 
         let event = source.next().await.unwrap();
         assert!(matches!(event, L2BlockEvent::Block(_)));
@@ -177,7 +199,8 @@ mod tests {
         let poller = FixedPoller(block.clone());
         // Two identical blocks in sequence — second should be skipped, stream ends.
         let stream = futures::stream::iter(vec![Ok(block.clone()), Ok(block)]);
-        let mut source = HybridBlockSource::new(stream, poller, Duration::from_secs(100));
+        let mut source =
+            HybridBlockSource::new(StreamSub(stream.boxed()), poller, Duration::from_secs(100));
 
         // First call returns the block.
         let event = source.next().await.unwrap();
@@ -195,7 +218,8 @@ mod tests {
         let block2 = make_block(1, B256::from([1u8; 32]));
         let poller = FixedPoller(block1.clone());
         let stream = futures::stream::iter(vec![Ok(block1), Ok(block2)]);
-        let mut source = HybridBlockSource::new(stream, poller, Duration::from_secs(100));
+        let mut source =
+            HybridBlockSource::new(StreamSub(stream.boxed()), poller, Duration::from_secs(100));
 
         // First block.
         let event = source.next().await.unwrap();
@@ -211,7 +235,8 @@ mod tests {
         let stream =
             futures::stream::once(async { Err(SourceError::Provider("rpc down".to_string())) });
         let poller = FixedPoller(make_block(1, B256::ZERO));
-        let mut source = HybridBlockSource::new(stream, poller, Duration::from_secs(100));
+        let mut source =
+            HybridBlockSource::new(StreamSub(stream.boxed()), poller, Duration::from_secs(100));
 
         let err = source.next().await.unwrap_err();
         assert!(matches!(err, SourceError::Provider(_)));

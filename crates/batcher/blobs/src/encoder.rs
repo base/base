@@ -1,5 +1,7 @@
 //! EIP-4844 blob encoder.
 
+use std::sync::Arc;
+
 use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
 use base_protocol::{DERIVATION_VERSION_0, Frame};
 
@@ -40,7 +42,7 @@ impl BlobEncoder {
     ///
     /// Each frame is prefixed with [`DERIVATION_VERSION_0`] before encoding.
     /// Returns a blob per frame in the same order.
-    pub fn encode_frames(frames: &[Frame]) -> Result<Vec<Blob>, BlobEncodeError> {
+    pub fn encode_frames(frames: &[Arc<Frame>]) -> Result<Vec<Blob>, BlobEncodeError> {
         let mut blobs = Vec::with_capacity(frames.len());
         for frame in frames {
             let encoded = frame.encode();

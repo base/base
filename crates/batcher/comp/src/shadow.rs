@@ -102,10 +102,23 @@ impl CompressorWriter for ShadowCompressor {
     }
 
     fn flush(&mut self) -> CompressorResult<()> {
+        // Only the shadow compressor needs to be flushed. The main compressor
+        // (both `BrotliCompressor` and `ZlibCompressor`) re-compresses the
+        // entire accumulated raw buffer on every `write()` call, so its
+        // `compressed` output is always fully up-to-date. There is no internal
+        // streaming state that could strand data — `flush()` and `close()` are
+        // no-ops on the underlying compressors. The shadow, however, is flushed
+        // during `write()` for accurate size estimation, so we forward `flush()`
+        // to it here to keep the estimate current.
         self.shadow.flush()
     }
 
     fn close(&mut self) -> CompressorResult<()> {
+        // Only the shadow compressor is closed. The main compressor does not
+        // require an explicit `close()` because its `compressed` buffer is
+        // always fully materialized after each `write()` — `read()` can drain
+        // it directly without any finalization step. See the comment on
+        // `flush()` above for more detail.
         self.shadow.close()
     }
 

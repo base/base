@@ -8,7 +8,10 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod types;
-pub use types::{BatchSubmission, EncoderConfig, ReorgError, StepError, StepResult, SubmissionId};
+pub use types::{
+    BatchSubmission, EncoderConfig, EncoderConfigError, ReorgError, StepError, StepResult,
+    SubmissionId,
+};
 
 mod pipeline;
 pub use pipeline::BatchPipeline;

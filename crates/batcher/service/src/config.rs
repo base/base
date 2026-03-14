@@ -2,7 +2,7 @@
 
 use std::{fmt, str::FromStr, time::Duration};
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::B256;
 use base_batcher_core::ThrottleConfig;
 use base_batcher_encoder::EncoderConfig;
 use url::Url;
@@ -28,6 +28,9 @@ impl FromStr for SecretKey {
 
 /// Full batcher configuration combining RPC endpoints, identity, encoding
 /// parameters, submission limits, and optional throttling.
+///
+/// The batch inbox address is sourced from the rollup config fetched at startup
+/// via `optimism_rollupConfig`, so it is not stored here.
 #[derive(Debug, Clone)]
 pub struct BatcherConfig {
     /// L1 RPC endpoint.
@@ -38,8 +41,6 @@ pub struct BatcherConfig {
     pub rollup_rpc_url: Url,
     /// Private key for signing L1 transactions.
     pub batcher_private_key: SecretKey,
-    /// Batcher inbox address on L1.
-    pub inbox_address: Address,
     /// L2 block polling interval.
     pub poll_interval: Duration,
     /// Encoder configuration.
@@ -63,13 +64,12 @@ impl Default for BatcherConfig {
             l2_rpc_url: "http://localhost:9545".parse().expect("valid default URL"),
             rollup_rpc_url: "http://localhost:7545".parse().expect("valid default URL"),
             batcher_private_key: SecretKey(B256::ZERO),
-            inbox_address: Address::ZERO,
             poll_interval: Duration::from_secs(1),
             encoder_config: EncoderConfig::default(),
             max_pending_transactions: 1,
             num_confirmations: 1,
             resubmission_timeout: Duration::from_secs(48),
-            throttle: None,
+            throttle: Some(ThrottleConfig::default()),
             metrics_port: 7300,
         }
     }

@@ -1,6 +1,6 @@
 //! Error types for the batch driver.
 
-use base_batcher_encoder::{ReorgError, StepError};
+use base_batcher_encoder::StepError;
 use base_batcher_source::SourceError;
 use base_blobs::BlobEncodeError;
 
@@ -13,9 +13,6 @@ pub enum BatchDriverError {
     /// An error encoding frames into blobs.
     #[error("blob encoding error: {0}")]
     Blob(#[from] BlobEncodeError),
-    /// A reorg was detected during block ingestion.
-    #[error("reorg during block ingestion: {0}")]
-    Reorg(#[from] ReorgError),
     /// A block could not be composed into a batch; continuing would produce a gap
     /// in the submitted L2 block sequence.
     #[error("fatal pipeline step error: {0}")]

@@ -153,18 +153,18 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
     /// Returns [`BatcherError::Reorg`] if a block parent hash mismatch is detected.
     /// Returns [`BatcherError::Channel`] if channel encoding fails.
     /// Returns [`BatcherError::SpanBatch`] if span batch construction fails.
-    pub fn encode_frames(&mut self) -> Result<Vec<Frame>, BatcherError> {
+    pub fn encode_frames(&mut self) -> Result<Vec<Arc<Frame>>, BatcherError> {
         match self.config.batch_type {
             BatchType::Single => self.encode_single_frames(),
             BatchType::Span => self.encode_span_frames(),
         }
     }
 
-    fn encode_single_frames(&mut self) -> Result<Vec<Frame>, BatcherError> {
+    fn encode_single_frames(&mut self) -> Result<Vec<Arc<Frame>>, BatcherError> {
         let mut block_count = 0u64;
 
         while let Some(block) = self.l2_source.next_block() {
-            self.pipeline.add_block(block)?;
+            self.pipeline.add_block(block).map_err(|b| b.0)?;
             block_count += 1;
         }
 
@@ -192,7 +192,7 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
         Ok(frames)
     }
 
-    fn encode_span_frames(&mut self) -> Result<Vec<Frame>, BatcherError> {
+    fn encode_span_frames(&mut self) -> Result<Vec<Arc<Frame>>, BatcherError> {
         let mut singles: Vec<(SingleBatch, u64)> = Vec::new();
 
         while let Some(block) = self.l2_source.next_block() {
@@ -220,7 +220,7 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
 
         let mut frames = Vec::new();
         while channel_out.ready_bytes() > 0 {
-            frames.push(channel_out.output_frame(MAX_FRAME_LEN)?);
+            frames.push(Arc::new(channel_out.output_frame(MAX_FRAME_LEN)?));
         }
 
         info!(frames = frames.len(), "batcher encoded span frames");
@@ -230,7 +230,7 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
     /// Submit the given frames to the L1 miner as pending transactions.
     ///
     /// Each frame is submitted as a separate [`PendingTx`].
-    pub fn submit_frames(&mut self, frames: &[Frame]) {
+    pub fn submit_frames(&mut self, frames: &[Arc<Frame>]) {
         for frame in frames {
             let encoded = frame.encode();
             let mut input = Vec::with_capacity(1 + encoded.len());
@@ -303,7 +303,7 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
     ///
     /// [`encode_frames`]: Batcher::encode_frames
     /// [`submit_frames`]: Batcher::submit_frames
-    pub fn advance(&mut self) -> Result<Vec<Frame>, BatcherError> {
+    pub fn advance(&mut self) -> Result<Vec<Arc<Frame>>, BatcherError> {
         let frames = self.encode_frames()?;
         self.submit_frames(&frames);
         Ok(frames)
@@ -311,10 +311,10 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
 }
 
 impl<S: L2BlockProvider> Action for Batcher<'_, S> {
-    type Output = Vec<Frame>;
+    type Output = Vec<Arc<Frame>>;
     type Error = BatcherError;
 
-    fn act(&mut self) -> Result<Vec<Frame>, BatcherError> {
+    fn act(&mut self) -> Result<Vec<Arc<Frame>>, BatcherError> {
         self.advance()
     }
 }

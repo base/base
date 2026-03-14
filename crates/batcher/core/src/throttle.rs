@@ -1,12 +1,24 @@
 //! Throttle controller for DA backlog management.
 
 /// Configuration for the throttle controller.
+///
+/// Defaults match the op-batcher reference implementation:
+/// 1 MB threshold, full intensity, linear strategy.
 #[derive(Debug, Clone)]
 pub struct ThrottleConfig {
     /// Backlog threshold in bytes at which throttling activates.
+    /// Default: 1,000,000 bytes (1 MB).
     pub threshold_bytes: u64,
     /// Maximum throttle intensity (0.0 to 1.0).
+    /// Default: 1.0 (full throttle at 2× threshold for [`ThrottleStrategy::Linear`]).
     pub max_intensity: f64,
+}
+
+impl Default for ThrottleConfig {
+    fn default() -> Self {
+        // Match op-batcher's default: 1 MB threshold (--throttle-threshold default).
+        Self { threshold_bytes: 1_000_000, max_intensity: 1.0 }
+    }
 }
 
 /// Parameters to apply when throttling is active.
