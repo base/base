@@ -13,6 +13,9 @@ pub use discovery::{AwsTargetGroupDiscovery, K8sStatefulSetDiscovery};
 mod error;
 pub use error::{RegistrarError, Result};
 
+mod prover;
+pub use prover::ProverClient;
+
 mod registry;
 pub use registry::{RegistryClient, RegistryContractClient};
 

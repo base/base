@@ -17,6 +17,10 @@ pub enum RegistrarError {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
+    /// Public key returned by a prover instance is malformed.
+    #[error("invalid public key: {0}")]
+    InvalidPublicKey(String),
+
     /// ZK proof generation failed.
     #[error("proof generation failed")]
     ProofGeneration(#[source] Box<dyn std::error::Error + Send + Sync>),
