@@ -11,12 +11,17 @@ use base_consensus_registry::Registry;
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/// Build a [`RollupConfig`] with tight `max_sequencer_drift` for drift tests.
+/// Build a [`RollupConfig`] configured for sequencer-drift tests.
 ///
 /// Starts from the real Base mainnet config. Overrides:
-/// - `max_sequencer_drift = 8` so drift is exceeded after 4 L2 blocks
-///   when pinned to a stale L1 origin with `block_time = 2`.
-/// - Batcher actor fields, genesis, and hardfork times as in all test configs.
+/// - Fjord active from genesis — the batcher uses brotli compression (channel
+///   version byte `0x01`), which the derivation pipeline only accepts after
+///   the Fjord hardfork. Fjord also hard-codes `max_sequencer_drift = 1800 s`.
+/// - `block_time = 300 s` so that exactly 6 L2 blocks fit within the 1800 s
+///   Fjord drift window when the sequencer is pinned to a stale L1 origin.
+///   L2 timestamps: 300, 600, …, 1800 (blocks 1-6 ≤ drift), 2100, 2400 (blocks
+///   7-8 > drift → deposit-only).
+/// - Batcher actor fields and genesis reset as in all test configs.
 ///
 /// L1 `block_time = 4` is controlled via [`L1MinerConfig`] at the call site.
 fn drift_rollup_config(batcher: &BatcherConfig) -> RollupConfig {
@@ -30,8 +35,9 @@ fn drift_rollup_config(batcher: &BatcherConfig) -> RollupConfig {
     rc.hardforks.delta_time = Some(0);
     rc.hardforks.ecotone_time = Some(0);
     rc.hardforks.fjord_time = Some(0);
-    // Tight drift: 4 L2 blocks (at block_time=2) before the boundary is crossed.
-    rc.max_sequencer_drift = 8;
+    // 300 s blocks: 6 blocks × 300 s = 1800 s == Fjord max_sequencer_drift.
+    // Block 7 (ts=2100) is the first over the boundary.
+    rc.block_time = 300;
     rc
 }
 
@@ -50,33 +56,21 @@ fn drift_rollup_config(batcher: &BatcherConfig) -> RollupConfig {
 ///
 /// ## Setup
 ///
-/// - `max_sequencer_drift = 8`, `block_time = 2`, L1 `block_time = 4`
+/// - Fjord active → `max_sequencer_drift = 1800 s`, `block_time = 300 s`, L1
+///   `block_time = 4 s`
 /// - L1 genesis at ts=0 → L1 block 1 at ts=4
 /// - Pin the sequencer to L1 genesis (epoch 0, ts=0)
-/// - Build L2 blocks: ts=2, 4, 6, 8, 10, ...
-/// - After L2 block 5 (ts=10), `10 > 0 + 8 = 8` → drift exceeded
+/// - Build L2 blocks: ts=300, 600, …, 1800, 2100, 2400
+/// - After L2 block 6 (ts=1800), `1800 ≤ 0 + 1800 = 1800` → still within
+/// - L2 block 7 (ts=2100): `2100 > 1800` → drift exceeded
 ///
 /// ## Expected behaviour
 ///
 /// The derivation pipeline:
-/// 1. Accepts L2 blocks 1-4 (timestamps 2-8, within drift) as submitted
-/// 2. For L2 block 5+ (timestamps 10+, over drift), drops the batcher's
-///    non-empty batch and generates deposit-only default blocks instead
-///
-/// ## Harness requirements
-///
-/// This test needs:
-/// - `L2Sequencer::pin_l1_origin()` to prevent epoch advance (ALREADY EXISTS)
-/// - `L2Sequencer::build_empty_block()` for forced-empty blocks (ALREADY EXISTS)
-/// - The sequencer to allow building blocks past the drift boundary. Currently
-///   `build_next_block` does NOT enforce `max_sequencer_drift` — it builds any
-///   block the caller requests. The enforcement happens in the derivation
-///   pipeline's `BatchQueue`, which is what we are testing here.
+/// 1. Accepts L2 blocks 1-6 (timestamps 300-1800, within drift) as submitted
+/// 2. For L2 blocks 7-8 (timestamps 2100-2400, over drift), drops the
+///    batcher's non-empty batch and generates deposit-only default blocks
 #[tokio::test]
-#[ignore = "requires verifying deposit-only block content from pipeline attributes; \
-            the pipeline may generate default blocks but we need to assert they contain \
-            no user transactions — currently no assertion API for inspecting derived \
-            attributes' transaction content"]
 async fn sequencer_drift_produces_deposit_only_blocks() {
     let l1_cfg = L1MinerConfig { block_time: 4 };
     let batcher_cfg = BatcherConfig::default();
@@ -94,20 +88,22 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
     let l1_genesis = block_info_from(h.l1.block_by_number(0).expect("genesis"));
     sequencer.pin_l1_origin(l1_genesis);
 
-    // Build 6 L2 blocks pinned to epoch 0:
-    //   block 1: ts=2  (drift = 2-0 = 2 <= 8) ✓
-    //   block 2: ts=4  (drift = 4-0 = 4 <= 8) ✓
-    //   block 3: ts=6  (drift = 6-0 = 6 <= 8) ✓
-    //   block 4: ts=8  (drift = 8-0 = 8 <= 8) ✓
-    //   block 5: ts=10 (drift = 10-0 = 10 > 8) ✗ over drift
-    //   block 6: ts=12 (drift = 12-0 = 12 > 8) ✗ over drift
+    // Build 8 L2 blocks pinned to epoch 0 (block_time=300 s, max_drift=1800 s):
+    //   block 1: ts= 300 (drift=  300 ≤ 1800) ✓
+    //   block 2: ts= 600 (drift=  600 ≤ 1800) ✓
+    //   block 3: ts= 900 (drift=  900 ≤ 1800) ✓
+    //   block 4: ts=1200 (drift= 1200 ≤ 1800) ✓
+    //   block 5: ts=1500 (drift= 1500 ≤ 1800) ✓
+    //   block 6: ts=1800 (drift= 1800 ≤ 1800) ✓ (exactly at boundary)
+    //   block 7: ts=2100 (drift= 2100 > 1800) ✗ over drift
+    //   block 8: ts=2400 (drift= 2400 > 1800) ✗ over drift
     //
-    // Blocks 1-4 have user transactions. Blocks 5-6 also have user txs
+    // Blocks 1-6 have user transactions. Blocks 7-8 also have user txs
     // (sequencer doesn't enforce drift), but the pipeline should drop them.
     let (mut verifier, chain) = h.create_verifier();
     let mut block_hashes: Vec<(u64, B256)> = Vec::new();
 
-    for i in 1u64..=6 {
+    for i in 1u64..=8 {
         // Build with user transactions — the pipeline decides what to accept.
         let block = sequencer.build_next_block().expect("build L2 block");
         let hash = sequencer.head().block_info.hash;
@@ -135,25 +131,26 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
         total_derived += verifier.act_l2_pipeline_full().await.expect("step");
     }
 
-    // The pipeline should derive blocks for all L2 slots. Blocks 1-4 use the
-    // batcher's submitted batches. Blocks 5-6 are generated as deposit-only
+    // The pipeline should derive blocks for all L2 slots. Blocks 1-6 use the
+    // batcher's submitted batches. Blocks 7-8 are generated as deposit-only
     // default blocks because the non-empty batches are dropped for exceeding
     // max_sequencer_drift.
     assert!(
-        verifier.l2_safe().block_info.number >= 4,
-        "at least 4 L2 blocks should be derived (within drift)"
+        verifier.l2_safe().block_info.number >= 6,
+        "at least 6 L2 blocks should be derived (within drift)"
     );
-    assert!(total_derived >= 4, "at least 4 blocks derived");
+    assert!(total_derived >= 6, "at least 6 blocks derived");
 
-    // TODO: Assert that the derived attributes for blocks 5-6 contain no
-    // user transactions (deposit-only). This requires either:
-    // (a) The verifier to expose the OpAttributesWithParent for each derived block, or
-    // (b) A callback/hook in apply_attributes that records transaction counts.
-    //
-    // Harness extension needed:
-    //   pub fn derived_attributes_history(&self) -> &[OpAttributesWithParent]
-    // or:
-    //   pub fn derived_tx_counts(&self) -> &[(u64, usize)]  // (block_number, tx_count)
+    // Verify deposit-only behaviour: blocks 1-6 carry 2 txs each (deposit +
+    // user tx), blocks 7-8 must carry exactly 1 tx (L1 info deposit only).
+    let tx_counts = verifier.derived_tx_counts();
+    for &(number, count) in tx_counts {
+        if number <= 6 {
+            assert_eq!(count, 2, "block {number} should have deposit + user tx");
+        } else {
+            assert_eq!(count, 1, "block {number} past drift boundary should be deposit-only");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -161,17 +158,15 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
 // ---------------------------------------------------------------------------
 
 /// When `max_sequencer_drift` is exceeded, the sequencer should produce
-/// deposit-only (empty) blocks. These empty blocks should be accepted by
-/// the derivation pipeline because they contain no user transactions.
+/// deposit-only (empty) blocks. This test verifies that the pipeline correctly
+/// handles the over-drift region by deriving blocks for all L2 slots, even
+/// when the submitted batches are dropped.
 ///
 /// This test uses `L2Sequencer::build_empty_block()` for the over-drift
-/// blocks, confirming that the pipeline accepts forced-empty batches even
-/// past the drift boundary.
+/// blocks (7-8). The pipeline drops those batches (they still reference the
+/// stale epoch 0, triggering `SequencerDriftNotAdoptedNextOrigin`), and then
+/// generates deposit-only default blocks for those slots.
 #[tokio::test]
-#[ignore = "requires verifying that the pipeline accepts empty batches past \
-            max_sequencer_drift; the L2Sequencer supports build_empty_block() \
-            but the derivation pipeline's handling of empty batches at the drift \
-            boundary needs end-to-end verification in the harness"]
 async fn sequencer_drift_forced_empty_blocks_accepted() {
     let l1_cfg = L1MinerConfig { block_time: 4 };
     let batcher_cfg = BatcherConfig::default();
@@ -189,8 +184,9 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
     let (mut verifier, chain) = h.create_verifier();
     let mut block_hashes: Vec<(u64, B256)> = Vec::new();
 
-    // Build 4 normal blocks (within drift) + 2 empty blocks (over drift).
-    for i in 1u64..=4 {
+    // Build 6 normal blocks (within drift, ts=300..1800) + 2 empty blocks
+    // (over drift, ts=2100, 2400). block_time=300 s, max_drift=1800 s.
+    for i in 1u64..=6 {
         let block = sequencer.build_next_block().expect("build normal block");
         let hash = sequencer.head().block_info.hash;
         block_hashes.push((i, hash));
@@ -204,13 +200,13 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
     }
 
     // Build empty blocks past the drift boundary.
-    for i in 5u64..=6 {
+    for i in 7u64..=8 {
         let block = sequencer.build_empty_block().expect("build empty block");
         let hash = sequencer.head().block_info.hash;
         block_hashes.push((i, hash));
 
-        // The empty block has only the deposit tx — the batcher should still
-        // encode it (the batch contains epoch info but no user txs).
+        // The empty block has only the deposit tx — the batcher encodes it
+        // but the pipeline will drop it (stale epoch) and produce a default block.
         let mut source = ActionL2Source::new();
         source.push(block);
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
@@ -231,10 +227,9 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
         total_derived += verifier.act_l2_pipeline_full().await.expect("step");
     }
 
-    // All 6 blocks should be derived: 4 normal + 2 empty.
-    // The empty blocks past the drift boundary should be accepted because
-    // they contain no user transactions.
-    assert!(total_derived >= 4, "at least the 4 within-drift blocks should be derived");
+    // All 8 blocks should be derived: 6 normal + 2 empty (pipeline-generated
+    // deposit-only blocks for the over-drift slots).
+    assert!(total_derived >= 6, "at least the 6 within-drift blocks should be derived");
     assert_eq!(
         verifier.l2_safe().block_info.number,
         total_derived as u64,

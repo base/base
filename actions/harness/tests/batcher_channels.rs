@@ -1,8 +1,7 @@
 #![doc = "TDD action test skeletons for channel timeout and interleaving scenarios."]
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatcherConfig, ChannelDriverConfig, L1MinerConfig,
-    SharedL1Chain, block_info_from,
+    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain, block_info_from,
 };
 use base_consensus_genesis::RollupConfig;
 use base_consensus_registry::Registry;
@@ -100,10 +99,8 @@ fn base_rollup_config_for(batcher: &BatcherConfig) -> RollupConfig {
             multi-block channel timeout is not exercisable in the current harness — \
             the test skeleton documents the expected flow for when the harness supports it"]
 async fn channel_timeout_triggers_channel_invalidation() {
-    let batcher_cfg = BatcherConfig {
-        driver: ChannelDriverConfig { max_frame_size: 80 },
-        ..BatcherConfig::default()
-    };
+    // TODO: configure small target_frame_size via EncoderConfig to force multi-frame output.
+    let batcher_cfg = BatcherConfig::default();
     let rollup_cfg = timeout_rollup_config(&batcher_cfg);
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -325,13 +322,12 @@ async fn channel_timeout_recovery_resubmits_successfully() {
 /// block. This is a known limitation of the test harness, not the
 /// derivation pipeline itself.
 #[tokio::test]
-#[ignore = "requires ChannelDriver to support distinct channel IDs per flush; \
-            currently ChannelId::default() is hardcoded, so two channels produce \
-            frames with the same ID and the channel bank cannot distinguish them"]
 async fn interleaved_channels_correctly_reassembled() {
+    use base_batcher_encoder::EncoderConfig;
     let batcher_cfg = BatcherConfig {
-        // Small frame size to force multi-frame channels.
-        driver: ChannelDriverConfig { max_frame_size: 80 },
+        // Small max_frame_size forces each block's batch data to spill across multiple frames,
+        // producing distinct channel IDs per encoder instance (BatchEncoder randomizes per channel).
+        encoder: EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
     let rollup_cfg = interleave_rollup_config(&batcher_cfg);
@@ -355,9 +351,6 @@ async fn interleaved_channels_correctly_reassembled() {
     drop(batcher_a);
 
     // Encode channel B (L2 block 2).
-    // TODO: This will produce frames with the SAME channel ID as channel A
-    // because ChannelDriver uses ChannelId::default(). Once ChannelDriver
-    // supports configurable or random channel IDs, update this section.
     let mut source_b = ActionL2Source::new();
     source_b.push(block_b);
     let mut batcher_b = h.create_batcher(source_b, batcher_cfg.clone());

@@ -15,6 +15,7 @@ workspace = true
 thiserror.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
+base-protocol = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 rstest.workspace = true

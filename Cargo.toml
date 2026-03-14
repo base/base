@@ -249,8 +249,11 @@ base-action-harness = { path = "actions/harness" }
 
 # Batcher
 base-blobs = { path = "crates/batcher/blobs" }
-base-batcher-driver = { path = "crates/batcher/driver" }
 base-comp = { path = "crates/batcher/comp", default-features = false }
+base-batcher-encoder = { path = "crates/batcher/encoder" }
+base-batcher-source = { path = "crates/batcher/source" }
+base-batcher-core = { path = "crates/batcher/core" }
+base-batcher-service = { path = "crates/batcher/service" }
 
 # Utilities
 base-jwt = { path = "crates/utilities/jwt" }

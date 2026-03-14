@@ -1,0 +1,28 @@
+[package]
+name = "base-batcher-bin"
+description = "Base Batcher Binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-batcher"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+base-batcher-service.workspace = true
+base-batcher-encoder.workspace = true
+base-cli-utils.workspace = true
+alloy-primitives = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["derive", "env"] }
+serde = { workspace = true, features = ["derive", "std"] }
+tokio-util.workspace = true
+tracing = { workspace = true, features = ["std"] }
+eyre.workspace = true
+url.workspace = true

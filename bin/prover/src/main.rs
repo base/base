@@ -10,6 +10,8 @@
 use base_consensus_registry as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
 use base_proof_host as _;
+#[cfg(not(any(target_os = "linux", feature = "local")))]
+use base_proof_tee_nitro as _;
 use clap::Parser as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
 use tracing as _;

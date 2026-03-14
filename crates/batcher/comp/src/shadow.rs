@@ -4,7 +4,12 @@
 //!
 //! [sc]: https://github.com/ethereum-optimism/optimism/blob/develop/op-batcher/compressor/shadow_compressor.go#L18
 
-use crate::{CompressorError, CompressorResult, CompressorWriter, Config, VariantCompressor};
+use alloc::vec::Vec;
+
+use crate::{
+    ChannelCompressor, CompressorError, CompressorResult, CompressorWriter, Config,
+    VariantCompressor,
+};
 
 /// The largest potential blow-up in bytes we expect to see when compressing
 /// arbitrary (e.g. random) data.  Here we account for a 2 byte header, 4 byte
@@ -113,5 +118,15 @@ impl CompressorWriter for ShadowCompressor {
 
     fn read(&mut self, buf: &mut [u8]) -> CompressorResult<usize> {
         self.compressor.read(buf)
+    }
+}
+
+impl ChannelCompressor for ShadowCompressor {
+    fn get_compressed(&self) -> Vec<u8> {
+        self.compressor.get_compressed()
+    }
+
+    fn channel_version_byte(&self) -> Option<u8> {
+        self.compressor.channel_version_byte()
     }
 }

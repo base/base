@@ -1,0 +1,26 @@
+[package]
+name = "base-batcher-encoder"
+description = "Batcher encoding pipeline: BatchPipeline trait and BatchEncoder state machine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+base-comp = { workspace = true, features = ["std"] }
+base-protocol = { workspace = true, features = ["std"] }
+base-consensus-genesis = { workspace = true, features = ["std"] }
+base-alloy-consensus = { workspace = true, features = ["std"] }
+alloy-eips = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
+rand = { workspace = true, features = ["std", "small_rng"] }
+
+[dev-dependencies]
+alloy-consensus = { workspace = true, features = ["std"] }

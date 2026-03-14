@@ -33,7 +33,7 @@ base-consensus-genesis = { workspace = true, features = ["std"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-blobs.workspace = true
 base-comp = { workspace = true, features = ["std"] }
-base-batcher-driver.workspace = true
+base-batcher-encoder.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
