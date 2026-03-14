@@ -91,6 +91,8 @@ impl MeteringProvider for MeteringStore {
 
     fn clear(&self) {
         self.by_tx_hash.clear();
+        // Drain the LRU queue to prevent stale entries from accumulating
+        while self.lru.pop().is_ok() {}
     }
 
     fn set_enabled(&self, enabled: bool) {
