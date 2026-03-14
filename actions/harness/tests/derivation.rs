@@ -381,6 +381,134 @@ async fn reorg_flip_flop() {
     assert_eq!(verifier.l2_safe().block_info.number, 1);
 }
 
+/// The canonical chain flip-flops through three forks, where the middle fork
+/// is completely empty (no batcher data).
+///
+/// This extends [`reorg_flip_flop`] by testing that after the pipeline is reset
+/// to an empty fork and derives zero L2 blocks, it holds no residual channel or
+/// frame data from fork A when fork C presents the same two batches.  If stale
+/// frames from A persisted across the B reset they could cause the pipeline to
+/// assemble a channel prematurely or reject C's frames as duplicates.
+///
+/// - Fork A: mine A1 and A2, each with one batch; derive L2 blocks 1 and 2
+///   (safe head = 2).
+/// - Fork B: reorg to genesis; mine two empty L1 blocks; reset the pipeline;
+///   signal both — zero blocks derived; safe head = 0.
+/// - Fork C: reorg to genesis; resubmit the same two batches; reset the
+///   pipeline; signal both — both L2 blocks re-derived; safe head = 2.
+#[tokio::test]
+async fn reorg_flip_flop_empty_middle_fork() {
+    let batcher_cfg = BatcherConfig::default();
+    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
+
+    // Build L2 blocks 1-2 against a genesis-only chain so both reference epoch 0
+    // and their encoded batch frames are valid on any fork sharing genesis.
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_sequencer(l1_chain);
+    let block1 = builder.build_next_block().expect("build block 1");
+    let block1_hash = builder.head().block_info.hash;
+    let block2 = builder.build_next_block().expect("build block 2");
+    let block2_hash = builder.head().block_info.hash;
+
+    // Shared reset targets — valid across all forks because genesis is immutable.
+    let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis always present"));
+    let l2_genesis = h.l2_genesis();
+    let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
+
+    // --- Fork A: mine A1 (batch for L2 block 1) and A2 (batch for L2 block 2). ---
+    for block in [block1.clone(), block2.clone()] {
+        let mut source = ActionL2Source::new();
+        source.push(block);
+        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
+        batcher.advance().expect("fork A: encode");
+        drop(batcher);
+        h.l1.mine_block();
+    }
+
+    let (mut verifier, chain) = h.create_verifier();
+    verifier.register_block_hash(1, block1_hash);
+    verifier.register_block_hash(2, block2_hash);
+    verifier.initialize().await.expect("initialize");
+
+    for i in 1u64..=2 {
+        let blk = block_info_from(h.l1.block_by_number(i).expect("fork A block"));
+        verifier.act_l1_head_signal(blk).await.expect("fork A: signal");
+        let derived = verifier.act_l2_pipeline_full().await.expect("fork A: step");
+        assert_eq!(derived, 1, "fork A: L2 block {i} derived");
+        assert_eq!(
+            verifier.l2_safe().l1_origin.number, 0,
+            "fork A: L2 block {i} l1_origin = genesis"
+        );
+    }
+    assert_eq!(verifier.l2_safe().block_info.number, 2, "fork A: safe head = 2");
+
+    // --- Fork B: reorg to genesis; mine two empty blocks; derive nothing. ---
+    h.l1.reorg_to(0).expect("reorg to fork B");
+    chain.truncate_to(0);
+    let mut fork_b_blocks = Vec::new();
+    for _ in 0..2 {
+        fork_b_blocks.push(h.mine_and_push(&chain));
+    }
+
+    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset to fork B");
+    // act_reset sets safe_head and finalized_head to the reset target (l2_genesis).
+    // Per the OP Stack spec, unsafe_head is NOT clamped to safe_head on reset —
+    // it is re-discovered by walking back from the current tip to the first block
+    // with a plausible (canonical or ahead-of-L1) L1 origin.  In this verifier-only
+    // context no gossip blocks were received, so unsafe_head was never advanced
+    // beyond genesis and therefore remains 0 regardless.
+    assert_eq!(verifier.l2_safe().block_info.number, 0, "reset to B: safe head = 0");
+    assert_eq!(verifier.l2_finalized().block_info.number, 0, "reset to B: finalized head = 0");
+    assert_eq!(verifier.l2_unsafe().block_info.number, 0, "reset to B: unsafe head = 0");
+
+    let drained = verifier.act_l2_pipeline_full().await.expect("drain genesis after reset to B");
+    assert_eq!(drained, 0, "reset drain must produce no L2 blocks");
+
+    for (i, blk_info) in fork_b_blocks.into_iter().enumerate() {
+        verifier.act_l1_head_signal(blk_info).await.expect("fork B: signal");
+        let derived = verifier.act_l2_pipeline_full().await.expect("fork B: step");
+        assert_eq!(derived, 0, "fork B block {}: empty, nothing derived", i + 1);
+    }
+    assert_eq!(verifier.l2_safe().block_info.number, 0, "fork B: safe head = 0");
+    assert_eq!(verifier.l2_finalized().block_info.number, 0, "fork B: finalized head = 0");
+
+    // --- Fork C: reorg to genesis; resubmit both batches; re-derive both blocks. ---
+    h.l1.reorg_to(0).expect("reorg to fork C");
+    chain.truncate_to(0);
+    let mut fork_c_blocks = Vec::new();
+    for block in [block1, block2] {
+        let mut source = ActionL2Source::new();
+        source.push(block);
+        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
+        batcher.advance().expect("fork C: encode");
+        drop(batcher);
+        fork_c_blocks.push(h.mine_and_push(&chain));
+    }
+
+    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset to fork C");
+    assert_eq!(verifier.l2_safe().block_info.number, 0, "reset to C: safe head = 0");
+    assert_eq!(verifier.l2_finalized().block_info.number, 0, "reset to C: finalized head = 0");
+    // unsafe_head unchanged by act_reset (spec-compliant: re-discover, don't clamp).
+    assert_eq!(verifier.l2_unsafe().block_info.number, 0, "reset to C: unsafe head = 0");
+
+    let drained = verifier.act_l2_pipeline_full().await.expect("drain genesis after reset to C");
+    assert_eq!(drained, 0, "reset drain must produce no L2 blocks");
+
+    for (i, blk_info) in fork_c_blocks.into_iter().enumerate() {
+        verifier.act_l1_head_signal(blk_info).await.expect("fork C: signal");
+        let derived = verifier.act_l2_pipeline_full().await.expect("fork C: step");
+        assert_eq!(derived, 1, "fork C: L2 block {} re-derived", i + 1);
+        assert_eq!(
+            verifier.l2_safe().l1_origin.number, 0,
+            "fork C: L2 block {} l1_origin = genesis", i + 1
+        );
+    }
+    assert_eq!(verifier.l2_safe().block_info.number, 2, "fork C: safe head = 2 after flip-flop");
+    // finalized_head stays at genesis because no act_l1_finalized_signal was sent.
+    assert_eq!(verifier.l2_finalized().block_info.number, 0, "fork C: finalized head = 0");
+}
+
 /// A batch submitted at the last valid L1 block within the sequence window
 /// must be derived successfully.
 ///
