@@ -34,7 +34,7 @@ mod manager;
 pub use manager::{PreparedTx, SimpleTxManager};
 
 mod queue;
-pub use queue::{TxQueue, TxReceipt};
+pub use queue::{SendResult, TxQueue};
 
 mod metrics;
 pub use metrics::TxMetrics;
