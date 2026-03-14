@@ -3,11 +3,8 @@
 use std::time::Duration;
 
 use alloy_primitives::{Address, Bytes, keccak256};
-use jsonrpsee::{
-    core::client::ClientT,
-    http_client::{HttpClient, HttpClientBuilder},
-    rpc_params,
-};
+use base_proof_primitives::EnclaveApiClient;
+use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use tracing::debug;
 
@@ -45,29 +42,24 @@ impl ProverClient {
 
     /// Fetches the signer's 65-byte uncompressed public key via `enclave_signerPublicKey`.
     ///
-    /// Deserializes as `Vec<u8>` to match the server's canonical `RpcResult<Vec<u8>>` return
-    /// type in `EnclaveApi` (serialized as a JSON array of numbers by serde). Note: the
-    /// existing `EnclaveClient` in `base-enclave-client` deserializes as `Bytes` for the
-    /// same methods — that appears to be a mismatch on the client side, not here.
+    /// Uses the generated [`EnclaveApiClient`] trait from `base-proof-primitives`,
+    /// which ensures the method name and return type (`Vec<u8>`) match the server's
+    /// `EnclaveApi` trait at compile time.
     pub async fn signer_public_key(&self) -> Result<Vec<u8>> {
         debug!(endpoint = %self.endpoint, "fetching signer public key");
-        self.inner.request::<Vec<u8>, _>("enclave_signerPublicKey", rpc_params![]).await.map_err(
-            |e| RegistrarError::ProverClient {
-                instance: self.endpoint.clone(),
-                source: Box::new(e),
-            },
-        )
+        self.inner.signer_public_key().await.map_err(|e| RegistrarError::ProverClient {
+            instance: self.endpoint.clone(),
+            source: Box::new(e),
+        })
     }
 
     /// Fetches the raw Nitro attestation document via `enclave_signerAttestation`.
     pub async fn signer_attestation(&self) -> Result<Vec<u8>> {
         debug!(endpoint = %self.endpoint, "fetching signer attestation");
-        self.inner.request::<Vec<u8>, _>("enclave_signerAttestation", rpc_params![]).await.map_err(
-            |e| RegistrarError::ProverClient {
-                instance: self.endpoint.clone(),
-                source: Box::new(e),
-            },
-        )
+        self.inner.signer_attestation().await.map_err(|e| RegistrarError::ProverClient {
+            instance: self.endpoint.clone(),
+            source: Box::new(e),
+        })
     }
 
     /// Derives an Ethereum [`Address`] from a SEC1-encoded public key.
@@ -110,17 +102,15 @@ impl ProverClient {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
+    use hex_literal::hex;
     use k256::ecdsa::SigningKey;
     use rstest::rstest;
 
     use super::*;
 
     /// Well-known Hardhat / Anvil account #0 private key.
-    const HARDHAT_PRIVATE_KEY: [u8; 32] = [
-        0xac, 0x09, 0x74, 0xbe, 0xc3, 0x9a, 0x17, 0xe3, 0x6b, 0xa4, 0xa6, 0xb4, 0xd2, 0x38, 0xff,
-        0x94, 0x4b, 0xac, 0xb4, 0x78, 0xcb, 0xed, 0x5e, 0xfc, 0xae, 0x78, 0x4d, 0x7b, 0xf4, 0xf2,
-        0xff, 0x80,
-    ];
+    const HARDHAT_PRIVATE_KEY: [u8; 32] =
+        hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
     /// Returns the 65-byte uncompressed public key for the Hardhat account #0.
     fn hardhat_public_key() -> Vec<u8> {

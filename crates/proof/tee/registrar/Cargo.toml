@@ -26,7 +26,8 @@ aws-sdk-elasticloadbalancingv2.workspace = true
 k256.workspace = true
 
 # RPC
-jsonrpsee = { workspace = true, features = ["http-client"] }
+jsonrpsee = { workspace = true, features = ["http-client", "server"] }
+base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
 # Async
 async-trait.workspace = true
@@ -41,6 +42,7 @@ tracing.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+hex-literal.workspace = true
 rstest.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
