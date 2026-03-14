@@ -46,42 +46,41 @@ impl std::fmt::Debug for SigningConfig {
     }
 }
 
+/// AWS ALB target group discovery configuration.
+///
+/// Contains the parameters needed to construct an [`AwsTargetGroupDiscovery`]
+/// at runtime. The SDK clients are built separately from these values.
+///
+/// [`AwsTargetGroupDiscovery`]: crate::AwsTargetGroupDiscovery
+#[derive(Clone, Debug)]
+pub struct AwsDiscoveryConfig {
+    /// AWS ALB target group ARN for prover instance discovery.
+    pub target_group_arn: String,
+    /// AWS region (e.g. `"us-east-1"`).
+    pub aws_region: String,
+    /// JSON-RPC port to poll on each prover instance.
+    pub port: u16,
+}
+
 /// Discovery backend configuration.
 ///
-/// Selected at startup via `--discovery-mode`. Only the fields of the active
-/// variant are required; unused variant fields are never read.
+/// Selected at startup via `--discovery-mode`. Only the active variant's
+/// parameters are required; unused variant fields are never read.
 #[derive(Clone, Debug)]
 pub enum DiscoveryConfig {
     /// K8s `StatefulSet` DNS enumeration (preferred).
     ///
-    /// Discovers pods by iterating `0..replicas` and constructing deterministic
-    /// DNS names (`{name}-{i}.{svc}.{ns}.svc.cluster.local:{port}`).
-    /// No AWS API calls required.
-    K8s {
-        /// K8s `StatefulSet` name (e.g. `"prover"`).
-        statefulset_name: String,
-        /// Headless Service name used for pod DNS (e.g. `"prover-headless"`).
-        service_name: String,
-        /// Namespace of the prover `StatefulSet` (e.g. `"provers"`).
-        namespace: String,
-        /// Number of `StatefulSet` replicas to enumerate.
-        replicas: usize,
-        /// JSON-RPC port to poll on each prover pod.
-        port: u16,
-    },
+    /// Wraps [`K8sStatefulSetDiscovery`] directly — no duplicate fields.
+    ///
+    /// [`K8sStatefulSetDiscovery`]: crate::K8sStatefulSetDiscovery
+    K8s(crate::K8sStatefulSetDiscovery),
     /// AWS ALB target group polling (fallback).
     ///
-    /// Discovers instances via `describe_target_health` + `describe_instances`.
-    /// Supports the `Initial` warm-up window so new instances are registered
-    /// before the ALB health check completes.
-    Aws {
-        /// AWS ALB target group ARN for prover instance discovery.
-        target_group_arn: String,
-        /// AWS region (e.g. `"us-east-1"`).
-        aws_region: String,
-        /// JSON-RPC port to poll on each prover instance.
-        port: u16,
-    },
+    /// Wraps [`AwsDiscoveryConfig`] with the connection parameters needed to
+    /// construct an [`AwsTargetGroupDiscovery`] at runtime.
+    ///
+    /// [`AwsTargetGroupDiscovery`]: crate::AwsTargetGroupDiscovery
+    Aws(AwsDiscoveryConfig),
 }
 
 /// Boundless Network configuration for ZK proof generation.

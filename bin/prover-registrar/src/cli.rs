@@ -5,8 +5,8 @@ use std::time::Duration;
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use base_proof_tee_registrar::{
-    BoundlessConfig, DiscoveryConfig, RegistrarConfig, RegistrarError, RemoteSignerConfig,
-    SigningConfig,
+    AwsDiscoveryConfig, BoundlessConfig, DiscoveryConfig, K8sStatefulSetDiscovery, RegistrarConfig,
+    RegistrarError, RemoteSignerConfig, SigningConfig,
 };
 use clap::{ArgGroup, Args, Parser, ValueEnum};
 use url::Url;
@@ -200,13 +200,13 @@ impl Cli {
                         "--prover-replicas must be greater than 0".into(),
                     ));
                 }
-                DiscoveryConfig::K8s {
+                DiscoveryConfig::K8s(K8sStatefulSetDiscovery::new(
                     statefulset_name,
                     service_name,
                     namespace,
                     replicas,
-                    port: self.prover_port,
-                }
+                    self.prover_port,
+                ))
             }
             DiscoveryMode::Aws => {
                 let target_group_arn = self.target_group_arn.ok_or_else(|| {
@@ -217,7 +217,11 @@ impl Cli {
                 let aws_region = self.aws_region.ok_or_else(|| {
                     RegistrarError::Config("--aws-region is required for aws discovery mode".into())
                 })?;
-                DiscoveryConfig::Aws { target_group_arn, aws_region, port: self.prover_port }
+                DiscoveryConfig::Aws(AwsDiscoveryConfig {
+                    target_group_arn,
+                    aws_region,
+                    port: self.prover_port,
+                })
             }
         };
 
@@ -387,13 +391,13 @@ mod tests {
     #[test]
     fn into_config_k8s_returns_k8s_discovery() {
         let config = Cli::parse_from(base_args()).into_config().unwrap();
-        assert!(matches!(config.discovery, DiscoveryConfig::K8s { .. }));
+        assert!(matches!(config.discovery, DiscoveryConfig::K8s(_)));
     }
 
     #[test]
     fn into_config_aws_returns_aws_discovery() {
         let config = Cli::parse_from(aws_args()).into_config().unwrap();
-        assert!(matches!(config.discovery, DiscoveryConfig::Aws { .. }));
+        assert!(matches!(config.discovery, DiscoveryConfig::Aws(_)));
     }
 
     #[test]
@@ -575,31 +579,16 @@ mod tests {
     }
 
     #[test]
-    fn k8s_discovery_config_fields() {
-        let config = Cli::parse_from(base_args()).into_config().unwrap();
-        let DiscoveryConfig::K8s { statefulset_name, service_name, namespace, replicas, port } =
-            config.discovery
-        else {
-            panic!("expected K8s discovery config");
-        };
-        assert_eq!(statefulset_name, "prover");
-        assert_eq!(service_name, "prover-headless");
-        assert_eq!(namespace, "provers");
-        assert_eq!(replicas, 4);
-        assert_eq!(port, 8000);
-    }
-
-    #[test]
     fn aws_discovery_config_fields() {
         let config = Cli::parse_from(aws_args()).into_config().unwrap();
-        let DiscoveryConfig::Aws { target_group_arn, aws_region, port } = config.discovery else {
+        let DiscoveryConfig::Aws(aws) = config.discovery else {
             panic!("expected Aws discovery config");
         };
         assert_eq!(
-            target_group_arn,
+            aws.target_group_arn,
             "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123"
         );
-        assert_eq!(aws_region, "us-east-1");
-        assert_eq!(port, 8000);
+        assert_eq!(aws.aws_region, "us-east-1");
+        assert_eq!(aws.port, 8000);
     }
 }

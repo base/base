@@ -54,60 +54,29 @@ impl InstanceHealthStatus {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
-    #[test]
-    fn healthy_should_register() {
-        assert!(InstanceHealthStatus::Healthy.should_register());
+    #[rstest]
+    #[case::initial(InstanceHealthStatus::Initial, true)]
+    #[case::healthy(InstanceHealthStatus::Healthy, true)]
+    #[case::unhealthy(InstanceHealthStatus::Unhealthy, false)]
+    #[case::draining(InstanceHealthStatus::Draining, false)]
+    fn should_register(#[case] status: InstanceHealthStatus, #[case] expected: bool) {
+        assert_eq!(status.should_register(), expected);
     }
 
-    #[test]
-    fn initial_should_register() {
-        assert!(InstanceHealthStatus::Initial.should_register());
-    }
-
-    #[test]
-    fn unhealthy_should_not_register() {
-        assert!(!InstanceHealthStatus::Unhealthy.should_register());
-    }
-
-    #[test]
-    fn draining_should_not_register() {
-        assert!(!InstanceHealthStatus::Draining.should_register());
-    }
-
-    #[test]
-    fn from_aws_state_initial() {
-        assert_eq!(InstanceHealthStatus::from_aws_state("initial"), InstanceHealthStatus::Initial);
-    }
-
-    #[test]
-    fn from_aws_state_healthy() {
-        assert_eq!(InstanceHealthStatus::from_aws_state("healthy"), InstanceHealthStatus::Healthy);
-    }
-
-    #[test]
-    fn from_aws_state_draining() {
-        assert_eq!(
-            InstanceHealthStatus::from_aws_state("draining"),
-            InstanceHealthStatus::Draining
-        );
-    }
-
-    #[test]
-    fn from_aws_state_unhealthy() {
-        assert_eq!(
-            InstanceHealthStatus::from_aws_state("unhealthy"),
-            InstanceHealthStatus::Unhealthy
-        );
-    }
-
-    #[test]
-    fn from_aws_state_unknown_maps_to_unhealthy() {
-        assert_eq!(
-            InstanceHealthStatus::from_aws_state("unavailable"),
-            InstanceHealthStatus::Unhealthy
-        );
+    #[rstest]
+    #[case::initial("initial", InstanceHealthStatus::Initial)]
+    #[case::healthy("healthy", InstanceHealthStatus::Healthy)]
+    #[case::draining("draining", InstanceHealthStatus::Draining)]
+    #[case::unhealthy("unhealthy", InstanceHealthStatus::Unhealthy)]
+    #[case::unavailable("unavailable", InstanceHealthStatus::Unhealthy)]
+    #[case::empty("", InstanceHealthStatus::Unhealthy)]
+    #[case::bogus("bogus", InstanceHealthStatus::Unhealthy)]
+    fn from_aws_state(#[case] input: &str, #[case] expected: InstanceHealthStatus) {
+        assert_eq!(InstanceHealthStatus::from_aws_state(input), expected);
     }
 }
 
