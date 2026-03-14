@@ -5,7 +5,7 @@
 //! queue order because [`TxManager::send_async`] is called on the caller's
 //! task before spawning a background completion task.
 
-use std::sync::Arc;
+use std::{num::NonZeroUsize, sync::Arc};
 
 use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
 use tracing::debug;
@@ -37,11 +37,8 @@ impl<M: TxManager + 'static> TxQueue<M> {
     ///
     /// `max_pending` controls how many transactions may be in-flight at once.
     /// `None` means unlimited (no backpressure).
-    pub fn new(tx_mgr: Arc<M>, max_pending: Option<usize>) -> Self {
-        if max_pending == Some(0) {
-            panic!("max_pending must be > 0 or None for unlimited");
-        }
-        let permits = max_pending.unwrap_or(Semaphore::MAX_PERMITS);
+    pub fn new(tx_mgr: Arc<M>, max_pending: Option<NonZeroUsize>) -> Self {
+        let permits = max_pending.map(|n| n.get()).unwrap_or(Semaphore::MAX_PERMITS);
         debug!(max_pending = permits, "tx queue created");
         Self { tx_mgr, semaphore: Arc::new(Semaphore::new(permits)) }
     }
@@ -56,11 +53,12 @@ impl<M: TxManager + 'static> TxQueue<M> {
     ///
     /// # Warning: not cancellation-safe
     ///
-    /// This future **must not** be used inside `tokio::select!`. If dropped
-    /// after [`TxManager::send_async`] has been called but before the
-    /// background task delivers a result, the nonce is managed by the
-    /// underlying `TxManager` (returned to the pool on error), but the
-    /// result will never be delivered to `result_tx`.
+    /// This future **must not** be dropped after polling begins — do not use
+    /// it inside `tokio::select!`, `tokio::time::timeout`,
+    /// `FuturesUnordered`, or any combinator that may drop in-progress
+    /// futures. If dropped after [`TxManager::send_async`] has been called
+    /// but before the background task is spawned, a nonce is consumed and
+    /// the result will never be delivered to `result_tx`.
     pub async fn send<T: Send + 'static>(
         &self,
         id: T,
@@ -87,8 +85,12 @@ impl<M: TxManager + 'static> TxQueue<M> {
     ///
     /// # Warning: not cancellation-safe
     ///
-    /// Same as [`send`](Self::send) — not cancellation-safe once dispatch
-    /// begins.
+    /// This future **must not** be dropped after polling begins — do not use
+    /// it inside `tokio::select!`, `tokio::time::timeout`,
+    /// `FuturesUnordered`, or any combinator that may drop in-progress
+    /// futures. If dropped after [`TxManager::send_async`] has been called
+    /// but before the background task is spawned, a nonce is consumed and
+    /// the result will never be delivered to `result_tx`.
     pub async fn try_send<T: Send + 'static>(
         &self,
         id: T,
@@ -263,7 +265,7 @@ mod tests {
         let mgr = Arc::new(GatedMockTxManager::new(3));
         let (result_tx, mut result_rx) = mpsc::channel::<SendResult<u64>>(16);
 
-        let queue = Arc::new(TxQueue::new(Arc::clone(&mgr), Some(2)));
+        let queue = Arc::new(TxQueue::new(Arc::clone(&mgr), Some(NonZeroUsize::new(2).unwrap())));
 
         // First two sends should proceed immediately.
         queue.send(1, stub_candidate(), result_tx.clone()).await;
@@ -272,14 +274,19 @@ mod tests {
         // Third send should block because both permits are held.
         let queue_clone = Arc::clone(&queue);
         let result_tx_clone = result_tx.clone();
-        let blocked = tokio::spawn(async move {
+        let mut blocked = tokio::spawn(async move {
             // This will not return until a permit is freed.
             queue_clone.send(3, stub_candidate(), result_tx_clone).await;
         });
 
-        // Yield to let the spawned task reach the semaphore.
-        tokio::task::yield_now().await;
-        assert!(!blocked.is_finished(), "third send should be blocked");
+        // On current_thread, yield_now deterministically advances the spawned
+        // task to its semaphore await. Use a short timeout as a safety net.
+        let timeout_result = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            &mut blocked,
+        )
+        .await;
+        assert!(timeout_result.is_err(), "third send should be blocked");
 
         // Complete the first transaction — frees a permit.
         mgr.complete(0);
@@ -298,10 +305,10 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn try_send_returns_err_when_full() {
-        let mgr = Arc::new(GatedMockTxManager::new(4));
+        let mgr = Arc::new(GatedMockTxManager::new(3));
         let (result_tx, mut result_rx) = mpsc::channel::<SendResult<u64>>(16);
 
-        let queue = TxQueue::new(Arc::clone(&mgr), Some(2));
+        let queue = TxQueue::new(Arc::clone(&mgr), Some(NonZeroUsize::new(2).unwrap()));
 
         assert!(queue.try_send(1, stub_candidate(), result_tx.clone()).await.is_ok());
         assert!(queue.try_send(2, stub_candidate(), result_tx.clone()).await.is_ok());
@@ -315,18 +322,9 @@ mod tests {
         mgr.complete(0);
         let _ = result_rx.recv().await;
 
-        // Wait for the permit to be released by the spawned task.
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(1);
-        loop {
-            tokio::task::yield_now().await;
-            if queue.try_send(4, stub_candidate(), result_tx.clone()).await.is_ok() {
-                break;
-            }
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "permit was not released within 1s",
-            );
-        }
+        // The permit was released before the result was sent (see `dispatch`),
+        // so a slot is guaranteed to be free by the time we receive the result.
+        assert!(queue.try_send(4, stub_candidate(), result_tx.clone()).await.is_ok());
 
         // Cleanup.
         mgr.complete(1);
@@ -338,7 +336,7 @@ mod tests {
         let mgr = Arc::new(MockTxManager::new());
         let (result_tx, mut result_rx) = mpsc::channel::<SendResult<String>>(16);
 
-        let queue = TxQueue::new(mgr, Some(10));
+        let queue = TxQueue::new(mgr, Some(NonZeroUsize::new(10).unwrap()));
 
         let ids = ["alpha", "beta", "gamma"];
         for id in &ids {
@@ -383,7 +381,7 @@ mod tests {
         let (result_tx, mut result_rx) = mpsc::channel::<SendResult<u64>>(16);
 
         // Only one permit — if the error doesn't release it, the second send hangs.
-        let queue = TxQueue::new(Arc::clone(&mgr), Some(1));
+        let queue = TxQueue::new(Arc::clone(&mgr), Some(NonZeroUsize::new(1).unwrap()));
 
         // First send: should resolve to an error.
         queue.send(1, stub_candidate(), result_tx.clone()).await;
@@ -400,10 +398,4 @@ mod tests {
         assert_eq!(second.result.unwrap_err(), TxManagerError::NonceTooLow);
     }
 
-    #[test]
-    #[should_panic(expected = "max_pending must be > 0")]
-    fn max_pending_zero_panics() {
-        let mgr = Arc::new(MockTxManager::new());
-        let _ = TxQueue::new(mgr, Some(0));
-    }
 }
