@@ -24,7 +24,8 @@ use crate::{
 const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "Esc", description: "Back to home" },
     Keybinding { key: "?", description: "Toggle help" },
-    Keybinding { key: "↑/k ↓/j", description: "Navigate" },
+    Keybinding { key: "↑/k", description: "Move up" },
+    Keybinding { key: "↓/j", description: "Move down" },
     Keybinding { key: "g/G", description: "Top/Bottom" },
     Keybinding { key: "←/h →/l", description: "Switch panel" },
     Keybinding { key: "Tab", description: "Next panel" },

@@ -109,11 +109,6 @@ impl ToastState {
         self.toasts.push(toast);
     }
 
-    /// Returns true if any active toast has the given message.
-    pub(crate) fn contains_message(&self, message: &str) -> bool {
-        self.toasts.iter().any(|t| t.message == message)
-    }
-
     /// Removes all active toasts with the given message.
     pub(crate) fn dismiss_message(&mut self, message: &str) {
         self.toasts.retain(|t| t.message != message);

@@ -8,7 +8,7 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
 use anyhow::Result;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_flashblocks::Flashblock;
-use base_alloy_network::{Base, ReceiptResponse, TransactionResponse};
+use base_alloy_network::{Base, TransactionResponse};
 use futures::{StreamExt, stream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
@@ -514,20 +514,6 @@ pub(crate) struct TxSummary {
     pub effective_priority_fee_per_gas: Option<u128>,
     /// Block base fee per gas, in wei.
     pub base_fee_per_gas: Option<u64>,
-    /// Gas used by this transaction, if available.
-    pub gas_used: Option<u64>,
-    /// Whether this transaction is known to have reverted.
-    pub reverted: Option<bool>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct TxReceiptFields {
-    /// Gas used by this transaction.
-    pub gas_used: u64,
-    /// Effective gas price paid by this transaction, in wei.
-    pub effective_gas_price: u128,
-    /// Whether the transaction succeeded.
-    pub success: bool,
 }
 
 /// Decodes raw EIP-2718 encoded transaction bytes into summaries.
@@ -561,131 +547,16 @@ pub(crate) fn decode_flashblock_transactions(
                 to,
                 effective_priority_fee_per_gas: effective_priority_fee.or(max_priority_fee),
                 base_fee_per_gas,
-                gas_used: None,
-                reverted: None,
             })
         })
         .collect()
-}
-
-async fn fetch_receipt_fields_by_hashes<P: Provider<Base>>(
-    provider: Arc<P>,
-    block_number: u64,
-    block_hash: B256,
-    tx_hashes: Vec<B256>,
-) -> std::collections::HashMap<B256, TxReceiptFields> {
-    match provider.get_block_receipts(block_hash.into()).await {
-        Ok(Some(receipts)) => {
-            return receipts
-                .into_iter()
-                .map(|receipt| {
-                    (
-                        receipt.transaction_hash(),
-                        TxReceiptFields {
-                            gas_used: receipt.gas_used(),
-                            effective_gas_price: receipt.effective_gas_price(),
-                            success: receipt.status(),
-                        },
-                    )
-                })
-                .collect();
-        }
-        Ok(None) => {
-            warn!(
-                block = block_number,
-                "block receipts not found; falling back to per-transaction receipts"
-            );
-        }
-        Err(e) => {
-            warn!(
-                error = %e,
-                block = block_number,
-                "failed to fetch block receipts; falling back to per-transaction receipts"
-            );
-        }
-    }
-
-    let mut receipt_fields_by_hash = std::collections::HashMap::with_capacity(tx_hashes.len());
-
-    let mut receipt_stream = stream::iter(tx_hashes.into_iter().map(|hash| {
-        let provider = Arc::clone(&provider);
-        async move { (hash, provider.get_transaction_receipt(hash).await) }
-    }))
-    .buffer_unordered(CONCURRENT_BLOCK_FETCHES);
-
-    while let Some((hash, receipt_result)) = receipt_stream.next().await {
-        match receipt_result {
-            Ok(Some(receipt)) => {
-                receipt_fields_by_hash.insert(
-                    hash,
-                    TxReceiptFields {
-                        gas_used: receipt.gas_used(),
-                        effective_gas_price: receipt.effective_gas_price(),
-                        success: receipt.status(),
-                    },
-                );
-            }
-            Ok(None) => {}
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    block = block_number,
-                    tx_hash = %format_args!("{hash:#x}"),
-                    "failed to fetch transaction receipt"
-                );
-            }
-        }
-    }
-
-    receipt_fields_by_hash
-}
-
-/// Fetches per-transaction gas used for a block keyed by transaction hash.
-pub(crate) async fn fetch_block_transaction_gas(
-    l2_rpc: String,
-    block_number: u64,
-    tx: mpsc::Sender<Vec<(B256, TxReceiptFields)>>,
-) {
-    let result = async {
-        let provider = Arc::new(
-            ProviderBuilder::new()
-                .disable_recommended_fillers()
-                .network::<Base>()
-                .connect(&l2_rpc)
-                .await?,
-        );
-
-        let block = provider
-            .get_block_by_number(BlockNumberOrTag::Number(block_number))
-            .full()
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Block {block_number} not found"))?;
-
-        let tx_hashes = block.transactions.txns().map(|tx| tx.inner.tx_hash()).collect();
-        let receipt_fields_by_hash =
-            fetch_receipt_fields_by_hashes(provider, block_number, block.header.hash, tx_hashes)
-                .await;
-
-        Ok::<_, anyhow::Error>(receipt_fields_by_hash)
-    }
-    .await;
-
-    match result {
-        Ok(receipt_fields_by_hash) => {
-            let _ = tx.send(receipt_fields_by_hash.into_iter().collect()).await;
-        }
-        Err(e) => {
-            warn!(error = %e, block = block_number, "failed to fetch block transaction gas");
-            let _ = tx.send(Vec::new()).await;
-        }
-    }
 }
 
 /// Fetches all transactions for a given block and sends summaries through the channel.
 pub(crate) async fn fetch_block_transactions(
     l2_rpc: String,
     block_number: u64,
-    tx: mpsc::Sender<Vec<TxSummary>>,
+    tx: mpsc::Sender<Result<Vec<TxSummary>, String>>,
 ) {
     let result = async {
         let provider = Arc::new(
@@ -703,39 +574,21 @@ pub(crate) async fn fetch_block_transactions(
             .ok_or_else(|| anyhow::anyhow!("Block {block_number} not found"))?;
 
         let base_fee = block.header.base_fee_per_gas;
-        let tx_hashes = block.transactions.txns().map(|tx| tx.inner.tx_hash()).collect();
-        let receipt_fields_by_hash =
-            fetch_receipt_fields_by_hashes(provider, block_number, block.header.hash, tx_hashes)
-                .await;
 
         let summaries: Vec<TxSummary> = block
             .transactions
             .txns()
-            .map(|tx_obj| {
-                let hash = tx_obj.inner.tx_hash();
-                let receipt_fields = receipt_fields_by_hash.get(&hash).copied();
-                TxSummary {
-                    hash,
-                    from: tx_obj.inner.inner.signer(),
-                    to: tx_obj.inner.to(),
-                    effective_priority_fee_per_gas: receipt_fields
-                        .map(|receipt| {
-                            receipt
-                                .effective_gas_price
-                                .saturating_sub(base_fee.map(u128::from).unwrap_or_default())
-                        })
-                        .or_else(|| {
-                            Some(
-                                tx_obj
-                                    .inner
-                                    .effective_gas_price(base_fee)
-                                    .saturating_sub(base_fee.map(u128::from).unwrap_or_default()),
-                            )
-                        }),
-                    base_fee_per_gas: base_fee,
-                    gas_used: receipt_fields.map(|receipt| receipt.gas_used),
-                    reverted: receipt_fields.map(|receipt| !receipt.success),
-                }
+            .map(|tx_obj| TxSummary {
+                hash: tx_obj.inner.tx_hash(),
+                from: tx_obj.inner.inner.signer(),
+                to: tx_obj.inner.to(),
+                effective_priority_fee_per_gas: Some(
+                    tx_obj
+                        .inner
+                        .effective_gas_price(base_fee)
+                        .saturating_sub(base_fee.map(u128::from).unwrap_or_default()),
+                ),
+                base_fee_per_gas: base_fee,
             })
             .collect();
 
@@ -745,11 +598,11 @@ pub(crate) async fn fetch_block_transactions(
 
     match result {
         Ok(summaries) => {
-            let _ = tx.send(summaries).await;
+            let _ = tx.send(Ok(summaries)).await;
         }
         Err(e) => {
             warn!(error = %e, block = block_number, "failed to fetch block transactions");
-            let _ = tx.send(Vec::new()).await;
+            let _ = tx.send(Err(e.to_string())).await;
         }
     }
 }

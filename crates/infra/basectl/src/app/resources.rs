@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use base_alloy_flashblocks::Flashblock;
 use base_consensus_genesis::SystemConfig;
@@ -12,6 +12,7 @@ use crate::{
 };
 
 const MAX_FLASH_BLOCKS: usize = 30;
+const MAX_RECENT_DA_FLASHBLOCK_IDS: usize = 512;
 
 /// Shared resources available to all TUI views.
 #[derive(Debug)]
@@ -42,6 +43,8 @@ pub(crate) struct DaState {
     pub l1_connection_mode: Option<L1ConnectionMode>,
     buffered_flashblocks: Vec<Flashblock>,
     buffered_safe_heads: Vec<u64>,
+    recent_flashblock_ids: VecDeque<(u64, u64)>,
+    recent_flashblock_id_set: HashSet<(u64, u64)>,
     fb_rx: Option<mpsc::Receiver<Flashblock>>,
     sync_rx: Option<mpsc::Receiver<u64>>,
     backlog_rx: Option<mpsc::Receiver<BacklogFetchResult>>,
@@ -119,6 +122,8 @@ impl DaState {
             l1_connection_mode: None,
             buffered_flashblocks: Vec::new(),
             buffered_safe_heads: Vec::new(),
+            recent_flashblock_ids: VecDeque::with_capacity(MAX_RECENT_DA_FLASHBLOCK_IDS),
+            recent_flashblock_id_set: HashSet::with_capacity(MAX_RECENT_DA_FLASHBLOCK_IDS),
             fb_rx: None,
             sync_rx: None,
             backlog_rx: None,
@@ -194,6 +199,9 @@ impl DaState {
             .unwrap_or_default();
 
         for fb in flashblocks {
+            if !self.remember_flashblock_id(fb.metadata.block_number, fb.index) {
+                continue;
+            }
             if self.loaded {
                 self.process_flashblock(&fb);
             } else {
@@ -247,6 +255,22 @@ impl DaState {
         for safe_block in std::mem::take(&mut self.buffered_safe_heads) {
             self.tracker.update_safe_head(safe_block);
         }
+    }
+
+    fn remember_flashblock_id(&mut self, block_number: u64, index: u64) -> bool {
+        let id = (block_number, index);
+        if !self.recent_flashblock_id_set.insert(id) {
+            return false;
+        }
+
+        self.recent_flashblock_ids.push_back(id);
+        if self.recent_flashblock_ids.len() > MAX_RECENT_DA_FLASHBLOCK_IDS
+            && let Some(evicted) = self.recent_flashblock_ids.pop_front()
+        {
+            self.recent_flashblock_id_set.remove(&evicted);
+        }
+
+        true
     }
 
     fn process_flashblock(&mut self, fb: &Flashblock) {
@@ -438,5 +462,15 @@ mod tests {
         assert!(!state.loaded);
         assert_eq!(state.tracker.l1_blocks.len(), 1);
         assert_eq!(state.tracker.l1_blocks.front().unwrap().block_number, 123);
+    }
+
+    #[test]
+    fn deduplicates_replayed_flashblock_ids() {
+        let mut state = DaState::new();
+
+        assert!(state.remember_flashblock_id(100, 0));
+        assert!(!state.remember_flashblock_id(100, 0));
+        assert!(state.remember_flashblock_id(100, 1));
+        assert!(!state.remember_flashblock_id(100, 1));
     }
 }
