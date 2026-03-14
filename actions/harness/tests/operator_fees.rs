@@ -165,7 +165,7 @@ fn operator_fee_encoded_in_l1_info_post_isthmus() {
 /// The first Isthmus block uses the old format because `L1BlockInfoTx::try_new`
 /// has an `!is_first_isthmus_block` guard: when the guard fires the code falls
 /// through to the `Ecotone` branch. This allows the Isthmus upgrade deposit
-/// transactions (injected by the derivation pipeline) to update the L1Block
+/// transactions (injected by the derivation pipeline) to update the `L1Block`
 /// contract before the new calldata format is consumed — exactly the same
 /// mechanism as the Ecotone/Bedrock transition. From the second Isthmus block
 /// onwards the `Isthmus` format is used and operator fee fields are populated.
@@ -268,7 +268,7 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
 /// Isthmus transition: `L1BlockInfoTx::try_new` has a `!is_first_jovian_block`
 /// guard that, when triggered, skips the Jovian branch and falls through to the
 /// Isthmus branch (which fires because `is_isthmus_active` is true). The upgrade
-/// deposits update the L1Block contract in that same block; from the second
+/// deposits update the `L1Block` contract in that same block; from the second
 /// Jovian block onwards the `Jovian` format is used.
 ///
 /// Additionally, the first Jovian block must contain no user transactions —
@@ -457,7 +457,7 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
 /// block, and the derivation pipeline generates a deposit-only default block
 /// for that slot instead.
 ///
-/// The first Jovian block (ts=6, block 3 with block_time=2) must contain no
+/// The first Jovian block (ts=6, block 3 with `block_time=2`) must contain no
 /// user transactions. The batch validator enforces `NonEmptyTransitionBlock`:
 /// any batch with user transactions at the Jovian upgrade slot is dropped.
 /// When the sequencing window expires with no valid batch remaining for the
@@ -631,7 +631,7 @@ fn operator_fee_update_log(
 /// log in L1 block N is invisible to the attributes builder until the first L2
 /// block whose epoch advances to N.
 ///
-/// With L1 block_time=12 s and L2 block_time=2 s, six L2 blocks fit in one L1
+/// With L1 `block_time=12` s and L2 `block_time=2` s, six L2 blocks fit in one L1
 /// epoch (genesis counts as block 0). The sequencer advances the epoch when
 /// `next_l1.timestamp <= next_l2.timestamp`. L1 block 1 has ts=12, so the
 /// epoch transitions at L2 block 6 (ts=12):
