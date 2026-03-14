@@ -491,7 +491,7 @@ async fn query_receipt_returns_error_on_unreachable_provider() {
 
 /// Sequential `send_async()` calls receive monotonically increasing nonces,
 /// regardless of tokio task scheduling order.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn send_async_preserves_call_order_nonces() {
     let (manager, _anvil) = setup_with_config(fast_send_config()).await;
 

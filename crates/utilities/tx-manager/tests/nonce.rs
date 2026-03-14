@@ -278,3 +278,80 @@ async fn reserve_nonce_consumes_and_increments() {
     let guard = manager.next_nonce().await.expect("next_nonce after reserves");
     assert_eq!(guard.nonce(), 3);
 }
+
+// ── high-water mark tests ─────────────────────────────────────────
+
+#[tokio::test]
+async fn consume_reserved_sets_high_water_mark() {
+    let (manager, _anvil) = setup();
+
+    // Reserve nonce 0 — sets high-water mark to 1.
+    let n = manager.reserve_nonce().await.expect("should reserve nonce 0");
+    assert_eq!(n, 0);
+
+    // Reset clears the cache; chain returns 0 since no tx was sent.
+    // But the high-water mark ensures we skip past nonce 0.
+    manager.reset().await;
+    let guard = manager.next_nonce().await.expect("should get nonce after reset");
+    assert_eq!(guard.nonce(), 1, "high-water mark should prevent reuse of reserved nonce 0");
+}
+
+#[tokio::test]
+async fn high_water_mark_tracks_highest_reservation() {
+    let (manager, _anvil) = setup();
+
+    // Reserve nonces 0, 1, 2 — high-water mark advances to 3.
+    for expected in 0..3u64 {
+        let n = manager.reserve_nonce().await.expect("should reserve nonce");
+        assert_eq!(n, expected);
+    }
+
+    // Reset and verify next nonce skips past all reserved nonces.
+    manager.reset().await;
+    let guard = manager.next_nonce().await.expect("should get nonce after reset");
+    assert_eq!(guard.nonce(), 3, "next nonce after reset should skip past all reserved nonces");
+}
+
+#[tokio::test]
+async fn high_water_mark_no_op_when_cache_ahead() {
+    let (manager, _anvil) = setup();
+
+    // Reserve nonce 0 — high-water mark is 1.
+    let n = manager.reserve_nonce().await.expect("should reserve nonce 0");
+    assert_eq!(n, 0);
+
+    // Advance the cache past the high-water mark via next_nonce.
+    let g1 = manager.next_nonce().await.expect("nonce 1");
+    assert_eq!(g1.nonce(), 1);
+    drop(g1);
+    let g2 = manager.next_nonce().await.expect("nonce 2");
+    assert_eq!(g2.nonce(), 2);
+    drop(g2);
+
+    // Cache is at 3, high-water mark is 1. Next nonce should be 3 (no interference).
+    let g3 = manager.next_nonce().await.expect("nonce 3");
+    assert_eq!(g3.nonce(), 3, "high-water mark should not interfere when cache is ahead");
+}
+
+#[tokio::test]
+async fn reserve_nonce_protects_against_reset_collision() {
+    let (manager, _anvil) = setup();
+
+    // Reserve nonces 0 and 1 (simulating two concurrent send_async calls).
+    let n0 = manager.reserve_nonce().await.expect("should reserve nonce 0");
+    let n1 = manager.reserve_nonce().await.expect("should reserve nonce 1");
+    assert_eq!(n0, 0);
+    assert_eq!(n1, 1);
+
+    // Simulate a concurrent send() failure triggering reset().
+    manager.reset().await;
+
+    // After reset, chain returns 0. But high-water mark (2) ensures
+    // next_nonce() returns >= 2, avoiding collision with reserved 0 and 1.
+    let guard = manager.next_nonce().await.expect("should get nonce after reset");
+    assert!(
+        guard.nonce() >= 2,
+        "nonce after reset must be >= 2 to avoid collision with reserved nonces, got {}",
+        guard.nonce(),
+    );
+}
