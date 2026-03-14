@@ -40,10 +40,8 @@ test-utils = [
 
 [dependencies]
 # workspace
-base-node-core.workspace = true
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
-base-engine-tree.workspace = true
 
 # reth
 reth-chain-state.workspace = true
