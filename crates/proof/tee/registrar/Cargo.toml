@@ -42,7 +42,7 @@ tracing.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-hex-literal.workspace = true
 rstest.workspace = true
+hex-literal.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
