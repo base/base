@@ -216,6 +216,14 @@ impl InstanceDiscovery for AwsTargetGroupDiscovery {
             })
             .collect();
 
+        // Warn about registerable instances that the EC2 call didn't return
+        // (e.g. terminated between the ELB and EC2 calls, or missing a private IP).
+        for (id, _) in targets.iter().filter(|(_, s)| s.should_register()) {
+            if !instance_ips.contains_key(id) {
+                warn!(instance_id = %id, "registerable instance missing from EC2 response, skipping");
+            }
+        }
+
         Ok(Self::assemble_prover_instances(&targets, &instance_ips, self.port))
     }
 }
