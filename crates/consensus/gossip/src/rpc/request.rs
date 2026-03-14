@@ -465,7 +465,7 @@ impl P2pRpcRequest {
                 banned_ips,
                 banned_subnets,
             }) {
-                warn!(target: "p2p::rpc", error = ?e, "Failed to send peer info through response channel");
+                warn!(target: "p2p::rpc", error = ?e, "Failed to send peer dump through response channel");
             }
         });
     }
