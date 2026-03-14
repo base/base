@@ -655,12 +655,33 @@ fn collect_sorted_transaction_prefixes<'a>(
     let mut running_transactions = Vec::with_capacity(total_tx_count);
 
     for flashblock in flashblocks {
-        running_transactions.extend(flashblock.transactions.iter().copied());
-        running_transactions.sort_by_key(|tx| Reverse(tx.priority_fee_per_gas));
+        running_transactions =
+            merge_transactions_desc(running_transactions, flashblock.transactions.as_slice());
         prefixes.push(running_transactions.clone());
     }
 
     prefixes
+}
+
+fn merge_transactions_desc<'a>(
+    existing: Vec<&'a MeteredTransaction>,
+    new_transactions: &[&'a MeteredTransaction],
+) -> Vec<&'a MeteredTransaction> {
+    let mut merged = Vec::with_capacity(existing.len() + new_transactions.len());
+    let mut existing_iter = existing.into_iter().peekable();
+    let mut new_iter = new_transactions.iter().copied().peekable();
+
+    while let (Some(existing_tx), Some(new_tx)) = (existing_iter.peek(), new_iter.peek()) {
+        if existing_tx.priority_fee_per_gas >= new_tx.priority_fee_per_gas {
+            merged.push(existing_iter.next().expect("peeked existing transaction"));
+        } else {
+            merged.push(new_iter.next().expect("peeked new transaction"));
+        }
+    }
+
+    merged.extend(existing_iter);
+    merged.extend(new_iter);
+    merged
 }
 
 /// Mirrors the builder's cumulative target math:
@@ -1401,6 +1422,45 @@ mod tests {
 
         let expected_max = gas_fee.max(exec_fee).max(da_fee);
         assert_eq!(result.priority_fee, expected_max);
+    }
+
+    #[test]
+    fn collect_sorted_transaction_prefixes_merges_each_flashblock_into_descending_prefixes() {
+        let tx_100 = tx(100, 1);
+        let tx_95 = tx(95, 1);
+        let tx_90 = tx(90, 1);
+        let tx_80 = tx(80, 1);
+        let tx_70 = tx(70, 1);
+        let tx_60 = tx(60, 1);
+
+        let flashblocks = vec![
+            FlashblockEstimateInput { flashblock_index: 1, transactions: vec![&tx_100, &tx_80] },
+            FlashblockEstimateInput { flashblock_index: 2, transactions: vec![&tx_90, &tx_70] },
+            FlashblockEstimateInput { flashblock_index: 3, transactions: vec![&tx_95, &tx_60] },
+        ];
+
+        let prefixes = collect_sorted_transaction_prefixes(&flashblocks);
+
+        let priorities: Vec<Vec<U256>> = prefixes
+            .iter()
+            .map(|prefix| prefix.iter().map(|tx| tx.priority_fee_per_gas).collect())
+            .collect();
+
+        assert_eq!(
+            priorities,
+            vec![
+                vec![U256::from(100), U256::from(80)],
+                vec![U256::from(100), U256::from(90), U256::from(80), U256::from(70)],
+                vec![
+                    U256::from(100),
+                    U256::from(95),
+                    U256::from(90),
+                    U256::from(80),
+                    U256::from(70),
+                    U256::from(60),
+                ],
+            ]
+        );
     }
 
     #[test]
