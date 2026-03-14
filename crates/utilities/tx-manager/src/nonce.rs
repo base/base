@@ -95,7 +95,7 @@ impl NonceManager {
             // Fast path: cache is populated — read-and-increment in a
             // single lock round-trip.
             if let Some(n) = guard.nonce {
-                return Self::reserve_nonce(guard, n);
+                return Self::advance_nonce(guard, n);
             }
 
             // Cache miss: snapshot the generation, then drop the lock so
@@ -144,7 +144,7 @@ impl NonceManager {
                 debug!(nonce = fetched, "nonce fetched from chain");
                 fetched
             });
-            return Self::reserve_nonce(guard, nonce);
+            return Self::advance_nonce(guard, nonce);
         }
 
         warn!(attempts = Self::MAX_RETRY_ATTEMPTS, "nonce acquisition failed after max retries",);
@@ -157,7 +157,7 @@ impl NonceManager {
     /// Both the fast path (cache hit) and Phase 3 (after RPC fetch) use
     /// this single call-site for the `checked_add` overflow check,
     /// ensuring consistent behavior.
-    fn reserve_nonce(
+    fn advance_nonce(
         mut guard: OwnedMutexGuard<NonceState>,
         nonce: u64,
     ) -> Result<NonceGuard, TxManagerError> {
@@ -165,6 +165,29 @@ impl NonceManager {
         guard.nonce = Some(next);
         debug!(nonce, "nonce reserved");
         Ok(NonceGuard { guard: Some(guard), nonce })
+    }
+
+    /// Reserves the next nonce and immediately releases the lock, returning
+    /// the raw `u64` value.
+    ///
+    /// Unlike [`next_nonce`](Self::next_nonce), this method does **not** hold
+    /// the mutex for the lifetime of a guard — it acquires, increments, and
+    /// releases in a single call. This makes the reserved nonce irrevocable:
+    /// there is no [`NonceGuard`] to roll back on failure.
+    ///
+    /// This is used by [`send_async`](crate::SimpleTxManager::send_async) to
+    /// pre-assign nonces **before** `tokio::spawn`, guaranteeing that
+    /// sequential `send_async()` calls receive monotonically increasing nonces
+    /// regardless of task scheduling order.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`next_nonce`](Self::next_nonce).
+    pub async fn reserve_nonce(&self) -> Result<u64, TxManagerError> {
+        let guard = self.next_nonce().await?;
+        let nonce = guard.nonce();
+        drop(guard); // consume nonce, release lock
+        Ok(nonce)
     }
 
     /// Clears the cached nonce, forcing a fresh chain fetch on the next

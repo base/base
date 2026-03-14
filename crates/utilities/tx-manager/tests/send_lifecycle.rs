@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_consensus::SignableTransaction;
+use alloy_consensus::{SignableTransaction, Transaction};
 use alloy_network::{EthereumWallet, TxSigner};
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Address, B256, Signature, U256};
@@ -485,4 +485,50 @@ async fn query_receipt_returns_error_on_unreachable_provider() {
     .await;
 
     assert!(result.is_err(), "query_receipt should fail when provider is unreachable");
+}
+
+// ── send_async() nonce ordering ───────────────────────────────────────
+
+/// Sequential `send_async()` calls receive monotonically increasing nonces,
+/// regardless of tokio task scheduling order.
+#[tokio::test]
+async fn send_async_preserves_call_order_nonces() {
+    let (manager, _anvil) = setup_with_config(fast_send_config()).await;
+
+    let count = 5;
+    let mut handles = Vec::with_capacity(count);
+
+    // Call send_async sequentially — each call pre-reserves a nonce before
+    // spawning, so the nonce assignment matches call order.
+    for _ in 0..count {
+        let candidate = TxCandidate {
+            to: Some(Address::with_last_byte(0x42)),
+            value: U256::from(1u64),
+            gas_limit: 0,
+            ..Default::default()
+        };
+        handles.push(manager.send_async(candidate).await);
+    }
+
+    // Collect receipts (order may differ from send order).
+    let mut nonces: Vec<u64> = Vec::with_capacity(count);
+    for handle in handles {
+        let receipt = tokio::time::timeout(Duration::from_secs(30), handle)
+            .await
+            .expect("send_async should complete within 30 s")
+            .expect("send_async should succeed");
+
+        let tx = manager
+            .provider()
+            .get_transaction_by_hash(receipt.transaction_hash)
+            .await
+            .expect("should fetch tx")
+            .expect("tx should exist");
+        nonces.push(tx.inner.nonce());
+    }
+
+    // Nonces should form a contiguous, monotonically increasing sequence
+    // starting from 0.
+    let expected: Vec<u64> = (0..count as u64).collect();
+    assert_eq!(nonces, expected, "send_async nonces should match call order");
 }

@@ -258,3 +258,23 @@ async fn concurrent_next_nonce_uniqueness_across_resets() {
         manager.reset().await;
     }
 }
+
+#[tokio::test]
+async fn reserve_nonce_consumes_and_increments() {
+    let (manager, _anvil) = setup();
+
+    // reserve_nonce returns sequential values starting from 0.
+    let n0 = manager.reserve_nonce().await.expect("first reserve");
+    assert_eq!(n0, 0);
+
+    let n1 = manager.reserve_nonce().await.expect("second reserve");
+    assert_eq!(n1, 1);
+
+    let n2 = manager.reserve_nonce().await.expect("third reserve");
+    assert_eq!(n2, 2);
+
+    // The lock is released immediately — next_nonce can acquire it
+    // without blocking and picks up from where reserve_nonce left off.
+    let guard = manager.next_nonce().await.expect("next_nonce after reserves");
+    assert_eq!(guard.nonce(), 3);
+}
