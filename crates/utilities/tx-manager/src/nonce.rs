@@ -166,7 +166,11 @@ impl NonceManager {
             // the original set retains elements < fetched (stale).
             let kept = guard.returned_nonces.split_off(&fetched);
             if !guard.returned_nonces.is_empty() {
-                debug!(pruned = guard.returned_nonces.len(), chain_nonce = fetched, "pruned stale returned nonces");
+                debug!(
+                    pruned = guard.returned_nonces.len(),
+                    chain_nonce = fetched,
+                    "pruned stale returned nonces"
+                );
             }
             guard.returned_nonces = kept;
 

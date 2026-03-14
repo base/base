@@ -15,7 +15,6 @@ use base_proof_tee_nitro::{NitroEnclave, VSOCK_PORT};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_tee_nitro::{NitroProverServer, NitroTransport};
 use clap::{Parser, Subcommand};
-use eyre::eyre;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use tracing::info;
 

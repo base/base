@@ -99,7 +99,7 @@ struct BumpState {
 impl BumpState {
     /// Constructs a [`BumpState`] from a [`PreparedTx`] and the hash of the
     /// published transaction.
-    fn from_prepared(prepared: &PreparedTx, tx_hash: B256) -> Self {
+    const fn from_prepared(prepared: &PreparedTx, tx_hash: B256) -> Self {
         Self {
             tip: prepared.gas_tip_cap,
             fee_cap: prepared.gas_fee_cap,
@@ -691,11 +691,10 @@ impl SimpleTxManager {
         // Return pre-reserved nonces that were never published so they can
         // be reissued by subsequent send/send_async calls, preventing
         // irrecoverable nonce gaps.
-        if let Some(n) = nonce_override {
-            if Self::should_return_reserved_nonce(&result, &send_state) {
+        if let Some(n) = nonce_override
+            && Self::should_return_reserved_nonce(&result, &send_state) {
                 self.nonce_manager.return_reserved_nonce(n).await;
             }
-        }
 
         result
     }
@@ -1348,7 +1347,12 @@ mod tests {
     #[case::nonce_too_high_no_override(false, Err(TxManagerError::NonceTooHigh), None, true)]
     #[case::nonce_too_high_with_override(false, Err(TxManagerError::NonceTooHigh), Some(42), true)]
     #[case::nonce_override_timeout(false, Err(TxManagerError::SendTimeout), Some(42), false)]
-    #[case::nonce_override_pre_publish_error(false, Err(TxManagerError::ChannelClosed), Some(42), false)]
+    #[case::nonce_override_pre_publish_error(
+        false,
+        Err(TxManagerError::ChannelClosed),
+        Some(42),
+        false
+    )]
     fn should_reset_nonce_on_send_error(
         #[case] has_publish: bool,
         #[case] result: crate::TxManagerResult<()>,
@@ -1360,11 +1364,7 @@ mod tests {
             send_state.record_successful_publish();
         }
         assert_eq!(
-            SimpleTxManager::should_reset_nonce_on_send_error(
-                &result,
-                &send_state,
-                nonce_override,
-            ),
+            SimpleTxManager::should_reset_nonce_on_send_error(&result, &send_state, nonce_override,),
             expected,
         );
     }
@@ -1384,13 +1384,7 @@ mod tests {
         if has_publish {
             send_state.record_successful_publish();
         }
-        assert_eq!(
-            SimpleTxManager::should_return_reserved_nonce(
-                &result,
-                &send_state,
-            ),
-            expected,
-        );
+        assert_eq!(SimpleTxManager::should_return_reserved_nonce(&result, &send_state,), expected,);
     }
 
     #[tokio::test]
