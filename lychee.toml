@@ -4,7 +4,7 @@ exclude_all_private = false
 max_concurrency = 16
 max_retries = 3
 retry_wait_time = 5
-accept = [200, 403, 429, 503] # 403 is often returned by private repos instead of 404; 429 is rate limiting; 503 is transient GitHub unavailability
+accept = [200, 403, 429, 502, 503] # 403 is often returned by private repos instead of 404; 429 is rate limiting; 502/503 is transient GitHub unavailability
 exclude_path = [
     "crates/utilities/test-utils/contracts/",
     "**/package-lock.json",

@@ -740,19 +740,14 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
         verifier.act_l2_pipeline_full().await.expect("step");
     }
 
-    assert_eq!(
-        verifier.l2_safe().block_info.number,
-        6,
-        "all 6 L2 blocks must be derived"
-    );
+    assert_eq!(verifier.l2_safe().block_info.number, 6, "all 6 L2 blocks must be derived");
 
     let infos = verifier.derived_l1_info_txs();
     let find = |n: u64| infos.iter().find(|(bn, _)| *bn == n).map(|(_, tx)| tx);
 
     // Blocks 1–5 (epoch 0, no receipt update) carry OLD fee params.
     for n in 1u64..=5 {
-        let info =
-            find(n).unwrap_or_else(|| panic!("L1 info tx for block {n} must be recorded"));
+        let info = find(n).unwrap_or_else(|| panic!("L1 info tx for block {n} must be recorded"));
         assert_eq!(
             info.operator_fee_scalar(),
             OLD_SCALAR,
