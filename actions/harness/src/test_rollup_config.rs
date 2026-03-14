@@ -39,14 +39,14 @@ impl TestRollupConfigBuilder {
     }
 
     /// Overrides the channel timeout used before and after Granite activation.
-    pub fn with_channel_timeout(mut self, n: u64) -> Self {
+    pub const fn with_channel_timeout(mut self, n: u64) -> Self {
         self.config.channel_timeout = n;
         self.config.granite_channel_timeout = n;
         self
     }
 
     /// Overrides the pre-Fjord `max_sequencer_drift` field on the config.
-    pub fn with_max_sequencer_drift(mut self, n: u64) -> Self {
+    pub const fn with_max_sequencer_drift(mut self, n: u64) -> Self {
         self.config.max_sequencer_drift = n;
         self
     }
@@ -66,12 +66,12 @@ impl TestRollupConfigBuilder {
         self.config.hardforks.pectra_blob_schedule_time = Some(0);
         self.config.hardforks.isthmus_time = Some(0);
         self.config.hardforks.jovian_time = Some(0);
-        self.config.hardforks.base.get_or_insert(BaseHardforkConfig::default()).v1 = Some(0);
+        self.config.hardforks.base.get_or_insert_with(BaseHardforkConfig::default).v1 = Some(0);
         self
     }
 
     /// Finalizes the builder and returns the configured rollup config.
-    pub fn build(self) -> RollupConfig {
+    pub const fn build(self) -> RollupConfig {
         self.config
     }
 }
