@@ -9,8 +9,8 @@ use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
 use base_tx_manager::{
-    FeeOverride, GasPriceCaps, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig,
-    TxManagerError,
+    FeeCalculator, FeeOverride, GasPriceCaps, SimpleTxManager, TxCandidate, TxManager,
+    TxManagerConfig, TxManagerError,
 };
 
 /// Helper: spawns an Anvil instance and returns a [`SimpleTxManager`]
@@ -608,4 +608,133 @@ async fn prepared_tx_fees_match_decoded_transaction_with_overrides() {
 fn simple_tx_manager_is_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<SimpleTxManager>();
+}
+
+// ── increase_gas_price ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn increase_gas_price_bumps_above_threshold() {
+    let (manager, _anvil) = setup().await;
+
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        value: U256::from(1_000u64),
+        gas_limit: 0,
+        ..Default::default()
+    };
+
+    // Use the initial on-wire fees as the "old" values.
+    let prepared = manager.craft_tx(&candidate, None).await.expect("should craft initial tx");
+    let initial_tip = prepared.gas_tip_cap;
+    let initial_fee_cap = prepared.gas_fee_cap;
+
+    let bumped = manager
+        .increase_gas_price(&candidate, initial_tip, initial_fee_cap, None)
+        .await
+        .expect("should compute bumped fees");
+
+    // Bumped values must satisfy the 10% threshold for non-blob txs.
+    let threshold_tip = FeeCalculator::calc_threshold_value(initial_tip, false);
+    let threshold_fee_cap = FeeCalculator::calc_threshold_value(initial_fee_cap, false);
+    assert!(
+        bumped.gas_tip_cap >= threshold_tip,
+        "bumped tip {} should be >= threshold {}",
+        bumped.gas_tip_cap,
+        threshold_tip,
+    );
+    assert!(
+        bumped.gas_fee_cap >= threshold_fee_cap,
+        "bumped fee_cap {} should be >= threshold {}",
+        bumped.gas_fee_cap,
+        threshold_fee_cap,
+    );
+    assert!(bumped.blob_fee_cap.is_none(), "blob_fee_cap should be None for non-blob tx");
+}
+
+#[tokio::test]
+async fn increase_gas_price_fee_limit_exceeded() {
+    let config = TxManagerConfig {
+        fee_limit_multiplier: 1,
+        fee_limit_threshold: 0,
+        ..TxManagerConfig::default()
+    };
+
+    let (manager, _anvil) = setup_with_config(config).await;
+
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        value: U256::from(1_000u64),
+        gas_limit: 0,
+        ..Default::default()
+    };
+
+    // Use high old fees that will bump above the ceiling. The 10% bump
+    // on a fee_cap of 500 gwei will produce ~550 gwei, which exceeds
+    // `1 × raw_gas_fee_cap` (Anvil's ~3 gwei).
+    let old_tip = 500_000_000_000u128; // 500 gwei
+    let old_fee_cap = 500_000_000_000u128; // 500 gwei
+
+    let err = manager
+        .increase_gas_price(&candidate, old_tip, old_fee_cap, None)
+        .await
+        .expect_err("should exceed fee limit");
+
+    assert!(
+        matches!(err, TxManagerError::FeeLimitExceeded { .. }),
+        "expected TxManagerError::FeeLimitExceeded, got {err:?}",
+    );
+}
+
+#[tokio::test]
+async fn increase_gas_price_preserves_none_blob_fee_cap() {
+    let (manager, _anvil) = setup().await;
+
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        value: U256::from(1_000u64),
+        gas_limit: 0,
+        ..Default::default()
+    };
+
+    let caps = manager.suggest_gas_price_caps().await.expect("should get caps");
+
+    let bumped = manager
+        .increase_gas_price(&candidate, caps.gas_tip_cap, caps.gas_fee_cap, None)
+        .await
+        .expect("should compute bumped fees");
+
+    assert!(
+        bumped.blob_fee_cap.is_none(),
+        "blob_fee_cap should remain None when old_blob_fee_cap is None",
+    );
+}
+
+#[tokio::test]
+async fn increase_gas_price_bumps_blob_fee_cap() {
+    let (manager, _anvil) = setup().await;
+
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        value: U256::from(1_000u64),
+        gas_limit: 0,
+        ..Default::default()
+    };
+
+    let caps = manager.suggest_gas_price_caps().await.expect("should get caps");
+
+    let old_blob_fee_cap = 1_000_000_000u128; // 1 gwei
+    let bumped = manager
+        .increase_gas_price(&candidate, caps.gas_tip_cap, caps.gas_fee_cap, Some(old_blob_fee_cap))
+        .await
+        .expect("should compute bumped fees with blob fee cap");
+
+    assert!(bumped.blob_fee_cap.is_some(), "blob_fee_cap should be Some when old_blob_fee_cap is Some");
+
+    let threshold = FeeCalculator::calc_threshold_value(old_blob_fee_cap, true);
+    assert!(
+        bumped.blob_fee_cap.unwrap() >= threshold,
+        "bumped blob_fee_cap {} should be >= 100% threshold {}",
+        bumped.blob_fee_cap.unwrap(),
+        threshold,
+    );
 }
