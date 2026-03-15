@@ -29,7 +29,7 @@ fn l1_info_from_block(block: &OpBlock) -> L1BlockInfoTx {
 /// 1. Before Ecotone: `L1BlockInfoTx::Bedrock` (no blob base fee, 4-byte
 ///    `setL1BlockValues` selector).
 /// 2. At the **first** Ecotone block: still `Bedrock` format, because the
-///    L1Block contract has not yet been upgraded (upgrade transactions are
+///    `L1Block` contract has not yet been upgraded (upgrade transactions are
 ///    placed *after* the L1 info deposit, so the contract is still on the old
 ///    ABI for the first block).
 /// 3. From the **second** Ecotone block onward: `L1BlockInfoTx::Ecotone`

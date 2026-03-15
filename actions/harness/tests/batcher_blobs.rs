@@ -254,7 +254,7 @@ async fn batcher_da_switching() {
 /// - `max_frame_size = 80` to force a multi-frame channel.
 /// - `channel_timeout = 2` (very tight: expires after 2 L1 blocks).
 /// - Frame 0 submitted as a blob sidecar in L1 block 1.
-/// - L1 blocks 2–4 are empty (channel_timeout + 1 = 3 blocks).
+/// - L1 blocks 2–4 are empty (`channel_timeout` + 1 = 3 blocks).
 /// - Remaining frames arrive as blobs in L1 block 5 — channel already timed out.
 /// - Recovery: all frames resubmitted in a fresh channel (L1 block 6).
 ///
