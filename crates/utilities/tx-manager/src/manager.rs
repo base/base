@@ -446,7 +446,15 @@ impl SimpleTxManager {
             None => None,
         };
 
-        Ok(GasPriceCaps { gas_tip_cap: tip_cap, gas_fee_cap, raw_gas_fee_cap, blob_fee_cap })
+        let block_timestamp = latest_block.header.timestamp;
+
+        Ok(GasPriceCaps {
+            gas_tip_cap: tip_cap,
+            gas_fee_cap,
+            raw_gas_fee_cap,
+            blob_fee_cap,
+            block_timestamp,
+        })
     }
 
     /// Computes bumped fee parameters for a replacement transaction.
@@ -636,7 +644,8 @@ impl SimpleTxManager {
 
         // Step 4b: Attach blob sidecar and blob-specific fields.
         if is_blob {
-            let sidecar_variant = self.blob_builder.make_sidecar_auto(candidate.blobs.clone())?;
+            let sidecar_variant =
+                self.blob_builder.make_sidecar_auto(candidate.blobs.clone(), caps.block_timestamp)?;
             tx_request.sidecar = Some(sidecar_variant);
             tx_request.populate_blob_hashes();
             tx_request.max_fee_per_blob_gas = blob_fee_cap;
@@ -1558,6 +1567,7 @@ mod tests {
             gas_fee_cap: 15_000_000_000_000,
             raw_gas_fee_cap: 15_000_000_000_000,
             blob_fee_cap: None,
+            block_timestamp: 0,
         };
 
         let prepared = manager
