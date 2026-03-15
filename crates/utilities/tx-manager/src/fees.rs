@@ -262,6 +262,12 @@ pub struct GasPriceCaps {
     pub raw_gas_fee_cap: u128,
     /// Maximum blob fee per gas (for EIP-4844 txs). `None` for non-blob txs.
     pub blob_fee_cap: Option<u128>,
+    /// Blob fee cap computed from the raw provider blob base fee before
+    /// enforcing configured minimums (`min_blob_fee`).
+    ///
+    /// Used as the `suggested` baseline in [`FeeCalculator::check_limits`]
+    /// so the blob fee ceiling mirrors the gas fee ceiling behaviour.
+    pub raw_blob_fee_cap: Option<u128>,
     /// Timestamp of the latest block used to derive these fee estimates.
     ///
     /// Threaded to [`BlobTxBuilder::make_sidecar_auto`] so the
@@ -287,6 +293,7 @@ mod tests {
         assert_eq!(caps.gas_fee_cap, 0);
         assert_eq!(caps.raw_gas_fee_cap, 0);
         assert!(caps.blob_fee_cap.is_none());
+        assert!(caps.raw_blob_fee_cap.is_none());
         assert_eq!(caps.block_timestamp, 0);
     }
 

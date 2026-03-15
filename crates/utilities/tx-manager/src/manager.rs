@@ -273,6 +273,17 @@ impl SimpleTxManager {
         err
     }
 
+    /// Checks that `fee` does not exceed the configured ceiling relative to
+    /// `suggested` (the raw provider estimate before enforced minimums).
+    fn check_fee_limit(&self, fee: u128, suggested: u128) -> TxManagerResult<()> {
+        FeeCalculator::check_limits(
+            fee,
+            suggested,
+            self.config.fee_limit_multiplier,
+            self.config.fee_limit_threshold,
+        )
+    }
+
     /// Constructs and signs a transaction, retrying on transient errors.
     ///
     /// Wraps [`craft_tx`](Self::craft_tx) in a retry loop with up to
@@ -355,7 +366,11 @@ impl SimpleTxManager {
 
     /// Queries the provider for current gas price estimates (non-blob transactions).
     ///
-    /// Returns a [`GasPriceCaps`] with `blob_fee_cap: None`.
+    /// Returns a [`GasPriceCaps`] with `blob_fee_cap: None` and
+    /// `raw_blob_fee_cap: None`. For blob fee estimates, use
+    /// [`craft_tx`](Self::craft_tx) or [`prepare`](Self::prepare) with a
+    /// blob-carrying [`TxCandidate`] — those methods fetch blob fees
+    /// internally.
     ///
     /// # Errors
     ///
@@ -435,17 +450,18 @@ impl SimpleTxManager {
         self.metrics.record_tipcap(tip_cap as f64 / WEI_PER_GWEI);
 
         // Compute blob fee cap when this is a blob transaction.
-        let blob_fee_cap = match blob_fee_result {
+        let (blob_fee_cap, raw_blob_fee_cap) = match blob_fee_result {
             Some(result) => {
                 let raw_blob_base_fee = result
                     .map_err(|_| self.rpc_error("get_blob_base_fee timed out"))?
                     .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?;
+                let raw_blob_cap = FeeCalculator::calc_blob_fee_cap(raw_blob_base_fee);
                 let blob_base_fee = raw_blob_base_fee.max(self.config.min_blob_fee);
                 let blob_cap = FeeCalculator::calc_blob_fee_cap(blob_base_fee);
                 self.metrics.record_blob_fee(blob_cap as f64 / WEI_PER_GWEI);
-                Some(blob_cap)
+                (Some(blob_cap), Some(raw_blob_cap))
             }
-            None => None,
+            None => (None, None),
         };
 
         let block_timestamp = latest_block.header.timestamp;
@@ -455,6 +471,7 @@ impl SimpleTxManager {
             gas_fee_cap,
             raw_gas_fee_cap,
             blob_fee_cap,
+            raw_blob_fee_cap,
             block_timestamp,
         })
     }
@@ -508,12 +525,7 @@ impl SimpleTxManager {
         );
 
         // Step 4: Enforce fee ceiling.
-        FeeCalculator::check_limits(
-            bumped_fee_cap,
-            caps.raw_gas_fee_cap,
-            self.config.fee_limit_multiplier,
-            self.config.fee_limit_threshold,
-        )?;
+        self.check_fee_limit(bumped_fee_cap, caps.raw_gas_fee_cap)?;
 
         // Step 5: Bump blob fee cap separately with 100% minimum.
         let blob_fee_cap = match old_blob_fee_cap {
@@ -522,16 +534,11 @@ impl SimpleTxManager {
                 let bumped_blob =
                     caps.blob_fee_cap.map_or(threshold, |network_blob| threshold.max(network_blob));
 
-                // Enforce fee ceiling on blob fee cap using the network's
-                // suggested blob fee cap as the baseline, mirroring the
-                // gas fee cap ceiling in Step 4.
-                if let Some(suggested_blob) = caps.blob_fee_cap {
-                    FeeCalculator::check_limits(
-                        bumped_blob,
-                        suggested_blob,
-                        self.config.fee_limit_multiplier,
-                        self.config.fee_limit_threshold,
-                    )?;
+                // Enforce fee ceiling on blob fee cap using the raw
+                // (pre-minimum) blob fee cap as the baseline, mirroring
+                // the gas fee cap ceiling in Step 4.
+                if let Some(raw_blob) = caps.raw_blob_fee_cap {
+                    self.check_fee_limit(bumped_blob, raw_blob)?;
                 }
 
                 Some(bumped_blob)
@@ -638,12 +645,7 @@ impl SimpleTxManager {
         // (`min_tip_cap`, `min_basefee`). This detects when enforced
         // minimums or fee overrides inflate the fee cap beyond
         // `fee_limit_multiplier × raw_provider_fee_cap`.
-        FeeCalculator::check_limits(
-            fee_cap,
-            caps.raw_gas_fee_cap,
-            self.config.fee_limit_multiplier,
-            self.config.fee_limit_threshold,
-        )?;
+        self.check_fee_limit(fee_cap, caps.raw_gas_fee_cap)?;
 
         // Step 3b: Compute blob fee cap with config minimum and override floor.
         let blob_fee_cap = if is_blob {
@@ -653,6 +655,11 @@ impl SimpleTxManager {
         } else {
             None
         };
+
+        // Step 3c: Enforce blob fee ceiling (mirrors Step 3 for gas fee cap).
+        if let (Some(blob_cap), Some(raw_blob)) = (blob_fee_cap, caps.raw_blob_fee_cap) {
+            self.check_fee_limit(blob_cap, raw_blob)?;
+        }
 
         // Step 4: Build TransactionRequest.
         let from = self.sender_address();
@@ -686,6 +693,12 @@ impl SimpleTxManager {
         // the 21,000 minimum for plain value transfers). When the caller
         // supplies an explicit gas_limit, it is used as a floor via max()
         // so the transaction never under-provisions gas.
+        //
+        // Strip the blob sidecar for the estimation call — some nodes
+        // reject sidecar data in `eth_estimateGas`. Versioned hashes and
+        // `max_fee_per_blob_gas` remain so intrinsic-gas accounting is
+        // correct.
+        let sidecar_stash = tx_request.sidecar.take();
         let estimated = tokio::time::timeout(
             self.config.network_timeout,
             self.provider.estimate_gas(tx_request.clone()),
@@ -693,8 +706,9 @@ impl SimpleTxManager {
         .await
         .map_err(|_| self.rpc_error("estimate_gas timed out"))?
         .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?;
+        tx_request.sidecar = sidecar_stash;
         let gas_floor = fee_overrides.as_ref().map_or(0, |fo| fo.gas_limit_floor);
-        let gas_limit = if gas_floor > 0 { gas_floor } else { candidate.gas_limit }.max(estimated);
+        let gas_limit = candidate.gas_limit.max(gas_floor).max(estimated);
         tx_request = tx_request.with_gas_limit(gas_limit);
 
         // Step 6: Assign nonce.
@@ -1496,28 +1510,33 @@ mod tests {
     #[rstest]
     #[case::success_updates_state(
         Ok(BumpState { tip: 200, fee_cap: 2000, blob_fee_cap: None, gas_limit: 50_000, tx_hash: B256::with_last_byte(0x42), nonce: 0 }),
-        false, 200, 2000, 50_000, B256::with_last_byte(0x42),
+        false, 200, 2000, None, 50_000, B256::with_last_byte(0x42),
+    )]
+    #[case::success_with_blob_fee_cap(
+        Ok(BumpState { tip: 300, fee_cap: 3000, blob_fee_cap: Some(10_000), gas_limit: 60_000, tx_hash: B256::with_last_byte(0x43), nonce: 1 }),
+        false, 300, 3000, Some(10_000), 60_000, B256::with_last_byte(0x43),
     )]
     #[case::non_retryable_returns_abort(
         Err(TxManagerError::FeeLimitExceeded { fee: 500, ceiling: 100 }),
-        true, 100, 1000, 21_000, B256::ZERO,
+        true, 100, 1000, Some(5_000), 21_000, B256::ZERO,
     )]
     #[case::retryable_continues(
         Err(TxManagerError::Rpc("transient error".to_string())),
-        false, 100, 1000, 21_000, B256::ZERO,
+        false, 100, 1000, Some(5_000), 21_000, B256::ZERO,
     )]
     fn apply_bump_result(
         #[case] input: Result<BumpState, TxManagerError>,
         #[case] abort_expected: bool,
         #[case] expected_tip: u128,
         #[case] expected_fee_cap: u128,
+        #[case] expected_blob_fee_cap: Option<u128>,
         #[case] expected_gas_limit: u64,
         #[case] expected_hash: B256,
     ) {
         let mut state = BumpState {
             tip: 100,
             fee_cap: 1000,
-            blob_fee_cap: None,
+            blob_fee_cap: Some(5_000),
             gas_limit: 21_000,
             tx_hash: B256::ZERO,
             nonce: 0,
@@ -1528,6 +1547,7 @@ mod tests {
         assert_eq!(abort.is_some(), abort_expected);
         assert_eq!(state.tip, expected_tip);
         assert_eq!(state.fee_cap, expected_fee_cap);
+        assert_eq!(state.blob_fee_cap, expected_blob_fee_cap);
         assert_eq!(state.gas_limit, expected_gas_limit);
         assert_eq!(state.tx_hash, expected_hash);
     }
@@ -1596,6 +1616,7 @@ mod tests {
             gas_fee_cap: 15_000_000_000_000,
             raw_gas_fee_cap: 15_000_000_000_000,
             blob_fee_cap: None,
+            raw_blob_fee_cap: None,
             block_timestamp: 0,
         };
 

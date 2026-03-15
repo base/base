@@ -819,3 +819,77 @@ async fn increase_gas_price_bumps_blob_fee_cap() {
         threshold,
     );
 }
+
+#[tokio::test]
+async fn blob_fee_bump_round_trip() {
+    let (manager, _anvil) = setup().await;
+
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        blobs: Arc::new(vec![Blob::default()]),
+        ..Default::default()
+    };
+
+    // Step 1: Craft the initial blob transaction.
+    let initial = manager.craft_tx(&candidate, None).await.expect("should craft initial blob tx");
+    let initial_blob_fee = initial.blob_fee_cap.expect("initial tx should have blob_fee_cap");
+    assert!(initial_blob_fee > 0, "initial blob_fee_cap should be non-zero");
+
+    // Step 2: Simulate a fee bump — compute bumped fees from the initial values.
+    let bumped = manager
+        .increase_gas_price(
+            &candidate,
+            initial.gas_tip_cap,
+            initial.gas_fee_cap,
+            Some(initial_blob_fee),
+        )
+        .await
+        .expect("should compute bumped fees");
+
+    let bumped_blob_fee = bumped.blob_fee_cap.expect("bumped fees should have blob_fee_cap");
+    assert!(
+        bumped_blob_fee >= initial_blob_fee,
+        "bumped blob_fee_cap {bumped_blob_fee} should be >= initial {initial_blob_fee}",
+    );
+
+    // Step 3: Re-craft the transaction with the bumped fee overrides.
+    let fee_override = FeeOverride::new(bumped.gas_tip_cap, bumped.gas_fee_cap)
+        .with_blob_fee_cap(bumped_blob_fee)
+        .with_gas_limit_floor(initial.gas_limit);
+
+    let replacement = manager
+        .craft_tx(&candidate, Some(fee_override))
+        .await
+        .expect("should craft replacement blob tx");
+
+    // Step 4: Verify the replacement transaction.
+    let replacement_blob_fee =
+        replacement.blob_fee_cap.expect("replacement tx should have blob_fee_cap");
+    assert!(
+        replacement_blob_fee >= bumped_blob_fee,
+        "replacement blob_fee_cap {replacement_blob_fee} should be >= bumped {bumped_blob_fee}",
+    );
+    assert!(
+        replacement.gas_limit >= initial.gas_limit,
+        "replacement gas_limit {} should be >= initial {}",
+        replacement.gas_limit,
+        initial.gas_limit,
+    );
+    assert!(
+        replacement.gas_tip_cap >= bumped.gas_tip_cap,
+        "replacement tip {} should be >= bumped tip {}",
+        replacement.gas_tip_cap,
+        bumped.gas_tip_cap,
+    );
+
+    // Decode and verify the replacement is still a valid EIP-4844 tx with sidecar.
+    let envelope = TxEnvelope::decode_2718(&mut replacement.raw_tx.as_ref())
+        .expect("should decode replacement TxEnvelope");
+    assert!(envelope.is_eip4844(), "replacement should be EIP-4844");
+
+    let signed = envelope.as_eip4844().expect("should be EIP-4844");
+    assert!(
+        matches!(signed.tx(), TxEip4844Variant::TxEip4844WithSidecar(_)),
+        "replacement should have sidecar attached",
+    );
+}
