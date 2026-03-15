@@ -26,8 +26,7 @@ impl BaseNodeExtension for TxPoolRpcExtension {
 
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
             // Register TransactionStatusApi
-            let status_api = TransactionStatusApiImpl::new(sequencer_rpc, ctx.pool().clone())
-                .expect("Failed to create transaction status API");
+            let status_api = TransactionStatusApiImpl::new(sequencer_rpc.clone(), ctx.pool().clone())?;
             ctx.modules.merge_configured(status_api.into_rpc())?;
 
             // Register AdminTxPoolApi
