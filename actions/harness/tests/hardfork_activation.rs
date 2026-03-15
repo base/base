@@ -394,19 +394,10 @@ async fn jovian_derivation_crosses_activation_boundary() {
     //   block 3 → ts=6  (first Jovian block — must be empty)
     //   block 4 → ts=8  (post-Jovian, user txs ok)
     let jovian_time = 6u64;
-    let hardforks = HardForkConfig {
-        canyon_time: Some(0),
-        delta_time: Some(0),
-        ecotone_time: Some(0),
-        fjord_time: Some(0),
-        granite_time: Some(0),
-        holocene_time: Some(0),
-        isthmus_time: Some(0),
-        jovian_time: Some(jovian_time),
-        ..Default::default()
-    };
-    let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .through_isthmus()
+        .with_jovian_at(jovian_time)
+        .build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());

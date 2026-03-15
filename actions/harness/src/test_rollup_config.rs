@@ -85,6 +85,53 @@ impl TestRollupConfigBuilder {
         self
     }
 
+    /// Activates all forks from Canyon through Holocene at genesis, leaving Isthmus
+    /// and later as `None`.
+    ///
+    /// Replaces the entire hardfork schedule. Use when a test needs a cumulative
+    /// schedule up to Holocene with no later forks reachable.
+    pub fn through_holocene(mut self) -> Self {
+        self.config.hardforks = HardForkConfig {
+            canyon_time: Some(0),
+            delta_time: Some(0),
+            ecotone_time: Some(0),
+            fjord_time: Some(0),
+            granite_time: Some(0),
+            holocene_time: Some(0),
+            ..Default::default()
+        };
+        self
+    }
+
+    /// Activates all forks from Canyon through Isthmus at genesis, leaving Jovian
+    /// and later as `None`.
+    ///
+    /// Replaces the entire hardfork schedule. Use when a test needs Isthmus active
+    /// from genesis with no later forks reachable.
+    pub fn through_isthmus(self) -> Self {
+        let mut this = self.through_holocene();
+        this.config.hardforks.isthmus_time = Some(0);
+        this
+    }
+
+    /// Sets the Isthmus activation timestamp.
+    ///
+    /// Typically chained after [`through_holocene`](Self::through_holocene) to
+    /// schedule Isthmus at a specific future timestamp.
+    pub const fn with_isthmus_at(mut self, t: u64) -> Self {
+        self.config.hardforks.isthmus_time = Some(t);
+        self
+    }
+
+    /// Sets the Jovian activation timestamp.
+    ///
+    /// Typically chained after [`through_isthmus`](Self::through_isthmus) to
+    /// schedule Jovian at a specific future timestamp.
+    pub const fn with_jovian_at(mut self, t: u64) -> Self {
+        self.config.hardforks.jovian_time = Some(t);
+        self
+    }
+
     /// Activates every scheduled fork from genesis for tests that need it.
     ///
     /// `base_mainnet` intentionally keeps the harness's existing "Canyon through

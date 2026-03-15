@@ -6,7 +6,7 @@ use base_action_harness::{
     TestRollupConfigBuilder, block_info_from,
 };
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
-use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, HardForkConfig};
+use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
 use base_protocol::L1BlockInfoTx;
 
 /// Decode the [`L1BlockInfoTx`] from the first (L1 info deposit) transaction of
@@ -48,19 +48,9 @@ fn l1_info_from_block(block: &OpBlock) -> L1BlockInfoTx {
 #[test]
 fn operator_fee_not_encoded_before_isthmus() {
     let batcher_cfg = BatcherConfig::default();
-    let hardforks = HardForkConfig {
-        canyon_time: Some(0),
-        delta_time: Some(0),
-        ecotone_time: Some(0),
-        fjord_time: Some(0),
-        granite_time: Some(0),
-        holocene_time: Some(0),
-        // Isthmus and Jovian are intentionally absent — they remain None so
-        // their mainnet timestamps are unreachable (L1 miner starts at ts=0).
-        ..Default::default()
-    };
-    let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+    // Holocene is the latest active fork; Isthmus and Jovian remain None so their
+    // mainnet timestamps are unreachable (L1 miner starts at ts=0).
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).through_holocene().build();
     let h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
@@ -97,18 +87,8 @@ fn operator_fee_encoded_in_l1_info_post_isthmus() {
     const OPERATOR_FEE_CONSTANT: u64 = 500;
 
     let batcher_cfg = BatcherConfig::default();
-    let hardforks = HardForkConfig {
-        canyon_time: Some(0),
-        delta_time: Some(0),
-        ecotone_time: Some(0),
-        fjord_time: Some(0),
-        granite_time: Some(0),
-        holocene_time: Some(0),
-        isthmus_time: Some(0),
-        ..Default::default()
-    };
     let mut rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).through_isthmus().build();
     let sys_cfg = rollup_cfg.genesis.system_config.as_mut().unwrap();
     sys_cfg.operator_fee_scalar = Some(OPERATOR_FEE_SCALAR);
     sys_cfg.operator_fee_constant = Some(OPERATOR_FEE_CONSTANT);
@@ -161,18 +141,10 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
     let batcher_cfg = BatcherConfig::default();
     // Isthmus at ts=6 → with block_time=2, block 3 (ts=6) is the first Isthmus block.
     let isthmus_time = 6u64;
-    let hardforks = HardForkConfig {
-        canyon_time: Some(0),
-        delta_time: Some(0),
-        ecotone_time: Some(0),
-        fjord_time: Some(0),
-        granite_time: Some(0),
-        holocene_time: Some(0),
-        isthmus_time: Some(isthmus_time),
-        ..Default::default()
-    };
-    let mut rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .through_holocene()
+        .with_isthmus_at(isthmus_time)
+        .build();
     let sys_cfg = rollup_cfg.genesis.system_config.as_mut().unwrap();
     sys_cfg.operator_fee_scalar = Some(OPERATOR_FEE_SCALAR);
     sys_cfg.operator_fee_constant = Some(OPERATOR_FEE_CONSTANT);
@@ -270,19 +242,10 @@ fn l1_info_format_transitions_at_jovian_boundary() {
     let batcher_cfg = BatcherConfig::default();
     // Isthmus at genesis, Jovian at ts=6 → block 3 (ts=6) is the first Jovian block.
     let jovian_time = 6u64;
-    let hardforks = HardForkConfig {
-        canyon_time: Some(0),
-        delta_time: Some(0),
-        ecotone_time: Some(0),
-        fjord_time: Some(0),
-        granite_time: Some(0),
-        holocene_time: Some(0),
-        isthmus_time: Some(0),
-        jovian_time: Some(jovian_time),
-        ..Default::default()
-    };
-    let mut rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .through_isthmus()
+        .with_jovian_at(jovian_time)
+        .build();
     let sys_cfg = rollup_cfg.genesis.system_config.as_mut().unwrap();
     sys_cfg.operator_fee_scalar = Some(OPERATOR_FEE_SCALAR);
     sys_cfg.operator_fee_constant = Some(OPERATOR_FEE_CONSTANT);
@@ -381,18 +344,10 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
 
     let batcher_cfg = BatcherConfig::default();
     let isthmus_time = 6u64;
-    let hardforks = HardForkConfig {
-        canyon_time: Some(0),
-        delta_time: Some(0),
-        ecotone_time: Some(0),
-        fjord_time: Some(0),
-        granite_time: Some(0),
-        holocene_time: Some(0),
-        isthmus_time: Some(isthmus_time),
-        ..Default::default()
-    };
-    let mut rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .through_holocene()
+        .with_isthmus_at(isthmus_time)
+        .build();
     let sys_cfg = rollup_cfg.genesis.system_config.as_mut().unwrap();
     sys_cfg.operator_fee_scalar = Some(OPERATOR_FEE_SCALAR);
     sys_cfg.operator_fee_constant = Some(OPERATOR_FEE_CONSTANT);
@@ -464,19 +419,10 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
 async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     let batcher_cfg = BatcherConfig::default();
     let jovian_time = 6u64;
-    let hardforks = HardForkConfig {
-        canyon_time: Some(0),
-        delta_time: Some(0),
-        ecotone_time: Some(0),
-        fjord_time: Some(0),
-        granite_time: Some(0),
-        holocene_time: Some(0),
-        isthmus_time: Some(0),
-        jovian_time: Some(jovian_time),
-        ..Default::default()
-    };
-    let mut rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .through_isthmus()
+        .with_jovian_at(jovian_time)
+        .build();
     // Narrow the sequencing window: epoch-0 batches must land in L1 blocks 0–3.
     // When the pipeline reaches L1 block 4 (epoch 0 + 4 = 4), force-inclusion
     // fires and a deposit-only block is generated for any pending L2 slot.
@@ -638,18 +584,8 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
 
     let l1_sys_cfg_addr = Address::repeat_byte(0xCC);
     let batcher_cfg = BatcherConfig::default();
-    let hardforks = HardForkConfig {
-        canyon_time: Some(0),
-        delta_time: Some(0),
-        ecotone_time: Some(0),
-        fjord_time: Some(0),
-        granite_time: Some(0),
-        holocene_time: Some(0),
-        isthmus_time: Some(0),
-        ..Default::default()
-    };
     let mut rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).through_isthmus().build();
     rollup_cfg.l1_system_config_address = l1_sys_cfg_addr;
     let sys_cfg = rollup_cfg.genesis.system_config.as_mut().unwrap();
     sys_cfg.operator_fee_scalar = Some(OLD_SCALAR);
