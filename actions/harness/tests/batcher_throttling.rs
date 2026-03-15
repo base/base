@@ -120,3 +120,53 @@ fn test_throttle_step_strategy_full_intensity() {
     assert_eq!(params.max_block_size, 2_000, "step at full intensity: block lower limit");
     assert_eq!(params.max_tx_size, 150, "step at full intensity: tx lower limit");
 }
+
+/// Verify that `da_backlog_bytes()` returns 0 after encoding (all blocks
+/// consumed by the pipeline) and that [`ThrottleController`] correctly
+/// signals throttling for a simulated high backlog then clears when the
+/// backlog reaches zero.
+#[test]
+fn test_throttle_batcher_integration() {
+    let l1_cfg = L1MinerConfig { block_time: 2 };
+    let batcher_cfg = BatcherConfig::default();
+    let rollup_cfg = {
+        let mut rc = Registry::rollup_config(8453).unwrap().clone();
+        rc.batch_inbox_address = batcher_cfg.inbox_address;
+        rc.genesis.system_config.as_mut().unwrap().batcher_address = batcher_cfg.batcher_address;
+        rc.genesis.l2_time = 0;
+        rc.genesis.l1 = Default::default();
+        rc.genesis.l2 = Default::default();
+        rc.hardforks.canyon_time = Some(0);
+        rc.hardforks.delta_time = Some(0);
+        rc.hardforks.ecotone_time = Some(0);
+        rc.hardforks.fjord_time = Some(0);
+        rc
+    };
+    let mut h = ActionTestHarness::new(l1_cfg, rollup_cfg);
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+
+    let mut source = ActionL2Source::new();
+    for _ in 0..3 {
+        source.push(sequencer.build_next_block().unwrap());
+    }
+
+    let mut batcher = h.create_batcher(source, batcher_cfg);
+
+    // After encoding all blocks the encoder has consumed them: backlog is 0.
+    batcher.encode_frames().unwrap();
+    let backlog_after = batcher.da_backlog_bytes();
+    assert_eq!(backlog_after, 0, "backlog should be 0 after all blocks are encoded");
+
+    // Simulate a high-backlog scenario with ThrottleController directly.
+    let threshold = 1_000u64;
+    let config = ThrottleConfig { threshold_bytes: threshold, ..ThrottleConfig::default() };
+    let ctrl = ThrottleController::new(config, ThrottleStrategy::Linear);
+
+    let simulated_backlog = threshold * 2;
+    let params = ctrl.update(simulated_backlog);
+    assert!(params.is_some(), "throttle should activate for high simulated backlog");
+
+    // Zero backlog: throttle deactivated.
+    assert!(ctrl.update(0).is_none(), "throttle clears when backlog is zero");
+}

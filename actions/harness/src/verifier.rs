@@ -387,6 +387,19 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                             // No more data for now — pipeline is idle.
                             break;
                         }
+                        PipelineErrorKind::Temporary(PipelineError::ChannelReaderEmpty) => {
+                            // The channel bank pruned a timed-out channel and has nothing
+                            // ready to provide to the channel reader. Step once more; the
+                            // next call will either find a ready channel or return Eof.
+                            no_progress += 1;
+                            if no_progress > 1_000 {
+                                return Err(VerifierError::Pipeline(Box::new(
+                                    PipelineError::Provider(
+                                        "pipeline stuck: 1000 consecutive ChannelReaderEmpty without progress".into()
+                                    ).temp()
+                                )));
+                            }
+                        }
                         PipelineErrorKind::Temporary(PipelineError::NotEnoughData) => {
                             // The channel bank just ingested a frame but the channel isn't
                             // assembled yet, or the batch reader needs another read attempt.

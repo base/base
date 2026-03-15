@@ -52,10 +52,6 @@ use base_action_harness::{
 /// issues, `ChannelDriver` needs a `with_channel_id(id)` builder or random
 /// ID generation.
 #[tokio::test]
-#[ignore = "channel timeout semantics in the IndexedTraversal mode need verification; \
-            the indexed traversal clears the ChannelBank per L1 block, which may mean \
-            multi-block channel timeout is not exercisable in the current harness — \
-            the test skeleton documents the expected flow for when the harness supports it"]
 async fn channel_timeout_triggers_channel_invalidation() {
     use base_batcher_encoder::EncoderConfig;
 
@@ -167,9 +163,10 @@ async fn channel_timeout_triggers_channel_invalidation() {
 /// No new methods needed — uses existing `Batcher::advance()` with a fresh
 /// `ChannelDriver` instance for the recovery submission.
 #[tokio::test]
-#[ignore = "blocked on channel timeout test infrastructure; once the channel bank \
-            correctly prunes timed-out channels in the IndexedTraversal path, \
-            this recovery test can be enabled"]
+#[ignore = "test design issue: batcher.advance() submits all frames in a single L1 \
+            block, so the channel completes immediately and the safe head advances \
+            before the timeout window elapses — needs restructuring to use selective \
+            per-frame submission to make the channel actually expire before recovery"]
 async fn channel_timeout_recovery_resubmits_successfully() {
     let batcher_cfg = BatcherConfig::default();
     let rollup_cfg =
@@ -271,20 +268,12 @@ async fn channel_timeout_recovery_resubmits_successfully() {
 /// 2. **Randomize by default** — have `ChannelDriver::flush()` generate a
 ///    random `ChannelId` per flush call (matches op-batcher behaviour).
 ///
-/// Additionally, the `IndexedTraversal` mode clears the `ChannelBank` on
-/// each `ProvideBlock` signal. For interleaving to work, all interleaved
-/// frames must be in the SAME L1 block (as separate transactions). This
-/// is already supported by the harness: call `submit_frames` for each
-/// frame individually, then mine one block.
+/// ## Note on same-block placement
 ///
-/// ## NOTE on `IndexedTraversal` limitation
-///
-/// The current `IndexedTraversal` mode processes one L1 block at a time
-/// and clears the channel bank between blocks. This means multi-block
-/// interleaving (frames from different channels in different L1 blocks)
-/// is NOT supported. All interleaved frames must land in the same L1
-/// block. This is a known limitation of the test harness, not the
-/// derivation pipeline itself.
+/// For interleaving to work across two channels both channels' frames must
+/// land in the same L1 block (as separate transactions).  All interleaved
+/// frames are submitted to the harness before a single `mine_and_push` call,
+/// so they all appear in L1 block 1.
 #[tokio::test]
 async fn interleaved_channels_correctly_reassembled() {
     use base_batcher_encoder::EncoderConfig;
@@ -360,4 +349,91 @@ async fn interleaved_channels_correctly_reassembled() {
     // Both channels should be reassembled and both L2 blocks derived.
     assert_eq!(derived, 2, "expected 2 L2 blocks derived from interleaved channels");
     assert_eq!(verifier.l2_safe().block_info.number, 2);
+}
+
+// ---------------------------------------------------------------------------
+// D. Multi-block channel — frames split across consecutive L1 blocks
+// ---------------------------------------------------------------------------
+
+/// A single channel whose frames are spread across two consecutive L1 blocks
+/// is correctly reassembled by the derivation pipeline.
+///
+/// This is the primary regression test for the `ProvideBlock` signal fix in
+/// [`ChannelBank`]: when a new L1 block arrives via `ProvideBlock`, the channel
+/// bank must **not** discard in-progress channels.  Without the fix, frame 0
+/// (submitted in L1 block 1) would be lost when L1 block 2 is signalled, and
+/// the channel could never complete.
+///
+/// ## Setup
+///
+/// - `max_frame_size = 80` forces a multi-frame channel so we can split frame 0
+///   and the remainder across two distinct L1 blocks.
+/// - Frame 0 is submitted in L1 block 1; remaining frames in L1 block 2.
+/// - Both blocks are within the default `channel_timeout` window.
+///
+/// ## Expected behaviour
+///
+/// After processing L1 block 2 the pipeline assembles the complete channel and
+/// derives L2 block 1.  The safe head advances to 1.
+#[tokio::test]
+async fn multi_block_channel_assembles_across_l1_blocks() {
+    use base_batcher_encoder::EncoderConfig;
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let block = sequencer.build_next_block().expect("build L2 block 1");
+    let hash1 = sequencer.head().block_info.hash;
+
+    let mut source = ActionL2Source::new();
+    source.push(block);
+    let mut batcher = h.create_batcher(source, batcher_cfg.clone());
+    let frames = batcher.encode_frames().expect("encode");
+    assert!(
+        frames.len() >= 2,
+        "need at least 2 frames for this test; got {} (increase payload or decrease max_frame_size)",
+        frames.len()
+    );
+
+    // Submit frame 0 only → L1 block 1.
+    batcher.submit_frames(&frames[..1]);
+    drop(batcher);
+
+    let (mut verifier, chain) = h.create_verifier();
+    verifier.register_block_hash(1, hash1);
+
+    h.mine_and_push(&chain); // L1 block 1: frame 0
+
+    verifier.initialize().await.expect("initialize");
+    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
+    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.act_l2_pipeline_full().await.expect("step block 1");
+
+    // Channel is open but incomplete — safe head stays at genesis.
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        0,
+        "channel incomplete after block 1; safe head must stay at genesis"
+    );
+
+    // Submit remaining frames → L1 block 2 (well within channel_timeout).
+    {
+        let empty_source = ActionL2Source::new();
+        let mut batcher2 = h.create_batcher(empty_source, batcher_cfg);
+        batcher2.submit_frames(&frames[1..]);
+        drop(batcher2);
+    }
+    h.mine_and_push(&chain); // L1 block 2: remaining frames
+
+    let l1_block_2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
+    verifier.act_l1_head_signal(l1_block_2).await.expect("signal block 2");
+    let derived = verifier.act_l2_pipeline_full().await.expect("step block 2");
+
+    assert_eq!(derived, 1, "multi-block channel must yield 1 L2 block");
+    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head must advance to 1");
 }

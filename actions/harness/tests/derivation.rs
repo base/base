@@ -10,9 +10,7 @@ use base_action_harness::{
     L2Verifier, PendingTx, SharedL1Chain, StepResult, TestRollupConfigBuilder, block_info_from,
 };
 use base_blobs::BlobEncoder;
-use base_consensus_genesis::{
-    CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, L1ChainConfig, RollupConfig,
-};
+use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, L1ChainConfig};
 use base_protocol::{
     BlockInfo, DEPOSIT_EVENT_ABI_HASH, DEPOSIT_EVENT_VERSION_0, DERIVATION_VERSION_0, L2BlockInfo,
 };
@@ -498,8 +496,9 @@ async fn batch_accepted_at_last_seq_window_block() {
     const SEQ_WINDOW: u64 = 4;
 
     let batcher_cfg = BatcherConfig::default();
-    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
-    rollup_cfg.seq_window_size = SEQ_WINDOW;
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_seq_window_size(SEQ_WINDOW)
+        .build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Build L2 block 1 referencing L1 genesis (epoch 0).
@@ -647,10 +646,9 @@ fn user_deposit_log(
 async fn l1_deposit_included_in_derived_l2_block() {
     let deposit_contract = Address::repeat_byte(0xDD);
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = RollupConfig {
-        deposit_contract_address: deposit_contract,
-        ..TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build()
-    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_deposit_contract(deposit_contract)
+        .build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Build L2 block 1 from the sequencer.
@@ -725,8 +723,9 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     let batcher_b =
         BatcherConfig { batcher_address: Address::repeat_byte(0xBB), ..batcher_a.clone() };
 
-    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_a).build();
-    rollup_cfg.l1_system_config_address = l1_sys_cfg_addr;
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_a)
+        .with_l1_system_config_address(l1_sys_cfg_addr)
+        .build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
     // Build all L2 blocks (1, 2, and 3) upfront from the L1 genesis state.
@@ -873,8 +872,9 @@ async fn multi_l2_per_l1_epoch() {
 async fn batch_past_sequence_window_rejected() {
     const SEQ_WINDOW: u64 = 3;
     let batcher_cfg = BatcherConfig::default();
-    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
-    rollup_cfg.seq_window_size = SEQ_WINDOW;
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_seq_window_size(SEQ_WINDOW)
+        .build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Build L2 block 1 (epoch 0).
@@ -1396,10 +1396,9 @@ fn gas_limit_update_log(l1_sys_cfg_addr: Address, gas_limit: u64) -> alloy_primi
 async fn gpo_params_change_does_not_disrupt_derivation() {
     let l1_sys_cfg_addr = Address::repeat_byte(0xCC);
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = RollupConfig {
-        l1_system_config_address: l1_sys_cfg_addr,
-        ..TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build()
-    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_l1_system_config_address(l1_sys_cfg_addr)
+        .build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -1458,10 +1457,9 @@ async fn gpo_params_change_does_not_disrupt_derivation() {
 async fn gas_limit_change_does_not_disrupt_derivation() {
     let l1_sys_cfg_addr = Address::repeat_byte(0xCC);
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = RollupConfig {
-        l1_system_config_address: l1_sys_cfg_addr,
-        ..TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build()
-    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_l1_system_config_address(l1_sys_cfg_addr)
+        .build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -1939,8 +1937,9 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     let batcher_b =
         BatcherConfig { batcher_address: Address::repeat_byte(0xBB), ..batcher_a.clone() };
 
-    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_a).build();
-    rollup_cfg.l1_system_config_address = l1_sys_cfg_addr;
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_a)
+        .with_l1_system_config_address(l1_sys_cfg_addr)
+        .build();
     let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 

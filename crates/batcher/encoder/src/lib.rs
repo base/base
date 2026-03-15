@@ -9,8 +9,8 @@
 
 mod types;
 pub use types::{
-    BatchSubmission, EncoderConfig, EncoderConfigError, ReorgError, StepError, StepResult,
-    SubmissionId,
+    BatchSubmission, BatchType, DaType, EncoderConfig, EncoderConfigError, ReorgError, StepError,
+    StepResult, SubmissionId,
 };
 
 mod pipeline;

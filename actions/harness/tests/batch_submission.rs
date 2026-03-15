@@ -274,3 +274,23 @@ fn garbage_invalid_brotli_submitted_to_l1() {
     drop(batcher);
     assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
 }
+
+#[test]
+fn garbage_strip_version_submitted_to_l1() {
+    let mut h = ActionTestHarness::default();
+    let source = ActionL2Source::new();
+    let mut batcher = h.create_batcher(source, BatcherConfig::default());
+    batcher.submit_garbage_frames(GarbageKind::StripVersion);
+    drop(batcher);
+    assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
+}
+
+#[test]
+fn garbage_dirty_append_submitted_to_l1() {
+    let mut h = ActionTestHarness::default();
+    let source = ActionL2Source::new();
+    let mut batcher = h.create_batcher(source, BatcherConfig::default());
+    batcher.submit_garbage_frames(GarbageKind::DirtyAppend);
+    drop(batcher);
+    assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
+}

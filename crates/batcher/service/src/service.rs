@@ -186,6 +186,8 @@ impl BatcherService {
     /// if any of those steps fail — the caller sees the failure immediately,
     /// before any background work is spawned.
     pub async fn setup(self) -> eyre::Result<ReadyBatcher> {
+        self.config.encoder_config.validate()?;
+
         info!(
             l1_rpc = %self.config.l1_rpc_url,
             l2_rpc = %self.config.l2_rpc_url,

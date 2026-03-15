@@ -1,4 +1,5 @@
-use base_consensus_genesis::{BaseHardforkConfig, RollupConfig};
+use alloy_primitives::Address;
+use base_consensus_genesis::{BaseHardforkConfig, HardForkConfig, RollupConfig};
 use base_consensus_registry::Registry;
 
 use crate::BatcherConfig;
@@ -48,6 +49,39 @@ impl TestRollupConfigBuilder {
     /// Overrides the pre-Fjord `max_sequencer_drift` field on the config.
     pub const fn with_max_sequencer_drift(mut self, n: u64) -> Self {
         self.config.max_sequencer_drift = n;
+        self
+    }
+
+    /// Overrides the L2 block time in seconds.
+    pub const fn with_block_time(mut self, n: u64) -> Self {
+        self.config.block_time = n;
+        self
+    }
+
+    /// Overrides the sequencer window size (in L1 blocks).
+    pub const fn with_seq_window_size(mut self, n: u64) -> Self {
+        self.config.seq_window_size = n;
+        self
+    }
+
+    /// Overrides the L1 system config contract address.
+    pub const fn with_l1_system_config_address(mut self, addr: Address) -> Self {
+        self.config.l1_system_config_address = addr;
+        self
+    }
+
+    /// Overrides the L1 deposit contract address.
+    pub const fn with_deposit_contract(mut self, addr: Address) -> Self {
+        self.config.deposit_contract_address = addr;
+        self
+    }
+
+    /// Replaces the entire hardfork schedule with the supplied [`HardForkConfig`].
+    ///
+    /// Use this when a test needs fine-grained control over which forks are active
+    /// at which timestamps (e.g. hardfork boundary tests, span-batch gating tests).
+    pub const fn with_hardforks(mut self, hardforks: HardForkConfig) -> Self {
+        self.config.hardforks = hardforks;
         self
     }
 

@@ -39,8 +39,8 @@ use base_action_harness::{
 async fn sequencer_drift_produces_deposit_only_blocks() {
     let l1_cfg = L1MinerConfig { block_time: 4 };
     let batcher_cfg = BatcherConfig::default();
-    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
-    rollup_cfg.block_time = 300;
+    let rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_block_time(300).build();
     let mut h = ActionTestHarness::new(l1_cfg, rollup_cfg.clone());
 
     // Mine L1 block 1 (ts=4) so the sequencer has an epoch to reference,
@@ -136,8 +136,8 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
 async fn sequencer_drift_forced_empty_blocks_accepted() {
     let l1_cfg = L1MinerConfig { block_time: 4 };
     let batcher_cfg = BatcherConfig::default();
-    let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
-    rollup_cfg.block_time = 300;
+    let rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_block_time(300).build();
     let mut h = ActionTestHarness::new(l1_cfg, rollup_cfg);
 
     // Mine 1 L1 block so epoch 1 exists, but pin sequencer to epoch 0.

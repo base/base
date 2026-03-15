@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::B256;
+pub use base_protocol::BatchType;
 use base_protocol::{ChannelId, Frame};
 
 /// Identifies a batch submission for receipt tracking.
@@ -15,6 +16,24 @@ use base_protocol::{ChannelId, Frame};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SubmissionId(pub u64);
 
+/// Selects how batch frames are encoded for L1 submission.
+///
+/// The driver uses this field on each [`BatchSubmission`] to determine whether
+/// frames should be packed into EIP-4844 blobs or sent as transaction calldata.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DaType {
+    /// Frames are packed into EIP-4844 blobs, one blob per frame (default).
+    #[default]
+    Blob,
+    /// Each frame is sent as a single calldata transaction
+    /// (`[DERIVATION_VERSION_0] ++ frame.encode()`).
+    ///
+    /// When using calldata mode, set
+    /// [`EncoderConfig::target_num_frames`] to `1` so that each
+    /// [`BatchSubmission`] contains exactly one frame.
+    Calldata,
+}
+
 /// A single L1 transaction's worth of batch data: one or more frames encoded as blobs.
 ///
 /// Contains up to [`EncoderConfig::target_num_frames`] frames, each mapping to one
@@ -26,6 +45,8 @@ pub struct BatchSubmission {
     pub id: SubmissionId,
     /// The channel this submission belongs to.
     pub channel_id: ChannelId,
+    /// How frames in this submission should be encoded for L1.
+    pub da_type: DaType,
     /// Frames to include in this L1 transaction.
     /// Each frame maps to one EIP-4844 blob. Shared via [`Arc`] to avoid
     /// deep copies of the frame payload when handing off to the driver.
@@ -118,6 +139,23 @@ pub struct EncoderConfig {
     ///
     /// Default: 1 (one blob per transaction).
     pub target_num_frames: usize,
+
+    /// Whether to encode blocks as individual [`SingleBatch`](base_consensus_genesis::batch::SingleBatch)es
+    /// or accumulate them into a single [`SpanBatch`](base_protocol::SpanBatch).
+    ///
+    /// Default: [`BatchType::Single`].
+    pub batch_type: BatchType,
+
+    /// How frames should be encoded for L1 submission.
+    ///
+    /// When set to [`DaType::Calldata`], set [`target_num_frames`] to `1` so
+    /// that each [`BatchSubmission`] contains exactly one frame (one calldata
+    /// tx per frame matches the derivation protocol).
+    ///
+    /// Default: [`DaType::Blob`].
+    ///
+    /// [`target_num_frames`]: EncoderConfig::target_num_frames
+    pub da_type: DaType,
 }
 
 impl Default for EncoderConfig {
@@ -128,6 +166,8 @@ impl Default for EncoderConfig {
             max_channel_duration: 2,
             sub_safety_margin: 0,
             target_num_frames: 1,
+            batch_type: BatchType::Single,
+            da_type: DaType::Blob,
         }
     }
 }
@@ -144,6 +184,11 @@ impl EncoderConfig {
             return Err(EncoderConfigError::SafetyMarginTooLarge {
                 sub_safety_margin: self.sub_safety_margin,
                 max_channel_duration: self.max_channel_duration,
+            });
+        }
+        if matches!(self.da_type, DaType::Calldata) && self.target_num_frames != 1 {
+            return Err(EncoderConfigError::CalldataRequiresSingleFrame {
+                target_num_frames: self.target_num_frames,
             });
         }
         Ok(())
@@ -167,6 +212,15 @@ pub enum EncoderConfigError {
         sub_safety_margin: u64,
         /// The configured maximum channel duration.
         max_channel_duration: u64,
+    },
+    /// `da_type == DaType::Calldata` but `target_num_frames != 1`.
+    ///
+    /// Calldata mode submits one frame per L1 transaction. Set
+    /// `target_num_frames = 1` when using [`DaType::Calldata`].
+    #[error("calldata DA requires target_num_frames == 1, got {target_num_frames}")]
+    CalldataRequiresSingleFrame {
+        /// The configured target number of frames.
+        target_num_frames: usize,
     },
 }
 

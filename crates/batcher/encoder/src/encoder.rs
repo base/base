@@ -6,6 +6,15 @@ use std::{
     sync::Arc,
 };
 
+/// Approximate compression ratio used by the `ShadowCompressor` (Brotli-10).
+/// Must stay in sync with the `approx_compr_ratio` value in `BatchEncoder::open_new_channel`.
+const APPROX_COMPR_RATIO: f64 = 0.6;
+
+/// Approximate bytes of per-block overhead when encoding as part of a [`SpanBatch`].
+/// Accounts for the fixed fields carried per singular batch (parent hash, epoch number,
+/// epoch hash, timestamp) plus RLP framing. Used for span accumulator size estimation.
+const SPAN_BATCH_PER_BLOCK_OVERHEAD: usize = 50;
+
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
@@ -13,12 +22,13 @@ use base_comp::{
     BatchComposer, ChannelOut, CompressionAlgo, CompressorType, Config, ShadowCompressor,
 };
 use base_consensus_genesis::RollupConfig;
-use base_protocol::{Batch, ChannelId};
+use base_protocol::{Batch, ChannelId, SingleBatch, SpanBatch};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, warn};
 
 use crate::{
-    BatchPipeline, BatchSubmission, EncoderConfig, ReorgError, StepError, StepResult, SubmissionId,
+    BatchPipeline, BatchSubmission, BatchType, EncoderConfig, ReorgError, StepError, StepResult,
+    SubmissionId,
     channel::{OpenChannel, PendingRef, ReadyChannel},
 };
 
@@ -49,6 +59,20 @@ pub struct BatchEncoder {
     next_id: u64,
     /// Per-instance RNG for generating unique channel IDs.
     rng: SmallRng,
+    /// Accumulated (`SingleBatch`, `sequence_number`) pairs when operating in
+    /// [`BatchType::Span`] mode. Blocks are collected here during `step()` and
+    /// flushed as a single [`SpanBatch`] when `close_current_channel()` is called.
+    span_accumulator: Vec<(SingleBatch, u64)>,
+    /// Running sum of the estimated raw (uncompressed) byte size of all blocks currently
+    /// in `span_accumulator`. Incremented by `SPAN_BATCH_PER_BLOCK_OVERHEAD` plus raw
+    /// transaction bytes for each block pushed in `step()`, and reset to zero when the
+    /// accumulator is drained. Avoids an O(N·M) re-scan of the accumulator on every step.
+    span_raw_bytes: usize,
+    /// L1 head block number when the first block was accumulated into the current span
+    /// (Span mode only). Used by `check_channel_timeout()` to detect when the span has
+    /// been open too long and must be flushed, since `current_channel` is `None` between
+    /// span flushes. Cleared when `close_current_channel()` drains the accumulator.
+    span_opened_at_l1: Option<u64>,
 }
 
 impl fmt::Debug for BatchEncoder {
@@ -62,6 +86,9 @@ impl fmt::Debug for BatchEncoder {
             .field("ready_channels", &self.ready_channels.len())
             .field("pending", &self.pending.len())
             .field("next_id", &self.next_id)
+            .field("span_accumulator_len", &self.span_accumulator.len())
+            .field("span_raw_bytes", &self.span_raw_bytes)
+            .field("span_opened_at_l1", &self.span_opened_at_l1)
             .finish_non_exhaustive()
     }
 }
@@ -81,11 +108,74 @@ impl BatchEncoder {
             pending: HashMap::new(),
             next_id: 0,
             rng: SmallRng::from_os_rng(),
+            span_accumulator: Vec::new(),
+            span_raw_bytes: 0,
+            span_opened_at_l1: None,
         }
     }
 
     /// Close the current channel, drain its frames, and push it to `ready_channels`.
+    ///
+    /// In [`BatchType::Span`] mode the span accumulator is flushed as a single
+    /// [`SpanBatch`] into a freshly-opened channel before draining frames.
+    /// If both the channel and the accumulator are empty the call is a no-op.
     fn close_current_channel(&mut self) {
+        // In Span mode: build a SpanBatch from the accumulator, then open a channel
+        // and write it. The accumulator is only consumed if all appends succeed, so
+        // blocks are never silently lost on error — they remain in the accumulator for
+        // the next close attempt.
+        //
+        // Importantly, both the channel open and the accumulator drain happen only
+        // after successful batch construction: this prevents writing a zero-block (or
+        // partial) SpanBatch to the channel, which would be silently ignored by the
+        // derivation pipeline and waste L1 DA space.
+        if self.config.batch_type == BatchType::Span && !self.span_accumulator.is_empty() {
+            let chain_id = self.rollup_config.l2_chain_id.id();
+            let mut span_batch = SpanBatch { chain_id, ..Default::default() };
+            let total = self.span_accumulator.len();
+            let mut append_failed = false;
+
+            for (single, seq_num) in &self.span_accumulator {
+                if let Err(e) = span_batch.append_singular_batch(single.clone(), *seq_num) {
+                    warn!(
+                        error = %e,
+                        total,
+                        "span batch append failed; blocks preserved in accumulator"
+                    );
+                    append_failed = true;
+                    break;
+                }
+            }
+
+            if !append_failed {
+                // All blocks encoded into the SpanBatch. Now open a channel and write it.
+                // The accumulator is only cleared *after* a successful add_batch so that
+                // blocks are never silently lost if the channel rejects the batch (e.g.
+                // if the span batch exceeds MAX_RLP_BYTES_PER_CHANNEL).
+                if self.current_channel.is_none() {
+                    self.open_new_channel();
+                }
+
+                let add_ok = self
+                    .current_channel
+                    .as_mut()
+                    .map(|open| {
+                        open.out.add_batch(Batch::Span(span_batch)).map_err(|e| {
+                            warn!(error = %e, total, "failed to add span batch to channel; blocks preserved in accumulator");
+                        }).is_ok()
+                    })
+                    .unwrap_or(false);
+
+                if add_ok {
+                    self.span_accumulator.clear();
+                    self.span_raw_bytes = 0;
+                    self.span_opened_at_l1 = None;
+                }
+            }
+            // On failure (append or add_batch): accumulator is untouched so blocks
+            // are retried on the next close attempt. No partial SpanBatch is submitted.
+        }
+
         let Some(mut open) = self.current_channel.take() else {
             return;
         };
@@ -144,7 +234,7 @@ impl BatchEncoder {
             target_output_size: self.config.target_frame_size as u64,
             kind: CompressorType::Shadow,
             compression_algo: CompressionAlgo::Brotli10,
-            approx_compr_ratio: 0.6,
+            approx_compr_ratio: APPROX_COMPR_RATIO,
         };
         let compressor = ShadowCompressor::from(compressor_config);
 
@@ -153,15 +243,26 @@ impl BatchEncoder {
         self.current_channel = Some(OpenChannel { out: channel_out, opened_at_l1: self.l1_head });
     }
 
-    /// Check if the current channel has timed out and close it if so.
+    /// Check if the current channel (or span accumulator) has timed out and close it if so.
     fn check_channel_timeout(&mut self) -> bool {
+        // Apply the safety margin so channels are closed `sub_safety_margin` L1 blocks
+        // before the configured `max_channel_duration`, ensuring frames land well within
+        // the protocol's `channel_timeout` inclusion window.
+        let effective_duration =
+            self.config.max_channel_duration.saturating_sub(self.config.sub_safety_margin);
+
         let should_close = if let Some(ref open) = self.current_channel {
-            // Apply the safety margin so channels are closed `sub_safety_margin` L1 blocks
-            // before the configured `max_channel_duration`, ensuring frames land well within
-            // the protocol's `channel_timeout` inclusion window.
-            let effective_duration =
-                self.config.max_channel_duration.saturating_sub(self.config.sub_safety_margin);
             self.l1_head.saturating_sub(open.opened_at_l1) >= effective_duration
+        } else if self.config.batch_type == BatchType::Span {
+            // In Span mode there is no open channel between size-based flushes; instead
+            // we track the L1 head at which the first block was accumulated. If the
+            // accumulator is non-empty and the effective duration has elapsed, flush it.
+            self.span_opened_at_l1
+                .map(|opened_at| {
+                    !self.span_accumulator.is_empty()
+                        && self.l1_head.saturating_sub(opened_at) >= effective_duration
+                })
+                .unwrap_or(false)
         } else {
             false
         };
@@ -202,42 +303,99 @@ impl BatchPipeline for BatchEncoder {
             return Ok(StepResult::Idle);
         }
 
-        // Ensure a channel is open.
-        if self.current_channel.is_none() {
-            self.open_new_channel();
-        }
-
         // Get the block at the cursor.
         let block = &self.blocks[self.block_cursor];
 
         // Convert block to a SingleBatch. Failure here is fatal: skipping the block
         // would produce a gap in the L2 block sequence submitted to L1.
-        let (single_batch, _l1_info) = BatchComposer::block_to_single_batch(block)
+        let (single_batch, l1_info) = BatchComposer::block_to_single_batch(block)
             .map_err(|source| StepError::CompositionFailed { cursor: self.block_cursor, source })?;
 
-        // Try to add the batch to the current channel.
-        let batch = Batch::Single(single_batch);
-        let open = self.current_channel.as_mut().unwrap();
-        Ok(match open.out.add_batch(batch) {
-            Ok(()) => {
+        match self.config.batch_type {
+            BatchType::Span => {
+                // In Span mode blocks are accumulated in memory; the span batch is
+                // written to the channel only when close_current_channel() is called.
+                let seq_num = l1_info.sequence_number();
+                // Maintain a running byte counter so the size check below is O(1) per
+                // step rather than O(N·M) over the entire accumulator.
+                let block_raw_bytes = SPAN_BATCH_PER_BLOCK_OVERHEAD
+                    + single_batch.transactions.iter().map(|tx| tx.len()).sum::<usize>();
+                self.span_raw_bytes += block_raw_bytes;
+                self.span_accumulator.push((single_batch, seq_num));
                 self.block_cursor += 1;
 
+                // Track the L1 head at which the first block of this span was accumulated.
+                // `check_channel_timeout()` uses this to detect when the span has been open
+                // too long even though `current_channel` is None between flushes.
+                if self.span_opened_at_l1.is_none() {
+                    self.span_opened_at_l1 = Some(self.l1_head);
+                }
+
+                // Estimate the compressed size of the accumulated span batch and close
+                // the channel when it would exceed the configured size budget. This mirrors
+                // op-batcher's `SpanChannelOut`, which triggers closure based on estimated
+                // compressed size rather than waiting for a timeout.
+                //
+                // Each block contributes fixed-field overhead plus its raw transaction bytes.
+                // The compressed estimate uses the same ratio as the ShadowCompressor so that
+                // the size trigger fires at roughly the same threshold as Single mode.
+                let compressed_estimate =
+                    (self.span_raw_bytes as f64 * APPROX_COMPR_RATIO) as usize;
+                let size_target =
+                    self.config.target_frame_size.saturating_mul(self.config.target_num_frames);
+
                 debug!(
-                    block_cursor = %self.block_cursor,
-                    blocks_len = %self.blocks.len(),
-                    "encoded block into channel"
+                    block_cursor = self.block_cursor,
+                    blocks_len = self.blocks.len(),
+                    span_accumulator_len = self.span_accumulator.len(),
+                    span_raw_bytes = self.span_raw_bytes,
+                    compressed_estimate,
+                    size_target,
+                    "accumulated block for span batch"
                 );
 
-                StepResult::BlockEncoded
+                if compressed_estimate >= size_target {
+                    debug!(
+                        span_len = self.span_accumulator.len(),
+                        compressed_estimate, size_target, "span accumulator full, closing channel"
+                    );
+                    self.close_current_channel();
+                    return Ok(StepResult::ChannelClosed);
+                }
+
+                Ok(StepResult::BlockEncoded)
             }
-            Err(e) => {
-                // Channel is full (ExceedsMaxRlpBytesPerChannel or compression full).
-                // Close the current channel and the caller will retry on the next step.
-                debug!(error = %e, "channel rejected batch, closing");
-                self.close_current_channel();
-                StepResult::ChannelClosed
+            BatchType::Single => {
+                // Ensure a channel is open.
+                if self.current_channel.is_none() {
+                    self.open_new_channel();
+                }
+
+                // Try to add the batch to the current channel.
+                let batch = Batch::Single(single_batch);
+                let open = self.current_channel.as_mut().unwrap();
+                Ok(match open.out.add_batch(batch) {
+                    Ok(()) => {
+                        self.block_cursor += 1;
+
+                        debug!(
+                            block_cursor = self.block_cursor,
+                            blocks_len = self.blocks.len(),
+                            "encoded block into channel"
+                        );
+
+                        StepResult::BlockEncoded
+                    }
+                    Err(e) => {
+                        // Channel is full (ExceedsMaxRlpBytesPerChannel or compression full).
+                        // Close the current channel and the caller will retry on the next step.
+                        debug!(error = %e, "channel rejected batch, closing");
+                        self.close_current_channel();
+                        StepResult::ChannelClosed
+                    }
+                })
             }
-        })
+        }
     }
 
     fn next_submission(&mut self) -> Option<BatchSubmission> {
@@ -261,7 +419,12 @@ impl BatchPipeline for BatchEncoder {
                 self.pending
                     .insert(id, PendingRef { channel_idx: chan_idx, frame_start, frame_count });
 
-                return Some(BatchSubmission { id, channel_id: channel.id, frames });
+                return Some(BatchSubmission {
+                    id,
+                    channel_id: channel.id,
+                    da_type: self.config.da_type,
+                    frames,
+                });
             }
         }
 
@@ -363,6 +526,9 @@ impl BatchPipeline for BatchEncoder {
         self.current_channel = None;
         self.ready_channels.clear();
         self.pending.clear();
+        self.span_accumulator.clear();
+        self.span_raw_bytes = 0;
+        self.span_opened_at_l1 = None;
         // Intentionally not resetting `next_id`: keeping it monotonically
         // increasing across resets means post-reset submissions can never
         // share an ID with any pre-reset in-flight submission, eliminating
@@ -761,6 +927,7 @@ mod tests {
             target_num_frames: 2,
             max_channel_duration: 2,
             sub_safety_margin: 0,
+            ..EncoderConfig::default()
         };
         let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
 
@@ -799,6 +966,7 @@ mod tests {
             target_num_frames: 3,
             max_channel_duration: 2,
             sub_safety_margin: 0,
+            ..EncoderConfig::default()
         };
         let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
 
@@ -924,5 +1092,252 @@ mod tests {
         // Cursor must still be 0 — the block was not consumed.
         assert_eq!(encoder.block_cursor, 0);
         assert_eq!(encoder.blocks.len(), 1);
+    }
+
+    // --- Span batch tests ---
+
+    /// A [`BatchEncoder`] in Span mode with a tiny `target_frame_size` so the very first
+    /// accumulated block exceeds the compressed-size threshold and triggers `ChannelClosed`.
+    fn span_encoder_tiny_target() -> BatchEncoder {
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            target_frame_size: 1,
+            max_frame_size: 130_044,
+            ..EncoderConfig::default()
+        };
+        BatchEncoder::new(Arc::new(RollupConfig::default()), config)
+    }
+
+    /// In Span mode, `step()` returns `BlockEncoded` for multiple blocks without
+    /// opening a channel — blocks accumulate in the span accumulator until the size
+    /// threshold or timeout fires.
+    #[test]
+    fn test_span_batch_accumulates_blocks_without_channel() {
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            target_frame_size: 130_044, // large: size won't trigger
+            max_channel_duration: 1000,
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
+
+        let b1 = make_block(B256::ZERO);
+        let b1_hash = b1.header.hash_slow();
+        encoder.add_block(b1).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+
+        // No channel opened — blocks are in the span accumulator.
+        assert!(encoder.current_channel.is_none());
+        assert_eq!(encoder.span_accumulator.len(), 1);
+        assert!(encoder.span_opened_at_l1.is_some(), "span_opened_at_l1 must be set");
+
+        let b2 = make_block(b1_hash);
+        let b2_hash = b2.header.hash_slow();
+        encoder.add_block(b2).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert!(encoder.current_channel.is_none());
+        assert_eq!(encoder.span_accumulator.len(), 2);
+
+        let b3 = make_block(b2_hash);
+        encoder.add_block(b3).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert!(encoder.current_channel.is_none());
+        assert_eq!(encoder.span_accumulator.len(), 3);
+
+        // No submissions available until channel is closed.
+        assert!(encoder.next_submission().is_none());
+    }
+
+    /// When the estimated compressed size of the span accumulator exceeds
+    /// `target_frame_size * target_num_frames`, `step()` returns `ChannelClosed`
+    /// and a submission is immediately available.
+    #[test]
+    fn test_span_batch_size_threshold_triggers_close() {
+        let mut encoder = span_encoder_tiny_target();
+
+        let block = make_block(B256::ZERO);
+        encoder.add_block(block).unwrap();
+
+        // The first block's overhead alone exceeds target_frame_size=1.
+        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
+
+        // Accumulator must be flushed.
+        assert!(encoder.span_accumulator.is_empty());
+        assert!(encoder.span_opened_at_l1.is_none());
+
+        // A submission must be immediately available.
+        let sub = encoder.next_submission();
+        assert!(sub.is_some(), "span batch should produce a submission after size-based close");
+    }
+
+    /// In Span mode, `advance_l1_head` triggers `check_channel_timeout()` which closes
+    /// and flushes the span accumulator when the effective duration has elapsed, even
+    /// though `current_channel` is `None`.
+    #[test]
+    fn test_span_batch_timeout_triggers_close() {
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            target_frame_size: 130_044, // large: size won't trigger
+            max_frame_size: 130_044,
+            max_channel_duration: 5,
+            sub_safety_margin: 0,
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
+
+        let block = make_block(B256::ZERO);
+        encoder.add_block(block).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+
+        // One block accumulated; no channel open.
+        assert!(encoder.current_channel.is_none());
+        assert_eq!(encoder.span_accumulator.len(), 1);
+        assert_eq!(encoder.span_opened_at_l1, Some(0));
+
+        // Advance L1 head just below the timeout — accumulator must be preserved.
+        encoder.advance_l1_head(4);
+        assert_eq!(encoder.span_accumulator.len(), 1, "accumulator must survive before timeout");
+        assert!(encoder.ready_channels.is_empty());
+
+        // At exactly the timeout threshold — accumulator must be flushed.
+        encoder.advance_l1_head(5);
+        assert!(encoder.span_accumulator.is_empty(), "accumulator must be flushed at timeout");
+        assert!(encoder.span_opened_at_l1.is_none());
+        assert!(!encoder.ready_channels.is_empty(), "a ready channel must exist after flush");
+
+        let sub = encoder.next_submission();
+        assert!(sub.is_some(), "should have a submission after timeout flush");
+    }
+
+    /// `sub_safety_margin` shortens the effective timeout in Span mode just as it does
+    /// in Single mode: a span opened at L1 block 0 with `max_channel_duration=10,
+    /// sub_safety_margin=4` must flush when `l1_head` reaches 6.
+    #[test]
+    fn test_span_batch_sub_safety_margin_shortens_timeout() {
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            target_frame_size: 130_044,
+            max_frame_size: 130_044,
+            max_channel_duration: 10,
+            sub_safety_margin: 4,
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
+
+        let block = make_block(B256::ZERO);
+        encoder.add_block(block).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+
+        // One block before effective threshold (10 - 4 = 6) — must survive.
+        encoder.advance_l1_head(5);
+        assert_eq!(
+            encoder.span_accumulator.len(),
+            1,
+            "accumulator must survive before effective timeout"
+        );
+
+        // At exactly the effective threshold — must flush.
+        encoder.advance_l1_head(6);
+        assert!(encoder.span_accumulator.is_empty(), "must flush at effective timeout");
+        assert!(!encoder.ready_channels.is_empty());
+    }
+
+    /// End-to-end span batch path: add a block, trigger size-based close,
+    /// get submission, confirm, and verify blocks are pruned.
+    #[test]
+    fn test_span_batch_end_to_end() {
+        let mut encoder = span_encoder_tiny_target();
+
+        let b1 = make_block(B256::ZERO);
+        encoder.add_block(b1).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
+
+        let sub = encoder.next_submission().expect("submission must be available");
+        let sub_id = sub.id;
+
+        // Blocks must NOT be pruned until the submission is confirmed.
+        assert!(!encoder.blocks.is_empty());
+
+        encoder.confirm(sub_id, 10);
+
+        // After confirmation blocks must be pruned.
+        assert!(encoder.blocks.is_empty());
+        assert_eq!(encoder.block_cursor, 0);
+    }
+
+    /// `reset()` in Span mode must clear both the accumulator and `span_opened_at_l1`.
+    #[test]
+    fn test_span_batch_reset_clears_span_state() {
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            target_frame_size: 130_044, // large: size won't trigger
+            max_channel_duration: 1000,
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
+
+        let block = make_block(B256::ZERO);
+        encoder.add_block(block).unwrap();
+        encoder.step().unwrap();
+
+        assert_eq!(encoder.span_accumulator.len(), 1);
+        assert!(encoder.span_opened_at_l1.is_some());
+
+        encoder.reset();
+
+        assert!(encoder.span_accumulator.is_empty());
+        assert!(encoder.span_opened_at_l1.is_none());
+    }
+
+    /// Multiple successive Span channels work correctly: each block immediately triggers
+    /// a size-based close (with tiny target), and each channel is confirmed and pruned
+    /// independently.
+    #[test]
+    fn test_span_batch_multiple_channels() {
+        let mut encoder = span_encoder_tiny_target();
+
+        // First block → size threshold → first channel closed.
+        let b1 = make_block(B256::ZERO);
+        let b1_hash = b1.header.hash_slow();
+        encoder.add_block(b1).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
+        assert_eq!(encoder.ready_channels.len(), 1);
+
+        // Second block → size threshold → second channel closed.
+        let b2 = make_block(b1_hash);
+        encoder.add_block(b2).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
+        assert_eq!(encoder.ready_channels.len(), 2);
+
+        // Confirm first channel — its block is pruned.
+        let sub1 = encoder.next_submission().expect("ch1 must have a submission");
+        let id1 = sub1.id;
+        encoder.confirm(id1, 10);
+        assert_eq!(encoder.ready_channels.len(), 1);
+
+        // Confirm second channel — its block is pruned.
+        let sub2 = encoder.next_submission().expect("ch2 must have a submission");
+        let id2 = sub2.id;
+        encoder.confirm(id2, 11);
+        assert_eq!(encoder.ready_channels.len(), 0);
+        assert!(encoder.blocks.is_empty());
+    }
+
+    /// A span-mode requeue rewinds the cursor on the ready channel just as in Single mode.
+    #[test]
+    fn test_span_batch_requeue_rewinds_cursor() {
+        let mut encoder = span_encoder_tiny_target();
+
+        let block = make_block(B256::ZERO);
+        encoder.add_block(block).unwrap();
+        assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
+
+        let sub = encoder.next_submission().unwrap();
+        let sub_id = sub.id;
+
+        encoder.requeue(sub_id);
+
+        let resub = encoder.next_submission();
+        assert!(resub.is_some(), "requeued span frames must be available again");
     }
 }
