@@ -4,7 +4,7 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use alloy_primitives::{Address, Bytes, U256};
 use base_batcher_encoder::{BatchPipeline, DaType, FrameEncoder, StepResult, SubmissionId};
-use base_batcher_source::{L2BlockEvent, UnsafeBlockSource};
+use base_batcher_source::{L2BlockEvent, SourceError, UnsafeBlockSource};
 use base_blobs::BlobEncoder;
 use base_tx_manager::{TxCandidate, TxManager};
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -95,6 +95,11 @@ where
     /// 3. Selects on cancellation, block source events, and receipt completion.
     /// 4. Returns `Ok(())` on cancellation or `Err` on source/encoding failure.
     pub async fn run(mut self, cancellation: CancellationToken) -> Result<(), BatchDriverError> {
+        // Set when InMemoryBlockSource (or any bounded source) signals Exhausted.
+        // After force-closing the channel on Exhausted, we run one more outer-loop
+        // iteration to process the closed channel into submissions before draining
+        // all in-flight receipt futures and exiting.
+        let mut source_exhausted = false;
         loop {
             // Drain encoding steps synchronously before I/O. A budget prevents
             // a large block backlog from starving the tokio executor: after
@@ -219,6 +224,25 @@ where
                 }
             }
 
+            // When the source is fully drained, all pending submissions have been
+            // pushed to `in_flight` by the loop above. Await their receipts and exit.
+            if source_exhausted {
+                while let Some((id, outcome)) = self.in_flight.next().await {
+                    match outcome {
+                        TxOutcome::Confirmed { l1_block } => {
+                            self.pipeline.confirm(id, l1_block);
+                            self.pipeline.advance_l1_head(l1_block);
+                            debug!(id = %id.0, l1_block, "submission confirmed (drain)");
+                        }
+                        TxOutcome::Failed => {
+                            self.pipeline.requeue(id);
+                            warn!(id = %id.0, "submission failed, requeued (drain)");
+                        }
+                    }
+                }
+                return Ok(());
+            }
+
             // Block on I/O: cancellation, new blocks, or receipt completions.
             tokio::select! {
                 biased;
@@ -229,8 +253,8 @@ where
                 }
 
                 event = self.source.next() => {
-                    match event? {
-                        L2BlockEvent::Block(block) => {
+                    match event {
+                        Ok(L2BlockEvent::Block(block)) => {
                             let number = block.header.number;
                             match self.pipeline.add_block(*block) {
                                 Ok(()) => {
@@ -253,7 +277,7 @@ where
                                 }
                             }
                         }
-                        L2BlockEvent::Reorg { new_safe_head } => {
+                        Ok(L2BlockEvent::Reorg { new_safe_head }) => {
                             warn!(
                                 head = %new_safe_head.block_info.number,
                                 "L2 reorg detected, resetting pipeline"
@@ -266,6 +290,17 @@ where
                             self.in_flight = FuturesUnordered::new();
                             self.pipeline.reset();
                         }
+                        Err(SourceError::Exhausted) => {
+                            // Force-close the current channel so that any
+                            // partially-filled encoded blocks become available as
+                            // submissions on the next outer-loop iteration.
+                            // `source_exhausted` causes that iteration to drain
+                            // all in-flight futures and exit rather than blocking
+                            // on another source event.
+                            self.pipeline.force_close_channel();
+                            source_exhausted = true;
+                        }
+                        Err(e) => return Err(e.into()),
                     }
                 }
 
@@ -364,6 +399,7 @@ mod tests {
         fn requeue(&mut self, id: SubmissionId) {
             self.recorded.lock().unwrap().requeued.push(id);
         }
+        fn force_close_channel(&mut self) {}
         fn advance_l1_head(&mut self, l1_block: u64) {
             self.recorded.lock().unwrap().l1_heads.push(l1_block);
         }
@@ -403,6 +439,7 @@ mod tests {
         }
         fn confirm(&mut self, _: SubmissionId, _: u64) {}
         fn requeue(&mut self, _: SubmissionId) {}
+        fn force_close_channel(&mut self) {}
         fn advance_l1_head(&mut self, _: u64) {}
         fn reset(&mut self) {
             self.recorded.lock().unwrap().resets += 1;
@@ -831,6 +868,7 @@ mod tests {
         }
         fn confirm(&mut self, _: SubmissionId, _: u64) {}
         fn requeue(&mut self, _: SubmissionId) {}
+        fn force_close_channel(&mut self) {}
         fn advance_l1_head(&mut self, _: u64) {}
         fn reset(&mut self) {
             *self.resets.lock().unwrap() += 1;
@@ -1093,6 +1131,8 @@ mod tests {
             fn confirm(&mut self, _: SubmissionId, _: u64) {}
 
             fn requeue(&mut self, _: SubmissionId) {}
+
+            fn force_close_channel(&mut self) {}
 
             fn advance_l1_head(&mut self, _: u64) {}
 

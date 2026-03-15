@@ -518,6 +518,10 @@ impl BatchPipeline for BatchEncoder {
         );
     }
 
+    fn force_close_channel(&mut self) {
+        self.close_current_channel();
+    }
+
     fn advance_l1_head(&mut self, l1_block: u64) {
         if l1_block <= self.l1_head {
             return;

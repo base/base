@@ -20,7 +20,7 @@ pub use harness::ActionTestHarness;
 
 mod batcher;
 pub use base_batcher_encoder::BatchType;
-pub use batcher::{Batcher, BatcherConfig, BatcherError, GarbageKind};
+pub use batcher::{Batcher, BatcherConfig, BatcherError, GarbageKind, L1MinerTxManager};
 
 mod test_rollup_config;
 pub use test_rollup_config::TestRollupConfigBuilder;

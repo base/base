@@ -2,17 +2,23 @@ use std::sync::Arc;
 
 use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bytes};
+use base_batcher_core::{
+    BatchDriver, BatchDriverError, NoopThrottleClient, ThrottleConfig, ThrottleController,
+    ThrottleStrategy,
+};
 use base_batcher_encoder::{
     BatchEncoder, BatchPipeline, BatchType, EncoderConfig, FrameEncoder, ReorgError, StepError,
     StepResult, SubmissionId,
 };
+use base_batcher_source::test_utils::InMemoryBlockSource;
 use base_blobs::BlobEncoder;
 use base_comp::BatchComposeError;
 use base_consensus_genesis::RollupConfig;
 use base_protocol::{DERIVATION_VERSION_0, Frame};
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::{Action, L1Miner, L2BlockProvider, PendingTx};
+use crate::{Action, L1Miner, L1MinerTxManager, L2BlockProvider, PendingTx};
 
 /// Selects the kind of invalid frame data submitted by
 /// [`Batcher::submit_garbage_frames`].
@@ -61,7 +67,7 @@ impl Default for BatcherConfig {
     }
 }
 
-/// Errors returned by [`Batcher::advance`].
+/// Errors returned by [`Batcher::advance`] and [`Batcher::advance_full`].
 #[derive(Debug, thiserror::Error)]
 pub enum BatcherError {
     /// The L2 source was exhausted before any blocks could be batched.
@@ -73,6 +79,12 @@ pub enum BatcherError {
     /// An L2 reorg was detected during block ingestion.
     #[error("reorg: {0}")]
     Reorg(#[from] ReorgError),
+    /// The spawned [`BatchDriver`] task panicked.
+    #[error("batch driver task panicked")]
+    DriverPanicked,
+    /// The [`BatchDriver`] returned an error.
+    #[error("batch driver error: {0}")]
+    Driver(#[from] BatchDriverError),
 }
 
 impl From<StepError> for BatcherError {
@@ -105,6 +117,7 @@ impl From<StepError> for BatcherError {
 pub struct Batcher<S: L2BlockProvider> {
     l2_source: S,
     pipeline: BatchEncoder,
+    rollup_config: Arc<RollupConfig>,
     config: BatcherConfig,
     pending_txs: Vec<PendingTx>,
     pending_blobs: Vec<(B256, Box<Blob>)>,
@@ -135,10 +148,11 @@ impl<S: L2BlockProvider> Batcher<S> {
         let rollup_config = Arc::new(rollup_config.clone());
         let mut encoder_config = config.encoder.clone();
         encoder_config.batch_type = config.batch_type;
-        let pipeline = BatchEncoder::new(rollup_config, encoder_config);
+        let pipeline = BatchEncoder::new(Arc::clone(&rollup_config), encoder_config);
         Self {
             l2_source,
             pipeline,
+            rollup_config,
             config,
             pending_txs: Vec::new(),
             pending_blobs: Vec::new(),
@@ -186,9 +200,9 @@ impl<S: L2BlockProvider> Batcher<S> {
             }
         }
 
-        // Intentional test-only force-flush: advance the L1 head past the
-        // channel timeout so the encoder closes the channel immediately.
-        self.pipeline.advance_l1_head(u64::MAX);
+        // Force-close the current channel so all encoded blocks are immediately
+        // available as submissions, without advancing the L1 head tracker.
+        self.pipeline.force_close_channel();
 
         let mut frames = Vec::new();
         while let Some(sub) = self.pipeline.next_submission() {
@@ -320,6 +334,73 @@ impl<S: L2BlockProvider> Batcher<S> {
         let frames = self.encode_frames()?;
         self.submit_blob_frames(&frames);
         Ok(frames)
+    }
+
+    /// Run one full batch cycle using the production [`BatchDriver`].
+    ///
+    /// All available L2 blocks are loaded into an [`InMemoryBlockSource`], then a
+    /// [`BatchDriver`] is spawned with the provided [`L1MinerTxManager`]. After
+    /// yielding to let the driver process blocks and queue submissions,
+    /// [`L1MinerTxManager::mine_block`] mines an L1 block and fires all pending
+    /// receipt oneshots. The driver drains its in-flight receipts and exits.
+    ///
+    /// This path exercises [`BatchDriver`], [`TxCandidate`], [`TxManager`], and
+    /// delivers real L1 block numbers to [`BatchPipeline::confirm`].
+    ///
+    /// # Runtime requirement
+    ///
+    /// Must be called from a `current_thread` tokio runtime (the default for
+    /// `#[tokio::test]`). One `yield_now()` is sufficient to let the driver
+    /// complete the full encoding and submission loop before receipts are fired,
+    /// because [`InMemoryBlockSource::next`] and [`L1MinerTxManager::send_async`]
+    /// both return without suspending.
+    ///
+    /// [`TxCandidate`]: base_batcher_core::TxCandidate
+    /// [`TxManager`]: base_batcher_core::TxManager
+    pub async fn advance_full(
+        &mut self,
+        l1: &mut L1Miner,
+        tx_manager: &L1MinerTxManager,
+    ) -> Result<(), BatcherError> {
+        let mut source = InMemoryBlockSource::new();
+        let mut block_count = 0u64;
+        while let Some(block) = self.l2_source.next_block() {
+            source.push_block(block);
+            block_count += 1;
+        }
+        if block_count == 0 {
+            return Err(BatcherError::NoBlocks);
+        }
+
+        let mut encoder_config = self.config.encoder.clone();
+        encoder_config.batch_type = self.config.batch_type;
+        let pipeline = BatchEncoder::new(Arc::clone(&self.rollup_config), encoder_config);
+        let cancel = CancellationToken::new();
+        let driver = BatchDriver::new(
+            pipeline,
+            source,
+            tx_manager.clone(),
+            self.config.inbox_address,
+            /* max_pending_transactions */ 16,
+            ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Off),
+            NoopThrottleClient,
+        );
+
+        let driver_task = tokio::spawn(driver.run(cancel));
+
+        // Yield to give the driver one scheduling turn. With the current_thread
+        // runtime, InMemoryBlockSource::next() and L1MinerTxManager::send_async()
+        // both complete without suspending, so the driver runs through the full
+        // encode-and-submit loop before suspending on in_flight.next().await.
+        tokio::task::yield_now().await;
+
+        // Mine the L1 block — submits pending txs/blobs and fires all receipt oneshots.
+        tx_manager.mine_block(l1);
+
+        // The driver wakes, drains receipts, and exits Ok(()).
+        driver_task.await.map_err(|_| BatcherError::DriverPanicked)??;
+
+        Ok(())
     }
 
     /// Buffer intentionally malformed frame data as a pending L1 transaction.

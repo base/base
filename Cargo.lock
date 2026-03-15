@@ -2363,6 +2363,7 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "alloy-rlp",
+ "alloy-rpc-types-eth",
  "alloy-signer",
  "alloy-signer-local",
  "alloy-trie",
@@ -2370,6 +2371,7 @@ dependencies = [
  "base-alloy-consensus",
  "base-batcher-core",
  "base-batcher-encoder",
+ "base-batcher-source",
  "base-blobs",
  "base-comp",
  "base-consensus-derive",
@@ -2379,10 +2381,12 @@ dependencies = [
  "base-execution-evm",
  "base-protocol",
  "base-revm",
+ "base-tx-manager",
  "reth-evm",
  "revm",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

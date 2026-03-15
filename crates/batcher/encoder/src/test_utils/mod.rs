@@ -51,6 +51,8 @@ impl BatchPipeline for MockBatchPipeline {
         self.requeued.push(id);
     }
 
+    fn force_close_channel(&mut self) {}
+
     fn advance_l1_head(&mut self, l1_block: u64) {
         self.l1_heads.push(l1_block);
     }

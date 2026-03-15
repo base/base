@@ -2,7 +2,7 @@
 
 use base_action_harness::{
     Action, ActionL2Source, ActionTestHarness, BatchType, BatcherConfig, BatcherError, GarbageKind,
-    SharedL1Chain,
+    L1MinerTxManager, SharedL1Chain,
 };
 use base_protocol::DERIVATION_VERSION_0;
 
@@ -233,6 +233,58 @@ fn batcher_txs_survive_reorg_and_resubmit() {
     // Post-reorg block 2 should also contain batcher txs.
     assert!(!h.l1.tip().batcher_txs.is_empty());
     assert_eq!(h.l1.latest_number(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// advance_full: BatchDriver end-to-end path
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn advance_full_mines_block_with_submissions() {
+    let mut h = ActionTestHarness::default();
+    let cfg = BatcherConfig::default();
+    let tx_manager = L1MinerTxManager::new(cfg.batcher_address, cfg.inbox_address);
+
+    let source = make_source(&h, 3);
+    let mut batcher = h.create_batcher(source, cfg);
+    batcher.advance_full(&mut h.l1, &tx_manager).await.expect("advance_full should succeed");
+
+    assert!(h.l1.latest_number() >= 1, "at least one L1 block should be mined");
+    // Default EncoderConfig uses DaType::Blob, so submissions appear as blob sidecars.
+    assert!(
+        !h.l1.tip().batcher_txs.is_empty() || !h.l1.tip().blob_sidecars.is_empty(),
+        "mined block should contain batcher submissions (calldata or blobs)"
+    );
+}
+
+#[tokio::test]
+async fn advance_full_span_batch_mode() {
+    let mut h = ActionTestHarness::default();
+    let cfg = BatcherConfig { batch_type: BatchType::Span, ..Default::default() };
+    let tx_manager = L1MinerTxManager::new(cfg.batcher_address, cfg.inbox_address);
+
+    let source = make_source(&h, 3);
+    let mut batcher = h.create_batcher(source, cfg);
+    batcher.advance_full(&mut h.l1, &tx_manager).await.expect("advance_full span should succeed");
+
+    assert!(h.l1.latest_number() >= 1, "at least one L1 block should be mined");
+    assert!(
+        !h.l1.tip().batcher_txs.is_empty() || !h.l1.tip().blob_sidecars.is_empty(),
+        "mined block should contain span batcher submissions (calldata or blobs)"
+    );
+}
+
+#[tokio::test]
+async fn advance_full_errors_when_no_l2_blocks() {
+    let mut h = ActionTestHarness::default();
+    let cfg = BatcherConfig::default();
+    let tx_manager = L1MinerTxManager::new(cfg.batcher_address, cfg.inbox_address);
+
+    let source = ActionL2Source::new(); // empty
+    let mut batcher = h.create_batcher(source, cfg);
+    let err =
+        batcher.advance_full(&mut h.l1, &tx_manager).await.expect_err("should fail with no blocks");
+    assert!(matches!(err, BatcherError::NoBlocks));
 }
 
 // ---------------------------------------------------------------------------

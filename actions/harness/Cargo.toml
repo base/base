@@ -35,7 +35,12 @@ base-consensus-registry.workspace = true
 base-blobs.workspace = true
 base-comp = { workspace = true, features = ["std"] }
 base-batcher-encoder.workspace = true
+base-batcher-core.workspace = true
+base-batcher-source.workspace = true
+base-tx-manager.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+tokio-util.workspace = true
+alloy-rpc-types-eth.workspace = true
 
 [dev-dependencies]
-base-batcher-core.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
