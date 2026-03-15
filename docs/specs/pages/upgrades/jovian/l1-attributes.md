@@ -33,4 +33,4 @@ In each subsequent L2 block, the `setL1BlockValuesJovian()` method must be used.
 
 When using this method, the pre-Jovian values are migrated over 1:1
 and the transaction also sets `daFootprintGasScalar` to the
-value from the [`SystemConfig`](system-config.md). If that value is `0`, then a default of `400` is set.
+value from the [`SystemConfig`](../../protocol/consensus/derivation.md#system-configuration). If that value is `0`, then a default of `400` is set.
