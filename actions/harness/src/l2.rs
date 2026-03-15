@@ -20,7 +20,7 @@ use revm::{
     state::AccountInfo,
 };
 
-use crate::{L2BlockProvider, SharedL1Chain};
+use crate::{L2BlockProvider, SharedBlockHashRegistry, SharedL1Chain};
 
 /// Hardcoded private key for the test account used across all action tests.
 ///
@@ -137,6 +137,8 @@ pub struct L2Sequencer {
     /// Optional pinned L1 origin. When set, epoch selection is bypassed and
     /// this block is used as the epoch for every subsequent L2 block built.
     l1_origin_pin: Option<BlockInfo>,
+    /// Shared registry of built L2 block hashes, keyed by block number.
+    block_hashes: SharedBlockHashRegistry,
 }
 
 impl L2Sequencer {
@@ -167,7 +169,14 @@ impl L2Sequencer {
             nonce: 0,
             db,
             l1_origin_pin: None,
+            block_hashes: SharedBlockHashRegistry::default(),
         }
+    }
+
+    /// Replace the sequencer's block-hash registry with a shared instance.
+    pub fn with_block_hash_registry(mut self, block_hashes: SharedBlockHashRegistry) -> Self {
+        self.block_hashes = block_hashes;
+        self
     }
 
     /// Set the number of signed user transactions included per block.
@@ -313,6 +322,7 @@ impl L2Sequencer {
             l1_origin: BlockNumHash { number: epoch_number, hash: epoch_hash },
             seq_num,
         };
+        self.block_hashes.insert(next_number, block_hash);
 
         Ok(block)
     }

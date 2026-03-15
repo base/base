@@ -7,7 +7,7 @@ use base_protocol::{BlockInfo, L2BlockInfo};
 use crate::{
     ActionBlobDataSource, ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, Batcher,
     BatcherConfig, BlobVerifierPipeline, L1Miner, L1MinerConfig, L2BlockProvider, L2Sequencer,
-    L2Verifier, SharedL1Chain, VerifierPipeline, block_info_from,
+    L2Verifier, SharedBlockHashRegistry, SharedL1Chain, VerifierPipeline, block_info_from,
 };
 
 /// Top-level test harness that owns all actors for a single action test.
@@ -37,12 +37,18 @@ pub struct ActionTestHarness {
     pub l1: L1Miner,
     /// The rollup configuration shared by all actors.
     pub rollup_config: RollupConfig,
+    /// Shared L2 block hashes written by sequencers and read by verifiers.
+    block_hashes: SharedBlockHashRegistry,
 }
 
 impl ActionTestHarness {
     /// Create a harness with the given configurations.
     pub fn new(l1_config: L1MinerConfig, rollup_config: RollupConfig) -> Self {
-        Self { l1: L1Miner::new(l1_config), rollup_config }
+        Self {
+            l1: L1Miner::new(l1_config),
+            rollup_config,
+            block_hashes: SharedBlockHashRegistry::default(),
+        }
     }
 
     /// Mine `n` L1 blocks and return the latest block number after mining.
@@ -122,6 +128,7 @@ impl ActionTestHarness {
         let system_config = self.rollup_config.genesis.system_config.unwrap_or_default();
 
         L2Sequencer::new(genesis_head, l1_chain, self.rollup_config.clone(), system_config)
+            .with_block_hash_registry(self.block_hashes.clone())
     }
 
     /// Create an [`L2Verifier`] wired to the harness's L1 chain.
@@ -176,7 +183,8 @@ impl ActionTestHarness {
             l2_provider,
             safe_head,
             genesis_l1,
-        );
+        )
+        .with_block_hash_registry(self.block_hashes.clone());
 
         (verifier, chain)
     }
@@ -218,7 +226,8 @@ impl ActionTestHarness {
             ActionL2ChainProvider::from_genesis(&self.rollup_config),
             safe_head,
             genesis_l1,
-        );
+        )
+        .with_block_hash_registry(self.block_hashes.clone());
 
         (verifier, chain)
     }

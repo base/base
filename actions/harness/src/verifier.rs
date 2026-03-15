@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    sync::{Arc, Mutex},
+};
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
@@ -37,6 +41,27 @@ pub type BlobVerifierPipeline = base_consensus_derive::DerivationPipeline<
     >,
     ActionL2ChainProvider,
 >;
+
+/// Shared L2 block hashes keyed by block number.
+///
+/// `L2Sequencer` writes into this registry as blocks are built, and
+/// `L2Verifier` reads from the same registry when it applies derived
+/// attributes so the resulting safe-head hash chain matches the sequencer's
+/// sealed headers.
+#[derive(Debug, Clone, Default)]
+pub struct SharedBlockHashRegistry(Arc<Mutex<HashMap<u64, B256>>>);
+
+impl SharedBlockHashRegistry {
+    /// Record the hash for an L2 block number.
+    pub fn insert(&self, number: u64, hash: B256) {
+        self.0.lock().expect("block hash registry lock poisoned").insert(number, hash);
+    }
+
+    /// Return the registered hash for an L2 block number.
+    pub fn get(&self, number: u64) -> Option<B256> {
+        self.0.lock().expect("block hash registry lock poisoned").get(&number).copied()
+    }
+}
 
 /// Errors returned by [`L2Verifier`] action methods.
 #[derive(Debug, thiserror::Error)]
@@ -107,14 +132,6 @@ pub struct L2Verifier<P: Pipeline + SignalReceiver + Debug> {
     /// block is deposit-only (only the L1 info deposit transaction). Counts
     /// greater than 1 include user transactions.
     derived_tx_counts: Vec<(u64, usize)>,
-    /// Block hashes by L2 block number, registered externally from the
-    /// [`L2Sequencer`](crate::L2Sequencer). Used by [`apply_attributes`]
-    /// so the verifier's safe-head hash matches the sequencer's real block
-    /// hash, enabling correct `parent_hash` validation in [`BatchQueue`].
-    ///
-    /// [`apply_attributes`]: L2Verifier::apply_attributes
-    /// [`BatchQueue`]: base_consensus_derive::BatchQueue
-    block_hashes: HashMap<u64, B256>,
     /// User transaction counts per derived L2 block, recorded in [`apply_attributes`].
     ///
     /// Each entry is `(l2_block_number, user_tx_count)`. Deposit-only blocks —
@@ -131,6 +148,15 @@ pub struct L2Verifier<P: Pipeline + SignalReceiver + Debug> {
     ///
     /// [`apply_attributes`]: L2Verifier::apply_attributes
     derived_l1_info_txs: Vec<(u64, L1BlockInfoTx)>,
+    /// Shared block hashes by L2 block number.
+    ///
+    /// When the verifier and sequencer share the same registry, derivation can
+    /// look up the sequencer's real block hash without tests manually calling
+    /// [`register_block_hash`]. Unsafe gossip also writes into this registry.
+    ///
+    /// [`apply_attributes`]: L2Verifier::apply_attributes
+    /// [`BatchQueue`]: base_consensus_derive::BatchQueue
+    block_hashes: SharedBlockHashRegistry,
 }
 
 impl L2Verifier<VerifierPipeline> {
@@ -212,11 +238,17 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
             finalized_head: safe_head,
             finalized_l1_number: 0,
             safe_head_history: Vec::new(),
-            block_hashes: HashMap::new(),
             derived_tx_counts: Vec::new(),
             derived_user_tx_counts: Vec::new(),
             derived_l1_info_txs: Vec::new(),
+            block_hashes: SharedBlockHashRegistry::default(),
         }
+    }
+
+    /// Replace the verifier's block-hash registry with a shared instance.
+    pub fn with_block_hash_registry(mut self, block_hashes: SharedBlockHashRegistry) -> Self {
+        self.block_hashes = block_hashes;
+        self
     }
 
     /// Initialize the pipeline by seeding the genesis [`SystemConfig`] and
@@ -573,10 +605,9 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
 
     /// Register the block hash for a given L2 block number.
     ///
-    /// Call this after [`L2Sequencer::build_next_block`] to record the real
-    /// block hash. When derivation later applies attributes for this block
-    /// number, the verifier will use the registered hash instead of a default,
-    /// keeping the `parent_hash` chain consistent with the sequencer.
+    /// Most tests no longer need this when the verifier shares a
+    /// [`SharedBlockHashRegistry`] with [`L2Sequencer`], but it remains useful
+    /// as a manual override for blocks produced outside that shared setup.
     ///
     /// [`L2Sequencer::build_next_block`]: crate::L2Sequencer::build_next_block
     pub fn register_block_hash(&mut self, number: u64, hash: B256) {
@@ -689,10 +720,10 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     /// `safe_head.l1_origin.number`, so using the inclusion block here would cause
     /// subsequent same-epoch batches to be rejected as `EpochTooOld`.
     ///
-    /// The block hash is looked up from [`register_block_hash`] entries. When the
-    /// [`L2Sequencer`] produces real sealed headers, the test must register each
-    /// block's hash so the verifier's `parent_hash` chain stays consistent with
-    /// the batches the sequencer submitted.
+    /// The block hash is looked up from the shared registry or any manual
+    /// [`register_block_hash`] entries. When the verifier shares a
+    /// [`SharedBlockHashRegistry`] with [`L2Sequencer`], this happens
+    /// automatically as blocks are built.
     ///
     /// [`register_block_hash`]: L2Verifier::register_block_hash
     /// [`L2Sequencer`]: crate::L2Sequencer
@@ -718,8 +749,8 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         if let Some(l1_info) = self.l1_info_from_attrs(&attrs) {
             self.derived_l1_info_txs.push((new_number, l1_info));
         }
-        let hash = self.block_hashes.get(&new_number).copied().unwrap_or_default();
         let tx_count = attrs.attributes.transactions.as_ref().map_or(0, |v| v.len());
+        let hash = self.block_hashes.get(new_number).unwrap_or_default();
         self.safe_head = L2BlockInfo {
             block_info: BlockInfo {
                 number: new_number,

@@ -71,7 +71,6 @@ async fn channel_timeout_triggers_channel_invalidation() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let block = sequencer.build_next_block().expect("build L2 block 1");
-    let hash1 = sequencer.head().block_info.hash;
 
     let mut source = ActionL2Source::new();
     source.push(block.clone());
@@ -88,7 +87,6 @@ async fn channel_timeout_triggers_channel_invalidation() {
     drop(batcher);
 
     let (mut verifier, chain) = h.create_verifier();
-    verifier.register_block_hash(1, hash1);
 
     h.mine_and_push(&chain); // L1 block 1: frame 0 only
 
@@ -180,7 +178,6 @@ async fn channel_timeout_recovery_resubmits_successfully() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let block = sequencer.build_next_block().expect("build block 1");
-    let hash1 = sequencer.head().block_info.hash;
 
     // First attempt: submit batch in L1 block 1.
     let mut source = ActionL2Source::new();
@@ -190,7 +187,6 @@ async fn channel_timeout_recovery_resubmits_successfully() {
     drop(batcher);
 
     let (mut verifier, chain) = h.create_verifier();
-    verifier.register_block_hash(1, hash1);
 
     h.mine_and_push(&chain); // L1 block 1
 
@@ -302,9 +298,7 @@ async fn interleaved_channels_correctly_reassembled() {
 
     // Build 2 L2 blocks — one for each channel.
     let block_a = sequencer.build_next_block().expect("build block A");
-    let hash_a = sequencer.head().block_info.hash;
     let block_b = sequencer.build_next_block().expect("build block B");
-    let hash_b = sequencer.head().block_info.hash;
 
     // Encode channel A (L2 block 1).
     let mut source_a = ActionL2Source::new();
@@ -349,8 +343,6 @@ async fn interleaved_channels_correctly_reassembled() {
     h.l1.mine_block();
 
     let (mut verifier, _chain) = h.create_verifier();
-    verifier.register_block_hash(1, hash_a);
-    verifier.register_block_hash(2, hash_b);
     verifier.initialize().await.expect("initialize");
 
     let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
