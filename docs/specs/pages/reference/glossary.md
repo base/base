@@ -431,19 +431,6 @@ The gas limit may not be set to a value larger than the
 [maximum gas limit](configurability.md#gas-limit). This is to ensure that L2 blocks are fault
 provable and of reasonable size to be processed by the client software.
 
-### Customizable Feature
-
-[customizable-feature]: glossary.md#customizable-feature
-
-A **Customizable Feature** is a component of Base that is maintained as a production-grade
-element of the stack behind some sort of toggle. A Customizable Feature is distinct from other
-types of feature-flagged code because it is part of the mainline Base and is intended to remain
-as a supported configuration option indefinitely. Unlike short-lived feature flags, which exist
-only to keep develop releasable while work is in progress, customizable features are permanent,
-user-facing options. They must be fully documented, tested in all supported modes, and designed for
-long-term maintainability.
-
-
 ## Batch Submission
 
 [batch-submission]: glossary.md#batch-submission
