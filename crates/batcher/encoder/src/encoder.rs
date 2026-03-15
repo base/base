@@ -50,7 +50,7 @@ pub struct BatchEncoder {
     next_id: u64,
     /// Per-instance RNG for generating unique channel IDs.
     rng: SmallRng,
-    /// Accumulated (SingleBatch, sequence_number) pairs when operating in
+    /// Accumulated (`SingleBatch`, `sequence_number`) pairs when operating in
     /// [`BatchType::Span`] mode. Blocks are collected here during `step()` and
     /// flushed as a single [`SpanBatch`] when `close_current_channel()` is called.
     span_accumulator: Vec<(SingleBatch, u64)>,
@@ -122,10 +122,10 @@ impl BatchEncoder {
                 }
             }
 
-            if let Some(ref mut open) = self.current_channel {
-                if let Err(e) = open.out.add_batch(Batch::Span(span_batch)) {
-                    warn!(error = %e, "failed to add span batch to channel");
-                }
+            if let Some(ref mut open) = self.current_channel
+                && let Err(e) = open.out.add_batch(Batch::Span(span_batch))
+            {
+                warn!(error = %e, "failed to add span batch to channel");
             }
         }
 
