@@ -629,7 +629,8 @@ impl SimpleTxManager {
                 // Consume the nonce (drop guard if present).
                 drop(guard);
 
-                // Record max possible fee metric in gwei.
+                // Record max possible fee metric in gwei. Intentionally recorded on every
+                // attempt (initial + fee bumps) to track fee escalation across retries.
                 let fee_gwei = gas_limit as f64 * (fee_cap as f64 / WEI_PER_GWEI);
                 self.metrics.record_tx_max_fee(fee_gwei);
 
