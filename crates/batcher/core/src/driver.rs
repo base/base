@@ -198,7 +198,7 @@ where
                             tx_data: Bytes::from(data),
                             value: U256::ZERO,
                             gas_limit: 0,
-                            blobs: vec![],
+                            blobs: vec![].into(),
                         }
                     }
                 };
