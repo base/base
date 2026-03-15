@@ -279,9 +279,15 @@ impl BatcherService {
             num_confirmations: self.config.num_confirmations as u64,
             ..TxManagerConfig::default()
         };
-        let tx_manager = SimpleTxManager::new(l1_provider, wallet, tx_manager_config, l1_chain_id, Arc::new(NoopTxMetrics))
-            .await
-            .map_err(|e| eyre::eyre!("failed to create tx manager: {e}"))?;
+        let tx_manager = SimpleTxManager::new(
+            l1_provider,
+            wallet,
+            tx_manager_config,
+            l1_chain_id,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .map_err(|e| eyre::eyre!("failed to create tx manager: {e}"))?;
 
         // Build the driver — all fallible setup is complete at this point.
         let driver = BatchDriver::new(
