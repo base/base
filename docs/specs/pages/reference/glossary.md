@@ -428,7 +428,7 @@ introduced the change, as opposed to the 1/1024 adjustments towards a target as 
 updates of L1 blocks.
 
 The gas limit may not be set to a value larger than the
-[maximum gas limit](configurability.md#gas-limit). This is to ensure that L2 blocks are fault
+[maximum gas limit](../protocol/consensus/derivation.md#system-configuration). This is to ensure that L2 blocks are fault
 provable and of reasonable size to be processed by the client software.
 
 ## Batch Submission
