@@ -12,8 +12,8 @@ workspace = true
 
 [dependencies]
 # Workspace
-base-proof-mpt.workspace = true
 base-protocol.workspace = true
+base-proof-mpt.workspace = true
 base-proof-driver.workspace = true
 base-proof-executor.workspace = true
 base-proof-preimage.workspace = true
@@ -43,8 +43,8 @@ spin.workspace = true
 serde.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-async-trait.workspace = true
 serde_json.workspace = true
+async-trait.workspace = true
 
 # KZG
 ark-ff.workspace = true
