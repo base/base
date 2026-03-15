@@ -182,7 +182,6 @@ impl EngineState {
 
 #[cfg(test)]
 mod test {
-    #[cfg(feature = "metrics")]
     use base_protocol::BlockInfo;
     #[cfg(feature = "metrics")]
     use metrics_exporter_prometheus::PrometheusBuilder;
@@ -194,7 +193,7 @@ mod test {
     impl EngineState {
         /// Set the unsafe head.
         pub fn set_unsafe_head(&mut self, unsafe_head: L2BlockInfo) {
-            self.sync_state.apply_update(EngineSyncStateUpdate {
+            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
                 unsafe_head: Some(unsafe_head),
                 ..Default::default()
             });
@@ -202,7 +201,7 @@ mod test {
 
         /// Set the cross-verified unsafe head.
         pub fn set_cross_unsafe_head(&mut self, cross_unsafe_head: L2BlockInfo) {
-            self.sync_state.apply_update(EngineSyncStateUpdate {
+            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
                 cross_unsafe_head: Some(cross_unsafe_head),
                 ..Default::default()
             });
@@ -210,7 +209,7 @@ mod test {
 
         /// Set the local safe head.
         pub fn set_local_safe_head(&mut self, local_safe_head: L2BlockInfo) {
-            self.sync_state.apply_update(EngineSyncStateUpdate {
+            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
                 local_safe_head: Some(local_safe_head),
                 ..Default::default()
             });
@@ -218,7 +217,7 @@ mod test {
 
         /// Set the safe head.
         pub fn set_safe_head(&mut self, safe_head: L2BlockInfo) {
-            self.sync_state.apply_update(EngineSyncStateUpdate {
+            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
                 safe_head: Some(safe_head),
                 ..Default::default()
             });
@@ -226,7 +225,7 @@ mod test {
 
         /// Set the finalized head.
         pub fn set_finalized_head(&mut self, finalized_head: L2BlockInfo) {
-            self.sync_state.apply_update(EngineSyncStateUpdate {
+            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
                 finalized_head: Some(finalized_head),
                 ..Default::default()
             });
@@ -264,5 +263,30 @@ mod test {
         assert!(handle.render().contains(
             format!("base_node_block_labels{{label=\"{label_name}\"}} {number}").as_str()
         ));
+    }
+
+    #[test]
+    fn test_set_state_helpers_actually_update_state() {
+        let make_block = |number: u64| L2BlockInfo {
+            block_info: BlockInfo { number, ..Default::default() },
+            ..Default::default()
+        };
+
+        let mut state = EngineState::default();
+
+        state.set_unsafe_head(make_block(10));
+        assert_eq!(state.sync_state.unsafe_head().block_info.number, 10);
+
+        state.set_cross_unsafe_head(make_block(9));
+        assert_eq!(state.sync_state.cross_unsafe_head().block_info.number, 9);
+
+        state.set_local_safe_head(make_block(8));
+        assert_eq!(state.sync_state.local_safe_head().block_info.number, 8);
+
+        state.set_safe_head(make_block(7));
+        assert_eq!(state.sync_state.safe_head().block_info.number, 7);
+
+        state.set_finalized_head(make_block(6));
+        assert_eq!(state.sync_state.finalized_head().block_info.number, 6);
     }
 }
