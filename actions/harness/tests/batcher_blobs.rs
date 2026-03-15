@@ -237,3 +237,113 @@ async fn batcher_da_switching() {
     assert_eq!(total_derived, 6, "expected 6 L2 blocks derived (3 calldata + 3 blob)");
     assert_eq!(verifier.l2_safe().block_info.number, 6, "safe head should reach L2 block 6");
 }
+
+// ---------------------------------------------------------------------------
+// Blob DA channel timeout
+// ---------------------------------------------------------------------------
+
+/// A blob DA channel that is not completed within `channel_timeout` L1 blocks
+/// is discarded by the pipeline. Late blob frames for the timed-out channel
+/// are silently ignored; a fresh channel submitted inside the window recovers.
+///
+/// This is the blob-DA variant of
+/// `channel_timeout_triggers_channel_invalidation` in `batcher_channels.rs`.
+/// It uses `submit_blob_frames` instead of `submit_frames` throughout.
+///
+/// Setup:
+/// - `max_frame_size = 80` to force a multi-frame channel.
+/// - `channel_timeout = 2` (very tight: expires after 2 L1 blocks).
+/// - Frame 0 submitted as a blob sidecar in L1 block 1.
+/// - L1 blocks 2–4 are empty (channel_timeout + 1 = 3 blocks).
+/// - Remaining frames arrive as blobs in L1 block 5 — channel already timed out.
+/// - Recovery: all frames resubmitted in a fresh channel (L1 block 6).
+///
+/// The safe head must remain at 0 through L1 block 5, then advance to 1 after
+/// the fresh blob channel is processed.
+#[tokio::test]
+async fn blob_da_channel_timeout() {
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_channel_timeout(2).build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let block = sequencer.build_next_block().expect("build L2 block 1");
+
+    // Encode the L2 block into multiple frames (tiny max_frame_size).
+    let mut source = ActionL2Source::new();
+    source.push(block.clone());
+    let mut batcher = h.create_batcher(source, batcher_cfg.clone());
+    let frames = batcher.encode_frames().expect("encode multi-frame channel");
+    assert!(
+        frames.len() >= 2,
+        "expected multi-frame channel with max_frame_size=80, got {} frames",
+        frames.len()
+    );
+
+    // Submit ONLY frame 0 as a blob sidecar in L1 block 1.
+    batcher.submit_blob_frames(&frames[..1]);
+    batcher.flush(&mut h.l1);
+
+    let (mut verifier, chain) = h.create_blob_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
+    h.mine_and_push(&chain); // L1 block 1: blob with frame 0 only
+
+    verifier.initialize().await.expect("initialize");
+    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
+    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.act_l2_pipeline_full().await.expect("step block 1");
+
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        0,
+        "incomplete blob channel should not advance safe head"
+    );
+
+    // Mine channel_timeout + 1 = 3 empty L1 blocks to expire the channel.
+    for _ in 0..3 {
+        h.mine_and_push(&chain);
+    }
+    for i in 2..=4 {
+        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
+        verifier.act_l1_head_signal(blk).await.expect("signal empty block");
+        verifier.act_l2_pipeline_full().await.expect("step empty block");
+    }
+
+    // Submit remaining frames as blobs — channel already timed out; silently dropped.
+    {
+        let empty_source = ActionL2Source::new();
+        let mut late_batcher = h.create_batcher(empty_source, batcher_cfg.clone());
+        late_batcher.submit_blob_frames(&frames[1..]);
+        late_batcher.flush(&mut h.l1);
+    }
+    h.mine_and_push(&chain); // L1 block 5: late blob frames
+
+    let l1_block_5 = block_info_from(h.l1.block_by_number(5).expect("block 5"));
+    verifier.act_l1_head_signal(l1_block_5).await.expect("signal block 5");
+    let derived = verifier.act_l2_pipeline_full().await.expect("step block 5");
+    assert_eq!(derived, 0, "late blob frames after channel timeout must be silently dropped");
+
+    // Recovery: resubmit all frames as blobs in a fresh channel.
+    let mut source2 = ActionL2Source::new();
+    source2.push(block);
+    let mut batcher2 = h.create_batcher(source2, batcher_cfg);
+    let recovery_frames = batcher2.encode_frames().expect("encode recovery channel");
+    batcher2.submit_blob_frames(&recovery_frames);
+    batcher2.flush(&mut h.l1);
+    h.mine_and_push(&chain); // L1 block 6: fresh blob channel with all frames
+
+    let l1_block_6 = block_info_from(h.l1.block_by_number(6).expect("block 6"));
+    verifier.act_l1_head_signal(l1_block_6).await.expect("signal block 6");
+    let recovered = verifier.act_l2_pipeline_full().await.expect("step block 6");
+
+    assert_eq!(recovered, 1, "resubmitted blob channel should derive L2 block 1");
+    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head should recover to 1");
+}

@@ -2283,3 +2283,286 @@ async fn pipeline_l1_origin_advance_observable_after_epoch_exhausted() {
         "safe head must not change: origin advanced but empty block 2 has no batch"
     );
 }
+
+// ── Span batch: multi-epoch crossing ──────────────────────────────────────────
+
+/// A single span batch encoding L2 blocks that span two L1 epochs is correctly
+/// derived by the pipeline.
+///
+/// With `block_time=2` and L1 `block_time=12`, L2 blocks 1–5 (ts=2..10)
+/// reference epoch 0 (L1 genesis) and L2 block 6 (ts=12) references epoch 1
+/// (L1 block 1). All 6 blocks are encoded together in one span batch and
+/// submitted in L1 block 2.
+///
+/// The `SpanBatch::get_single_batch` implementation encodes the epoch
+/// transition internally; this test exercises that path and verifies that
+/// the `BatchQueue` correctly emits all 6 blocks in order.
+///
+/// Mirrors [`multi_epoch_sequence`] which uses singular batches for the same
+/// block set.
+#[tokio::test]
+async fn span_batch_crossing_l1_epoch_boundary() {
+    let batcher_cfg = BatcherConfig { batch_type: BatchType::Span, ..BatcherConfig::default() };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    // Mine L1 block 1 at ts=12 so the sequencer can advance to epoch 1 when
+    // building L2 block 6 (ts=12).
+    h.mine_l1_blocks(1);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_sequencer(l1_chain);
+
+    // Blocks 1–5 (ts=2..10) reference epoch 0; block 6 (ts=12) references epoch 1.
+    let mut source = ActionL2Source::new();
+    for _ in 1..=6u64 {
+        source.push(builder.build_next_block().expect("build L2 block"));
+    }
+    assert_eq!(builder.head().l1_origin.number, 1, "block 6 must reference epoch 1");
+
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &builder,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
+    // Encode all 6 blocks as a single span batch and submit in L1 block 2.
+    let mut batcher = h.create_batcher(source, batcher_cfg);
+    batcher.advance().expect("encode multi-epoch span batch");
+    batcher.flush(&mut h.l1);
+    h.mine_and_push(&chain); // L1 block 2: span batch for all 6 L2 blocks
+
+    verifier.initialize().await.expect("initialize");
+
+    // L1 block 1: epoch-providing only, no batches → nothing derived.
+    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
+    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.act_l2_pipeline_full().await.expect("pipeline block 1");
+
+    // L1 block 2: contains the span batch. The BatchQueue has both epoch 0
+    // (L1 block 0→1) and epoch 1 (L1 block 1→2) boundaries available, so
+    // it emits all 6 L2 blocks in one pipeline run.
+    let l1_block_2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
+    verifier.act_l1_head_signal(l1_block_2).await.expect("signal block 2");
+    let derived = verifier.act_l2_pipeline_full().await.expect("pipeline block 2");
+
+    assert_eq!(
+        derived, 6,
+        "all 6 L2 blocks must be derived from a single span batch crossing the epoch boundary"
+    );
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        6,
+        "safe head must reach block 6 after span batch crosses epoch 0 → 1"
+    );
+}
+
+/// The [`BatchQueue`] reorders span batches submitted in reverse L1 order.
+///
+/// This is the span-batch variant of
+/// [`out_of_order_singular_batches_reordered_by_batch_queue`]. The span batch
+/// for L2 block 2 is submitted in L1 block 1 (a "future" batch); the span
+/// batch for L2 block 1 arrives in L1 block 2 (the expected-next batch).
+///
+/// The `BatchQueue` must:
+/// 1. Buffer the future span batch on L1 block 1 (no blocks derived).
+/// 2. Derive L2 block 1 from the expected-next span batch on L1 block 2.
+/// 3. Pop the buffered span batch and derive L2 block 2 in the same run.
+///
+/// [`BatchQueue`]: base_consensus_derive::BatchQueue
+#[tokio::test]
+async fn out_of_order_span_batches_reordered_by_batch_queue() {
+    let span_cfg = BatcherConfig { batch_type: BatchType::Span, ..BatcherConfig::default() };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&span_cfg).build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_sequencer(l1_chain);
+
+    let block1 = builder.build_next_block().expect("build L2 block 1");
+    let block2 = builder.build_next_block().expect("build L2 block 2");
+
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &builder,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
+    // L1 block 1: span batch for L2 block 2 (future batch, submitted out of order).
+    {
+        let mut source = ActionL2Source::new();
+        source.push(block2);
+        let mut batcher = h.create_batcher(source, span_cfg.clone());
+        batcher.advance().expect("encode future span batch");
+        batcher.flush(&mut h.l1);
+    }
+    h.mine_and_push(&chain); // L1 block 1: future span batch
+
+    // L1 block 2: span batch for L2 block 1 (the expected-next batch).
+    {
+        let mut source = ActionL2Source::new();
+        source.push(block1);
+        let mut batcher = h.create_batcher(source, span_cfg);
+        batcher.advance().expect("encode present span batch");
+        batcher.flush(&mut h.l1);
+    }
+    h.mine_and_push(&chain); // L1 block 2: present span batch
+
+    verifier.initialize().await.expect("initialize");
+
+    // Signal L1 block 1: span batch for block 2 is a future batch (ts=4 >
+    // expected ts=2). The BatchQueue buffers it; no attributes produced.
+    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
+    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    let (_, hit) = verifier
+        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
+        .await
+        .expect("step block 1");
+    assert!(!hit, "future span batch must be buffered; no blocks derived from L1 block 1");
+    assert_eq!(verifier.l2_safe().block_info.number, 0, "safe head must remain at genesis");
+
+    // Signal L1 block 2: expected-next span batch (block 1) arrives.
+    let l1_block_2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
+    verifier.act_l1_head_signal(l1_block_2).await.expect("signal block 2");
+
+    // First PreparedAttributes: L2 block 1 (earliest timestamp) must derive first.
+    let (_, hit1) = verifier
+        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
+        .await
+        .expect("step for block 1 attributes");
+    assert!(hit1, "pipeline must derive block 1 when its span batch arrives");
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        1,
+        "BatchQueue must reorder: block 1 derived before the buffered span batch for block 2"
+    );
+
+    // Second PreparedAttributes: buffered block-2 span batch now matches expected-next.
+    let (_, hit2) = verifier
+        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
+        .await
+        .expect("step for block 2 attributes");
+    assert!(hit2, "buffered span batch for block 2 must derive after block 1 is safe");
+    assert_eq!(verifier.l2_safe().block_info.number, 2, "safe head must reach block 2");
+}
+
+// ── Large L1 gaps ──────────────────────────────────────────────────────────────
+
+/// Batches submitted after a long gap of empty L1 blocks are accepted and
+/// derived correctly as long as the gap is within the sequence window.
+///
+/// Two L2 blocks are built in epoch 0. The batches are withheld for 15 L1
+/// blocks and then submitted in L1 block 16. Because Base mainnet's default
+/// `seq_window_size` is large enough to accommodate 16 L1 blocks, both
+/// batches are accepted and both L2 blocks derive.
+///
+/// This exercises the pipeline's L1 traversal over many empty blocks — the
+/// common mainnet scenario during periods of L1 congestion.
+///
+/// op-e2e ref: `LargeL1Gaps`
+#[tokio::test]
+async fn large_l1_gaps_within_sequence_window() {
+    let batcher_cfg = BatcherConfig::default();
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_sequencer(l1_chain);
+
+    // Build 2 L2 blocks in epoch 0 (both reference L1 genesis as their origin).
+    let block1 = builder.build_next_block().expect("build block 1");
+    let block2 = builder.build_next_block().expect("build block 2");
+
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &builder,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
+    // Mine 15 empty L1 blocks with no batch data.
+    for _ in 0..15 {
+        h.mine_and_push(&chain); // L1 blocks 1–15: all empty
+    }
+
+    // Submit both batches together in L1 block 16 — still inside the window.
+    let mut source = ActionL2Source::new();
+    source.push(block1);
+    source.push(block2);
+    let mut batcher = h.create_batcher(source, batcher_cfg);
+    batcher.advance().expect("encode batches");
+    batcher.flush(&mut h.l1);
+    h.mine_and_push(&chain); // L1 block 16: batches for L2 blocks 1 and 2
+
+    verifier.initialize().await.expect("initialize");
+
+    // Drive derivation through all 16 L1 blocks. The pipeline traverses 15
+    // empty blocks before finding the channel in block 16.
+    for i in 1..=16u64 {
+        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
+        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l2_pipeline_full().await.expect("pipeline");
+    }
+
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        2,
+        "both L2 blocks must derive even after 15 empty L1 blocks before the batch"
+    );
+}
+
+// ── Sequence-window exhaustion ─────────────────────────────────────────────────
+
+/// When no batches are submitted across many L1 blocks the derivation pipeline
+/// generates deposit-only default blocks for every expired epoch, ensuring the
+/// L2 chain always makes forward progress.
+///
+/// Configuration:
+/// - `seq_window_size = 4` (small window so epochs expire quickly)
+/// - Zero batches submitted
+/// - 20 empty L1 blocks mined
+///
+/// Expected result: the safe head advances well past genesis as the pipeline
+/// synthesises deposit-only blocks for each expired epoch.
+///
+/// op-e2e ref: `ExtendedTimeWithoutL1Batches`
+#[tokio::test]
+async fn extended_sequence_window_exhaustion_fills_with_deposit_only_blocks() {
+    const SEQ_WINDOW: u64 = 4;
+    let batcher_cfg = BatcherConfig::default();
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_seq_window_size(SEQ_WINDOW)
+        .build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let builder = h.create_l2_sequencer(l1_chain);
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &builder,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
+    // Mine 20 empty L1 blocks — no batches submitted anywhere.
+    for _ in 0..20 {
+        h.mine_and_push(&chain);
+    }
+
+    verifier.initialize().await.expect("initialize");
+
+    let mut total_derived = 0;
+    for i in 1..=20u64 {
+        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
+        verifier.act_l1_head_signal(blk).await.expect("signal");
+        total_derived += verifier.act_l2_pipeline_full().await.expect("pipeline");
+    }
+
+    // With no batches, the pipeline generates deposit-only blocks for each
+    // expired sequence window. The safe head must advance past genesis.
+    assert!(
+        verifier.l2_safe().block_info.number > 0,
+        "safe head must advance past genesis via deposit-only blocks when \
+         sequence windows expire; got {}",
+        verifier.l2_safe().block_info.number
+    );
+    assert!(
+        total_derived > 0,
+        "pipeline must have generated deposit-only blocks for expired epochs; \
+         total_derived = {total_derived}"
+    );
+}
