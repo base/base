@@ -87,19 +87,16 @@ impl BlobTxBuilder {
         let blobs = Arc::unwrap_or_clone(blobs);
 
         if self.should_use_cell_proofs(block_timestamp) {
-            let eip7594 =
-                BlobTransactionSidecarEip7594::try_from_blobs_with_settings(blobs, kzg)
-                    .map_err(|e| {
-                        TxManagerError::Unsupported(format!(
-                            "EIP-7594 cell proof computation failed: {e}"
-                        ))
-                    })?;
+            let eip7594 = BlobTransactionSidecarEip7594::try_from_blobs_with_settings(blobs, kzg)
+                .map_err(|e| {
+                TxManagerError::Unsupported(format!("EIP-7594 cell proof computation failed: {e}"))
+            })?;
             Ok(BlobTransactionSidecarVariant::Eip7594(eip7594))
         } else {
-            let sidecar =
-                BlobTransactionSidecar::try_from_blobs_with_settings(blobs, kzg).map_err(
-                    |e| TxManagerError::Unsupported(format!("KZG sidecar construction failed: {e}")),
-                )?;
+            let sidecar = BlobTransactionSidecar::try_from_blobs_with_settings(blobs, kzg)
+                .map_err(|e| {
+                    TxManagerError::Unsupported(format!("KZG sidecar construction failed: {e}"))
+                })?;
             Ok(BlobTransactionSidecarVariant::Eip4844(sidecar))
         }
     }

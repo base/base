@@ -721,25 +721,26 @@ impl SimpleTxManager {
         // block timestamp (e.g. fork activation crossed mid-send-loop),
         // discard it and rebuild.
         let built_sidecar = if is_blob {
-            let sidecar = match cached_sidecar {
-                Some(cached)
-                    if self.blob_builder.is_sidecar_valid(&cached, caps.block_timestamp) =>
-                {
-                    cached
-                }
-                cached => {
-                    if cached.is_some() {
-                        info!(
-                            block_timestamp = caps.block_timestamp,
-                            "cached sidecar proof type stale, rebuilding"
-                        );
+            let sidecar =
+                match cached_sidecar {
+                    Some(cached)
+                        if self.blob_builder.is_sidecar_valid(&cached, caps.block_timestamp) =>
+                    {
+                        cached
                     }
-                    Arc::new(
-                        self.blob_builder
-                            .make_sidecar_auto(Arc::clone(&candidate.blobs), caps.block_timestamp)?,
-                    )
-                }
-            };
+                    cached => {
+                        if cached.is_some() {
+                            info!(
+                                block_timestamp = caps.block_timestamp,
+                                "cached sidecar proof type stale, rebuilding"
+                            );
+                        }
+                        Arc::new(self.blob_builder.make_sidecar_auto(
+                            Arc::clone(&candidate.blobs),
+                            caps.block_timestamp,
+                        )?)
+                    }
+                };
             tx_request.sidecar = Some((*sidecar).clone());
             tx_request.populate_blob_hashes();
             tx_request.max_fee_per_blob_gas = blob_fee_cap;

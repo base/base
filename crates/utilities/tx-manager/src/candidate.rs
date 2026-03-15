@@ -43,10 +43,8 @@ mod tests {
 
     #[test]
     fn candidate_with_blobs_is_type3() {
-        let candidate = TxCandidate {
-            blobs: Arc::new(vec![Blob::default()]),
-            ..Default::default()
-        };
+        let candidate =
+            TxCandidate { blobs: Arc::new(vec![Blob::default()]), ..Default::default() };
 
         assert_eq!(candidate.blobs.len(), 1);
         // Struct-update preserves remaining defaults.
