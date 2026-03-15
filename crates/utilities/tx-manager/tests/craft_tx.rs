@@ -214,10 +214,8 @@ async fn craft_tx_produces_valid_signed_blob_transaction() {
 
 #[tokio::test]
 async fn craft_tx_produces_cell_proof_sidecar_when_enabled() {
-    let config = TxManagerConfig {
-        cell_proofs_activation_timestamp: 0,
-        ..TxManagerConfig::default()
-    };
+    let config =
+        TxManagerConfig { cell_proofs_activation_timestamp: 0, ..TxManagerConfig::default() };
     let (manager, anvil) = setup_with_config(config).await;
 
     let to = Address::with_last_byte(0x42);

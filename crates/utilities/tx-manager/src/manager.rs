@@ -303,9 +303,7 @@ impl SimpleTxManager {
     /// which indicates a caller bug (blob tx path must always populate this).
     fn raw_blob_baseline(&self, caps: &GasPriceCaps) -> TxManagerResult<u128> {
         caps.raw_blob_fee_cap.ok_or_else(|| {
-            TxManagerError::Unsupported(
-                "raw_blob_fee_cap missing on blob transaction path".into(),
-            )
+            TxManagerError::Unsupported("raw_blob_fee_cap missing on blob transaction path".into())
         })
     }
 
