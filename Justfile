@@ -21,7 +21,7 @@ default:
 
 # Runs the specs docs locally
 specs:
-    cd docs/specs && npm ci && npm run dev
+    cd docs/specs && bun ci && bun dev
 
 # One-time project setup: installs tooling and builds test contracts
 setup:

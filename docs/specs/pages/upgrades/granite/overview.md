@@ -9,8 +9,8 @@
 
 ## Execution Layer
 
-- [Limit `bn256Pairing` precompile input size](exec-engine.md#bn256pairing-precompile-input-restriction)
+- [Limit `bn256Pairing` precompile input size](/upgrades/granite/exec-engine#bn256pairing-precompile-input-restriction)
 
 ## Consensus Layer
 
-- [Reduce Channel Timeout to 50](derivation.md#reduce-channel-timeout)
+- [Reduce Channel Timeout to 50](/upgrades/granite/derivation#reduce-channel-timeout)

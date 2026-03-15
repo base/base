@@ -19,4 +19,4 @@ if it is not nil, and then _deactivated_ at the hard fork timestamp.
 
 ## Consensus Layer
 
-- [Derivation](derivation.md)
+- [Derivation](/upgrades/pectra-blob-schedule/derivation)

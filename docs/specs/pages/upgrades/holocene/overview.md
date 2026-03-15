@@ -9,12 +9,12 @@
 
 ## Execution Layer
 
-- [Dynamic EIP-1559 Parameters](exec-engine.md#dynamic-eip-1559-parameters)
+- [Dynamic EIP-1559 Parameters](/upgrades/holocene/exec-engine#dynamic-eip-1559-parameters)
 
 ## Consensus Layer
 
-- [Holocene Derivation](derivation.md#holocene-derivation)
+- [Holocene Derivation](/upgrades/holocene/derivation#holocene-derivation)
 
 ## Smart Contracts
 
-- [System Config](system-config.md)
+- [System Config](/upgrades/holocene/system-config)

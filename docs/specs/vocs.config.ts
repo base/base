@@ -208,8 +208,8 @@ const sidebar: SidebarItem[] = [
 ]
 
 export default defineConfig({
-  title: 'Base Specification',
-  description: 'Base Chain specs inspired by Ethereum and the OP Stack, with independent evolution after Jovian.',
+  title: 'Base Chain Specification',
+  description: 'Base Chain protocol specification, upgrades, and reference documentation.',
   logoUrl: '/assets/base/logo.svg',
   iconUrl: '/assets/base/favicon.png',
   topNav: [
@@ -229,4 +229,5 @@ export default defineConfig({
     },
   },
   sidebar,
+  checkDeadlinks: 'error',
 })

@@ -27,17 +27,15 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44e0a462d63b868e3b000 # v2.0.2
         with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: docs/specs/package-lock.json
+          bun-version: latest
       - name: Install dependencies
         working-directory: docs/specs
-        run: npm ci
+        run: bun ci
       - name: Install Playwright browsers
         working-directory: docs/specs
-        run: npx playwright install chromium --with-deps
+        run: bunx playwright install chromium --with-deps
       - name: Build specs site
         working-directory: docs/specs
-        run: npm run build
+        run: bun run build
