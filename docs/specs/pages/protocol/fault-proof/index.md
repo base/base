@@ -484,7 +484,7 @@ This approach ensures that the fault proof program can complete a state transiti
 amount of time.
 
 During program execution, the precompiles are substituted with interactions with pre-image oracle.
-The program hints the host for a precompile input. Which it the subsequently retrieves the result of the precompile
+The program hints the host for a precompile input. Which then subsequently retrieves the result of the precompile
 operation using the [type 6 global precompile key](#type-6-global-precompile-key).
 All accelerated precompiles must be functionally equivalent to their EVM equivalent.
 
