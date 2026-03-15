@@ -15,7 +15,7 @@ use base_batcher_core::{
 use base_batcher_encoder::BatchEncoder;
 use base_batcher_source::{BlockSubscription, HybridBlockSource, SourceError};
 use base_consensus_genesis::RollupConfig;
-use base_tx_manager::{SimpleTxManager, TxManagerConfig};
+use base_tx_manager::{NoopTxMetrics, SimpleTxManager, TxManagerConfig};
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -279,7 +279,7 @@ impl BatcherService {
             num_confirmations: self.config.num_confirmations as u64,
             ..TxManagerConfig::default()
         };
-        let tx_manager = SimpleTxManager::new(l1_provider, wallet, tx_manager_config, l1_chain_id)
+        let tx_manager = SimpleTxManager::new(l1_provider, wallet, tx_manager_config, l1_chain_id, Arc::new(NoopTxMetrics))
             .await
             .map_err(|e| eyre::eyre!("failed to create tx manager: {e}"))?;
 
