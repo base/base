@@ -113,6 +113,11 @@ pub struct TxManagerConfig {
     pub tx_not_in_mempool_timeout: Duration,
     /// Maximum time to poll for confirmation before giving up.
     pub confirmation_timeout: Duration,
+    /// Minimum blob base fee (in wei) to use for blob transactions.
+    pub min_blob_fee: u128,
+    /// Unix timestamp at or after which cell proofs (EIP-7594, 128 proofs/blob)
+    /// are used instead of legacy KZG proofs (1 proof/blob). `u64::MAX` disables.
+    pub cell_proofs_activation_timestamp: u64,
 }
 
 impl Default for TxManagerConfig {
@@ -130,6 +135,8 @@ impl Default for TxManagerConfig {
             tx_send_timeout: Duration::ZERO,
             tx_not_in_mempool_timeout: Duration::from_secs(120),
             confirmation_timeout: Duration::from_secs(300),
+            min_blob_fee: 1_000_000_000, // 1 gwei
+            cell_proofs_activation_timestamp: u64::MAX,
         }
     }
 }
@@ -283,6 +290,16 @@ mod tests {
     #[test]
     fn default_passes_validation() {
         TxManagerConfig::default().validate().expect("default config should be valid");
+    }
+
+    #[test]
+    fn default_min_blob_fee_is_one_gwei() {
+        assert_eq!(TxManagerConfig::default().min_blob_fee, 1_000_000_000);
+    }
+
+    #[test]
+    fn default_cell_proofs_activation_disabled() {
+        assert_eq!(TxManagerConfig::default().cell_proofs_activation_timestamp, u64::MAX);
     }
 
     #[test]

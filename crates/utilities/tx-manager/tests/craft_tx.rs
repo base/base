@@ -115,21 +115,18 @@ async fn craft_tx_with_explicit_gas_limit_above_estimate() {
 }
 
 #[tokio::test]
-async fn craft_tx_rejects_blob_transactions() {
+async fn craft_tx_rejects_blob_without_recipient() {
     let (manager, _anvil) = setup().await;
 
-    let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        blobs: vec![Blob::default()],
-        ..Default::default()
-    };
+    let candidate = TxCandidate { to: None, blobs: vec![Blob::default()], ..Default::default() };
 
-    let err = manager.craft_tx(&candidate, None).await.expect_err("should reject blob tx");
+    let err =
+        manager.craft_tx(&candidate, None).await.expect_err("should reject blob tx without to");
     match &err {
         TxManagerError::Unsupported(msg) => {
             assert!(
-                msg.contains("blob transactions are not yet supported"),
-                "expected blob rejection message, got: {msg}",
+                msg.contains("recipient address"),
+                "expected recipient address rejection message, got: {msg}",
             );
         }
         other => panic!("expected TxManagerError::Unsupported, got {other:?}"),
@@ -401,13 +398,13 @@ async fn craft_tx_returns_fee_limit_exceeded_when_minimums_inflate_beyond_multip
 async fn prepare_exits_immediately_on_non_retryable_error() {
     let (manager, _anvil) = setup().await;
 
-    let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        blobs: vec![Blob::default()],
-        ..Default::default()
-    };
+    // Blob transactions without a recipient trigger Unsupported (non-retryable).
+    let candidate = TxCandidate { to: None, blobs: vec![Blob::default()], ..Default::default() };
 
-    let err = manager.prepare(&candidate, None).await.expect_err("should reject blob tx");
+    let err = manager
+        .prepare(&candidate, None)
+        .await
+        .expect_err("should reject blob tx without recipient");
 
     assert!(
         matches!(err, TxManagerError::Unsupported(_)),

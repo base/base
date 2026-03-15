@@ -16,7 +16,7 @@ workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-primitives.workspace = true
-alloy-eips = { workspace = true, features = ["std"] }
+alloy-eips = { workspace = true, features = ["std", "kzg"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # misc

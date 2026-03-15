@@ -1,5 +1,197 @@
-//! EIP-4844 blob transaction builder.
+//! EIP-4844 blob transaction sidecar construction.
+//!
+//! [`BlobTxBuilder`] wraps alloy's KZG sidecar API to produce
+//! [`BlobTransactionSidecar`] (legacy, 1 proof/blob) or
+//! [`BlobTransactionSidecarVariant::Eip7594`] (cell proofs, 128 proofs/blob)
+//! depending on a configurable activation timestamp.
 
-/// Builder for EIP-4844 blob-carrying transactions.
-#[derive(Debug)]
-pub struct BlobTxBuilder;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use alloy_eips::{
+    eip4844::{BlobTransactionSidecar, c_kzg, env_settings::EnvKzgSettings},
+    eip7594::BlobTransactionSidecarVariant,
+};
+
+use crate::TxManagerError;
+
+/// Builder for EIP-4844 blob-carrying transaction sidecars.
+///
+/// Wraps alloy's KZG primitives to construct either legacy (1 proof/blob)
+/// or EIP-7594 cell-proof (128 proofs/blob) sidecars based on a
+/// configurable activation timestamp.
+#[derive(Debug, Clone)]
+pub struct BlobTxBuilder {
+    /// Unix timestamp at or after which cell proofs are used.
+    /// `u64::MAX` disables cell proofs (always legacy).
+    cell_proofs_activation_timestamp: u64,
+}
+
+impl BlobTxBuilder {
+    /// Creates a new [`BlobTxBuilder`].
+    ///
+    /// Pass `u64::MAX` to disable cell proofs (always produce legacy sidecars).
+    #[must_use]
+    pub const fn new(cell_proofs_activation_timestamp: u64) -> Self {
+        Self { cell_proofs_activation_timestamp }
+    }
+
+    /// Returns `true` when EIP-7594 cell proofs should be used.
+    ///
+    /// Cell proofs are active when the current wall-clock time is at or past
+    /// the configured activation timestamp.
+    #[must_use]
+    pub fn should_use_cell_proofs(&self) -> bool {
+        if self.cell_proofs_activation_timestamp == u64::MAX {
+            return false;
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before UNIX epoch")
+            .as_secs();
+        now >= self.cell_proofs_activation_timestamp
+    }
+
+    /// Builds a legacy [`BlobTransactionSidecar`] (1 KZG proof per blob).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TxManagerError::Unsupported`] if KZG computation fails.
+    pub fn make_sidecar(
+        &self,
+        blobs: Vec<alloy_eips::eip4844::Blob>,
+    ) -> Result<BlobTransactionSidecar, TxManagerError> {
+        let settings = EnvKzgSettings::Default;
+        Self::build_legacy_sidecar(blobs, settings.get())
+    }
+
+    /// Builds a [`BlobTransactionSidecarVariant`], automatically selecting
+    /// legacy or EIP-7594 cell proofs based on [`should_use_cell_proofs`](Self::should_use_cell_proofs).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TxManagerError::Unsupported`] if KZG computation fails.
+    pub fn make_sidecar_auto(
+        &self,
+        blobs: Vec<alloy_eips::eip4844::Blob>,
+    ) -> Result<BlobTransactionSidecarVariant, TxManagerError> {
+        let settings = EnvKzgSettings::Default;
+        let kzg = settings.get();
+        let sidecar = Self::build_legacy_sidecar(blobs, kzg)?;
+
+        if self.should_use_cell_proofs() {
+            let eip7594 = sidecar.try_into_7594(kzg).map_err(|e| {
+                TxManagerError::Unsupported(format!("EIP-7594 cell proof computation failed: {e}"))
+            })?;
+            Ok(BlobTransactionSidecarVariant::Eip7594(eip7594))
+        } else {
+            Ok(BlobTransactionSidecarVariant::Eip4844(sidecar))
+        }
+    }
+
+    /// Internal helper: builds a legacy sidecar with the given KZG settings.
+    fn build_legacy_sidecar(
+        blobs: Vec<alloy_eips::eip4844::Blob>,
+        kzg: &c_kzg::KzgSettings,
+    ) -> Result<BlobTransactionSidecar, TxManagerError> {
+        BlobTransactionSidecar::try_from_blobs_with_settings(blobs, kzg).map_err(|e| {
+            TxManagerError::Unsupported(format!("KZG sidecar construction failed: {e}"))
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_eips::{eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
+
+    use super::*;
+
+    /// Helper: creates a builder with cell proofs disabled.
+    fn legacy_builder() -> BlobTxBuilder {
+        BlobTxBuilder::new(u64::MAX)
+    }
+
+    /// Helper: creates a builder with cell proofs always active.
+    fn cell_proofs_builder() -> BlobTxBuilder {
+        BlobTxBuilder::new(0)
+    }
+
+    #[test]
+    fn make_sidecar_single_blob() {
+        let builder = legacy_builder();
+        let sidecar = builder.make_sidecar(vec![Blob::default()]).unwrap();
+        assert_eq!(sidecar.blobs.len(), 1);
+        assert_eq!(sidecar.commitments.len(), 1);
+        assert_eq!(sidecar.proofs.len(), 1);
+    }
+
+    #[test]
+    fn make_sidecar_two_blobs() {
+        let builder = legacy_builder();
+        let sidecar = builder.make_sidecar(vec![Blob::default(), Blob::default()]).unwrap();
+        assert_eq!(sidecar.blobs.len(), 2);
+        assert_eq!(sidecar.commitments.len(), 2);
+        assert_eq!(sidecar.proofs.len(), 2);
+    }
+
+    #[test]
+    fn make_sidecar_six_blobs() {
+        let builder = legacy_builder();
+        let blobs = vec![Blob::default(); 6];
+        let sidecar = builder.make_sidecar(blobs).unwrap();
+        assert_eq!(sidecar.blobs.len(), 6);
+        assert_eq!(sidecar.commitments.len(), 6);
+        assert_eq!(sidecar.proofs.len(), 6);
+    }
+
+    #[test]
+    fn versioned_hashes_use_0x01_version_byte() {
+        let builder = legacy_builder();
+        let sidecar = builder.make_sidecar(vec![Blob::default(), Blob::default()]).unwrap();
+        for hash in sidecar.versioned_hashes() {
+            assert_eq!(hash.0[0], 0x01, "versioned hash should start with 0x01, got: {hash}");
+        }
+    }
+
+    #[test]
+    fn should_use_cell_proofs_disabled() {
+        let builder = BlobTxBuilder::new(u64::MAX);
+        assert!(!builder.should_use_cell_proofs());
+    }
+
+    #[test]
+    fn should_use_cell_proofs_past() {
+        let builder = BlobTxBuilder::new(0);
+        assert!(builder.should_use_cell_proofs());
+    }
+
+    #[test]
+    fn should_use_cell_proofs_future() {
+        let builder = BlobTxBuilder::new(u64::MAX - 1);
+        assert!(!builder.should_use_cell_proofs());
+    }
+
+    #[test]
+    fn make_sidecar_auto_legacy() {
+        let builder = legacy_builder();
+        let variant = builder.make_sidecar_auto(vec![Blob::default()]).unwrap();
+        assert!(variant.is_eip4844(), "expected Eip4844 variant");
+        let sidecar = variant.as_eip4844().unwrap();
+        assert_eq!(sidecar.proofs.len(), 1);
+    }
+
+    #[test]
+    fn make_sidecar_auto_cell_proofs() {
+        let builder = cell_proofs_builder();
+        let variant = builder.make_sidecar_auto(vec![Blob::default()]).unwrap();
+        assert!(variant.is_eip7594(), "expected Eip7594 variant");
+        let sidecar = variant.as_eip7594().unwrap();
+        // 128 cell proofs per blob.
+        assert_eq!(sidecar.cell_proofs.len(), CELLS_PER_EXT_BLOB);
+    }
+
+    #[test]
+    fn blob_tx_builder_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<BlobTxBuilder>();
+    }
+}
