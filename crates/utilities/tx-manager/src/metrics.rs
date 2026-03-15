@@ -70,7 +70,14 @@ pub trait TxMetrics: Send + Sync + Debug + 'static {
     /// Record a confirmed (successfully mined) transaction.
     fn record_tx_confirmed(&self);
 
-    /// Record a failed (aborted) transaction.
+    /// Record a failed send attempt.
+    ///
+    /// This fires on **any** `send_tx` error path, including `SendTimeout`.
+    /// A timeout does not guarantee the transaction will never confirm — the
+    /// background `wait_for_tx` task may still be running and the transaction
+    /// may already be in the mempool. This counter therefore tracks "send
+    /// attempts that did not return a confirmed receipt," not definitive
+    /// on-chain failures.
     fn record_tx_failed(&self);
 }
 
@@ -135,7 +142,7 @@ impl BaseTxMetrics {
         describe_gauge!(TIPCAP_GWEI, "Tip cap in gwei");
         describe_counter!(RPC_ERROR_COUNT, "Number of RPC errors");
         describe_counter!(TX_CONFIRMED_COUNT, "Number of confirmed transactions");
-        describe_counter!(TX_FAILED_COUNT, "Number of failed transactions");
+        describe_counter!(TX_FAILED_COUNT, "Number of failed send attempts (includes timeouts where the tx may still confirm)");
     }
 }
 
