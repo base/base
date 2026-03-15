@@ -1,0 +1,36 @@
+[package]
+name = "base-runtime"
+description = "Async runtime abstraction for deterministic batcher and pipeline testing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+futures.workspace = true
+thiserror.workspace = true
+
+tokio = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
+tokio-stream = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "time", "sync"] }
+
+[features]
+default = [ "tokio" ]
+tokio = [
+	"dep:tokio",
+	"dep:tokio-stream",
+	"dep:tokio-util",
+	"tokio/macros",
+	"tokio/rt",
+	"tokio/sync",
+	"tokio/time",
+]
+test-utils = [ "tokio", "tokio/test-util" ]

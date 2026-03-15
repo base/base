@@ -259,6 +259,7 @@ base-comp = { path = "crates/batcher/comp", default-features = false }
 base-jwt = { path = "crates/utilities/jwt" }
 base-health = { path = "crates/utilities/health" }
 base-cli-utils = { path = "crates/utilities/cli" }
+base-runtime = { path = "crates/utilities/runtime", default-features = false }
 base-test-utils = { path = "crates/utilities/test-utils" }
 base-tx-manager = { path = "crates/utilities/tx-manager" }
 base-macros = { path = "crates/utilities/macros", default-features = false }

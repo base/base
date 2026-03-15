@@ -4616,6 +4616,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-runtime"
+version = "0.0.0"
+dependencies = [
+ "futures",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+]
+
+[[package]]
 name = "base-test-utils"
 version = "0.0.0"
 dependencies = [
