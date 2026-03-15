@@ -3,7 +3,8 @@ use std::sync::Arc;
 use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bytes};
 use base_batcher_encoder::{
-    BatchEncoder, BatchPipeline, BatchType, EncoderConfig, ReorgError, StepError, StepResult,
+    BatchEncoder, BatchPipeline, BatchType, EncoderConfig, FrameEncoder, ReorgError, StepError,
+    StepResult, SubmissionId,
 };
 use base_blobs::BlobEncoder;
 use base_comp::BatchComposeError;
@@ -107,6 +108,20 @@ pub struct Batcher<S: L2BlockProvider> {
     config: BatcherConfig,
     pending_txs: Vec<PendingTx>,
     pending_blobs: Vec<(B256, Box<Blob>)>,
+    /// Submissions drained from the pipeline but not yet confirmed.
+    ///
+    /// Each entry is `(id, frame_count)` so that [`flush`](Batcher::flush)
+    /// can confirm only the submissions whose frames were fully covered by
+    /// [`submit_frames`](Batcher::submit_frames) / [`submit_blob_frames`](Batcher::submit_blob_frames),
+    /// and requeue the rest.
+    pending_submissions: Vec<(SubmissionId, usize)>,
+    /// Running count of frames buffered since the last [`flush`](Batcher::flush).
+    ///
+    /// Incremented by [`submit_frames`](Batcher::submit_frames) and
+    /// [`submit_blob_frames`](Batcher::submit_blob_frames). Consumed frame-by-frame
+    /// in [`flush`](Batcher::flush) to determine which submission IDs are fully
+    /// covered and should be confirmed vs. requeued.
+    submitted_frame_count: usize,
 }
 
 impl<S: L2BlockProvider> Batcher<S> {
@@ -121,7 +136,15 @@ impl<S: L2BlockProvider> Batcher<S> {
         let mut encoder_config = config.encoder.clone();
         encoder_config.batch_type = config.batch_type;
         let pipeline = BatchEncoder::new(rollup_config, encoder_config);
-        Self { l2_source, pipeline, config, pending_txs: Vec::new(), pending_blobs: Vec::new() }
+        Self {
+            l2_source,
+            pipeline,
+            config,
+            pending_txs: Vec::new(),
+            pending_blobs: Vec::new(),
+            pending_submissions: Vec::new(),
+            submitted_frame_count: 0,
+        }
     }
 
     /// Drain all available L2 blocks and encode them into frames without
@@ -169,6 +192,8 @@ impl<S: L2BlockProvider> Batcher<S> {
 
         let mut frames = Vec::new();
         while let Some(sub) = self.pipeline.next_submission() {
+            let frame_count = sub.frames.len();
+            self.pending_submissions.push((sub.id, frame_count));
             frames.extend(sub.frames);
         }
 
@@ -181,20 +206,26 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Each frame is buffered as a separate [`PendingTx`]. Call [`flush`] to
     /// drain them into an [`L1Miner`].
     ///
+    /// # Ordering invariant
+    ///
+    /// `frames` must be an **in-order prefix** of the slice returned by the most
+    /// recent [`encode_frames`](Batcher::encode_frames) call. [`flush`] accounts
+    /// for submitted frames by consuming a positional counter (`submitted_frame_count`)
+    /// against the ordered list of pending submissions — it has no way to detect
+    /// which individual frames were passed here. Submitting an out-of-order subset
+    /// (e.g. `&frames[1..]` while skipping frame 0) will cause [`flush`] to confirm
+    /// the wrong submission IDs and requeue the wrong ones.
+    ///
     /// [`flush`]: Batcher::flush
     pub fn submit_frames(&mut self, frames: &[Arc<Frame>]) {
         for frame in frames {
-            let encoded = frame.encode();
-            let mut input = Vec::with_capacity(1 + encoded.len());
-            input.push(DERIVATION_VERSION_0);
-            input.extend_from_slice(&encoded);
-
             self.pending_txs.push(PendingTx {
                 from: self.config.batcher_address,
                 to: self.config.inbox_address,
-                input: Bytes::from(input),
+                input: FrameEncoder::to_calldata(frame),
             });
         }
+        self.submitted_frame_count += frames.len();
         info!(frames = frames.len(), "batcher buffered frames");
     }
 
@@ -203,6 +234,11 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Each frame is encoded into one blob using [`BlobEncoder::encode_frames`].
     /// Call [`flush`] to drain them into an [`L1Miner`].
     ///
+    /// # Ordering invariant
+    ///
+    /// Same constraint as [`submit_frames`](Batcher::submit_frames): `frames` must
+    /// be an in-order prefix of the [`encode_frames`](Batcher::encode_frames) output.
+    ///
     /// [`flush`]: Batcher::flush
     pub fn submit_blob_frames(&mut self, frames: &[Arc<Frame>]) {
         let blobs =
@@ -210,10 +246,28 @@ impl<S: L2BlockProvider> Batcher<S> {
         for blob in blobs {
             self.pending_blobs.push((B256::ZERO, Box::new(blob)));
         }
+        self.submitted_frame_count += frames.len();
         info!(frames = frames.len(), "batcher buffered frames as blobs");
     }
 
-    /// Drain all pending transactions and blobs into the given [`L1Miner`].
+    /// Drain all pending transactions and blobs into the given [`L1Miner`], then
+    /// confirm or requeue each buffered submission with the encoding pipeline.
+    ///
+    /// Submissions are confirmed only when every frame they contain was actually
+    /// passed to [`submit_frames`](Batcher::submit_frames) or
+    /// [`submit_blob_frames`](Batcher::submit_blob_frames). Submissions whose
+    /// frames were not (fully) submitted are requeued so the encoder can rewind
+    /// their frame cursor and re-emit them on the next drain.
+    ///
+    /// This distinction matters for partial-frame tests (e.g., channel timeout
+    /// scenarios that submit only the first frame and let the rest expire): without
+    /// requeue, the encoder would incorrectly treat unsubmitted frames as confirmed,
+    /// permanently corrupting its internal block deque and `pending` map.
+    ///
+    /// The `l1_block` passed to [`BatchPipeline::confirm`] is `u64::MAX` — matching
+    /// the value already used by `encode_frames` to force-close the channel. The
+    /// [`BatchEncoder`] implementation does not use the `l1_block` argument to
+    /// `confirm()`, so the exact value is irrelevant here.
     pub fn flush(&mut self, l1: &mut L1Miner) {
         for tx in self.pending_txs.drain(..) {
             l1.submit_tx(tx);
@@ -221,6 +275,39 @@ impl<S: L2BlockProvider> Batcher<S> {
         for (hash, blob) in self.pending_blobs.drain(..) {
             l1.enqueue_blob(hash, blob);
         }
+
+        // Walk submissions in drain order. Each submission contributed `frame_count`
+        // frames to the flat frame list returned by `encode_frames()`. Consume
+        // `submitted_frame_count` one submission at a time: if this submission's
+        // frames were fully covered, confirm it; otherwise requeue it so the
+        // encoder rewinds the frame cursor for future re-submission.
+        let mut remaining = self.submitted_frame_count;
+        for (id, frame_count) in self.pending_submissions.drain(..) {
+            if remaining >= frame_count {
+                remaining -= frame_count;
+                self.pipeline.confirm(id, u64::MAX);
+            } else {
+                self.pipeline.requeue(id);
+            }
+        }
+        self.submitted_frame_count = 0;
+    }
+
+    /// Drain any submissions that were requeued by the last [`flush`](Batcher::flush).
+    ///
+    /// After a partial-frame flush, the encoder rewinds the frame cursor for
+    /// unsubmitted submissions. Calling this method pulls those frames back out of
+    /// the pipeline so they can be re-submitted via [`submit_frames`](Batcher::submit_frames).
+    ///
+    /// Returns an empty [`Vec`] when no requeued submissions are pending.
+    pub fn drain_requeued_frames(&mut self) -> Vec<Arc<Frame>> {
+        let mut frames = Vec::new();
+        while let Some(sub) = self.pipeline.next_submission() {
+            let frame_count = sub.frames.len();
+            self.pending_submissions.push((sub.id, frame_count));
+            frames.extend(sub.frames);
+        }
+        frames
     }
 
     /// Encode and submit all frames as blobs in one step.

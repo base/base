@@ -7,11 +7,17 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-mod types;
-pub use types::{
-    BatchSubmission, BatchType, DaType, EncoderConfig, EncoderConfigError, ReorgError, StepError,
-    StepResult, SubmissionId,
-};
+mod submission;
+pub use submission::{BatchSubmission, BatchType, DaType, FrameEncoder, SubmissionId};
+
+mod step;
+pub use step::{StepError, StepResult};
+
+mod reorg;
+pub use reorg::ReorgError;
+
+mod config;
+pub use config::{EncoderConfig, EncoderConfigError};
 
 mod pipeline;
 pub use pipeline::BatchPipeline;

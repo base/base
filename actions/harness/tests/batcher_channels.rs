@@ -4,6 +4,7 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder, block_info_from,
 };
+use base_batcher_encoder::EncoderConfig;
 
 // ---------------------------------------------------------------------------
 // A. Channel timeout — first frame's inclusion span exceeds channel_timeout
@@ -53,8 +54,6 @@ use base_action_harness::{
 /// ID generation.
 #[tokio::test]
 async fn channel_timeout_triggers_channel_invalidation() {
-    use base_batcher_encoder::EncoderConfig;
-
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() },
         ..BatcherConfig::default()
@@ -162,8 +161,6 @@ async fn channel_timeout_triggers_channel_invalidation() {
 /// channel completes immediately.
 #[tokio::test]
 async fn channel_timeout_recovery_resubmits_successfully() {
-    use base_batcher_encoder::EncoderConfig;
-
     // Small max_frame_size forces a multi-frame channel so we can hold back
     // frames to induce a timeout, matching the setup in
     // channel_timeout_triggers_channel_invalidation.
@@ -288,7 +285,6 @@ async fn channel_timeout_recovery_resubmits_successfully() {
 /// so they all appear in L1 block 1.
 #[tokio::test]
 async fn interleaved_channels_correctly_reassembled() {
-    use base_batcher_encoder::EncoderConfig;
     let batcher_cfg = BatcherConfig {
         // Small max_frame_size forces each block's batch data to spill across multiple frames,
         // producing distinct channel IDs per encoder instance (BatchEncoder randomizes per channel).
@@ -386,7 +382,6 @@ async fn interleaved_channels_correctly_reassembled() {
 /// derives L2 block 1.  The safe head advances to 1.
 #[tokio::test]
 async fn multi_block_channel_assembles_across_l1_blocks() {
-    use base_batcher_encoder::EncoderConfig;
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() },
         ..BatcherConfig::default()
@@ -446,4 +441,147 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
 
     assert_eq!(derived, 1, "multi-block channel must yield 1 L2 block");
     assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head must advance to 1");
+}
+
+// ---------------------------------------------------------------------------
+// E. Confirm / requeue lifecycle
+// ---------------------------------------------------------------------------
+
+/// Verifies that the **prefix length** passed to [`Batcher::submit_frames`]
+/// is what determines which submissions are confirmed on [`Batcher::flush`],
+/// not which frames were submitted.
+///
+/// [`flush`] consumes a positional counter (`submitted_frame_count`) against
+/// the ordered list of pending submissions built by [`encode_frames`]. It has
+/// no per-frame identity tracking, so the confirmed/requeued boundary is always
+/// a prefix of that ordered list. Submitting an out-of-order subset (e.g.
+/// `&frames[1..]` while skipping frame 0) would confirm the wrong submissions.
+///
+/// ## Scenario
+///
+/// 1. Encode one L2 block into ≥3 frames (one submission per frame with the
+///    default `target_num_frames = 1`).
+/// 2. Submit **zero** frames and flush → all N submissions requeued;
+///    `drain_requeued_frames` returns all N frames.
+/// 3. Submit a **two-frame prefix** of those requeued frames and flush → 2
+///    submissions confirmed, N−2 requeued; `drain_requeued_frames` returns
+///    the N−2 remaining frames.
+/// 4. Submit all remaining frames and flush → everything confirmed;
+///    `drain_requeued_frames` returns empty.
+///
+/// [`encode_frames`]: base_action_harness::Batcher::encode_frames
+/// [`flush`]: base_action_harness::Batcher::flush
+#[tokio::test]
+async fn submit_frames_prefix_length_determines_confirm_boundary() {
+    let batcher_cfg = BatcherConfig {
+        // Small max_frame_size ensures ≥3 frames so we can walk through
+        // zero, mid-point, and full prefix lengths in one test.
+        encoder: EncoderConfig { max_frame_size: 60, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let block = sequencer.build_next_block().expect("build L2 block");
+
+    let mut source = ActionL2Source::new();
+    source.push(block);
+    let mut batcher = h.create_batcher(source, batcher_cfg);
+    let frames = batcher.encode_frames().expect("encode frames");
+    let n = frames.len();
+    assert!(n >= 3, "need ≥3 frames; got {n} (decrease max_frame_size)");
+
+    // --- Step 1: zero-length prefix → all submissions requeued ---
+    // submit_frames is not called, so submitted_frame_count stays 0.
+    // flush requeues every pending submission.
+    batcher.flush(&mut h.l1);
+    let after_zero = batcher.drain_requeued_frames();
+    assert_eq!(after_zero.len(), n, "zero-prefix flush must requeue all {n} submissions");
+
+    // --- Step 2: two-frame prefix → exactly 2 submissions confirmed ---
+    batcher.submit_frames(&after_zero[..2]);
+    batcher.flush(&mut h.l1);
+    let after_two = batcher.drain_requeued_frames();
+    assert_eq!(
+        after_two.len(),
+        n - 2,
+        "two-frame prefix must confirm 2 submissions and requeue the remaining {}",
+        n - 2
+    );
+
+    // --- Step 3: remaining frames → all confirmed, nothing left ---
+    batcher.submit_frames(&after_two);
+    batcher.flush(&mut h.l1);
+    let after_full = batcher.drain_requeued_frames();
+    assert!(
+        after_full.is_empty(),
+        "after submitting all remaining frames, drain_requeued_frames must return empty"
+    );
+}
+
+/// Verifies that [`Batcher::flush`] correctly confirms only the submissions
+/// whose frames were fully covered by [`Batcher::submit_frames`], and requeues
+/// the rest.
+///
+/// ## Scenario
+///
+/// 1. Encode one L2 block into a multi-frame channel.
+/// 2. Submit only frame 0 — with `target_num_frames = 1` each submission holds
+///    one frame, so submission 0 is **confirmed** and submissions 1..N are **requeued**.
+/// 3. Call [`Batcher::drain_requeued_frames`] to pull the requeued frames back
+///    out of the pipeline. Verify the count is N−1 (all but the confirmed one).
+/// 4. Submit ALL frames this time and flush. The submission is now **confirmed**.
+/// 5. Call [`Batcher::drain_requeued_frames`] again — must return empty because
+///    the channel is fully confirmed and there is nothing left to re-drain.
+#[tokio::test]
+async fn confirm_lifecycle_requeues_partial_submissions() {
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let block = sequencer.build_next_block().expect("build L2 block");
+
+    let mut source = ActionL2Source::new();
+    source.push(block);
+    let mut batcher = h.create_batcher(source, batcher_cfg);
+    let frames = batcher.encode_frames().expect("encode frames");
+    assert!(
+        frames.len() >= 2,
+        "need ≥2 frames for partial-submit test; got {} (increase payload or decrease max_frame_size)",
+        frames.len()
+    );
+
+    // --- Step 1: partial submit → requeue ---
+    batcher.submit_frames(&frames[..1]);
+    batcher.flush(&mut h.l1);
+
+    // With target_num_frames = 1 (the default), each BatchSubmission holds
+    // exactly one frame. Submitting frame 0 fully covers submission 0, so it
+    // is confirmed. Submissions 1..N are not covered and are requeued.
+    // drain_requeued_frames() must return the N-1 unsubmitted frames.
+    let requeued = batcher.drain_requeued_frames();
+    assert_eq!(
+        requeued.len(),
+        frames.len() - 1,
+        "requeued frame count must equal total frames minus the one submitted (which was confirmed)"
+    );
+
+    // --- Step 2: full submit → confirm ---
+    batcher.submit_frames(&requeued);
+    batcher.flush(&mut h.l1);
+
+    // All frames confirmed — nothing left to re-drain.
+    let after_confirm = batcher.drain_requeued_frames();
+    assert!(
+        after_confirm.is_empty(),
+        "after full confirm, drain_requeued_frames() must return empty; got {}",
+        after_confirm.len()
+    );
 }

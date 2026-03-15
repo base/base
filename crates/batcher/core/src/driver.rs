@@ -3,10 +3,9 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use alloy_primitives::{Address, Bytes, U256};
-use base_batcher_encoder::{BatchPipeline, DaType, StepResult, SubmissionId};
+use base_batcher_encoder::{BatchPipeline, DaType, FrameEncoder, StepResult, SubmissionId};
 use base_batcher_source::{L2BlockEvent, UnsafeBlockSource};
 use base_blobs::BlobEncoder;
-use base_protocol::DERIVATION_VERSION_0;
 use base_tx_manager::{TxCandidate, TxManager};
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::Semaphore;
@@ -186,16 +185,10 @@ where
                     },
                     DaType::Calldata => {
                         // Calldata mode: one frame per submission (enforced by
-                        // EncoderConfig::validate). Encode as
-                        // [DERIVATION_VERSION_0] ++ frame.encode().
-                        let frame = &sub.frames[0];
-                        let encoded = frame.encode();
-                        let mut data = Vec::with_capacity(1 + encoded.len());
-                        data.push(DERIVATION_VERSION_0);
-                        data.extend_from_slice(&encoded);
+                        // EncoderConfig::validate).
                         TxCandidate {
                             to: Some(self.inbox),
-                            tx_data: Bytes::from(data),
+                            tx_data: FrameEncoder::to_calldata(&sub.frames[0]),
                             value: U256::ZERO,
                             gas_limit: 0,
                             blobs: vec![].into(),
