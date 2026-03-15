@@ -87,9 +87,9 @@ pub struct PreparedTx {
     pub nonce: u64,
     /// Cached blob sidecar from transaction construction. `None` for non-blob txs.
     ///
-    /// Reused across fee bump iterations to avoid recomputing KZG proofs
-    /// from the same blob data.
-    pub sidecar: Option<BlobTransactionSidecarVariant>,
+    /// Wrapped in `Arc` so fee-bump retry clones are pointer copies (~0 bytes)
+    /// instead of deep clones (~800 KB per blob).
+    pub sidecar: Option<Arc<BlobTransactionSidecarVariant>>,
 }
 
 /// Mutable fee-bump state tracked across iterations in the send loop.
@@ -111,9 +111,9 @@ struct BumpState {
     tx_hash: B256,
     /// Nonce used in the most recently published transaction.
     nonce: u64,
-    /// Cached blob sidecar. Reused across fee bumps to avoid recomputing
-    /// KZG proofs from the same blob data.
-    sidecar: Option<BlobTransactionSidecarVariant>,
+    /// Cached blob sidecar. Wrapped in `Arc` so fee-bump retry clones are
+    /// pointer copies (~0 bytes) instead of deep clones (~800 KB per blob).
+    sidecar: Option<Arc<BlobTransactionSidecarVariant>>,
 }
 
 impl BumpState {
@@ -355,7 +355,7 @@ impl SimpleTxManager {
         fee_overrides: Option<FeeOverride>,
         mut initial_caps: Option<GasPriceCaps>,
         nonce_override: Option<u64>,
-        cached_sidecar: Option<BlobTransactionSidecarVariant>,
+        cached_sidecar: Option<Arc<BlobTransactionSidecarVariant>>,
     ) -> TxManagerResult<PreparedTx> {
         (|| {
             let caps = initial_caps.take();
@@ -636,7 +636,7 @@ impl SimpleTxManager {
         fee_overrides: Option<FeeOverride>,
         caps: Option<GasPriceCaps>,
         nonce_override: Option<u64>,
-        cached_sidecar: Option<BlobTransactionSidecarVariant>,
+        cached_sidecar: Option<Arc<BlobTransactionSidecarVariant>>,
     ) -> TxManagerResult<PreparedTx> {
         let is_blob = !candidate.blobs.is_empty();
 
@@ -716,18 +716,34 @@ impl SimpleTxManager {
         // Step 4b: Attach blob sidecar and blob-specific fields.
         //
         // Reuse a cached sidecar when available (fee bump iterations) to
-        // avoid recomputing KZG proofs from the same blob data.
+        // avoid recomputing KZG proofs from the same blob data. If the
+        // cached sidecar's proof variant no longer matches the current
+        // block timestamp (e.g. fork activation crossed mid-send-loop),
+        // discard it and rebuild.
         let built_sidecar = if is_blob {
-            let sidecar_variant = match cached_sidecar {
-                Some(cached) => cached,
-                None => self
-                    .blob_builder
-                    .make_sidecar_auto(Arc::clone(&candidate.blobs), caps.block_timestamp)?,
+            let sidecar = match cached_sidecar {
+                Some(cached)
+                    if self.blob_builder.is_sidecar_valid(&cached, caps.block_timestamp) =>
+                {
+                    cached
+                }
+                cached => {
+                    if cached.is_some() {
+                        info!(
+                            block_timestamp = caps.block_timestamp,
+                            "cached sidecar proof type stale, rebuilding"
+                        );
+                    }
+                    Arc::new(
+                        self.blob_builder
+                            .make_sidecar_auto(Arc::clone(&candidate.blobs), caps.block_timestamp)?,
+                    )
+                }
             };
-            tx_request.sidecar = Some(sidecar_variant.clone());
+            tx_request.sidecar = Some((*sidecar).clone());
             tx_request.populate_blob_hashes();
             tx_request.max_fee_per_blob_gas = blob_fee_cap;
-            Some(sidecar_variant)
+            Some(sidecar)
         } else {
             None
         };

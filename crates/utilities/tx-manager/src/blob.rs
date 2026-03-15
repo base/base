@@ -55,6 +55,22 @@ impl BlobTxBuilder {
         block_timestamp >= self.cell_proofs_activation_timestamp
     }
 
+    /// Returns `true` when `sidecar`'s proof variant matches what
+    /// [`should_use_cell_proofs`](Self::should_use_cell_proofs) would select
+    /// for the given `block_timestamp`.
+    ///
+    /// Use this to detect stale cached sidecars across fork boundaries
+    /// (e.g. the `cell_proofs_activation_timestamp` was crossed during an
+    /// active send loop).
+    #[must_use]
+    pub const fn is_sidecar_valid(
+        &self,
+        sidecar: &BlobTransactionSidecarVariant,
+        block_timestamp: u64,
+    ) -> bool {
+        self.should_use_cell_proofs(block_timestamp) == sidecar.is_eip7594()
+    }
+
     /// Builds a [`BlobTransactionSidecarVariant`], automatically selecting
     /// legacy or EIP-7594 cell proofs based on [`should_use_cell_proofs`](Self::should_use_cell_proofs).
     ///
@@ -199,5 +215,60 @@ mod tests {
     fn blob_tx_builder_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<BlobTxBuilder>();
+    }
+
+    // ── is_sidecar_valid ────────────────────────────────────────────────
+
+    #[test]
+    fn is_sidecar_valid_matches_legacy_before_activation() {
+        let builder = BlobTxBuilder::new(1_000);
+        let sidecar = builder.make_sidecar_auto(Arc::new(vec![Blob::default()]), 999).unwrap();
+        assert!(builder.is_sidecar_valid(&sidecar, 999));
+    }
+
+    #[test]
+    fn is_sidecar_valid_matches_cell_proofs_after_activation() {
+        let builder = BlobTxBuilder::new(1_000);
+        let sidecar = builder.make_sidecar_auto(Arc::new(vec![Blob::default()]), 1_000).unwrap();
+        assert!(builder.is_sidecar_valid(&sidecar, 1_000));
+    }
+
+    #[test]
+    fn is_sidecar_valid_rejects_legacy_after_activation() {
+        let builder = BlobTxBuilder::new(1_000);
+        // Build a legacy sidecar (pre-activation).
+        let sidecar = builder.make_sidecar_auto(Arc::new(vec![Blob::default()]), 999).unwrap();
+        assert!(sidecar.is_eip4844());
+        // Validate against a post-activation timestamp — should be invalid.
+        assert!(!builder.is_sidecar_valid(&sidecar, 1_000));
+    }
+
+    #[test]
+    fn is_sidecar_valid_rejects_cell_proofs_before_activation() {
+        let builder = BlobTxBuilder::new(1_000);
+        // Build a cell-proof sidecar (post-activation).
+        let sidecar = builder.make_sidecar_auto(Arc::new(vec![Blob::default()]), 1_000).unwrap();
+        assert!(sidecar.is_eip7594());
+        // Validate against a pre-activation timestamp — should be invalid.
+        assert!(!builder.is_sidecar_valid(&sidecar, 999));
+    }
+
+    #[test]
+    fn sidecar_cache_invalidated_across_fork_transition() {
+        let builder = BlobTxBuilder::new(1_000);
+        let blobs = Arc::new(vec![Blob::default()]);
+
+        // Build pre-fork sidecar.
+        let pre_fork = builder.make_sidecar_auto(Arc::clone(&blobs), 999).unwrap();
+        assert!(pre_fork.is_eip4844());
+        assert!(builder.is_sidecar_valid(&pre_fork, 999));
+
+        // After fork activation the cached sidecar is stale.
+        assert!(!builder.is_sidecar_valid(&pre_fork, 1_000));
+
+        // Rebuild with post-fork timestamp produces a valid sidecar.
+        let post_fork = builder.make_sidecar_auto(blobs, 1_000).unwrap();
+        assert!(post_fork.is_eip7594());
+        assert!(builder.is_sidecar_valid(&post_fork, 1_000));
     }
 }
