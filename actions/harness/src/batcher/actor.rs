@@ -164,7 +164,7 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
         let mut block_count = 0u64;
 
         while let Some(block) = self.l2_source.next_block() {
-            self.pipeline.add_block(block).map_err(|b| b.0)?;
+            self.pipeline.add_block(block).map_err(|(e, _)| e)?;
             block_count += 1;
         }
 

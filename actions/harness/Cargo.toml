@@ -36,5 +36,6 @@ base-comp = { workspace = true, features = ["std"] }
 base-batcher-encoder.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros"] }
+base-batcher-core.workspace = true
 base-consensus-registry.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }

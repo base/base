@@ -176,12 +176,12 @@ impl BatchEncoder {
 }
 
 impl BatchPipeline for BatchEncoder {
-    fn add_block(&mut self, block: OpBlock) -> Result<(), Box<(ReorgError, OpBlock)>> {
+    fn add_block(&mut self, block: OpBlock) -> Result<(), (ReorgError, Box<OpBlock>)> {
         if !self.blocks.is_empty() && block.header.parent_hash != self.tip {
-            return Err(Box::new((
+            return Err((
                 ReorgError::ParentMismatch { expected: self.tip, got: block.header.parent_hash },
-                block,
-            )));
+                Box::new(block),
+            ));
         }
 
         let hash = block.header.hash_slow();
@@ -438,7 +438,7 @@ mod tests {
         // Second block with wrong parent hash should fail.
         let wrong_parent = B256::from([0xAB; 32]);
         let block2 = make_block(wrong_parent);
-        let (err, returned_block) = *encoder.add_block(block2).unwrap_err();
+        let (err, returned_block) = encoder.add_block(block2).unwrap_err();
         assert_eq!(returned_block.header.parent_hash, wrong_parent);
 
         match err {

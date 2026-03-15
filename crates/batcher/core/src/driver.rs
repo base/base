@@ -12,7 +12,7 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::{BatchDriverError, ThrottleController, TxOutcome};
+use crate::{BatchDriverError, ThrottleClient, ThrottleController, ThrottleParams, TxOutcome};
 
 /// Type alias for the in-flight receipt future collection.
 type InFlight = FuturesUnordered<Pin<Box<dyn Future<Output = (SubmissionId, TxOutcome)> + Send>>>;
@@ -25,11 +25,12 @@ type InFlight = FuturesUnordered<Pin<Box<dyn Future<Output = (SubmissionId, TxOu
 /// Uses [`FuturesUnordered`] for concurrent receipt tracking and a [`Semaphore`]
 /// for pending transaction backpressure.
 #[derive(Debug)]
-pub struct BatchDriver<P, S, TM>
+pub struct BatchDriver<P, S, TM, TC>
 where
     P: BatchPipeline,
     S: UnsafeBlockSource,
     TM: TxManager,
+    TC: ThrottleClient,
 {
     /// The encoding pipeline.
     pipeline: P,
@@ -45,8 +46,10 @@ where
     semaphore: Arc<Semaphore>,
     /// DA backlog throttle controller.
     throttle: ThrottleController,
-    /// Cancellation token for graceful shutdown.
-    cancellation: CancellationToken,
+    /// Client for applying DA size limits to the block builder.
+    throttle_client: TC,
+    /// Last applied DA limits (`max_tx_size`, `max_block_size`) to avoid redundant RPC calls.
+    last_applied_da_limits: Option<(u64, u64)>,
 }
 
 /// Maximum number of encoding steps to run synchronously per outer loop iteration
@@ -54,11 +57,12 @@ where
 /// starving receipt processing and cancellation checks.
 const STEP_BUDGET: usize = 128;
 
-impl<P, S, TM> BatchDriver<P, S, TM>
+impl<P, S, TM, TC> BatchDriver<P, S, TM, TC>
 where
     P: BatchPipeline,
     S: UnsafeBlockSource,
     TM: TxManager,
+    TC: ThrottleClient,
 {
     /// Create a new [`BatchDriver`].
     pub fn new(
@@ -68,7 +72,7 @@ where
         inbox: Address,
         max_pending_transactions: usize,
         throttle: ThrottleController,
-        cancellation: CancellationToken,
+        throttle_client: TC,
     ) -> Self {
         Self {
             pipeline,
@@ -78,7 +82,8 @@ where
             in_flight: FuturesUnordered::new(),
             semaphore: Arc::new(Semaphore::new(max_pending_transactions)),
             throttle,
-            cancellation,
+            throttle_client,
+            last_applied_da_limits: None,
         }
     }
 
@@ -89,7 +94,7 @@ where
     /// 2. Submits any ready frames non-blocking (`try_acquire_owned`).
     /// 3. Selects on cancellation, block source events, and receipt completion.
     /// 4. Returns `Ok(())` on cancellation or `Err` on source/encoding failure.
-    pub async fn run(mut self) -> Result<(), BatchDriverError> {
+    pub async fn run(mut self, cancellation: CancellationToken) -> Result<(), BatchDriverError> {
         loop {
             // Drain encoding steps synchronously before I/O. A budget prevents
             // a large block backlog from starving the tokio executor: after
@@ -112,10 +117,38 @@ where
                 }
             }
 
-            // Check DA backlog and log throttle status.
+            // Check DA backlog and apply throttle if needed.
             let backlog_bytes = self.pipeline.da_backlog_bytes();
-            if let Some(params) = self.throttle.update(backlog_bytes) {
-                debug!(intensity = params.intensity, "DA throttle active");
+            let throttle_params = self.throttle.update(backlog_bytes);
+            let is_throttling = throttle_params.as_ref().is_some_and(ThrottleParams::is_throttling);
+
+            let (max_tx_size, max_block_size) = throttle_params.as_ref().map_or_else(
+                || {
+                    (
+                        self.throttle.config().tx_size_upper_limit,
+                        self.throttle.config().block_size_upper_limit,
+                    )
+                },
+                |p| (p.max_tx_size, p.max_block_size),
+            );
+
+            let new_limits = (max_tx_size, max_block_size);
+            if self.last_applied_da_limits != Some(new_limits) {
+                if let Err(e) =
+                    self.throttle_client.set_max_da_size(max_tx_size, max_block_size).await
+                {
+                    warn!(error = %e, "failed to apply DA size limits to block builder");
+                } else {
+                    if is_throttling {
+                        info!(
+                            intensity = throttle_params.as_ref().unwrap().intensity,
+                            max_block_size, max_tx_size, "DA throttle activated"
+                        );
+                    } else {
+                        info!(max_block_size, max_tx_size, "DA throttle deactivated, limits reset");
+                    }
+                    self.last_applied_da_limits = Some(new_limits);
+                }
             }
 
             // Submit all ready frames without blocking. Using try_acquire_owned
@@ -176,7 +209,7 @@ where
             tokio::select! {
                 biased;
 
-                _ = self.cancellation.cancelled() => {
+                _ = cancellation.cancelled() => {
                     info!("batcher driver cancelled");
                     return Ok(());
                 }
@@ -189,8 +222,7 @@ where
                                 Ok(()) => {
                                     debug!(block = %number, "added unsafe block to pipeline");
                                 }
-                                Err(boxed) => {
-                                    let (e, block) = *boxed;
+                                Err((e, block)) => {
                                     warn!(
                                         block = %number,
                                         error = %e,
@@ -203,7 +235,7 @@ where
                                     // and the block is always accepted. This prevents the
                                     // block from being silently lost when the source won't
                                     // re-deliver it (e.g. HybridBlockSource deduplication).
-                                    let _ = self.pipeline.add_block(block);
+                                    let _ = self.pipeline.add_block(*block);
                                 }
                             }
                         }
@@ -260,11 +292,14 @@ mod tests {
     use base_batcher_source::{L2BlockEvent, SourceError, UnsafeBlockSource};
     use base_protocol::{ChannelId, Frame};
     use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
-    use tokio::sync::oneshot;
+    use tokio::sync::{mpsc, oneshot};
     use tokio_util::sync::CancellationToken;
 
     use super::BatchDriver;
-    use crate::{ThrottleConfig, ThrottleController, ThrottleStrategy};
+    use crate::{
+        NoopThrottleClient, ThrottleConfig, ThrottleController, ThrottleStrategy,
+        test_utils::TrackingThrottleClient,
+    };
 
     // ---- Shared recording state ----
 
@@ -284,16 +319,23 @@ mod tests {
     struct TrackingPipeline {
         recorded: Arc<Mutex<Recorded>>,
         submissions: std::collections::VecDeque<BatchSubmission>,
+        /// Value returned by `da_backlog_bytes()`. Default: 0.
+        da_backlog_bytes_value: u64,
     }
 
     impl TrackingPipeline {
         fn new(recorded: Arc<Mutex<Recorded>>) -> Self {
-            Self { recorded, submissions: Default::default() }
+            Self { recorded, submissions: Default::default(), da_backlog_bytes_value: 0 }
+        }
+
+        fn with_da_backlog(mut self, value: u64) -> Self {
+            self.da_backlog_bytes_value = value;
+            self
         }
     }
 
     impl BatchPipeline for TrackingPipeline {
-        fn add_block(&mut self, _: OpBlock) -> Result<(), Box<(ReorgError, OpBlock)>> {
+        fn add_block(&mut self, _: OpBlock) -> Result<(), (ReorgError, Box<OpBlock>)> {
             Ok(())
         }
         fn step(&mut self) -> Result<StepResult, StepError> {
@@ -315,7 +357,7 @@ mod tests {
             self.recorded.lock().unwrap().resets += 1;
         }
         fn da_backlog_bytes(&self) -> u64 {
-            0
+            self.da_backlog_bytes_value
         }
     }
 
@@ -333,11 +375,11 @@ mod tests {
     }
 
     impl BatchPipeline for ReorgPipeline {
-        fn add_block(&mut self, block: OpBlock) -> Result<(), Box<(ReorgError, OpBlock)>> {
-            Err(Box::new((
+        fn add_block(&mut self, block: OpBlock) -> Result<(), (ReorgError, Box<OpBlock>)> {
+            Err((
                 ReorgError::ParentMismatch { expected: B256::ZERO, got: B256::with_last_byte(1) },
-                block,
-            )))
+                Box::new(block),
+            ))
         }
         fn step(&mut self) -> Result<StepResult, StepError> {
             Ok(StepResult::Idle)
@@ -521,7 +563,7 @@ mod tests {
 
     fn noop_throttle() -> ThrottleController {
         ThrottleController::new(
-            ThrottleConfig { threshold_bytes: 0, max_intensity: 0.0 },
+            ThrottleConfig { threshold_bytes: 0, max_intensity: 0.0, ..Default::default() },
             ThrottleStrategy::Off,
         )
     }
@@ -529,8 +571,7 @@ mod tests {
     fn make_driver<TM: TxManager>(
         pipeline: TrackingPipeline,
         tx_manager: TM,
-        cancellation: CancellationToken,
-    ) -> BatchDriver<TrackingPipeline, PendingSource, TM> {
+    ) -> BatchDriver<TrackingPipeline, PendingSource, TM, Arc<NoopThrottleClient>> {
         BatchDriver::new(
             pipeline,
             PendingSource,
@@ -538,16 +579,15 @@ mod tests {
             Address::ZERO,
             1,
             noop_throttle(),
-            cancellation,
+            Arc::new(NoopThrottleClient),
         )
     }
 
     fn make_driver_with_max_pending<TM: TxManager>(
         pipeline: TrackingPipeline,
         tx_manager: TM,
-        cancellation: CancellationToken,
         max_pending: usize,
-    ) -> BatchDriver<TrackingPipeline, PendingSource, TM> {
+    ) -> BatchDriver<TrackingPipeline, PendingSource, TM, Arc<NoopThrottleClient>> {
         BatchDriver::new(
             pipeline,
             PendingSource,
@@ -555,7 +595,7 @@ mod tests {
             Address::ZERO,
             max_pending,
             noop_throttle(),
-            cancellation,
+            Arc::new(NoopThrottleClient),
         )
     }
 
@@ -569,8 +609,8 @@ mod tests {
 
         let cancellation = CancellationToken::new();
         let handle = tokio::spawn(
-            make_driver(pipeline, ImmediateConfirmTxManager { l1_block: 42 }, cancellation.clone())
-                .run(),
+            make_driver(pipeline, ImmediateConfirmTxManager { l1_block: 42 })
+                .run(cancellation.clone()),
         );
 
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -594,7 +634,7 @@ mod tests {
 
         let cancellation = CancellationToken::new();
         let handle =
-            tokio::spawn(make_driver(pipeline, ImmediateFailTxManager, cancellation.clone()).run());
+            tokio::spawn(make_driver(pipeline, ImmediateFailTxManager).run(cancellation.clone()));
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         cancellation.cancel();
@@ -627,8 +667,8 @@ mod tests {
 
         let cancellation = CancellationToken::new();
         let handle = tokio::spawn(
-            make_driver(pipeline, ImmediateConfirmTxManager { l1_block: 1 }, cancellation.clone())
-                .run(),
+            make_driver(pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                .run(cancellation.clone()),
         );
 
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -661,13 +701,8 @@ mod tests {
 
         let cancellation = CancellationToken::new();
         let handle = tokio::spawn(
-            make_driver_with_max_pending(
-                pipeline,
-                ImmediateConfirmTxManager { l1_block: 10 },
-                cancellation.clone(),
-                2,
-            )
-            .run(),
+            make_driver_with_max_pending(pipeline, ImmediateConfirmTxManager { l1_block: 10 }, 2)
+                .run(cancellation.clone()),
         );
 
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -692,8 +727,8 @@ mod tests {
 
         let cancellation = CancellationToken::new();
         let handle = tokio::spawn(
-            make_driver_with_max_pending(pipeline, NeverConfirmTxManager, cancellation.clone(), 1)
-                .run(),
+            make_driver_with_max_pending(pipeline, NeverConfirmTxManager, 1)
+                .run(cancellation.clone()),
         );
 
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -719,13 +754,8 @@ mod tests {
 
         let cancellation = CancellationToken::new();
         let handle = tokio::spawn(
-            make_driver_with_max_pending(
-                pipeline,
-                ImmediateConfirmTxManager { l1_block: 7 },
-                cancellation.clone(),
-                1,
-            )
-            .run(),
+            make_driver_with_max_pending(pipeline, ImmediateConfirmTxManager { l1_block: 7 }, 1)
+                .run(cancellation.clone()),
         );
 
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -763,16 +793,16 @@ mod tests {
     }
 
     impl BatchPipeline for OneReorgPipeline {
-        fn add_block(&mut self, block: OpBlock) -> Result<(), Box<(ReorgError, OpBlock)>> {
+        fn add_block(&mut self, block: OpBlock) -> Result<(), (ReorgError, Box<OpBlock>)> {
             if self.fail_next {
                 self.fail_next = false;
-                return Err(Box::new((
+                return Err((
                     ReorgError::ParentMismatch {
                         expected: B256::ZERO,
                         got: B256::with_last_byte(1),
                     },
-                    block,
-                )));
+                    Box::new(block),
+                ));
             }
             *self.blocks_accepted.lock().unwrap() += 1;
             Ok(())
@@ -812,9 +842,9 @@ mod tests {
             Address::ZERO,
             1,
             noop_throttle(),
-            cancellation.clone(),
+            Arc::new(NoopThrottleClient),
         );
-        let handle = tokio::spawn(driver.run());
+        let handle = tokio::spawn(driver.run(cancellation.clone()));
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         cancellation.cancel();
@@ -844,9 +874,9 @@ mod tests {
             Address::ZERO,
             1,
             noop_throttle(),
-            cancellation.clone(),
+            Arc::new(NoopThrottleClient),
         );
-        let handle = tokio::spawn(driver.run());
+        let handle = tokio::spawn(driver.run(cancellation.clone()));
 
         tokio::time::sleep(Duration::from_millis(50)).await;
         cancellation.cancel();
@@ -858,5 +888,273 @@ mod tests {
             1,
             "pipeline.reset() must be called when add_block returns ReorgError"
         );
+    }
+
+    // ---- Throttle integration tests ----
+
+    /// When the DA backlog exceeds the threshold, the driver must call
+    /// `set_max_da_size` on the throttle client with reduced limits.
+    #[tokio::test]
+    async fn test_throttle_client_called_on_high_backlog() {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        // 2 MB backlog — above the default 1 MB threshold.
+        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(2_000_000);
+
+        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
+        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+
+        let cancellation = CancellationToken::new();
+        let driver = BatchDriver::new(
+            pipeline,
+            PendingSource,
+            ImmediateConfirmTxManager { l1_block: 1 },
+            Address::ZERO,
+            1,
+            throttle,
+            Arc::new(throttle_client),
+        );
+        let handle = tokio::spawn(driver.run(cancellation.clone()));
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancellation.cancel();
+        assert!(handle.await.unwrap().is_ok());
+
+        let calls = throttle_recorded.lock().unwrap();
+        assert!(!calls.is_empty(), "throttle client must be called when backlog is high");
+        let (max_tx_size, max_block_size) = calls[0];
+        assert!(
+            max_block_size < 130_000,
+            "max_block_size should be below upper limit when throttled, got {max_block_size}"
+        );
+        assert!(
+            max_tx_size < 20_000,
+            "max_tx_size should be below upper limit when throttled, got {max_tx_size}"
+        );
+    }
+
+    /// When the DA backlog is zero (below threshold), the driver must call
+    /// `set_max_da_size` with the upper limits to reset any previous throttle.
+    #[tokio::test]
+    async fn test_throttle_client_called_with_upper_limits_on_zero_backlog() {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(0);
+
+        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
+        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+
+        let cancellation = CancellationToken::new();
+        let driver = BatchDriver::new(
+            pipeline,
+            PendingSource,
+            ImmediateConfirmTxManager { l1_block: 1 },
+            Address::ZERO,
+            1,
+            throttle,
+            Arc::new(throttle_client),
+        );
+        let handle = tokio::spawn(driver.run(cancellation.clone()));
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancellation.cancel();
+        assert!(handle.await.unwrap().is_ok());
+
+        let calls = throttle_recorded.lock().unwrap();
+        assert!(!calls.is_empty(), "throttle client must be called even with zero backlog");
+        let (max_tx_size, max_block_size) = calls[0];
+        assert_eq!(
+            max_block_size, 130_000,
+            "max_block_size should be the upper limit when not throttling"
+        );
+        assert_eq!(
+            max_tx_size, 20_000,
+            "max_tx_size should be the upper limit when not throttling"
+        );
+    }
+
+    /// When the DA limits do not change between iterations, the driver must not
+    /// call `set_max_da_size` redundantly. The deduplication check via
+    /// `last_applied_da_limits` ensures the RPC is called at most once for
+    /// identical limits.
+    #[tokio::test]
+    async fn test_throttle_not_called_redundantly() {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(0);
+
+        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
+        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+
+        let cancellation = CancellationToken::new();
+        let driver = BatchDriver::new(
+            pipeline,
+            PendingSource,
+            ImmediateConfirmTxManager { l1_block: 1 },
+            Address::ZERO,
+            1,
+            throttle,
+            Arc::new(throttle_client),
+        );
+        let handle = tokio::spawn(driver.run(cancellation.clone()));
+
+        // Run for 100ms to allow multiple loop iterations.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        cancellation.cancel();
+        assert!(handle.await.unwrap().is_ok());
+
+        let calls = throttle_recorded.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            1,
+            "set_max_da_size must be called exactly once when limits do not change, got {}",
+            calls.len()
+        );
+    }
+
+    /// With the Step strategy and full intensity, when backlog is above the
+    /// threshold, the driver must apply the lower DA limits.
+    #[tokio::test]
+    async fn test_step_strategy_full_intensity_applies_lower_limits() {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        // Backlog of 100 — above threshold of 1.
+        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(100);
+
+        let config =
+            ThrottleConfig { threshold_bytes: 1, max_intensity: 1.0, ..Default::default() };
+        let throttle = ThrottleController::new(config, ThrottleStrategy::Step);
+        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+
+        let cancellation = CancellationToken::new();
+        let driver = BatchDriver::new(
+            pipeline,
+            PendingSource,
+            ImmediateConfirmTxManager { l1_block: 1 },
+            Address::ZERO,
+            1,
+            throttle,
+            Arc::new(throttle_client),
+        );
+        let handle = tokio::spawn(driver.run(cancellation.clone()));
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancellation.cancel();
+        assert!(handle.await.unwrap().is_ok());
+
+        let calls = throttle_recorded.lock().unwrap();
+        assert!(!calls.is_empty(), "throttle client must be called with Step strategy");
+        let (max_tx_size, max_block_size) = calls[0];
+        assert_eq!(
+            max_block_size, 2_000,
+            "Step strategy at full intensity must apply block_size_lower_limit"
+        );
+        assert_eq!(
+            max_tx_size, 150,
+            "Step strategy at full intensity must apply tx_size_lower_limit"
+        );
+    }
+
+    /// Verifies that when the DA backlog transitions from above the threshold
+    /// (throttle active) to zero (throttle inactive), the driver makes exactly
+    /// two RPC calls: one with reduced limits and one resetting to upper limits.
+    #[tokio::test]
+    async fn test_throttle_transitions_from_active_to_inactive() {
+        // Pipeline whose DA backlog is controlled from the test via a shared lock.
+        struct DynamicPipeline {
+            backlog: Arc<Mutex<u64>>,
+        }
+
+        impl BatchPipeline for DynamicPipeline {
+            fn add_block(&mut self, _: OpBlock) -> Result<(), (ReorgError, Box<OpBlock>)> {
+                Ok(())
+            }
+
+            fn step(&mut self) -> Result<StepResult, StepError> {
+                Ok(StepResult::Idle)
+            }
+
+            fn next_submission(&mut self) -> Option<BatchSubmission> {
+                None
+            }
+
+            fn confirm(&mut self, _: SubmissionId, _: u64) {}
+
+            fn requeue(&mut self, _: SubmissionId) {}
+
+            fn advance_l1_head(&mut self, _: u64) {}
+
+            fn reset(&mut self) {}
+
+            fn da_backlog_bytes(&self) -> u64 {
+                *self.backlog.lock().unwrap()
+            }
+        }
+
+        // Source driven by an mpsc channel so the test can wake the driver loop
+        // by sending a dummy block event after changing the backlog.
+        struct ChannelSource {
+            rx: mpsc::UnboundedReceiver<L2BlockEvent>,
+        }
+
+        #[async_trait]
+        impl UnsafeBlockSource for ChannelSource {
+            async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+                match self.rx.recv().await {
+                    Some(event) => Ok(event),
+                    // Channel closed: park until the driver is cancelled.
+                    None => std::future::pending().await,
+                }
+            }
+        }
+
+        let (source_tx, source_rx) = mpsc::unbounded_channel();
+
+        // Start with 2 MB backlog — above the default 1 MB threshold.
+        let backlog = Arc::new(Mutex::new(2_000_000u64));
+        let pipeline = DynamicPipeline { backlog: Arc::clone(&backlog) };
+
+        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
+        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+
+        let cancellation = CancellationToken::new();
+        let driver = BatchDriver::new(
+            pipeline,
+            ChannelSource { rx: source_rx },
+            ImmediateConfirmTxManager { l1_block: 1 },
+            Address::ZERO,
+            1,
+            throttle,
+            Arc::new(throttle_client),
+        );
+        let handle = tokio::spawn(driver.run(cancellation.clone()));
+
+        // First iteration fires immediately on startup; give it time to complete.
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        // Drop the backlog to zero, then wake the driver by delivering a dummy
+        // block so the select! arm fires and the loop re-runs the throttle check.
+        *backlog.lock().unwrap() = 0;
+        source_tx.send(L2BlockEvent::Block(Box::default())).unwrap();
+
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        cancellation.cancel();
+        assert!(handle.await.unwrap().is_ok());
+
+        let calls = throttle_recorded.lock().unwrap();
+        assert!(
+            calls.len() >= 2,
+            "expected at least 2 throttle calls (activate + deactivate), got {}",
+            calls.len()
+        );
+
+        // First call must have reduced limits (throttle active, backlog was high).
+        let (first_tx, first_block) = calls[0];
+        assert!(
+            first_block < 130_000,
+            "first call should apply throttled block limit, got {first_block}"
+        );
+        assert!(first_tx < 20_000, "first call should apply throttled tx limit, got {first_tx}");
+
+        // Last call must reset to upper limits (throttle deactivated).
+        let (last_tx, last_block) = *calls.last().unwrap();
+        assert_eq!(last_block, 130_000, "last call should reset block limit to upper bound");
+        assert_eq!(last_tx, 20_000, "last call should reset tx limit to upper bound");
     }
 }

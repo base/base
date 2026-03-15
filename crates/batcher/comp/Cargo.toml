@@ -25,16 +25,16 @@ brotli = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
 
 [dev-dependencies]
-rstest.workspace = true
 spin.workspace = true
+rstest.workspace = true
 proptest.workspace = true
-serde_json.workspace = true
 alloy-eips.workspace = true
-alloy-sol-types.workspace = true
+serde_json.workspace = true
 alloy-consensus.workspace = true
-alloy-primitives = { workspace = true, features = ["arbitrary"] }
+alloy-sol-types.workspace = true
 arbitrary = { workspace = true, features = ["derive"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
+alloy-primitives = { workspace = true, features = ["arbitrary"] }
 
 [features]
 default = []
