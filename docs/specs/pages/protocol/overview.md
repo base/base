@@ -1,13 +1,12 @@
 # Overview
 
-This document is a high-level technical overview of the Base protocol. It aims to explain how the protocol works in
-an informal manner, and direct readers to other parts of the specification so that they may learn more.
-
-This document combines foundational context and architecture details for Base Chain.
+Base is an optimistic rollup built on Ethereum. L2 transaction data is posted to Ethereum for data availability,
+and proofs allow anyone to challenge invalid state transitions. This page gives a high-level tour of the
+protocol components and the core user flows.
 
 ## Network Participants
 
-Generally speaking, there are three primary actors that interact with Base: users, sequencers, and verifiers.
+There are three primary actors that interact with Base: users, sequencers, and verifiers.
 
 ```mermaid
 graph TD
@@ -28,7 +27,6 @@ graph TD
     Users -->|submit transactions| Sequencers
     Users -->|query data| Verifiers
 
-
     Sequencers -->|submit transaction batches| EthereumL1
     Sequencers -.->|fetch deposit data| EthereumL1
 
@@ -44,13 +42,12 @@ graph TD
 
 Users are the general class of network participants who:
 
-- Submit transactions through a Sequencer or by interacting with contracts on Ethereum.
+- Submit transactions through the sequencer or by interacting with contracts on Ethereum.
 - Query transaction data from interfaces operated by verifiers.
 
 ### Sequencers
 
-The sequencer fills the role of block producer on Base. Base currently operates with a single active sequencer. In
-general, specifications may use the term "the Sequencer" as a stand-in for the active sequencing service.
+The sequencer fills the role of block producer on Base. Base currently operates with a single active sequencer.
 
 The Sequencer:
 
@@ -59,6 +56,7 @@ The Sequencer:
 - Consolidates both transaction streams into ordered L2 blocks.
 - Submits information to L1 that is sufficient to fully reproduce those L2 blocks.
 - Provides real-time access to pending L2 blocks that have not yet been confirmed on L1.
+- Produces Flashblocks every 200ms, committing to the ordering of transactions within the block as it is being built.
 
 The Sequencer serves an important role for the operation of an L2 chain but is not a trusted actor. The Sequencer is generally
 responsible for improving the user experience by ordering transactions much more quickly and cheaply than would currently
@@ -66,12 +64,12 @@ be possible if users were to submit all transactions directly to L1.
 
 ### Verifiers
 
-Verifiers download and execute the L2 state transition function independently of the Sequencer. Verifiers help to maintain
+Verifiers execute the L2 state transition function independently of the Sequencer. Verifiers help to maintain
 the integrity of the network and serve blockchain data to Users.
 
 Verifiers generally:
 
-- Download rollup data from L1 and the Sequencer.
+- Sync rollup data from L1 and the Sequencer.
 - Use rollup data to execute the L2 state transition function.
 - Serve rollup data and computed L2 state information to Users.
 
@@ -81,9 +79,191 @@ Verifiers can also act as Proposers and/or Challengers who:
 - Validate assertions made by other participants.
 - Dispute invalid assertions made by other participants.
 
-## Key Interaction Diagrams
+## High-Level System Diagram
 
-### Depositing and Sending Transactions
+The following diagram shows how the major protocol components interact across L1 and L2.
+
+```mermaid
+graph LR
+    subgraph "Ethereum L1"
+        OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        BatchInbox(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
+        DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
+    end
+
+    subgraph "L2 Node"
+        RollupNode(<a href="./consensus/">Consensus</a>)
+        ExecutionEngine(<a href="./execution/">Execution Engine</a>)
+    end
+
+    Batcher(<a href="./batcher.html">Batcher</a>)
+    Proposers(Proposers)
+    Challengers(Challengers)
+    Users(Users)
+
+    Users -->|deposits / withdrawals| OptimismPortal
+    Users -->|transactions| ExecutionEngine
+
+    Batcher -->|post transaction batches| BatchInbox
+    Batcher -.->|fetch batch data| RollupNode
+
+    RollupNode -.->|fetch batches| BatchInbox
+    RollupNode -.->|fetch deposit events| OptimismPortal
+    RollupNode -->|Engine API| ExecutionEngine
+
+    Proposers -->|submit output proposals| DisputeGameFactory
+    Proposers -.->|fetch outputs| RollupNode
+    Challengers -->|verify / challenge games| DisputeGameFactory
+    OptimismPortal -.->|query state proposals| DisputeGameFactory
+
+    classDef l1Contracts stroke:#bbf,stroke-width:2px;
+    classDef l2Components stroke:#333,stroke-width:2px;
+    classDef systemUser stroke:#f9a,stroke-width:2px;
+
+    class OptimismPortal,BatchInbox,DisputeGameFactory l1Contracts;
+    class RollupNode,ExecutionEngine l2Components;
+    class Batcher,Proposers,Challengers,Users systemUser;
+```
+
+## Protocol Components
+
+### Consensus
+
+The rollup node is responsible for deriving the canonical L2 chain from L1 data. It reads transaction batches
+from the Batch Inbox and deposit events from OptimismPortal, constructs payload attributes, and drives the
+execution engine via the Engine API. Unsafe (unconfirmed) blocks are gossiped to other nodes over a dedicated
+P2P network to give verifiers low-latency access before batches land on L1.
+
+[Consensus →](./consensus/)
+
+```mermaid
+graph LR
+    L1(Ethereum L1)
+    subgraph "Rollup Node"
+        BatchDecoding(Batch Decoding)
+        Derivation(Derivation Pipeline)
+    end
+    EngineAPI(Engine API)
+    EE(Execution Engine)
+    L2(L2 Blocks)
+
+    L1 -->|batches + deposit events| BatchDecoding
+    BatchDecoding --> Derivation
+    Derivation -->|payload attributes| EngineAPI
+    EngineAPI --> EE
+    EE --> L2
+
+    classDef l1 stroke:#bbf,stroke-width:2px;
+    classDef l2 stroke:#333,stroke-width:2px;
+    class L1 l1;
+    class EE,L2 l2;
+```
+
+### Execution
+
+The execution engine is a Reth-based runtime. It exposes the standard Ethereum JSON-RPC API and
+processes blocks produced by the rollup node. Predeploys (system contracts at fixed L2 addresses), precompiles,
+and preinstalls extend the EVM for rollup-specific functionality such as fee distribution, L1 block attribute
+injection, and cross-domain messaging.
+
+[Execution →](./execution/)
+
+### Bridging
+
+Deposits flow from the `OptimismPortal` contract on L1 into L2 as special deposit transactions included at the
+start of each L2 block. Withdrawals flow in the opposite direction: a withdrawal transaction is initiated on L2,
+a proposer submits an output root to `DisputeGameFactory`, and after the challenge period the user proves and
+finalizes the withdrawal on L1 via `OptimismPortal`.
+
+[Bridging →](./bridging/deposits)
+
+```mermaid
+graph LR
+    subgraph "Deposit Path"
+        User1(User)
+        OP1(OptimismPortal)
+        DepTx(Deposit Transaction on L2)
+    end
+
+    subgraph "Withdrawal Path"
+        User2(User)
+        WdTx(Withdrawal Tx on L2)
+        DGF(DisputeGameFactory)
+        OP2(OptimismPortal)
+    end
+
+    User1 -->|depositTransaction| OP1
+    OP1 -->|TransactionDeposited event| DepTx
+
+    User2 -->|initiates withdrawal| WdTx
+    WdTx -->|output root proposed| DGF
+    User2 -->|prove + finalize| OP2
+    OP2 -.->|verify game| DGF
+
+    classDef l1 stroke:#bbf,stroke-width:2px;
+    classDef systemUser stroke:#f9a,stroke-width:2px;
+    class OP1,OP2,DGF l1;
+    class User1,User2 systemUser;
+```
+
+### Batcher
+
+The batcher is a service run by the sequencer that compresses L2 transaction data into channel frames and posts
+them as calldata (or blobs) to the Batch Inbox Address on L1. This is the data availability layer that allows
+any verifier to independently reconstruct the L2 chain from L1.
+
+[Batcher →](./batcher)
+
+```mermaid
+graph LR
+    Sequencer(Sequencer)
+    Batcher(<a href="./batcher.html">Batcher</a>)
+    BatchInbox(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
+    RollupNode(<a href="./consensus/">Rollup Node</a>)
+
+    Sequencer -->|L2 blocks| Batcher
+    Batcher -->|compressed channel frames| BatchInbox
+    BatchInbox -.->|fetch batches| RollupNode
+
+    classDef l1 stroke:#bbf,stroke-width:2px;
+    classDef l2 stroke:#333,stroke-width:2px;
+    classDef systemUser stroke:#f9a,stroke-width:2px;
+    class BatchInbox l1;
+    class RollupNode l2;
+    class Batcher,Sequencer systemUser;
+```
+
+### Proofs
+
+Output proposals and fault proofs allow permissionless verification of the L2 state. Anyone can propose an
+output root to the `DisputeGameFactory`, and anyone can challenge it. Disputes are resolved by the `FaultDisputeGame`
+contract using the Cannon VM for on-chain execution tracing of disputed state transitions. Valid withdrawals can
+only be finalized through `OptimismPortal` once the associated dispute game resolves in favor of the proposer.
+
+[Proofs →](./fault-proof/)
+
+```mermaid
+graph LR
+    Proposer(Proposer)
+    DGF(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
+    FDG(<a href="./fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
+    Challengers(Challengers)
+    OP(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+
+    Proposer -->|submit output root| DGF
+    DGF -->|create game| FDG
+    Challengers -->|challenge / defend| FDG
+    FDG -->|resolved result| OP
+
+    classDef l1 stroke:#bbf,stroke-width:2px;
+    classDef systemUser stroke:#f9a,stroke-width:2px;
+    class DGF,FDG,OP l1;
+    class Proposer,Challengers systemUser;
+```
+
+## Core User Flows
+
+### Depositing ETH to Base
 
 Users will often begin their L2 journey by depositing ETH from L1.
 Once they have ETH to pay fees, they'll start sending transactions on L2.
@@ -115,7 +295,13 @@ graph TD
     class Users systemUser;
 ```
 
-### Withdrawing
+### Sending Transactions on Base
+
+Sending transactions on Base works the same as on Ethereum. Users sign transactions and submit them via
+`eth_sendRawTransaction` to any node's JSON-RPC endpoint. The sequencer picks them up from its mempool,
+orders them into L2 blocks, and eventually posts the batch to L1.
+
+### Withdrawing from Base
 
 Users may also want to withdraw ETH or ERC20 tokens from Base back to Ethereum. Withdrawals are initiated
 as standard transactions on L2 but are then completed using transactions on L1. Withdrawals must reference a valid
@@ -155,416 +341,3 @@ graph LR
     class Sequencer l2Components;
     class Users,Proposers systemUser;
 ```
-
-## Next Steps
-
-Check out the sidebar to the left to find any specification you might want to read, or click one of the links embedded
-in one of the above diagrams to learn about particular components that have been mentioned.
-## Architecture Design Goals
-
-- **Execution-Level EVM Equivalence:** The developer experience should be identical to L1 except where L2 introduces a
-  fundamental difference.
-  - No special compiler.
-  - No unexpected gas costs.
-  - Transaction traces work out-of-the-box.
-  - All existing Ethereum tooling works - all you have to do is change the chain ID.
-- **Maximal compatibility with ETH1 nodes:** The implementation should minimize any differences with a vanilla Geth
-  node, and leverage as many existing L1 standards as possible.
-  - The execution engine/rollup node uses the ETH2 Engine API to build the canonical L2 chain.
-  - The execution engine leverages Geth's existing mempool and sync implementations, including snap sync.
-- **Minimize state and complexity:**
-  - Whenever possible, services contributing to the rollup infrastructure are stateless.
-  - Stateful services can recover to full operation from a fresh DB using the peer-to-peer network and on-chain sync
-    mechanisms.
-  - Running a replica is as simple as running a Geth node.
-
-## Architecture Overview
-
-### Core L1 Smart Contracts
-
-Below you'll find an architecture diagram describing the core L1 smart contracts for Base.
-Smart contracts that are considered "peripheral" and not core to Base operation are described separately.
-
-```mermaid
-graph LR
-    subgraph "External Contracts"
-        ExternalERC20(External ERC20 Contracts)
-        ExternalERC721(External ERC721 Contracts)
-    end
-
-    subgraph "L1 Smart Contracts"
-        BatchDataEOA(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
-        L1StandardBridge(<a href="./bridging/bridges.html">L1StandardBridge</a>)
-        L1ERC721Bridge(<a href="./bridging/bridges.html">L1ERC721Bridge</a>)
-        L1CrossDomainMessenger(<a href="./bridging/messengers.html">L1CrossDomainMessenger</a>)
-        OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
-        SuperchainConfig(SuperchainConfig)
-        SystemConfig(<a href="./consensus/derivation.html#system-configuration">SystemConfig</a>)
-        DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
-        FaultDisputeGame(<a href="./fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
-        AnchorStateRegistry(<a href="./fault-proof/stage-one/fault-dispute-game.html#anchor-state-registry">AnchorStateRegistry</a>)
-        DelayedWETH(<a href="./fault-proof/stage-one/bond-incentives.html#delayedweth#de">DelayedWETH</a>)
-    end
-
-    subgraph "User Interactions (Permissionless)"
-        Users(Users)
-        Challengers(Challengers)
-    end
-
-    subgraph "System Interactions"
-        Guardian(Guardian)
-        Batcher(<a href="./batcher.html">Batcher</a>)
-    end
-
-    subgraph "Layer 2 Interactions"
-        L2Nodes(Layer 2 Nodes)
-    end
-
-    L2Nodes -.->|fetch transaction batches| BatchDataEOA
-    L2Nodes -.->|fetch deposit events| OptimismPortal
-
-    Batcher -->|publish transaction batches| BatchDataEOA
-
-    ExternalERC20 <-->|mint/burn/transfer tokens| L1StandardBridge
-    ExternalERC721 <-->|mint/burn/transfer tokens| L1ERC721Bridge
-
-    L1StandardBridge <-->|send/receive messages| L1CrossDomainMessenger
-    L1StandardBridge -.->|query pause state| SuperchainConfig
-
-    L1ERC721Bridge <-->|send/receive messages| L1CrossDomainMessenger
-    L1ERC721Bridge -.->|query pause state| SuperchainConfig
-
-    L1CrossDomainMessenger <-->|send/receive messages| OptimismPortal
-    L1CrossDomainMessenger -.->|query pause state| SuperchainConfig
-
-    OptimismPortal -.->|query pause state| SuperchainConfig
-    OptimismPortal -.->|query config| SystemConfig
-    OptimismPortal -.->|query state proposals| DisputeGameFactory
-
-    DisputeGameFactory -->|generate instances| FaultDisputeGame
-
-    FaultDisputeGame -->|store bonds| DelayedWETH
-    FaultDisputeGame -->|query/update anchor states| AnchorStateRegistry
-
-    Users <-->|deposit/withdraw ETH/ERC20s| L1StandardBridge
-    Users <-->|deposit/withdraw ERC721s| L1ERC721Bridge
-    Users -->|prove/execute withdrawals| OptimismPortal
-
-    Challengers -->|propose output roots| DisputeGameFactory
-    Challengers -->|verify/challenge/defend proposals| FaultDisputeGame
-
-    Guardian -->|pause/unpause| SuperchainConfig
-    Guardian -->|safety net actions| OptimismPortal
-    Guardian -->|safety net actions| DisputeGameFactory
-    Guardian -->|safety net actions| DelayedWETH
-
-    classDef extContracts stroke:#ff9,stroke-width:2px;
-    classDef l1Contracts stroke:#bbf,stroke-width:2px;
-    classDef l1EOA stroke:#bbb,stroke-width:2px;
-    classDef userInt stroke:#f9a,stroke-width:2px;
-    classDef systemUser stroke:#f9a,stroke-width:2px;
-    classDef l2Nodes stroke:#333,stroke-width:2px
-    class ExternalERC20,ExternalERC721 extContracts;
-    class L1StandardBridge,L1ERC721Bridge,L1CrossDomainMessenger,OptimismPortal,SuperchainConfig,SystemConfig,DisputeGameFactory,FaultDisputeGame,DelayedWETH,AnchorStateRegistry l1Contracts;
-    class BatchDataEOA l1EOA;
-    class Users,Challengers userInt;
-    class Batcher,Guardian systemUser;
-    class L2Nodes l2Nodes;
-```
-
-#### Notes for Core L1 Smart Contracts
-
-- The `Batch Inbox Address` described above (**highlighted in GREY**) is _not_ a smart contract and is instead an arbitrarily
-  selected account that is assumed to have no known private key. The convention for deriving this account's address is
-  provided on the [Configurability](../reference/configurability.md#consensus-parameters) page.
-  - Historically, it was often derived as
-    `0xFF0000....<L2 chain ID>` where `<L2 chain ID>` is chain ID of the Layer 2 network for which the data is being posted.
-    Historically, some Base deployments used this form; Base may use chain-specific configured values.
-- Smart contracts that sit behind `Proxy` contracts are **highlighted in BLUE**. Refer to the
-  [Smart Contract Proxies](#smart-contract-proxies) section below to understand how these proxies are designed.
-  - The `L1CrossDomainMessenger` contract sits behind the [`ResolvedDelegateProxy`](https://github.com/ethereum-optimism/optimism/tree/develop/packages/contracts-bedrock/src/legacy/ResolvedDelegateProxy.sol)
-    contract, a legacy proxy contract type inherited from earlier Base implementations. This proxy type is used exclusively
-    for the `L1CrossDomainMessenger` to maintain backwards compatibility.
-  - The `L1StandardBridge` contract sits behind the [`L1ChugSplashProxy`](https://github.com/ethereum-optimism/optimism/tree/develop/packages/contracts-bedrock/src/legacy/L1ChugSplashProxy.sol)
-    contract, a legacy proxy contract type inherited from earlier Base implementations. This proxy type is used exclusively
-    for the `L1StandardBridge` contract to maintain backwards compatibility.
-
-### Core L2 Smart Contracts
-
-Here you'll find an architecture diagram describing the core Base smart contracts that exist natively on the L2 chain
-itself.
-
-```mermaid
-graph LR
-    subgraph "Layer 1 (Ethereum)"
-        L1SmartContracts(L1 Smart Contracts)
-    end
-
-    subgraph "L2 Client"
-        L2Node(L2 Node)
-    end
-
-    subgraph "L2 System Contracts"
-        L1Block(<a href="./execution/evm/predeploys.html#l1block">L1Block</a>)
-        GasPriceOracle(<a href="./execution/evm/predeploys.html#gaspriceoracle">GasPriceOracle</a>)
-        L1FeeVault(<a href="./execution/evm/predeploys.html#l1feevault">L1FeeVault</a>)
-        BaseFeeVault(<a href="./execution/evm/predeploys.html#basefeevault">BaseFeeVault</a>)
-        SequencerFeeVault(<a href="./execution/evm/predeploys.html#sequencerfeevault">SequencerFeeVault</a>)
-    end
-
-    subgraph "L2 Bridge Contracts"
-        L2CrossDomainMessenger(<a href="./execution/evm/predeploys.html#l2crossdomainmessenger">L2CrossDomainMessenger</a>)
-        L2ToL1MessagePasser(<a href="./execution/evm/predeploys.html#l2tol1messagepasser">L2ToL1MessagePasser</a>)
-        L2StandardBridge(<a href="./execution/evm/predeploys.html#l2standardbridge">L2StandardBridge</a>)
-        L2ERC721Bridge(<a href="./execution/evm/predeploys.html">L2ERC721Bridge</a>)
-    end
-
-    subgraph "Transactions"
-        DepositTransaction(Deposit Transaction)
-        UserTransaction(User Transaction)
-    end
-
-    subgraph "External Contracts"
-        ExternalERC20(External ERC20 Contracts)
-        ExternalERC721(External ERC721 Contracts)
-    end
-
-    subgraph "Remaining L2 Universe"
-        OtherContracts(Any Contracts and Addresses)
-    end
-
-    L2Node -.->|derives chain from| L1SmartContracts
-    L2Node -->|updates| L1Block
-    L2Node -->|distributes fees to| L1FeeVault
-    L2Node -->|distributes fees to| BaseFeeVault
-    L2Node -->|distributes fees to| SequencerFeeVault
-    L2Node -->|derives from deposits| DepositTransaction
-    L2Node -->|derives from chain data| UserTransaction
-
-    UserTransaction -->|can trigger| OtherContracts
-    DepositTransaction -->|maybe triggers| L2CrossDomainMessenger
-    DepositTransaction -->|can trigger| OtherContracts
-
-    ExternalERC20 <-->|mint/burn/transfer| L2StandardBridge
-    ExternalERC721 <-->|mint/burn/transfer| L2ERC721Bridge
-
-    L2StandardBridge <-->|sends/receives messages| L2CrossDomainMessenger
-    L2ERC721Bridge <-->|sends/receives messages| L2CrossDomainMessenger
-    GasPriceOracle -.->|queries| L1Block
-    L2CrossDomainMessenger -->|sends messages| L2ToL1MessagePasser
-
-    classDef extContracts stroke:#ff9,stroke-width:2px;
-    classDef l2Contracts stroke:#bbf,stroke-width:2px;
-    classDef transactions stroke:#fba,stroke-width:2px;
-    classDef l2Node stroke:#f9a,stroke-width:2px;
-
-    class ExternalERC20,ExternalERC721 extContracts;
-    class L2CrossDomainMessenger,L2ToL1MessagePasser,L2StandardBridge,L2ERC721Bridge l2Contracts;
-    class L1Block,L1FeeVault,BaseFeeVault,SequencerFeeVault,GasPriceOracle l2Contracts;
-    class UserTransaction,DepositTransaction transactions;
-    class L2Node l2Node;
-```
-
-#### Notes for Core L2 Smart Contracts
-
-- Contracts highlighted as "L2 System Contracts" are updated or mutated automatically as part of the chain derivation
-  process. Users typically do not mutate these contracts directly, except in the case of the `FeeVault` contracts where
-  any user may trigger a withdrawal of collected fees to the pre-determined withdrawal address.
-- Smart contracts that sit behind `Proxy` contracts are **highlighted in BLUE**. Refer to the
-  [Smart Contract Proxies](#smart-contract-proxies) section below to understand how these proxies are designed.
-- User interactions for the "L2 Bridge Contracts" have been omitted from this diagram but largely follow the same user
-  interactions described in the architecture diagram for the [Core L1 Smart Contracts](#core-l1-smart-contracts).
-
-### Smart Contract Proxies
-
-Most Base smart contracts sit behind `Proxy` contracts that are managed by a `ProxyAdmin` contract.
-The `ProxyAdmin` contract is controlled by some `owner` address that can be any EOA or smart contract.
-Below you'll find a diagram that explains the behavior of the typical proxy contract.
-
-```mermaid
-graph LR
-    ProxyAdminOwner(Proxy Admin Owner)
-    ProxyAdmin(<a href="https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/universal/ProxyAdmin.sol">ProxyAdmin</a>)
-
-    subgraph "Logical Smart Contract"
-        Proxy(<a href="https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/universal/Proxy.sol">Proxy</a>)
-        Implementation(Implementation)
-    end
-
-    ProxyAdminOwner -->|manages| ProxyAdmin
-    ProxyAdmin -->|upgrades| Proxy
-    Proxy -->|delegatecall| Implementation
-
-    classDef l1Contracts stroke:#bbf,stroke-width:2px;
-    classDef systemUser stroke:#f9a,stroke-width:2px;
-    class Proxy l1Contracts;
-    class ProxyAdminOwner systemUser;
-```
-
-### L2 Node Components
-
-Below you'll find a diagram illustrating the basic interactions between the components that make up an L2 node as well
-as demonstrations of how different actors use these components to fulfill their roles.
-
-```mermaid
-graph LR
-    subgraph "L2 Node"
-        RollupNode(<a href="./consensus/">Consensus</a>)
-        ExecutionEngine(<a href="./execution/">Execution Engine</a>)
-    end
-
-    subgraph "System Interactions"
-        BatchSubmitter(<a href="./batcher.html">Batcher</a>)
-        OutputSubmitter(Output Submitter)
-        Challenger(Challenger)
-    end
-
-    subgraph "L1 Smart Contracts"
-        BatchDataEOA(<a href="../reference/glossary.html#batcher-transaction">Batch Inbox Address</a>)
-        OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
-        DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
-        FaultDisputeGame(<a href="./fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
-    end
-
-    BatchSubmitter -.->|fetch transaction batch info| RollupNode
-    BatchSubmitter -.->|fetch transaction batch info| ExecutionEngine
-    BatchSubmitter -->|send transaction batches| BatchDataEOA
-
-    RollupNode -.->|fetch transaction batches| BatchDataEOA
-    RollupNode -.->|fetch deposit transactions| OptimismPortal
-    RollupNode -->|drives| ExecutionEngine
-
-    OutputSubmitter -.->|fetch outputs| RollupNode
-    OutputSubmitter -->|send output proposals| DisputeGameFactory
-
-    Challenger -.->|fetch dispute games| DisputeGameFactory
-    Challenger -->|verify/challenge/defend games| FaultDisputeGame
-
-    classDef l2Components stroke:#333,stroke-width:2px;
-    classDef systemUser stroke:#f9a,stroke-width:2px;
-    classDef l1Contracts stroke:#bbf,stroke-width:2px;
-
-    class RollupNode,ExecutionEngine l2Components;
-    class BatchSubmitter,OutputSubmitter,Challenger systemUser;
-    class BatchDataEOA,OptimismPortal,DisputeGameFactory,FaultDisputeGame l1Contracts;
-```
-
-### Transaction/Block Propagation
-
-**Spec links:**
-
-- [Execution Engine](execution/index.md)
-
-Since the EE uses Reth under the hood, Base uses Reth's built-in peer-to-peer network and transaction pool to
-propagate transactions. The same network can also be used to propagate submitted blocks and support snap-sync.
-
-Unsubmitted blocks, however, are propagated using a separate peer-to-peer network of Rollup Nodes. This is optional,
-however, and is provided as a convenience to lower latency for verifiers and their JSON-RPC clients.
-
-The below diagram illustrates how the sequencer and verifiers fit together:
-
-![Propagation](/static/assets/propagation.svg)
-
-## Key Interactions In Depth
-
-### Deposits
-
-**Spec links:**
-
-- [Deposits](bridging/deposits.md)
-
-Base supports two types of deposits: user deposits, and L1 attributes deposits. To perform a user deposit, users
-call the `depositTransaction` method on the `OptimismPortal` contract. This in turn emits `TransactionDeposited` events,
-which the rollup node reads during block derivation.
-
-L1 attributes deposits are used to register L1 block attributes (number, timestamp, etc.) on L2 via a call to the L1
-Attributes Predeploy. They cannot be initiated by users, and are instead added to L2 blocks automatically by the rollup
-node.
-
-Both deposit types are represented by a single custom EIP-2718 transaction type on L2.
-
-### Block Derivation
-
-#### Overview
-
-The rollup chain can be deterministically derived given an L1 Ethereum chain. The fact that the entire rollup chain can
-be derived based on L1 blocks is _what makes Base a rollup_. This process can be represented as:
-
-```text
-derive_rollup_chain(l1_blockchain) -> rollup_blockchain
-```
-
-Base's block derivation function is designed such that it:
-
-- Requires no state other than what is easily accessible using L1 and L2 execution engine APIs.
-- Supports sequencers and sequencer consensus.
-- Is resilient to sequencer censorship.
-
-#### Epochs and the Sequencing Window
-
-The rollup chain is subdivided into epochs. There is a 1:1 correspondence between L1 block numbers and epoch numbers.
-
-For L1 block number `n`, there is a corresponding rollup epoch `n` which can only be derived after a _sequencing window_
-worth of blocks has passed, i.e. after L1 block number `n + SEQUENCING_WINDOW_SIZE` is added to the L1 chain.
-
-Each epoch contains at least one block. Every block in the epoch contains an L1 info transaction which contains
-contextual information about L1 such as the block hash and timestamp. The first block in the epoch also contains all
-deposits initiated via the `OptimismPortal` contract on L1. All L2 blocks can also contain _sequenced transactions_,
-i.e. transactions submitted directly to the sequencer.
-
-Whenever the sequencer creates a new L2 block for a given epoch, it must submit it to L1 as part of a _batch_, within
-the epoch's sequencing window (i.e. the batch must land before L1 block `n + SEQUENCING_WINDOW_SIZE`). These batches are
-(along with the `TransactionDeposited` L1 events) what allows the derivation of the L2 chain from the L1 chain.
-
-The sequencer does not need for a L2 block to be batch-submitted to L1 in order to build on top of it. In fact, batches
-typically contain multiple L2 blocks worth of sequenced transactions. This is what enables
-_fast transaction confirmations_ on the sequencer.
-
-Since transaction batches for a given epoch can be submitted anywhere within the sequencing window, verifiers must
-search all blocks within the window for transaction batches. This protects against the uncertainty of transaction
-inclusion of L1. This uncertainty is also why we need the sequencing window in the first place: otherwise the sequencer
-could retroactively add blocks to an old epoch, and validators wouldn't know when they can finalize an epoch.
-
-The sequencing window also prevents censorship by the sequencer: deposits made on a given L1 block will be included in
-the L2 chain at worst after `SEQUENCING_WINDOW_SIZE` L1 blocks have passed.
-
-The following diagram describes this relationship, and how L2 blocks are derived from L1 blocks (L1 info transactions
-have been elided):
-
-![Epochs and Sequencing Windows](/static/assets/sequencer-block-gen.svg)
-
-#### Block Derivation Loop
-
-A sub-component of the rollup node called the _rollup driver_ is actually responsible for performing block derivation.
-The rollup driver is essentially an infinite loop that runs the block derivation function. For each epoch, the block
-derivation function performs the following steps:
-
-1. Downloads deposit and transaction batch data for each block in the sequencing window.
-2. Converts the deposit and transaction batch data into payload attributes for the Engine API.
-3. Submits the payload attributes to the Engine API, where they are converted into blocks and added to the canonical
-   chain.
-
-This process is then repeated with incrementing epochs until the tip of L1 is reached.
-
-### Engine API
-
-The rollup driver doesn't actually create blocks. Instead, it directs the execution engine to do so via the Engine API.
-For each iteration of the block derivation loop described above, the rollup driver will craft a _payload attributes_
-object and send it to the execution engine. The execution engine will then convert the payload attributes object into a
-block, and add it to the chain. The basic sequence of the rollup driver is as follows:
-
-1. Call [fork choice updated][EngineAPIVersion] with the payload attributes object. We'll skip over the details of the
-   fork choice state parameter for now - just know that one of its fields is the L2 chain's `headBlockHash`, and that it
-   is set to the block hash of the tip of the L2 chain. The Engine API returns a payload ID.
-2. Call [get payload][EngineAPIVersion] with the payload ID returned in step 1. The engine API returns a payload object
-   that includes a block hash as one of its fields.
-3. Call [new payload][EngineAPIVersion] with the payload returned in step 2. (Ecotone blocks, must use V3, pre-Ecotone
-   blocks MUST use the V2 version)
-4. Call [fork choice updated][EngineAPIVersion] with the fork choice parameter's `headBlockHash` set to the block hash
-   returned in step 2. The tip of the L2 chain is now the block created in step 1.
-
-[EngineAPIVersion]: consensus/derivation.md#engine-api-usage
-
-The swimlane diagram below visualizes the process:
-
-![Engine API](/static/assets/engine.svg)
