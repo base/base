@@ -617,9 +617,9 @@ impl SimpleTxManager {
             self.config.fee_limit_threshold,
         )?;
 
-        // Step 3b: Compute blob fee cap with override floor.
+        // Step 3b: Compute blob fee cap with config minimum and override floor.
         let blob_fee_cap = if is_blob {
-            let network = caps.blob_fee_cap.unwrap_or(0);
+            let network = caps.blob_fee_cap.unwrap_or(self.config.min_blob_fee);
             let override_val = fee_overrides.as_ref().map_or(0, |fo| fo.blob_fee_cap);
             Some(network.max(override_val))
         } else {
