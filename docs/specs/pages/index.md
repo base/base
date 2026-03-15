@@ -2,7 +2,7 @@
 
 This specification defines the Base Chain protocol: how nodes derive and execute blocks, how
 transactions are propagated, and how state transitions are verified. It covers core protocol rules,
-execution behavior, and fault proof interfaces.
+execution behavior, and proving.
 
 ## Design Goals
 

@@ -61,7 +61,7 @@ such forks.
 
 ## L1 Attributes Predeployed Contract
 
-[sys-config]: ../../protocol/system-config.md
+[sys-config]: ../../protocol/consensus/derivation.md#system-configuration
 
 The L1 Attributes predeploy stores the following values:
 

@@ -139,6 +139,37 @@ protocol upgrades.
 | `MAX_CHANNEL_BANK_SIZE` | 100,000,000 | 1,000,000,000 | [Fjord](../../upgrades/fjord/derivation.md#increasing-max_rlp_bytes_per_channel-and-max_channel_bank_size) | Constant increased with Fjord. |
 | `MAX_SPAN_BATCH_ELEMENT_COUNT` | 10,000,000 | 10,000,000 | Effectively introduced in [Fjord](../../upgrades/fjord/derivation.md#increasing-max_rlp_bytes_per_channel-and-max_channel_bank_size)| Number of elements |
 
+## System Configuration
+
+The `SystemConfig` is an L1 contract that emits rollup configuration changes as log events.
+The derivation pipeline picks up these events and applies them to L2 state, ensuring every
+node converges on the same configuration at the same L2 block height. `SystemConfig` is the
+source of truth for configuration values within Base.
+
+### System Config Updates
+
+System config updates are signaled through the `ConfigUpdate(uint256,uint8,bytes)` event. The event
+structure includes:
+
+- The first topic determines the version
+- The second topic determines the type of update
+- The remaining event data encodes the configuration update
+
+In version `0`, the following update types are supported:
+
+- Type `0`: `batcherHash` overwrite, as `bytes32` payload
+- Type `1`: Pre-Ecotone, `overhead` and `scalar` overwrite, as two packed `uint256` entries. After
+  Ecotone upgrade, `overhead` is ignored and `scalar` is interpreted as a versioned encoding that
+  updates `baseFeeScalar` and `blobBaseFeeScalar`
+- Type `2`: `gasLimit` overwrite, as `uint64` payload
+- Type `3`: `unsafeBlockSigner` overwrite, as `address` payload
+- Type `4`: `eip1559Params` overwrite, as `uint256` payload encoding denomination and elasticity
+- Type `5`: `operatorFeeParams` overwrite, as `uint256` payload encoding scalar and constant
+- Type `6`: `minBaseFee` overwrite, as `uint64` payload
+- Type `7`: `daFootprintGasScalar` overwrite, as `uint16` payload
+
+If a System Config Update cannot be parsed for any reason, it is not applied and is instead skipped.
+
 ---
 
 # Batch Submission

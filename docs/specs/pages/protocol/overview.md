@@ -199,7 +199,7 @@ graph LR
         L1CrossDomainMessenger(<a href="./bridging/messengers.html">L1CrossDomainMessenger</a>)
         OptimismPortal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
         SuperchainConfig(SuperchainConfig)
-        SystemConfig(<a href="./system-config.html">SystemConfig</a>)
+        SystemConfig(<a href="./consensus/derivation.html#system-configuration">SystemConfig</a>)
         DisputeGameFactory(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
         FaultDisputeGame(<a href="./fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
         AnchorStateRegistry(<a href="./fault-proof/stage-one/fault-dispute-game.html#anchor-state-registry">AnchorStateRegistry</a>)
@@ -276,7 +276,7 @@ graph LR
 
 - The `Batch Inbox Address` described above (**highlighted in GREY**) is _not_ a smart contract and is instead an arbitrarily
   selected account that is assumed to have no known private key. The convention for deriving this account's address is
-  provided on the [Configurability](configurability.md#consensus-parameters) page.
+  provided on the [Configurability](../reference/configurability.md#consensus-parameters) page.
   - Historically, it was often derived as
     `0xFF0000....<L2 chain ID>` where `<L2 chain ID>` is chain ID of the Layer 2 network for which the data is being posted.
     Historically, some Base deployments used this form; Base may use chain-specific configured values.
