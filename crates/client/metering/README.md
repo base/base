@@ -94,14 +94,19 @@ Meters a bundle and returns a recommended priority fee based on recent block con
 ```
 
 **Algorithm:**
-1. Meter the bundle to get resource consumption (gas, execution time, DA bytes)
+1. Meter the bundle to get resource consumption (gas, execution time, state root time, DA bytes)
 2. Use cached metering data from recent blocks (populated by ingestion pipeline)
 3. For each block in the cache:
    - For execution time, estimate each tx-pool flashblock independently because that budget
-     resets each flashblock in the builder
-   - For gas, state root time, and DA bytes, estimate against cumulative transaction prefixes
-     for scheduled tx-pool flashblocks `1..=target_flashblocks_per_block`, mirroring the
-     builder's per-flashblock cumulative targets and excluding the base flashblock at index `0`
+     resets each flashblock in the builder.
+   - For gas, state root time, and DA bytes, estimate each flashblock against cumulative
+     transaction prefixes for scheduled tx-pool flashblocks `1..=target_flashblocks_per_block`,
+     using the same growing cumulative targets the builder derives from whole-block budgets.
+   - These estimates use the configured target number of tx-pool flashblocks per block, not the
+     number of flashblocks observed in the cache. The base flashblock at index `0` is not part of
+     this schedule.
+   - Use the worst flashblock-level execution estimate and the block-end estimate for the
+     accumulating resources as that block's rolling summary.
 4. Take the median fee across all blocks for each resource (upper median for even counts)
 5. Return the maximum fee across all resources as `priorityFee`
 
@@ -165,6 +170,13 @@ The ingestion pipeline works as follows:
 Note: The `FlashblockInclusion` must include raw transaction bytes (`IncludedTransaction.raw_tx`)
 for accurate DA-based priority fee estimation. These bytes are used to compute the compressed
 transaction size via `flz_compress_len`.
+
+## DA Size Configuration
+
+`MeteringResourceLimits::da_bytes` configures the whole-block DA budget used by the estimator.
+The estimator converts that into cumulative per-flashblock targets using
+`target_flashblocks_per_block`. The `miner_getMaxDASize` RPC can be used to query the
+sequencer's current DA budget.
 
 ## License
 
