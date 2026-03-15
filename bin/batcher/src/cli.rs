@@ -181,6 +181,6 @@ impl BatcherArgs {
         let _signal_handle = RuntimeManager::install_signal_handler(cancellation.clone());
 
         let service = BatcherService::new(config);
-        service.start(cancellation).await
+        service.setup().await?.run(cancellation).await
     }
 }

@@ -10,9 +10,6 @@
 mod config;
 pub use config::{BatcherConfig, SecretKey};
 
-mod noop;
-pub use noop::NoopTxManager;
-
 mod source;
 pub use source::RpcPollingSource;
 
@@ -23,4 +20,4 @@ mod throttle;
 pub use throttle::RpcThrottleClient;
 
 mod service;
-pub use service::BatcherService;
+pub use service::{BatcherService, ReadyBatcher};

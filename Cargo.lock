@@ -2615,10 +2615,11 @@ dependencies = [
 name = "base-batcher-service"
 version = "0.0.0"
 dependencies = [
- "alloy-consensus",
+ "alloy-network",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types-eth",
+ "alloy-signer-local",
  "async-trait",
  "base-alloy-consensus",
  "base-alloy-network",
@@ -6704,6 +6705,7 @@ dependencies = [
  "alloy-signer-local",
  "base-alloy-network",
  "base-alloy-rpc-types",
+ "base-batcher-service",
  "base-builder-core",
  "base-consensus-disc",
  "base-consensus-genesis",
@@ -6741,6 +6743,7 @@ dependencies = [
  "tempfile",
  "testcontainers",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
 ]
