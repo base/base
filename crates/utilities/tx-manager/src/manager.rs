@@ -246,9 +246,8 @@ impl SimpleTxManager {
         self.closed.load(Ordering::Acquire)
     }
 
-    /// Records an RPC error metric and returns a [`TxManagerError::Rpc`] for a
-    /// timed-out RPC call.
-    fn rpc_timeout_error(&self, msg: &str) -> TxManagerError {
+    /// Records an RPC error metric and returns a [`TxManagerError::Rpc`].
+    fn rpc_error(&self, msg: &str) -> TxManagerError {
         self.metrics.record_rpc_error();
         TxManagerError::Rpc(msg.into())
     }
@@ -372,22 +371,19 @@ impl SimpleTxManager {
         );
 
         let raw_tip_cap = tip_result
-            .map_err(|_| self.rpc_timeout_error("get_max_priority_fee_per_gas timed out"))?
+            .map_err(|_| self.rpc_error("get_max_priority_fee_per_gas timed out"))?
             .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?;
 
         let latest_block = block_result
-            .map_err(|_| self.rpc_timeout_error("get_block_by_number timed out"))?
+            .map_err(|_| self.rpc_error("get_block_by_number timed out"))?
             .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?
-            .ok_or_else(|| {
-                self.metrics.record_rpc_error();
-                TxManagerError::Rpc("latest block not found".to_string())
-            })?;
+            .ok_or_else(|| self.rpc_error("latest block not found"))?;
 
         let raw_base_fee = u128::from(
             latest_block
                 .header
                 .base_fee_per_gas
-                .ok_or_else(|| TxManagerError::Rpc("base fee not available".to_string()))?,
+                .ok_or_else(|| self.rpc_error("base fee not available"))?,
         );
 
         // Compute raw gas fee cap from provider values before enforcing minimums.
@@ -594,7 +590,7 @@ impl SimpleTxManager {
             self.provider.estimate_gas(tx_request.clone()),
         )
         .await
-        .map_err(|_| self.rpc_timeout_error("estimate_gas timed out"))?
+        .map_err(|_| self.rpc_error("estimate_gas timed out"))?
         .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?;
         let gas_limit = candidate.gas_limit.max(estimated);
         tx_request = tx_request.with_gas_limit(gas_limit);
@@ -1118,7 +1114,7 @@ impl SimpleTxManager {
                 Err(classified)
             }
             Err(_) => {
-                let err = self.rpc_timeout_error("send_raw_transaction timed out");
+                let err = self.rpc_error("send_raw_transaction timed out");
                 send_state.process_send_error(&err);
                 self.metrics.record_publish_error();
                 warn!("publish timed out");
