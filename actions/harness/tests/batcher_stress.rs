@@ -46,9 +46,5 @@ fn batcher_stress_large_txs() {
     let tip = h.l1.tip();
 
     // Each frame becomes one batcher tx.
-    assert_eq!(
-        tip.batcher_txs.len(),
-        frames.len(),
-        "mined block should contain one tx per frame"
-    );
+    assert_eq!(tip.batcher_txs.len(), frames.len(), "mined block should contain one tx per frame");
 }
