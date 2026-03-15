@@ -134,7 +134,7 @@ function sectionItemWithoutDirs(
 
 const hiddenProtocolFiles = ['access-lists.md']
 
-const protocolTodoExcludedDirs = ['bridging', 'configuration', 'consensus', 'execution', 'fault-proof']
+const protocolTodoExcludedDirs = ['bridging', 'consensus', 'execution', 'fault-proof']
 
 const protocolTodoExcludedFiles = [
   ...hiddenProtocolFiles,

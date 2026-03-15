@@ -606,7 +606,6 @@ L2 derivation inputs include:
 
 ### System Configuration
 
-[system-config]: glossary.md#system-configuration
 
 This term refers to the collection of dynamically configurable rollup parameters maintained
 by the [`SystemConfig`](../protocol/consensus/derivation.md#system-configuration) contract on L1 and read by the L2 [derivation] process.
