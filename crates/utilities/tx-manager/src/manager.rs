@@ -696,7 +696,11 @@ impl SimpleTxManager {
 
         // Step 3b: Compute blob fee cap with config minimum and override floor.
         let blob_fee_cap = if is_blob {
-            let network = caps.blob_fee_cap.unwrap_or(self.config.min_blob_fee);
+            let network = caps.blob_fee_cap.ok_or_else(|| {
+                TxManagerError::Unsupported(
+                    "blob_fee_cap missing from fee caps on blob transaction path".into(),
+                )
+            })?;
             let floor = fee_overrides.as_ref().and_then(|fo| fo.blob_fee_cap).unwrap_or(0);
             Some(network.max(floor))
         } else {
@@ -740,9 +744,10 @@ impl SimpleTxManager {
                         cached
                     }
                     cached => {
-                        if cached.is_some() {
+                        if let Some(ref stale) = cached {
                             info!(
                                 block_timestamp = caps.block_timestamp,
+                                cached_is_eip7594 = stale.is_eip7594(),
                                 "cached sidecar proof type stale, rebuilding"
                             );
                         }
