@@ -30,7 +30,7 @@ pub const MAX_BLOBS_PER_TX: usize = MAX_BLOBS_PER_TX_FUSAKA as usize;
 pub struct BlobTxBuilder {
     /// Unix timestamp at or after which cell proofs are used.
     /// `u64::MAX` disables cell proofs (always legacy).
-    cell_proofs_activation_timestamp: u64,
+    pub cell_proofs_activation_timestamp: u64,
 }
 
 impl BlobTxBuilder {
@@ -104,6 +104,7 @@ impl BlobTxBuilder {
 #[cfg(test)]
 mod tests {
     use alloy_eips::{eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
+    use rstest::rstest;
 
     use super::*;
 
@@ -117,35 +118,17 @@ mod tests {
         BlobTxBuilder::new(0)
     }
 
-    #[test]
-    fn make_sidecar_auto_single_blob_legacy() {
+    #[rstest]
+    #[case::single_blob(1)]
+    #[case::two_blobs(2)]
+    #[case::six_blobs(6)]
+    fn make_sidecar_auto_n_blobs_legacy(#[case] n: usize) {
         let builder = legacy_builder();
-        let variant = builder.make_sidecar_auto(Arc::new(vec![Blob::default()]), 0).unwrap();
+        let variant = builder.make_sidecar_auto(Arc::new(vec![Blob::default(); n]), 0).unwrap();
         let sidecar = variant.as_eip4844().expect("expected Eip4844 variant");
-        assert_eq!(sidecar.blobs.len(), 1);
-        assert_eq!(sidecar.commitments.len(), 1);
-        assert_eq!(sidecar.proofs.len(), 1);
-    }
-
-    #[test]
-    fn make_sidecar_auto_two_blobs_legacy() {
-        let builder = legacy_builder();
-        let variant =
-            builder.make_sidecar_auto(Arc::new(vec![Blob::default(), Blob::default()]), 0).unwrap();
-        let sidecar = variant.as_eip4844().expect("expected Eip4844 variant");
-        assert_eq!(sidecar.blobs.len(), 2);
-        assert_eq!(sidecar.commitments.len(), 2);
-        assert_eq!(sidecar.proofs.len(), 2);
-    }
-
-    #[test]
-    fn make_sidecar_auto_six_blobs_legacy() {
-        let builder = legacy_builder();
-        let variant = builder.make_sidecar_auto(Arc::new(vec![Blob::default(); 6]), 0).unwrap();
-        let sidecar = variant.as_eip4844().expect("expected Eip4844 variant");
-        assert_eq!(sidecar.blobs.len(), 6);
-        assert_eq!(sidecar.commitments.len(), 6);
-        assert_eq!(sidecar.proofs.len(), 6);
+        assert_eq!(sidecar.blobs.len(), n);
+        assert_eq!(sidecar.commitments.len(), n);
+        assert_eq!(sidecar.proofs.len(), n);
     }
 
     #[test]
@@ -158,34 +141,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn should_use_cell_proofs_disabled() {
-        let builder = BlobTxBuilder::new(u64::MAX);
-        assert!(!builder.should_use_cell_proofs(1_000_000));
-    }
-
-    #[test]
-    fn should_use_cell_proofs_past() {
-        let builder = BlobTxBuilder::new(1_000);
-        assert!(builder.should_use_cell_proofs(1_001));
-    }
-
-    #[test]
-    fn should_use_cell_proofs_exactly_at_activation() {
-        let builder = BlobTxBuilder::new(1_000);
-        assert!(builder.should_use_cell_proofs(1_000));
-    }
-
-    #[test]
-    fn should_use_cell_proofs_one_second_before() {
-        let builder = BlobTxBuilder::new(1_000);
-        assert!(!builder.should_use_cell_proofs(999));
-    }
-
-    #[test]
-    fn should_use_cell_proofs_future() {
-        let builder = BlobTxBuilder::new(u64::MAX - 1);
-        assert!(!builder.should_use_cell_proofs(1_000_000));
+    #[rstest]
+    #[case::disabled(u64::MAX, 1_000_000, false)]
+    #[case::past(1_000, 1_001, true)]
+    #[case::exactly_at_activation(1_000, 1_000, true)]
+    #[case::one_second_before(1_000, 999, false)]
+    #[case::future(u64::MAX - 1, 1_000_000, false)]
+    fn should_use_cell_proofs(
+        #[case] activation: u64,
+        #[case] block_ts: u64,
+        #[case] expected: bool,
+    ) {
+        let builder = BlobTxBuilder::new(activation);
+        assert_eq!(builder.should_use_cell_proofs(block_ts), expected);
     }
 
     #[test]
@@ -215,38 +183,15 @@ mod tests {
 
     // ── is_sidecar_valid ────────────────────────────────────────────────
 
-    #[test]
-    fn is_sidecar_valid_matches_legacy_before_activation() {
+    #[rstest]
+    #[case::matches_legacy_before_activation(999, 999, true)]
+    #[case::matches_cell_proofs_after_activation(1_000, 1_000, true)]
+    #[case::rejects_legacy_after_activation(999, 1_000, false)]
+    #[case::rejects_cell_proofs_before_activation(1_000, 999, false)]
+    fn is_sidecar_valid(#[case] build_ts: u64, #[case] validate_ts: u64, #[case] expected: bool) {
         let builder = BlobTxBuilder::new(1_000);
-        let sidecar = builder.make_sidecar_auto(Arc::new(vec![Blob::default()]), 999).unwrap();
-        assert!(builder.is_sidecar_valid(&sidecar, 999));
-    }
-
-    #[test]
-    fn is_sidecar_valid_matches_cell_proofs_after_activation() {
-        let builder = BlobTxBuilder::new(1_000);
-        let sidecar = builder.make_sidecar_auto(Arc::new(vec![Blob::default()]), 1_000).unwrap();
-        assert!(builder.is_sidecar_valid(&sidecar, 1_000));
-    }
-
-    #[test]
-    fn is_sidecar_valid_rejects_legacy_after_activation() {
-        let builder = BlobTxBuilder::new(1_000);
-        // Build a legacy sidecar (pre-activation).
-        let sidecar = builder.make_sidecar_auto(Arc::new(vec![Blob::default()]), 999).unwrap();
-        assert!(sidecar.is_eip4844());
-        // Validate against a post-activation timestamp — should be invalid.
-        assert!(!builder.is_sidecar_valid(&sidecar, 1_000));
-    }
-
-    #[test]
-    fn is_sidecar_valid_rejects_cell_proofs_before_activation() {
-        let builder = BlobTxBuilder::new(1_000);
-        // Build a cell-proof sidecar (post-activation).
-        let sidecar = builder.make_sidecar_auto(Arc::new(vec![Blob::default()]), 1_000).unwrap();
-        assert!(sidecar.is_eip7594());
-        // Validate against a pre-activation timestamp — should be invalid.
-        assert!(!builder.is_sidecar_valid(&sidecar, 999));
+        let sidecar = builder.make_sidecar_auto(Arc::new(vec![Blob::default()]), build_ts).unwrap();
+        assert_eq!(builder.is_sidecar_valid(&sidecar, validate_ts), expected);
     }
 
     #[test]
