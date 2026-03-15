@@ -150,6 +150,7 @@ impl TxManagerConfig {
     /// - `num_confirmations` must be >= 1
     /// - `safe_abort_nonce_too_low_count` must be >= 1
     /// - `fee_limit_multiplier` must be >= 1
+    /// - `min_blob_fee` must be >= 1
     /// - `network_timeout` must be > 0
     /// - `resubmission_timeout` must be > 0
     /// - `receipt_query_interval` must be > 0
@@ -202,6 +203,13 @@ impl TxManagerConfig {
                 field: "confirmation_timeout",
                 constraint: "> 0",
                 value: "0s".to_string(),
+            });
+        }
+        if self.min_blob_fee == 0 {
+            return Err(ConfigError::OutOfRange {
+                field: "min_blob_fee",
+                constraint: ">= 1",
+                value: "0".to_string(),
             });
         }
         Ok(())
@@ -310,6 +318,16 @@ mod tests {
         assert!(
             matches!(err, ConfigError::OutOfRange { field: "confirmation_timeout", .. }),
             "expected OutOfRange for confirmation_timeout, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validation_rejects_zero_min_blob_fee() {
+        let config = TxManagerConfig { min_blob_fee: 0, ..TxManagerConfig::default() };
+        let err = config.validate().unwrap_err();
+        assert!(
+            matches!(err, ConfigError::OutOfRange { field: "min_blob_fee", .. }),
+            "expected OutOfRange for min_blob_fee, got: {err}"
         );
     }
 }

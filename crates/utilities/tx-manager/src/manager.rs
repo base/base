@@ -121,7 +121,7 @@ struct BumpState {
 impl BumpState {
     /// Constructs a [`BumpState`] from a [`PreparedTx`] and the hash of the
     /// published transaction.
-    fn from_prepared(prepared: &PreparedTx, tx_hash: B256) -> Self {
+    fn from_prepared(prepared: PreparedTx, tx_hash: B256) -> Self {
         Self {
             tip: prepared.gas_tip_cap,
             fee_cap: prepared.gas_fee_cap,
@@ -129,7 +129,7 @@ impl BumpState {
             gas_limit: prepared.gas_limit,
             tx_hash,
             nonce: prepared.nonce,
-            sidecar: prepared.sidecar.clone(),
+            sidecar: prepared.sidecar,
         }
     }
 }
@@ -295,18 +295,18 @@ impl SimpleTxManager {
         )
     }
 
-    /// Returns the raw (pre-minimum) blob fee cap from `caps`, falling back to
-    /// the configured [`min_blob_fee`](crate::TxManagerConfig::min_blob_fee)
-    /// when the provider did not return one.
-    fn raw_blob_baseline(&self, caps: &GasPriceCaps) -> u128 {
-        // Invariant: when called from a blob tx path, suggest_gas_price_caps_for(true)
-        // always populates raw_blob_fee_cap. The unwrap_or fallback is retained as
-        // a safety net but should never fire in practice.
-        debug_assert!(
-            caps.raw_blob_fee_cap.is_some(),
-            "raw_blob_fee_cap should always be Some when called from a blob tx path",
-        );
-        caps.raw_blob_fee_cap.unwrap_or(self.config.min_blob_fee)
+    /// Returns the raw (pre-minimum) blob fee cap from `caps`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TxManagerError::Unsupported`] if `raw_blob_fee_cap` is `None`,
+    /// which indicates a caller bug (blob tx path must always populate this).
+    fn raw_blob_baseline(&self, caps: &GasPriceCaps) -> TxManagerResult<u128> {
+        caps.raw_blob_fee_cap.ok_or_else(|| {
+            TxManagerError::Unsupported(
+                "raw_blob_fee_cap missing on blob transaction path".into(),
+            )
+        })
     }
 
     /// Constructs and signs a transaction, retrying on transient errors.
@@ -576,7 +576,7 @@ impl SimpleTxManager {
                 // Enforce fee ceiling on blob fee cap using the raw
                 // (pre-minimum) blob fee cap as the baseline, mirroring
                 // the gas fee cap ceiling in Step 4.
-                self.check_fee_limit(bumped_blob, self.raw_blob_baseline(&caps))?;
+                self.check_fee_limit(bumped_blob, self.raw_blob_baseline(&caps)?)?;
 
                 Some(bumped_blob)
             }
@@ -705,7 +705,7 @@ impl SimpleTxManager {
 
         // Step 3c: Enforce blob fee ceiling (mirrors Step 3 for gas fee cap).
         if let Some(blob_cap) = blob_fee_cap {
-            self.check_fee_limit(blob_cap, self.raw_blob_baseline(&caps))?;
+            self.check_fee_limit(blob_cap, self.raw_blob_baseline(&caps)?)?;
         }
 
         // Step 4: Build TransactionRequest.
@@ -1021,7 +1021,7 @@ impl SimpleTxManager {
         let prepared =
             self.prepare_with_initial_caps(candidate, None, None, nonce_override, None).await?;
         let tx_hash = self.publish_tx(send_state, &prepared.raw_tx, None).await?;
-        let mut bump = BumpState::from_prepared(&prepared, tx_hash);
+        let mut bump = BumpState::from_prepared(prepared, tx_hash);
 
         // Receipt delivery channel — mpsc because fee bumps may spawn
         // new wait tasks with different tx hashes.
@@ -1220,7 +1220,7 @@ impl SimpleTxManager {
             Arc::clone(&self.closed),
         );
 
-        Ok(BumpState::from_prepared(&prepared, new_hash))
+        Ok(BumpState::from_prepared(prepared, new_hash))
     }
 
     /// Applies the result of a fee bump attempt, updating the tracked fee

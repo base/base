@@ -18,8 +18,7 @@ use crate::TxManagerError;
 
 /// Maximum number of blobs allowed per transaction.
 ///
-/// Set to [`MAX_BLOBS_PER_TX_FUSAKA`] (6), which is the per-transaction
-/// limit across all current forks (Dencun through Fusaka).
+/// Set to [`MAX_BLOBS_PER_TX_FUSAKA`] (6), the Fusaka per-transaction limit.
 pub const MAX_BLOBS_PER_TX: usize = MAX_BLOBS_PER_TX_FUSAKA as usize;
 
 /// Builder for EIP-4844 blob-carrying transaction sidecars.
