@@ -664,7 +664,8 @@ impl SimpleTxManager {
         .await
         .map_err(|_| self.rpc_error("estimate_gas timed out"))?
         .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?;
-        let gas_limit = candidate.gas_limit.max(estimated);
+        let gas_floor = fee_overrides.as_ref().map_or(0, |fo| fo.gas_limit_floor);
+        let gas_limit = if gas_floor > 0 { gas_floor } else { candidate.gas_limit }.max(estimated);
         tx_request = tx_request.with_gas_limit(gas_limit);
 
         // Step 6: Assign nonce.
@@ -1048,15 +1049,12 @@ impl SimpleTxManager {
         let bumped =
             self.increase_gas_price(candidate, old.tip, old.fee_cap, old.blob_fee_cap).await?;
 
-        // Clone candidate with the previous gas limit as a floor so that
-        // craft_tx_with_caps's `candidate.gas_limit.max(estimated)` logic
-        // ensures the gas limit never decreases across bumps.
-        let mut bump_candidate = candidate.clone();
-        bump_candidate.gas_limit = old.gas_limit;
-
-        // Build fee overrides including blob fee cap when applicable.
+        // Build fee overrides including blob fee cap and gas limit floor.
+        // The gas limit floor ensures the limit never decreases across bumps,
+        // avoiding a full candidate clone.
         let fee_override = FeeOverride::new(bumped.gas_tip_cap, bumped.gas_fee_cap)
-            .with_blob_fee_cap(bumped.blob_fee_cap.unwrap_or(0));
+            .with_blob_fee_cap(bumped.blob_fee_cap.unwrap_or(0))
+            .with_gas_limit_floor(old.gas_limit);
 
         // Rebuild transaction with bumped fees as overrides and the fresh
         // caps to avoid a redundant provider round-trip.
@@ -1066,7 +1064,7 @@ impl SimpleTxManager {
         // send_async() tasks.
         let prepared = self
             .prepare_with_initial_caps(
-                &bump_candidate,
+                candidate,
                 Some(fee_override),
                 Some(bumped.caps),
                 Some(old.nonce),
