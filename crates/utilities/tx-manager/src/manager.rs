@@ -415,13 +415,11 @@ impl SimpleTxManager {
     /// [`FeeCalculator::calc_threshold_value`].
     ///
     /// The returned [`BumpedFees`] carries the fresh [`GasPriceCaps`] so
-    /// callers can forward them to
-    /// [`prepare_with_initial_caps`](Self::prepare_with_initial_caps)
-    /// without a redundant provider round-trip. Gas estimation is
+    /// callers can forward them to the internal preparation path without a
+    /// redundant provider round-trip. Gas estimation is
     /// intentionally **not** performed here — callers should rely on
-    /// [`craft_tx`](Self::craft_tx) or
-    /// [`prepare_with_initial_caps`](Self::prepare_with_initial_caps)
-    /// which estimate gas as part of transaction construction.
+    /// [`craft_tx`](Self::craft_tx), which estimates gas as part of
+    /// transaction construction.
     ///
     /// # Errors
     ///

@@ -29,15 +29,14 @@ pub struct NonceState {
     /// Tracks the highest nonce consumed by [`NonceManager::reserve_nonce`].
     ///
     /// After a [`NonceManager::reset`], the nonce cache is cleared and
-    /// re-fetched from the chain. The high-water mark ensures that
-    /// [`NonceManager::advance_nonce`] never re-issues a nonce that was
-    /// previously reserved by a concurrent `send_async()` task. The
-    /// effective starting nonce after reset is `max(chain_nonce, reserved_high_water)`.
+    /// re-fetched from the chain. The high-water mark ensures that nonce
+    /// allocation never re-issues a nonce that was previously reserved by a
+    /// concurrent `send_async()` task. The effective starting nonce after
+    /// reset is `max(chain_nonce, reserved_high_water)`.
     pub reserved_high_water: u64,
     /// Nonces that were reserved via [`NonceManager::reserve_nonce`] but
-    /// never published. These are recycled by [`NonceManager::advance_nonce`]
-    /// on subsequent nonce requests, filling gaps left by failed
-    /// `send_async` tasks.
+    /// never published. These are recycled on subsequent nonce requests,
+    /// filling gaps left by failed `send_async` tasks.
     ///
     /// Not cleared by [`NonceManager::reset`] — the nonces were never
     /// published and must persist for reuse.
@@ -235,7 +234,7 @@ impl NonceManager {
     /// releases in a single call. This makes the reserved nonce irrevocable:
     /// there is no [`NonceGuard`] to roll back on failure.
     ///
-    /// This is used by [`send_async`](crate::SimpleTxManager::send_async) to
+    /// This is used by [`send_async`](crate::TxManager::send_async) to
     /// pre-assign nonces **before** `tokio::spawn`, guaranteeing that
     /// sequential `send_async()` calls receive monotonically increasing nonces
     /// regardless of task scheduling order.
@@ -310,10 +309,10 @@ impl NonceGuard {
 
     /// Consumes the reserved nonce and updates the high-water mark.
     ///
-    /// Records `self.nonce + 1` as the high-water mark so that
-    /// [`NonceManager::advance_nonce`] will never re-issue this nonce
-    /// after a [`NonceManager::reset`]. The guard is consumed (dropped),
-    /// releasing the mutex lock.
+    /// Records `self.nonce + 1` as the high-water mark so that nonce
+    /// allocation will never re-issue this nonce after a
+    /// [`NonceManager::reset`]. The guard is consumed (dropped), releasing
+    /// the mutex lock.
     ///
     /// # Errors
     ///
