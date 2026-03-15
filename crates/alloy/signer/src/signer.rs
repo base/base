@@ -43,33 +43,15 @@ impl RemoteSigner {
     ///
     /// Use this constructor when you need custom TLS configuration (e.g. mTLS)
     /// or other HTTP client settings.
-    pub fn with_http_client(
-        http_client: reqwest::Client,
-        endpoint: Url,
-        address: Address,
-    ) -> Self {
+    pub fn with_http_client(http_client: reqwest::Client, endpoint: Url, address: Address) -> Self {
         let transport = Http::with_client(http_client, endpoint);
         let client = ClientBuilder::default().transport(transport, false);
         Self { client, address }
     }
 
-    /// Extracts the signature from a [`TxEnvelope`].
-    const fn extract_signature(envelope: &TxEnvelope) -> Signature {
-        match envelope {
-            TxEnvelope::Legacy(tx) => *tx.signature(),
-            TxEnvelope::Eip2930(tx) => *tx.signature(),
-            TxEnvelope::Eip1559(tx) => *tx.signature(),
-            TxEnvelope::Eip4844(tx) => *tx.signature(),
-            TxEnvelope::Eip7702(tx) => *tx.signature(),
-        }
-    }
-
     /// Builds a [`TransactionRequest`] from a [`SignableTransaction`] for submission
     /// to the remote signer's `eth_signTransaction` endpoint.
-    fn build_tx_request(
-        &self,
-        tx: &dyn SignableTransaction<Signature>,
-    ) -> TransactionRequest {
+    pub fn build_tx_request(&self, tx: &dyn SignableTransaction<Signature>) -> TransactionRequest {
         let mut request = TransactionRequest::default()
             .with_nonce(tx.nonce())
             .with_gas_limit(tx.gas_limit())
@@ -137,18 +119,31 @@ impl TxSigner<Signature> for RemoteSigner {
         let envelope = TxEnvelope::decode_2718(&mut bytes.as_ref())
             .map_err(|e| alloy_signer::Error::other(RemoteSignerError::Decode(e.to_string())))?;
 
-        Ok(Self::extract_signature(&envelope))
+        let signature = *envelope.signature();
+        let hash = tx.signature_hash();
+        let recovered = signature
+            .recover_address_from_prehash(&hash)
+            .map_err(|e| alloy_signer::Error::other(RemoteSignerError::Recovery(e.to_string())))?;
+
+        if recovered != self.address {
+            return Err(alloy_signer::Error::other(RemoteSignerError::SignerMismatch {
+                expected: self.address,
+                recovered,
+            }));
+        }
+
+        Ok(signature)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    use alloy_consensus::TxEip1559;
+    use alloy_consensus::{TxEip1559, TxLegacy};
     use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
     use alloy_primitives::U256;
+
+    use super::*;
 
     #[test]
     fn address_returns_configured_address() {
@@ -166,7 +161,7 @@ mod tests {
         let from = Address::repeat_byte(0x01);
         let to = Address::repeat_byte(0x02);
         let signer = test_signer(from);
-        let mut tx = TxEip1559 {
+        let tx = TxEip1559 {
             chain_id: 1,
             nonce: 42,
             gas_limit: 21_000,
@@ -177,7 +172,7 @@ mod tests {
             ..Default::default()
         };
 
-        let request = signer.build_tx_request(&mut tx);
+        let request = signer.build_tx_request(&tx);
 
         assert_eq!(request.from, Some(from));
         assert_eq!(request.nonce, Some(42));
@@ -192,7 +187,7 @@ mod tests {
     fn build_tx_request_handles_create() {
         let from = Address::repeat_byte(0x01);
         let signer = test_signer(from);
-        let mut tx = TxEip1559 {
+        let tx = TxEip1559 {
             chain_id: 1,
             nonce: 0,
             gas_limit: 100_000,
@@ -202,19 +197,17 @@ mod tests {
             ..Default::default()
         };
 
-        let request = signer.build_tx_request(&mut tx);
+        let request = signer.build_tx_request(&tx);
 
         assert_eq!(request.to, Some(TxKind::Create));
     }
 
     #[test]
     fn build_tx_request_handles_legacy_gas_price() {
-        use alloy_consensus::TxLegacy;
-
         let from = Address::repeat_byte(0x01);
         let to = Address::repeat_byte(0x02);
         let signer = test_signer(from);
-        let mut tx = TxLegacy {
+        let tx = TxLegacy {
             chain_id: Some(1),
             nonce: 5,
             gas_limit: 21_000,
@@ -224,7 +217,7 @@ mod tests {
             ..Default::default()
         };
 
-        let request = signer.build_tx_request(&mut tx);
+        let request = signer.build_tx_request(&tx);
 
         assert_eq!(request.gas_price, Some(50));
         assert_eq!(request.nonce, Some(5));
@@ -247,16 +240,11 @@ mod tests {
             ..Default::default()
         };
 
-        let sig = signer
-            .sign_transaction(&mut tx)
-            .await
-            .expect("signing should succeed");
+        let sig = signer.sign_transaction(&mut tx).await.expect("signing should succeed");
 
         // Verify the signature recovers to the expected address.
         let hash = tx.signature_hash();
-        let recovered = sig
-            .recover_address_from_prehash(&hash)
-            .expect("should recover address");
+        let recovered = sig.recover_address_from_prehash(&hash).expect("should recover address");
         assert_eq!(recovered, address);
     }
 
