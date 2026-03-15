@@ -95,6 +95,14 @@ pub struct L2Verifier<P: Pipeline + SignalReceiver + Debug> {
     finalized_head: L2BlockInfo,
     /// Tracks the most recently signalled finalized L1 block number.
     finalized_l1_number: u64,
+    /// Tracks the most recently signalled L1 safe head block number.
+    ///
+    /// Updated by [`act_l1_safe_signal`]. Exposed via [`safe_l1_number`]
+    /// for assertions in finalization-related tests.
+    ///
+    /// [`act_l1_safe_signal`]: L2Verifier::act_l1_safe_signal
+    /// [`safe_l1_number`]: L2Verifier::safe_l1_number
+    safe_l1_number: u64,
     /// History of safe head updates paired with the L1 origin number.
     ///
     /// Each entry is `(l2_block_info, l1_origin_number)`. Appended by
@@ -215,6 +223,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
             unsafe_head: safe_head,
             finalized_head: safe_head,
             finalized_l1_number: 0,
+            safe_l1_number: 0,
             safe_head_history: Vec::new(),
             derived_tx_counts: Vec::new(),
             derived_user_tx_counts: Vec::new(),
@@ -299,11 +308,25 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
             .map_err(|e| VerifierError::Signal(Box::new(e)))
     }
 
+    /// Return the most recently signalled L1 safe head block number.
+    ///
+    /// Updated by [`act_l1_safe_signal`]. Use this in finalization tests to
+    /// assert that the harness has seen a particular L1 safe head.
+    ///
+    /// [`act_l1_safe_signal`]: L2Verifier::act_l1_safe_signal
+    pub const fn safe_l1_number(&self) -> u64 {
+        self.safe_l1_number
+    }
+
     /// Signal the pipeline that a new L1 safe head is available.
     ///
-    /// Currently a no-op in the verifier — the safe L2 head is already tracked
-    /// by derivation. Stored for future use.
-    pub async fn act_l1_safe_signal(&mut self, _head: BlockInfo) -> Result<(), VerifierError> {
+    /// Records `head.number` in [`safe_l1_number`] for assertions. In the
+    /// action harness the L2 safe head is already advanced by derivation, so
+    /// this signal does not need to drive additional pipeline steps.
+    ///
+    /// [`safe_l1_number`]: L2Verifier::safe_l1_number
+    pub async fn act_l1_safe_signal(&mut self, head: BlockInfo) -> Result<(), VerifierError> {
+        self.safe_l1_number = head.number;
         Ok(())
     }
 
@@ -357,6 +380,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         self.derived_l1_info_txs.clear();
         self.finalized_head = l2_safe_head;
         self.finalized_l1_number = 0;
+        self.safe_l1_number = 0;
         Ok(())
     }
 
@@ -397,28 +421,17 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                             // No more data for now — pipeline is idle.
                             break;
                         }
-                        PipelineErrorKind::Temporary(PipelineError::ChannelReaderEmpty) => {
-                            // The channel bank pruned a timed-out channel and has nothing
-                            // ready to provide to the channel reader. Step once more; the
-                            // next call will either find a ready channel or return Eof.
+                        PipelineErrorKind::Temporary(
+                            PipelineError::NotEnoughData | PipelineError::ChannelReaderEmpty,
+                        ) => {
+                            // These transient errors mean the pipeline ingested data but
+                            // isn't ready yet. Step again immediately, but track consecutive
+                            // no-progress loops.
                             no_progress += 1;
                             if no_progress > 1_000 {
                                 return Err(VerifierError::Pipeline(Box::new(
                                     PipelineError::Provider(
-                                        "pipeline stuck: 1000 consecutive ChannelReaderEmpty without progress".into()
-                                    ).temp()
-                                )));
-                            }
-                        }
-                        PipelineErrorKind::Temporary(PipelineError::NotEnoughData) => {
-                            // The channel bank just ingested a frame but the channel isn't
-                            // assembled yet, or the batch reader needs another read attempt.
-                            // This is a transient state — step again immediately.
-                            no_progress += 1;
-                            if no_progress > 1_000 {
-                                return Err(VerifierError::Pipeline(Box::new(
-                                    PipelineError::Provider(
-                                        "pipeline stuck: 1000 consecutive NotEnoughData without progress".into()
+                                        "pipeline stuck: 1000 consecutive no-progress without derivation".into()
                                     ).temp()
                                 )));
                             }
@@ -500,8 +513,8 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     /// # Errors
     ///
     /// Returns [`VerifierError::Pipeline`] on any non-transient pipeline error,
-    /// or when `NotEnoughData` is returned more than 1 000 consecutive times
-    /// without progress (indicating a stuck pipeline).
+    /// or when `NotEnoughData` or `ChannelReaderEmpty` is returned more than
+    /// 1 000 consecutive times without progress (indicating a stuck pipeline).
     ///
     /// # Example
     ///
@@ -556,12 +569,14 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                     PipelineErrorKind::Temporary(PipelineError::Eof) => {
                         return Ok((steps, false));
                     }
-                    PipelineErrorKind::Temporary(PipelineError::NotEnoughData) => {
+                    PipelineErrorKind::Temporary(
+                        PipelineError::NotEnoughData | PipelineError::ChannelReaderEmpty,
+                    ) => {
                         no_progress += 1;
                         if no_progress > 1_000 {
                             return Err(VerifierError::Pipeline(Box::new(
                                 PipelineError::Provider(
-                                    "pipeline stuck: 1000 consecutive NotEnoughData without progress"
+                                    "pipeline stuck: 1000 consecutive no-progress without derivation"
                                         .into(),
                                 )
                                 .temp(),
@@ -594,13 +609,16 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         &self.derived_tx_counts
     }
 
-    /// Register the block hash for a given L2 block number.
+    /// Manually register the block hash for a given L2 block number.
     ///
-    /// Most tests no longer need this when the verifier shares a
-    /// [`SharedBlockHashRegistry`] with [`L2Sequencer`], but it remains useful
-    /// as a manual override for blocks produced outside that shared setup.
+    /// Not needed when the verifier was created via
+    /// [`create_verifier_from_sequencer`] — the sequencer populates the
+    /// shared registry automatically on each [`build_next_block`] call.
+    /// Use this only for blocks produced outside the sequencer (e.g. synthetic
+    /// blocks constructed directly in a test).
     ///
-    /// [`L2Sequencer::build_next_block`]: crate::L2Sequencer::build_next_block
+    /// [`create_verifier_from_sequencer`]: crate::ActionTestHarness::create_verifier_from_sequencer
+    /// [`build_next_block`]: crate::L2Sequencer::build_next_block
     pub fn register_block_hash(&mut self, number: u64, hash: B256) {
         self.block_hashes.insert(number, hash);
     }
