@@ -94,13 +94,15 @@ fn base_rollup_config_for(batcher: &BatcherConfig) -> RollupConfig {
 /// issues, `ChannelDriver` needs a `with_channel_id(id)` builder or random
 /// ID generation.
 #[tokio::test]
-#[ignore = "channel timeout semantics in the IndexedTraversal mode need verification; \
-            the indexed traversal clears the ChannelBank per L1 block, which may mean \
-            multi-block channel timeout is not exercisable in the current harness — \
-            the test skeleton documents the expected flow for when the harness supports it"]
 async fn channel_timeout_triggers_channel_invalidation() {
-    // TODO: configure small target_frame_size via EncoderConfig to force multi-frame output.
-    let batcher_cfg = BatcherConfig::default();
+    use base_batcher_encoder::EncoderConfig;
+    // Use a tiny max_frame_size so the single L2 block's batch data is split across
+    // multiple frames. This lets us submit frame 0 in one L1 block and hold the
+    // remaining frames back until the channel has timed out.
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let rollup_cfg = timeout_rollup_config(&batcher_cfg);
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -204,9 +206,11 @@ async fn channel_timeout_triggers_channel_invalidation() {
 /// No new methods needed — uses existing `Batcher::advance()` with a fresh
 /// `ChannelDriver` instance for the recovery submission.
 #[tokio::test]
-#[ignore = "blocked on channel timeout test infrastructure; once the channel bank \
-            correctly prunes timed-out channels in the IndexedTraversal path, \
-            this recovery test can be enabled"]
+#[ignore = "test design issue: batcher.advance() submits all frames in a single L1 \
+            block, so the channel completes immediately and the safe head advances \
+            before the timeout window elapses — the test needs to be restructured to \
+            use selective per-frame submission (like the first timeout test) to make \
+            the channel actually expire before recovery"]
 async fn channel_timeout_recovery_resubmits_successfully() {
     let batcher_cfg = BatcherConfig::default();
     let rollup_cfg = timeout_rollup_config(&batcher_cfg);
