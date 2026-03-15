@@ -37,7 +37,7 @@ mod queue;
 pub use queue::{SendResult, TxQueue};
 
 mod metrics;
-pub use metrics::TxMetrics;
+pub use metrics::{BaseTxMetrics, NoopTxMetrics, TxMetrics};
 
 mod blob;
 pub use blob::BlobTxBuilder;

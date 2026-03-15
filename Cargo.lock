@@ -4660,6 +4660,7 @@ dependencies = [
  "backon",
  "clap",
  "humantime",
+ "metrics",
  "proptest",
  "rayon",
  "rstest",

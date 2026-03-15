@@ -53,8 +53,16 @@ use tracing::{debug, error, info, warn};
 use crate::{
     BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps, NonceManager, RpcErrorClassifier,
     SendHandle, SendResponse, SendState, TxCandidate, TxManager, TxManagerConfig, TxManagerError,
-    TxManagerResult,
+    TxManagerResult, TxMetrics,
 };
+
+/// Number of wei in one gwei (10^9), as `f64` for fractional-precision
+/// metric conversions that must not truncate sub-gwei values.
+///
+/// `u128 as f64` is lossless for values up to 2^53 (~9 × 10^15 wei, or
+/// ~9 million gwei). Realistic per-gas fee values (tip cap, base fee) are
+/// well under this threshold, so the conversion preserves full precision.
+const WEI_PER_GWEI: f64 = 1_000_000_000.0;
 
 /// A signed transaction together with the fee values that were applied
 /// during construction.
@@ -132,6 +140,8 @@ pub struct SimpleTxManager {
     /// on the original manager is observed by tasks spawned via
     /// [`send_async`](Self::send_async) and [`wait_for_tx`](Self::wait_for_tx).
     closed: Arc<AtomicBool>,
+    /// Metrics collector for transaction lifecycle events.
+    metrics: Arc<dyn TxMetrics>,
 }
 
 impl SimpleTxManager {
@@ -159,6 +169,7 @@ impl SimpleTxManager {
         wallet: EthereumWallet,
         config: TxManagerConfig,
         chain_id: u64,
+        metrics: Arc<dyn TxMetrics>,
     ) -> TxManagerResult<Self> {
         config.validate().map_err(|e| TxManagerError::InvalidConfig(e.to_string()))?;
 
@@ -185,6 +196,7 @@ impl SimpleTxManager {
             nonce_manager,
             chain_id,
             closed: Arc::new(AtomicBool::new(false)),
+            metrics,
         })
     }
 
@@ -213,6 +225,11 @@ impl SimpleTxManager {
         self.chain_id
     }
 
+    /// Returns a reference to the metrics collector.
+    pub fn metrics(&self) -> &dyn TxMetrics {
+        self.metrics.as_ref()
+    }
+
     /// Signals the manager to stop accepting new transactions.
     ///
     /// After calling `close()`, any subsequent call to [`prepare`](Self::prepare)
@@ -227,6 +244,24 @@ impl SimpleTxManager {
     /// Returns `true` if the manager has been closed via [`close`](Self::close).
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
+    }
+
+    /// Records an RPC error metric and returns a [`TxManagerError::Rpc`].
+    fn rpc_error(&self, msg: &str) -> TxManagerError {
+        self.metrics.record_rpc_error();
+        TxManagerError::Rpc(msg.into())
+    }
+
+    /// Classifies an RPC error string and records an RPC error metric when the
+    /// error is an unrecognised transport failure ([`TxManagerError::Rpc`]).
+    /// Recognised state errors (e.g. `NonceTooLow`, `ExecutionReverted`) are
+    /// returned without inflating the RPC error counter.
+    fn classify_and_record_rpc(&self, error_msg: &str) -> TxManagerError {
+        let err = RpcErrorClassifier::classify_rpc_error(error_msg);
+        if err.is_rpc_error() {
+            self.metrics.record_rpc_error();
+        }
+        err
     }
 
     /// Constructs and signs a transaction, retrying on transient errors.
@@ -336,19 +371,19 @@ impl SimpleTxManager {
         );
 
         let raw_tip_cap = tip_result
-            .map_err(|_| TxManagerError::Rpc("get_max_priority_fee_per_gas timed out".into()))?
-            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+            .map_err(|_| self.rpc_error("get_max_priority_fee_per_gas timed out"))?
+            .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?;
 
         let latest_block = block_result
-            .map_err(|_| TxManagerError::Rpc("get_block_by_number timed out".into()))?
-            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?
-            .ok_or_else(|| TxManagerError::Rpc("latest block not found".to_string()))?;
+            .map_err(|_| self.rpc_error("get_block_by_number timed out"))?
+            .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?
+            .ok_or_else(|| self.rpc_error("latest block not found"))?;
 
         let raw_base_fee = u128::from(
             latest_block
                 .header
                 .base_fee_per_gas
-                .ok_or_else(|| TxManagerError::Rpc("base fee not available".to_string()))?,
+                .ok_or_else(|| self.rpc_error("base fee not available"))?,
         );
 
         // Compute raw gas fee cap from provider values before enforcing minimums.
@@ -360,6 +395,10 @@ impl SimpleTxManager {
 
         // Compute gas fee cap with enforced minimums.
         let gas_fee_cap = FeeCalculator::calc_gas_fee_cap(base_fee, tip_cap);
+
+        // Record fee metrics (converted from wei to gwei with fractional precision).
+        self.metrics.record_basefee(base_fee as f64 / WEI_PER_GWEI);
+        self.metrics.record_tipcap(tip_cap as f64 / WEI_PER_GWEI);
 
         Ok(GasPriceCaps { gas_tip_cap: tip_cap, gas_fee_cap, raw_gas_fee_cap, blob_fee_cap: None })
     }
@@ -551,8 +590,8 @@ impl SimpleTxManager {
             self.provider.estimate_gas(tx_request.clone()),
         )
         .await
-        .map_err(|_| TxManagerError::Rpc("estimate_gas timed out".into()))?
-        .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+        .map_err(|_| self.rpc_error("estimate_gas timed out"))?
+        .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?;
         let gas_limit = candidate.gas_limit.max(estimated);
         tx_request = tx_request.with_gas_limit(gas_limit);
 
@@ -570,6 +609,7 @@ impl SimpleTxManager {
             }
         };
         tx_request = tx_request.with_nonce(nonce);
+        self.metrics.record_current_nonce(nonce);
 
         info!(
             nonce,
@@ -588,6 +628,12 @@ impl SimpleTxManager {
             Ok(envelope) => {
                 // Consume the nonce (drop guard if present).
                 drop(guard);
+
+                // Record max possible fee metric in gwei. Intentionally recorded on every
+                // attempt (initial + fee bumps) to track fee escalation across retries.
+                let fee_gwei = gas_limit as f64 * (fee_cap as f64 / WEI_PER_GWEI);
+                self.metrics.record_tx_max_fee(fee_gwei);
+
                 Ok(PreparedTx {
                     raw_tx: Bytes::from(Encodable2718::encoded_2718(&envelope)),
                     gas_tip_cap: tip_cap,
@@ -656,13 +702,15 @@ impl SimpleTxManager {
             send_state.set_mempool_deadline(Instant::now() + self.config.tx_not_in_mempool_timeout);
         }
 
-        // Wrap the inner loop in a send timeout if configured.
+        let start = Instant::now();
+
+        // Wrap the event loop in a send timeout if configured.
         let result = if self.config.tx_send_timeout.is_zero() {
-            self.send_tx_inner(&candidate, &send_state, nonce_override).await
+            self.send_event_loop(&candidate, &send_state, nonce_override).await
         } else {
             tokio::time::timeout(
                 self.config.tx_send_timeout,
-                self.send_tx_inner(&candidate, &send_state, nonce_override),
+                self.send_event_loop(&candidate, &send_state, nonce_override),
             )
             .await
             .unwrap_or_else(|_| {
@@ -673,6 +721,15 @@ impl SimpleTxManager {
                 Err(TxManagerError::SendTimeout)
             })
         };
+
+        let latency_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.metrics.record_send_latency(latency_ms);
+
+        if result.is_ok() {
+            self.metrics.record_tx_confirmed();
+        } else {
+            self.metrics.record_tx_failed();
+        }
 
         if Self::should_reset_nonce_on_send_error(&result, &send_state, nonce_override) {
             // Three policies (see should_reset_nonce_on_send_error):
@@ -752,14 +809,14 @@ impl SimpleTxManager {
         }
     }
 
-    /// Inner send loop extracted from [`send_tx`](Self::send_tx) to allow
-    /// optional timeout wrapping.
+    /// Drives a signed transaction from publication through mempool to onchain
+    /// confirmation.
     ///
     /// `nonce_override` is forwarded to the **initial**
     /// [`prepare_with_initial_caps`](Self::prepare_with_initial_caps) call.
     /// Fee bump paths reuse the original nonce via their own `nonce_override`
     /// to avoid corrupting concurrent `send_async` reservations.
-    async fn send_tx_inner(
+    async fn send_event_loop(
         &self,
         candidate: &TxCandidate,
         send_state: &Arc<SendState>,
@@ -942,6 +999,7 @@ impl SimpleTxManager {
         // Record the bump and log only after the transaction has been
         // successfully published to avoid inflating the count on failure.
         send_state.record_fee_bump();
+        self.metrics.record_gas_bump();
         info!(
             bump_count = %send_state.bump_count(),
             old_tip = %old.tip,
@@ -1028,7 +1086,7 @@ impl SimpleTxManager {
                 Ok(tx_hash)
             }
             Ok(Err(e)) => {
-                let classified = RpcErrorClassifier::classify_rpc_error(&e.to_string());
+                let classified = self.classify_and_record_rpc(&e.to_string());
 
                 // AlreadyKnown on resubmission is a success — the tx is in
                 // the mempool from a prior publish. Return the previous hash.
@@ -1044,6 +1102,9 @@ impl SimpleTxManager {
                 }
 
                 send_state.process_send_error(&classified);
+                if classified.is_rpc_error() {
+                    self.metrics.record_publish_error();
+                }
 
                 if classified.is_retryable() {
                     warn!(error = %classified, "publish failed, will retry");
@@ -1054,8 +1115,9 @@ impl SimpleTxManager {
                 Err(classified)
             }
             Err(_) => {
-                let err = TxManagerError::Rpc("send_raw_transaction timed out".into());
+                let err = self.rpc_error("send_raw_transaction timed out");
                 send_state.process_send_error(&err);
+                self.metrics.record_publish_error();
                 warn!("publish timed out");
                 Err(err)
             }
@@ -1279,6 +1341,8 @@ impl TxManager for SimpleTxManager {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use alloy_consensus::{TxEip1559, TxEnvelope};
     use alloy_eips::Decodable2718;
     use alloy_network::EthereumWallet;
@@ -1289,7 +1353,7 @@ mod tests {
     use rstest::rstest;
 
     use super::{BumpState, SimpleTxManager};
-    use crate::{GasPriceCaps, TxCandidate, TxManagerConfig, TxManagerError};
+    use crate::{GasPriceCaps, NoopTxMetrics, TxCandidate, TxManagerConfig, TxManagerError};
 
     async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
         let anvil = Anvil::new().spawn();
@@ -1298,9 +1362,15 @@ mod tests {
         let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
         let wallet = EthereumWallet::from(signer);
         let chain_id = anvil.chain_id();
-        let manager = SimpleTxManager::new(provider, wallet, TxManagerConfig::default(), chain_id)
-            .await
-            .expect("should create manager");
+        let manager = SimpleTxManager::new(
+            provider,
+            wallet,
+            TxManagerConfig::default(),
+            chain_id,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .expect("should create manager");
         (manager, anvil)
     }
 

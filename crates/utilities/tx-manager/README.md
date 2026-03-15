@@ -195,17 +195,19 @@ base-tx-manager = { git = "https://github.com/base/base" }
 ```
 
 ```rust,ignore
+use std::sync::Arc;
+
 use alloy_network::EthereumWallet;
 use alloy_primitives::{bytes, Address, U256};
 use alloy_provider::RootProvider;
-use base_tx_manager::{SimpleTxManager, TxCandidate, TxManager, TxManagerConfig};
+use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig};
 
 // Create a SimpleTxManager with a provider, wallet, and config.
 let provider = RootProvider::new_http("http://localhost:8545".parse()?);
 let wallet = EthereumWallet::from(signer);
 let config = TxManagerConfig::default();
 let chain_id = 1;
-let manager = SimpleTxManager::new(provider, wallet, config, chain_id).await?;
+let manager = SimpleTxManager::new(provider, wallet, config, chain_id, Arc::new(BaseTxMetrics::new("my_service"))).await?;
 
 // Build a regular (type-2) transaction candidate.
 let candidate = TxCandidate {

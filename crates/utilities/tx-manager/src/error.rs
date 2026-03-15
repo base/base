@@ -169,6 +169,16 @@ impl TxManagerError {
     pub const fn is_already_known(&self) -> bool {
         matches!(self, Self::AlreadyKnown)
     }
+
+    /// Returns `true` only for [`TxManagerError::Rpc`].
+    ///
+    /// Used to gate RPC error metric recording so that recognised state
+    /// errors (e.g. `NonceTooLow`, `ExecutionReverted`) do not inflate the
+    /// RPC error counter.
+    #[must_use]
+    pub const fn is_rpc_error(&self) -> bool {
+        matches!(self, Self::Rpc(_))
+    }
 }
 
 /// Result type alias for transaction manager operations.
@@ -336,6 +346,18 @@ mod tests {
     #[case::invalid_safe_abort(TxManagerError::InvalidSafeAbortNonceTooLowCount, false)]
     fn is_already_known(#[case] error: TxManagerError, #[case] expected: bool) {
         assert_eq!(error.is_already_known(), expected);
+    }
+
+    // ── is_rpc_error ─────────────────────────────────────────────────────
+
+    #[rstest]
+    #[case::rpc(TxManagerError::Rpc("any error".to_string()), true)]
+    #[case::nonce_too_low(TxManagerError::NonceTooLow, false)]
+    #[case::underpriced(TxManagerError::Underpriced, false)]
+    #[case::already_known(TxManagerError::AlreadyKnown, false)]
+    #[case::channel_closed(TxManagerError::ChannelClosed, false)]
+    fn is_rpc_error(#[case] error: TxManagerError, #[case] expected: bool) {
+        assert_eq!(error.is_rpc_error(), expected);
     }
 
     // ── Display output ──────────────────────────────────────────────────
