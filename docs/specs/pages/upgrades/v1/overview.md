@@ -15,14 +15,14 @@
 
 ## Execution Layer
 
-- [EIP-7823: Upper-Bound MODEXP](exec-engine.md#upper-bound-modexp)
-- [EIP-7825: Transaction Gas Limit Cap](exec-engine.md#transaction-gas-limit-cap)
-- [EIP-7883: MODEXP Gas Cost Increase](exec-engine.md#modexp-gas-cost-increase)
-- [EIP-7939: CLZ Opcode](exec-engine.md#clz-opcode)
-- [EIP-7951: secp256r1 Precompile](exec-engine.md#secp256r1-precompile-gas-cost)
-- [EIP-7642: eth/69](exec-engine.md#eth69)
-- [EIP-7910: eth_config RPC Method](exec-engine.md#eth_config-rpc-method)
-- [Remove Account Balances & Receipts](exec-engine.md#remove-account-balances--receipts)
+- [EIP-7823: Upper-Bound MODEXP](/upgrades/v1/exec-engine#upper-bound-modexp)
+- [EIP-7825: Transaction Gas Limit Cap](/upgrades/v1/exec-engine#transaction-gas-limit-cap)
+- [EIP-7883: MODEXP Gas Cost Increase](/upgrades/v1/exec-engine#modexp-gas-cost-increase)
+- [EIP-7939: CLZ Opcode](/upgrades/v1/exec-engine#clz-opcode)
+- [EIP-7951: secp256r1 Precompile](/upgrades/v1/exec-engine#secp256r1-precompile-gas-cost)
+- [EIP-7642: eth/69](/upgrades/v1/exec-engine#eth69)
+- [EIP-7910: eth_config RPC Method](/upgrades/v1/exec-engine#eth_config-rpc-method)
+- [Remove Account Balances & Receipts](/upgrades/v1/exec-engine#remove-account-balances--receipts)
 
 ## Proofs
 
