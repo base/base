@@ -115,6 +115,28 @@ async fn craft_tx_with_explicit_gas_limit_above_estimate() {
 }
 
 #[tokio::test]
+async fn craft_tx_rejects_too_many_blobs() {
+    let (manager, _anvil) = setup().await;
+
+    let candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        blobs: Arc::new(vec![Blob::default(); 7]),
+        ..Default::default()
+    };
+
+    let err = manager.craft_tx(&candidate, None).await.expect_err("should reject too many blobs");
+    match &err {
+        TxManagerError::Unsupported(msg) => {
+            assert!(
+                msg.contains("exceeds maximum"),
+                "expected blob count exceeded message, got: {msg}",
+            );
+        }
+        other => panic!("expected TxManagerError::Unsupported, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn craft_tx_rejects_blob_without_recipient() {
     let (manager, _anvil) = setup().await;
 
@@ -793,16 +815,21 @@ async fn increase_gas_price_bumps_blob_fee_cap() {
 
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
-        value: U256::from(1_000u64),
-        gas_limit: 0,
+        blobs: Arc::new(vec![Blob::default()]),
         ..Default::default()
     };
 
-    let caps = manager.suggest_gas_price_caps().await.expect("should get caps");
+    // Use craft_tx to get valid initial fees for a blob transaction.
+    let initial = manager.craft_tx(&candidate, None).await.expect("should craft initial blob tx");
+    let old_blob_fee_cap = initial.blob_fee_cap.expect("blob tx should have blob_fee_cap");
 
-    let old_blob_fee_cap = 1_000_000_000u128; // 1 gwei
     let bumped = manager
-        .increase_gas_price(&candidate, caps.gas_tip_cap, caps.gas_fee_cap, Some(old_blob_fee_cap))
+        .increase_gas_price(
+            &candidate,
+            initial.gas_tip_cap,
+            initial.gas_fee_cap,
+            Some(old_blob_fee_cap),
+        )
         .await
         .expect("should compute bumped fees with blob fee cap");
 
@@ -817,6 +844,27 @@ async fn increase_gas_price_bumps_blob_fee_cap() {
         "bumped blob_fee_cap {} should be >= 100% threshold {}",
         bumped.blob_fee_cap.unwrap(),
         threshold,
+    );
+}
+
+#[tokio::test]
+async fn increase_gas_price_rejects_blob_fee_cap_mismatch() {
+    let (manager, _anvil) = setup().await;
+
+    // Non-blob candidate with old_blob_fee_cap = Some should be rejected.
+    let non_blob_candidate = TxCandidate {
+        to: Some(Address::with_last_byte(0x42)),
+        ..Default::default()
+    };
+
+    let err = manager
+        .increase_gas_price(&non_blob_candidate, 1_000, 2_000, Some(500))
+        .await
+        .expect_err("should reject blob fee cap on non-blob tx");
+
+    assert!(
+        matches!(err, TxManagerError::Unsupported(_)),
+        "expected TxManagerError::Unsupported, got {err:?}",
     );
 }
 

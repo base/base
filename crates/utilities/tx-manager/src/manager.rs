@@ -41,7 +41,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_eips::{BlockNumberOrTag, Encodable2718};
+use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7594::BlobTransactionSidecarVariant};
 use alloy_network::{Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
@@ -85,6 +85,11 @@ pub struct PreparedTx {
     pub gas_limit: u64,
     /// Nonce assigned to the signed transaction.
     pub nonce: u64,
+    /// Cached blob sidecar from transaction construction. `None` for non-blob txs.
+    ///
+    /// Reused across fee bump iterations to avoid recomputing KZG proofs
+    /// from the same blob data.
+    pub sidecar: Option<BlobTransactionSidecarVariant>,
 }
 
 /// Mutable fee-bump state tracked across iterations in the send loop.
@@ -106,12 +111,15 @@ struct BumpState {
     tx_hash: B256,
     /// Nonce used in the most recently published transaction.
     nonce: u64,
+    /// Cached blob sidecar. Reused across fee bumps to avoid recomputing
+    /// KZG proofs from the same blob data.
+    sidecar: Option<BlobTransactionSidecarVariant>,
 }
 
 impl BumpState {
     /// Constructs a [`BumpState`] from a [`PreparedTx`] and the hash of the
     /// published transaction.
-    const fn from_prepared(prepared: &PreparedTx, tx_hash: B256) -> Self {
+    fn from_prepared(prepared: &PreparedTx, tx_hash: B256) -> Self {
         Self {
             tip: prepared.gas_tip_cap,
             fee_cap: prepared.gas_fee_cap,
@@ -119,6 +127,7 @@ impl BumpState {
             gas_limit: prepared.gas_limit,
             tx_hash,
             nonce: prepared.nonce,
+            sidecar: prepared.sidecar.clone(),
         }
     }
 }
@@ -275,13 +284,20 @@ impl SimpleTxManager {
 
     /// Checks that `fee` does not exceed the configured ceiling relative to
     /// `suggested` (the raw provider estimate before enforced minimums).
-    fn check_fee_limit(&self, fee: u128, suggested: u128) -> TxManagerResult<()> {
+    const fn check_fee_limit(&self, fee: u128, suggested: u128) -> TxManagerResult<()> {
         FeeCalculator::check_limits(
             fee,
             suggested,
             self.config.fee_limit_multiplier,
             self.config.fee_limit_threshold,
         )
+    }
+
+    /// Returns the raw (pre-minimum) blob fee cap from `caps`, falling back to
+    /// the configured [`min_blob_fee`](crate::TxManagerConfig::min_blob_fee)
+    /// when the provider did not return one.
+    fn raw_blob_baseline(&self, caps: &GasPriceCaps) -> u128 {
+        caps.raw_blob_fee_cap.unwrap_or(self.config.min_blob_fee)
     }
 
     /// Constructs and signs a transaction, retrying on transient errors.
@@ -319,7 +335,7 @@ impl SimpleTxManager {
         candidate: &TxCandidate,
         fee_overrides: Option<FeeOverride>,
     ) -> TxManagerResult<PreparedTx> {
-        self.prepare_with_initial_caps(candidate, fee_overrides, None, None).await
+        self.prepare_with_initial_caps(candidate, fee_overrides, None, None, None).await
     }
 
     /// Internal variant of [`prepare`](Self::prepare) that optionally reuses
@@ -339,9 +355,11 @@ impl SimpleTxManager {
         fee_overrides: Option<FeeOverride>,
         mut initial_caps: Option<GasPriceCaps>,
         nonce_override: Option<u64>,
+        cached_sidecar: Option<BlobTransactionSidecarVariant>,
     ) -> TxManagerResult<PreparedTx> {
         (|| {
             let caps = initial_caps.take();
+            let sidecar = cached_sidecar.clone();
             async move {
                 // Re-check closed flag on each retry attempt to avoid wasted
                 // RPC calls after shutdown. ChannelClosed is non-retryable,
@@ -349,7 +367,8 @@ impl SimpleTxManager {
                 if self.is_closed() {
                     return Err(TxManagerError::ChannelClosed);
                 }
-                self.craft_tx_with_caps(candidate, fee_overrides, caps, nonce_override).await
+                self.craft_tx_with_caps(candidate, fee_overrides, caps, nonce_override, sidecar)
+                    .await
             }
         })
         .retry(
@@ -508,6 +527,15 @@ impl SimpleTxManager {
         old_fee_cap: u128,
         old_blob_fee_cap: Option<u128>,
     ) -> TxManagerResult<BumpedFees> {
+        // Validate consistency: old_blob_fee_cap must be Some for blob txs
+        // and None for non-blob txs.
+        if old_blob_fee_cap.is_some() == candidate.blobs.is_empty() {
+            return Err(TxManagerError::Unsupported(
+                "old_blob_fee_cap must be Some for blob transactions and None for non-blob transactions"
+                    .into(),
+            ));
+        }
+
         // Step 1: Fetch fresh network fees.
         let caps = self.suggest_gas_price_caps_for(!candidate.blobs.is_empty()).await?;
 
@@ -537,9 +565,7 @@ impl SimpleTxManager {
                 // Enforce fee ceiling on blob fee cap using the raw
                 // (pre-minimum) blob fee cap as the baseline, mirroring
                 // the gas fee cap ceiling in Step 4.
-                if let Some(raw_blob) = caps.raw_blob_fee_cap {
-                    self.check_fee_limit(bumped_blob, raw_blob)?;
-                }
+                self.check_fee_limit(bumped_blob, self.raw_blob_baseline(&caps))?;
 
                 Some(bumped_blob)
             }
@@ -595,7 +621,7 @@ impl SimpleTxManager {
         candidate: &TxCandidate,
         fee_overrides: Option<FeeOverride>,
     ) -> TxManagerResult<PreparedTx> {
-        self.craft_tx_with_caps(candidate, fee_overrides, None, None).await
+        self.craft_tx_with_caps(candidate, fee_overrides, None, None, None).await
     }
 
     /// Internal variant of [`craft_tx`](Self::craft_tx) that optionally uses
@@ -610,6 +636,7 @@ impl SimpleTxManager {
         fee_overrides: Option<FeeOverride>,
         caps: Option<GasPriceCaps>,
         nonce_override: Option<u64>,
+        cached_sidecar: Option<BlobTransactionSidecarVariant>,
     ) -> TxManagerResult<PreparedTx> {
         let is_blob = !candidate.blobs.is_empty();
 
@@ -618,6 +645,15 @@ impl SimpleTxManager {
             return Err(TxManagerError::Unsupported(
                 "blob transactions must have a recipient address".to_string(),
             ));
+        }
+
+        // Reject blob transactions that exceed the per-transaction blob limit.
+        if is_blob && candidate.blobs.len() > crate::MAX_BLOBS_PER_TX {
+            return Err(TxManagerError::Unsupported(format!(
+                "blob count {} exceeds maximum {} per transaction",
+                candidate.blobs.len(),
+                crate::MAX_BLOBS_PER_TX,
+            )));
         }
 
         // Step 1: Get fee estimates (includes blob base fee when is_blob).
@@ -657,8 +693,8 @@ impl SimpleTxManager {
         };
 
         // Step 3c: Enforce blob fee ceiling (mirrors Step 3 for gas fee cap).
-        if let (Some(blob_cap), Some(raw_blob)) = (blob_fee_cap, caps.raw_blob_fee_cap) {
-            self.check_fee_limit(blob_cap, raw_blob)?;
+        if let Some(blob_cap) = blob_fee_cap {
+            self.check_fee_limit(blob_cap, self.raw_blob_baseline(&caps))?;
         }
 
         // Step 4: Build TransactionRequest.
@@ -678,14 +714,23 @@ impl SimpleTxManager {
         }
 
         // Step 4b: Attach blob sidecar and blob-specific fields.
-        if is_blob {
-            let sidecar_variant = self
-                .blob_builder
-                .make_sidecar_auto(Arc::clone(&candidate.blobs), caps.block_timestamp)?;
-            tx_request.sidecar = Some(sidecar_variant);
+        //
+        // Reuse a cached sidecar when available (fee bump iterations) to
+        // avoid recomputing KZG proofs from the same blob data.
+        let built_sidecar = if is_blob {
+            let sidecar_variant = match cached_sidecar {
+                Some(cached) => cached,
+                None => self
+                    .blob_builder
+                    .make_sidecar_auto(Arc::clone(&candidate.blobs), caps.block_timestamp)?,
+            };
+            tx_request.sidecar = Some(sidecar_variant.clone());
             tx_request.populate_blob_hashes();
             tx_request.max_fee_per_blob_gas = blob_fee_cap;
-        }
+            Some(sidecar_variant)
+        } else {
+            None
+        };
 
         // Step 5: Gas estimation.
         //
@@ -758,6 +803,7 @@ impl SimpleTxManager {
                     blob_fee_cap,
                     gas_limit,
                     nonce,
+                    sidecar: built_sidecar,
                 })
             }
             Err(e) => {
@@ -945,7 +991,7 @@ impl SimpleTxManager {
         // The returned PreparedTx carries the actual on-wire fees, eliminating
         // the need for a separate suggest_gas_price_caps() call.
         let prepared =
-            self.prepare_with_initial_caps(candidate, None, None, nonce_override).await?;
+            self.prepare_with_initial_caps(candidate, None, None, nonce_override, None).await?;
         let tx_hash = self.publish_tx(send_state, &prepared.raw_tx, None).await?;
         let mut bump = BumpState::from_prepared(&prepared, tx_hash);
 
@@ -1111,6 +1157,7 @@ impl SimpleTxManager {
                 Some(fee_override),
                 Some(bumped.caps),
                 Some(old.nonce),
+                old.sidecar.clone(),
             )
             .await?;
 
@@ -1509,11 +1556,11 @@ mod tests {
 
     #[rstest]
     #[case::success_updates_state(
-        Ok(BumpState { tip: 200, fee_cap: 2000, blob_fee_cap: None, gas_limit: 50_000, tx_hash: B256::with_last_byte(0x42), nonce: 0 }),
+        Ok(BumpState { tip: 200, fee_cap: 2000, blob_fee_cap: None, gas_limit: 50_000, tx_hash: B256::with_last_byte(0x42), nonce: 0, sidecar: None }),
         false, 200, 2000, None, 50_000, B256::with_last_byte(0x42),
     )]
     #[case::success_with_blob_fee_cap(
-        Ok(BumpState { tip: 300, fee_cap: 3000, blob_fee_cap: Some(10_000), gas_limit: 60_000, tx_hash: B256::with_last_byte(0x43), nonce: 1 }),
+        Ok(BumpState { tip: 300, fee_cap: 3000, blob_fee_cap: Some(10_000), gas_limit: 60_000, tx_hash: B256::with_last_byte(0x43), nonce: 1, sidecar: None }),
         false, 300, 3000, Some(10_000), 60_000, B256::with_last_byte(0x43),
     )]
     #[case::non_retryable_returns_abort(
@@ -1540,6 +1587,7 @@ mod tests {
             gas_limit: 21_000,
             tx_hash: B256::ZERO,
             nonce: 0,
+            sidecar: None,
         };
 
         let abort = SimpleTxManager::apply_bump_result(input, &mut state);
@@ -1621,7 +1669,7 @@ mod tests {
         };
 
         let prepared = manager
-            .prepare_with_initial_caps(&candidate, None, Some(caps.clone()), None)
+            .prepare_with_initial_caps(&candidate, None, Some(caps.clone()), None, None)
             .await
             .expect("should prepare tx using supplied caps");
         let tx = decode_eip1559(&prepared.raw_tx);

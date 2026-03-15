@@ -40,7 +40,7 @@ mod metrics;
 pub use metrics::{BaseTxMetrics, NoopTxMetrics, TxMetrics};
 
 mod blob;
-pub use blob::BlobTxBuilder;
+pub use blob::{BlobTxBuilder, MAX_BLOBS_PER_TX};
 
 #[cfg(test)]
 pub mod test_utils;
