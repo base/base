@@ -150,6 +150,26 @@ impl EncoderConfig {
     }
 }
 
+/// Errors returned by [`EncoderConfig::validate`].
+#[derive(Debug, thiserror::Error)]
+pub enum EncoderConfigError {
+    /// `sub_safety_margin >= max_channel_duration`.
+    ///
+    /// The effective channel timeout (`max_channel_duration - sub_safety_margin`) would
+    /// saturate to 0, causing every channel to close immediately on the first
+    /// `advance_l1_head` call. Ensure `sub_safety_margin < max_channel_duration`.
+    #[error(
+        "sub_safety_margin ({sub_safety_margin}) must be less than \
+         max_channel_duration ({max_channel_duration})"
+    )]
+    SafetyMarginTooLarge {
+        /// The configured safety margin.
+        sub_safety_margin: u64,
+        /// The configured maximum channel duration.
+        max_channel_duration: u64,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -186,24 +206,4 @@ mod tests {
         assert!(msg.contains(&sub_safety_margin.to_string()));
         assert!(msg.contains(&max_channel_duration.to_string()));
     }
-}
-
-/// Errors returned by [`EncoderConfig::validate`].
-#[derive(Debug, thiserror::Error)]
-pub enum EncoderConfigError {
-    /// `sub_safety_margin >= max_channel_duration`.
-    ///
-    /// The effective channel timeout (`max_channel_duration - sub_safety_margin`) would
-    /// saturate to 0, causing every channel to close immediately on the first
-    /// `advance_l1_head` call. Ensure `sub_safety_margin < max_channel_duration`.
-    #[error(
-        "sub_safety_margin ({sub_safety_margin}) must be less than \
-         max_channel_duration ({max_channel_duration})"
-    )]
-    SafetyMarginTooLarge {
-        /// The configured safety margin.
-        sub_safety_margin: u64,
-        /// The configured maximum channel duration.
-        max_channel_duration: u64,
-    },
 }

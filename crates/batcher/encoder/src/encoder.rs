@@ -119,9 +119,9 @@ impl BatchEncoder {
 
         debug!(
             channel_id = ?channel_id,
-            frame_count = frames.len(),
-            block_range_start = block_range.start,
-            block_range_end = block_range.end,
+            frame_count = %frames.len(),
+            block_range_start = %block_range.start,
+            block_range_end = %block_range.end,
             "closed channel"
         );
 
@@ -167,7 +167,7 @@ impl BatchEncoder {
         };
 
         if should_close {
-            debug!(l1_head = self.l1_head, "channel timed out, closing");
+            debug!(l1_head = %self.l1_head, "channel timed out, closing");
             self.close_current_channel();
         }
 
@@ -223,8 +223,8 @@ impl BatchPipeline for BatchEncoder {
                 self.block_cursor += 1;
 
                 debug!(
-                    block_cursor = self.block_cursor,
-                    blocks_len = self.blocks.len(),
+                    block_cursor = %self.block_cursor,
+                    blocks_len = %self.blocks.len(),
                     "encoded block into channel"
                 );
 
@@ -276,7 +276,7 @@ impl BatchPipeline for BatchEncoder {
 
         let chan_idx = pending_ref.channel_idx;
         if chan_idx >= self.ready_channels.len() {
-            warn!(id = ?id, chan_idx, "confirm: channel index out of bounds; submission lost");
+            warn!(id = ?id, chan_idx = %chan_idx, "confirm: channel index out of bounds; submission lost");
             return;
         }
 
@@ -290,8 +290,8 @@ impl BatchPipeline for BatchEncoder {
 
             debug!(
                 channel_id = ?channel.id,
-                block_range_start = block_range.start,
-                block_range_end = block_range.end,
+                block_range_start = %block_range.start,
+                block_range_end = %block_range.end,
                 "channel fully confirmed, pruning blocks"
             );
 
@@ -308,9 +308,7 @@ impl BatchPipeline for BatchEncoder {
             // Prune confirmed blocks from the deque.
             let prune_count = block_range.end;
             if prune_count > 0 {
-                for _ in 0..prune_count {
-                    self.blocks.pop_front();
-                }
+                self.blocks.drain(..prune_count);
                 self.block_cursor = self.block_cursor.saturating_sub(prune_count);
 
                 // Adjust the high-water mark for all remaining channels.
@@ -330,7 +328,7 @@ impl BatchPipeline for BatchEncoder {
 
         let chan_idx = pending_ref.channel_idx;
         if chan_idx >= self.ready_channels.len() {
-            warn!(id = ?id, chan_idx, "requeue: channel index out of bounds; submission lost");
+            warn!(id = ?id, chan_idx = %chan_idx, "requeue: channel index out of bounds; submission lost");
             return;
         }
 
@@ -344,8 +342,8 @@ impl BatchPipeline for BatchEncoder {
 
         debug!(
             id = ?id,
-            frame_start = pending_ref.frame_start,
-            frame_count = pending_ref.frame_count,
+            frame_start = %pending_ref.frame_start,
+            frame_count = %pending_ref.frame_count,
             "requeued submission"
         );
     }
@@ -373,17 +371,13 @@ impl BatchPipeline for BatchEncoder {
     }
 
     fn da_backlog_bytes(&self) -> u64 {
-        let mut total: u64 = 0;
-        for block in self.blocks.iter().skip(self.block_cursor) {
-            for tx in &block.body.transactions {
-                // Exclude deposit transactions (type 0x7E).
-                if matches!(tx, OpTxEnvelope::Deposit(_)) {
-                    continue;
-                }
-                total += tx.encode_2718_len() as u64;
-            }
-        }
-        total
+        self.blocks
+            .iter()
+            .skip(self.block_cursor)
+            .flat_map(|b| &b.body.transactions)
+            .filter(|tx| !matches!(tx, OpTxEnvelope::Deposit(_)))
+            .map(|tx| tx.encode_2718_len() as u64)
+            .sum()
     }
 }
 

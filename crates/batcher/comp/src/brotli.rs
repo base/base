@@ -2,6 +2,8 @@
 
 use alloc::vec::Vec;
 
+use brotli::enc::{BrotliCompress, BrotliEncoderParams};
+
 use crate::{ChannelCompressor, CompressorError, CompressorResult, CompressorWriter};
 
 /// The brotli encoding level used in Base.
@@ -53,33 +55,30 @@ impl BrotliCompressor {
         let level = level.into();
         Self { compressed: Vec::new(), raw: Vec::new(), closed: false, level }
     }
+
+    /// Compresses the given bytes data using the Brotli compressor implemented
+    /// in the [`brotli`](https://crates.io/crates/brotli) crate.
+    ///
+    /// Note: The level must be between 0 and 11. In Base, the levels 9, 10, and 11 are used.
+    ///       By default, [`BrotliLevel::Brotli10`] is used.
+    pub fn compress(
+        mut input: &[u8],
+        level: BrotliLevel,
+    ) -> Result<Vec<u8>, BrotliCompressionError> {
+        let mut output = alloc::vec![];
+        BrotliCompress(
+            &mut input,
+            &mut output,
+            &BrotliEncoderParams { quality: level as i32, ..Default::default() },
+        )?;
+        Ok(output)
+    }
 }
 
 impl From<BrotliLevel> for BrotliCompressor {
     fn from(level: BrotliLevel) -> Self {
         Self::new(level)
     }
-}
-
-/// Compresses the given bytes data using the Brotli compressor implemented
-/// in the [`brotli`](https://crates.io/crates/brotli) crate.
-///
-/// Note: The level must be between 0 and 11. In Base, the levels 9, 10, and 11 are used.
-///       By default, [`BrotliLevel::Brotli10`] is used.
-#[allow(unused_variables)]
-#[allow(unused_mut)]
-pub fn compress_brotli(
-    mut input: &[u8],
-    level: BrotliLevel,
-) -> Result<Vec<u8>, BrotliCompressionError> {
-    use brotli::enc::{BrotliCompress, BrotliEncoderParams};
-    let mut output = alloc::vec![];
-    BrotliCompress(
-        &mut input,
-        &mut output,
-        &BrotliEncoderParams { quality: level as i32, ..Default::default() },
-    )?;
-    Ok(output)
 }
 
 impl CompressorWriter for BrotliCompressor {
@@ -93,7 +92,7 @@ impl CompressorWriter for BrotliCompressor {
 
         // Compress the raw buffer.
         self.compressed =
-            compress_brotli(&self.raw, self.level).map_err(|_| CompressorError::Brotli)?;
+            Self::compress(&self.raw, self.level).map_err(|_| CompressorError::Brotli)?;
 
         Ok(data.len())
     }

@@ -55,13 +55,9 @@ impl From<Config> for RatioCompressor {
 
 impl CompressorWriter for RatioCompressor {
     fn write(&mut self, data: &[u8]) -> CompressorResult<usize> {
-        match self.compressor.write(data) {
-            Ok(n) => {
-                self.lake += n as u64;
-                Ok(n)
-            }
-            Err(e) => Err(e),
-        }
+        let n = self.compressor.write(data)?;
+        self.lake += n as u64;
+        Ok(n)
     }
 
     fn flush(&mut self) -> CompressorResult<()> {

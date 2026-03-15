@@ -6,18 +6,8 @@ use miniz_oxide::inflate::DecompressError;
 
 use crate::{ChannelCompressor, CompressorResult, CompressorWriter};
 
-/// The best compression.
+/// The best compression level for ZLIB.
 const BEST_ZLIB_COMPRESSION: u8 = 9;
-
-/// Method to compress data using ZLIB.
-pub fn compress_zlib(data: &[u8]) -> Vec<u8> {
-    miniz_oxide::deflate::compress_to_vec(data, BEST_ZLIB_COMPRESSION)
-}
-
-/// Method to decompress data using ZLIB.
-pub fn decompress_zlib(data: &[u8]) -> Result<Vec<u8>, DecompressError> {
-    miniz_oxide::inflate::decompress_to_vec(data)
-}
 
 /// The ZLIB compressor.
 #[derive(Debug, Clone, Default)]
@@ -34,13 +24,23 @@ impl ZlibCompressor {
     pub const fn new() -> Self {
         Self { buffer: Vec::new(), compressed: Vec::new() }
     }
+
+    /// Compress `data` using ZLIB deflate.
+    pub fn compress(data: &[u8]) -> Vec<u8> {
+        miniz_oxide::deflate::compress_to_vec(data, BEST_ZLIB_COMPRESSION)
+    }
+
+    /// Decompress ZLIB-deflated `data`.
+    pub fn decompress(data: &[u8]) -> Result<Vec<u8>, DecompressError> {
+        miniz_oxide::inflate::decompress_to_vec(data)
+    }
 }
 
 impl CompressorWriter for ZlibCompressor {
     fn write(&mut self, data: &[u8]) -> CompressorResult<usize> {
         self.buffer.extend_from_slice(data);
         self.compressed.clear();
-        self.compressed.extend_from_slice(&compress_zlib(&self.buffer));
+        self.compressed.extend_from_slice(&Self::compress(&self.buffer));
         Ok(data.len())
     }
 
