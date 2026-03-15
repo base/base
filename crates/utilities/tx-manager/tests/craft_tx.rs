@@ -158,6 +158,11 @@ async fn craft_tx_rejects_blob_without_recipient() {
 
 #[tokio::test]
 async fn craft_tx_produces_valid_signed_blob_transaction() {
+    // This test also implicitly verifies that `estimate_gas` succeeds when
+    // the sidecar is stripped but blob versioned hashes remain on the
+    // TransactionRequest (the sidecar-strip path in craft_tx_with_caps
+    // Step 5). If the node rejected hashes-without-sidecar, this test
+    // would fail at craft_tx.
     let (manager, anvil) = setup().await;
 
     let to = Address::with_last_byte(0x42);
@@ -205,6 +210,37 @@ async fn craft_tx_produces_valid_signed_blob_transaction() {
         inner.max_fee_per_blob_gas,
         "PreparedTx blob_fee_cap should match decoded max_fee_per_blob_gas",
     );
+}
+
+#[tokio::test]
+async fn craft_tx_produces_cell_proof_sidecar_when_enabled() {
+    let config = TxManagerConfig {
+        cell_proofs_activation_timestamp: 0,
+        ..TxManagerConfig::default()
+    };
+    let (manager, anvil) = setup_with_config(config).await;
+
+    let to = Address::with_last_byte(0x42);
+    let candidate =
+        TxCandidate { to: Some(to), blobs: Arc::new(vec![Blob::default()]), ..Default::default() };
+
+    let prepared =
+        manager.craft_tx(&candidate, None).await.expect("should craft cell-proof blob tx");
+
+    // The cached sidecar must use the EIP-7594 (cell proofs) variant.
+    let sidecar = prepared.sidecar.as_ref().expect("sidecar should be Some for blob tx");
+    assert!(sidecar.is_eip7594(), "expected EIP-7594 cell-proof sidecar");
+
+    // On the wire it is still EIP-4844 type — cell proofs are sidecar-internal.
+    let envelope =
+        TxEnvelope::decode_2718(&mut prepared.raw_tx.as_ref()).expect("should decode TxEnvelope");
+    assert!(envelope.is_eip4844(), "expected EIP-4844 transaction type");
+
+    let signed = envelope.as_eip4844().expect("should be EIP-4844");
+    let inner = signed.tx().tx();
+    assert_eq!(inner.to, to, "recipient should match");
+    assert_eq!(inner.chain_id, anvil.chain_id(), "chain_id should match");
+    assert!(!inner.blob_versioned_hashes.is_empty(), "blob_versioned_hashes should be populated");
 }
 
 #[tokio::test]

@@ -195,8 +195,8 @@ pub struct FeeOverride {
     pub gas_tip_cap: u128,
     /// Minimum acceptable maximum total fee per gas (base fee + tip).
     pub gas_fee_cap: u128,
-    /// Minimum acceptable blob fee cap (for EIP-4844 txs). `0` = no override.
-    pub blob_fee_cap: u128,
+    /// Minimum acceptable blob fee cap (for EIP-4844 txs). `None` = no override.
+    pub blob_fee_cap: Option<u128>,
     /// Minimum gas limit (floor). Used during fee bumps so the gas limit
     /// never decreases across replacement attempts. `0` = no override.
     pub gas_limit_floor: u64,
@@ -206,13 +206,13 @@ impl FeeOverride {
     /// Creates a new [`FeeOverride`] with the given tip and fee cap floors.
     #[must_use]
     pub const fn new(gas_tip_cap: u128, gas_fee_cap: u128) -> Self {
-        Self { gas_tip_cap, gas_fee_cap, blob_fee_cap: 0, gas_limit_floor: 0 }
+        Self { gas_tip_cap, gas_fee_cap, blob_fee_cap: None, gas_limit_floor: 0 }
     }
 
     /// Returns a copy with the blob fee cap floor set.
     #[must_use]
     pub const fn with_blob_fee_cap(mut self, blob_fee_cap: u128) -> Self {
-        self.blob_fee_cap = blob_fee_cap;
+        self.blob_fee_cap = Some(blob_fee_cap);
         self
     }
 

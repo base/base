@@ -26,6 +26,7 @@ pub struct TxCandidate {
     /// ETH value to send.
     pub value: U256,
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

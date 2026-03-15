@@ -87,8 +87,10 @@ pub struct PreparedTx {
     pub nonce: u64,
     /// Cached blob sidecar from transaction construction. `None` for non-blob txs.
     ///
-    /// Wrapped in `Arc` so fee-bump retry clones are pointer copies (~0 bytes)
-    /// instead of deep clones (~800 KB per blob).
+    /// Wrapped in `Arc` so cloning across fee-bump iterations is a pointer
+    /// copy rather than a deep clone (~800 KB per blob). One deep clone per
+    /// `craft_tx` call is unavoidable because alloy's
+    /// `TransactionRequest::sidecar` requires an owned value.
     pub sidecar: Option<Arc<BlobTransactionSidecarVariant>>,
 }
 
@@ -111,8 +113,8 @@ struct BumpState {
     tx_hash: B256,
     /// Nonce used in the most recently published transaction.
     nonce: u64,
-    /// Cached blob sidecar. Wrapped in `Arc` so fee-bump retry clones are
-    /// pointer copies (~0 bytes) instead of deep clones (~800 KB per blob).
+    /// Cached blob sidecar. See [`PreparedTx::sidecar`] for rationale on
+    /// the `Arc` wrapper.
     sidecar: Option<Arc<BlobTransactionSidecarVariant>>,
 }
 
@@ -297,6 +299,13 @@ impl SimpleTxManager {
     /// the configured [`min_blob_fee`](crate::TxManagerConfig::min_blob_fee)
     /// when the provider did not return one.
     fn raw_blob_baseline(&self, caps: &GasPriceCaps) -> u128 {
+        // Invariant: when called from a blob tx path, suggest_gas_price_caps_for(true)
+        // always populates raw_blob_fee_cap. The unwrap_or fallback is retained as
+        // a safety net but should never fire in practice.
+        debug_assert!(
+            caps.raw_blob_fee_cap.is_some(),
+            "raw_blob_fee_cap should always be Some when called from a blob tx path",
+        );
         caps.raw_blob_fee_cap.unwrap_or(self.config.min_blob_fee)
     }
 
@@ -383,13 +392,15 @@ impl SimpleTxManager {
         .await
     }
 
-    /// Queries the provider for current gas price estimates (non-blob transactions).
+    /// Queries the provider for current gas price estimates.
     ///
-    /// Returns a [`GasPriceCaps`] with `blob_fee_cap: None` and
-    /// `raw_blob_fee_cap: None`. For blob fee estimates, use
-    /// [`craft_tx`](Self::craft_tx) or [`prepare`](Self::prepare) with a
-    /// blob-carrying [`TxCandidate`] — those methods fetch blob fees
-    /// internally.
+    /// Returns a [`GasPriceCaps`] for **non-blob** (EIP-1559) transactions only:
+    /// `blob_fee_cap` and `raw_blob_fee_cap` will always be `None`.
+    ///
+    /// Blob fee estimation is performed internally by
+    /// [`craft_tx`](Self::craft_tx) and [`prepare`](Self::prepare) when the
+    /// [`TxCandidate`] carries blobs — there is no need to call this method
+    /// separately for blob transactions.
     ///
     /// # Errors
     ///
@@ -686,8 +697,8 @@ impl SimpleTxManager {
         // Step 3b: Compute blob fee cap with config minimum and override floor.
         let blob_fee_cap = if is_blob {
             let network = caps.blob_fee_cap.unwrap_or(self.config.min_blob_fee);
-            let override_val = fee_overrides.as_ref().map_or(0, |fo| fo.blob_fee_cap);
-            Some(network.max(override_val))
+            let floor = fee_overrides.as_ref().and_then(|fo| fo.blob_fee_cap).unwrap_or(0);
+            Some(network.max(floor))
         } else {
             None
         };
@@ -1158,9 +1169,11 @@ impl SimpleTxManager {
         // Build fee overrides including blob fee cap and gas limit floor.
         // The gas limit floor ensures the limit never decreases across bumps,
         // avoiding a full candidate clone.
-        let fee_override = FeeOverride::new(bumped.gas_tip_cap, bumped.gas_fee_cap)
-            .with_blob_fee_cap(bumped.blob_fee_cap.unwrap_or(0))
+        let mut fee_override = FeeOverride::new(bumped.gas_tip_cap, bumped.gas_fee_cap)
             .with_gas_limit_floor(old.gas_limit);
+        if let Some(blob_cap) = bumped.blob_fee_cap {
+            fee_override = fee_override.with_blob_fee_cap(blob_cap);
+        }
 
         // Rebuild transaction with bumped fees as overrides and the fresh
         // caps to avoid a redundant provider round-trip.
