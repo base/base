@@ -5,8 +5,10 @@
 //! [`BlobTransactionSidecarVariant::Eip7594`] (cell proofs, 128 proofs/blob)
 //! depending on a configurable activation timestamp.
 
+use std::sync::Arc;
+
 use alloy_eips::{
-    eip4844::{BlobTransactionSidecar, c_kzg, env_settings::EnvKzgSettings},
+    eip4844::{Blob, BlobTransactionSidecar, c_kzg, env_settings::EnvKzgSettings},
     eip7594::BlobTransactionSidecarVariant,
 };
 
@@ -52,7 +54,7 @@ impl BlobTxBuilder {
     /// Returns [`TxManagerError::Unsupported`] if KZG computation fails.
     pub fn make_sidecar(
         &self,
-        blobs: Vec<alloy_eips::eip4844::Blob>,
+        blobs: Arc<Vec<Blob>>,
     ) -> Result<BlobTransactionSidecar, TxManagerError> {
         let settings = EnvKzgSettings::Default;
         Self::build_legacy_sidecar(blobs, settings.get())
@@ -66,7 +68,7 @@ impl BlobTxBuilder {
     /// Returns [`TxManagerError::Unsupported`] if KZG computation fails.
     pub fn make_sidecar_auto(
         &self,
-        blobs: Vec<alloy_eips::eip4844::Blob>,
+        blobs: Arc<Vec<Blob>>,
         block_timestamp: u64,
     ) -> Result<BlobTransactionSidecarVariant, TxManagerError> {
         let settings = EnvKzgSettings::Default;
@@ -84,13 +86,17 @@ impl BlobTxBuilder {
     }
 
     /// Internal helper: builds a legacy sidecar with the given KZG settings.
+    ///
+    /// Uses [`Arc::unwrap_or_clone`] to avoid copying when the caller has
+    /// relinquished its reference (single owner).
     fn build_legacy_sidecar(
-        blobs: Vec<alloy_eips::eip4844::Blob>,
+        blobs: Arc<Vec<Blob>>,
         kzg: &c_kzg::KzgSettings,
     ) -> Result<BlobTransactionSidecar, TxManagerError> {
-        BlobTransactionSidecar::try_from_blobs_with_settings(blobs, kzg).map_err(|e| {
-            TxManagerError::Unsupported(format!("KZG sidecar construction failed: {e}"))
-        })
+        BlobTransactionSidecar::try_from_blobs_with_settings(Arc::unwrap_or_clone(blobs), kzg)
+            .map_err(|e| {
+                TxManagerError::Unsupported(format!("KZG sidecar construction failed: {e}"))
+            })
     }
 }
 
@@ -113,7 +119,7 @@ mod tests {
     #[test]
     fn make_sidecar_single_blob() {
         let builder = legacy_builder();
-        let sidecar = builder.make_sidecar(vec![Blob::default()]).unwrap();
+        let sidecar = builder.make_sidecar(Arc::new(vec![Blob::default()])).unwrap();
         assert_eq!(sidecar.blobs.len(), 1);
         assert_eq!(sidecar.commitments.len(), 1);
         assert_eq!(sidecar.proofs.len(), 1);
@@ -122,7 +128,8 @@ mod tests {
     #[test]
     fn make_sidecar_two_blobs() {
         let builder = legacy_builder();
-        let sidecar = builder.make_sidecar(vec![Blob::default(), Blob::default()]).unwrap();
+        let sidecar =
+            builder.make_sidecar(Arc::new(vec![Blob::default(), Blob::default()])).unwrap();
         assert_eq!(sidecar.blobs.len(), 2);
         assert_eq!(sidecar.commitments.len(), 2);
         assert_eq!(sidecar.proofs.len(), 2);
@@ -131,8 +138,7 @@ mod tests {
     #[test]
     fn make_sidecar_six_blobs() {
         let builder = legacy_builder();
-        let blobs = vec![Blob::default(); 6];
-        let sidecar = builder.make_sidecar(blobs).unwrap();
+        let sidecar = builder.make_sidecar(Arc::new(vec![Blob::default(); 6])).unwrap();
         assert_eq!(sidecar.blobs.len(), 6);
         assert_eq!(sidecar.commitments.len(), 6);
         assert_eq!(sidecar.proofs.len(), 6);
@@ -141,7 +147,8 @@ mod tests {
     #[test]
     fn versioned_hashes_use_0x01_version_byte() {
         let builder = legacy_builder();
-        let sidecar = builder.make_sidecar(vec![Blob::default(), Blob::default()]).unwrap();
+        let sidecar =
+            builder.make_sidecar(Arc::new(vec![Blob::default(), Blob::default()])).unwrap();
         for hash in sidecar.versioned_hashes() {
             assert_eq!(hash.0[0], 0x01, "versioned hash should start with 0x01, got: {hash}");
         }
@@ -180,7 +187,7 @@ mod tests {
     #[test]
     fn make_sidecar_auto_legacy() {
         let builder = legacy_builder();
-        let variant = builder.make_sidecar_auto(vec![Blob::default()], 0).unwrap();
+        let variant = builder.make_sidecar_auto(Arc::new(vec![Blob::default()]), 0).unwrap();
         assert!(variant.is_eip4844(), "expected Eip4844 variant");
         let sidecar = variant.as_eip4844().unwrap();
         assert_eq!(sidecar.proofs.len(), 1);
@@ -189,7 +196,7 @@ mod tests {
     #[test]
     fn make_sidecar_auto_cell_proofs() {
         let builder = cell_proofs_builder();
-        let variant = builder.make_sidecar_auto(vec![Blob::default()], 1_000).unwrap();
+        let variant = builder.make_sidecar_auto(Arc::new(vec![Blob::default()]), 1_000).unwrap();
         assert!(variant.is_eip7594(), "expected Eip7594 variant");
         let sidecar = variant.as_eip7594().unwrap();
         // 128 cell proofs per blob.

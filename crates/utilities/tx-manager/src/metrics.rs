@@ -26,6 +26,9 @@ const BASEFEE_GWEI: &str = "base_tx_manager_basefee_gwei";
 /// Metric name for the tip cap in gwei.
 const TIPCAP_GWEI: &str = "base_tx_manager_tipcap_gwei";
 
+/// Metric name for the blob fee cap in gwei.
+const BLOB_FEE_GWEI: &str = "base_tx_manager_blob_fee_gwei";
+
 /// Metric name for RPC error count.
 const RPC_ERROR_COUNT: &str = "base_tx_manager_rpc_error_count";
 
@@ -64,6 +67,9 @@ pub trait TxMetrics: Send + Sync + Debug + 'static {
     /// Record the tip cap in gwei (fractional precision preserved).
     fn record_tipcap(&self, tipcap_gwei: f64);
 
+    /// Record the blob fee cap in gwei (fractional precision preserved).
+    fn record_blob_fee(&self, blob_fee_gwei: f64);
+
     /// Record an RPC error.
     fn record_rpc_error(&self);
 
@@ -96,6 +102,7 @@ impl TxMetrics for NoopTxMetrics {
     fn record_publish_error(&self) {}
     fn record_basefee(&self, _basefee_gwei: f64) {}
     fn record_tipcap(&self, _tipcap_gwei: f64) {}
+    fn record_blob_fee(&self, _blob_fee_gwei: f64) {}
     fn record_rpc_error(&self) {}
     fn record_tx_confirmed(&self) {}
     fn record_tx_failed(&self) {}
@@ -140,6 +147,7 @@ impl BaseTxMetrics {
         describe_counter!(TX_PUBLISH_ERROR_COUNT, "Number of transaction publish errors");
         describe_gauge!(BASEFEE_GWEI, "Base fee in gwei");
         describe_gauge!(TIPCAP_GWEI, "Tip cap in gwei");
+        describe_gauge!(BLOB_FEE_GWEI, "Blob fee cap in gwei");
         describe_counter!(RPC_ERROR_COUNT, "Number of RPC errors");
         describe_counter!(TX_CONFIRMED_COUNT, "Number of confirmed transactions");
         describe_counter!(
@@ -178,6 +186,10 @@ impl TxMetrics for BaseTxMetrics {
         gauge!(TIPCAP_GWEI, NAME_LABEL => self.name).set(tipcap_gwei);
     }
 
+    fn record_blob_fee(&self, blob_fee_gwei: f64) {
+        gauge!(BLOB_FEE_GWEI, NAME_LABEL => self.name).set(blob_fee_gwei);
+    }
+
     fn record_rpc_error(&self) {
         counter!(RPC_ERROR_COUNT, NAME_LABEL => self.name).increment(1);
     }
@@ -205,6 +217,7 @@ mod tests {
         m.record_publish_error();
         m.record_basefee(30.123);
         m.record_tipcap(2.456);
+        m.record_blob_fee(1.0);
         m.record_rpc_error();
         m.record_tx_confirmed();
         m.record_tx_failed();
@@ -226,6 +239,7 @@ mod tests {
         m.record_publish_error();
         m.record_basefee(30.123);
         m.record_tipcap(2.456);
+        m.record_blob_fee(1.0);
         m.record_rpc_error();
         m.record_tx_confirmed();
         m.record_tx_failed();

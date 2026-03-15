@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use alloy_consensus::{SignableTransaction, TxEip1559, TxEnvelope};
+use alloy_consensus::{SignableTransaction, TxEip1559, TxEip4844Variant, TxEnvelope};
 use alloy_eips::{Decodable2718, eip4844::Blob};
 use alloy_network::{EthereumWallet, TxSigner};
 use alloy_node_bindings::Anvil;
@@ -118,7 +118,11 @@ async fn craft_tx_with_explicit_gas_limit_above_estimate() {
 async fn craft_tx_rejects_blob_without_recipient() {
     let (manager, _anvil) = setup().await;
 
-    let candidate = TxCandidate { to: None, blobs: vec![Blob::default()], ..Default::default() };
+    let candidate = TxCandidate {
+        to: None,
+        blobs: Arc::new(vec![Blob::default()]),
+        ..Default::default()
+    };
 
     let err =
         manager.craft_tx(&candidate, None).await.expect_err("should reject blob tx without to");
@@ -131,6 +135,64 @@ async fn craft_tx_rejects_blob_without_recipient() {
         }
         other => panic!("expected TxManagerError::Unsupported, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn craft_tx_produces_valid_signed_blob_transaction() {
+    let (manager, anvil) = setup().await;
+
+    let to = Address::with_last_byte(0x42);
+    let candidate = TxCandidate {
+        to: Some(to),
+        blobs: Arc::new(vec![Blob::default()]),
+        ..Default::default()
+    };
+
+    let prepared = manager.craft_tx(&candidate, None).await.expect("should craft blob tx");
+
+    // Decode the raw transaction bytes.
+    let envelope =
+        TxEnvelope::decode_2718(&mut prepared.raw_tx.as_ref()).expect("should decode TxEnvelope");
+
+    // Must be EIP-4844 type.
+    assert!(envelope.is_eip4844(), "expected EIP-4844 transaction, got {envelope:?}");
+
+    let signed = envelope.as_eip4844().expect("should be EIP-4844");
+    let variant = signed.tx();
+
+    // The inner tx must have blob-specific fields populated.
+    let inner = variant.tx();
+    assert_eq!(inner.to, to, "recipient should match");
+    assert_eq!(inner.chain_id, anvil.chain_id(), "chain_id should match");
+    assert!(!inner.blob_versioned_hashes.is_empty(), "blob_versioned_hashes should be populated");
+    assert_eq!(
+        inner.blob_versioned_hashes.len(),
+        1,
+        "should have one versioned hash for one blob",
+    );
+    assert!(inner.max_fee_per_blob_gas > 0, "max_fee_per_blob_gas should be non-zero");
+
+    // Versioned hashes must use the 0x01 version byte.
+    for hash in &inner.blob_versioned_hashes {
+        assert_eq!(hash.0[0], 0x01, "versioned hash should start with 0x01, got: {hash}");
+    }
+
+    // The sidecar must be present (TxEip4844WithSidecar variant).
+    assert!(
+        matches!(variant, TxEip4844Variant::TxEip4844WithSidecar(_)),
+        "expected TxEip4844WithSidecar variant, got standalone TxEip4844",
+    );
+
+    // PreparedTx must carry the blob fee cap.
+    assert!(prepared.blob_fee_cap.is_some(), "PreparedTx blob_fee_cap should be Some");
+    assert!(prepared.blob_fee_cap.unwrap() > 0, "PreparedTx blob_fee_cap should be non-zero");
+
+    // PreparedTx blob fee cap must match the max_fee_per_blob_gas in the signed tx.
+    assert_eq!(
+        prepared.blob_fee_cap.unwrap(),
+        inner.max_fee_per_blob_gas,
+        "PreparedTx blob_fee_cap should match decoded max_fee_per_blob_gas",
+    );
 }
 
 #[tokio::test]
@@ -399,7 +461,11 @@ async fn prepare_exits_immediately_on_non_retryable_error() {
     let (manager, _anvil) = setup().await;
 
     // Blob transactions without a recipient trigger Unsupported (non-retryable).
-    let candidate = TxCandidate { to: None, blobs: vec![Blob::default()], ..Default::default() };
+    let candidate = TxCandidate {
+        to: None,
+        blobs: Arc::new(vec![Blob::default()]),
+        ..Default::default()
+    };
 
     let err = manager
         .prepare(&candidate, None)

@@ -174,7 +174,7 @@ where
                             tx_data: Bytes::new(),
                             value: U256::ZERO,
                             gas_limit: 0,
-                            blobs,
+                            blobs: Arc::new(blobs),
                         };
                         let handle = self.tx_manager.send_async(candidate).await;
                         let fut: Pin<Box<dyn Future<Output = (SubmissionId, TxOutcome)> + Send>> =

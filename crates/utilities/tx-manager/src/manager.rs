@@ -441,7 +441,9 @@ impl SimpleTxManager {
                     .map_err(|_| self.rpc_error("get_blob_base_fee timed out"))?
                     .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?;
                 let blob_base_fee = raw_blob_base_fee.max(self.config.min_blob_fee);
-                Some(FeeCalculator::calc_blob_fee_cap(blob_base_fee))
+                let blob_cap = FeeCalculator::calc_blob_fee_cap(blob_base_fee);
+                self.metrics.record_blob_fee(blob_cap as f64 / WEI_PER_GWEI);
+                Some(blob_cap)
             }
             None => None,
         };
@@ -514,12 +516,38 @@ impl SimpleTxManager {
         )?;
 
         // Step 5: Bump blob fee cap separately with 100% minimum.
-        let blob_fee_cap = old_blob_fee_cap.map(|old_blob| {
-            let threshold = FeeCalculator::calc_threshold_value(old_blob, true);
-            caps.blob_fee_cap.map_or(threshold, |network_blob| threshold.max(network_blob))
-        });
+        let blob_fee_cap = match old_blob_fee_cap {
+            Some(old_blob) => {
+                let threshold = FeeCalculator::calc_threshold_value(old_blob, true);
+                let bumped_blob =
+                    caps.blob_fee_cap.map_or(threshold, |network_blob| threshold.max(network_blob));
 
-        info!(%old_tip, %old_fee_cap, %bumped_tip, %bumped_fee_cap, "gas price increase computed");
+                // Enforce fee ceiling on blob fee cap using the network's
+                // suggested blob fee cap as the baseline, mirroring the
+                // gas fee cap ceiling in Step 4.
+                if let Some(suggested_blob) = caps.blob_fee_cap {
+                    FeeCalculator::check_limits(
+                        bumped_blob,
+                        suggested_blob,
+                        self.config.fee_limit_multiplier,
+                        self.config.fee_limit_threshold,
+                    )?;
+                }
+
+                Some(bumped_blob)
+            }
+            None => None,
+        };
+
+        info!(
+            %old_tip,
+            %old_fee_cap,
+            %bumped_tip,
+            %bumped_fee_cap,
+            old_blob_fee_cap = ?old_blob_fee_cap,
+            blob_fee_cap = ?blob_fee_cap,
+            "gas price increase computed",
+        );
 
         Ok(BumpedFees { gas_tip_cap: bumped_tip, gas_fee_cap: bumped_fee_cap, blob_fee_cap, caps })
     }
@@ -646,7 +674,7 @@ impl SimpleTxManager {
         if is_blob {
             let sidecar_variant = self
                 .blob_builder
-                .make_sidecar_auto(candidate.blobs.clone(), caps.block_timestamp)?;
+                .make_sidecar_auto(Arc::clone(&candidate.blobs), caps.block_timestamp)?;
             tx_request.sidecar = Some(sidecar_variant);
             tx_request.populate_blob_hashes();
             tx_request.max_fee_per_blob_gas = blob_fee_cap;
@@ -1084,6 +1112,8 @@ impl SimpleTxManager {
             new_tip = %prepared.gas_tip_cap,
             old_fee_cap = %old.fee_cap,
             new_fee_cap = %prepared.gas_fee_cap,
+            old_blob_fee_cap = ?old.blob_fee_cap,
+            new_blob_fee_cap = ?prepared.blob_fee_cap,
             old_gas_limit = %old.gas_limit,
             new_gas_limit = %prepared.gas_limit,
             "fee bump applied",
