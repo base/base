@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_alloy_consensus::OpBlock;
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 use futures::{StreamExt, stream::BoxStream};
 use tokio::time::{Duration, Interval, interval};
 
@@ -89,10 +89,25 @@ where
                     "reorg detected: different hash for same block number"
                 );
                 self.seen.insert(number, hash);
-                // TODO: L2BlockInfo requires l1_origin and seq_num which need deposit tx parsing.
-                // For now, construct a minimal L2BlockInfo from the block header.
                 let block_info = BlockInfo::from(&block);
-                let new_safe_head = L2BlockInfo::new(block_info, Default::default(), 0);
+                // Parse l1_origin and seq_num from the L1 info deposit tx embedded in every L2
+                // block. Fall back to zeroed fields with a warning when the deposit is absent.
+                let new_safe_head = block
+                    .body
+                    .transactions
+                    .first()
+                    .and_then(|tx| tx.as_deposit())
+                    .and_then(|dep| L1BlockInfoTx::decode_calldata(&dep.input).ok())
+                    .map(|l1_info| {
+                        L2BlockInfo::new(block_info, l1_info.id(), l1_info.sequence_number())
+                    })
+                    .unwrap_or_else(|| {
+                        tracing::warn!(
+                            block = number,
+                            "reorg block missing deposit tx, l1_origin will be zeroed"
+                        );
+                        L2BlockInfo::new(block_info, Default::default(), 0)
+                    });
                 // Note: we intentionally do not emit a Block event for the reorg block itself.
                 // The reorg block (at `number`) is the new safe head — already confirmed on-chain
                 // — so the batcher does not need to encode it. After the consumer resets,
@@ -150,6 +165,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::BlockBody;
+    use alloy_primitives::Sealed;
+    use base_alloy_consensus::{OpTxEnvelope, TxDeposit};
+    use base_protocol::L1BlockInfoBedrock;
     use futures::{StreamExt, stream::BoxStream};
 
     use super::*;
@@ -240,5 +259,53 @@ mod tests {
 
         let err = source.next().await.unwrap_err();
         assert!(matches!(err, SourceError::Provider(_)));
+    }
+
+    #[tokio::test]
+    async fn test_reorg_safe_head_has_l1_origin() {
+        let l1_number = 42u64;
+        let l1_hash = B256::from([0xABu8; 32]);
+        let calldata = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::new_from_number_and_block_hash(
+            l1_number, l1_hash,
+        ))
+        .encode_calldata();
+
+        let deposit =
+            OpTxEnvelope::Deposit(Sealed::new(TxDeposit { input: calldata, ..Default::default() }));
+
+        let block1 = OpBlock {
+            header: alloy_consensus::Header {
+                number: 1,
+                parent_hash: B256::ZERO,
+                ..Default::default()
+            },
+            body: BlockBody { transactions: vec![deposit.clone()], ..Default::default() },
+        };
+        // Reorg block — same number, different parent hash produces a different block hash.
+        let block2 = OpBlock {
+            header: alloy_consensus::Header {
+                number: 1,
+                parent_hash: B256::from([1u8; 32]),
+                ..Default::default()
+            },
+            body: BlockBody { transactions: vec![deposit], ..Default::default() },
+        };
+
+        let poller = FixedPoller(block1.clone());
+        let stream = futures::stream::iter(vec![Ok(block1), Ok(block2)]);
+        let mut source =
+            HybridBlockSource::new(StreamSub(stream.boxed()), poller, Duration::from_secs(100));
+
+        // First block arrives normally.
+        let event = source.next().await.unwrap();
+        assert!(matches!(event, L2BlockEvent::Block(_)));
+
+        // Second block at same number with different hash → reorg.
+        let event = source.next().await.unwrap();
+        let L2BlockEvent::Reorg { new_safe_head } = event else {
+            panic!("expected Reorg event");
+        };
+        assert_eq!(new_safe_head.l1_origin.number, l1_number);
+        assert_eq!(new_safe_head.l1_origin.hash, l1_hash);
     }
 }

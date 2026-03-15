@@ -2,8 +2,10 @@
 
 use std::sync::Arc;
 
+use alloy_network::EthereumWallet;
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
+use alloy_signer_local::PrivateKeySigner;
 use base_alloy_consensus::OpBlock;
 use base_alloy_network::Base;
 use base_batcher_core::{
@@ -13,6 +15,7 @@ use base_batcher_core::{
 use base_batcher_encoder::BatchEncoder;
 use base_batcher_source::{BlockSubscription, HybridBlockSource, SourceError};
 use base_consensus_genesis::RollupConfig;
+use base_tx_manager::{SimpleTxManager, TxManagerConfig};
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -20,8 +23,7 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    BatcherConfig, NoopTxManager, NullSubscription, RpcPollingSource, RpcThrottleClient,
-    WsBlockSubscription,
+    BatcherConfig, NullSubscription, RpcPollingSource, RpcThrottleClient, WsBlockSubscription,
 };
 
 /// Service-internal throttle client variant: either a no-op or an RPC client.
@@ -64,10 +66,46 @@ impl BlockSubscription for Subscription {
     }
 }
 
+/// Concrete driver type produced by [`BatcherService::setup`].
+///
+/// Private — callers interact only through [`ReadyBatcher`].
+type ServiceDriver = BatchDriver<
+    BatchEncoder,
+    HybridBlockSource<Subscription, RpcPollingSource>,
+    SimpleTxManager,
+    ServiceThrottle,
+>;
+
+/// A fully-initialised batcher ready to run the submission loop.
+///
+/// Created by [`BatcherService::setup`]. All connections are live and the
+/// rollup config has been fetched. Call [`run`](Self::run) to enter the
+/// main driver loop, or spawn it in a background task for in-process use.
+pub struct ReadyBatcher {
+    driver: ServiceDriver,
+}
+
+impl std::fmt::Debug for ReadyBatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReadyBatcher").finish_non_exhaustive()
+    }
+}
+
+impl ReadyBatcher {
+    /// Run the batch submission loop until `cancellation` is triggered.
+    pub async fn run(self, cancellation: CancellationToken) -> eyre::Result<()> {
+        info!("batcher driver running");
+        self.driver.run(cancellation).await?;
+        info!("batcher service shutting down");
+        Ok(())
+    }
+}
+
 /// The batcher service.
 ///
-/// Wires the encoder, block source, transaction manager, and driver
-/// into a running batcher process. Call [`start`](Self::start) to run.
+/// Wires the encoder, block source, transaction manager, and driver.
+/// Call [`setup`](Self::setup) to initialise all components, then call
+/// [`ReadyBatcher::run`] to enter the submission loop.
 #[derive(Debug)]
 pub struct BatcherService {
     /// Full batcher configuration.
@@ -141,11 +179,13 @@ impl BatcherService {
         Subscription::Ws(WsBlockSubscription::new(ws_provider, stream))
     }
 
-    /// Start the batcher service.
+    /// Initialise all batcher components and return a [`ReadyBatcher`].
     ///
-    /// Constructs the encoding pipeline, block source, and driver, then
-    /// runs the driver loop until the cancellation token is triggered.
-    pub async fn start(self, cancellation: CancellationToken) -> eyre::Result<()> {
+    /// Connects to the L2 and L1 RPC endpoints, fetches the rollup config,
+    /// validates the private key, and constructs the driver. Returns an error
+    /// if any of those steps fail — the caller sees the failure immediately,
+    /// before any background work is spawned.
+    pub async fn setup(self) -> eyre::Result<ReadyBatcher> {
         info!(
             l1_rpc = %self.config.l1_rpc_url,
             l2_rpc = %self.config.l2_rpc_url,
@@ -217,10 +257,33 @@ impl BatcherService {
         );
         let throttle = ThrottleController::new(throttle_config, throttle_strategy);
 
-        // TODO: Wire in SimpleTxManager with L1 provider, wallet, and chain ID.
-        let tx_manager = NoopTxManager;
+        // Connect to the L1 RPC endpoint for transaction submission.
+        let l1_provider: RootProvider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .connect(self.config.l1_rpc_url.as_str())
+            .await
+            .map_err(|e| eyre::eyre!("failed to connect to L1: {e}"))?;
 
-        // Build and run the driver.
+        // Build the batcher wallet from the configured private key.
+        let signer = PrivateKeySigner::from_bytes(&self.config.batcher_private_key.0)
+            .map_err(|e| eyre::eyre!("invalid batcher private key: {e}"))?;
+        let wallet = EthereumWallet::new(signer);
+
+        // Fetch L1 chain ID and construct the tx manager.
+        let l1_chain_id = l1_provider
+            .get_chain_id()
+            .await
+            .map_err(|e| eyre::eyre!("failed to fetch L1 chain ID: {e}"))?;
+        let tx_manager_config = TxManagerConfig {
+            resubmission_timeout: self.config.resubmission_timeout,
+            num_confirmations: self.config.num_confirmations as u64,
+            ..TxManagerConfig::default()
+        };
+        let tx_manager = SimpleTxManager::new(l1_provider, wallet, tx_manager_config, l1_chain_id)
+            .await
+            .map_err(|e| eyre::eyre!("failed to create tx manager: {e}"))?;
+
+        // Build the driver — all fallible setup is complete at this point.
         let driver = BatchDriver::new(
             encoder,
             source,
@@ -232,9 +295,6 @@ impl BatcherService {
         );
 
         info!("batcher service components initialized");
-        driver.run(cancellation).await?;
-
-        info!("batcher service shutting down");
-        Ok(())
+        Ok(ReadyBatcher { driver })
     }
 }
