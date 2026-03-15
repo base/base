@@ -71,6 +71,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let block = sequencer.build_next_block().expect("build L2 block 1");
+    let block_hash = sequencer.head().block_info.hash;
 
     let mut source = ActionL2Source::new();
     source.push(block.clone());
@@ -87,6 +88,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
     drop(batcher);
 
     let (mut verifier, chain) = h.create_verifier();
+    verifier.register_block_hash(1, block_hash);
 
     h.mine_and_push(&chain); // L1 block 1: frame 0 only
 
@@ -178,6 +180,7 @@ async fn channel_timeout_recovery_resubmits_successfully() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let block = sequencer.build_next_block().expect("build block 1");
+    let block_hash = sequencer.head().block_info.hash;
 
     // First attempt: submit batch in L1 block 1.
     let mut source = ActionL2Source::new();
@@ -187,6 +190,7 @@ async fn channel_timeout_recovery_resubmits_successfully() {
     drop(batcher);
 
     let (mut verifier, chain) = h.create_verifier();
+    verifier.register_block_hash(1, block_hash);
 
     h.mine_and_push(&chain); // L1 block 1
 
@@ -342,7 +346,10 @@ async fn interleaved_channels_correctly_reassembled() {
     // Mine one L1 block containing all interleaved frames.
     h.l1.mine_block();
 
-    let (mut verifier, _chain) = h.create_verifier();
+    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
     verifier.initialize().await.expect("initialize");
 
     let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));

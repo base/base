@@ -38,7 +38,10 @@ async fn finalization_advances_with_multiple_l2_blocks_per_epoch() {
     }
 
     // Create verifier after mining so it observes the hashes the sequencer already registered.
-    let (mut verifier, _chain) = h.create_verifier();
+    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
     verifier.initialize().await.expect("initialize");
 
     // Finalized head starts at genesis.
@@ -101,7 +104,10 @@ async fn finalization_advances_incrementally_with_l1_epochs() {
     assert_eq!(sequencer.head().l1_origin.number, 1, "last L2 block should reference epoch 1");
     assert!(last_epoch_0_number > 0, "at least one L2 block should reference epoch 0");
 
-    let (mut verifier, chain) = h.create_verifier();
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
 
     for block in &blocks {
         let mut source = ActionL2Source::new();
@@ -176,7 +182,10 @@ async fn finalization_does_not_exceed_safe_head() {
     // Mine many more L1 blocks without any corresponding L2 derivation data.
     h.mine_l1_blocks(10);
 
-    let (mut verifier, _chain) = h.create_verifier();
+    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
     verifier.initialize().await.expect("initialize");
 
     // Derive only 2 L2 blocks.
@@ -233,7 +242,10 @@ async fn finalization_reorg_clears_state() {
         h.l1.mine_block();
     }
 
-    let (mut verifier, chain) = h.create_verifier();
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
     verifier.initialize().await.expect("initialize");
 
     // Derive both L2 blocks.
@@ -278,6 +290,7 @@ async fn finalization_reorg_clears_state() {
     let mut batcher_fresh = h.create_batcher(source, batcher_cfg.clone());
     batcher_fresh.advance().expect("encode fresh");
     drop(batcher_fresh);
+    verifier.register_block_hash(1, sequencer_fresh.head().block_info.hash);
     h.l1.mine_block();
 
     // Push the new block to the shared chain.
@@ -321,7 +334,10 @@ async fn finalization_does_not_regress() {
     }
 
     // Submit each L2 block in a separate L1 inclusion block.
-    let (mut verifier, chain) = h.create_verifier();
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
 
     for block in &blocks {
         let mut source = ActionL2Source::new();

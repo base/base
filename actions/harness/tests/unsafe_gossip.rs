@@ -1,51 +1,9 @@
 #![doc = "Action tests for L2 unsafe-head gossip simulation."]
 
-use std::sync::Arc;
-
 use base_action_harness::{
-    ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, ActionL2Source,
-    ActionTestHarness, BatcherConfig, L1MinerConfig, L2Verifier, SharedL1Chain,
-    TestRollupConfigBuilder, VerifierPipeline, block_info_from,
+    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain,
+    TestRollupConfigBuilder, block_info_from,
 };
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
-use base_protocol::{BlockInfo, L2BlockInfo};
-
-/// Create a verifier wired to `h`'s current L1 chain, returning both the
-/// verifier and the shared chain.
-///
-/// Extracted to avoid duplicating the 20-line constructor in every test.
-fn make_verifier(
-    h: &ActionTestHarness,
-    rollup_cfg: &RollupConfig,
-) -> (L2Verifier<VerifierPipeline>, SharedL1Chain) {
-    let chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let rollup_config = Arc::new(rollup_cfg.clone());
-    let l1_chain_config = Arc::new(L1ChainConfig::default());
-    let l1_provider = ActionL1ChainProvider::new(chain.clone());
-    let dap_source = ActionDataSource::new(chain.clone(), rollup_cfg.batch_inbox_address);
-    let genesis_l1 = block_info_from(h.l1.chain().first().expect("genesis always present"));
-    let safe_head = L2BlockInfo {
-        block_info: BlockInfo {
-            hash: rollup_cfg.genesis.l2.hash,
-            number: rollup_cfg.genesis.l2.number,
-            parent_hash: Default::default(),
-            timestamp: rollup_cfg.genesis.l2_time,
-        },
-        l1_origin: alloy_eips::BlockNumHash { number: genesis_l1.number, hash: genesis_l1.hash },
-        seq_num: 0,
-    };
-    let l2_provider = ActionL2ChainProvider::from_genesis(rollup_cfg);
-    let verifier = L2Verifier::new(
-        rollup_config,
-        l1_chain_config,
-        l1_provider,
-        dap_source,
-        l2_provider,
-        safe_head,
-        genesis_l1,
-    );
-    (verifier, chain)
-}
 
 /// Simulates the full op-e2e gossip pattern:
 ///
@@ -86,7 +44,10 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
 
     // Create the verifier AFTER mining so the SharedL1Chain snapshot already
     // contains the L1 block with the batch.
-    let (mut verifier, _chain) = make_verifier(&h, &rollup_cfg);
+    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
 
     // Initialize: seed the genesis SystemConfig and drain the empty genesis
     // L1 block so IndexedTraversal is ready for new block signals.
@@ -144,7 +105,10 @@ async fn test_out_of_order_gossip_is_dropped() {
     let _block2 = sequencer.build_next_block().expect("build block 2");
     let block3 = sequencer.build_next_block().expect("build block 3");
 
-    let (mut verifier, _chain) = make_verifier(&h, &rollup_cfg);
+    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
     verifier.initialize().await.expect("initialize should succeed");
 
     // Inject block 3 first — gap-jump; must be dropped.

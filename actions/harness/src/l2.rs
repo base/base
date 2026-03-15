@@ -1,4 +1,7 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::{Arc, Mutex},
+};
 
 use alloy_consensus::{Header, SignableTransaction};
 use alloy_eips::BlockNumHash;
@@ -20,7 +23,7 @@ use revm::{
     state::AccountInfo,
 };
 
-use crate::{L2BlockProvider, SharedBlockHashRegistry, SharedL1Chain};
+use crate::{L2BlockProvider, SharedL1Chain};
 
 /// Hardcoded private key for the test account used across all action tests.
 ///
@@ -91,6 +94,32 @@ impl ActionL2Source {
 impl L2BlockProvider for ActionL2Source {
     fn next_block(&mut self) -> Option<OpBlock> {
         self.blocks.pop_front()
+    }
+}
+
+/// Shared L2 block hashes keyed by block number.
+///
+/// `L2Sequencer` writes into this registry as blocks are built, and
+/// `L2Verifier` reads from the same registry when it applies derived
+/// attributes so the resulting safe-head hash chain matches the sequencer's
+/// sealed headers.
+#[derive(Debug, Clone, Default)]
+pub struct SharedBlockHashRegistry(Arc<Mutex<HashMap<u64, B256>>>);
+
+impl SharedBlockHashRegistry {
+    /// Create an empty shared registry.
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(HashMap::new())))
+    }
+
+    /// Record the hash for an L2 block number.
+    pub fn insert(&self, number: u64, hash: B256) {
+        self.0.lock().expect("block hash registry lock poisoned").insert(number, hash);
+    }
+
+    /// Return the registered hash for an L2 block number.
+    pub fn get(&self, number: u64) -> Option<B256> {
+        self.0.lock().expect("block hash registry lock poisoned").get(&number).copied()
     }
 }
 
@@ -169,14 +198,8 @@ impl L2Sequencer {
             nonce: 0,
             db,
             l1_origin_pin: None,
-            block_hashes: SharedBlockHashRegistry::default(),
+            block_hashes: SharedBlockHashRegistry::new(),
         }
-    }
-
-    /// Replace the sequencer's block-hash registry with a shared instance.
-    pub fn with_block_hash_registry(mut self, block_hashes: SharedBlockHashRegistry) -> Self {
-        self.block_hashes = block_hashes;
-        self
     }
 
     /// Set the number of signed user transactions included per block.
@@ -188,6 +211,11 @@ impl L2Sequencer {
     /// Return the current unsafe L2 head.
     pub const fn head(&self) -> L2BlockInfo {
         self.head
+    }
+
+    /// Return the sequencer's shared block-hash registry.
+    pub fn block_hash_registry(&self) -> SharedBlockHashRegistry {
+        self.block_hashes.clone()
     }
 
     /// Pin the L1 origin to the given block, bypassing automatic epoch advance.

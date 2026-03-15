@@ -7,7 +7,7 @@ use base_protocol::{BlockInfo, L2BlockInfo};
 use crate::{
     ActionBlobDataSource, ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, Batcher,
     BatcherConfig, BlobVerifierPipeline, L1Miner, L1MinerConfig, L2BlockProvider, L2Sequencer,
-    L2Verifier, SharedBlockHashRegistry, SharedL1Chain, VerifierPipeline, block_info_from,
+    L2Verifier, SharedL1Chain, VerifierPipeline, block_info_from,
 };
 
 /// Top-level test harness that owns all actors for a single action test.
@@ -37,18 +37,12 @@ pub struct ActionTestHarness {
     pub l1: L1Miner,
     /// The rollup configuration shared by all actors.
     pub rollup_config: RollupConfig,
-    /// Shared L2 block hashes written by sequencers and read by verifiers.
-    block_hashes: SharedBlockHashRegistry,
 }
 
 impl ActionTestHarness {
     /// Create a harness with the given configurations.
     pub fn new(l1_config: L1MinerConfig, rollup_config: RollupConfig) -> Self {
-        Self {
-            l1: L1Miner::new(l1_config),
-            rollup_config,
-            block_hashes: SharedBlockHashRegistry::default(),
-        }
+        Self { l1: L1Miner::new(l1_config), rollup_config }
     }
 
     /// Mine `n` L1 blocks and return the latest block number after mining.
@@ -128,7 +122,6 @@ impl ActionTestHarness {
         let system_config = self.rollup_config.genesis.system_config.unwrap_or_default();
 
         L2Sequencer::new(genesis_head, l1_chain, self.rollup_config.clone(), system_config)
-            .with_block_hash_registry(self.block_hashes.clone())
     }
 
     /// Create an [`L2Verifier`] wired to the harness's L1 chain.
@@ -143,6 +136,23 @@ impl ActionTestHarness {
         self.create_verifier_with_l2_provider(l2_provider)
     }
 
+    /// Create an [`L2Verifier`] explicitly wired to a sequencer's block-hash registry.
+    ///
+    /// This is the normal path for tests that build blocks with [`L2Sequencer`]
+    /// and then derive them with a verifier. The supplied `l1_chain` becomes
+    /// the verifier's shared L1 view and is returned so tests can keep pushing
+    /// newly mined L1 blocks into it.
+    pub fn create_verifier_from_sequencer(
+        &self,
+        sequencer: &L2Sequencer,
+        l1_chain: SharedL1Chain,
+    ) -> (L2Verifier<VerifierPipeline>, SharedL1Chain) {
+        let l2_provider = ActionL2ChainProvider::from_genesis(&self.rollup_config);
+        let (verifier, chain) =
+            self.create_verifier_with_l2_provider_and_chain(l2_provider, l1_chain);
+        (verifier.with_block_hash_registry(sequencer.block_hash_registry()), chain)
+    }
+
     /// Create an [`L2Verifier`] using a caller-supplied [`ActionL2ChainProvider`].
     ///
     /// Use this when the test needs to pre-populate the provider with custom
@@ -154,6 +164,35 @@ impl ActionTestHarness {
         l2_provider: ActionL2ChainProvider,
     ) -> (L2Verifier<VerifierPipeline>, SharedL1Chain) {
         let chain = SharedL1Chain::from_blocks(self.l1.chain().to_vec());
+        self.create_verifier_with_l2_provider_and_chain(l2_provider, chain)
+    }
+
+    /// Create an [`L2Verifier`] wired to blob DA.
+    ///
+    /// Identical to [`create_verifier`] but uses [`ActionBlobDataSource`] so
+    /// the pipeline reads blobs from the L1 chain instead of calldata.
+    ///
+    /// [`create_verifier`]: ActionTestHarness::create_verifier
+    pub fn create_blob_verifier(&self) -> (L2Verifier<BlobVerifierPipeline>, SharedL1Chain) {
+        let chain = SharedL1Chain::from_blocks(self.l1.chain().to_vec());
+        self.create_blob_verifier_with_chain(chain)
+    }
+
+    /// Create a blob verifier explicitly wired to a sequencer's block-hash registry.
+    pub fn create_blob_verifier_from_sequencer(
+        &self,
+        sequencer: &L2Sequencer,
+        l1_chain: SharedL1Chain,
+    ) -> (L2Verifier<BlobVerifierPipeline>, SharedL1Chain) {
+        let (verifier, chain) = self.create_blob_verifier_with_chain(l1_chain);
+        (verifier.with_block_hash_registry(sequencer.block_hash_registry()), chain)
+    }
+
+    fn create_verifier_with_l2_provider_and_chain(
+        &self,
+        l2_provider: ActionL2ChainProvider,
+        chain: SharedL1Chain,
+    ) -> (L2Verifier<VerifierPipeline>, SharedL1Chain) {
         let rollup_config = Arc::new(self.rollup_config.clone());
         let l1_chain_config = Arc::new(L1ChainConfig::default());
 
@@ -175,28 +214,24 @@ impl ActionTestHarness {
             seq_num: 0,
         };
 
-        let verifier = L2Verifier::new(
-            rollup_config,
-            l1_chain_config,
-            l1_provider,
-            dap_source,
-            l2_provider,
-            safe_head,
-            genesis_l1,
+        (
+            L2Verifier::new(
+                rollup_config,
+                l1_chain_config,
+                l1_provider,
+                dap_source,
+                l2_provider,
+                safe_head,
+                genesis_l1,
+            ),
+            chain,
         )
-        .with_block_hash_registry(self.block_hashes.clone());
-
-        (verifier, chain)
     }
 
-    /// Create an [`L2Verifier`] wired to blob DA.
-    ///
-    /// Identical to [`create_verifier`] but uses [`ActionBlobDataSource`] so
-    /// the pipeline reads blobs from the L1 chain instead of calldata.
-    ///
-    /// [`create_verifier`]: ActionTestHarness::create_verifier
-    pub fn create_blob_verifier(&self) -> (L2Verifier<BlobVerifierPipeline>, SharedL1Chain) {
-        let chain = SharedL1Chain::from_blocks(self.l1.chain().to_vec());
+    fn create_blob_verifier_with_chain(
+        &self,
+        chain: SharedL1Chain,
+    ) -> (L2Verifier<BlobVerifierPipeline>, SharedL1Chain) {
         let rollup_config = Arc::new(self.rollup_config.clone());
         let l1_chain_config = Arc::new(L1ChainConfig::default());
 
@@ -218,18 +253,18 @@ impl ActionTestHarness {
             seq_num: 0,
         };
 
-        let verifier = L2Verifier::new_blob(
-            rollup_config,
-            l1_chain_config,
-            l1_provider,
-            dap_source,
-            ActionL2ChainProvider::from_genesis(&self.rollup_config),
-            safe_head,
-            genesis_l1,
+        (
+            L2Verifier::new_blob(
+                rollup_config,
+                l1_chain_config,
+                l1_provider,
+                dap_source,
+                ActionL2ChainProvider::from_genesis(&self.rollup_config),
+                safe_head,
+                genesis_l1,
+            ),
+            chain,
         )
-        .with_block_hash_registry(self.block_hashes.clone());
-
-        (verifier, chain)
     }
 }
 

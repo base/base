@@ -65,7 +65,10 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
     //
     // Blocks 1-6 have user transactions. Blocks 7-8 also have user txs
     // (sequencer doesn't enforce drift), but the pipeline should drop them.
-    let (mut verifier, chain) = h.create_verifier();
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
 
     for _ in 1u64..=8 {
         // Build with user transactions — the pipeline decides what to accept.
@@ -141,7 +144,10 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
     let l1_genesis = block_info_from(h.l1.block_by_number(0).expect("genesis"));
     sequencer.pin_l1_origin(l1_genesis);
 
-    let (mut verifier, chain) = h.create_verifier();
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
 
     // Build 6 normal blocks (within drift, ts=300..1800) + 2 empty blocks
     // (over drift, ts=2100, 2400). block_time=300 s, max_drift=1800 s.

@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    sync::{Arc, Mutex},
-};
+use std::{fmt::Debug, sync::Arc};
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
@@ -15,7 +11,10 @@ use base_consensus_derive::{
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo, OpAttributesWithParent};
 
-use crate::{ActionBlobDataSource, ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider};
+use crate::{
+    ActionBlobDataSource, ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider,
+    SharedBlockHashRegistry,
+};
 
 /// The concrete pipeline type used by [`L2Verifier`] with calldata DA.
 ///
@@ -41,27 +40,6 @@ pub type BlobVerifierPipeline = base_consensus_derive::DerivationPipeline<
     >,
     ActionL2ChainProvider,
 >;
-
-/// Shared L2 block hashes keyed by block number.
-///
-/// `L2Sequencer` writes into this registry as blocks are built, and
-/// `L2Verifier` reads from the same registry when it applies derived
-/// attributes so the resulting safe-head hash chain matches the sequencer's
-/// sealed headers.
-#[derive(Debug, Clone, Default)]
-pub struct SharedBlockHashRegistry(Arc<Mutex<HashMap<u64, B256>>>);
-
-impl SharedBlockHashRegistry {
-    /// Record the hash for an L2 block number.
-    pub fn insert(&self, number: u64, hash: B256) {
-        self.0.lock().expect("block hash registry lock poisoned").insert(number, hash);
-    }
-
-    /// Return the registered hash for an L2 block number.
-    pub fn get(&self, number: u64) -> Option<B256> {
-        self.0.lock().expect("block hash registry lock poisoned").get(&number).copied()
-    }
-}
 
 /// Errors returned by [`L2Verifier`] action methods.
 #[derive(Debug, thiserror::Error)]
@@ -241,7 +219,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
             derived_tx_counts: Vec::new(),
             derived_user_tx_counts: Vec::new(),
             derived_l1_info_txs: Vec::new(),
-            block_hashes: SharedBlockHashRegistry::default(),
+            block_hashes: SharedBlockHashRegistry::new(),
         }
     }
 

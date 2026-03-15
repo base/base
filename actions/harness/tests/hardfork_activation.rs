@@ -286,7 +286,10 @@ async fn span_batch_rejected_before_delta() {
 
     h.l1.mine_block();
 
-    let (mut verifier, _chain) = h.create_verifier();
+    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
+        &builder,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
     verifier.initialize().await.expect("initialize");
     verifier.act_l1_head_signal(block_info_from(h.l1.tip())).await.expect("signal");
     verifier.act_l2_pipeline_full().await.expect("pipeline");
@@ -324,7 +327,10 @@ async fn span_batch_derives_after_delta() {
 
     h.l1.mine_block();
 
-    let (mut verifier, _chain) = h.create_verifier();
+    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
+        &builder,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
     verifier.initialize().await.expect("initialize");
     verifier.act_l1_head_signal(block_info_from(h.l1.tip())).await.expect("signal");
     let derived = verifier.act_l2_pipeline_full().await.expect("pipeline");
@@ -355,7 +361,10 @@ async fn single_batch_derives_with_fjord() {
         h.l1.mine_block();
     }
 
-    let (mut verifier, _chain) = h.create_verifier();
+    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
+        &builder,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
     verifier.initialize().await.expect("initialize");
 
     for i in 1..=2u64 {
@@ -426,7 +435,10 @@ async fn jovian_derivation_crosses_activation_boundary() {
         h.l1.mine_block();
     }
 
-    let (mut verifier, _chain) = h.create_verifier();
+    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
+        &builder,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
     verifier.initialize().await.expect("initialize");
 
     for i in 1..=4u64 {

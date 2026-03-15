@@ -419,13 +419,10 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    let mut block_hashes = Vec::new();
     for _ in 0..4u64 {
         // All blocks carry user transactions — Isthmus allows user txs at transition.
         let mut source = ActionL2Source::new();
         source.push(builder.build_next_block().expect("build L2 block"));
-        let head = builder.head();
-        block_hashes.push((head.block_info.number, head.block_info.hash));
 
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("batcher encode");
@@ -433,10 +430,10 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
         h.l1.mine_block();
     }
 
-    let (mut verifier, _chain) = h.create_verifier();
-    for (number, hash) in &block_hashes {
-        verifier.register_block_hash(*number, *hash);
-    }
+    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
+        &builder,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
     verifier.initialize().await.expect("initialize");
 
     for i in 1..=4u64 {
@@ -698,16 +695,13 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
 
     // L2 blocks 1–5 (ts=2,4,6,8,10): epoch 0, OLD config.
     let mut epoch0_blocks: Vec<base_alloy_consensus::OpBlock> = Vec::new();
-    let mut epoch0_hashes: Vec<B256> = Vec::new();
     for _ in 0..5 {
         let block = sequencer.build_next_block().expect("build epoch-0 block");
-        epoch0_hashes.push(sequencer.head().block_info.hash);
         epoch0_blocks.push(block);
     }
 
     // L2 block 6 (ts=12): epoch 1, epoch change — NEW config from L1 block 1's receipts.
     let block6 = sequencer.build_next_block().expect("build block 6");
-    let hash6 = sequencer.head().block_info.hash;
 
     // Batch all epoch-0 blocks into L1 block 2 and block 6 into L1 block 3.
     let mut source = ActionL2Source::new();
@@ -727,11 +721,10 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
     h.l1.mine_block(); // L1 block 3, ts=36
 
     // Verifier snapshot includes all L1 blocks 0–3.
-    let (mut verifier, _chain) = h.create_verifier();
-    for (i, hash) in epoch0_hashes.iter().enumerate() {
-        verifier.register_block_hash((i + 1) as u64, *hash);
-    }
-    verifier.register_block_hash(6, hash6);
+    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
     verifier.initialize().await.expect("initialize");
 
     for i in 1u64..=3 {
