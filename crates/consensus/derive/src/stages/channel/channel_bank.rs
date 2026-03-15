@@ -232,9 +232,19 @@ where
     P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
 {
     async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
-        self.prev.signal(signal).await?;
-        self.channels.clear();
-        self.channel_queue = VecDeque::with_capacity(10);
+        match signal {
+            Signal::Reset(_) | Signal::Activation(_) | Signal::FlushChannel => {
+                self.prev.signal(signal).await?;
+                self.channels.clear();
+                self.channel_queue = VecDeque::with_capacity(10);
+            }
+            Signal::ProvideBlock(_) => {
+                // Advance the L1 origin without discarding in-progress channels.
+                // Multi-block channels must survive across block boundaries so that
+                // channel timeout detection can work correctly.
+                self.prev.signal(signal).await?;
+            }
+        }
         Ok(())
     }
 }

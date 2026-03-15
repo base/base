@@ -3,9 +3,10 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use alloy_primitives::{Address, Bytes, U256};
-use base_batcher_encoder::{BatchPipeline, StepResult, SubmissionId};
+use base_batcher_encoder::{BatchPipeline, DaType, StepResult, SubmissionId};
 use base_batcher_source::{L2BlockEvent, UnsafeBlockSource};
 use base_blobs::BlobEncoder;
+use base_protocol::DERIVATION_VERSION_0;
 use base_tx_manager::{TxCandidate, TxManager};
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::Semaphore;
@@ -167,41 +168,61 @@ where
                     break; // Nothing to submit; wait for more encoding work.
                 };
                 let id = sub.id;
-                match BlobEncoder::encode_frames(&sub.frames) {
-                    Ok(blobs) => {
-                        let candidate = TxCandidate {
+                let candidate = match sub.da_type {
+                    DaType::Blob => match BlobEncoder::encode_frames(&sub.frames) {
+                        Ok(blobs) => TxCandidate {
                             to: Some(self.inbox),
                             tx_data: Bytes::new(),
                             value: U256::ZERO,
                             gas_limit: 0,
                             blobs,
-                        };
-                        let handle = self.tx_manager.send_async(candidate).await;
-                        let fut: Pin<Box<dyn Future<Output = (SubmissionId, TxOutcome)> + Send>> =
-                            Box::pin(async move {
-                                let outcome = match handle.await {
-                                    Ok(receipt) => {
-                                        let l1_block = receipt.block_number.unwrap_or_else(|| {
-                                            warn!(id = %id.0, "confirmed receipt missing block number; l1_head will not advance");
-                                            0
-                                        });
-                                        TxOutcome::Confirmed { l1_block }
-                                    }
-                                    Err(e) => {
-                                        warn!(id = %id.0, error = %e, "submission failed");
-                                        TxOutcome::Failed
-                                    }
-                                };
-                                drop(permit);
-                                (id, outcome)
-                            });
-                        self.in_flight.push(fut);
+                        },
+                        Err(e) => {
+                            warn!(id = %id.0, error = %e, "failed to encode frames to blobs, requeueing");
+                            self.pipeline.requeue(id);
+                            drop(permit);
+                            continue;
+                        }
+                    },
+                    DaType::Calldata => {
+                        // Calldata mode: one frame per submission (enforced by
+                        // EncoderConfig::validate). Encode as
+                        // [DERIVATION_VERSION_0] ++ frame.encode().
+                        let frame = &sub.frames[0];
+                        let encoded = frame.encode();
+                        let mut data = Vec::with_capacity(1 + encoded.len());
+                        data.push(DERIVATION_VERSION_0);
+                        data.extend_from_slice(&encoded);
+                        TxCandidate {
+                            to: Some(self.inbox),
+                            tx_data: Bytes::from(data),
+                            value: U256::ZERO,
+                            gas_limit: 0,
+                            blobs: vec![],
+                        }
                     }
-                    Err(e) => {
-                        warn!(id = %id.0, error = %e, "failed to encode frames to blobs, requeueing");
-                        self.pipeline.requeue(id);
-                        drop(permit);
-                    }
+                };
+                {
+                    let handle = self.tx_manager.send_async(candidate).await;
+                    let fut: Pin<Box<dyn Future<Output = (SubmissionId, TxOutcome)> + Send>> =
+                        Box::pin(async move {
+                            let outcome = match handle.await {
+                                Ok(receipt) => {
+                                    let l1_block = receipt.block_number.unwrap_or_else(|| {
+                                        warn!(id = %id.0, "confirmed receipt missing block number; l1_head will not advance");
+                                        0
+                                    });
+                                    TxOutcome::Confirmed { l1_block }
+                                }
+                                Err(e) => {
+                                    warn!(id = %id.0, error = %e, "submission failed");
+                                    TxOutcome::Failed
+                                }
+                            };
+                            drop(permit);
+                            (id, outcome)
+                        });
+                    self.in_flight.push(fut);
                 }
             }
 
@@ -557,6 +578,7 @@ mod tests {
         BatchSubmission {
             id: SubmissionId(id),
             channel_id: ChannelId::default(),
+            da_type: base_batcher_encoder::DaType::Blob,
             frames: vec![Arc::new(Frame::default())],
         }
     }
@@ -662,6 +684,7 @@ mod tests {
         pipeline.submissions.push_back(BatchSubmission {
             id: SubmissionId(0),
             channel_id: ChannelId::default(),
+            da_type: base_batcher_encoder::DaType::Blob,
             frames: vec![Arc::new(Frame { data: vec![0u8; OVERSIZED], ..Frame::default() })],
         });
 

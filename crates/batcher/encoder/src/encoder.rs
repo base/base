@@ -13,12 +13,13 @@ use base_comp::{
     BatchComposer, ChannelOut, CompressionAlgo, CompressorType, Config, ShadowCompressor,
 };
 use base_consensus_genesis::RollupConfig;
-use base_protocol::{Batch, ChannelId};
+use base_protocol::{Batch, ChannelId, SingleBatch, SpanBatch};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, warn};
 
 use crate::{
-    BatchPipeline, BatchSubmission, EncoderConfig, ReorgError, StepError, StepResult, SubmissionId,
+    BatchPipeline, BatchSubmission, BatchType, EncoderConfig, ReorgError, StepError, StepResult,
+    SubmissionId,
     channel::{OpenChannel, PendingRef, ReadyChannel},
 };
 
@@ -49,6 +50,10 @@ pub struct BatchEncoder {
     next_id: u64,
     /// Per-instance RNG for generating unique channel IDs.
     rng: SmallRng,
+    /// Accumulated (`SingleBatch`, `sequence_number`) pairs when operating in
+    /// [`BatchType::Span`] mode. Blocks are collected here during `step()` and
+    /// flushed as a single [`SpanBatch`] when `close_current_channel()` is called.
+    span_accumulator: Vec<(SingleBatch, u64)>,
 }
 
 impl fmt::Debug for BatchEncoder {
@@ -62,6 +67,7 @@ impl fmt::Debug for BatchEncoder {
             .field("ready_channels", &self.ready_channels.len())
             .field("pending", &self.pending.len())
             .field("next_id", &self.next_id)
+            .field("span_accumulator_len", &self.span_accumulator.len())
             .finish_non_exhaustive()
     }
 }
@@ -81,11 +87,48 @@ impl BatchEncoder {
             pending: HashMap::new(),
             next_id: 0,
             rng: SmallRng::from_os_rng(),
+            span_accumulator: Vec::new(),
         }
     }
 
     /// Close the current channel, drain its frames, and push it to `ready_channels`.
+    ///
+    /// In [`BatchType::Span`] mode the span accumulator is flushed as a single
+    /// [`SpanBatch`] into a freshly-opened channel before draining frames.
+    /// If both the channel and the accumulator are empty the call is a no-op.
     fn close_current_channel(&mut self) {
+        // In Span mode: if we have accumulated blocks, open a channel and write the
+        // span batch before proceeding to the shared flush/drain logic below.
+        if self.config.batch_type == BatchType::Span && !self.span_accumulator.is_empty() {
+            // Ensure a channel is open to receive the span batch.
+            if self.current_channel.is_none() {
+                self.open_new_channel();
+            }
+
+            let chain_id = self.rollup_config.l2_chain_id.id();
+            let mut span_batch = SpanBatch { chain_id, ..Default::default() };
+            let singles = std::mem::take(&mut self.span_accumulator);
+            let total = singles.len();
+            for (single, seq_num) in singles {
+                if let Err(e) = span_batch.append_singular_batch(single, seq_num) {
+                    warn!(
+                        error = %e,
+                        total,
+                        "span batch append failed, dropping accumulator"
+                    );
+                    // The accumulator was already taken; discard the partial span batch
+                    // and close whatever channel is open.
+                    break;
+                }
+            }
+
+            if let Some(ref mut open) = self.current_channel
+                && let Err(e) = open.out.add_batch(Batch::Span(span_batch))
+            {
+                warn!(error = %e, "failed to add span batch to channel");
+            }
+        }
+
         let Some(mut open) = self.current_channel.take() else {
             return;
         };
@@ -202,42 +245,62 @@ impl BatchPipeline for BatchEncoder {
             return Ok(StepResult::Idle);
         }
 
-        // Ensure a channel is open.
-        if self.current_channel.is_none() {
-            self.open_new_channel();
-        }
-
         // Get the block at the cursor.
         let block = &self.blocks[self.block_cursor];
 
         // Convert block to a SingleBatch. Failure here is fatal: skipping the block
         // would produce a gap in the L2 block sequence submitted to L1.
-        let (single_batch, _l1_info) = BatchComposer::block_to_single_batch(block)
+        let (single_batch, l1_info) = BatchComposer::block_to_single_batch(block)
             .map_err(|source| StepError::CompositionFailed { cursor: self.block_cursor, source })?;
 
-        // Try to add the batch to the current channel.
-        let batch = Batch::Single(single_batch);
-        let open = self.current_channel.as_mut().unwrap();
-        Ok(match open.out.add_batch(batch) {
-            Ok(()) => {
+        match self.config.batch_type {
+            BatchType::Span => {
+                // In Span mode blocks are accumulated in memory; the span batch is
+                // written to the channel only when close_current_channel() is called.
+                let seq_num = l1_info.sequence_number();
+                self.span_accumulator.push((single_batch, seq_num));
                 self.block_cursor += 1;
 
                 debug!(
-                    block_cursor = %self.block_cursor,
-                    blocks_len = %self.blocks.len(),
-                    "encoded block into channel"
+                    block_cursor = self.block_cursor,
+                    blocks_len = self.blocks.len(),
+                    span_accumulator_len = self.span_accumulator.len(),
+                    "accumulated block for span batch"
                 );
 
-                StepResult::BlockEncoded
+                Ok(StepResult::BlockEncoded)
             }
-            Err(e) => {
-                // Channel is full (ExceedsMaxRlpBytesPerChannel or compression full).
-                // Close the current channel and the caller will retry on the next step.
-                debug!(error = %e, "channel rejected batch, closing");
-                self.close_current_channel();
-                StepResult::ChannelClosed
+            BatchType::Single => {
+                // Ensure a channel is open.
+                if self.current_channel.is_none() {
+                    self.open_new_channel();
+                }
+
+                // Try to add the batch to the current channel.
+                let batch = Batch::Single(single_batch);
+                let open = self.current_channel.as_mut().unwrap();
+                Ok(match open.out.add_batch(batch) {
+                    Ok(()) => {
+                        self.block_cursor += 1;
+
+                        debug!(
+                            block_cursor = self.block_cursor,
+                            blocks_len = self.blocks.len(),
+                            "encoded block into channel"
+                        );
+
+                        StepResult::BlockEncoded
+                    }
+                    Err(e) => {
+                        // Channel is full (ExceedsMaxRlpBytesPerChannel or compression full).
+                        // Close the current channel and the caller will retry on the next step.
+                        debug!(error = %e, "channel rejected batch, closing");
+                        self.close_current_channel();
+                        StepResult::ChannelClosed
+                    }
+                })
             }
-        })
+        }
     }
 
     fn next_submission(&mut self) -> Option<BatchSubmission> {
@@ -261,7 +324,12 @@ impl BatchPipeline for BatchEncoder {
                 self.pending
                     .insert(id, PendingRef { channel_idx: chan_idx, frame_start, frame_count });
 
-                return Some(BatchSubmission { id, channel_id: channel.id, frames });
+                return Some(BatchSubmission {
+                    id,
+                    channel_id: channel.id,
+                    da_type: self.config.da_type,
+                    frames,
+                });
             }
         }
 
@@ -363,6 +431,7 @@ impl BatchPipeline for BatchEncoder {
         self.current_channel = None;
         self.ready_channels.clear();
         self.pending.clear();
+        self.span_accumulator.clear();
         // Intentionally not resetting `next_id`: keeping it monotonically
         // increasing across resets means post-reset submissions can never
         // share an ID with any pre-reset in-flight submission, eliminating
@@ -761,6 +830,7 @@ mod tests {
             target_num_frames: 2,
             max_channel_duration: 2,
             sub_safety_margin: 0,
+            ..EncoderConfig::default()
         };
         let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
 
@@ -799,6 +869,7 @@ mod tests {
             target_num_frames: 3,
             max_channel_duration: 2,
             sub_safety_margin: 0,
+            ..EncoderConfig::default()
         };
         let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
 
