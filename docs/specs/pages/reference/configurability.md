@@ -11,6 +11,7 @@ There are four categories of Base configuration:
 
 | Parameter | Description | Administrator |
 |-----------|-------------|---------------|
+<<<<<<< HEAD
 | [Batch Inbox Address](glossary.md#batch-inbox) | L1 address where [batcher transactions](glossary.md#batcher-transaction) are posted | Static |
 | [Batcher Hash](glossary.md#batcher-hash) | Versioned hash of the authorized batcher sender(s) | [System Config Owner](#admin-roles) |
 | Chain ID | Unique chain ID for transaction signature validation | Static |
