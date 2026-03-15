@@ -19,10 +19,11 @@ pub const SINGLE_BATCH_TYPE: u8 = 0x00;
 pub const SPAN_BATCH_TYPE: u8 = 0x01;
 
 /// The Batch Type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BatchType {
     /// Single Batch.
+    #[default]
     Single = SINGLE_BATCH_TYPE,
     /// Span Batch.
     Span = SPAN_BATCH_TYPE,

@@ -1,27 +1,9 @@
 #![doc = "Action tests for L2 finalization via the verifier pipeline."]
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain, block_info_from,
+    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain,
+    TestRollupConfigBuilder, block_info_from,
 };
-use base_consensus_genesis::RollupConfig;
-use base_consensus_registry::Registry;
-
-/// Build a [`RollupConfig`] wired to the given [`BatcherConfig`].
-///
-/// Mirrors the helper used across the `derivation.rs` tests.
-fn rollup_config_for(batcher: &BatcherConfig) -> RollupConfig {
-    let mut rc = Registry::rollup_config(8453).expect("mainnet config").clone();
-    rc.batch_inbox_address = batcher.inbox_address;
-    rc.genesis.system_config.as_mut().unwrap().batcher_address = batcher.batcher_address;
-    rc.genesis.l2_time = 0;
-    rc.genesis.l1 = Default::default();
-    rc.genesis.l2 = Default::default();
-    rc.hardforks.canyon_time = Some(0);
-    rc.hardforks.delta_time = Some(0);
-    rc.hardforks.ecotone_time = Some(0);
-    rc.hardforks.fjord_time = Some(0);
-    rc
-}
 
 /// When multiple L2 blocks share the same L1 epoch (`l1_origin`), finalizing the
 /// L1 inclusion block causes ALL L2 blocks in that epoch to become finalized
@@ -30,7 +12,7 @@ fn rollup_config_for(batcher: &BatcherConfig) -> RollupConfig {
 #[tokio::test]
 async fn finalization_advances_with_multiple_l2_blocks_per_epoch() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Build 3 L2 blocks, all referencing L1 epoch 0 (genesis).
@@ -99,7 +81,7 @@ async fn finalization_advances_with_multiple_l2_blocks_per_epoch() {
 #[tokio::test]
 async fn finalization_advances_incrementally_with_l1_epochs() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Mine L1 block 1 so the sequencer can advance to epoch 1.
@@ -182,7 +164,7 @@ async fn finalization_advances_incrementally_with_l1_epochs() {
 #[tokio::test]
 async fn finalization_does_not_exceed_safe_head() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Build 2 L2 blocks in epoch 0.
@@ -246,7 +228,7 @@ async fn finalization_does_not_exceed_safe_head() {
 #[tokio::test]
 async fn finalization_reorg_clears_state() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
     // Build 2 L2 blocks.
@@ -344,7 +326,7 @@ async fn finalization_reorg_clears_state() {
 #[tokio::test]
 async fn finalization_does_not_regress() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     // Mine L1 block 1 for epoch advancement.

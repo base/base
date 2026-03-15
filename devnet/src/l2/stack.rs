@@ -3,7 +3,7 @@
 //! This module provides [`L2Stack`], which composes a complete L2 network by orchestrating:
 //! - Builder execution layer (in-process, produces blocks and sequences transactions)
 //! - Consensus layer (in-process, derives L2 blocks from L1 data)
-//! - Batcher (Docker container, submits L2 transaction batches to L1)
+//! - Batcher (in-process, submits L2 transaction batches to L1)
 //! - Client execution layer (in-process, follows the L2 and builds pending state using Flashblocks)
 
 use alloy_primitives::B256;
@@ -15,8 +15,9 @@ use eyre::{Result, WrapErr};
 use url::Url;
 
 use super::{
-    BatcherConfig, BatcherContainer, InProcessBuilder, InProcessBuilderConfig, InProcessClient,
-    InProcessClientConfig, InProcessConsensus, InProcessConsensusConfig, L2ContainerConfig,
+    InProcessBatcher, InProcessBatcherConfig, InProcessBuilder, InProcessBuilderConfig,
+    InProcessClient, InProcessClientConfig, InProcessConsensus, InProcessConsensusConfig,
+    L2ContainerConfig,
 };
 use crate::config::SEQUENCER;
 
@@ -53,7 +54,7 @@ pub struct L2StackConfig {
 /// This struct orchestrates the full L2 infrastructure:
 /// - Builder execution layer (in-process, produces blocks and sequences transactions)
 /// - Consensus layer (in-process, derives L2 blocks from L1 data)
-/// - Batcher (Docker container, submits L2 transaction batches to L1)
+/// - Batcher (in-process, submits L2 transaction batches to L1)
 ///
 /// The startup order is:
 /// 1. Builder starts first (in-process EL)
@@ -65,7 +66,7 @@ pub struct L2StackConfig {
 pub struct L2Stack {
     builder: InProcessBuilder,
     builder_consensus: InProcessConsensus,
-    batcher: BatcherContainer,
+    batcher: InProcessBatcher,
     client: InProcessClient,
     client_consensus: InProcessConsensus,
 }
@@ -138,24 +139,16 @@ impl L2Stack {
             .await
             .wrap_err("Failed to start builder consensus")?;
 
-        // 3. Start the batcher, pointing at builder consensus RPC.
-        // The batcher runs in Docker, so convert the host-accessible L1 URL to use the
-        // Docker host gateway address (e.g. host.docker.internal).
-        let l1_rpc_port = l1_rpc_url
-            .port()
-            .ok_or_else(|| eyre::eyre!("L1 RPC URL must have an explicit port"))?;
-        let batcher_config = BatcherConfig {
-            l1_rpc_url: format!("http://{}:{l1_rpc_port}", crate::host::host_address()),
-            l1_rpc_port,
-            l2_rpc_url: builder.host_rpc_url(),
-            l2_rpc_port: builder.rpc_port(),
-            rollup_rpc_url: builder_consensus.host_rpc_url(),
-            rollup_rpc_port: builder_consensus.rpc_port(),
+        // 3. Start the in-process batcher, pointing at builder consensus RPC.
+        // No host gateway translation needed — the batcher runs in the same process as the test.
+        let batcher = InProcessBatcher::start(InProcessBatcherConfig {
+            l1_rpc_url: l1_rpc_url.clone(),
+            l2_rpc_url: builder.rpc_url()?,
+            rollup_rpc_url: builder_consensus.rpc_url(),
             batcher_key: config.batcher_key,
-        };
-        let batcher = BatcherContainer::start(batcher_config, config.container_config.as_ref())
-            .await
-            .wrap_err("Failed to start batcher")?;
+        })
+        .await
+        .wrap_err("Failed to start in-process batcher")?;
 
         // 4. Start the client (in-process EL).
         // If tx forwarding is enabled, configure it with the builder's RPC URL
@@ -234,8 +227,8 @@ impl L2Stack {
         &self.builder_consensus
     }
 
-    /// Returns a reference to the batcher container.
-    pub const fn batcher(&self) -> &BatcherContainer {
+    /// Returns a reference to the in-process batcher.
+    pub const fn batcher(&self) -> &InProcessBatcher {
         &self.batcher
     }
 

@@ -4,30 +4,11 @@ use std::sync::Arc;
 
 use base_action_harness::{
     ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, ActionL2Source,
-    ActionTestHarness, BatcherConfig, L1MinerConfig, L2Verifier, SharedL1Chain, VerifierPipeline,
-    block_info_from,
+    ActionTestHarness, BatcherConfig, L1MinerConfig, L2Verifier, SharedL1Chain,
+    TestRollupConfigBuilder, VerifierPipeline, block_info_from,
 };
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
-use base_consensus_registry::Registry;
 use base_protocol::{BlockInfo, L2BlockInfo};
-
-/// Build a [`RollupConfig`] wired to the given [`BatcherConfig`].
-///
-/// Mirrors the helper in `derivation.rs`: starts from the Base mainnet config
-/// and overrides only the fields that must differ for in-memory action tests.
-fn rollup_config_for(batcher: &BatcherConfig) -> RollupConfig {
-    let mut rc = Registry::rollup_config(8453).expect("mainnet config").clone();
-    rc.batch_inbox_address = batcher.inbox_address;
-    rc.genesis.system_config.as_mut().unwrap().batcher_address = batcher.batcher_address;
-    rc.genesis.l2_time = 0;
-    rc.genesis.l1 = Default::default();
-    rc.genesis.l2 = Default::default();
-    rc.hardforks.canyon_time = Some(0);
-    rc.hardforks.delta_time = Some(0);
-    rc.hardforks.ecotone_time = Some(0);
-    rc.hardforks.fjord_time = Some(0);
-    rc
-}
 
 /// Create a verifier wired to `h`'s current L1 chain, returning both the
 /// verifier and the shared chain.
@@ -79,7 +60,7 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
     const L2_BLOCK_COUNT: u64 = 5;
 
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
     // --- Phase 1: Build L2 blocks with the sequencer. ---
@@ -153,7 +134,7 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
 #[tokio::test]
 async fn test_out_of_order_gossip_is_dropped() {
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = rollup_config_for(&batcher_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
     // Build 3 sequential L2 blocks (we will inject block 3 first, skipping 1 & 2).

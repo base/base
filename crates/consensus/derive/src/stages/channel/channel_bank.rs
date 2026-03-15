@@ -231,10 +231,28 @@ impl<P> SignalReceiver for ChannelBank<P>
 where
     P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
 {
+    /// Handle a pipeline signal.
+    ///
+    /// `Reset`, `Activation`, and `FlushChannel` clear the channel bank because they represent
+    /// a discontinuity in the L1 data stream (reorg, hardfork boundary, or explicit flush).
+    ///
+    /// `ProvideBlock` is intentionally **not** cleared here, diverging from kona's upstream
+    /// `ChannelBank` which clears unconditionally on all signals. Channels can span multiple
+    /// L1 blocks; clearing on every block advancement would destroy in-progress multi-block
+    /// channels before their frames have all arrived, breaking channel timeout detection.
+    /// This matches op-node's `channel_bank.go`, where only `Reset()` discards channel state
+    /// and normal L1 block advancement leaves channels intact.
     async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
-        self.prev.signal(signal).await?;
-        self.channels.clear();
-        self.channel_queue = VecDeque::with_capacity(10);
+        match signal {
+            Signal::Reset(_) | Signal::Activation(_) | Signal::FlushChannel => {
+                self.prev.signal(signal).await?;
+                self.channels.clear();
+                self.channel_queue = VecDeque::with_capacity(10);
+            }
+            Signal::ProvideBlock(_) => {
+                self.prev.signal(signal).await?;
+            }
+        }
         Ok(())
     }
 }
@@ -250,7 +268,7 @@ mod tests {
     use super::*;
     use crate::{
         test_utils::{CollectingLayer, TestNextFrameProvider, TraceStorage},
-        types::ResetSignal,
+        types::{ActivationSignal, ResetSignal},
     };
 
     #[test]
@@ -418,6 +436,111 @@ mod tests {
         assert_eq!(channel_bank.channels.len(), 0);
         assert_eq!(channel_bank.channel_queue.len(), 0);
         assert!(channel_bank.prev.reset);
+    }
+
+    /// `Activation` is a hardfork-boundary signal and must discard buffered
+    /// channel data, just like `Reset`.
+    #[tokio::test]
+    async fn test_activation_clears_channels() {
+        let mock = TestNextFrameProvider::new(vec![]);
+        let cfg = Arc::new(RollupConfig::default());
+        let mut channel_bank = ChannelBank::new(cfg, mock);
+        channel_bank.channels.insert([0xFF; 16], Channel::default());
+        channel_bank.channel_queue.push_back([0xFF; 16]);
+        assert!(!channel_bank.prev.reset);
+        channel_bank.signal(ActivationSignal::default().signal()).await.unwrap();
+        assert_eq!(channel_bank.channels.len(), 0, "Activation must clear channels");
+        assert_eq!(channel_bank.channel_queue.len(), 0, "Activation must clear channel queue");
+        assert!(channel_bank.prev.reset, "Activation must propagate to prev stage");
+    }
+
+    /// `FlushChannel` is an explicit flush directive and must discard buffered
+    /// channel data, just like `Reset`.
+    #[tokio::test]
+    async fn test_flush_channel_clears_channels() {
+        let mock = TestNextFrameProvider::new(vec![]);
+        let cfg = Arc::new(RollupConfig::default());
+        let mut channel_bank = ChannelBank::new(cfg, mock);
+        channel_bank.channels.insert([0xFF; 16], Channel::default());
+        channel_bank.channel_queue.push_back([0xFF; 16]);
+        assert!(!channel_bank.prev.reset);
+        channel_bank.signal(Signal::FlushChannel).await.unwrap();
+        assert_eq!(channel_bank.channels.len(), 0, "FlushChannel must clear channels");
+        assert_eq!(channel_bank.channel_queue.len(), 0, "FlushChannel must clear channel queue");
+        assert!(channel_bank.prev.reset, "FlushChannel must propagate to prev stage");
+    }
+
+    /// `ProvideBlock` advances the L1 origin and must NOT discard in-progress
+    /// channels — this is the intentional divergence from kona's upstream
+    /// `ChannelBank`, which clears unconditionally on all signals.  Channels
+    /// that span multiple L1 blocks must survive each `ProvideBlock` so that
+    /// the channel-timeout window can be measured correctly.
+    #[tokio::test]
+    async fn test_provide_block_preserves_channels() {
+        let mock = TestNextFrameProvider::new(vec![]);
+        let cfg = Arc::new(RollupConfig::default());
+        let mut channel_bank = ChannelBank::new(cfg, mock);
+        channel_bank.channels.insert([0xFF; 16], Channel::default());
+        channel_bank.channel_queue.push_back([0xFF; 16]);
+        assert!(!channel_bank.prev.reset);
+        channel_bank.signal(Signal::ProvideBlock(BlockInfo::default())).await.unwrap();
+        assert_eq!(channel_bank.channels.len(), 1, "ProvideBlock must not clear channels");
+        assert_eq!(
+            channel_bank.channel_queue.len(),
+            1,
+            "ProvideBlock must not clear channel queue"
+        );
+        assert!(channel_bank.prev.reset, "ProvideBlock must still propagate to prev stage");
+    }
+
+    /// Multiple successive `ProvideBlock` signals — one per simulated L1 block
+    /// — must all leave in-progress channels intact.
+    #[tokio::test]
+    async fn test_provide_block_preserves_channels_across_multiple_signals() {
+        let mock = TestNextFrameProvider::new(vec![]);
+        let cfg = Arc::new(RollupConfig::default());
+        let mut channel_bank = ChannelBank::new(cfg, mock);
+        channel_bank.channels.insert([0xAA; 16], Channel::default());
+        channel_bank.channel_queue.push_back([0xAA; 16]);
+        for i in 0u64..5 {
+            channel_bank
+                .signal(Signal::ProvideBlock(BlockInfo { number: i, ..Default::default() }))
+                .await
+                .unwrap();
+            assert_eq!(channel_bank.channels.len(), 1, "channels must survive ProvideBlock #{i}");
+            assert_eq!(
+                channel_bank.channel_queue.len(),
+                1,
+                "channel queue must survive ProvideBlock #{i}"
+            );
+        }
+    }
+
+    /// After some `ProvideBlock` signals (which must preserve channel state), a
+    /// subsequent `Reset` must still clear everything.
+    #[tokio::test]
+    async fn test_reset_after_provide_block_clears_channels() {
+        let mock = TestNextFrameProvider::new(vec![]);
+        let cfg = Arc::new(RollupConfig::default());
+        let mut channel_bank = ChannelBank::new(cfg, mock);
+        channel_bank.channels.insert([0xBB; 16], Channel::default());
+        channel_bank.channel_queue.push_back([0xBB; 16]);
+        // Advance a few L1 blocks — channels must survive.
+        for i in 0u64..3 {
+            channel_bank
+                .signal(Signal::ProvideBlock(BlockInfo { number: i, ..Default::default() }))
+                .await
+                .unwrap();
+        }
+        assert_eq!(channel_bank.channels.len(), 1, "channels must survive ProvideBlock signals");
+        // A Reset (e.g. reorg) must now clear everything.
+        channel_bank.signal(ResetSignal::default().signal()).await.unwrap();
+        assert_eq!(channel_bank.channels.len(), 0, "Reset must clear channels after ProvideBlock");
+        assert_eq!(
+            channel_bank.channel_queue.len(),
+            0,
+            "Reset must clear channel queue after ProvideBlock"
+        );
     }
 
     #[test]

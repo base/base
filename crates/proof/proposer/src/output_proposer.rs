@@ -27,9 +27,9 @@ use tracing::info;
 use url::Url;
 
 use crate::{
-    ProposerError,
     config::SigningConfig,
     constants::{GAS_LIMIT_MULTIPLIER_DENOMINATOR, GAS_LIMIT_MULTIPLIER_NUMERATOR},
+    error::ProposerError,
     prover::ProverProposal,
 };
 

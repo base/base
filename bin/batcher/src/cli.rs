@@ -142,6 +142,7 @@ impl BatcherArgs {
             max_channel_duration: self.max_channel_duration,
             sub_safety_margin: self.sub_safety_margin,
             target_num_frames: self.target_num_frames,
+            ..base_batcher_encoder::EncoderConfig::default()
         };
         encoder_config.validate()?;
         Ok(BatcherConfig {
@@ -181,6 +182,6 @@ impl BatcherArgs {
         let _signal_handle = RuntimeManager::install_signal_handler(cancellation.clone());
 
         let service = BatcherService::new(config);
-        service.start(cancellation).await
+        service.setup().await?.run(cancellation).await
     }
 }

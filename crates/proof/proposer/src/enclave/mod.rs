@@ -2,19 +2,18 @@
 
 use alloy_primitives::{B256, U256};
 use async_trait::async_trait;
-pub use base_enclave::PerChainConfig;
 use base_enclave::{
-    AggregateRequest, BlockId, ExecuteStatelessRequest, Genesis, GenesisSystemConfig, RollupConfig,
+    AggregateRequest, BlockId, ExecuteStatelessRequest, Genesis, GenesisSystemConfig,
+    PerChainConfig, RollupConfig,
 };
-use base_enclave_client::ClientError;
-pub use base_enclave_client::EnclaveClient;
+use base_enclave_client::{ClientError, EnclaveClient};
 use base_proof_primitives::Proposal;
 
-use crate::ProposerError;
+use crate::error::ProposerError;
 
 /// Trait abstracting the enclave RPC client for testability.
 ///
-/// This follows the same pattern as [`crate::rpc::L1Client`] and [`crate::rpc::L2Client`].
+/// This follows the same pattern as [`base_proof_rpc::L1Client`] and [`base_proof_rpc::L2Client`].
 #[async_trait]
 pub trait EnclaveClientTrait: Send + Sync {
     /// Executes stateless block validation in the enclave.

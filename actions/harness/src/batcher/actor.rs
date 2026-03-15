@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, B256, Bytes};
 use base_batcher_encoder::{
     BatchEncoder, BatchPipeline, EncoderConfig, ReorgError, StepError, StepResult,
 };
+use base_blobs::BlobEncoder;
 use base_comp::{
     BatchComposeError, BatchComposer, BrotliCompressor, BrotliLevel, ChannelOut, ChannelOutError,
 };
@@ -39,6 +40,13 @@ pub enum GarbageKind {
     MalformedRlp,
     /// Valid frame header, brotli magic byte `0x00`, then random bytes.
     InvalidBrotli,
+    /// Frame data without the `DERIVATION_VERSION_0` prefix byte.
+    /// The derivation pipeline checks for the version byte first and ignores
+    /// transactions that don't start with it.
+    StripVersion,
+    /// Valid `DERIVATION_VERSION_0` prefix + complete frame, then appended garbage bytes.
+    /// The extra trailing bytes should be silently dropped by the frame parser.
+    DirtyAppend,
 }
 
 /// Configuration for the [`Batcher`] actor.
@@ -246,6 +254,37 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
         info!(frames = frames.len(), "batcher submitted frames to L1");
     }
 
+    /// Submit the given frames to the L1 miner as EIP-4844 blob sidecars.
+    ///
+    /// Each frame is encoded into one blob using [`BlobEncoder::encode_frames`].
+    /// Blobs are enqueued via [`L1Miner::enqueue_blob`] with a zero versioned
+    /// hash (sufficient for the in-memory [`ActionBlobDataSource`], which reads
+    /// all blob sidecars unconditionally).
+    ///
+    /// Mine an L1 block after calling this to include the blobs in a block.
+    ///
+    /// [`ActionBlobDataSource`]: crate::ActionBlobDataSource
+    pub fn submit_blob_frames(&mut self, frames: &[Arc<Frame>]) {
+        let blobs =
+            BlobEncoder::encode_frames(frames).expect("frame data fits within blob capacity");
+        for blob in blobs {
+            self.l1_miner.enqueue_blob(B256::ZERO, Box::new(blob));
+        }
+        info!(frames = frames.len(), "batcher submitted frames as blobs to L1");
+    }
+
+    /// Encode and submit all frames as blobs in one step.
+    ///
+    /// Equivalent to calling [`encode_frames`] followed by [`submit_blob_frames`].
+    ///
+    /// [`encode_frames`]: Batcher::encode_frames
+    /// [`submit_blob_frames`]: Batcher::submit_blob_frames
+    pub fn advance_blob(&mut self) -> Result<Vec<Arc<Frame>>, BatcherError> {
+        let frames = self.encode_frames()?;
+        self.submit_blob_frames(&frames);
+        Ok(frames)
+    }
+
     /// Submit intentionally malformed frame data to L1.
     ///
     /// These garbage frames should be silently dropped by the derivation
@@ -286,6 +325,28 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
                 v.push(1u8); // is_last = true
                 Bytes::from(v)
             }
+            GarbageKind::StripVersion => {
+                // Frame data without the DERIVATION_VERSION_0 prefix.
+                // Starts directly with a channel ID — no version byte, so the
+                // derivation pipeline discards the tx before parsing any frames.
+                let mut v = vec![];
+                v.extend_from_slice(&[0u8; 16]); // channel ID (no version prefix)
+                v.extend_from_slice(&[0u8, 0u8]); // frame number = 0
+                v.extend_from_slice(&[0u8, 0u8, 0u8, 0u8]); // frame data length = 0
+                v.push(1u8); // is_last = true
+                Bytes::from(v)
+            }
+            GarbageKind::DirtyAppend => {
+                // Valid DERIVATION_VERSION_0 + a minimal complete frame, then 50 garbage
+                // bytes appended. The extra trailing bytes follow the valid frame.
+                let mut v = vec![DERIVATION_VERSION_0];
+                v.extend_from_slice(&[0u8; 16]); // channel ID
+                v.extend_from_slice(&[0u8, 0u8]); // frame number = 0
+                v.extend_from_slice(&[0u8, 0u8, 0u8, 0u8]); // frame data length = 0
+                v.push(1u8); // is_last = true
+                v.extend_from_slice(&[0xBE_u8; 50]); // appended garbage
+                Bytes::from(v)
+            }
         };
 
         self.l1_miner.submit_tx(PendingTx {
@@ -294,6 +355,14 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
             input,
         });
         info!(kind = ?kind, "batcher submitted garbage frame");
+    }
+
+    /// Return the estimated number of unsubmitted data bytes in the encoding pipeline.
+    ///
+    /// Delegates to [`BatchEncoder::da_backlog_bytes`]. Useful for testing the
+    /// throttle controller's backlog detection.
+    pub fn da_backlog_bytes(&self) -> u64 {
+        self.pipeline.da_backlog_bytes()
     }
 
     /// Encode and submit all frames in one step (convenience wrapper).

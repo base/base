@@ -1,6 +1,6 @@
 //! Contains the `ChannelOut` primitive for Base.
 
-use alloc::{sync::Arc, vec, vec::Vec};
+use alloc::{fmt, sync::Arc, vec, vec::Vec};
 
 use alloy_rlp::Encodable;
 use base_consensus_genesis::RollupConfig;
@@ -36,7 +36,6 @@ pub enum ChannelOutError {
 }
 
 /// [`ChannelOut`] constructs a channel from compressed, encoded batch data.
-#[allow(missing_debug_implementations)]
 pub struct ChannelOut<C>
 where
     C: ChannelCompressor,
@@ -54,6 +53,17 @@ where
     pub frame_number: u16,
     /// The compressor.
     pub compressor: C,
+}
+
+impl<C: ChannelCompressor> fmt::Debug for ChannelOut<C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChannelOut")
+            .field("id", &self.id)
+            .field("rlp_length", &self.rlp_length)
+            .field("frame_number", &self.frame_number)
+            .field("closed", &self.closed)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<C> ChannelOut<C>
@@ -147,10 +157,7 @@ where
             if self.frame_number == 0 { self.compressor.channel_version_byte() } else { None };
         let prefix_len = usize::from(version_byte.is_some());
 
-        let mut max_size = max_size - FRAME_V0_OVERHEAD - prefix_len;
-        if max_size > self.ready_bytes() {
-            max_size = self.ready_bytes();
-        }
+        let max_size = (max_size - FRAME_V0_OVERHEAD - prefix_len).min(self.ready_bytes());
 
         let mut data = Vec::with_capacity(prefix_len + max_size);
         if let Some(v) = version_byte {

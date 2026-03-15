@@ -28,10 +28,7 @@ mod driver;
 pub use driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl, RecoveredGame};
 
 mod enclave;
-pub use enclave::{
-    EnclaveClient, EnclaveClientTrait, PerChainConfig, create_enclave_client,
-    rollup_config_to_per_chain_config,
-};
+pub use enclave::{EnclaveClientTrait, create_enclave_client, rollup_config_to_per_chain_config};
 
 mod error;
 pub use error::*;

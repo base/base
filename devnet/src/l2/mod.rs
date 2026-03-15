@@ -6,6 +6,9 @@ pub use batcher::{BatcherConfig, BatcherContainer};
 pub mod config;
 pub use config::L2ContainerConfig;
 
+pub mod in_process_batcher;
+pub use in_process_batcher::{InProcessBatcher, InProcessBatcherConfig};
+
 pub mod in_process_builder;
 pub use in_process_builder::{InProcessBuilder, InProcessBuilderConfig};
 

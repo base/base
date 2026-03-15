@@ -54,7 +54,7 @@ pub enum TxManagerError {
 
     /// Calculated fee exceeds the configured fee-limit ceiling.
     ///
-    /// Returned by [`FeeCalculator::check_limits`] when the proposed fee
+    /// Returned by [`crate::FeeCalculator::check_limits`] when the proposed fee
     /// surpasses `fee_limit_multiplier × suggested_fee` and the suggested
     /// fee is at or above `fee_limit_threshold`. Non-retryable.
     #[error("fee limit exceeded: fee {fee} exceeds ceiling {ceiling}")]

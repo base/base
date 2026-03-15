@@ -26,12 +26,12 @@ mod types;
 pub use types::{CompressionAlgo, CompressorError, CompressorResult, CompressorType};
 
 mod zlib;
-pub use zlib::{ZlibCompressor, compress_zlib, decompress_zlib};
+pub use zlib::ZlibCompressor;
 
 #[cfg(feature = "std")]
 mod brotli;
 #[cfg(feature = "std")]
-pub use brotli::{BrotliCompressionError, BrotliCompressor, BrotliLevel, compress_brotli};
+pub use brotli::{BrotliCompressionError, BrotliCompressor, BrotliLevel};
 
 #[cfg(feature = "std")]
 mod variant;

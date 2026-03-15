@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
+base-batcher-service.workspace = true
 base-txpool-rpc.workspace = true
 base-flashblocks.workspace = true
 base-tx-forwarding.workspace = true
@@ -55,6 +56,7 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 base-alloy-network.workspace = true
 
 # tokio
+tokio-util.workspace = true
 tokio = { workspace = true, features = ["full", "rt-multi-thread", "macros"] }
 
 # rpc

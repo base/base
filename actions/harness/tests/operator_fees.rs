@@ -2,34 +2,12 @@
 
 use alloy_primitives::{Address, B256, LogData};
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain, block_info_from,
+    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain,
+    TestRollupConfigBuilder, block_info_from,
 };
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
-use base_consensus_genesis::{
-    CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, HardForkConfig, RollupConfig,
-};
-use base_consensus_registry::Registry;
+use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, HardForkConfig};
 use base_protocol::L1BlockInfoTx;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Build a [`RollupConfig`] for operator fee tests with the given hardfork schedule.
-///
-/// Starts from the real Base mainnet config and zeroes the genesis fields for
-/// in-memory testing (L1 miner starts at ts=0). The caller supplies the
-/// complete [`HardForkConfig`].
-fn rollup_config_for(batcher: &BatcherConfig, hardforks: HardForkConfig) -> RollupConfig {
-    let mut rc = Registry::rollup_config(8453).expect("mainnet config").clone();
-    rc.batch_inbox_address = batcher.inbox_address;
-    rc.genesis.system_config.as_mut().unwrap().batcher_address = batcher.batcher_address;
-    rc.genesis.l2_time = 0;
-    rc.genesis.l1 = Default::default();
-    rc.genesis.l2 = Default::default();
-    rc.hardforks = hardforks;
-    rc
-}
 
 /// Decode the [`L1BlockInfoTx`] from the first (L1 info deposit) transaction of
 /// an [`OpBlock`].
@@ -81,7 +59,8 @@ fn operator_fee_not_encoded_before_isthmus() {
         // their mainnet timestamps are unreachable (L1 miner starts at ts=0).
         ..Default::default()
     };
-    let rollup_cfg = rollup_config_for(&batcher_cfg, hardforks);
+    let rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
     let h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
@@ -128,7 +107,8 @@ fn operator_fee_encoded_in_l1_info_post_isthmus() {
         isthmus_time: Some(0),
         ..Default::default()
     };
-    let mut rollup_cfg = rollup_config_for(&batcher_cfg, hardforks);
+    let mut rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
     let sys_cfg = rollup_cfg.genesis.system_config.as_mut().unwrap();
     sys_cfg.operator_fee_scalar = Some(OPERATOR_FEE_SCALAR);
     sys_cfg.operator_fee_constant = Some(OPERATOR_FEE_CONSTANT);
@@ -191,7 +171,8 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
         isthmus_time: Some(isthmus_time),
         ..Default::default()
     };
-    let mut rollup_cfg = rollup_config_for(&batcher_cfg, hardforks);
+    let mut rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
     let sys_cfg = rollup_cfg.genesis.system_config.as_mut().unwrap();
     sys_cfg.operator_fee_scalar = Some(OPERATOR_FEE_SCALAR);
     sys_cfg.operator_fee_constant = Some(OPERATOR_FEE_CONSTANT);
@@ -300,7 +281,8 @@ fn l1_info_format_transitions_at_jovian_boundary() {
         jovian_time: Some(jovian_time),
         ..Default::default()
     };
-    let mut rollup_cfg = rollup_config_for(&batcher_cfg, hardforks);
+    let mut rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
     let sys_cfg = rollup_cfg.genesis.system_config.as_mut().unwrap();
     sys_cfg.operator_fee_scalar = Some(OPERATOR_FEE_SCALAR);
     sys_cfg.operator_fee_constant = Some(OPERATOR_FEE_CONSTANT);
@@ -409,7 +391,8 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
         isthmus_time: Some(isthmus_time),
         ..Default::default()
     };
-    let mut rollup_cfg = rollup_config_for(&batcher_cfg, hardforks);
+    let mut rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
     let sys_cfg = rollup_cfg.genesis.system_config.as_mut().unwrap();
     sys_cfg.operator_fee_scalar = Some(OPERATOR_FEE_SCALAR);
     sys_cfg.operator_fee_constant = Some(OPERATOR_FEE_CONSTANT);
@@ -495,7 +478,8 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
         jovian_time: Some(jovian_time),
         ..Default::default()
     };
-    let mut rollup_cfg = rollup_config_for(&batcher_cfg, hardforks);
+    let mut rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
     // Narrow the sequencing window: epoch-0 batches must land in L1 blocks 0–3.
     // When the pipeline reaches L1 block 4 (epoch 0 + 4 = 4), force-inclusion
     // fires and a deposit-only block is generated for any pending L2 slot.
@@ -675,7 +659,8 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
         isthmus_time: Some(0),
         ..Default::default()
     };
-    let mut rollup_cfg = rollup_config_for(&batcher_cfg, hardforks);
+    let mut rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
     rollup_cfg.l1_system_config_address = l1_sys_cfg_addr;
     let sys_cfg = rollup_cfg.genesis.system_config.as_mut().unwrap();
     sys_cfg.operator_fee_scalar = Some(OLD_SCALAR);

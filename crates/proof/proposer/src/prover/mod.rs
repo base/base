@@ -13,8 +13,8 @@ use alloy_rpc_types_eth::TransactionReceipt;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_rpc_types::Transaction as OpTransaction;
 use base_enclave::{
-    AggregateRequest, ChainConfig, ExecuteStatelessRequest, RollupConfig, l2_block_to_block_info,
-    output_root_v0_with_hash,
+    AggregateRequest, ChainConfig, ExecuteStatelessRequest, PerChainConfig, RollupConfig,
+    l2_block_to_block_info, output_root_v0_with_hash,
 };
 use base_proof_primitives::Proposal;
 use base_proof_rpc::{L1BlockId, L1Provider, L2BlockRef, OpBlock};
@@ -23,11 +23,7 @@ pub use types::ProverProposal;
 #[cfg(test)]
 pub(crate) use types::test_helpers;
 
-use crate::{
-    ProposerError,
-    enclave::{EnclaveClientTrait, PerChainConfig},
-    rpc::ProverL2Provider,
-};
+use crate::{enclave::EnclaveClientTrait, error::ProposerError, rpc::ProverL2Provider};
 
 /// Deposit transaction type identifier (EIP-2718 type byte for OP deposits).
 const DEPOSIT_TX_TYPE: u8 = 0x7E;

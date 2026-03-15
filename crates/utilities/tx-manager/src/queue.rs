@@ -51,8 +51,8 @@ impl<M: TxManager + 'static> TxQueue<M> {
     /// 1. Acquires a semaphore permit (blocks when at capacity).
     /// 2. Calls [`TxManager::send_async`] **on the caller's task** so that
     ///    nonces are reserved in call order.
-    /// 3. Spawns a background task that awaits the [`SendHandle`], delivers the
-    ///    result on `result_tx`, and releases the permit.
+    /// 3. Spawns a background task that awaits the [`crate::SendHandle`],
+    ///    delivers the result on `result_tx`, and releases the permit.
     ///
     /// # Warning: not cancellation-safe
     ///

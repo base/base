@@ -2,7 +2,7 @@
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, BatchType, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    block_info_from,
+    TestRollupConfigBuilder, block_info_from,
 };
 use base_consensus_genesis::{HardForkConfig, RollupConfig};
 use base_consensus_registry::Registry;
@@ -246,22 +246,6 @@ fn base_v1_is_standalone_from_jovian() {
 // activates at T, keeping the upgrade-transaction injection isolated.
 // ---------------------------------------------------------------------------
 
-/// Build a [`RollupConfig`] wired to the given [`BatcherConfig`] and [`HardForkConfig`].
-///
-/// Starts from the real Base mainnet config and replaces the hardfork schedule
-/// with the caller-supplied `hardforks`. This lets derivation tests set exact
-/// hardfork timestamps without spurious cascade activations from unlisted forks.
-fn rollup_config_for(batcher: &BatcherConfig, hardforks: HardForkConfig) -> RollupConfig {
-    let mut rc = Registry::rollup_config(8453).expect("mainnet config").clone();
-    rc.batch_inbox_address = batcher.inbox_address;
-    rc.genesis.system_config.as_mut().unwrap().batcher_address = batcher.batcher_address;
-    rc.genesis.l2_time = 0;
-    rc.genesis.l1 = Default::default();
-    rc.genesis.l2 = Default::default();
-    rc.hardforks = hardforks;
-    rc
-}
-
 /// With only Canyon active (Delta NOT active, Fjord NOT active), a span batch
 /// submitted by the batcher must NOT be derived.
 ///
@@ -275,7 +259,8 @@ fn rollup_config_for(batcher: &BatcherConfig, hardforks: HardForkConfig) -> Roll
 async fn span_batch_rejected_before_delta() {
     let batcher_cfg = BatcherConfig::default();
     let hardforks = HardForkConfig { canyon_time: Some(0), ..Default::default() };
-    let rollup_cfg = rollup_config_for(&batcher_cfg, hardforks);
+    let rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -312,7 +297,8 @@ async fn span_batch_rejected_before_delta() {
 async fn span_batch_derives_after_delta() {
     let batcher_cfg = BatcherConfig::default();
     let hardforks = HardForkConfig { fjord_time: Some(0), ..Default::default() };
-    let rollup_cfg = rollup_config_for(&batcher_cfg, hardforks);
+    let rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -350,7 +336,8 @@ async fn span_batch_derives_after_delta() {
 async fn single_batch_derives_with_fjord() {
     let batcher_cfg = BatcherConfig::default();
     let hardforks = HardForkConfig { fjord_time: Some(0), ..Default::default() };
-    let rollup_cfg = rollup_config_for(&batcher_cfg, hardforks);
+    let rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -421,7 +408,8 @@ async fn jovian_derivation_crosses_activation_boundary() {
         jovian_time: Some(jovian_time),
         ..Default::default()
     };
-    let rollup_cfg = rollup_config_for(&batcher_cfg, hardforks);
+    let rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());

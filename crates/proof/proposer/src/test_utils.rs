@@ -18,8 +18,9 @@ use base_proof_rpc::{
 };
 
 use crate::{
-    OutputProposer, ProposerError,
     enclave::EnclaveClientTrait,
+    error::ProposerError,
+    output_proposer::OutputProposer,
     prover::{Prover, ProverProposal},
     rpc::ProverL2Provider,
 };
