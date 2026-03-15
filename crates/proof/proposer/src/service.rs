@@ -23,9 +23,15 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    Driver, DriverConfig, DriverHandle, L2ClientKind, ProposerConfig, ProposerDriverControl,
-    Prover, SigningConfig, create_enclave_client, create_output_proposer,
-    rollup_config_to_per_chain_config,
+    balance::balance_monitor,
+    config::{ProposerConfig, SigningConfig},
+    driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl},
+    enclave::{create_enclave_client, rollup_config_to_per_chain_config},
+    health::serve,
+    metrics::record_startup_metrics,
+    output_proposer::create_output_proposer,
+    prover::Prover,
+    rpc::L2ClientKind,
 };
 
 /// Runs the full proposer service lifecycle.
@@ -57,7 +63,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     config.metrics.init().expect("failed to install Prometheus recorder");
 
     // Record startup metrics (no-ops if no recorder installed).
-    crate::record_startup_metrics(env!("CARGO_PKG_VERSION"));
+    record_startup_metrics(env!("CARGO_PKG_VERSION"));
 
     // ── 3. Create RPC clients ────────────────────────────────────────────
     let l1_config = L1ClientConfig::new(config.l1_eth_rpc.clone())
@@ -211,18 +217,13 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         let addr = SocketAddr::new(config.rpc.addr, config.rpc.port);
         let ready_flag = Arc::clone(&ready);
         let health_cancel = cancel.clone();
-        tokio::spawn(
-            async move { crate::serve(addr, ready_flag, admin_driver, health_cancel).await },
-        )
+        tokio::spawn(async move { serve(addr, ready_flag, admin_driver, health_cancel).await })
     };
 
     // ── 8. Start balance monitor (if metrics enabled) ────────────────────
     let balance_handle: Option<JoinHandle<()>> = if config.metrics.enabled {
-        let handle = tokio::spawn(crate::balance_monitor(
-            Arc::clone(&l1_client),
-            proposer_address,
-            cancel.clone(),
-        ));
+        let handle =
+            tokio::spawn(balance_monitor(Arc::clone(&l1_client), proposer_address, cancel.clone()));
         info!(%proposer_address, "Balance monitor started");
         Some(handle)
     } else {
