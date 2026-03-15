@@ -142,7 +142,10 @@ impl BaseTxMetrics {
         describe_gauge!(TIPCAP_GWEI, "Tip cap in gwei");
         describe_counter!(RPC_ERROR_COUNT, "Number of RPC errors");
         describe_counter!(TX_CONFIRMED_COUNT, "Number of confirmed transactions");
-        describe_counter!(TX_FAILED_COUNT, "Number of failed send attempts (includes timeouts where the tx may still confirm)");
+        describe_counter!(
+            TX_FAILED_COUNT,
+            "Number of failed send attempts (includes timeouts where the tx may still confirm)"
+        );
     }
 }
 
