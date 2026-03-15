@@ -26,7 +26,7 @@ fn make_source(h: &ActionTestHarness, n: u64) -> ActionL2Source {
 
 #[test]
 fn batcher_produces_frames_for_single_block() {
-    let mut h = ActionTestHarness::default();
+    let h = ActionTestHarness::default();
     let source = make_source(&h, 1);
     let mut batcher = h.create_batcher(source, BatcherConfig::default());
     let frames = batcher.advance().expect("advance should succeed");
@@ -35,7 +35,7 @@ fn batcher_produces_frames_for_single_block() {
 
 #[test]
 fn batcher_produces_frames_for_multiple_blocks() {
-    let mut h = ActionTestHarness::default();
+    let h = ActionTestHarness::default();
     let source = make_source(&h, 5);
     let mut batcher = h.create_batcher(source, BatcherConfig::default());
     let frames = batcher.advance().expect("advance should succeed");
@@ -44,7 +44,7 @@ fn batcher_produces_frames_for_multiple_blocks() {
 
 #[test]
 fn batcher_errors_when_no_l2_blocks() {
-    let mut h = ActionTestHarness::default();
+    let h = ActionTestHarness::default();
     let source = ActionL2Source::new(); // empty
     let mut batcher = h.create_batcher(source, BatcherConfig::default());
     let err = batcher.advance().expect_err("should fail with no blocks");
@@ -57,7 +57,7 @@ fn batcher_errors_when_no_l2_blocks() {
 
 #[test]
 fn batcher_produces_frames_for_single_block_span() {
-    let mut h = ActionTestHarness::default();
+    let h = ActionTestHarness::default();
     let source = make_source(&h, 1);
     let cfg = BatcherConfig { batch_type: BatchType::Span, ..Default::default() };
     let mut batcher = h.create_batcher(source, cfg);
@@ -67,7 +67,7 @@ fn batcher_produces_frames_for_single_block_span() {
 
 #[test]
 fn batcher_produces_span_frames_for_multiple_blocks() {
-    let mut h = ActionTestHarness::default();
+    let h = ActionTestHarness::default();
     let source = make_source(&h, 5);
     let cfg = BatcherConfig { batch_type: BatchType::Span, ..Default::default() };
     let mut batcher = h.create_batcher(source, cfg);
@@ -89,7 +89,7 @@ fn batcher_submits_tx_to_l1_pending_pool() {
     let source = make_source(&h, 3);
     let mut batcher = h.create_batcher(source, cfg);
     batcher.advance().expect("advance should succeed");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
     // Before mining: pending pool should have at least one tx.
     let pending = h.l1.pending_txs();
@@ -106,7 +106,7 @@ fn batcher_tx_payload_starts_with_derivation_version_0() {
     let source = make_source(&h, 2);
     let mut batcher = h.create_batcher(source, BatcherConfig::default());
     batcher.advance().expect("advance should succeed");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
     for tx in h.l1.pending_txs() {
         assert_eq!(
@@ -123,7 +123,7 @@ fn mined_block_contains_batcher_txs() {
     let source = make_source(&h, 2);
     let mut batcher = h.create_batcher(source, BatcherConfig::default());
     batcher.advance().expect("advance should succeed");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
     h.l1.mine_block();
 
@@ -137,7 +137,7 @@ fn mined_block_contains_batcher_txs() {
 
 #[test]
 fn action_act_delegates_to_advance() {
-    let mut h = ActionTestHarness::default();
+    let h = ActionTestHarness::default();
     let source = make_source(&h, 1);
     let mut batcher = h.create_batcher(source, BatcherConfig::default());
     let frames = batcher.act().expect("act should succeed");
@@ -162,6 +162,7 @@ fn two_batcher_cycles_each_submit_distinct_txs() {
         }
         let mut batcher = h.create_batcher(source, BatcherConfig::default());
         batcher.advance().expect("first advance");
+        batcher.flush(&mut h.l1);
     }
     h.l1.mine_block();
     let after_first = h.l1.tip().batcher_txs.len();
@@ -175,6 +176,7 @@ fn two_batcher_cycles_each_submit_distinct_txs() {
         }
         let mut batcher = h.create_batcher(source, BatcherConfig::default());
         batcher.advance().expect("second advance");
+        batcher.flush(&mut h.l1);
     }
     h.l1.mine_block();
     let after_second = h.l1.tip().batcher_txs.len();
@@ -205,6 +207,7 @@ fn batcher_txs_survive_reorg_and_resubmit() {
         }
         let mut batcher = h.create_batcher(source, BatcherConfig::default());
         batcher.advance().expect("advance");
+        batcher.flush(&mut h.l1);
     }
     h.l1.mine_block();
     assert_eq!(h.l1.latest_number(), 2);
@@ -223,6 +226,7 @@ fn batcher_txs_survive_reorg_and_resubmit() {
         }
         let mut batcher = h.create_batcher(source, BatcherConfig::default());
         batcher.advance().expect("re-advance after reorg");
+        batcher.flush(&mut h.l1);
     }
     h.l1.mine_block();
 
@@ -241,7 +245,7 @@ fn garbage_random_submitted_to_l1() {
     let source = ActionL2Source::new();
     let mut batcher = h.create_batcher(source, BatcherConfig::default());
     batcher.submit_garbage_frames(GarbageKind::Random);
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
 }
 
@@ -251,7 +255,7 @@ fn garbage_truncated_submitted_to_l1() {
     let source = ActionL2Source::new();
     let mut batcher = h.create_batcher(source, BatcherConfig::default());
     batcher.submit_garbage_frames(GarbageKind::Truncated);
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
 }
 
@@ -261,7 +265,7 @@ fn garbage_malformed_rlp_submitted_to_l1() {
     let source = ActionL2Source::new();
     let mut batcher = h.create_batcher(source, BatcherConfig::default());
     batcher.submit_garbage_frames(GarbageKind::MalformedRlp);
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
 }
 
@@ -271,7 +275,7 @@ fn garbage_invalid_brotli_submitted_to_l1() {
     let source = ActionL2Source::new();
     let mut batcher = h.create_batcher(source, BatcherConfig::default());
     batcher.submit_garbage_frames(GarbageKind::InvalidBrotli);
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
 }
 
@@ -281,7 +285,7 @@ fn garbage_strip_version_submitted_to_l1() {
     let source = ActionL2Source::new();
     let mut batcher = h.create_batcher(source, BatcherConfig::default());
     batcher.submit_garbage_frames(GarbageKind::StripVersion);
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
 }
 
@@ -291,6 +295,6 @@ fn garbage_dirty_append_submitted_to_l1() {
     let source = ActionL2Source::new();
     let mut batcher = h.create_batcher(source, BatcherConfig::default());
     batcher.submit_garbage_frames(GarbageKind::DirtyAppend);
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
 }

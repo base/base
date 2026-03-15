@@ -79,7 +79,7 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
         source.push(block);
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("batcher encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.mine_and_push(&chain);
     }
 
@@ -158,7 +158,7 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
         source.push(block);
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.mine_and_push(&chain);
     }
 
@@ -172,7 +172,7 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
         source.push(block);
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("encode empty block");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.mine_and_push(&chain);
     }
 

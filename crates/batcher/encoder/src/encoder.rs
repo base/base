@@ -170,6 +170,13 @@ impl BatchEncoder {
                     self.span_accumulator.clear();
                     self.span_raw_bytes = 0;
                     self.span_opened_at_l1 = None;
+                } else {
+                    // Discard the channel we just opened so that the drain logic below
+                    // (`self.current_channel.take()`) short-circuits and returns early.
+                    // Without this, the empty channel (0 frames) would be pushed to
+                    // `ready_channels`, where it can never be confirmed and never removed,
+                    // leaking memory and growing the O(N) scan in `next_submission`.
+                    self.current_channel = None;
                 }
             }
             // On failure (append or add_batch): accumulator is untouched so blocks

@@ -38,7 +38,7 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
     }
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("batcher should encode all blocks");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block();
     let l1_block_1 = block_info_from(h.l1.tip());
 

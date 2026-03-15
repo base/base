@@ -33,7 +33,7 @@ async fn finalization_advances_with_multiple_l2_blocks_per_epoch() {
         source.push(block.clone());
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("batcher encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.l1.mine_block();
     }
 
@@ -114,7 +114,7 @@ async fn finalization_advances_incrementally_with_l1_epochs() {
         source.push(block.clone());
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("batcher encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.mine_and_push(&chain);
     }
 
@@ -175,7 +175,7 @@ async fn finalization_does_not_exceed_safe_head() {
         source.push(block);
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.l1.mine_block();
     }
 
@@ -238,7 +238,7 @@ async fn finalization_reorg_clears_state() {
         source.push(block);
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.l1.mine_block();
     }
 
@@ -289,7 +289,7 @@ async fn finalization_reorg_clears_state() {
     source.push(block1_fresh);
     let mut batcher_fresh = h.create_batcher(source, batcher_cfg.clone());
     batcher_fresh.advance().expect("encode fresh");
-    drop(batcher_fresh);
+    batcher_fresh.flush(&mut h.l1);
     verifier.register_block_hash(1, sequencer_fresh.head().block_info.hash);
     h.l1.mine_block();
 
@@ -344,7 +344,7 @@ async fn finalization_does_not_regress() {
         source.push(block.clone());
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("batcher encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.mine_and_push(&chain);
     }
 

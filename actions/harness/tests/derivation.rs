@@ -33,7 +33,7 @@ async fn single_l2_block_derived_from_batcher_frame() {
     // Encode the L2 block into a batcher frame and submit to the L1 pending pool.
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("batcher should encode the block");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
     // Mine the L1 block that includes the batcher transaction.
     h.l1.mine_block();
@@ -87,7 +87,7 @@ async fn multiple_l1_blocks_each_derive_one_l2_block() {
 
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("batcher advance");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.l1.mine_block();
     }
 
@@ -126,7 +126,7 @@ async fn batch_in_orphaned_l1_block_is_not_derived() {
 
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("batcher encode");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block();
 
     // Reorg L1 back to genesis; mine an empty replacement block 1'.
@@ -167,7 +167,7 @@ async fn reorg_reverts_derived_safe_head() {
 
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("batcher encode");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block();
 
     // Create the verifier and derive L2 block 1.
@@ -227,7 +227,7 @@ async fn reorg_and_resubmit_rederives_l2_block() {
     source.push(block1.clone());
     let mut batcher = h.create_batcher(source, batcher_cfg.clone());
     batcher.advance().expect("batcher encode");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block();
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -268,7 +268,7 @@ async fn reorg_and_resubmit_rederives_l2_block() {
     source2.push(block1);
     let mut batcher = h.create_batcher(source2, batcher_cfg);
     batcher.advance().expect("batcher re-encode on new fork");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block(); // block 2'
     chain.push(h.l1.tip().clone());
 
@@ -309,7 +309,7 @@ async fn reorg_flip_flop() {
     source.push(block1.clone());
     let mut batcher = h.create_batcher(source, batcher_cfg.clone());
     batcher.advance().expect("A1 batcher encode");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block(); // A1
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -328,7 +328,7 @@ async fn reorg_flip_flop() {
     source.push(block1.clone());
     let mut batcher = h.create_batcher(source, batcher_cfg.clone());
     batcher.advance().expect("B1 batcher encode");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block(); // B1
     let fork_b1 = block_info_from(h.l1.tip());
 
@@ -348,7 +348,7 @@ async fn reorg_flip_flop() {
     source.push(block1);
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("A1' batcher encode");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block(); // A1'
     let fork_a_prime1 = block_info_from(h.l1.tip());
 
@@ -402,7 +402,7 @@ async fn reorg_flip_flop_empty_middle_fork() {
         source.push(block);
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("fork A: encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.l1.mine_block();
     }
 
@@ -464,7 +464,7 @@ async fn reorg_flip_flop_empty_middle_fork() {
         source.push(block);
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("fork C: encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         fork_c_blocks.push(h.mine_and_push(&chain));
     }
 
@@ -524,7 +524,7 @@ async fn batch_accepted_at_last_seq_window_block() {
     // epoch 0 with seq_window_size = 4 (valid iff inclusion_block < 4).
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("batcher encode");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block(); // block 3
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -684,7 +684,7 @@ async fn l1_deposit_included_in_derived_l2_block() {
     // Submit the batcher frame into the same L1 block as the deposit log.
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("batcher encode");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block();
 
     // Create verifier AFTER mining so the snapshot contains block 1.
@@ -759,7 +759,7 @@ async fn batcher_key_rotation_accepts_new_batcher() {
         source.push(block);
         let mut batcher = h.create_batcher(source, batcher_a.clone());
         batcher.advance().expect("batcher A encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.l1.mine_block();
     }
 
@@ -794,7 +794,7 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     source_a.push(block3.clone());
     let mut batcher = h.create_batcher(source_a, batcher_a.clone());
     batcher.advance().expect("batcher A encode block 3");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block(); // block 4 — A's frame
     chain.push(h.l1.tip().clone());
 
@@ -808,7 +808,7 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     source_b.push(block3);
     let mut batcher = h.create_batcher(source_b, batcher_b);
     batcher.advance().expect("batcher B encode block 3");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block(); // block 5 — B's frame
     chain.push(h.l1.tip().clone());
 
@@ -846,7 +846,7 @@ async fn multi_l2_per_l1_epoch() {
         source.push(block);
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("batcher advance");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
 
         h.mine_and_push(&chain);
     }
@@ -905,7 +905,7 @@ async fn batch_past_sequence_window_rejected() {
     // Submit batch in block 3 — past the window.
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("encode");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block(); // block 3
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -985,7 +985,7 @@ async fn multi_epoch_sequence() {
         source.push(block.clone());
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("batcher advance");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.mine_and_push(&chain);
     }
 
@@ -1028,7 +1028,7 @@ async fn same_epoch_multi_batch_one_l1_block() {
     // Encode all 3 blocks into one batcher submission (single channel).
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("batcher encode 3 blocks");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
     // Mine ONE L1 block containing all 3 batches.
     h.l1.mine_block();
@@ -1077,7 +1077,7 @@ async fn deep_reorg_multi_block() {
         source.push(block.clone());
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.l1.mine_block();
     }
 
@@ -1113,7 +1113,7 @@ async fn deep_reorg_multi_block() {
         source.push(block.clone());
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("re-encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.mine_and_push(&chain);
     }
 
@@ -1174,7 +1174,7 @@ async fn garbage_frame_data_ignored() {
     // Now submit the real batch.
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("encode");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.mine_and_push(&chain);
 
     let l1_block_2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
@@ -1241,7 +1241,7 @@ async fn multi_frame_channel_reassembled() {
 
     // Submit ALL frames to the same L1 block (each as a separate tx).
     batcher.submit_frames(&frames);
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.mine_and_push(&chain);
 
     verifier.initialize().await.expect("initialize");
@@ -1274,7 +1274,7 @@ async fn single_l2_block_derived_from_span_batch() {
 
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("span batcher advance");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
     h.l1.mine_block();
 
@@ -1314,7 +1314,7 @@ async fn three_l2_blocks_derived_from_span_batch() {
 
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("span advance");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
     h.l1.mine_block();
 
@@ -1419,7 +1419,7 @@ async fn gpo_params_change_does_not_disrupt_derivation() {
     source.push(block1);
     let mut batcher = h.create_batcher(source, batcher_cfg.clone());
     batcher.advance().expect("encode block 1");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block();
 
     // L1 block 2: gas-config update log only, no batch.
@@ -1431,7 +1431,7 @@ async fn gpo_params_change_does_not_disrupt_derivation() {
     source.push(block2);
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("encode block 2");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block();
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -1479,7 +1479,7 @@ async fn gas_limit_change_does_not_disrupt_derivation() {
     source.push(block1);
     let mut batcher = h.create_batcher(source, batcher_cfg.clone());
     batcher.advance().expect("encode block 1");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block();
 
     // L1 block 2: gas-limit update log only.
@@ -1491,7 +1491,7 @@ async fn gas_limit_change_does_not_disrupt_derivation() {
     source.push(block2);
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("encode block 2");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block();
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -1534,7 +1534,7 @@ async fn garbage_kind_silently_ignored_then_valid_batch_derived(kind: GarbageKin
     let source_empty = ActionL2Source::new();
     let mut batcher = h.create_batcher(source_empty, batcher_cfg.clone());
     batcher.submit_garbage_frames(kind);
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block();
 
     // L1 block 2: valid batch.
@@ -1542,7 +1542,7 @@ async fn garbage_kind_silently_ignored_then_valid_batch_derived(kind: GarbageKin
     source.push(block);
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("encode valid batch");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block();
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -1618,7 +1618,7 @@ async fn l2_finalized_advances_via_l1_finalized_signal() {
         source.push(block);
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.l1.mine_block();
     }
 
@@ -1772,7 +1772,7 @@ async fn derive_chain_from_near_l1_genesis() {
         source.push(block);
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.l1.mine_block(); // mines L1 block 5+i
     }
 
@@ -1829,7 +1829,7 @@ async fn single_l2_block_derived_from_blob() {
     // Encode the L2 block into frames (without submitting to L1 as calldata).
     let mut batcher = h.create_batcher(source, batcher_cfg);
     let frames = batcher.encode_frames().expect("batcher should encode the block");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
     // Build the frame data payload: [DERIVATION_VERSION_0] ++ encoded frames.
     let mut frame_data = vec![DERIVATION_VERSION_0];
@@ -1878,7 +1878,7 @@ async fn multiple_l2_blocks_derived_from_blob() {
     // Encode all 3 blocks into a single channel and get the frames.
     let mut batcher = h.create_batcher(all_source, batcher_cfg);
     let frames = batcher.encode_frames().expect("batcher should encode blocks");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
     // Build frame data and encode into a blob.
     let mut frame_data = vec![DERIVATION_VERSION_0];
@@ -1961,7 +1961,7 @@ async fn batcher_config_update_rolled_back_on_reorg() {
         source.push(block);
         let mut batcher = h.create_batcher(source, batcher_a.clone());
         batcher.advance().expect("batcher A encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.l1.mine_block();
     }
 
@@ -1995,7 +1995,7 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     source_a.push(block3.clone());
     let mut batcher = h.create_batcher(source_a, batcher_a.clone());
     batcher.advance().expect("batcher A encode block 3");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
 
@@ -2028,7 +2028,7 @@ async fn batcher_config_update_rolled_back_on_reorg() {
         source.push(block);
         let mut batcher = h.create_batcher(source, batcher_a.clone());
         batcher.advance().expect("batcher A encode on new fork");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.l1.mine_block();
         chain.push(h.l1.tip().clone());
     }
@@ -2086,7 +2086,7 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
         source.push(block2);
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("submit future batch (block 2)");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
     }
     h.mine_and_push(&chain); // L1 block 1: future batch
 
@@ -2096,7 +2096,7 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
         source.push(block1);
         let mut batcher = h.create_batcher(source, batcher_cfg);
         batcher.advance().expect("submit present batch (block 1)");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
     }
     h.mine_and_push(&chain); // L1 block 2: present batch
 
@@ -2169,7 +2169,7 @@ async fn pipeline_idle_before_l1_signal_derives_after() {
     source.push(block1);
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("encode and submit");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -2234,7 +2234,7 @@ async fn pipeline_l1_origin_advance_observable_after_epoch_exhausted() {
 
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("encode and submit both blocks");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &builder,

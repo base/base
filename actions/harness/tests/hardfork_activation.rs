@@ -272,7 +272,7 @@ async fn span_batch_rejected_before_delta() {
     let span_cfg = BatcherConfig { batch_type: BatchType::Span, ..batcher_cfg.clone() };
     let mut batcher = h.create_batcher(source, span_cfg);
     batcher.advance().expect("batcher should encode span batch");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
     h.l1.mine_block();
 
@@ -314,7 +314,7 @@ async fn span_batch_derives_after_delta() {
     let span_cfg = BatcherConfig { batch_type: BatchType::Span, ..batcher_cfg.clone() };
     let mut batcher = h.create_batcher(source, span_cfg);
     batcher.advance().expect("batcher encode span batch");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
     h.l1.mine_block();
 
@@ -349,7 +349,7 @@ async fn single_batch_derives_with_fjord() {
 
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("batcher advance");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.l1.mine_block();
     }
 
@@ -424,7 +424,7 @@ async fn jovian_derivation_crosses_activation_boundary() {
 
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("batcher encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.l1.mine_block();
     }
 

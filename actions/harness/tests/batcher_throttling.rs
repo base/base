@@ -2,9 +2,9 @@
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain,
+    TestRollupConfigBuilder,
 };
 use base_batcher_core::{ThrottleConfig, ThrottleController, ThrottleStrategy};
-use base_consensus_registry::Registry;
 
 /// When the batcher accumulates frames without submitting them, the total
 /// encoded bytes should exceed a configured threshold and activate
@@ -14,20 +14,8 @@ use base_consensus_registry::Registry;
 async fn test_throttle_activates_when_frames_accumulate() {
     let l1_cfg = L1MinerConfig { block_time: 2 };
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = {
-        let mut rc = Registry::rollup_config(8453).unwrap().clone();
-        rc.batch_inbox_address = batcher_cfg.inbox_address;
-        rc.genesis.system_config.as_mut().unwrap().batcher_address = batcher_cfg.batcher_address;
-        rc.genesis.l2_time = 0;
-        rc.genesis.l1 = Default::default();
-        rc.genesis.l2 = Default::default();
-        rc.hardforks.canyon_time = Some(0);
-        rc.hardforks.delta_time = Some(0);
-        rc.hardforks.ecotone_time = Some(0);
-        rc.hardforks.fjord_time = Some(0);
-        rc
-    };
-    let mut h = ActionTestHarness::new(l1_cfg, rollup_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let h = ActionTestHarness::new(l1_cfg, rollup_cfg);
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
@@ -129,20 +117,8 @@ fn test_throttle_step_strategy_full_intensity() {
 fn test_throttle_batcher_integration() {
     let l1_cfg = L1MinerConfig { block_time: 2 };
     let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = {
-        let mut rc = Registry::rollup_config(8453).unwrap().clone();
-        rc.batch_inbox_address = batcher_cfg.inbox_address;
-        rc.genesis.system_config.as_mut().unwrap().batcher_address = batcher_cfg.batcher_address;
-        rc.genesis.l2_time = 0;
-        rc.genesis.l1 = Default::default();
-        rc.genesis.l2 = Default::default();
-        rc.hardforks.canyon_time = Some(0);
-        rc.hardforks.delta_time = Some(0);
-        rc.hardforks.ecotone_time = Some(0);
-        rc.hardforks.fjord_time = Some(0);
-        rc
-    };
-    let mut h = ActionTestHarness::new(l1_cfg, rollup_cfg);
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let h = ActionTestHarness::new(l1_cfg, rollup_cfg);
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 

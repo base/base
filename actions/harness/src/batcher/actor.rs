@@ -1,32 +1,17 @@
 use std::sync::Arc;
 
+use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bytes};
 use base_batcher_encoder::{
-    BatchEncoder, BatchPipeline, EncoderConfig, ReorgError, StepError, StepResult,
+    BatchEncoder, BatchPipeline, BatchType, EncoderConfig, ReorgError, StepError, StepResult,
 };
 use base_blobs::BlobEncoder;
-use base_comp::{
-    BatchComposeError, BatchComposer, BrotliCompressor, BrotliLevel, ChannelOut, ChannelOutError,
-};
+use base_comp::BatchComposeError;
 use base_consensus_genesis::RollupConfig;
-use base_protocol::{
-    Batch, ChannelId, DERIVATION_VERSION_0, Frame, MAX_FRAME_LEN, SingleBatch, SpanBatch,
-    SpanBatchError,
-};
+use base_protocol::{DERIVATION_VERSION_0, Frame};
 use tracing::info;
 
 use crate::{Action, L1Miner, L2BlockProvider, PendingTx};
-
-/// Selects whether the batcher encodes blocks as individual [`SingleBatch`]es
-/// or groups them into a single [`SpanBatch`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum BatchType {
-    /// Each L2 block is encoded as a separate [`SingleBatch`] (default).
-    #[default]
-    Single,
-    /// All L2 blocks in one cycle are grouped into a single [`SpanBatch`].
-    Span,
-}
 
 /// Selects the kind of invalid frame data submitted by
 /// [`Batcher::submit_garbage_frames`].
@@ -57,7 +42,8 @@ pub struct BatcherConfig {
     pub batcher_address: Address,
     /// Batch inbox address on L1. Used as the `to` field on L1 transactions.
     pub inbox_address: Address,
-    /// Whether to encode blocks as [`SingleBatch`]es or a [`SpanBatch`].
+    /// Whether to encode blocks as [`SingleBatch`](base_protocol::SingleBatch)es
+    /// or a [`SpanBatch`](base_protocol::SpanBatch).
     pub batch_type: BatchType,
     /// Encoder configuration forwarded to [`BatchEncoder`].
     pub encoder: EncoderConfig,
@@ -86,12 +72,6 @@ pub enum BatcherError {
     /// An L2 reorg was detected during block ingestion.
     #[error("reorg: {0}")]
     Reorg(#[from] ReorgError),
-    /// Channel encoding or compression failed.
-    #[error("channel error: {0}")]
-    Channel(#[from] ChannelOutError),
-    /// Span batch construction failed.
-    #[error("span batch error: {0}")]
-    SpanBatch(#[from] SpanBatchError),
 }
 
 impl From<StepError> for BatcherError {
@@ -105,52 +85,56 @@ impl From<StepError> for BatcherError {
 /// Batcher actor for action tests.
 ///
 /// `Batcher` drains [`OpBlock`]s from an [`L2BlockProvider`], encodes each
-/// one as a [`SingleBatch`] via [`BatchEncoder`] or groups them into a
-/// [`SpanBatch`] depending on [`BatcherConfig::batch_type`], compresses
-/// batches into a channel, and submits the resulting frame data to the
-/// [`L1Miner`] as a [`PendingTx`].
+/// one as a [`SingleBatch`] via [`BatchEncoder`] (or accumulates them into a
+/// [`SpanBatch`] when configured for span mode), compresses batches into a
+/// channel, and buffers the resulting frame data internally.
+///
+/// Call [`flush`] to drain the pending transactions and blobs into an
+/// [`L1Miner`].
 ///
 /// A single call to [`advance`] (or [`Action::act`]) runs one full encode
-/// cycle: drain all available L2 blocks → encode → flush → submit to L1.
-/// Callers then mine an L1 block to include the submitted transactions.
+/// cycle: drain all available L2 blocks → encode → buffer submissions.
+/// Callers then call [`flush`] and mine an L1 block to include the submitted
+/// transactions.
 ///
 /// [`advance`]: Batcher::advance
+/// [`flush`]: Batcher::flush
 /// [`OpBlock`]: base_alloy_consensus::OpBlock
 #[derive(Debug)]
-pub struct Batcher<'a, S: L2BlockProvider> {
-    l1_miner: &'a mut L1Miner,
+pub struct Batcher<S: L2BlockProvider> {
     l2_source: S,
     pipeline: BatchEncoder,
-    rollup_config: Arc<RollupConfig>,
     config: BatcherConfig,
+    pending_txs: Vec<PendingTx>,
+    pending_blobs: Vec<(B256, Box<Blob>)>,
 }
 
-impl<'a, S: L2BlockProvider> Batcher<'a, S> {
+impl<S: L2BlockProvider> Batcher<S> {
     /// Create a new [`Batcher`].
     ///
-    /// The batcher borrows `l1_miner` mutably so it can submit transactions
-    /// directly. `l2_source` is moved in so the batcher owns the block queue.
-    pub fn new(
-        l1_miner: &'a mut L1Miner,
-        l2_source: S,
-        rollup_config: &RollupConfig,
-        config: BatcherConfig,
-    ) -> Self {
+    /// Pending transactions and blobs are buffered internally. Call [`flush`]
+    /// to drain them into an [`L1Miner`].
+    ///
+    /// [`flush`]: Batcher::flush
+    pub fn new(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
         let rollup_config = Arc::new(rollup_config.clone());
-        let pipeline = BatchEncoder::new(Arc::clone(&rollup_config), config.encoder.clone());
-        Self { l1_miner, l2_source, pipeline, rollup_config, config }
+        let mut encoder_config = config.encoder.clone();
+        encoder_config.batch_type = config.batch_type;
+        let pipeline = BatchEncoder::new(rollup_config, encoder_config);
+        Self { l2_source, pipeline, config, pending_txs: Vec::new(), pending_blobs: Vec::new() }
     }
 
     /// Drain all available L2 blocks and encode them into frames without
     /// submitting to L1.
     ///
-    /// For [`BatchType::Single`], blocks are fed through [`BatchEncoder`].
-    /// For [`BatchType::Span`], all blocks are collected into one [`SpanBatch`]
-    /// and encoded via a fresh [`ChannelOut`].
+    /// Blocks are fed through [`BatchEncoder`], which handles both
+    /// [`SingleBatch`](base_protocol::SingleBatch) and
+    /// [`SpanBatch`](base_protocol::SpanBatch) modes via its internal
+    /// [`EncoderConfig`].
     ///
     /// Returns the encoded frames so callers can inspect or submit them
     /// selectively. Use [`submit_frames`] to submit a subset of frames to
-    /// the L1 miner.
+    /// the pending buffer.
     ///
     /// [`submit_frames`]: Batcher::submit_frames
     ///
@@ -159,16 +143,7 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
     /// Returns [`BatcherError::NoBlocks`] if the L2 source is empty.
     /// Returns [`BatcherError::Compose`] if the first tx is not a valid deposit.
     /// Returns [`BatcherError::Reorg`] if a block parent hash mismatch is detected.
-    /// Returns [`BatcherError::Channel`] if channel encoding fails.
-    /// Returns [`BatcherError::SpanBatch`] if span batch construction fails.
     pub fn encode_frames(&mut self) -> Result<Vec<Arc<Frame>>, BatcherError> {
-        match self.config.batch_type {
-            BatchType::Single => self.encode_single_frames(),
-            BatchType::Span => self.encode_span_frames(),
-        }
-    }
-
-    fn encode_single_frames(&mut self) -> Result<Vec<Arc<Frame>>, BatcherError> {
         let mut block_count = 0u64;
 
         while let Some(block) = self.l2_source.next_block() {
@@ -188,7 +163,8 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
             }
         }
 
-        // Force-close the current channel by advancing the L1 head past the timeout.
+        // Intentional test-only force-flush: advance the L1 head past the
+        // channel timeout so the encoder closes the channel immediately.
         self.pipeline.advance_l1_head(u64::MAX);
 
         let mut frames = Vec::new();
@@ -196,48 +172,16 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
             frames.extend(sub.frames);
         }
 
-        info!(blocks = block_count, frames = frames.len(), "batcher encoded single frames");
+        info!(blocks = block_count, frames = frames.len(), "batcher encoded frames");
         Ok(frames)
     }
 
-    fn encode_span_frames(&mut self) -> Result<Vec<Arc<Frame>>, BatcherError> {
-        let mut singles: Vec<(SingleBatch, u64)> = Vec::new();
-
-        while let Some(block) = self.l2_source.next_block() {
-            let (single, l1_info) = BatchComposer::block_to_single_batch(&block)?;
-            singles.push((single, l1_info.sequence_number()));
-        }
-
-        if singles.is_empty() {
-            return Err(BatcherError::NoBlocks);
-        }
-
-        let mut span_batch =
-            SpanBatch { chain_id: self.rollup_config.l2_chain_id.id(), ..Default::default() };
-        for (single, seq_num) in singles {
-            span_batch.append_singular_batch(single, seq_num)?;
-        }
-
-        // Encode the span batch directly via ChannelOut.
-        let compressor = BrotliCompressor::new(BrotliLevel::Brotli10);
-        let mut channel_out =
-            ChannelOut::new(ChannelId::default(), Arc::clone(&self.rollup_config), compressor);
-        channel_out.add_batch(Batch::Span(span_batch))?;
-        channel_out.flush()?;
-        channel_out.close();
-
-        let mut frames = Vec::new();
-        while channel_out.ready_bytes() > 0 {
-            frames.push(Arc::new(channel_out.output_frame(MAX_FRAME_LEN)?));
-        }
-
-        info!(frames = frames.len(), "batcher encoded span frames");
-        Ok(frames)
-    }
-
-    /// Submit the given frames to the L1 miner as pending transactions.
+    /// Buffer the given frames as pending L1 transactions.
     ///
-    /// Each frame is submitted as a separate [`PendingTx`].
+    /// Each frame is buffered as a separate [`PendingTx`]. Call [`flush`] to
+    /// drain them into an [`L1Miner`].
+    ///
+    /// [`flush`]: Batcher::flush
     pub fn submit_frames(&mut self, frames: &[Arc<Frame>]) {
         for frame in frames {
             let encoded = frame.encode();
@@ -245,32 +189,38 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
             input.push(DERIVATION_VERSION_0);
             input.extend_from_slice(&encoded);
 
-            self.l1_miner.submit_tx(PendingTx {
+            self.pending_txs.push(PendingTx {
                 from: self.config.batcher_address,
                 to: self.config.inbox_address,
                 input: Bytes::from(input),
             });
         }
-        info!(frames = frames.len(), "batcher submitted frames to L1");
+        info!(frames = frames.len(), "batcher buffered frames");
     }
 
-    /// Submit the given frames to the L1 miner as EIP-4844 blob sidecars.
+    /// Buffer the given frames as EIP-4844 blob sidecars.
     ///
     /// Each frame is encoded into one blob using [`BlobEncoder::encode_frames`].
-    /// Blobs are enqueued via [`L1Miner::enqueue_blob`] with a zero versioned
-    /// hash (sufficient for the in-memory [`ActionBlobDataSource`], which reads
-    /// all blob sidecars unconditionally).
+    /// Call [`flush`] to drain them into an [`L1Miner`].
     ///
-    /// Mine an L1 block after calling this to include the blobs in a block.
-    ///
-    /// [`ActionBlobDataSource`]: crate::ActionBlobDataSource
+    /// [`flush`]: Batcher::flush
     pub fn submit_blob_frames(&mut self, frames: &[Arc<Frame>]) {
         let blobs =
             BlobEncoder::encode_frames(frames).expect("frame data fits within blob capacity");
         for blob in blobs {
-            self.l1_miner.enqueue_blob(B256::ZERO, Box::new(blob));
+            self.pending_blobs.push((B256::ZERO, Box::new(blob)));
         }
-        info!(frames = frames.len(), "batcher submitted frames as blobs to L1");
+        info!(frames = frames.len(), "batcher buffered frames as blobs");
+    }
+
+    /// Drain all pending transactions and blobs into the given [`L1Miner`].
+    pub fn flush(&mut self, l1: &mut L1Miner) {
+        for tx in self.pending_txs.drain(..) {
+            l1.submit_tx(tx);
+        }
+        for (hash, blob) in self.pending_blobs.drain(..) {
+            l1.enqueue_blob(hash, blob);
+        }
     }
 
     /// Encode and submit all frames as blobs in one step.
@@ -285,11 +235,15 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
         Ok(frames)
     }
 
-    /// Submit intentionally malformed frame data to L1.
+    /// Buffer intentionally malformed frame data as a pending L1 transaction.
     ///
     /// These garbage frames should be silently dropped by the derivation
     /// pipeline. Use them to test that invalid data does not corrupt channel
     /// state or advance the safe head.
+    ///
+    /// Call [`flush`] to drain pending transactions into an [`L1Miner`].
+    ///
+    /// [`flush`]: Batcher::flush
     pub fn submit_garbage_frames(&mut self, kind: GarbageKind) {
         let input = match kind {
             GarbageKind::Random => {
@@ -349,12 +303,12 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
             }
         };
 
-        self.l1_miner.submit_tx(PendingTx {
+        self.pending_txs.push(PendingTx {
             from: self.config.batcher_address,
             to: self.config.inbox_address,
             input,
         });
-        info!(kind = ?kind, "batcher submitted garbage frame");
+        info!(kind = ?kind, "batcher buffered garbage frame");
     }
 
     /// Return the estimated number of unsubmitted data bytes in the encoding pipeline.
@@ -365,7 +319,7 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
         self.pipeline.da_backlog_bytes()
     }
 
-    /// Encode and submit all frames in one step (convenience wrapper).
+    /// Encode and buffer all frames in one step (convenience wrapper).
     ///
     /// Equivalent to calling [`encode_frames`] followed by [`submit_frames`]
     /// with all produced frames.
@@ -379,7 +333,7 @@ impl<'a, S: L2BlockProvider> Batcher<'a, S> {
     }
 }
 
-impl<S: L2BlockProvider> Action for Batcher<'_, S> {
+impl<S: L2BlockProvider> Action for Batcher<S> {
     type Output = Vec<Arc<Frame>>;
     type Error = BatcherError;
 

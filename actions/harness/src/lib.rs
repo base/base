@@ -19,7 +19,8 @@ mod harness;
 pub use harness::ActionTestHarness;
 
 mod batcher;
-pub use batcher::{BatchType, Batcher, BatcherConfig, BatcherError, GarbageKind};
+pub use base_batcher_encoder::BatchType;
+pub use batcher::{Batcher, BatcherConfig, BatcherError, GarbageKind};
 
 mod test_rollup_config;
 pub use test_rollup_config::TestRollupConfigBuilder;

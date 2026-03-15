@@ -1,4 +1,4 @@
 //! Batcher actor and supporting types for action tests.
 
 mod actor;
-pub use actor::{BatchType, Batcher, BatcherConfig, BatcherError, GarbageKind};
+pub use actor::{Batcher, BatcherConfig, BatcherError, GarbageKind};

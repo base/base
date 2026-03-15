@@ -67,7 +67,6 @@ async fn channel_timeout_triggers_channel_invalidation() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let block = sequencer.build_next_block().expect("build L2 block 1");
-    let block_hash = sequencer.head().block_info.hash;
 
     let mut source = ActionL2Source::new();
     source.push(block.clone());
@@ -81,10 +80,12 @@ async fn channel_timeout_triggers_channel_invalidation() {
 
     // Submit ONLY frame 0 in L1 block 1.
     batcher.submit_frames(&frames[..1]);
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
-    let (mut verifier, chain) = h.create_verifier();
-    verifier.register_block_hash(1, block_hash);
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
 
     h.mine_and_push(&chain); // L1 block 1: frame 0 only
 
@@ -119,7 +120,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
         let empty_source = ActionL2Source::new();
         let mut late_batcher = h.create_batcher(empty_source, batcher_cfg.clone());
         late_batcher.submit_frames(&frames[1..]);
-        drop(late_batcher);
+        late_batcher.flush(&mut h.l1);
     }
     h.mine_and_push(&chain); // L1 block 5: late frames
 
@@ -134,7 +135,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
     source2.push(block);
     let mut batcher2 = h.create_batcher(source2, batcher_cfg);
     batcher2.advance().expect("resubmit in new channel");
-    drop(batcher2);
+    batcher2.flush(&mut h.l1);
     h.mine_and_push(&chain); // L1 block 6: fresh channel, all frames
 
     let l1_block_6 = block_info_from(h.l1.block_by_number(6).expect("block 6"));
@@ -154,79 +155,90 @@ async fn channel_timeout_triggers_channel_invalidation() {
 /// derives the blocks from the recovery channel.
 ///
 /// This is a simpler variant of [`channel_timeout_triggers_channel_invalidation`]
-/// that focuses purely on the recovery path without verifying the timeout
-/// expiration itself. It can be implemented without the multi-block channel
-/// bank limitation since the recovery channel fits in a single L1 block.
-///
-/// ## Harness requirements
-///
-/// No new methods needed — uses existing `Batcher::advance()` with a fresh
-/// `ChannelDriver` instance for the recovery submission.
+/// that focuses purely on the recovery path. The timeout is induced the same
+/// way as in that test: encode a multi-frame channel, submit only frame 0 in
+/// L1 block 1, then let the channel expire over `channel_timeout + 1` empty
+/// blocks. The recovery submits all frames in a single L1 block so the new
+/// channel completes immediately.
 #[tokio::test]
-#[ignore = "test design issue: batcher.advance() submits all frames in a single L1 \
-            block, so the channel completes immediately and the safe head advances \
-            before the timeout window elapses — needs restructuring to use selective \
-            per-frame submission to make the channel actually expire before recovery"]
 async fn channel_timeout_recovery_resubmits_successfully() {
-    let batcher_cfg = BatcherConfig::default();
+    use base_batcher_encoder::EncoderConfig;
+
+    // Small max_frame_size forces a multi-frame channel so we can hold back
+    // frames to induce a timeout, matching the setup in
+    // channel_timeout_triggers_channel_invalidation.
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let rollup_cfg =
         TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_channel_timeout(2).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
-    // Build L2 block 1.
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let block = sequencer.build_next_block().expect("build block 1");
-    let block_hash = sequencer.head().block_info.hash;
 
-    // First attempt: submit batch in L1 block 1.
+    // Encode into a multi-frame channel.
     let mut source = ActionL2Source::new();
     source.push(block.clone());
     let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-    batcher.advance().expect("first submit");
-    drop(batcher);
+    let frames = batcher.encode_frames().expect("encode frames");
+    assert!(
+        frames.len() >= 2,
+        "expected multi-frame channel with max_frame_size=80, got {} frames",
+        frames.len()
+    );
 
-    let (mut verifier, chain) = h.create_verifier();
-    verifier.register_block_hash(1, block_hash);
+    // Submit only frame 0 in L1 block 1 — channel stays incomplete.
+    batcher.submit_frames(&frames[..1]);
+    batcher.flush(&mut h.l1);
 
-    h.mine_and_push(&chain); // L1 block 1
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
+    h.mine_and_push(&chain); // L1 block 1: frame 0 only
 
     verifier.initialize().await.expect("initialize");
 
-    // Mine enough empty blocks to expire the channel.
-    // channel_timeout = 2, so after 3 more empty blocks the channel is gone.
+    // Mine channel_timeout + 1 = 3 empty blocks to expire the channel.
     for _ in 0..3 {
-        h.mine_and_push(&chain);
+        h.mine_and_push(&chain); // L1 blocks 2, 3, 4
     }
 
-    // Step through all L1 blocks so far.
+    // Step the pipeline through all L1 blocks. The channel is pruned once
+    // L1 block 3 is processed (3 − 1 = 2 ≥ channel_timeout = 2).
     for i in 1..=h.l1.latest_number() {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block"));
+        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
         verifier.act_l1_head_signal(blk).await.expect("signal");
         verifier.act_l2_pipeline_full().await.expect("step");
     }
 
-    // Safe head should still be at genesis (channel timed out).
-    // NOTE: The pipeline may generate deposit-only default blocks instead,
-    // in which case the safe head advances past genesis. Both outcomes are
-    // valid — the key assertion is that the ORIGINAL batch content was not
-    // derived.
+    // The channel timed out — safe head is still at genesis.
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        0,
+        "channel should have timed out; safe head must remain at genesis"
+    );
 
-    // Recovery: resubmit in a new channel (all frames in one L1 block).
+    // Recovery: submit all frames in one L1 block so the new channel
+    // completes immediately within the timeout window.
     let mut source2 = ActionL2Source::new();
     source2.push(block);
     let mut batcher2 = h.create_batcher(source2, batcher_cfg);
     batcher2.advance().expect("recovery submit");
-    drop(batcher2);
-    h.mine_and_push(&chain);
+    batcher2.flush(&mut h.l1);
+    h.mine_and_push(&chain); // L1 block 5: fresh channel, all frames
 
     let recovery_blk =
         block_info_from(h.l1.block_by_number(h.l1.latest_number()).expect("recovery block"));
     verifier.act_l1_head_signal(recovery_blk).await.expect("signal recovery");
     let recovered = verifier.act_l2_pipeline_full().await.expect("step recovery");
 
-    // The recovery channel should derive L2 block 1.
-    assert!(recovered >= 1, "recovery channel should derive at least 1 L2 block");
+    assert_eq!(recovered, 1, "recovery channel should derive L2 block 1");
+    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head should recover to 1");
 }
 
 // ---------------------------------------------------------------------------
@@ -299,7 +311,6 @@ async fn interleaved_channels_correctly_reassembled() {
     let mut batcher_a = h.create_batcher(source_a, batcher_cfg.clone());
     let frames_a = batcher_a.encode_frames().expect("encode channel A");
     assert!(frames_a.len() >= 2, "channel A should have 2+ frames, got {}", frames_a.len());
-    drop(batcher_a);
 
     // Encode channel B (L2 block 2).
     let mut source_b = ActionL2Source::new();
@@ -307,7 +318,6 @@ async fn interleaved_channels_correctly_reassembled() {
     let mut batcher_b = h.create_batcher(source_b, batcher_cfg.clone());
     let frames_b = batcher_b.encode_frames().expect("encode channel B");
     assert!(frames_b.len() >= 2, "channel B should have 2+ frames, got {}", frames_b.len());
-    drop(batcher_b);
 
     // Verify channels have distinct IDs (will fail until ChannelDriver is updated).
     assert_ne!(
@@ -329,7 +339,7 @@ async fn interleaved_channels_correctly_reassembled() {
                 submitter.submit_frames(&frames_b[i..i + 1]);
             }
         }
-        drop(submitter);
+        submitter.flush(&mut h.l1);
     }
 
     // Mine one L1 block containing all interleaved frames.
@@ -387,7 +397,6 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let block = sequencer.build_next_block().expect("build L2 block 1");
-    let hash1 = sequencer.head().block_info.hash;
 
     let mut source = ActionL2Source::new();
     source.push(block);
@@ -401,10 +410,12 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
 
     // Submit frame 0 only → L1 block 1.
     batcher.submit_frames(&frames[..1]);
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
-    let (mut verifier, chain) = h.create_verifier();
-    verifier.register_block_hash(1, hash1);
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
 
     h.mine_and_push(&chain); // L1 block 1: frame 0
 
@@ -425,7 +436,7 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
         let empty_source = ActionL2Source::new();
         let mut batcher2 = h.create_batcher(empty_source, batcher_cfg);
         batcher2.submit_frames(&frames[1..]);
-        drop(batcher2);
+        batcher2.flush(&mut h.l1);
     }
     h.mine_and_push(&chain); // L1 block 2: remaining frames
 

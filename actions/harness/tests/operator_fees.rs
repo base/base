@@ -409,7 +409,7 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
 
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("batcher encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.l1.mine_block();
     }
 
@@ -489,21 +489,13 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     // Build three L2 blocks — each with 1 user transaction (the sequencer default).
     // Block 3 (ts=6) is the first Jovian block. The batch validator will drop the
     // non-empty batch for that slot with NonEmptyTransitionBlock.
-    let mut block_hashes = Vec::new();
-    for i in 1u64..=3 {
+    for _ in 1u64..=3 {
         let mut source = ActionL2Source::new();
         source.push(builder.build_next_block().expect("build L2 block"));
-        let head = builder.head();
-        if i < 3 {
-            // Register hashes only for blocks 1–2. Block 3 will be replaced by
-            // a pipeline-generated deposit-only block with a different hash, so
-            // the sequencer's hash for that slot is intentionally not registered.
-            block_hashes.push((head.block_info.number, head.block_info.hash));
-        }
 
         let mut batcher = h.create_batcher(source, batcher_cfg.clone());
         batcher.advance().expect("batcher encode");
-        drop(batcher);
+        batcher.flush(&mut h.l1);
         h.l1.mine_block();
     }
 
@@ -511,10 +503,10 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     // (0 + seq_window_size 4 = 4), triggering force-inclusion for L2 slot 3.
     h.l1.mine_block();
 
-    let (mut verifier, _chain) = h.create_verifier();
-    for (number, hash) in &block_hashes {
-        verifier.register_block_hash(*number, *hash);
-    }
+    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
+        &builder,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
     verifier.initialize().await.expect("initialize");
 
     // Signal L1 blocks 1–3. Blocks 1–2 are derived from their valid batches.
@@ -695,14 +687,14 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
     }
     let mut batcher = h.create_batcher(source, batcher_cfg.clone());
     batcher.advance().expect("encode blocks 1–5");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block(); // L1 block 2, ts=24
 
     let mut source = ActionL2Source::new();
     source.push(block6);
     let mut batcher = h.create_batcher(source, batcher_cfg);
     batcher.advance().expect("encode block 6");
-    drop(batcher);
+    batcher.flush(&mut h.l1);
     h.l1.mine_block(); // L1 block 3, ts=36
 
     // Verifier snapshot includes all L1 blocks 0–3.

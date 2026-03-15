@@ -39,7 +39,7 @@ fn batcher_stress_large_txs() {
 
     // Submit all frames to L1.
     batcher.submit_frames(&frames);
-    drop(batcher);
+    batcher.flush(&mut h.l1);
 
     // Mine the block containing all frame txs.
     h.l1.mine_block();

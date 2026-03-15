@@ -87,12 +87,15 @@ impl ActionTestHarness {
     /// Unlike the previous `create_batcher` that consumed an internal
     /// `MockL2Source`, this accepts any [`L2BlockProvider`] so tests can wire
     /// an [`L2BlockBuilder`] or a hand-rolled source directly.
+    ///
+    /// The returned batcher buffers pending transactions and blobs internally.
+    /// Call [`Batcher::flush`] to drain them into `self.l1`.
     pub fn create_batcher<S: L2BlockProvider>(
-        &mut self,
+        &self,
         source: S,
         config: BatcherConfig,
-    ) -> Batcher<'_, S> {
-        Batcher::new(&mut self.l1, source, &self.rollup_config, config)
+    ) -> Batcher<S> {
+        Batcher::new(source, &self.rollup_config, config)
     }
 
     /// Create an [`L2Sequencer`] starting from L2 genesis, wired to a
