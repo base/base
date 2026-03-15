@@ -644,8 +644,9 @@ impl SimpleTxManager {
 
         // Step 4b: Attach blob sidecar and blob-specific fields.
         if is_blob {
-            let sidecar_variant =
-                self.blob_builder.make_sidecar_auto(candidate.blobs.clone(), caps.block_timestamp)?;
+            let sidecar_variant = self
+                .blob_builder
+                .make_sidecar_auto(candidate.blobs.clone(), caps.block_timestamp)?;
             tx_request.sidecar = Some(sidecar_variant);
             tx_request.populate_blob_hashes();
             tx_request.max_fee_per_blob_gas = blob_fee_cap;
