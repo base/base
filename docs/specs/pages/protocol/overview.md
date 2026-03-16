@@ -1,12 +1,12 @@
 # Overview
 
-Base is an optimistic rollup built on Ethereum. L2 transaction data is posted to Ethereum for data availability,
+Base is a rollup built on Ethereum. L2 transaction data is posted to Ethereum for data availability,
 and proofs allow anyone to challenge invalid state transitions. This page gives a high-level tour of the
 protocol components and the core user flows.
 
 ## Network Participants
 
-There are three primary actors that interact with Base: users, sequencers, and verifiers.
+There are three primary actors that interact with Base: users, sequencers, and validators.
 
 ```mermaid
 graph TD
@@ -15,17 +15,17 @@ graph TD
     subgraph "L2 Participants"
         Users(Users)
         Sequencers(Sequencers)
-        Verifiers(Verifiers)
+        Validators(Validators)
     end
 
-    Verifiers -.->|fetch transaction batches| EthereumL1
-    Verifiers -.->|fetch deposit data| EthereumL1
-    Verifiers -->|submit/validate/challenge output proposals| EthereumL1
-    Verifiers -.->|fetch realtime P2P updates| Sequencers
+    Validators -.->|fetch transaction batches| EthereumL1
+    Validators -.->|fetch deposit data| EthereumL1
+    Validators -->|submit/validate/challenge output proposals| EthereumL1
+    Validators -.->|fetch realtime P2P updates| Sequencers
 
     Users -->|submit deposits/withdrawals| EthereumL1
     Users -->|submit transactions| Sequencers
-    Users -->|query data| Verifiers
+    Users -->|query data| Validators
 
     Sequencers -->|submit transaction batches| EthereumL1
     Sequencers -.->|fetch deposit data| EthereumL1
@@ -35,7 +35,7 @@ graph TD
     classDef systemUser stroke:#f9a,stroke-width:2px;
 
     class EthereumL1 l1Contracts;
-    class Users,Sequencers,Verifiers l2Components;
+    class Users,Sequencers,Validators l2Components;
 ```
 
 ### Users
@@ -43,7 +43,7 @@ graph TD
 Users are the general class of network participants who:
 
 - Submit transactions through the sequencer or by interacting with contracts on Ethereum.
-- Query transaction data from interfaces operated by verifiers.
+- Query transaction data from interfaces operated by validators.
 
 ### Sequencers
 
@@ -62,18 +62,18 @@ The Sequencer serves an important role for the operation of an L2 chain but is n
 responsible for improving the user experience by ordering transactions much more quickly and cheaply than would currently
 be possible if users were to submit all transactions directly to L1.
 
-### Verifiers
+### Validators
 
-Verifiers execute the L2 state transition function independently of the Sequencer. Verifiers help to maintain
+Validators execute the L2 state transition function independently of the Sequencer. Validators help to maintain
 the integrity of the network and serve blockchain data to Users.
 
-Verifiers generally:
+Validators generally:
 
 - Sync rollup data from L1 and the Sequencer.
 - Use rollup data to execute the L2 state transition function.
 - Serve rollup data and computed L2 state information to Users.
 
-Verifiers can also act as Proposers and/or Challengers who:
+Validators can also act as Proposers and/or Challengers who:
 
 - Submit assertions about the state of the L2 to a smart contract on L1.
 - Validate assertions made by other participants.
@@ -129,10 +129,10 @@ graph LR
 
 ### Consensus
 
-The rollup node is responsible for deriving the canonical L2 chain from L1 data. It reads transaction batches
+Consensus is responsible for deriving the canonical L2 chain from L1 data. It reads transaction batches
 from the Batch Inbox and deposit events from OptimismPortal, constructs payload attributes, and drives the
 execution engine via the Engine API. Unsafe (unconfirmed) blocks are gossiped to other nodes over a dedicated
-P2P network to give verifiers low-latency access before batches land on L1.
+P2P network to give validators low-latency access before batches land on L1.
 
 [Consensus →](./consensus/)
 
@@ -162,7 +162,7 @@ graph LR
 ### Execution
 
 The execution engine is a Reth-based runtime. It exposes the standard Ethereum JSON-RPC API and
-processes blocks produced by the rollup node. Predeploys (system contracts at fixed L2 addresses), precompiles,
+processes blocks produced by consensus. Predeploys (system contracts at fixed L2 addresses), precompiles,
 and preinstalls extend the EVM for rollup-specific functionality such as fee distribution, L1 block attribute
 injection, and cross-domain messaging.
 
@@ -210,7 +210,7 @@ graph LR
 
 The batcher is a service run by the sequencer that compresses L2 transaction data into channel frames and posts
 them as calldata (or blobs) to the Batch Inbox Address on L1. This is the data availability layer that allows
-any verifier to independently reconstruct the L2 chain from L1.
+any validator to independently reconstruct the L2 chain from L1.
 
 [Batcher →](./batcher)
 
