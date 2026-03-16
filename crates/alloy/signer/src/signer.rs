@@ -4,10 +4,10 @@ use alloy_consensus::{SignableTransaction, TxEnvelope};
 use alloy_eips::Decodable2718;
 use alloy_network::{TransactionBuilder, TxSigner};
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind};
-use alloy_rpc_client::{ClientBuilder, RpcClient};
 use alloy_rpc_types_eth::TransactionRequest;
-use alloy_transport_http::{Http, reqwest};
 use async_trait::async_trait;
+use base_alloy_rpc_jsonrpsee::EthSignerApiClient;
+use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tracing::debug;
 use url::Url;
 
@@ -21,32 +21,31 @@ use crate::RemoteSignerError;
 /// signing pipeline:
 ///
 /// ```rust,ignore
-/// let signer = RemoteSigner::new(endpoint, address);
+/// let signer = RemoteSigner::new(endpoint, address).unwrap();
 /// let wallet = EthereumWallet::from(signer);
 /// ```
 #[derive(Debug)]
 pub struct RemoteSigner {
-    /// The alloy RPC client used to communicate with the signer.
-    pub client: RpcClient,
+    /// The jsonrpsee HTTP client used to communicate with the signer.
+    pub client: HttpClient,
     /// The address of the account managed by the remote signer.
     pub address: Address,
 }
 
 impl RemoteSigner {
     /// Creates a new [`RemoteSigner`] with a default HTTP client.
-    pub fn new(endpoint: Url, address: Address) -> Self {
-        let client = ClientBuilder::default().http(endpoint);
-        Self { client, address }
+    pub fn new(endpoint: Url, address: Address) -> Result<Self, RemoteSignerError> {
+        let client = HttpClientBuilder::default()
+            .build(endpoint.as_str())
+            .map_err(RemoteSignerError::Client)?;
+        Ok(Self { client, address })
     }
 
-    /// Creates a new [`RemoteSigner`] with a custom [`reqwest::Client`].
+    /// Creates a new [`RemoteSigner`] with a pre-configured [`HttpClient`].
     ///
-    /// Use this constructor when you need custom TLS configuration (e.g. mTLS)
-    /// or other HTTP client settings.
-    pub fn with_http_client(http_client: reqwest::Client, endpoint: Url, address: Address) -> Self {
-        let transport = Http::with_client(http_client, endpoint);
-        let is_local = transport.guess_local();
-        let client = ClientBuilder::default().transport(transport, is_local);
+    /// Use this constructor when you need custom HTTP client settings
+    /// (e.g. custom TLS configuration, timeouts, or middleware).
+    pub const fn with_client(client: HttpClient, address: Address) -> Self {
         Self { client, address }
     }
 
@@ -151,11 +150,9 @@ impl TxSigner<Signature> for RemoteSigner {
 
         debug!(address = %self.address, "signing transaction via remote signer");
 
-        let bytes: Bytes = self
-            .client
-            .request::<_, Bytes>("eth_signTransaction", (request,))
+        let bytes: Bytes = EthSignerApiClient::sign_transaction(&self.client, request)
             .await
-            .map_err(|e| alloy_signer::Error::other(RemoteSignerError::Transport(e)))?;
+            .map_err(|e| alloy_signer::Error::other(RemoteSignerError::Rpc(e)))?;
 
         let envelope = TxEnvelope::decode_2718(&mut bytes.as_ref())
             .map_err(|e| alloy_signer::Error::other(RemoteSignerError::Decode(e.to_string())))?;
@@ -189,7 +186,7 @@ mod tests {
     }
 
     fn test_signer(address: Address) -> RemoteSigner {
-        RemoteSigner::new(Url::parse("http://127.0.0.1:1").unwrap(), address)
+        RemoteSigner::new(Url::parse("http://127.0.0.1:1").unwrap(), address).unwrap()
     }
 
     fn default_test_tx() -> TxEip1559 {
@@ -278,7 +275,7 @@ mod tests {
     async fn sign_transaction_roundtrip_with_anvil() {
         let anvil = Anvil::new().spawn();
         let address = anvil.addresses()[0];
-        let signer = RemoteSigner::new(anvil.endpoint_url(), address);
+        let signer = RemoteSigner::new(anvil.endpoint_url(), address).unwrap();
 
         let mut tx = TxEip1559 {
             chain_id: anvil.chain_id(),

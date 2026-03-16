@@ -9,5 +9,5 @@
 
 mod traits;
 #[cfg(feature = "client")]
-pub use traits::{MinerApiExtClient, OpAdminApiClient};
-pub use traits::{MinerApiExtServer, OpAdminApiServer};
+pub use traits::{EthSignerApiClient, MinerApiExtClient, OpAdminApiClient};
+pub use traits::{EthSignerApiServer, MinerApiExtServer, OpAdminApiServer};

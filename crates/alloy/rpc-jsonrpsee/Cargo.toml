@@ -16,6 +16,7 @@ workspace = true
 [dependencies]
 # Alloy
 alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std", "serde"] }
 
 # rpc
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
