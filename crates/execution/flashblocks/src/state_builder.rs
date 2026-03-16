@@ -47,6 +47,14 @@ pub struct ExecutedPendingTransaction {
     pub execution_time_us: Option<u128>,
 }
 
+#[derive(Debug)]
+struct CachedTransactionExecution {
+    receipt: OpTransactionReceipt,
+    state: EvmState,
+    result: ExecutionResult<OpHaltReason>,
+    execution_time_us: Option<u128>,
+}
+
 /// Executes or fetches cached values for transactions in a flashblock.
 #[derive(Debug)]
 pub struct PendingStateBuilder<E, ChainSpec> {
@@ -125,26 +133,19 @@ where
         };
 
         // Check if we have all the data we need to reuse the previous execution.
-        let cached_data = self.prev_pending_blocks.as_ref().and_then(|p| {
-            let receipt = p.get_receipt(tx_hash)?;
-            let state = p.get_transaction_state(&tx_hash)?;
-            let result = p.get_transaction_result(&tx_hash)?;
-            let execution_time_us = p.get_execution_time(&tx_hash);
-            Some((receipt, state, result, execution_time_us))
+        let cached_execution = self.prev_pending_blocks.as_ref().and_then(|p| {
+            Some(CachedTransactionExecution {
+                receipt: p.get_receipt(tx_hash)?.clone(),
+                state: p.get_transaction_state(&tx_hash)?,
+                result: p.get_transaction_result(&tx_hash)?.clone(),
+                execution_time_us: p.get_execution_time(&tx_hash),
+            })
         });
 
         // If cached, we can fill out pending block data using previous execution results
         // If not cached, we need to execute the transaction and build pending block data from scratch
-        if let Some((receipt, state, result, execution_time_us)) = cached_data {
-            self.execute_with_cached_data(
-                transaction,
-                receipt.clone(),
-                state,
-                result.clone(),
-                execution_time_us,
-                idx,
-                effective_gas_price,
-            )
+        if let Some(cached_execution) = cached_execution {
+            self.execute_with_cached_data(transaction, cached_execution, idx, effective_gas_price)
         } else {
             self.execute_with_evm(transaction, idx, effective_gas_price)
         }
@@ -186,13 +187,13 @@ where
     fn execute_with_cached_data(
         &mut self,
         transaction: Recovered<OpTxEnvelope>,
-        receipt: OpTransactionReceipt,
-        state: EvmState,
-        result: ExecutionResult<OpHaltReason>,
-        execution_time_us: Option<u128>,
+        cached_execution: CachedTransactionExecution,
         idx: usize,
         effective_gas_price: u128,
     ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
+        let CachedTransactionExecution { receipt, state, result, execution_time_us } =
+            cached_execution;
+
         let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
             let OpReceipt::Deposit(deposit_receipt) = &receipt.inner.inner.receipt else {
                 return Err(ExecutionError::DepositReceiptMismatch.into());
