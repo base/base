@@ -16,11 +16,6 @@ with a bond at stake if the proof is wrong. The [op-proposer][op-proposer] in on
 
 [op-proposer]: https://github.com/ethereum-optimism/optimism/tree/d48b45954c381f75a13e61312da68d84e9b41418/op-proposer
 
-_Note_: Proofs on Optimism are not fully specified at this time. Although proof
-construction and verification [is implemented in Cannon][cannon],
-the proof game specification and integration of a output-root challenger into the [rollup-node][g-rollup-node]
-are part of later specification milestones.
-
 [cannon]: https://github.com/ethereum-optimism/cannon
 
 ## Proposing L2 Output Commitments

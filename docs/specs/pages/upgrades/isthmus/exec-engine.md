@@ -49,7 +49,7 @@ After Isthmus activation, an L2 block header is valid iff:
 #### Rationale
 
 Currently, to generate [L2 output roots][output-root] for historical blocks, an archival node is required. This directly
-places a burden on users of the system in a post-proofs world, where:
+places a burden on users of the system in a post-fault-proofs world, where:
 
 1. A proposer must have an archive node to propose an output root at the safe head.
 1. A user that is proving their withdrawal must have an archive node to verify that the output root they are proving
@@ -141,7 +141,7 @@ The input size limits of the BLS precompile contracts are listed below:
 
 The rest of the BLS precompiles are fixed-size operations which have a fixed gas cost.
 
-All of the BLS precompiles should be [accelerated](../../protocol/fault-proof/index.md#precompile-accelerators) in proof
+All of the BLS precompiles should be [accelerated](../../protocol/fault-proof/index.md#precompile-accelerators) in fault proof
 programs so they call out to the L1 instead of calculating the result inside the program.
 
 ## Block Sealing
