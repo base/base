@@ -39,9 +39,10 @@ jobs:
           egress-policy: audit
 
       - name: Prepare
+        env:
+          ARCH: ${{ matrix.settings.arch }}
         run: |
-          platform=${{ matrix.settings.arch }}
-          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+          echo "PLATFORM_PAIR=${ARCH//\//-}" >> $GITHUB_ENV
           echo "RUST_BASE_TAG=${{ env.RUST_VERSION }}" >> $GITHUB_ENV
 
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -56,12 +57,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5.9.0
+        with:
+          images: ${{ env.RUST_BASE_IMAGE }}
+
       - name: Build and push rust-builder-base
         id: build
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
           file: etc/docker/Dockerfile.rust-base
+          labels: ${{ steps.meta.outputs.labels }}
           platforms: ${{ matrix.settings.arch }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           build-args: |
@@ -134,3 +142,7 @@ jobs:
             -t ${{ env.RUST_BASE_IMAGE }}:${{ env.RUST_BASE_TAG }} \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.RUST_BASE_IMAGE }}@sha256:%s ' *)
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${{ env.RUST_BASE_IMAGE }}:${{ steps.meta.outputs.version }}
