@@ -27,9 +27,9 @@ use crate::RemoteSignerError;
 #[derive(Debug)]
 pub struct RemoteSigner {
     /// The alloy RPC client used to communicate with the signer.
-    client: RpcClient,
+    pub client: RpcClient,
     /// The address of the account managed by the remote signer.
-    address: Address,
+    pub address: Address,
 }
 
 impl RemoteSigner {
@@ -45,7 +45,8 @@ impl RemoteSigner {
     /// or other HTTP client settings.
     pub fn with_http_client(http_client: reqwest::Client, endpoint: Url, address: Address) -> Self {
         let transport = Http::with_client(http_client, endpoint);
-        let client = ClientBuilder::default().transport(transport, false);
+        let is_local = transport.guess_local();
+        let client = ClientBuilder::default().transport(transport, is_local);
         Self { client, address }
     }
 
@@ -115,10 +116,7 @@ impl RemoteSigner {
     ) -> Result<(), RemoteSignerError> {
         let received = envelope.signature_hash();
         if received != *expected_hash {
-            return Err(RemoteSignerError::ContentMismatch {
-                expected: *expected_hash,
-                received,
-            });
+            return Err(RemoteSignerError::ContentMismatch { expected: *expected_hash, received });
         }
         Ok(())
     }

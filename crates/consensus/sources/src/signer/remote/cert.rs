@@ -135,7 +135,8 @@ impl RemoteSigner {
                 match self.build_http_client() {
                     Ok(new_client) => {
                         let transport = Http::with_client(new_client, self.endpoint.clone());
-                        let new_client = ClientBuilder::default().transport(transport, false);
+                        let is_local = transport.guess_local();
+                        let new_client = ClientBuilder::default().transport(transport, is_local);
 
                         // Update the client with the new TLS configuration. We're using a blocking
                         // write here because the handler is synchronous.
