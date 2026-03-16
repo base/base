@@ -32,10 +32,6 @@ serde.workspace = true
 eyre.workspace = true
 thiserror.workspace = true
 
-# Crypto
-hex.workspace = true
-zeroize.workspace = true
-
 # CLI
 clap.workspace = true
 base-cli-utils.workspace = true

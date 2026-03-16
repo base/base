@@ -14,6 +14,7 @@ use url::Url;
 
 base_cli_utils::define_log_args!("BASE_CHALLENGER");
 base_cli_utils::define_metrics_args!("BASE_CHALLENGER", 7310);
+base_tx_manager::define_signer_cli!("CHALLENGER");
 
 /// Challenger - ZK-proof dispute game challenger for Base.
 #[derive(Parser)]
@@ -101,15 +102,9 @@ pub struct ChallengerArgs {
     )]
     pub zk_request_timeout: Duration,
 
-    /// URL of the signer sidecar JSON-RPC endpoint (for production).
-    /// Must be used together with --signer-address.
-    #[arg(long = "signer-endpoint", env = "CHALLENGER_SIGNER_ENDPOINT")]
-    pub signer_endpoint: Option<Url>,
-
-    /// Address of the signer account on the signer sidecar.
-    /// Must be used together with --signer-endpoint.
-    #[arg(long = "signer-address", env = "CHALLENGER_SIGNER_ADDRESS")]
-    pub signer_address: Option<Address>,
+    /// Signer configuration (local private key or remote sidecar).
+    #[command(flatten)]
+    pub signer: SignerCli,
 
     /// Number of past games to scan on startup.
     #[arg(long = "lookback-games", env = "CHALLENGER_LOOKBACK_GAMES", default_value = "1000")]
@@ -136,8 +131,7 @@ impl std::fmt::Debug for ChallengerArgs {
             .field("zk_proof_service_endpoint", &self.zk_proof_service_endpoint)
             .field("zk_connect_timeout", &self.zk_connect_timeout)
             .field("zk_request_timeout", &self.zk_request_timeout)
-            .field("signer_endpoint", &self.signer_endpoint)
-            .field("signer_address", &self.signer_address)
+            .field("signer", &self.signer)
             .field("lookback_games", &self.lookback_games)
             .field("health_addr", &self.health_addr)
             .field("health_port", &self.health_port)

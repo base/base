@@ -214,3 +214,133 @@ macro_rules! define_tx_manager_cli {
         }
     };
 }
+
+/// Generates a `SignerCli` struct with signer CLI arguments,
+/// parameterized by env var prefix at compile time.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// base_tx_manager::define_signer_cli!("CHALLENGER");
+/// base_tx_manager::define_signer_cli!("PROPOSER");
+/// ```
+///
+/// The generated struct has three fields covering local and remote signing.
+/// Each env-backed field uses `concat!($prefix, "_", "FIELD_NAME")` — e.g.,
+/// with prefix `"CHALLENGER"` the private-key field reads from
+/// `CHALLENGER_PRIVATE_KEY`.
+///
+/// The macro also generates:
+/// - Custom `Debug` impl that redacts `private_key`
+/// - `impl TryFrom<SignerCli> for SignerConfig` that validates and converts
+///
+/// # Required downstream dependencies
+///
+/// The macro expands to code that references `::clap::Parser`, `::url::Url`,
+/// and `::alloy_primitives::{Address, B256}` via absolute paths. Consumer
+/// crates that invoke `define_signer_cli!` must add these dependencies to
+/// their own `Cargo.toml`:
+///
+/// ```toml
+/// [dependencies]
+/// clap = { version = "...", features = ["derive", "env"] }
+/// url = "..."
+/// alloy-primitives = "..."
+/// ```
+#[rustfmt::skip]
+#[macro_export]
+macro_rules! define_signer_cli {
+    ($prefix:literal) => {
+        /// CLI arguments for signer configuration.
+        ///
+        /// Designed to be `#[command(flatten)]`-ed into parent CLI structs.
+        /// Supports two mutually exclusive signing modes:
+        /// - **Local**: raw private key (for dev/testing)
+        /// - **Remote**: signer sidecar endpoint + address (for production)
+        #[derive(Clone, ::clap::Parser)]
+        #[command(next_help_heading = "Signer")]
+        pub struct SignerCli {
+            /// Hex-encoded secp256k1 private key (with or without 0x prefix).
+            /// Mutually exclusive with --signer-endpoint.
+            #[arg(
+                long = "private-key",
+                env = concat!($prefix, "_", "PRIVATE_KEY"),
+                conflicts_with = "signer_endpoint",
+            )]
+            pub private_key: Option<String>,
+
+            /// URL of the signer sidecar JSON-RPC endpoint (for production).
+            /// Mutually exclusive with --private-key.
+            /// Must be used together with --signer-address.
+            #[arg(
+                long = "signer-endpoint",
+                env = concat!($prefix, "_", "SIGNER_ENDPOINT"),
+                conflicts_with = "private_key",
+                requires = "signer_address",
+            )]
+            pub signer_endpoint: Option<::url::Url>,
+
+            /// Address of the signer account on the signer sidecar.
+            /// Must be used together with --signer-endpoint.
+            #[arg(
+                long = "signer-address",
+                env = concat!($prefix, "_", "SIGNER_ADDRESS"),
+                requires = "signer_endpoint",
+            )]
+            pub signer_address: Option<::alloy_primitives::Address>,
+        }
+
+        impl ::std::fmt::Debug for SignerCli {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                f.debug_struct("SignerCli")
+                    .field(
+                        "private_key",
+                        &self.private_key.as_ref().map(|_| "[REDACTED]"),
+                    )
+                    .field("signer_endpoint", &self.signer_endpoint)
+                    .field("signer_address", &self.signer_address)
+                    .finish()
+            }
+        }
+
+        impl TryFrom<SignerCli> for $crate::SignerConfig {
+            type Error = $crate::ConfigError;
+
+            fn try_from(cli: SignerCli) -> Result<Self, Self::Error> {
+                match (cli.private_key, cli.signer_endpoint, cli.signer_address) {
+                    (Some(pk), None, None) => {
+                        let key: ::alloy_primitives::B256 =
+                            pk.parse().map_err(|e: ::alloy_primitives::hex::FromHexError| {
+                                $crate::ConfigError::InvalidValue {
+                                    field: "private-key",
+                                    reason: e.to_string(),
+                                }
+                            })?;
+                        Ok($crate::SignerConfig::Local { private_key: key })
+                    }
+                    (None, Some(endpoint), Some(address)) => {
+                        if endpoint.host().is_none() {
+                            return Err($crate::ConfigError::InvalidValue {
+                                field: "signer-endpoint",
+                                reason: "URL must have a host".to_string(),
+                            });
+                        }
+                        Ok($crate::SignerConfig::Remote { endpoint, address })
+                    }
+                    (None, None, None) => Err($crate::ConfigError::InvalidValue {
+                        field: "signer",
+                        reason: "one of --private-key or \
+                                 (--signer-endpoint + --signer-address) \
+                                 must be provided"
+                            .to_string(),
+                    }),
+                    _ => Err($crate::ConfigError::InvalidValue {
+                        field: "signer",
+                        reason: "invalid combination of signer arguments"
+                            .to_string(),
+                    }),
+                }
+            }
+        }
+    };
+}
