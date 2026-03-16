@@ -9,12 +9,15 @@ use serde_bytes::ByteArray;
 
 sol! {
     /// Supported zero-knowledge proof coprocessor types.
+    ///
+    /// All variants must be present to match the on-chain `INitroEnclaveVerifier.sol`
+    /// enum ordering for correct ABI encoding, even if not all are used.
     enum ZkCoProcessorType {
         /// Unknown / unset.
         Unknown,
         /// RISC Zero zkVM proving system.
         RiscZero,
-        /// Succinct SP1 proving system.
+        /// Succinct SP1 proving system (not currently used — present for ABI compatibility).
         Succinct,
     }
 
