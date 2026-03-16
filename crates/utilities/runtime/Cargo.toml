@@ -27,11 +27,11 @@ tokio = { workspace = true, features = ["rt", "macros", "time", "sync"] }
 default = [ "tokio" ]
 tokio = [
 	"dep:tokio",
+	"dep:tokio-stream",
+	"dep:tokio-util",
+	"tokio/macros",
 	"tokio/rt",
 	"tokio/sync",
 	"tokio/time",
-	"tokio/macros",
-	"dep:tokio-util",
-	"dep:tokio-stream",
 ]
 test-utils = [ "dep:rand" ]
