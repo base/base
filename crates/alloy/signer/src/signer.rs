@@ -69,12 +69,10 @@ impl RemoteSigner {
             request = request.with_chain_id(chain_id);
         }
 
-        if let Some(gas_price) = tx.gas_price() {
-            request = request.with_gas_price(gas_price);
-        }
-
         if tx.is_dynamic_fee() {
             request = request.with_max_fee_per_gas(tx.max_fee_per_gas());
+        } else if let Some(gas_price) = tx.gas_price() {
+            request = request.with_gas_price(gas_price);
         }
 
         if let Some(max_priority_fee) = tx.max_priority_fee_per_gas() {
@@ -102,6 +100,25 @@ impl RemoteSigner {
         }
 
         request
+    }
+
+    /// Verifies that the signed envelope's transaction content matches the original
+    /// transaction by comparing signature hashes.
+    ///
+    /// This provides defense-in-depth beyond signature verification, ensuring
+    /// the remote signer did not alter the transaction content.
+    pub fn verify_envelope_content(
+        envelope: &TxEnvelope,
+        expected_hash: &B256,
+    ) -> Result<(), RemoteSignerError> {
+        let received = envelope.signature_hash();
+        if received != *expected_hash {
+            return Err(RemoteSignerError::ContentMismatch {
+                expected: *expected_hash,
+                received,
+            });
+        }
+        Ok(())
     }
 
     /// Verifies that the signature recovers to the expected signer address.
@@ -143,8 +160,10 @@ impl TxSigner<Signature> for RemoteSigner {
         let envelope = TxEnvelope::decode_2718(&mut bytes.as_ref())
             .map_err(|e| alloy_signer::Error::other(RemoteSignerError::Decode(e.to_string())))?;
 
-        let signature = *envelope.signature();
         let hash = tx.signature_hash();
+        Self::verify_envelope_content(&envelope, &hash).map_err(alloy_signer::Error::other)?;
+
+        let signature = *envelope.signature();
         self.verify_signature(&signature, &hash).map_err(alloy_signer::Error::other)?;
 
         Ok(signature)
@@ -171,6 +190,19 @@ mod tests {
 
     fn test_signer(address: Address) -> RemoteSigner {
         RemoteSigner::new(Url::parse("http://localhost:8080").unwrap(), address)
+    }
+
+    fn default_test_tx() -> TxEip1559 {
+        TxEip1559 {
+            chain_id: 1,
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: 100,
+            max_priority_fee_per_gas: 10,
+            to: TxKind::Call(Address::ZERO),
+            value: U256::from(100),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -265,11 +297,9 @@ mod tests {
         assert_eq!(recovered, address);
     }
 
-    #[tokio::test]
-    async fn ethereum_wallet_from_remote_signer() {
-        let anvil = Anvil::new().spawn();
-        let address = anvil.addresses()[0];
-        let signer = RemoteSigner::new(anvil.endpoint_url(), address);
+    #[test]
+    fn ethereum_wallet_from_remote_signer() {
+        let signer = test_signer(Address::repeat_byte(0x01));
 
         // Verify that RemoteSigner can be used with EthereumWallet.
         let _wallet = EthereumWallet::from(signer);
@@ -301,5 +331,41 @@ mod tests {
         let sig = real_signer.sign_hash_sync(&hash).unwrap();
 
         remote.verify_signature(&sig, &hash).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sign_transaction_transport_failure() {
+        // test_signer points at localhost:8080 which is not running.
+        let signer = test_signer(Address::repeat_byte(0x01));
+        let mut tx = default_test_tx();
+
+        signer.sign_transaction(&mut tx).await.unwrap_err();
+    }
+
+    #[test]
+    fn verify_envelope_content_rejects_mismatch() {
+        let key = PrivateKeySigner::random();
+        let tx = default_test_tx();
+
+        let sig = key.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let signed = tx.into_signed(sig);
+        let envelope = TxEnvelope::from(signed);
+
+        let wrong_hash = B256::repeat_byte(0xff);
+        let err = RemoteSigner::verify_envelope_content(&envelope, &wrong_hash).unwrap_err();
+        assert!(matches!(err, RemoteSignerError::ContentMismatch { .. }));
+    }
+
+    #[test]
+    fn verify_envelope_content_accepts_match() {
+        let key = PrivateKeySigner::random();
+        let tx = default_test_tx();
+
+        let expected_hash = tx.signature_hash();
+        let sig = key.sign_hash_sync(&expected_hash).unwrap();
+        let signed = tx.into_signed(sig);
+        let envelope = TxEnvelope::from(signed);
+
+        RemoteSigner::verify_envelope_content(&envelope, &expected_hash).unwrap();
     }
 }

@@ -1,6 +1,6 @@
 //! Error types for the remote signer.
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use thiserror::Error;
 
 /// Errors that can occur during remote signing operations.
@@ -22,5 +22,13 @@ pub enum RemoteSignerError {
         expected: Address,
         /// The recovered signer address.
         recovered: Address,
+    },
+    /// The signed transaction content does not match the original transaction.
+    #[error("signed transaction content mismatch: expected hash {expected}, got {received}")]
+    ContentMismatch {
+        /// The expected signature hash of the original transaction.
+        expected: B256,
+        /// The signature hash found in the signed envelope.
+        received: B256,
     },
 }

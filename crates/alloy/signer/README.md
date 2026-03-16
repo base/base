@@ -1,4 +1,4 @@
-# `base-remote-signer`
+# `base-alloy-signer`
 
 Remote transaction signer that delegates signing to an external signer sidecar via
 `eth_signTransaction` JSON-RPC.
@@ -15,11 +15,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-remote-signer = { workspace = true }
+base-alloy-signer = { workspace = true }
 ```
 
 ```rust,ignore
-use base_remote_signer::RemoteSigner;
+use base_alloy_signer::RemoteSigner;
 use alloy_network::EthereumWallet;
 use alloy_primitives::Address;
 use url::Url;

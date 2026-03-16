@@ -1,5 +1,5 @@
 [package]
-name = "base-remote-signer"
+name = "base-alloy-signer"
 description = "Remote transaction signer for EthereumWallet integration via eth_signTransaction"
 
 version.workspace = true
