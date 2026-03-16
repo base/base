@@ -66,7 +66,7 @@ pub struct SendBundleApiImpl<P> {
 
 impl<P> SendBundleApiImpl<P> {
     /// Creates a new handler.
-    pub fn new(
+    pub const fn new(
         pool: P,
         enabled: bool,
         current_block_number: std::sync::Arc<std::sync::atomic::AtomicU64>,
@@ -140,13 +140,13 @@ fn validate_bundle_request(
         }
     }
 
-    if let (Some(min_ts), Some(max_ts)) = (req.min_timestamp, req.max_timestamp) {
-        if min_ts > max_ts {
-            return Err(rpc_err(
-                ErrorCode::InvalidParams,
-                format!("minTimestamp {min_ts}ms is after maxTimestamp {max_ts}ms"),
-            ));
-        }
+    if let (Some(min_ts), Some(max_ts)) = (req.min_timestamp, req.max_timestamp)
+        && min_ts > max_ts
+    {
+        return Err(rpc_err(
+            ErrorCode::InvalidParams,
+            format!("minTimestamp {min_ts}ms is after maxTimestamp {max_ts}ms"),
+        ));
     }
 
     if req.reverting_tx_hashes.as_ref().is_some_and(|v| !v.is_empty()) {
@@ -186,6 +186,10 @@ where
             .try_into_recovered()
             .map_err(|_| rpc_err(ErrorCode::InvalidParams, "failed to recover signer"))?;
 
+        #[expect(
+            clippy::clone_on_copy,
+            reason = "tx_hash() returns &B256; * goes through Deref to [u8; 32]"
+        )]
         let tx_hash = recovered.tx_hash().clone();
         let encoded_len = raw.len();
 

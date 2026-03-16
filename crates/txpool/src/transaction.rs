@@ -98,7 +98,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     }
 
     /// Sets bundle metadata on this transaction, returning the modified instance.
-    pub fn with_bundle_metadata(
+    pub const fn with_bundle_metadata(
         mut self,
         target_block_number: Option<u64>,
         min_timestamp: Option<u64>,
@@ -371,16 +371,16 @@ pub trait BundleTransaction {
     fn is_bundle_expired(&self, block_number: u64, block_timestamp_secs: u64) -> bool {
         let block_timestamp_millis = block_timestamp_secs.saturating_mul(1000);
 
-        if let Some(max_ts) = self.max_timestamp_millis() {
-            if block_timestamp_millis > max_ts {
-                return true;
-            }
+        if let Some(max_ts) = self.max_timestamp_millis()
+            && block_timestamp_millis > max_ts
+        {
+            return true;
         }
 
-        if let Some(target) = self.target_block_number() {
-            if block_number > target {
-                return true;
-            }
+        if let Some(target) = self.target_block_number()
+            && block_number > target
+        {
+            return true;
         }
 
         false
@@ -391,10 +391,10 @@ pub trait BundleTransaction {
     fn is_bundle_not_yet_valid(&self, block_timestamp_secs: u64) -> bool {
         let block_timestamp_millis = block_timestamp_secs.saturating_mul(1000);
 
-        if let Some(min_ts) = self.min_timestamp_millis() {
-            if block_timestamp_millis < min_ts {
-                return true;
-            }
+        if let Some(min_ts) = self.min_timestamp_millis()
+            && block_timestamp_millis < min_ts
+        {
+            return true;
         }
 
         false

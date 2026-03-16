@@ -105,7 +105,13 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
         create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
 
     // Create the ValidatedTransaction payload
-    let validated_tx = ValidatedTransaction { sender, raw: raw_tx };
+    let validated_tx = ValidatedTransaction {
+        sender,
+        raw: raw_tx,
+        target_block_number: None,
+        min_timestamp: None,
+        max_timestamp: None,
+    };
 
     // Create RPC client for the builder
     let builder_rpc_url = devnet.l2_rpc_url()?;
@@ -172,6 +178,9 @@ async fn test_insert_validated_transaction_invalid_bytes() -> Result<()> {
     let validated_tx = ValidatedTransaction {
         sender: Address::repeat_byte(0x42),
         raw: Bytes::from(vec![0xDE, 0xAD, 0xBE, 0xEF]),
+        target_block_number: None,
+        min_timestamp: None,
+        max_timestamp: None,
     };
 
     // Call base_insertValidatedTransaction - should fail
