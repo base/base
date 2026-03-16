@@ -184,7 +184,7 @@ where
 
         let recovered = consensus_tx
             .try_into_recovered()
-            .map_err(|_| rpc_err(ErrorCode::InvalidParams, "failed to recover signer"))?;
+            .map_err(|e| rpc_err(ErrorCode::InvalidParams, format!("failed to recover signer: {e}")))?;
 
         let tx_hash = TxHash::from(*recovered.tx_hash());
         let encoded_len = raw.len();
