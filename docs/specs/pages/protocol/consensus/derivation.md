@@ -194,7 +194,7 @@ correctly), and so are individual transactions within the batch (e.g. signatures
 invalid individual transactions within an otherwise valid batch are discarded by correct nodes.
 
 If the sequencer applies a state transition incorrectly and posts an [output root][g-l2-output], then this output root
-will be incorrect. The incorrect output root will be challenged by a [fault proof][g-fault-proof], then replaced
+will be incorrect. The incorrect output root will be challenged by a [proof][g-fault-proof], then replaced
 by a correct output root **for the existing sequencer batches.**
 
 Refer to the [Batch Submission specification][batcher-spec] for more information.
@@ -892,7 +892,7 @@ Note that this algorithm covers several important use-cases:
 - Initialize the pipeline without starting from 0, e.g. when the rollup node restarts with an existing engine instance.
 - Recover the pipeline if it becomes inconsistent with the execution engine chain, e.g. when the engine syncs/changes.
 - Recover the pipeline when the L1 chain reorganizes, e.g. a late L1 block is orphaned, or a larger attestation failure.
-- Initialize the pipeline to derive a disputed L2 block with prior L1 and L2 history inside a fault-proof program.
+- Initialize the pipeline to derive a disputed L2 block with prior L1 and L2 history inside a proof program.
 
 Handling these cases also means a node can be configured to eagerly sync L1 data with 0 confirmations,
 as it can undo the changes if the L1 later does recognize the data as canonical, enabling safe low-latency usage.

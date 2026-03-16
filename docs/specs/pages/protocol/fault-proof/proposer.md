@@ -11,15 +11,10 @@
 After processing one or more blocks the outputs will need to be synchronized with the settlement layer (L1)
 for trustless execution of L2-to-L1 messaging, such as withdrawals.
 These output proposals act as the bridge's view into the L2 state.
-Actors called "Proposers" submit the output roots to the settlement layer (L1) and can be contested with a fault proof,
+Actors called "Proposers" submit the output roots to the settlement layer (L1) and can be contested with a proof,
 with a bond at stake if the proof is wrong. The [op-proposer][op-proposer] in one such implementation of a proposer.
 
 [op-proposer]: https://github.com/ethereum-optimism/optimism/tree/d48b45954c381f75a13e61312da68d84e9b41418/op-proposer
-
-_Note_: Fault proofs on Optimism are not fully specified at this time. Although fault proof
-construction and verification [is implemented in Cannon][cannon],
-the fault proof game specification and integration of a output-root challenger into the [rollup-node][g-rollup-node]
-are part of later specification milestones.
 
 [cannon]: https://github.com/ethereum-optimism/cannon
 

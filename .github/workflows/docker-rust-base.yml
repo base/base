@@ -1,0 +1,148 @@
+name: Docker Rust Base
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'etc/docker/Dockerfile.rust-base'
+      - '.github/workflows/docker-rust-base.yml'
+  workflow_dispatch: {}
+
+env:
+  RUST_BASE_IMAGE: ghcr.io/${{ github.repository_owner }}/rust-builder-base
+  RUST_VERSION: "1.93"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        settings:
+          - arch: linux/amd64
+            runs-on: ubuntu-24.04
+          - arch: linux/arm64
+            runs-on: ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.settings.runs-on }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+
+      - name: Prepare
+        env:
+          ARCH: ${{ matrix.settings.arch }}
+        run: |
+          echo "PLATFORM_PAIR=${ARCH//\//-}" >> $GITHUB_ENV
+          echo "RUST_BASE_TAG=${{ env.RUST_VERSION }}" >> $GITHUB_ENV
+
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Login to GHCR
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5.9.0
+        with:
+          images: ${{ env.RUST_BASE_IMAGE }}
+
+      - name: Build and push rust-builder-base
+        id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: etc/docker/Dockerfile.rust-base
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: ${{ matrix.settings.arch }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            RUST_VERSION=${{ env.RUST_VERSION }}
+          cache-from: type=registry,ref=${{ env.RUST_BASE_IMAGE }}:cache-${{ env.PLATFORM_PAIR }}
+          cache-to: type=registry,ref=${{ env.RUST_BASE_IMAGE }}:cache-${{ env.PLATFORM_PAIR }},mode=max
+
+      - name: Export digest
+        run: |
+          mkdir -p ${{ runner.temp }}/rust-base-digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/rust-base-digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rust-base-digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/rust-base-digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    needs:
+      - build
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+
+      - name: Prepare
+        run: |
+          echo "RUST_BASE_TAG=${{ env.RUST_VERSION }}" >> $GITHUB_ENV
+
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Download digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/rust-base-digests
+          pattern: rust-base-digests-*
+          merge-multiple: true
+
+      - name: Log into the Container registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5.9.0
+        with:
+          images: ${{ env.RUST_BASE_IMAGE }}
+          tags: |
+            type=sha,format=long
+
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/rust-base-digests
+        run: |
+          docker buildx imagetools create \
+            -t ${{ env.RUST_BASE_IMAGE }}:${{ env.RUST_BASE_TAG }} \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.RUST_BASE_IMAGE }}@sha256:%s ' *)
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${{ env.RUST_BASE_IMAGE }}:${{ steps.meta.outputs.version }}

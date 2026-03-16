@@ -235,7 +235,7 @@ graph LR
 
 ### Proofs
 
-Output proposals and fault proofs allow permissionless verification of the L2 state. Anyone can propose an
+Output proposals and proofs allow permissionless verification of the L2 state. Anyone can propose an
 output root to the `DisputeGameFactory`, and anyone can challenge it. Disputes are resolved by the `FaultDisputeGame`
 contract using the Cannon VM for on-chain execution tracing of disputed state transitions. Valid withdrawals can
 only be finalized through `OptimismPortal` once the associated dispute game resolves in favor of the proposer.

@@ -157,21 +157,28 @@ const sidebar: SidebarItem[] = [
     text: 'Upgrades',
     items: [
       { text: 'V1', link: '/upgrades/v1/overview' },
-      { text: 'Jovian', link: '/upgrades/jovian/overview' },
-      { text: 'Isthmus', link: '/upgrades/isthmus/overview' },
-      { text: 'Pectra Blob Schedule (Sepolia)', link: '/upgrades/pectra-blob-schedule/overview' },
-      { text: 'Holocene', link: '/upgrades/holocene/overview' },
-      { text: 'Granite', link: '/upgrades/granite/overview' },
-      { text: 'Fjord', link: '/upgrades/fjord/overview' },
-      { text: 'Ecotone', link: '/upgrades/ecotone/overview' },
-      { text: 'Delta', link: '/upgrades/delta/overview' },
-      { text: 'Canyon', link: '/upgrades/canyon/overview' },
+      {
+        text: 'Optimism',
+        collapsed: true,
+        items: [
+          { text: 'Jovian', link: '/upgrades/jovian/overview' },
+          { text: 'Isthmus', link: '/upgrades/isthmus/overview' },
+          { text: 'Pectra Blob Schedule (Sepolia)', link: '/upgrades/pectra-blob-schedule/overview' },
+          { text: 'Holocene', link: '/upgrades/holocene/overview' },
+          { text: 'Granite', link: '/upgrades/granite/overview' },
+          { text: 'Fjord', link: '/upgrades/fjord/overview' },
+          { text: 'Ecotone', link: '/upgrades/ecotone/overview' },
+          { text: 'Delta', link: '/upgrades/delta/overview' },
+          { text: 'Canyon', link: '/upgrades/canyon/overview' },
+        ],
+      },
     ],
   },
   sectionItem('reference', 'Reference'),
 ]
 
 export default defineConfig({
+  banner: '⚠️ This specification is under active development and subject to change.',
   title: 'Base Chain Specification',
   description: 'Base Chain protocol specification, upgrades, and reference documentation.',
   logoUrl: '/assets/base/logo.svg',
