@@ -4439,7 +4439,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "ciborium",
- "rstest",
  "serde",
  "serde_bytes",
  "thiserror 2.0.18",
