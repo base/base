@@ -9,7 +9,6 @@ use crate::CompressorResult;
 /// A trait that expands the standard library `Write` trait to include
 /// compression-specific methods and return [`CompressorResult`] instead of
 /// standard library `Result`.
-#[allow(clippy::len_without_is_empty)]
 pub trait CompressorWriter {
     /// Writes the given data to the compressor.
     fn write(&mut self, data: &[u8]) -> CompressorResult<usize>;
@@ -25,6 +24,11 @@ pub trait CompressorWriter {
 
     /// Returns the length of the compressed data.
     fn len(&self) -> usize;
+
+    /// Returns `true` if the compressed output is empty.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
     /// Reads the compressed data into the given buffer.
     /// Returns the number of bytes read.

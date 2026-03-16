@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { remarkMermaid } from './lib/remarkMermaid'
 import rehypeKatex from 'rehype-katex'
 import remarkMath from 'remark-math'
 import { defineConfig, type SidebarItem } from 'vocs'
@@ -13,11 +14,6 @@ type NodeInfo = {
   hasIndex: boolean
   indexTitle?: string
   items: SidebarItem[]
-}
-
-type BuildTreeOptions = {
-  excludeDirs?: Set<string>
-  excludeFiles?: Set<string>
 }
 
 function toPosix(path: string) {
@@ -62,13 +58,10 @@ function sortName(a: string, b: string) {
   return an.localeCompare(bn)
 }
 
-function buildTree(dirPath: string, options: BuildTreeOptions = {}): NodeInfo {
-  const { excludeDirs, excludeFiles } = options
+function buildTree(dirPath: string): NodeInfo {
   const entries = readdirSync(dirPath).sort(sortName)
-  const files = entries.filter((entry) => /\.(md|mdx)$/i.test(entry) && !excludeFiles?.has(entry))
-  const dirs = entries.filter(
-    (entry) => statSync(join(dirPath, entry)).isDirectory() && !excludeDirs?.has(entry),
-  )
+  const files = entries.filter((entry) => /\.(md|mdx)$/i.test(entry))
+  const dirs = entries.filter((entry) => statSync(join(dirPath, entry)).isDirectory())
 
   let hasIndex = false
   let indexTitle: string | undefined
@@ -113,34 +106,6 @@ function sectionItem(section: string, text: string): SidebarItem {
     ...(tree.items.length ? { items: tree.items } : {}),
   }
 }
-
-function sectionItemWithoutDirs(
-  section: string,
-  text: string,
-  excludedDirs: string[],
-  excludedFiles: string[] = [],
-): SidebarItem {
-  const sectionPath = join(pagesDir, section)
-  const tree = buildTree(sectionPath, {
-    excludeDirs: new Set(excludedDirs),
-    excludeFiles: new Set(excludedFiles),
-  })
-  return {
-    text,
-    ...(tree.hasIndex ? { link: `/${section}` } : {}),
-    ...(tree.items.length ? { items: tree.items } : {}),
-  }
-}
-
-const hiddenProtocolFiles = ['access-lists.md']
-
-const protocolTodoExcludedDirs = ['bridging', 'consensus', 'execution', 'fault-proof']
-
-const protocolTodoExcludedFiles = [
-  ...hiddenProtocolFiles,
-  'overview.md',
-  'batcher.md',
-]
 
 const bridgingSection: SidebarItem = {
   text: 'Bridging',
@@ -192,24 +157,31 @@ const sidebar: SidebarItem[] = [
   {
     text: 'Upgrades',
     items: [
-      { text: 'Jovian', link: '/upgrades/jovian/overview' },
-      { text: 'Isthmus', link: '/upgrades/isthmus/overview' },
-      { text: 'Pectra Blob Schedule (Sepolia)', link: '/upgrades/pectra-blob-schedule/overview' },
-      { text: 'Holocene', link: '/upgrades/holocene/overview' },
-      { text: 'Granite', link: '/upgrades/granite/overview' },
-      { text: 'Fjord', link: '/upgrades/fjord/overview' },
-      { text: 'Ecotone', link: '/upgrades/ecotone/overview' },
-      { text: 'Delta', link: '/upgrades/delta/overview' },
-      { text: 'Canyon', link: '/upgrades/canyon/overview' },
+      { text: 'V1', link: '/upgrades/v1/overview' },
+      {
+        text: 'Optimism',
+        collapsed: true,
+        items: [
+          { text: 'Jovian', link: '/upgrades/jovian/overview' },
+          { text: 'Isthmus', link: '/upgrades/isthmus/overview' },
+          { text: 'Pectra Blob Schedule (Sepolia)', link: '/upgrades/pectra-blob-schedule/overview' },
+          { text: 'Holocene', link: '/upgrades/holocene/overview' },
+          { text: 'Granite', link: '/upgrades/granite/overview' },
+          { text: 'Fjord', link: '/upgrades/fjord/overview' },
+          { text: 'Ecotone', link: '/upgrades/ecotone/overview' },
+          { text: 'Delta', link: '/upgrades/delta/overview' },
+          { text: 'Canyon', link: '/upgrades/canyon/overview' },
+        ],
+      },
     ],
   },
-  sectionItemWithoutDirs('protocol', 'TODO', protocolTodoExcludedDirs, protocolTodoExcludedFiles),
   sectionItem('reference', 'Reference'),
 ]
 
 export default defineConfig({
-  title: 'Base Specification',
-  description: 'Base Chain specs inspired by Ethereum and the OP Stack, with independent evolution after Jovian.',
+  banner: '⚠️ This specification is under active development and subject to change.',
+  title: 'Base Chain Specification',
+  description: 'Base Chain protocol specification, upgrades, and reference documentation.',
   logoUrl: '/assets/base/logo.svg',
   iconUrl: '/assets/base/favicon.png',
   topNav: [
@@ -217,7 +189,7 @@ export default defineConfig({
     { text: 'Blog', link: 'https://blog.base.dev/' },
   ],
   markdown: {
-    remarkPlugins: [remarkMath],
+    remarkPlugins: [remarkMath, remarkMermaid],
     rehypePlugins: [rehypeKatex],
   },
   rootDir: '.',
@@ -229,4 +201,5 @@ export default defineConfig({
     },
   },
   sidebar,
+  checkDeadlinks: 'error',
 })

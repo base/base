@@ -6,13 +6,13 @@
 
 [L1]: glossary.md#layer-1-L1
 
-Refers the Ethereum blockchain, used in contrast to [layer 2][L2], which refers to Optimism.
+Refers the Ethereum blockchain, used in contrast to [layer 2][L2], which refers to Base.
 
 ### Layer 2 (L2)
 
 [L2]: glossary.md#layer-2-L2
 
-Refers to the Optimism blockchain (specified in this repository), used in contrast to [layer 1][L1], which
+Refers to Base Chain (specified in this repository), used in contrast to [layer 1][L1], which
 refers to the Ethereum blockchain.
 
 ### Block
@@ -321,6 +321,113 @@ proof][fault-proof].
 > **TODO** specify current value for finalization period
 
 
+## Configuration
+
+### Batch Inbox
+
+[batch-inbox]: glossary.md#batch-inbox
+
+The **Batch Inbox** is the address that Sequencer transaction batches are published to. Sequencers
+publish transactions to the Batch Inbox by setting it as the `to` address on a transaction
+containing batched L2 transactions either in calldata or as blobdata.
+
+### Batcher Hash
+
+[batcher-hash]: glossary.md#batcher-hash
+
+The **Batcher Hash** identifies the sender(s) whose transactions to the [Batch Inbox](#batch-inbox)
+will be recognized by the L2 clients for a given Base chain.
+
+The Batcher Hash is versioned by the first byte of the hash. The structure of the V0 Batcher Hash
+is a 32 byte hash defined as follows:
+
+| 1 byte         | 11 bytes | 20 bytes |
+| -------------- | -------- | -------- |
+| version (0x00) | empty    | address  |
+
+This can also be understood as:
+
+```solidity
+bytes32(address(batcher))
+```
+
+Where `batcher` is the address of the account that sends transactions to the Batch Inbox. Put
+simply, the V0 hash identifies a _single_ address whose transaction batches will be recognized by
+L2 clients. This hash is versioned so that it could, for instance, be repurposed to be a commitment
+to a list of permitted accounts or some other form of batcher identification.
+
+### Fee Scalars
+
+[fee-scalars]: glossary.md#fee-scalars
+
+The **Fee Scalars** are parameters used to calculate the L1 data fee for L2 transactions. These
+parameters are also known as Gas Price Oracle (GPO) parameters.
+
+#### Pre-Ecotone Parameters
+
+Before the Ecotone upgrade, these include:
+
+- **Scalar**: A multiplier applied to the L1 base fee, interpreted as a big-endian `uint256`
+- **Overhead**: A constant gas overhead, interpreted as a big-endian `uint256`
+
+#### Post-Ecotone Parameters
+
+After the Ecotone upgrade:
+
+- The **Scalar** attribute encodes additional scalar information in a versioned encoding scheme
+- The **Overhead** value is ignored and does not affect the L2 state-transition output
+
+#### Post-Ecotone Scalar Encoding
+
+The Scalar is encoded as big-endian `uint256`, interpreted as `bytes32`, and composed as follows:
+
+- Byte `0`: scalar-version byte
+- Bytes `[1, 32)`: depending on scalar-version:
+  - Scalar-version `0`:
+    - Bytes `[1, 28)`: padding, should be zero
+    - Bytes `[28, 32)`: big-endian `uint32`, encoding the L1-fee `baseFeeScalar`
+    - This version implies the L1-fee `blobBaseFeeScalar` is set to 0
+    - If there are non-zero bytes in the padding area, `baseFeeScalar` must be set to MaxUint32
+  - Scalar-version `1`:
+    - Bytes `[1, 24)`: padding, must be zero
+    - Bytes `[24, 28)`: big-endian `uint32`, encoding the `blobBaseFeeScalar`
+    - Bytes `[28, 32)`: big-endian `uint32`, encoding the `baseFeeScalar`
+
+The `baseFeeScalar` corresponds to the share of the user-transaction (per byte) in the total
+regular L1 EVM gas usage consumed by the data-transaction of the batch-submitter. For blob
+transactions, this is the fixed intrinsic gas cost of the L1 transaction.
+
+The `blobBaseFeeScalar` corresponds to the share of a user-transaction (per byte) in the total
+blobdata that is introduced by the data-transaction of the batch-submitter.
+
+### Unsafe Block Signer
+
+[unsafe-block-signer]: glossary.md#unsafe-block-signer
+
+The **Unsafe Block Signer** is an Ethereum address whose corresponding private key is used to sign
+"unsafe" blocks before they are published to L1. This signature allows nodes in the P2P network to
+recognize these blocks as the canonical unsafe blocks, preventing denial of service attacks on the
+P2P layer.
+
+To ensure that its value can be fetched with a storage proof in a storage layout independent
+manner, it is stored at a special storage slot corresponding to
+`keccak256("systemconfig.unsafeblocksigner")`.
+
+Unlike other system config parameters, the Unsafe Block Signer only operates on blockchain policy
+and is not a consensus level parameter.
+
+### L2 Gas Limit
+
+[l2-gas-limit]: glossary.md#l2-gas-limit
+
+The **L2 Gas Limit** defines the maximum amount of gas that can be used in a single L2 block.
+This parameter ensures that L2 blocks remain of reasonable size to be processed and proven.
+
+Changes to the L2 gas limit are fully applied in the first L2 block with the L1 origin that
+introduced the change.
+
+The gas limit may not be set to a value larger than the
+[maximum gas limit](../protocol/consensus/derivation.md#system-configuration). This is to ensure that L2 blocks are provable and can be processed by consensus and execution software.
 ## Batch Submission
 
 [batch-submission]: glossary.md#batch-submission
@@ -330,7 +437,7 @@ proof][fault-proof].
 [data-availability]: glossary.md#data-availability
 
 Data availability is the guarantee that some data will be "available" (i.e. _retrievable_) during a reasonably long time
-window. In Optimism's case, the data in question are [sequencer batches][sequencer-batch] that [validators][validator]
+window. In Base's case, the data in question are [sequencer batches][sequencer-batch] that [validators][validator]
 need in order to verify the sequencer's work and validate the L2 chain.
 
 The [finalization period][finalization-period] should be taken as the lower bound on the availability window, since
@@ -496,12 +603,13 @@ L2 derivation inputs include:
 
 ### System Configuration
 
-[system-config]: glossary.md#system-configuration
 
 This term refers to the collection of dynamically configurable rollup parameters maintained
-by the [`SystemConfig`][system-config] contract on L1 and read by the L2 [derivation] process.
+by the [`SystemConfig`](../protocol/consensus/derivation.md#system-configuration) contract on L1 and read by the L2 [derivation] process.
 These parameters enable keys to be rotated regularly and external cost parameters to be adjusted
 without the network upgrade overhead of a hardfork.
+
+See the [System Configuration](../protocol/consensus/derivation.md#system-configuration) section for a full overview.
 
 ### Payload Attributes
 
@@ -664,7 +772,7 @@ cf. [L1 Attributes Predeployed Contract Specification](../protocol/bridging/depo
 
 A 32 byte value which serves as a commitment to the current state of the L2 chain.
 
-cf. [Proposing L2 output commitments](../protocol/proposals.md#l2-output-root-proposals-specification)
+cf. [Proposer](../protocol/fault-proof/proposer.md)
 
 ### L2 Output Oracle Contract
 
@@ -750,7 +858,7 @@ In these specifications, "execution engine" always refer to the L2 execution eng
 
 
 [deposits-spec]: ../protocol/bridging/deposits.md
-[system-config]: ../protocol/system-config.md
+[system-config]: ../protocol/consensus/derivation.md#system-configuration
 [exec-engine]: ../protocol/execution/index.md
 [derivation-spec]: ../protocol/consensus/derivation.md
 [rollup-node-spec]: ../protocol/consensus/index.md

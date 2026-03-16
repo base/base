@@ -11,16 +11,19 @@ pub use miner::{L1Block, L1Miner, L1MinerConfig, PendingTx, ReorgError, block_in
 
 mod l2;
 pub use l2::{
-    ActionL2Source, L2Sequencer, L2SequencerError, TEST_ACCOUNT_ADDRESS, TEST_ACCOUNT_KEY,
+    ActionL2Source, L2Sequencer, L2SequencerError, SharedBlockHashRegistry, TEST_ACCOUNT_ADDRESS,
+    TEST_ACCOUNT_KEY,
 };
 
 mod harness;
 pub use harness::ActionTestHarness;
 
 mod batcher;
-pub use batcher::{
-    BatchType, Batcher, BatcherConfig, BatcherError, ChannelDriverConfig, GarbageKind,
-};
+pub use base_batcher_encoder::{BatchType, DaType, EncoderConfig};
+pub use batcher::{Batcher, BatcherConfig, BatcherError, L1MinerTxManager};
+
+mod test_rollup_config;
+pub use test_rollup_config::TestRollupConfigBuilder;
 
 mod providers;
 pub use providers::{
@@ -29,4 +32,5 @@ pub use providers::{
 };
 
 mod verifier;
+pub use base_consensus_derive::StepResult;
 pub use verifier::{BlobVerifierPipeline, L2Verifier, VerifierError, VerifierPipeline};

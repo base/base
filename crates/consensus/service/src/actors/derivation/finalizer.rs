@@ -68,3 +68,115 @@ impl L2Finalizer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for [`L2Finalizer`] queue management.
+
+    use alloy_eips::BlockNumHash;
+    use base_alloy_rpc_types_engine::OpPayloadAttributes;
+    use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
+
+    use super::L2Finalizer;
+
+    /// Build a minimal [`OpAttributesWithParent`] whose derived L2 block number is
+    /// `l2_parent_number + 1` and whose L1 origin is `l1_origin_number`.
+    fn attrs(l2_parent_number: u64, l1_origin_number: u64) -> OpAttributesWithParent {
+        let parent = L2BlockInfo {
+            block_info: BlockInfo { number: l2_parent_number, ..Default::default() },
+            l1_origin: BlockNumHash::default(),
+            seq_num: 0,
+        };
+        let derived_from = BlockInfo { number: l1_origin_number, ..Default::default() };
+        OpAttributesWithParent::new(
+            OpPayloadAttributes::default(),
+            parent,
+            Some(derived_from),
+            false,
+        )
+    }
+
+    /// Build a [`BlockInfo`] representing a finalized L1 block at `number`.
+    fn l1_at(number: u64) -> BlockInfo {
+        BlockInfo { number, ..Default::default() }
+    }
+
+    #[test]
+    fn empty_queue_returns_none() {
+        let mut f = L2Finalizer::default();
+        assert!(f.try_finalize_next(l1_at(100)).is_none());
+    }
+
+    #[test]
+    fn single_entry_l1_not_yet_finalized() {
+        let mut f = L2Finalizer::default();
+        // L2 block 10 came from L1 origin 5. Finalizing at L1=3 should not include it.
+        f.enqueue_for_finalization(&attrs(9, 5)); // l2=10, l1_origin=5
+        assert!(f.try_finalize_next(l1_at(3)).is_none());
+        // Entry must still be in the queue.
+        assert!(f.try_finalize_next(l1_at(5)).is_some());
+    }
+
+    #[test]
+    fn single_entry_l1_exactly_at_finalized() {
+        // Boundary: l1_origin == finalized_l1. The range is `..=`, so this must match.
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs(9, 5)); // l2=10, l1_origin=5
+        assert_eq!(f.try_finalize_next(l1_at(5)), Some(10));
+    }
+
+    #[test]
+    fn multiple_l2_per_epoch_keeps_highest() {
+        // Three L2 blocks all derived from L1 epoch 1. Only the highest (3) should be returned.
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs(0, 1)); // l2=1, l1_origin=1
+        f.enqueue_for_finalization(&attrs(1, 1)); // l2=2, l1_origin=1
+        f.enqueue_for_finalization(&attrs(2, 1)); // l2=3, l1_origin=1
+        assert_eq!(f.try_finalize_next(l1_at(1)), Some(3));
+    }
+
+    #[test]
+    fn partial_finalization_drains_lower_entries() {
+        // Entries at L1=1,2,3. Finalizing at L1=2 returns highest across L1<=2 and drains those.
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs(4, 1)); // l2=5,  l1_origin=1
+        f.enqueue_for_finalization(&attrs(7, 2)); // l2=8,  l1_origin=2
+        f.enqueue_for_finalization(&attrs(10, 3)); // l2=11, l1_origin=3
+
+        assert_eq!(f.try_finalize_next(l1_at(2)), Some(8));
+        // L1=3 entry must still be present.
+        assert_eq!(f.try_finalize_next(l1_at(3)), Some(11));
+    }
+
+    #[test]
+    fn clear_empties_queue() {
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs(4, 1));
+        f.enqueue_for_finalization(&attrs(7, 2));
+        f.clear();
+        assert!(f.try_finalize_next(l1_at(100)).is_none());
+    }
+
+    #[test]
+    fn drain_preserves_future_entries() {
+        // After finalizing up to L1=2, entries at L1=5 must survive.
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs(4, 2)); // l2=5,  l1_origin=2
+        f.enqueue_for_finalization(&attrs(9, 5)); // l2=10, l1_origin=5
+
+        assert_eq!(f.try_finalize_next(l1_at(2)), Some(5));
+        // L1=5 entry is still present; finalizing it now returns l2=10.
+        assert_eq!(f.try_finalize_next(l1_at(5)), Some(10));
+    }
+
+    #[test]
+    fn old_finalized_signal_returns_none_after_drain() {
+        // After draining all entries up to L1=5, a later signal for L1=2 finds nothing.
+        let mut f = L2Finalizer::default();
+        f.enqueue_for_finalization(&attrs(19, 5)); // l2=20, l1_origin=5
+
+        assert_eq!(f.try_finalize_next(l1_at(5)), Some(20));
+        // Queue is now empty; an older signal cannot regress to a stale entry.
+        assert!(f.try_finalize_next(l1_at(2)).is_none());
+    }
+}

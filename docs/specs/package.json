@@ -11,6 +11,7 @@
     "preview": "vocs preview"
   },
   "devDependencies": {
+    "mermaid": "^11.12.3",
     "rehype-katex": "^7.0.1",
     "remark-math": "^6.0.0",
     "vocs": "^1.4.1"

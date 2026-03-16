@@ -28,6 +28,16 @@ impl FeeCalculator {
         tip.saturating_add(base_fee.saturating_mul(2))
     }
 
+    /// Recovers the effective base fee from an EIP-1559 fee cap and tip.
+    ///
+    /// This is the inverse of [`calc_gas_fee_cap`](Self::calc_gas_fee_cap):
+    /// given `fee_cap = tip + 2 × base_fee`, returns `(fee_cap - tip) / 2`.
+    #[must_use]
+    pub fn base_fee_from_caps(gas_fee_cap: u128, gas_tip_cap: u128) -> u128 {
+        debug_assert!(gas_fee_cap >= gas_tip_cap);
+        gas_fee_cap.saturating_sub(gas_tip_cap) / 2
+    }
+
     /// Computes the blob fee cap: `2 × blob_base_fee`.
     ///
     /// Mirrors [`calc_gas_fee_cap`](Self::calc_gas_fee_cap) for EIP-4844
@@ -169,18 +179,101 @@ impl FeeCalculator {
     }
 }
 
+/// Caller-supplied fee floor for transaction construction.
+///
+/// Used by [`crate::SimpleTxManager::prepare`] and
+/// [`crate::SimpleTxManager::craft_tx`] to enforce minimum fees during
+/// fee-bump iterations. The manager takes `max(network_fee, override)`
+/// for each component so the resulting transaction is guaranteed to meet
+/// the override thresholds even if network fees have dropped.
+///
+/// Field names mirror [`GasPriceCaps`] for consistency.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FeeOverride {
+    /// Minimum acceptable maximum priority fee per gas (tip).
+    pub gas_tip_cap: u128,
+    /// Minimum acceptable maximum total fee per gas (base fee + tip).
+    pub gas_fee_cap: u128,
+    /// Minimum acceptable blob fee cap (for EIP-4844 txs). `None` = no override.
+    pub blob_fee_cap: Option<u128>,
+    /// Minimum gas limit (floor). Used during fee bumps so the gas limit
+    /// never decreases across replacement attempts. `0` = no override.
+    pub gas_limit_floor: u64,
+}
+
+impl FeeOverride {
+    /// Creates a new [`FeeOverride`] with the given tip and fee cap floors.
+    #[must_use]
+    pub const fn new(gas_tip_cap: u128, gas_fee_cap: u128) -> Self {
+        Self { gas_tip_cap, gas_fee_cap, blob_fee_cap: None, gas_limit_floor: 0 }
+    }
+
+    /// Returns a copy with the blob fee cap floor set.
+    #[must_use]
+    pub const fn with_blob_fee_cap(mut self, blob_fee_cap: u128) -> Self {
+        self.blob_fee_cap = Some(blob_fee_cap);
+        self
+    }
+
+    /// Returns a copy with the gas limit floor set.
+    #[must_use]
+    pub const fn with_gas_limit_floor(mut self, gas_limit_floor: u64) -> Self {
+        self.gas_limit_floor = gas_limit_floor;
+        self
+    }
+}
+
+/// Result of [`crate::SimpleTxManager::increase_gas_price`].
+///
+/// Contains bumped fee values that satisfy geth's tx-replacement rules
+/// and the fresh [`GasPriceCaps`] used during computation so that callers
+/// can forward them to avoid a redundant provider round-trip.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct BumpedFees {
+    /// Bumped maximum priority fee per gas (tip).
+    pub gas_tip_cap: u128,
+    /// Bumped maximum total fee per gas (base fee + tip).
+    pub gas_fee_cap: u128,
+    /// Bumped blob fee cap (for EIP-4844 txs). `None` for non-blob txs.
+    pub blob_fee_cap: Option<u128>,
+    /// Fresh [`GasPriceCaps`] from the network, carried so that callers
+    /// can reuse them without a redundant provider query.
+    pub caps: GasPriceCaps,
+}
+
 /// Intermediate fee estimates computed during gas price suggestion.
 ///
 /// Used between fee calculation and transaction construction to carry
 /// the tip cap, base fee cap, and optional blob fee cap.
+#[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct GasPriceCaps {
     /// Maximum priority fee per gas (tip).
     pub gas_tip_cap: u128,
     /// Maximum total fee per gas (base fee + tip).
     pub gas_fee_cap: u128,
+    /// Gas fee cap computed from the raw provider values before enforcing
+    /// configured minimums (`min_tip_cap`, `min_basefee`).
+    ///
+    /// Used as the `suggested` baseline in [`FeeCalculator::check_limits`]
+    /// so the fee ceiling reflects inflation caused by our enforced minimums.
+    pub raw_gas_fee_cap: u128,
     /// Maximum blob fee per gas (for EIP-4844 txs). `None` for non-blob txs.
     pub blob_fee_cap: Option<u128>,
+    /// Blob fee cap computed from the raw provider blob base fee before
+    /// enforcing configured minimums (`min_blob_fee`).
+    ///
+    /// Used as the `suggested` baseline in [`FeeCalculator::check_limits`]
+    /// so the blob fee ceiling mirrors the gas fee ceiling behaviour.
+    pub raw_blob_fee_cap: Option<u128>,
+    /// Timestamp of the latest block used to derive these fee estimates.
+    ///
+    /// Threaded to [`BlobTxBuilder::make_sidecar_auto`] so the
+    /// legacy-vs-cell-proof decision is deterministic with respect to
+    /// chain state rather than wall-clock time.
+    pub block_timestamp: u64,
 }
 
 #[cfg(test)]
@@ -198,13 +291,24 @@ mod tests {
 
         assert_eq!(caps.gas_tip_cap, 0);
         assert_eq!(caps.gas_fee_cap, 0);
+        assert_eq!(caps.raw_gas_fee_cap, 0);
         assert!(caps.blob_fee_cap.is_none());
+        assert!(caps.raw_blob_fee_cap.is_none());
+        assert_eq!(caps.block_timestamp, 0);
     }
 
     #[test]
     fn gas_price_caps_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<GasPriceCaps>();
+    }
+
+    // ── BumpedFees ─────────────────────────────────────────────────────
+
+    #[test]
+    fn bumped_fees_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<BumpedFees>();
     }
 
     // ── calc_gas_fee_cap ────────────────────────────────────────────────
@@ -326,6 +430,33 @@ mod tests {
         }
     }
 
+    // ── calc_gas_fee_cap roundtrip ───────────────────────────────────────
+
+    /// Verifies that the reverse calculation `(fee_cap - tip) / 2`
+    /// recovers the original `base_fee` from a fee cap produced by
+    /// `calc_gas_fee_cap`. This roundtrip is relied upon by
+    /// `handle_fee_bump` in the manager to derive the effective base
+    /// fee from a `GasPriceCaps` result.
+    #[rstest]
+    #[case::one_gwei(1_000_000_000, 500_000_000)]
+    #[case::zeroes(0, 0)]
+    #[case::tip_only(0, 100)]
+    #[case::base_only(100, 0)]
+    #[case::large(5_000_000_000_000, 1_000_000_000_000)]
+    fn calc_gas_fee_cap_roundtrip_recovers_base_fee(#[case] base_fee: u128, #[case] tip: u128) {
+        let fee_cap = FeeCalculator::calc_gas_fee_cap(base_fee, tip);
+        // fee_cap = tip + 2 * base_fee, so (fee_cap - tip) / 2 == base_fee
+        // (only exact when no saturation occurs).
+        if fee_cap < u128::MAX {
+            let recovered = (fee_cap - tip) / 2;
+            assert_eq!(
+                recovered, base_fee,
+                "roundtrip should recover the base fee: \
+                 fee_cap={fee_cap}, tip={tip}, recovered={recovered}",
+            );
+        }
+    }
+
     // ── Property tests ──────────────────────────────────────────────────
 
     proptest! {
@@ -404,6 +535,20 @@ mod tests {
                 final_fee_cap >= final_tip,
                 "EIP-1559 invariant violated: fee_cap {final_fee_cap} < tip {final_tip}",
             );
+        }
+
+        #[test]
+        fn calc_gas_fee_cap_roundtrip(
+            base_fee in 0..u64::MAX as u128,
+            tip in 0..u64::MAX as u128,
+        ) {
+            let fee_cap = FeeCalculator::calc_gas_fee_cap(base_fee, tip);
+            // fee_cap = tip + 2 * base_fee ⇒ (fee_cap - tip) / 2 == base_fee.
+            // Only exact when no saturation occurred.
+            if fee_cap < u128::MAX {
+                let recovered = fee_cap.saturating_sub(tip) / 2;
+                prop_assert_eq!(recovered, base_fee);
+            }
         }
 
         #[test]

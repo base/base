@@ -4,7 +4,12 @@
 //!
 //! [sc]: https://github.com/ethereum-optimism/optimism/blob/develop/op-batcher/compressor/shadow_compressor.go#L18
 
-use crate::{CompressorError, CompressorResult, CompressorWriter, Config, VariantCompressor};
+use alloc::vec::Vec;
+
+use crate::{
+    ChannelCompressor, CompressorError, CompressorResult, CompressorWriter, Config,
+    VariantCompressor,
+};
 
 /// The largest potential blow-up in bytes we expect to see when compressing
 /// arbitrary (e.g. random) data.  Here we account for a 2 byte header, 4 byte
@@ -97,10 +102,23 @@ impl CompressorWriter for ShadowCompressor {
     }
 
     fn flush(&mut self) -> CompressorResult<()> {
+        // Only the shadow compressor needs to be flushed. The main compressor
+        // (both `BrotliCompressor` and `ZlibCompressor`) re-compresses the
+        // entire accumulated raw buffer on every `write()` call, so its
+        // `compressed` output is always fully up-to-date. There is no internal
+        // streaming state that could strand data — `flush()` and `close()` are
+        // no-ops on the underlying compressors. The shadow, however, is flushed
+        // during `write()` for accurate size estimation, so we forward `flush()`
+        // to it here to keep the estimate current.
         self.shadow.flush()
     }
 
     fn close(&mut self) -> CompressorResult<()> {
+        // Only the shadow compressor is closed. The main compressor does not
+        // require an explicit `close()` because its `compressed` buffer is
+        // always fully materialized after each `write()` — `read()` can drain
+        // it directly without any finalization step. See the comment on
+        // `flush()` above for more detail.
         self.shadow.close()
     }
 
@@ -113,5 +131,15 @@ impl CompressorWriter for ShadowCompressor {
 
     fn read(&mut self, buf: &mut [u8]) -> CompressorResult<usize> {
         self.compressor.read(buf)
+    }
+}
+
+impl ChannelCompressor for ShadowCompressor {
+    fn get_compressed(&self) -> Vec<u8> {
+        self.compressor.get_compressed()
+    }
+
+    fn channel_version_byte(&self) -> Option<u8> {
+        self.compressor.channel_version_byte()
     }
 }

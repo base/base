@@ -1,4 +1,7 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::{Arc, Mutex},
+};
 
 use alloy_consensus::{Header, SignableTransaction};
 use alloy_eips::BlockNumHash;
@@ -94,6 +97,32 @@ impl L2BlockProvider for ActionL2Source {
     }
 }
 
+/// Shared L2 block hashes keyed by block number.
+///
+/// `L2Sequencer` writes into this registry as blocks are built, and
+/// `L2Verifier` reads from the same registry when it applies derived
+/// attributes so the resulting safe-head hash chain matches the sequencer's
+/// sealed headers.
+#[derive(Debug, Clone, Default)]
+pub struct SharedBlockHashRegistry(Arc<Mutex<HashMap<u64, B256>>>);
+
+impl SharedBlockHashRegistry {
+    /// Create an empty shared registry.
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(HashMap::new())))
+    }
+
+    /// Record the hash for an L2 block number.
+    pub fn insert(&self, number: u64, hash: B256) {
+        self.0.lock().expect("block hash registry lock poisoned").insert(number, hash);
+    }
+
+    /// Return the registered hash for an L2 block number.
+    pub fn get(&self, number: u64) -> Option<B256> {
+        self.0.lock().expect("block hash registry lock poisoned").get(&number).copied()
+    }
+}
+
 /// Builds real [`OpBlock`]s for use in action tests.
 ///
 /// Each block contains:
@@ -137,6 +166,8 @@ pub struct L2Sequencer {
     /// Optional pinned L1 origin. When set, epoch selection is bypassed and
     /// this block is used as the epoch for every subsequent L2 block built.
     l1_origin_pin: Option<BlockInfo>,
+    /// Shared registry of built L2 block hashes, keyed by block number.
+    block_hashes: SharedBlockHashRegistry,
 }
 
 impl L2Sequencer {
@@ -167,6 +198,7 @@ impl L2Sequencer {
             nonce: 0,
             db,
             l1_origin_pin: None,
+            block_hashes: SharedBlockHashRegistry::new(),
         }
     }
 
@@ -179,6 +211,11 @@ impl L2Sequencer {
     /// Return the current unsafe L2 head.
     pub const fn head(&self) -> L2BlockInfo {
         self.head
+    }
+
+    /// Return the sequencer's shared block-hash registry.
+    pub fn block_hash_registry(&self) -> SharedBlockHashRegistry {
+        self.block_hashes.clone()
     }
 
     /// Pin the L1 origin to the given block, bypassing automatic epoch advance.
@@ -313,6 +350,7 @@ impl L2Sequencer {
             l1_origin: BlockNumHash { number: epoch_number, hash: epoch_hash },
             seq_num,
         };
+        self.block_hashes.insert(next_number, block_hash);
 
         Ok(block)
     }

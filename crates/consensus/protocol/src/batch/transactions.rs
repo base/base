@@ -155,6 +155,9 @@ impl SpanBatchTransactions {
         let mut sigs = Vec::with_capacity(self.total_block_tx_count as usize);
         for i in 0..self.total_block_tx_count {
             let y_parity = y_parity_bits.get_bit(i as usize).expect("same length");
+            if r.len() < 64 {
+                return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
+            }
             let r_val = U256::from_be_slice(&r[..32]);
             let s_val = U256::from_be_slice(&r[32..64]);
             sigs.push(Signature::new(r_val, s_val, y_parity == 1));
@@ -195,6 +198,9 @@ impl SpanBatchTransactions {
         let mut tos = Vec::with_capacity(self.total_block_tx_count as usize);
         let contract_creation_count = self.contract_creation_count();
         for _ in 0..(self.total_block_tx_count - contract_creation_count) {
+            if r.len() < 20 {
+                return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
+            }
             let to = Address::from_slice(&r[..20]);
             tos.push(to);
             r.advance(20);
@@ -359,6 +365,36 @@ mod tests {
     use alloy_primitives::{Signature, TxKind, address};
 
     use super::*;
+
+    /// Regression: truncated input to `decode_tx_sigs` must return an error, not panic.
+    /// A dishonest batcher can craft a span batch with fewer bytes than the declared tx count
+    /// requires, which previously caused an out-of-bounds slice panic.
+    #[test]
+    fn test_decode_tx_sigs_truncated_input() {
+        let mut txs = SpanBatchTransactions { total_block_tx_count: 1, ..Default::default() };
+        // y_parity bitfield for 1 tx = 1 byte (all zeros = false parity), then we need 64 bytes
+        // for r+s. Provide only 32 bytes to trigger the bounds check.
+        let truncated = [0u8; 33]; // 1 byte bitfield + 32 bytes (not enough for 64-byte sig)
+        assert_eq!(
+            txs.decode_tx_sigs(&mut truncated.as_ref()),
+            Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData))
+        );
+    }
+
+    /// Regression: truncated input to `decode_tx_tos` must return an error, not panic.
+    /// A dishonest batcher can craft a span batch with fewer bytes than the declared non-contract
+    /// tx count requires, which previously caused an out-of-bounds slice panic.
+    #[test]
+    fn test_decode_tx_tos_truncated_input() {
+        let mut txs = SpanBatchTransactions { total_block_tx_count: 1, ..Default::default() };
+        // contract_creation_bits is all zeros (default), so contract_creation_count = 0,
+        // meaning we expect 1 `to` address (20 bytes). Provide only 19 bytes.
+        let truncated = [0u8; 19];
+        assert_eq!(
+            txs.decode_tx_tos(&mut truncated.as_ref()),
+            Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData))
+        );
+    }
 
     #[test]
     fn test_span_batch_transactions_add_empty_txs() {

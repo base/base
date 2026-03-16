@@ -121,8 +121,12 @@ impl Channel {
             // closing frame.
             if self.last_frame_number < self.highest_frame_number {
                 self.inputs.retain(|id, frame| {
-                    self.estimated_size -= frame.size();
-                    *id < self.last_frame_number
+                    if *id < self.last_frame_number {
+                        true
+                    } else {
+                        self.estimated_size -= frame.size();
+                        false
+                    }
                 });
                 self.highest_frame_number = self.last_frame_number;
             }
@@ -315,6 +319,23 @@ mod test {
                 should_error: vec![false, false],
                 sizes: vec![205, 409],
                 frame_data: Some(b"sevenfour".to_vec().into()),
+            },
+            // Frames arrive out of order: frame 2 (non-last) before frame 0 (non-last),
+            // then the closing frame 1. The prune path inside `add_frame` must remove
+            // frame 2 and correctly adjust `estimated_size` only for removed frames,
+            // not for the retained frame 0.
+            FrameValidityTestCase {
+                name: "prune future frames on out-of-order close".to_string(),
+                frames: vec![
+                    Frame { id, number: 2, is_last: false, data: b"two".to_vec() },
+                    Frame { id, number: 0, is_last: false, data: b"zero".to_vec() },
+                    Frame { id, number: 1, is_last: true, data: b"one".to_vec() },
+                ],
+                should_error: vec![false, false, false],
+                // After frame 2 (3+200=203), after frame 0 (203+204=407),
+                // after frame 1 closes: prune removes frame 2 (-203), add frame 1 (+203) → 407.
+                sizes: vec![203, 407, 407],
+                frame_data: Some(b"zeroone".to_vec().into()),
             },
             FrameValidityTestCase {
                 name: "multiple valid frames, no data".to_string(),

@@ -61,9 +61,9 @@ impl BaseChainUpgradesExt for BaseChainUpgrades {
 
         forks.push((BaseUpgrade::Jovian.boxed(), self[BaseUpgrade::Jovian]));
 
-        let base_v1 = self[BaseUpgrade::BaseV1];
+        let base_v1 = self[BaseUpgrade::V1];
         if base_v1 != ForkCondition::Never {
-            forks.push((BaseUpgrade::BaseV1.boxed(), base_v1));
+            forks.push((BaseUpgrade::V1.boxed(), base_v1));
         }
 
         ChainHardforks::new(forks)
@@ -76,11 +76,11 @@ pub static DEV_HARDFORKS: Lazy<ChainHardforks> =
 
 /// Base Sepolia list of hardforks.
 pub static BASE_SEPOLIA_HARDFORKS: Lazy<ChainHardforks> =
-    Lazy::new(|| BaseChainUpgrades::base_sepolia().to_chain_hardforks());
+    Lazy::new(|| BaseChainUpgrades::sepolia().to_chain_hardforks());
 
 /// Base mainnet list of hardforks.
 pub static BASE_MAINNET_HARDFORKS: Lazy<ChainHardforks> =
-    Lazy::new(|| BaseChainUpgrades::base_mainnet().to_chain_hardforks());
+    Lazy::new(|| BaseChainUpgrades::mainnet().to_chain_hardforks());
 
 /// Base devnet-0-sepolia-dev-0 list of hardforks.
 pub static BASE_DEVNET_0_SEPOLIA_DEV_0_HARDFORKS: Lazy<ChainHardforks> =

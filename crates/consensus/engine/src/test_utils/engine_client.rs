@@ -98,14 +98,16 @@ pub struct MockEngineStorage {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust
 /// use base_consensus_engine::test_utils::{MockEngineClient};
+/// use base_consensus_genesis::RollupConfig;
 /// use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
+/// use alloy_primitives::B256;
 /// use std::sync::Arc;
 ///
 /// let mock = MockEngineClient::builder()
 ///     .with_config(Arc::new(RollupConfig::default()))
-///     .with_payload_status(PayloadStatus {
+///     .with_new_payload_v1_response(PayloadStatus {
 ///         status: PayloadStatusEnum::Valid,
 ///         latest_valid_hash: Some(B256::ZERO),
 ///     })

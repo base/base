@@ -3,53 +3,53 @@ syntax = "proto3";
 package prover;
 
 service ProverService {
-    rpc ProveBlock (ProveBlockRequest) returns (ProveBlockResponse);
-    rpc GetProof (GetProofRequest) returns (GetProofResponse);
+  rpc ProveBlock(ProveBlockRequest) returns (ProveBlockResponse);
+  rpc GetProof(GetProofRequest) returns (GetProofResponse);
 }
 
 enum ProofType {
-    PROOF_TYPE_UNSPECIFIED = 0;
-    PROOF_TYPE_KAILUA_BENTO_STARK = 1;
-    PROOF_TYPE_KAILUA_BENTO_SNARK = 2;
-    PROOF_TYPE_OP_SUCCINCT_SP1_CLUSTER_COMPRESSED = 3;
+  PROOF_TYPE_UNSPECIFIED = 0;
+  PROOF_TYPE_KAILUA_BENTO_STARK = 1;
+  PROOF_TYPE_KAILUA_BENTO_SNARK = 2;
+  PROOF_TYPE_GENERIC_ZKVM_CLUSTER_COMPRESSED = 3;
 }
 
 message ProveBlockRequest {
-    // The start block number to prove from.
-    uint64 start_block_number = 1;
-    uint64 number_of_blocks_to_prove = 2;
-    optional uint64 sequence_window = 3;
-    // The type of proof to generate
-    ProofType proof_type = 4;
+  // The start block number to prove from.
+  uint64 start_block_number = 1;
+  uint64 number_of_blocks_to_prove = 2;
+  optional uint64 sequence_window = 3;
+  // The type of proof to generate
+  ProofType proof_type = 4;
 }
 
 message ProveBlockResponse {
-    string session_id = 1;
+  string session_id = 1;
 }
 
 enum ReceiptType {
-    RECEIPT_TYPE_UNSPECIFIED = 0;
-    RECEIPT_TYPE_STARK = 1;
-    RECEIPT_TYPE_SNARK = 2;
+  RECEIPT_TYPE_UNSPECIFIED = 0;
+  RECEIPT_TYPE_STARK = 1;
+  RECEIPT_TYPE_SNARK = 2;
 }
 
 enum ProofJobStatus {
-    PROOF_JOB_STATUS_UNSPECIFIED = 0;
-    PROOF_JOB_STATUS_CREATED = 1;
-    PROOF_JOB_STATUS_PENDING = 2;
-    PROOF_JOB_STATUS_RUNNING = 3;
-    PROOF_JOB_STATUS_SUCCEEDED = 4;
-    PROOF_JOB_STATUS_FAILED = 5;
+  PROOF_JOB_STATUS_UNSPECIFIED = 0;
+  PROOF_JOB_STATUS_CREATED = 1;
+  PROOF_JOB_STATUS_PENDING = 2;
+  PROOF_JOB_STATUS_RUNNING = 3;
+  PROOF_JOB_STATUS_SUCCEEDED = 4;
+  PROOF_JOB_STATUS_FAILED = 5;
 }
 
 message GetProofRequest {
-    string session_id = 1;
-    // Optional: specify which receipt type to return (STARK or SNARK)
-    // If unspecified, returns STARK by default
-    optional ReceiptType receipt_type = 2;
+  string session_id = 1;
+  // Optional: specify which receipt type to return (STARK or SNARK)
+  // If unspecified, returns STARK by default
+  optional ReceiptType receipt_type = 2;
 }
 
 message GetProofResponse {
-    ProofJobStatus status = 1;
-    bytes receipt = 2; // the actual zk proof, only populated if status is SUCCEEDED
+  ProofJobStatus status = 1;
+  bytes receipt = 2; // the actual zk proof, only populated if status is SUCCEEDED
 }

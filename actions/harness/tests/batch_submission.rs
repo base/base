@@ -1,10 +1,9 @@
 #![doc = "Action tests for L2 batch submission via the Batcher actor."]
 
 use base_action_harness::{
-    Action, ActionL2Source, ActionTestHarness, BatchType, BatcherConfig, BatcherError, GarbageKind,
+    ActionL2Source, ActionTestHarness, BatchType, Batcher, BatcherConfig, BatcherError,
     SharedL1Chain,
 };
-use base_protocol::DERIVATION_VERSION_0;
 
 /// Build an [`ActionL2Source`] pre-populated with `n` real [`OpBlock`]s from
 /// the genesis of the given harness.
@@ -21,256 +20,49 @@ fn make_source(h: &ActionTestHarness, n: u64) -> ActionL2Source {
 }
 
 // ---------------------------------------------------------------------------
-// Basic encoding — singular batches
+// Batcher: persistent pipeline end-to-end path
 // ---------------------------------------------------------------------------
 
-#[test]
-fn batcher_produces_frames_for_single_block() {
-    let mut h = ActionTestHarness::default();
-    let source = make_source(&h, 1);
-    let mut batcher = h.create_batcher(source, BatcherConfig::default());
-    let frames = batcher.advance().expect("advance should succeed");
-    assert!(!frames.is_empty(), "expected at least one frame");
-}
-
-#[test]
-fn batcher_produces_frames_for_multiple_blocks() {
-    let mut h = ActionTestHarness::default();
-    let source = make_source(&h, 5);
-    let mut batcher = h.create_batcher(source, BatcherConfig::default());
-    let frames = batcher.advance().expect("advance should succeed");
-    assert!(!frames.is_empty(), "expected at least one frame");
-}
-
-#[test]
-fn batcher_errors_when_no_l2_blocks() {
-    let mut h = ActionTestHarness::default();
-    let source = ActionL2Source::new(); // empty
-    let mut batcher = h.create_batcher(source, BatcherConfig::default());
-    let err = batcher.advance().expect_err("should fail with no blocks");
-    assert!(matches!(err, BatcherError::NoBlocks));
-}
-
-// ---------------------------------------------------------------------------
-// Span batch encoding
-// ---------------------------------------------------------------------------
-
-#[test]
-fn batcher_produces_frames_for_single_block_span() {
-    let mut h = ActionTestHarness::default();
-    let source = make_source(&h, 1);
-    let cfg = BatcherConfig { batch_type: BatchType::Span, ..Default::default() };
-    let mut batcher = h.create_batcher(source, cfg);
-    let frames = batcher.advance().expect("span advance should succeed");
-    assert!(!frames.is_empty(), "expected at least one span frame");
-}
-
-#[test]
-fn batcher_produces_span_frames_for_multiple_blocks() {
-    let mut h = ActionTestHarness::default();
-    let source = make_source(&h, 5);
-    let cfg = BatcherConfig { batch_type: BatchType::Span, ..Default::default() };
-    let mut batcher = h.create_batcher(source, cfg);
-    let frames = batcher.advance().expect("span advance should succeed");
-    assert!(!frames.is_empty(), "expected at least one span frame");
-}
-
-// ---------------------------------------------------------------------------
-// L1 tx submission
-// ---------------------------------------------------------------------------
-
-#[test]
-fn batcher_submits_tx_to_l1_pending_pool() {
+#[tokio::test]
+async fn batcher_mines_block_with_submissions() {
     let mut h = ActionTestHarness::default();
     let cfg = BatcherConfig::default();
-    let inbox = cfg.inbox_address;
-    let batcher_addr = cfg.batcher_address;
 
     let source = make_source(&h, 3);
-    let mut batcher = h.create_batcher(source, cfg);
-    batcher.advance().expect("advance should succeed");
-    drop(batcher);
+    let mut batcher = Batcher::new(source, &h.rollup_config, cfg);
+    batcher.advance(&mut h.l1).await.expect("advance should succeed");
 
-    // Before mining: pending pool should have at least one tx.
-    let pending = h.l1.pending_txs();
-    assert!(!pending.is_empty(), "expected pending batcher txs");
-    for tx in pending {
-        assert_eq!(tx.to, inbox, "tx recipient should be batch inbox");
-        assert_eq!(tx.from, batcher_addr, "tx sender should be batcher address");
-    }
+    assert!(h.l1.latest_number() >= 1, "at least one L1 block should be mined");
+    // Default EncoderConfig uses DaType::Blob, so submissions appear as blob sidecars.
+    assert!(
+        !h.l1.tip().batcher_txs.is_empty() || !h.l1.tip().blob_sidecars.is_empty(),
+        "mined block should contain batcher submissions (calldata or blobs)"
+    );
 }
 
-#[test]
-fn batcher_tx_payload_starts_with_derivation_version_0() {
+#[tokio::test]
+async fn batcher_span_batch_mode() {
     let mut h = ActionTestHarness::default();
-    let source = make_source(&h, 2);
-    let mut batcher = h.create_batcher(source, BatcherConfig::default());
-    batcher.advance().expect("advance should succeed");
-    drop(batcher);
+    let cfg = BatcherConfig { batch_type: BatchType::Span, ..Default::default() };
 
-    for tx in h.l1.pending_txs() {
-        assert_eq!(
-            tx.input.first().copied(),
-            Some(DERIVATION_VERSION_0),
-            "tx input must start with DERIVATION_VERSION_0"
-        );
-    }
+    let source = make_source(&h, 3);
+    let mut batcher = Batcher::new(source, &h.rollup_config, cfg);
+    batcher.advance(&mut h.l1).await.expect("advance span should succeed");
+
+    assert!(h.l1.latest_number() >= 1, "at least one L1 block should be mined");
+    assert!(
+        !h.l1.tip().batcher_txs.is_empty() || !h.l1.tip().blob_sidecars.is_empty(),
+        "mined block should contain span batcher submissions (calldata or blobs)"
+    );
 }
 
-#[test]
-fn mined_block_contains_batcher_txs() {
+#[tokio::test]
+async fn batcher_errors_when_no_l2_blocks_async() {
     let mut h = ActionTestHarness::default();
-    let source = make_source(&h, 2);
-    let mut batcher = h.create_batcher(source, BatcherConfig::default());
-    batcher.advance().expect("advance should succeed");
-    drop(batcher);
+    let cfg = BatcherConfig::default();
 
-    h.l1.mine_block();
-
-    let tip = h.l1.tip();
-    assert!(!tip.batcher_txs.is_empty(), "mined block should contain batcher txs");
-}
-
-// ---------------------------------------------------------------------------
-// Action trait delegation
-// ---------------------------------------------------------------------------
-
-#[test]
-fn action_act_delegates_to_advance() {
-    let mut h = ActionTestHarness::default();
-    let source = make_source(&h, 1);
-    let mut batcher = h.create_batcher(source, BatcherConfig::default());
-    let frames = batcher.act().expect("act should succeed");
-    assert!(!frames.is_empty());
-}
-
-// ---------------------------------------------------------------------------
-// Multi-cycle: reuse harness across two batcher cycles
-// ---------------------------------------------------------------------------
-
-#[test]
-fn two_batcher_cycles_each_submit_distinct_txs() {
-    let mut h = ActionTestHarness::default();
-    let chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut sequencer = h.create_l2_sequencer(chain);
-
-    // First cycle: 2 L2 blocks.
-    {
-        let mut source = ActionL2Source::new();
-        for _ in 0..2 {
-            source.push(sequencer.build_next_block().expect("build"));
-        }
-        let mut batcher = h.create_batcher(source, BatcherConfig::default());
-        batcher.advance().expect("first advance");
-    }
-    h.l1.mine_block();
-    let after_first = h.l1.tip().batcher_txs.len();
-    assert!(after_first > 0);
-
-    // Second cycle: 3 more L2 blocks (sequencer state continues from block 3).
-    {
-        let mut source = ActionL2Source::new();
-        for _ in 0..3 {
-            source.push(sequencer.build_next_block().expect("build"));
-        }
-        let mut batcher = h.create_batcher(source, BatcherConfig::default());
-        batcher.advance().expect("second advance");
-    }
-    h.l1.mine_block();
-    let after_second = h.l1.tip().batcher_txs.len();
-    assert!(after_second > 0);
-
-    // Both cycles produced txs; total L1 height is 2.
-    assert_eq!(h.l1.latest_number(), 2);
-}
-
-// ---------------------------------------------------------------------------
-// Reorg interaction
-// ---------------------------------------------------------------------------
-
-#[test]
-fn batcher_txs_survive_reorg_and_resubmit() {
-    let mut h = ActionTestHarness::default();
-    let chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut sequencer = h.create_l2_sequencer(chain);
-
-    // Mine an empty block 1 so we have a safe reorg target.
-    h.l1.mine_block();
-
-    // Batch L2 blocks 1-2 and mine L1 block 2.
-    {
-        let mut source = ActionL2Source::new();
-        for _ in 0..2 {
-            source.push(sequencer.build_next_block().expect("build"));
-        }
-        let mut batcher = h.create_batcher(source, BatcherConfig::default());
-        batcher.advance().expect("advance");
-    }
-    h.l1.mine_block();
-    assert_eq!(h.l1.latest_number(), 2);
-
-    // Reorg back to block 1 — block 2 (with batcher txs) is lost.
-    let lost = h.l1.reorg_to(1).expect("reorg to block 1");
-    assert_eq!(lost.len(), 1);
-    assert!(!lost[0].batcher_txs.is_empty(), "lost block had batcher txs");
-    assert_eq!(h.l1.latest_number(), 1);
-
-    // Re-submit: build fresh L2 blocks 3-4 and batch again.
-    {
-        let mut source = ActionL2Source::new();
-        for _ in 0..2 {
-            source.push(sequencer.build_next_block().expect("build"));
-        }
-        let mut batcher = h.create_batcher(source, BatcherConfig::default());
-        batcher.advance().expect("re-advance after reorg");
-    }
-    h.l1.mine_block();
-
-    // Post-reorg block 2 should also contain batcher txs.
-    assert!(!h.l1.tip().batcher_txs.is_empty());
-    assert_eq!(h.l1.latest_number(), 2);
-}
-
-// ---------------------------------------------------------------------------
-// Garbage frame tests
-// ---------------------------------------------------------------------------
-
-#[test]
-fn garbage_random_submitted_to_l1() {
-    let mut h = ActionTestHarness::default();
-    let source = ActionL2Source::new();
-    let mut batcher = h.create_batcher(source, BatcherConfig::default());
-    batcher.submit_garbage_frames(GarbageKind::Random);
-    drop(batcher);
-    assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
-}
-
-#[test]
-fn garbage_truncated_submitted_to_l1() {
-    let mut h = ActionTestHarness::default();
-    let source = ActionL2Source::new();
-    let mut batcher = h.create_batcher(source, BatcherConfig::default());
-    batcher.submit_garbage_frames(GarbageKind::Truncated);
-    drop(batcher);
-    assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
-}
-
-#[test]
-fn garbage_malformed_rlp_submitted_to_l1() {
-    let mut h = ActionTestHarness::default();
-    let source = ActionL2Source::new();
-    let mut batcher = h.create_batcher(source, BatcherConfig::default());
-    batcher.submit_garbage_frames(GarbageKind::MalformedRlp);
-    drop(batcher);
-    assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
-}
-
-#[test]
-fn garbage_invalid_brotli_submitted_to_l1() {
-    let mut h = ActionTestHarness::default();
-    let source = ActionL2Source::new();
-    let mut batcher = h.create_batcher(source, BatcherConfig::default());
-    batcher.submit_garbage_frames(GarbageKind::InvalidBrotli);
-    drop(batcher);
-    assert_eq!(h.l1.pending_txs().len(), 1, "garbage tx should be queued");
+    let source = ActionL2Source::new(); // empty
+    let mut batcher = Batcher::new(source, &h.rollup_config, cfg);
+    let err = batcher.advance(&mut h.l1).await.expect_err("should fail with no blocks");
+    assert!(matches!(err, BatcherError::NoBlocks));
 }

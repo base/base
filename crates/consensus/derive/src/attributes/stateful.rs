@@ -14,6 +14,7 @@ use base_consensus_upgrades::{Hardfork, Hardforks};
 use base_protocol::{
     DEPOSIT_EVENT_ABI_HASH, L1BlockInfoTx, L2BlockInfo, Predeploys, decode_deposit,
 };
+use tracing::warn;
 
 use crate::{
     AttributesBuilder, BuilderError, ChainProvider, L2ChainProvider, PipelineEncodingError,
@@ -100,13 +101,13 @@ where
                 derive_deposits(epoch.hash, &receipts, self.rollup_cfg.deposit_contract_address)
                     .await
                     .map_err(|e| PipelineError::BadEncoding(e).crit())?;
-            sys_config
-                .update_with_receipts(
-                    &receipts,
-                    self.rollup_cfg.l1_system_config_address,
-                    self.rollup_cfg.is_ecotone_active(header.timestamp),
-                )
-                .map_err(|e| PipelineError::SystemConfigUpdate(e).crit())?;
+            if let Err(err) = sys_config.update_with_receipts(
+                &receipts,
+                self.rollup_cfg.l1_system_config_address,
+                self.rollup_cfg.is_ecotone_active(header.timestamp),
+            ) {
+                warn!(target: "attributes", error = ?err, block_number = epoch.number, "Failed to update system config, continuing");
+            }
             l1_header = header;
             deposit_transactions = deposits;
             0
@@ -256,7 +257,7 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_primitives::{B256, Log, LogData, U64, U256, address};
-    use base_consensus_genesis::{HardForkConfig, SystemConfig};
+    use base_consensus_genesis::{CONFIG_UPDATE_TOPIC, HardForkConfig, SystemConfig};
     use base_consensus_registry::L1Config;
     use base_protocol::{BlockInfo, DepositError};
 
@@ -650,5 +651,52 @@ mod tests {
         };
         assert_eq!(payload.transactions.as_ref().unwrap().len(), 10);
         assert_eq!(payload, expected);
+    }
+
+    #[tokio::test]
+    async fn test_syscfg_update_error_is_nonfatal() {
+        let block_time = 10;
+        let sys_config_addr = address!("1111111111111111111111111111111111111111");
+        let cfg = Arc::new(RollupConfig {
+            block_time,
+            l1_system_config_address: sys_config_addr,
+            ..Default::default()
+        });
+        let l1_cfg = Arc::new(L1Config::sepolia().into());
+        let l2_number = 1;
+        let mut fetcher = TestSystemConfigL2Fetcher::default();
+        fetcher.insert(l2_number, SystemConfig::default());
+        let mut provider = TestChainProvider::default();
+
+        // The epoch header's parent_hash must match l2_parent.l1_origin.hash.
+        let origin_hash = B256::left_padding_from(&[0xBB]);
+        let header = Header { parent_hash: origin_hash, ..Default::default() };
+        let epoch_hash = header.hash_slow();
+
+        // Malformed system config log: CONFIG_UPDATE_TOPIC present but only 1 topic (needs >= 3),
+        // causing update_with_receipts to return an error.
+        let bad_log = Log {
+            address: sys_config_addr,
+            data: LogData::new_unchecked(vec![CONFIG_UPDATE_TOPIC], Bytes::default()),
+        };
+        let bad_receipt = Receipt {
+            status: Eip658Value::Eip658(true),
+            logs: vec![bad_log],
+            ..Default::default()
+        };
+
+        provider.insert_header(epoch_hash, header);
+        provider.insert_receipts(epoch_hash, vec![bad_receipt]);
+
+        let mut builder = StatefulAttributesBuilder::new(cfg, l1_cfg, fetcher, provider);
+        let epoch = BlockNumHash { hash: epoch_hash, number: l2_number + 1 };
+        let l2_parent = L2BlockInfo {
+            block_info: BlockInfo { hash: B256::ZERO, number: l2_number, ..Default::default() },
+            l1_origin: BlockNumHash { hash: origin_hash, number: l2_number },
+            seq_num: 0,
+        };
+
+        // Should succeed despite the malformed system config receipt.
+        assert!(builder.prepare_payload_attributes(l2_parent, epoch).await.is_ok());
     }
 }

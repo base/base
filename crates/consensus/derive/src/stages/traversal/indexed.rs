@@ -168,7 +168,7 @@ mod tests {
     use alloc::vec;
 
     use alloy_consensus::Receipt;
-    use alloy_primitives::{B256, Bytes, Log, LogData, address, b256, hex};
+    use alloy_primitives::{B256, Bytes, Log, LogData, U256, address, b256};
     use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
 
     use super::*;
@@ -176,18 +176,24 @@ mod tests {
 
     const L1_SYS_CONFIG_ADDR: Address = address!("1337000000000000000000000000000000000000");
 
-    fn new_update_batcher_log() -> Log {
+    fn new_update_batcher_log_with_addr(addr: Address) -> Log {
+        let mut addr_word = [0u8; 32];
+        addr_word[12..32].copy_from_slice(addr.as_slice());
+        let mut data = alloc::vec::Vec::with_capacity(96);
+        data.extend_from_slice(U256::from(0x20).to_be_bytes::<32>().as_slice());
+        data.extend_from_slice(U256::from(0x20).to_be_bytes::<32>().as_slice());
+        data.extend_from_slice(&addr_word);
         Log {
             address: L1_SYS_CONFIG_ADDR,
             data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO, // Update type
-                ],
-                hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into()
-            )
+                vec![CONFIG_UPDATE_TOPIC, CONFIG_UPDATE_EVENT_VERSION_0, B256::ZERO],
+                data.into(),
+            ),
         }
+    }
+
+    fn new_update_batcher_log() -> Log {
+        new_update_batcher_log_with_addr(address!("000000000000000000000000000000000000beef"))
     }
 
     fn new_receipts() -> alloc::vec::Vec<Receipt> {
@@ -353,5 +359,148 @@ mod tests {
         assert!(traversal.provide_next_block(next_block).await.is_ok());
         let expected = address!("000000000000000000000000000000000000bEEF");
         assert_eq!(traversal.system_config.batcher_address, expected);
+        assert_eq!(traversal.batcher_addr(), expected);
+    }
+
+    /// Helper to create a `ConfigUpdate` log for `TYPE_GAS_LIMIT` (update type 0x02).
+    fn new_update_gas_limit_log(gas_limit: u64) -> Log {
+        let mut update_type = B256::ZERO;
+        update_type.0[31] = 0x02;
+
+        // ABI-encode the gas limit: pointer(0x20) + length(0x20) + value(u64 as U256)
+        let value = U256::from(gas_limit);
+        let mut data = alloc::vec::Vec::with_capacity(96);
+        data.extend_from_slice(U256::from(0x20).to_be_bytes::<32>().as_slice());
+        data.extend_from_slice(U256::from(0x20).to_be_bytes::<32>().as_slice());
+        data.extend_from_slice(value.to_be_bytes::<32>().as_slice());
+
+        Log {
+            address: L1_SYS_CONFIG_ADDR,
+            data: LogData::new_unchecked(
+                vec![CONFIG_UPDATE_TOPIC, CONFIG_UPDATE_EVENT_VERSION_0, update_type],
+                data.into(),
+            ),
+        }
+    }
+
+    /// A gas limit `ConfigUpdate` log is processed without error and the pipeline
+    /// continues normally.
+    #[tokio::test]
+    async fn test_gas_limit_update_does_not_disrupt_derivation() {
+        let block0 = BlockInfo::default();
+        let block1 = BlockInfo { number: 1, ..BlockInfo::default() };
+
+        let gas_limit_log = new_update_gas_limit_log(60_000_000);
+        let receipt = Receipt {
+            status: alloy_consensus::Eip658Value::Eip658(true),
+            logs: vec![gas_limit_log],
+            ..Receipt::default()
+        };
+
+        let mut provider = TestChainProvider::default();
+        let rollup_config = RollupConfig {
+            l1_system_config_address: L1_SYS_CONFIG_ADDR,
+            ..RollupConfig::default()
+        };
+        provider.insert_block(0, block0);
+        provider.insert_block(1, block1);
+        provider.insert_receipts(block1.hash, vec![receipt]);
+
+        let mut traversal = IndexedTraversal::new(provider, Arc::new(rollup_config));
+        traversal.block = Some(block0);
+
+        // Consume the current block.
+        assert!(traversal.next_l1_block().await.is_ok());
+        assert!(traversal.next_l1_block().await.is_err());
+
+        // Provide the next block with the gas limit update — should succeed.
+        assert!(traversal.provide_next_block(block1).await.is_ok());
+
+        // Verify gas_limit was updated.
+        assert_eq!(traversal.system_config.gas_limit, 60_000_000);
+
+        // Pipeline state is valid: the origin advanced and the block is ready.
+        assert_eq!(traversal.origin(), Some(block1));
+        assert!(!traversal.done);
+    }
+
+    /// The `batcher_address` field on `SystemConfig` is mutated after a `CONFIG_UPDATE`
+    /// log is processed during an L1 epoch change (`provide_next_block`).
+    #[tokio::test]
+    async fn test_batcher_address_update_applied_on_l1_epoch_change() {
+        let new_batcher = address!("00000000000000000000000000000000DeaDBeef");
+
+        let receipt = Receipt {
+            status: alloy_consensus::Eip658Value::Eip658(true),
+            logs: vec![new_update_batcher_log_with_addr(new_batcher)],
+            ..Receipt::default()
+        };
+
+        let epoch0_hash = b256!("1111111111111111111111111111111111111111111111111111111111111111");
+        let epoch1_hash = b256!("2222222222222222222222222222222222222222222222222222222222222222");
+        let block0 = BlockInfo { number: 10, hash: epoch0_hash, ..BlockInfo::default() };
+        let block1 =
+            BlockInfo { number: 11, hash: epoch1_hash, parent_hash: epoch0_hash, timestamp: 100 };
+
+        let mut provider = TestChainProvider::default();
+        let rollup_config = RollupConfig {
+            l1_system_config_address: L1_SYS_CONFIG_ADDR,
+            ..RollupConfig::default()
+        };
+        provider.insert_block(10, block0);
+        provider.insert_block(11, block1);
+        provider.insert_receipts(epoch1_hash, vec![receipt]);
+
+        let mut traversal = IndexedTraversal::new(provider, Arc::new(rollup_config));
+        traversal.block = Some(block0);
+
+        // Verify initial batcher_address is the default.
+        assert_eq!(traversal.system_config.batcher_address, Address::ZERO);
+
+        // Consume block0.
+        assert!(traversal.next_l1_block().await.is_ok());
+        assert!(traversal.next_l1_block().await.is_err());
+
+        // Advance to block1 (epoch change) — triggers receipt processing.
+        assert!(traversal.provide_next_block(block1).await.is_ok());
+
+        // The system config's batcher_address must now reflect the update.
+        assert_eq!(traversal.system_config.batcher_address, new_batcher);
+    }
+
+    /// After a `ConfigUpdate` log changes `batcher_address` from A → B, sending a
+    /// `Signal::Reset` with a `SystemConfig` containing address A restores the
+    /// batcher address back to A. This models L1 reorg rollback behavior.
+    #[tokio::test]
+    async fn test_reorg_signal_restores_batcher_address() {
+        let addr_a = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
+        let blocks = vec![BlockInfo::default(), BlockInfo::default()];
+        let receipts = new_receipts();
+        let mut traversal = new_test_managed(blocks, receipts);
+
+        // Start with batcher_address = ADDR_A.
+        traversal.system_config.batcher_address = addr_a;
+        assert_eq!(traversal.batcher_addr(), addr_a);
+
+        // Consume the current block so provide_next_block will process.
+        assert!(traversal.next_l1_block().await.is_ok());
+        assert!(traversal.next_l1_block().await.is_err());
+
+        // Provide the next L1 block carrying a ConfigUpdate that sets batcher to 0xBEEF.
+        let next_block = BlockInfo { number: 1, ..BlockInfo::default() };
+        assert!(traversal.provide_next_block(next_block).await.is_ok());
+
+        let addr_b = address!("000000000000000000000000000000000000bEEF");
+        assert_eq!(traversal.batcher_addr(), addr_b);
+
+        // Simulate L1 reorg: send a Reset signal with a SystemConfig that has ADDR_A.
+        let reset_config = SystemConfig { batcher_address: addr_a, ..SystemConfig::default() };
+        let signal =
+            Signal::Reset(ResetSignal { system_config: Some(reset_config), ..Default::default() });
+        assert!(traversal.signal(signal).await.is_ok());
+
+        // After reset, batcher_addr() must be restored to ADDR_A.
+        assert_eq!(traversal.batcher_addr(), addr_a);
     }
 }

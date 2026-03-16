@@ -1,0 +1,27 @@
+[package]
+name = "base-batcher-source"
+description = "L2 unsafe block source: UnsafeBlockSource trait and HybridBlockSource"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+futures.workspace = true
+async-trait.workspace = true
+tracing = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["macros"] }
+base-protocol = { workspace = true, features = ["std"] }
+base-runtime = { workspace = true, features = ["tokio"] }
+alloy-primitives = { workspace = true, features = ["std"] }
+base-alloy-consensus = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+alloy-consensus.workspace = true
+base-runtime = { workspace = true, features = ["test-utils"] }

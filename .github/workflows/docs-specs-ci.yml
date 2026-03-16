@@ -30,14 +30,12 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: docs/specs/package-lock.json
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.2"
       - name: Install dependencies
         working-directory: docs/specs
-        run: npm ci
-      - name: Install Playwright browsers
-        working-directory: docs/specs
-        run: npx playwright install chromium --with-deps
+        run: bun ci
       - name: Build specs site
         working-directory: docs/specs
-        run: npm run build
+        run: bun run build

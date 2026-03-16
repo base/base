@@ -51,7 +51,7 @@ impl DerivationEngineClient for QueuedDerivationEngineClient {
             .await
             .inspect(|_| info!(target: "derivation", "Engine reset successfully."))
             .ok_or_else(|| {
-                error!(target: "derivation_engine_client", "Failed to receive built payload");
+                error!(target: "derivation_engine_client", "Failed to receive forkchoice reset result");
                 EngineClientError::ResponseError("response channel closed.".to_string())
             })?
     }

@@ -56,12 +56,12 @@ necessary for L2 consensus layer clients to know the blob parameters and activat
 time for each L1 fork to compute the `blobBaseFee` correctly. Blob Parameter Only
 (BPO) forks, introduced in [EIP-7892](https://eips.ethereum.org/EIPS/eip-7892)
 can mean that `BLOB_BASE_FEE_UPDATE_FRACTION` is updated frequently:
-that clients and fault proof programs therefore need to stay up to date with
+that clients and proof programs therefore need to stay up to date with
 such forks.
 
 ## L1 Attributes Predeployed Contract
 
-[sys-config]: ../../protocol/system-config.md
+[sys-config]: ../../protocol/consensus/derivation.md#system-configuration
 
 The L1 Attributes predeploy stores the following values:
 

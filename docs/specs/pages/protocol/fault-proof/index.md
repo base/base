@@ -343,7 +343,7 @@ A disputed output-root may be disproven by first producing the output-root, and 
 
 1. Retrieve the output attributes from the L2 chain view: the state-root, block-hash, withdrawals storage-root.
 2. Compute the output-root, as the
-   [proposer should compute it](../proposals.md#l2-output-commitment-construction).
+   [proposer should compute it](proposer.md#l2-output-commitment-construction).
 3. If the output-root matches the `claim`, exit with code 0. Otherwise, exit with code 1.
 
 > Note: the dispute game interface is actively changing, and may require additional claim assertions.
@@ -446,7 +446,7 @@ chain to retrieve data from. `<chainID>` must be specified when the interop hard
 
 Requests the host to prepare the L2 Output at the l2 output root `<outputroot>`.
 The L2 Output is the preimage of a
-[computed output root](../proposals.md#l2-output-commitment-construction).
+[computed output root](proposer.md#l2-output-commitment-construction).
 
 The `<chainID>` is optionally concatenated after the `<blockHash>` as a big endian uint64 value to specify which L2
 chain to retrieve data from. `<chainID>` must be specified when the interop hard fork is active.

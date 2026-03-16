@@ -111,6 +111,13 @@ pub struct TxManagerConfig {
     pub tx_send_timeout: Duration,
     /// Mempool appearance timeout (zero = disabled).
     pub tx_not_in_mempool_timeout: Duration,
+    /// Maximum time to poll for confirmation before giving up.
+    pub confirmation_timeout: Duration,
+    /// Minimum blob base fee (in wei) to use for blob transactions.
+    pub min_blob_fee: u128,
+    /// Unix timestamp at or after which cell proofs (EIP-7594, 128 proofs/blob)
+    /// are used instead of legacy KZG proofs (1 proof/blob). `u64::MAX` disables.
+    pub cell_proofs_activation_timestamp: u64,
 }
 
 impl Default for TxManagerConfig {
@@ -127,6 +134,9 @@ impl Default for TxManagerConfig {
             receipt_query_interval: Duration::from_secs(12),
             tx_send_timeout: Duration::ZERO,
             tx_not_in_mempool_timeout: Duration::from_secs(120),
+            confirmation_timeout: Duration::from_secs(300),
+            min_blob_fee: 1_000_000_000, // 1 gwei
+            cell_proofs_activation_timestamp: u64::MAX,
         }
     }
 }
@@ -140,9 +150,11 @@ impl TxManagerConfig {
     /// - `num_confirmations` must be >= 1
     /// - `safe_abort_nonce_too_low_count` must be >= 1
     /// - `fee_limit_multiplier` must be >= 1
+    /// - `min_blob_fee` must be >= 1
     /// - `network_timeout` must be > 0
     /// - `resubmission_timeout` must be > 0
     /// - `receipt_query_interval` must be > 0
+    /// - `confirmation_timeout` must be > 0
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.num_confirmations == 0 {
             return Err(ConfigError::OutOfRange {
@@ -184,6 +196,20 @@ impl TxManagerConfig {
                 field: "receipt_query_interval",
                 constraint: "> 0",
                 value: "0s".to_string(),
+            });
+        }
+        if self.confirmation_timeout.is_zero() {
+            return Err(ConfigError::OutOfRange {
+                field: "confirmation_timeout",
+                constraint: "> 0",
+                value: "0s".to_string(),
+            });
+        }
+        if self.min_blob_fee == 0 {
+            return Err(ConfigError::OutOfRange {
+                field: "min_blob_fee",
+                constraint: ">= 1",
+                value: "0".to_string(),
             });
         }
         Ok(())
@@ -272,5 +298,36 @@ mod tests {
     #[test]
     fn default_passes_validation() {
         TxManagerConfig::default().validate().expect("default config should be valid");
+    }
+
+    #[test]
+    fn default_min_blob_fee_is_one_gwei() {
+        assert_eq!(TxManagerConfig::default().min_blob_fee, 1_000_000_000);
+    }
+
+    #[test]
+    fn default_cell_proofs_activation_disabled() {
+        assert_eq!(TxManagerConfig::default().cell_proofs_activation_timestamp, u64::MAX);
+    }
+
+    #[test]
+    fn validation_rejects_zero_confirmation_timeout() {
+        let config =
+            TxManagerConfig { confirmation_timeout: Duration::ZERO, ..TxManagerConfig::default() };
+        let err = config.validate().unwrap_err();
+        assert!(
+            matches!(err, ConfigError::OutOfRange { field: "confirmation_timeout", .. }),
+            "expected OutOfRange for confirmation_timeout, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validation_rejects_zero_min_blob_fee() {
+        let config = TxManagerConfig { min_blob_fee: 0, ..TxManagerConfig::default() };
+        let err = config.validate().unwrap_err();
+        assert!(
+            matches!(err, ConfigError::OutOfRange { field: "min_blob_fee", .. }),
+            "expected OutOfRange for min_blob_fee, got: {err}"
+        );
     }
 }

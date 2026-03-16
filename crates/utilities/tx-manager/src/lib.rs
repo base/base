@@ -14,7 +14,7 @@ mod candidate;
 pub use candidate::TxCandidate;
 
 mod fees;
-pub use fees::{FeeCalculator, GasPriceCaps};
+pub use fees::{BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps};
 
 mod send_state;
 pub use send_state::SendState;
@@ -24,6 +24,9 @@ mod macros;
 mod config;
 pub use config::{ConfigError, GweiParser, TxManagerConfig};
 
+mod signer_config;
+pub use signer_config::SignerConfig;
+
 mod traits;
 pub use traits::{SendHandle, SendResponse, TxManager};
 
@@ -31,13 +34,16 @@ mod nonce;
 pub use nonce::{NonceGuard, NonceManager, NonceState};
 
 mod manager;
-pub use manager::SimpleTxManager;
+pub use manager::{PreparedTx, SimpleTxManager};
 
 mod queue;
-pub use queue::TxQueue;
+pub use queue::{SendResult, TxQueue};
 
 mod metrics;
-pub use metrics::TxMetrics;
+pub use metrics::{BaseTxMetrics, NoopTxMetrics, TxMetrics};
 
 mod blob;
-pub use blob::BlobTxBuilder;
+pub use blob::{BlobTxBuilder, MAX_BLOBS_PER_TX};
+
+#[cfg(test)]
+pub mod test_utils;

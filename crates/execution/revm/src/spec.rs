@@ -118,7 +118,7 @@ pub mod name {
     /// Jovian spec name.
     pub const JOVIAN: &str = "Jovian";
     /// Base V1 spec name.
-    pub const BASE_V1: &str = "BaseV1";
+    pub const BASE_V1: &str = "V1";
 }
 
 #[cfg(test)]

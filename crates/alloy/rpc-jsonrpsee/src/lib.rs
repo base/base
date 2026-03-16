@@ -8,6 +8,10 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod traits;
+#[cfg(all(feature = "client", feature = "signer"))]
+pub use traits::EthSignerApiClient;
+#[cfg(feature = "signer")]
+pub use traits::EthSignerApiServer;
 #[cfg(feature = "client")]
 pub use traits::{MinerApiExtClient, OpAdminApiClient};
 pub use traits::{MinerApiExtServer, OpAdminApiServer};

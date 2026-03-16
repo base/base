@@ -415,9 +415,9 @@ impl BaseUpgrades for RollupConfig {
                 .jovian_time
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
-            // BaseV1 is standalone: not part of the Base upgrade cascade chain. It only activates
+            // V1 is standalone: not part of the Base upgrade cascade chain. It only activates
             // when explicitly configured and never implies (or is implied by) Jovian being active.
-            BaseUpgrade::BaseV1 => self
+            BaseUpgrade::V1 => self
                 .hardforks
                 .base
                 .as_ref()
@@ -473,7 +473,7 @@ mod tests {
         assert_eq!(config.spec_id(65), base_revm::OpSpecId::JOVIAN);
         config.hardforks.base = Some(crate::BaseHardforkConfig { v1: Some(70) });
         assert_eq!(config.spec_id(70), base_revm::OpSpecId::BASE_V1);
-        // BaseV1 takes precedence over Jovian when both are active at the same timestamp
+        // V1 takes precedence over Jovian when both are active at the same timestamp
         config.hardforks.base = Some(crate::BaseHardforkConfig { v1: Some(65) });
         assert_eq!(config.spec_id(65), base_revm::OpSpecId::BASE_V1);
     }
@@ -621,7 +621,7 @@ mod tests {
         let mut config = RollupConfig::default();
         assert!(!config.is_base_v1_active(0));
         config.hardforks.base = Some(BaseHardforkConfig { v1: Some(10) });
-        // BaseV1 does not cascade upward to existing forks
+        // V1 does not cascade upward to existing forks
         assert!(!config.is_regolith_active(10));
         assert!(!config.is_canyon_active(10));
         assert!(!config.is_jovian_active(10));

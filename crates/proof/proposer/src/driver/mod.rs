@@ -31,10 +31,14 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
-    AGGREGATE_BATCH_SIZE, BLOCKHASH_SAFETY_MARGIN, BLOCKHASH_WINDOW, MAX_GAME_RECOVERY_LOOKBACK,
-    NO_PARENT_INDEX, OutputProposer, PROPOSAL_TIMEOUT, ProposerError,
+    constants::{
+        AGGREGATE_BATCH_SIZE, BLOCKHASH_SAFETY_MARGIN, BLOCKHASH_WINDOW,
+        MAX_GAME_RECOVERY_LOOKBACK, NO_PARENT_INDEX, PROPOSAL_TIMEOUT,
+    },
     enclave::EnclaveClientTrait,
-    is_game_already_exists, metrics as proposer_metrics,
+    error::ProposerError,
+    metrics as proposer_metrics,
+    output_proposer::{OutputProposer, is_game_already_exists},
     prover::{Prover, ProverProposal},
     rpc::ProverL2Provider,
 };

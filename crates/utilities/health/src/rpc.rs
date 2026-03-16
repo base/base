@@ -1,0 +1,40 @@
+//! Health check RPC trait, types, and default implementation.
+
+use async_trait::async_trait;
+use jsonrpsee::core::RpcResult;
+
+/// A healthcheck response for the RPC server.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct HealthzResponse {
+    /// The application version.
+    pub version: String,
+}
+
+/// The healthz RPC API.
+#[jsonrpsee::proc_macros::rpc(server)]
+pub trait HealthzApi {
+    /// Returns the health status of the server.
+    #[method(name = "healthz")]
+    async fn healthz(&self) -> RpcResult<HealthzResponse>;
+}
+
+/// The healthz RPC server implementation.
+#[derive(Debug, Clone)]
+pub struct HealthzRpc {
+    /// The version string to report.
+    pub version: &'static str,
+}
+
+impl HealthzRpc {
+    /// Create a new [`HealthzRpc`] with the given version.
+    pub const fn new(version: &'static str) -> Self {
+        Self { version }
+    }
+}
+
+#[async_trait]
+impl HealthzApiServer for HealthzRpc {
+    async fn healthz(&self) -> RpcResult<HealthzResponse> {
+        Ok(HealthzResponse { version: self.version.to_string() })
+    }
+}

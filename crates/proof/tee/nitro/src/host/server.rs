@@ -1,11 +1,12 @@
 use std::{fmt, net::SocketAddr, sync::Arc};
 
+use base_health::{HealthzApiServer, HealthzRpc};
 use base_proof_host::{ProverConfig, ProverService};
 use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
 use jsonrpsee::{
     RpcModule,
     core::{RpcResult, async_trait},
-    server::{Server, ServerHandle},
+    server::{Server, ServerHandle, middleware::http::ProxyGetRequestLayer},
 };
 use tracing::info;
 
@@ -36,13 +37,16 @@ impl NitroProverServer {
 
     /// Start the JSON-RPC HTTP server on the given address.
     pub async fn run(self, addr: SocketAddr) -> eyre::Result<ServerHandle> {
-        let server = Server::builder().build(addr).await?;
+        let middleware = tower::ServiceBuilder::new()
+            .layer(ProxyGetRequestLayer::new([("/healthz", "healthz")])?);
+        let server = Server::builder().set_http_middleware(middleware).build(addr).await?;
         let addr = server.local_addr()?;
         info!(addr = %addr, "nitro rpc server started");
 
         let mut module = RpcModule::new(());
         module.merge(NitroProverRpc { service: self.service }.into_rpc())?;
         module.merge(NitroSignerRpc { transport: self.transport }.into_rpc())?;
+        module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc())?;
 
         Ok(server.start(module))
     }
@@ -84,25 +88,14 @@ impl EnclaveApiServer for NitroSignerRpc {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::B256;
     use base_proof_primitives::EnclaveApiServer;
 
     use super::*;
-    use crate::enclave::{EnclaveConfig, Server as EnclaveServer};
-
-    fn test_config() -> EnclaveConfig {
-        EnclaveConfig {
-            vsock_cid: 0,
-            vsock_port: 0,
-            config_hash: B256::ZERO,
-            tee_image_hash: B256::ZERO,
-        }
-    }
+    use crate::enclave::Server as EnclaveServer;
 
     #[tokio::test]
     async fn signer_public_key_routed_to_transport() {
-        let config = test_config();
-        let server = Arc::new(EnclaveServer::new(&config).unwrap());
+        let server = Arc::new(EnclaveServer::new().unwrap());
         let transport = Arc::new(NitroTransport::local(Arc::clone(&server)));
         let expected = server.signer_public_key();
 
@@ -114,9 +107,15 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn healthz_returns_version() {
+        let rpc = HealthzRpc::new(env!("CARGO_PKG_VERSION"));
+        let result = HealthzApiServer::healthz(&rpc).await.unwrap();
+        assert_eq!(result.version, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[tokio::test]
     async fn signer_attestation_routed_to_transport() {
-        let config = test_config();
-        let server = Arc::new(EnclaveServer::new(&config).unwrap());
+        let server = Arc::new(EnclaveServer::new().unwrap());
         let transport = Arc::new(NitroTransport::local(Arc::clone(&server)));
 
         let rpc = NitroSignerRpc { transport };

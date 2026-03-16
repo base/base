@@ -34,3 +34,4 @@ serde = { workspace = true, features = ["derive"] }
 hex.workspace = true
 rstest.workspace = true
 serde_json.workspace = true
+base-consensus-registry.workspace = true

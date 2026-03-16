@@ -54,7 +54,7 @@ pub enum TxManagerError {
 
     /// Calculated fee exceeds the configured fee-limit ceiling.
     ///
-    /// Returned by [`FeeCalculator::check_limits`] when the proposed fee
+    /// Returned by [`crate::FeeCalculator::check_limits`] when the proposed fee
     /// surpasses `fee_limit_multiplier × suggested_fee` and the suggested
     /// fee is at or above `fee_limit_threshold`. Non-retryable.
     #[error("fee limit exceeded: fee {fee} exceeds ceiling {ceiling}")]
@@ -72,6 +72,44 @@ pub enum TxManagerError {
     /// impossible.
     #[error("invalid safe_abort_nonce_too_low_count: must be greater than 0")]
     InvalidSafeAbortNonceTooLowCount,
+
+    /// Feature or transaction type is not supported.
+    ///
+    /// Returned when the manager encounters a request it cannot handle,
+    /// such as blob (EIP-4844) transactions before they are implemented.
+    /// Non-retryable because the unsupported condition is deterministic.
+    #[error("unsupported: {0}")]
+    Unsupported(String),
+
+    /// Transaction signing failed.
+    ///
+    /// Wraps the underlying signer error. Non-retryable because signing
+    /// failures are typically deterministic (wrong key, unsupported tx type).
+    #[error("signing failed: {0}")]
+    Sign(String),
+
+    /// The outer send timeout elapsed before the transaction was confirmed.
+    ///
+    /// Non-retryable because the caller's deadline has already been exceeded.
+    #[error("send timed out")]
+    SendTimeout,
+
+    /// Configuration is invalid.
+    ///
+    /// Returned when config validation fails or a chain ID mismatch is
+    /// detected during construction. Non-retryable because configuration
+    /// errors require operator intervention.
+    #[error("invalid config: {0}")]
+    InvalidConfig(String),
+
+    /// Wallet construction failed.
+    ///
+    /// Returned when the [`SignerConfig`](crate::SignerConfig) cannot build
+    /// an [`EthereumWallet`](alloy_network::EthereumWallet) — e.g. an
+    /// invalid private key or unreachable remote signer endpoint.
+    /// Non-retryable because the configuration is deterministically wrong.
+    #[error("wallet construction failed: {0}")]
+    WalletConstruction(String),
 
     // ── Fee / replacement errors (retryable) ─────────────────────────────
     /// Fee too low to enter the mempool.
@@ -139,6 +177,16 @@ impl TxManagerError {
     #[must_use]
     pub const fn is_already_known(&self) -> bool {
         matches!(self, Self::AlreadyKnown)
+    }
+
+    /// Returns `true` only for [`TxManagerError::Rpc`].
+    ///
+    /// Used to gate RPC error metric recording so that recognised state
+    /// errors (e.g. `NonceTooLow`, `ExecutionReverted`) do not inflate the
+    /// RPC error counter.
+    #[must_use]
+    pub const fn is_rpc_error(&self) -> bool {
+        matches!(self, Self::Rpc(_))
     }
 }
 
@@ -282,6 +330,11 @@ mod tests {
     #[case::invalid_safe_abort(TxManagerError::InvalidSafeAbortNonceTooLowCount, false)]
     #[case::nonce_overflow(TxManagerError::NonceOverflow, false)]
     #[case::nonce_acquisition_failed(TxManagerError::NonceAcquisitionFailed, false)]
+    #[case::unsupported(TxManagerError::Unsupported("test".to_string()), false)]
+    #[case::sign(TxManagerError::Sign("test".to_string()), false)]
+    #[case::invalid_config(TxManagerError::InvalidConfig("test".to_string()), false)]
+    #[case::wallet_construction(TxManagerError::WalletConstruction("test".to_string()), false)]
+    #[case::send_timeout(TxManagerError::SendTimeout, false)]
     #[case::underpriced(TxManagerError::Underpriced, true)]
     #[case::replacement_underpriced(TxManagerError::ReplacementUnderpriced, true)]
     #[case::fee_too_low(TxManagerError::FeeTooLow, true)]
@@ -303,6 +356,18 @@ mod tests {
     #[case::invalid_safe_abort(TxManagerError::InvalidSafeAbortNonceTooLowCount, false)]
     fn is_already_known(#[case] error: TxManagerError, #[case] expected: bool) {
         assert_eq!(error.is_already_known(), expected);
+    }
+
+    // ── is_rpc_error ─────────────────────────────────────────────────────
+
+    #[rstest]
+    #[case::rpc(TxManagerError::Rpc("any error".to_string()), true)]
+    #[case::nonce_too_low(TxManagerError::NonceTooLow, false)]
+    #[case::underpriced(TxManagerError::Underpriced, false)]
+    #[case::already_known(TxManagerError::AlreadyKnown, false)]
+    #[case::channel_closed(TxManagerError::ChannelClosed, false)]
+    fn is_rpc_error(#[case] error: TxManagerError, #[case] expected: bool) {
+        assert_eq!(error.is_rpc_error(), expected);
     }
 
     // ── Display output ──────────────────────────────────────────────────
@@ -337,7 +402,18 @@ mod tests {
         TxManagerError::NonceAcquisitionFailed,
         "nonce acquisition failed"
     )]
+    #[case::send_timeout(TxManagerError::SendTimeout, "send timed out")]
     #[case::rpc(TxManagerError::Rpc("test".to_string()), "rpc error: test")]
+    #[case::unsupported(TxManagerError::Unsupported("blob tx".to_string()), "unsupported: blob tx")]
+    #[case::sign(TxManagerError::Sign("key error".to_string()), "signing failed: key error")]
+    #[case::invalid_config(
+        TxManagerError::InvalidConfig("bad value".to_string()),
+        "invalid config: bad value"
+    )]
+    #[case::wallet_construction(
+        TxManagerError::WalletConstruction("bad key".to_string()),
+        "wallet construction failed: bad key"
+    )]
     fn display_output(#[case] error: TxManagerError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);
     }

@@ -112,7 +112,7 @@ Where:
 ### Output Root
 
 An **Output Root** is a commitment to a [Block Output](#block-output). A detailed description of
-this commitment can be found [on this page](../../proposals.md#l2-output-commitment-construction).
+this commitment can be found [on this page](../proposer.md#l2-output-commitment-construction).
 
 ### Super Output
 

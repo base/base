@@ -15,6 +15,10 @@ Transaction lifecycle management for Base onchain components.
 - **`TxCandidate`**: Input to the send pipeline. With empty `blobs` it produces a regular
   EIP-1559 (type-2) transaction; with non-empty `blobs` it produces an EIP-4844 (type-3)
   blob-carrying transaction. Carries calldata, optional recipient, gas limit, and value.
+- **`PreparedTx`**: A signed transaction together with the fee values (`gas_tip_cap`,
+  `gas_fee_cap`) that were applied during construction. Returned by `prepare()` and
+  `craft_tx()` so callers can track the actual on-wire fees without a redundant gas price
+  query.
 - **`GasPriceCaps`**: Intermediate fee estimates (tip cap, base fee cap, optional blob fee cap)
   passed between fee calculation and transaction construction.
 - **`FeeCalculator`**: Pure, deterministic fee arithmetic engine operating on `u128` values
@@ -38,8 +42,8 @@ Transaction lifecycle management for Base onchain components.
   pre-publish nonce-too-low, threshold nonce-too-low, and mempool deadline expiry.
 - **`TxManagerCli`**: Clap-based CLI argument struct with environment variable fallbacks
   (prefix `BASE_TX_MANAGER`). Captures all tunable tx-manager parameters and is designed
-  to be `#[command(flatten)]`-ed into parent CLI structs. Derives `Serialize`/`Deserialize`
-  and generates `Default` and `TryFrom<TxManagerCli> for TxManagerConfig` impls.
+  to be `#[command(flatten)]`-ed into parent CLI structs. Generates `Default` and
+  `TryFrom<TxManagerCli> for TxManagerConfig` impls.
 - **`TxManagerConfig`**: Validated runtime configuration with public fields. Can be
   constructed directly and validated via `validate()`, or converted from `TxManagerCli`
   via `TryFrom`.
@@ -58,7 +62,25 @@ Transaction lifecycle management for Base onchain components.
   guard after successful signing to release the lock, or call `rollback()` on failure to
   restore the nonce for reuse. Uses `OwnedMutexGuard` so the guard is `Send` and can cross
   task spawn boundaries.
-- **`SimpleTxManager`**: Default `TxManager` implementation.
+- **`SignerConfig`**: Describes how to construct an `EthereumWallet` — either from a local
+  private key (`Local`) or a remote signer endpoint (`Remote`). Passed to `SimpleTxManager::new`
+  to centralise wallet construction.
+- **`SimpleTxManager`**: Default `TxManager` implementation. Holds a `RootProvider`,
+  `EthereumWallet`, `TxManagerConfig`, `NonceManager`, chain ID, and a shutdown flag.
+  `new()` builds the wallet from a `SignerConfig`, validates the config, and cross-checks
+  the chain ID against the provider. `from_wallet()` accepts a pre-built `EthereumWallet`
+  directly, which is useful for tests or custom signers.
+  `prepare()` wraps `craft_tx()` in a `backon` retry loop (up to 30 attempts, 2-second
+  fixed delay) that retries only on transient errors and exits immediately when closed.
+  Both methods accept optional fee overrides `(tip, fee_cap)` and return a `PreparedTx`
+  containing the RLP-encoded raw bytes and the actual fees applied. `craft_tx()` queries
+  gas price caps, applies fee overrides as a floor via `max(network_fee, override)`,
+  enforces fee limits, builds a `TransactionRequest` with all fields set manually (no
+  alloy fillers), estimates or validates gas, assigns a nonce via `NonceManager`, and
+  signs via `NetworkWallet`.
+  `suggest_gas_price_caps()` queries the provider for tip cap and base fee, enforces
+  configured minimums, and returns a `GasPriceCaps`. Blob transactions are not yet
+  supported and are rejected with an error.
 - **`TxQueue`**: Queue for ordering and batching transactions.
 - **`TxMetrics`**: Metrics collection for transaction operations.
 - **`BlobTxBuilder`**: Builder for EIP-4844 blob-carrying transactions.
@@ -149,10 +171,9 @@ struct Cli {
 let config = TxManagerConfig::try_from(cli.tx)?;
 ```
 
-> **Note:** The macro expands to absolute paths (`::clap::Parser`,
-> `::humantime::parse_duration`, `::serde::{Serialize, Deserialize}`),
-> so consumer crates must add `clap` (with `derive` + `env` features),
-> `humantime`, and `serde` (with `derive` feature) to their own
+> **Note:** The macro expands to absolute paths (`::clap::Parser` and
+> `::humantime::parse_duration`), so consumer crates must add `clap`
+> (with `derive` + `env` features) and `humantime` to their own
 > `Cargo.toml`.
 
 ### Fee limit checks
@@ -179,8 +200,18 @@ base-tx-manager = { git = "https://github.com/base/base" }
 ```
 
 ```rust,ignore
-use alloy_primitives::{bytes, Address, U256};
-use base_tx_manager::{SimpleTxManager, TxCandidate, TxManager};
+use std::sync::Arc;
+
+use alloy_primitives::{bytes, Address, B256, U256};
+use alloy_provider::RootProvider;
+use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig};
+
+// Create a SimpleTxManager with a provider, signer config, and tx-manager config.
+let provider = RootProvider::new_http("http://localhost:8545".parse()?);
+let signer_config = SignerConfig::Local { private_key: B256::repeat_byte(0x01) };
+let config = TxManagerConfig::default();
+let chain_id = 1;
+let manager = SimpleTxManager::new(provider, signer_config, config, chain_id, Arc::new(BaseTxMetrics::new("my_service"))).await?;
 
 // Build a regular (type-2) transaction candidate.
 let candidate = TxCandidate {
@@ -191,11 +222,14 @@ let candidate = TxCandidate {
     ..Default::default()
 };
 
-// Blob (type-3) candidates set the `blobs` field instead.
-// let blob_candidate = TxCandidate { blobs: vec![blob], ..Default::default() };
+// Construct and sign the transaction (with automatic retry on transient errors).
+// Returns a PreparedTx containing the raw bytes and the fees that were applied.
+let prepared = manager.prepare(&candidate, None).await?;
+let raw_tx = prepared.raw_tx;
 
-// Submit through the manager trait.
-let receipt = manager.send(candidate).await?;
+// Or use craft_tx() directly for a single attempt without retry.
+let prepared = manager.craft_tx(&candidate, None).await?;
+let raw_tx = prepared.raw_tx;
 ```
 
 ## License

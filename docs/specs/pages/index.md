@@ -2,7 +2,7 @@
 
 This specification defines the Base Chain protocol: how nodes derive and execute blocks, how
 transactions are propagated, and how state transitions are verified. It covers core protocol rules,
-execution behavior, and fault proof interfaces.
+execution behavior, and proving.
 
 ## Design Goals
 
@@ -21,4 +21,4 @@ Our aim is to design a protocol specification that is:
 ## Lineage
 
 Base Chain inherits Ethereum's EVM semantics, transaction rules, and L1-anchored security. It was
-originally built on the [Base](https://specs.base.org). After the Jovian Hardfork, Base Chain forked off to its own specification.
+originally built on the [OP Stack](https://specs.optimism.io). After the Jovian Hardfork, Base Chain follows this specification.

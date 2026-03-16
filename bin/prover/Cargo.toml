@@ -1,6 +1,6 @@
 [package]
 name = "base-prover"
-description = "TEE prover server"
+description = "Prover server (TEE + ZK)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -19,18 +19,27 @@ workspace = true
 local = []
 
 [dependencies]
-# Workspace
+# Workspace – TEE
 base-proof-host.workspace = true
-alloy-primitives.workspace = true
 base-consensus-registry.workspace = true
 base-proof-tee-nitro = { workspace = true, features = ["host"] }
+
+# Workspace – ZK
+base-zk-db.workspace = true
+base-zk-outbox.workspace = true
+base-zk-service.workspace = true
+base-zk-client = { workspace = true, features = ["server"] }
 
 # CLI
 eyre.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 
 # Async
+futures.workspace = true
 tokio = { workspace = true, features = ["full"] }
+
+# gRPC
+tonic.workspace = true
 
 # Tracing
 tracing.workspace = true

@@ -6,7 +6,7 @@ use base_consensus_registry::test_utils::{BASE_MAINNET_CONFIG, BASE_SEPOLIA_CONF
 
 #[test]
 fn mainnet_rollup_config_matches_chain_hardforks() {
-    let chain = BaseChainUpgrades::base_mainnet();
+    let chain = BaseChainUpgrades::mainnet();
     for fork in BaseUpgrade::VARIANTS {
         // Regolith activated at genesis on Base and is stored as `regolith_time: None`
         // in the rollup config. The `upgrade_activation` cascade returns Canyon's
@@ -26,7 +26,7 @@ fn mainnet_rollup_config_matches_chain_hardforks() {
 
 #[test]
 fn sepolia_rollup_config_matches_chain_hardforks() {
-    let chain = BaseChainUpgrades::base_sepolia();
+    let chain = BaseChainUpgrades::sepolia();
     for fork in BaseUpgrade::VARIANTS {
         // See comment in mainnet test above.
         if *fork == BaseUpgrade::Regolith {
