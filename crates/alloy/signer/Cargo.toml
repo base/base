@@ -28,9 +28,9 @@ base-alloy-rpc-jsonrpsee = { workspace = true, features = ["client"] }
 # External
 url.workspace = true
 async-trait.workspace = true
-jsonrpsee = { workspace = true, features = ["http-client"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
+jsonrpsee = { workspace = true, features = ["http-client"] }
 
 [dev-dependencies]
 alloy-signer-local.workspace = true
