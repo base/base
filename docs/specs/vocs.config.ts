@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { remarkMermaid } from './lib/remarkMermaid'
 import rehypeKatex from 'rehype-katex'
 import remarkMath from 'remark-math'
 import { defineConfig, type SidebarItem } from 'vocs'
@@ -188,7 +189,7 @@ export default defineConfig({
     { text: 'Blog', link: 'https://blog.base.dev/' },
   ],
   markdown: {
-    remarkPlugins: [remarkMath],
+    remarkPlugins: [remarkMath, remarkMermaid],
     rehypePlugins: [rehypeKatex],
   },
   rootDir: '.',
