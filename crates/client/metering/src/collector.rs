@@ -3,8 +3,7 @@
 use std::{collections::HashMap, fmt, sync::Arc};
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{U256, keccak256};
-use base_alloy_flashblocks::Flashblock;
+use alloy_primitives::{Bytes, U256, keccak256};
 use base_alloy_flz::flz_compress_len;
 use base_flashblocks::PendingBlocks;
 use parking_lot::RwLock;
@@ -22,12 +21,6 @@ struct FlashblockPosition {
 impl FlashblockPosition {
     const fn new(block_number: u64, flashblock_index: u64) -> Self {
         Self { block_number, flashblock_index }
-    }
-}
-
-impl From<&Flashblock> for FlashblockPosition {
-    fn from(flashblock: &Flashblock) -> Self {
-        Self::new(flashblock.metadata.block_number, flashblock.index)
     }
 }
 
@@ -88,6 +81,12 @@ impl MeteringCollector {
             pending.latest_block_number(),
             pending.latest_flashblock_index(),
         );
+        debug!(
+            earliest_block_number = earliest_block_number,
+            latest_block_number = latest_position.block_number,
+            latest_flashblock_index = latest_position.flashblock_index,
+            "metering collector received pending blocks snapshot"
+        );
 
         let snapshot_regressed = self.last_processed.is_some_and(|last| latest_position < last)
             || self
@@ -126,7 +125,8 @@ impl MeteringCollector {
 
         let mut last_processed = self.last_processed;
         for flashblock in flashblocks {
-            let position = FlashblockPosition::from(&flashblock);
+            let position =
+                FlashblockPosition::new(flashblock.metadata.block_number, flashblock.index);
             if matches!(last_processed, Some(last) if position <= last) {
                 continue;
             }
@@ -141,7 +141,13 @@ impl MeteringCollector {
                 continue;
             };
 
-            self.process_flashblock(pending, &flashblock, base_fee);
+            self.process_flashblock(
+                pending,
+                position.block_number,
+                position.flashblock_index,
+                &flashblock.diff.transactions,
+                base_fee,
+            );
             last_processed = Some(position);
         }
 
@@ -149,13 +155,20 @@ impl MeteringCollector {
         self.last_processed = last_processed;
     }
 
-    fn process_flashblock(&self, pending: &PendingBlocks, flashblock: &Flashblock, base_fee: u64) {
-        let block_number = flashblock.metadata.block_number;
-        let flashblock_index = flashblock.index;
+    fn process_flashblock(
+        &self,
+        pending: &PendingBlocks,
+        block_number: u64,
+        flashblock_index: u64,
+        raw_transactions: &[Bytes],
+        base_fee: u64,
+    ) {
         let mut metered_transactions = Vec::new();
         let mut saw_effective_gas_price_below_base_fee = false;
+        let mut transactions_with_execution_time = 0usize;
+        let mut transactions_missing_execution_time = 0usize;
 
-        for raw_tx in &flashblock.diff.transactions {
+        for raw_tx in raw_transactions {
             let tx_hash = keccak256(raw_tx);
 
             let Some(tx) = pending.get_transaction_by_hash(tx_hash) else {
@@ -177,7 +190,14 @@ impl MeteringCollector {
             }
             let priority_fee = effective_gas_price.saturating_sub(base_fee as u128);
             let da_bytes = flz_compress_len(raw_tx) as u64;
-            let execution_time_us = pending.get_execution_time(&tx_hash).unwrap_or(0);
+            let execution_time_us =
+                if let Some(execution_time_us) = pending.get_execution_time(&tx_hash) {
+                    transactions_with_execution_time += 1;
+                    execution_time_us
+                } else {
+                    transactions_missing_execution_time += 1;
+                    0
+                };
 
             // State root time: prefer simulation data from PendingBlocks,
             // fall back to externally-submitted data from setMeteringInformation.
@@ -233,6 +253,8 @@ impl MeteringCollector {
                 block_number = block_number,
                 flashblock_index = flashblock_index,
                 transactions = inserted,
+                transactions_with_execution_time = transactions_with_execution_time,
+                transactions_missing_execution_time = transactions_missing_execution_time,
                 "collected metering data from flashblock"
             );
         }
