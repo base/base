@@ -21,6 +21,19 @@ use reth_transaction_pool::{
 
 use crate::estimated_da_size::DataAvailabilitySized;
 
+/// Assumed L2 block time in seconds, used to convert block-based bundle windows
+/// to time-based bounds.
+pub const BLOCK_TIME_SECS: u64 = 2;
+
+/// Maximum allowed advance window for bundle parameters (seconds).
+pub const MAX_BUNDLE_ADVANCE_SECS: u64 = 60;
+
+/// Maximum allowed advance window for bundle parameters (milliseconds).
+pub const MAX_BUNDLE_ADVANCE_MILLIS: u64 = MAX_BUNDLE_ADVANCE_SECS * 1000;
+
+/// Maximum allowed advance window in blocks.
+pub const MAX_BUNDLE_ADVANCE_BLOCKS: u64 = MAX_BUNDLE_ADVANCE_SECS / BLOCK_TIME_SECS;
+
 /// Returns current time as milliseconds since Unix epoch.
 pub fn unix_time_millis() -> u128 {
     match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
@@ -339,18 +352,6 @@ where
         self.received_at()
     }
 }
-
-/// Assumed block time in seconds for converting time-based limits to block counts.
-pub const BLOCK_TIME_SECS: u64 = 2;
-
-/// Maximum allowed advance window for bundle parameters (seconds).
-pub const MAX_BUNDLE_ADVANCE_SECS: u64 = 60;
-
-/// Maximum allowed advance window for bundle parameters (milliseconds).
-pub const MAX_BUNDLE_ADVANCE_MILLIS: u64 = MAX_BUNDLE_ADVANCE_SECS * 1000;
-
-/// Maximum allowed advance window in blocks.
-pub const MAX_BUNDLE_ADVANCE_BLOCKS: u64 = MAX_BUNDLE_ADVANCE_SECS / BLOCK_TIME_SECS;
 
 /// Trait for transactions that may carry bundle metadata.
 ///
