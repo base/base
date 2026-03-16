@@ -8,7 +8,7 @@ use thiserror::Error;
 pub enum RemoteSignerError {
     /// An error occurred during the JSON-RPC call.
     #[error("rpc error: {0}")]
-    Rpc(#[from] jsonrpsee::core::ClientError),
+    Rpc(jsonrpsee::core::ClientError),
     /// Failed to build the JSON-RPC HTTP client.
     #[error("client build error: {0}")]
     Client(jsonrpsee::core::ClientError),
