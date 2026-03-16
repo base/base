@@ -1,12 +1,12 @@
 use alloy_eips::Decodable2718;
 use alloy_primitives::{Bytes, TxHash};
 use base_execution_primitives::OpTransactionSigned;
-use reth_primitives_traits::SignedTransaction;
 use jsonrpsee::{
     core::RpcResult,
     proc_macros::rpc,
     types::{ErrorCode, ErrorObjectOwned},
 };
+use reth_primitives_traits::SignedTransaction;
 use reth_transaction_pool::TransactionPool;
 use tracing::debug;
 
@@ -100,9 +100,7 @@ fn validate_bundle_request(
         if block_number < current_block {
             return Err(rpc_err(
                 ErrorCode::InvalidParams,
-                format!(
-                    "blockNumber {block_number} is in the past (current {current_block})",
-                ),
+                format!("blockNumber {block_number} is in the past (current {current_block})",),
             ));
         }
         let max_block = current_block + MAX_BUNDLE_ADVANCE_BLOCKS;
@@ -152,10 +150,7 @@ fn validate_bundle_request(
     }
 
     if req.reverting_tx_hashes.as_ref().is_some_and(|v| !v.is_empty()) {
-        return Err(rpc_err(
-            ErrorCode::InvalidParams,
-            "revertingTxHashes is not supported",
-        ));
+        return Err(rpc_err(ErrorCode::InvalidParams, "revertingTxHashes is not supported"));
     }
 
     if req.replacement_uuid.is_some() {
@@ -179,22 +174,17 @@ where
             return Err(rpc_err(ErrorCode::MethodNotFound, "eth_sendBundle is not enabled"));
         }
 
-        let current_block =
-            self.current_block_number.load(std::sync::atomic::Ordering::Relaxed);
+        let current_block = self.current_block_number.load(std::sync::atomic::Ordering::Relaxed);
         validate_bundle_request(&bundle, current_block)?;
 
         let raw = &bundle.txs[0];
-        let consensus_tx =
-            OpTransactionSigned::decode_2718(&mut raw.as_ref()).map_err(|e| {
-                rpc_err(
-                    ErrorCode::InvalidParams,
-                    format!("failed to decode transaction: {e}"),
-                )
-            })?;
-
-        let recovered = consensus_tx.try_into_recovered().map_err(|_| {
-            rpc_err(ErrorCode::InvalidParams, "failed to recover signer")
+        let consensus_tx = OpTransactionSigned::decode_2718(&mut raw.as_ref()).map_err(|e| {
+            rpc_err(ErrorCode::InvalidParams, format!("failed to decode transaction: {e}"))
         })?;
+
+        let recovered = consensus_tx
+            .try_into_recovered()
+            .map_err(|_| rpc_err(ErrorCode::InvalidParams, "failed to recover signer"))?;
 
         let tx_hash = recovered.tx_hash().clone();
         let encoded_len = raw.len();

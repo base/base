@@ -195,9 +195,7 @@ impl<Cons: Typed2718, Pooled> Typed2718 for BasePooledTransaction<Cons, Pooled> 
 
 impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Pooled> {
     fn size(&self) -> usize {
-        self.inner.size()
-            + core::mem::size_of::<u128>()
-            + core::mem::size_of::<Option<u64>>() * 3
+        self.inner.size() + core::mem::size_of::<u128>() + core::mem::size_of::<Option<u64>>() * 3
     }
 }
 
