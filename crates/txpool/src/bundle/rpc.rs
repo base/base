@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use alloy_eips::Decodable2718;
 use alloy_primitives::{Bytes, TxHash};
 use base_execution_primitives::OpTransactionSigned;
@@ -55,6 +53,14 @@ pub trait SendBundleApi {
 pub struct SendBundleApiImpl<P> {
     pool: P,
     enabled: bool,
+    /// The latest known block number, used to validate `blockNumber` in bundle
+    /// requests. Callers must update this atomically (via [`Ordering::Release`]
+    /// or stronger) each time a new canonical block is committed. Reads use
+    /// [`Ordering::Relaxed`] because a slightly stale value is acceptable for
+    /// validation bounds.
+    ///
+    /// [`Ordering::Release`]: std::sync::atomic::Ordering::Release
+    /// [`Ordering::Relaxed`]: std::sync::atomic::Ordering::Relaxed
     current_block_number: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -67,13 +73,6 @@ impl<P> SendBundleApiImpl<P> {
     ) -> Self {
         Self { pool, enabled, current_block_number }
     }
-}
-
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
 }
 
 fn rpc_err(code: ErrorCode, msg: impl Into<String>) -> ErrorObjectOwned {
@@ -95,7 +94,7 @@ fn validate_bundle_request(
         ));
     }
 
-    let now_ms = now_millis();
+    let now_ms = crate::transaction::unix_time_millis() as u64;
 
     if let Some(block_number) = req.block_number {
         if block_number < current_block {
@@ -362,7 +361,7 @@ mod tests {
 
     #[test]
     fn rejects_min_after_max_timestamp() {
-        let now = now_millis();
+        let now = crate::transaction::unix_time_millis() as u64;
         let req = SendBundleRequest {
             txs: vec![Bytes::from_static(b"tx")],
             block_number: None,

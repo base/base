@@ -14,7 +14,7 @@ mod transaction;
 pub use transaction::{
     BasePooledTransaction, BundleTransaction, OpPooledTx, TimestampedTransaction,
     BLOCK_TIME_SECS, MAX_BUNDLE_ADVANCE_BLOCKS, MAX_BUNDLE_ADVANCE_MILLIS,
-    MAX_BUNDLE_ADVANCE_SECS,
+    MAX_BUNDLE_ADVANCE_SECS, unix_time_millis,
 };
 
 mod ordering;

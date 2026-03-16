@@ -4,7 +4,7 @@ use reth_provider::CanonStateNotification;
 use reth_transaction_pool::TransactionPool;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::transaction::BundleTransaction;
 
@@ -31,7 +31,10 @@ pub async fn maintain_bundle_transactions<P, N>(
             maybe = events.next() => {
                 match maybe {
                     Some(Ok(notification)) => notification,
-                    Some(Err(_)) => continue,
+                    Some(Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n))) => {
+                        warn!(missed = n, "canon state stream lagged, some blocks were not checked for bundle expiry");
+                        continue;
+                    }
                     None => break,
                 }
             }

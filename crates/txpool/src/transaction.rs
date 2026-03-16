@@ -22,7 +22,7 @@ use reth_transaction_pool::{
 use crate::estimated_da_size::DataAvailabilitySized;
 
 /// Returns current time as milliseconds since Unix epoch.
-fn unix_time_millis() -> u128 {
+pub fn unix_time_millis() -> u128 {
     match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
         Ok(dur) => dur.as_millis(),
         Err(err) => {
@@ -371,7 +371,7 @@ pub trait BundleTransaction {
     /// Returns `true` if this transaction's bundle constraints have expired
     /// relative to the given block number and block timestamp (in seconds).
     fn is_bundle_expired(&self, block_number: u64, block_timestamp_secs: u64) -> bool {
-        let block_timestamp_millis = block_timestamp_secs * 1000;
+        let block_timestamp_millis = block_timestamp_secs.saturating_mul(1000);
 
         if let Some(max_ts) = self.max_timestamp_millis() {
             if block_timestamp_millis > max_ts {
@@ -391,7 +391,7 @@ pub trait BundleTransaction {
     /// Returns `true` if this transaction's `min_timestamp` has not yet been
     /// reached. `block_timestamp_secs` is the block timestamp in seconds.
     fn is_bundle_not_yet_valid(&self, block_timestamp_secs: u64) -> bool {
-        let block_timestamp_millis = block_timestamp_secs * 1000;
+        let block_timestamp_millis = block_timestamp_secs.saturating_mul(1000);
 
         if let Some(min_ts) = self.min_timestamp_millis() {
             if block_timestamp_millis < min_ts {
