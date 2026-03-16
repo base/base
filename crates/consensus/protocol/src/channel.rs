@@ -121,7 +121,9 @@ impl Channel {
             // closing frame.
             if self.last_frame_number < self.highest_frame_number {
                 self.inputs.retain(|id, frame| {
-                    self.estimated_size -= frame.size();
+                    if *id > self.last_frame_number {
+                        self.estimated_size -= frame.size();
+                    }
                     *id < self.last_frame_number
                 });
                 self.highest_frame_number = self.last_frame_number;
@@ -337,6 +339,17 @@ mod test {
                 should_error: vec![false, false],
                 sizes: vec![207, 411],
                 frame_data: Some(b"seven__".to_vec().into()),
+            },
+            FrameValidityTestCase {
+                name: "prune after close frame, out of order".to_string(),
+                frames: vec![
+                    Frame { id, number: 2, data: b"four".to_vec(), ..Default::default() },
+                    Frame { id, number: 0, data: b"seven__".to_vec(), ..Default::default() },
+                    Frame { id, number: 1, data: b"!".to_vec(), is_last: true, ..Default::default() },
+                ],
+                should_error: vec![false, false, false],
+                sizes: vec![204, 411, 408],
+                frame_data: Some(b"seven__!".to_vec().into()),
             },
         ];
 
