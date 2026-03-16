@@ -6,13 +6,13 @@
 
 [L1]: glossary.md#layer-1-L1
 
-Refers the Ethereum blockchain, used in contrast to [layer 2][L2], which refers to Optimism.
+Refers the Ethereum blockchain, used in contrast to [layer 2][L2], which refers to Base.
 
 ### Layer 2 (L2)
 
 [L2]: glossary.md#layer-2-L2
 
-Refers to the Optimism blockchain (specified in this repository), used in contrast to [layer 1][L1], which
+Refers to Base Chain (specified in this repository), used in contrast to [layer 1][L1], which
 refers to the Ethereum blockchain.
 
 ### Block
@@ -336,7 +336,7 @@ containing batched L2 transactions either in calldata or as blobdata.
 [batcher-hash]: glossary.md#batcher-hash
 
 The **Batcher Hash** identifies the sender(s) whose transactions to the [Batch Inbox](#batch-inbox)
-will be recognized by the L2 clients for a given OP Chain.
+will be recognized by the L2 clients for a given Base chain.
 
 The Batcher Hash is versioned by the first byte of the hash. The structure of the V0 Batcher Hash
 is a 32 byte hash defined as follows:
@@ -437,7 +437,7 @@ The gas limit may not be set to a value larger than the
 [data-availability]: glossary.md#data-availability
 
 Data availability is the guarantee that some data will be "available" (i.e. _retrievable_) during a reasonably long time
-window. In Optimism's case, the data in question are [sequencer batches][sequencer-batch] that [validators][validator]
+window. In Base's case, the data in question are [sequencer batches][sequencer-batch] that [validators][validator]
 need in order to verify the sequencer's work and validate the L2 chain.
 
 The [finalization period][finalization-period] should be taken as the lower bound on the availability window, since
