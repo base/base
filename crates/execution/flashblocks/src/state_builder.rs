@@ -619,7 +619,7 @@ mod tests {
         }]);
         pending_blocks_builder.with_receipt(tx_hash, first_result.receipt.clone());
         pending_blocks_builder.with_transaction_state(tx_hash, first_result.state.clone());
-        pending_blocks_builder.with_transaction_result(tx_hash, first_result.result.clone());
+        pending_blocks_builder.with_transaction_result(tx_hash, first_result.result);
         pending_blocks_builder.with_execution_time(tx_hash, 1_234);
 
         let prev_pending_blocks =

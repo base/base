@@ -453,26 +453,35 @@ where
         // Store state root time for the collector to pick up when
         // the transaction appears in a flashblock.
         if meter.state_root_time_us > 0 {
-            if let Some((evicted_tx_hash, _)) =
-                cache.write().push(tx_hash, meter.state_root_time_us)
-                && evicted_tx_hash != tx_hash
-            {
+            let evicted_tx_hash = cache.write().push(tx_hash, meter.state_root_time_us).and_then(
+                |(evicted_tx_hash, _)| (evicted_tx_hash != tx_hash).then_some(evicted_tx_hash),
+            );
+
+            if let Some(evicted_tx_hash) = evicted_tx_hash {
                 warn!(
                     evicted_tx_hash = %evicted_tx_hash,
                     "Evicted pending state root time due to cache capacity"
                 );
             }
+            debug!(
+                tx_hash = %tx_hash,
+                state_root_time_us = meter.state_root_time_us,
+                "Stored external metering info"
+            );
         }
-
-        debug!(
-            tx_hash = %tx_hash,
-            state_root_time_us = meter.state_root_time_us,
-            "Stored external metering info"
-        );
         Ok(())
     }
 
     async fn set_metering_enabled(&self, enabled: bool) -> RpcResult<()> {
+        if self.state_root_cache.is_none() {
+            warn!("set_metering_enabled called but no collector configured");
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                "Metering data collection not configured".to_string(),
+                None::<()>,
+            ));
+        }
+
         self.metering_enabled.store(enabled, Ordering::Relaxed);
         info!(enabled = enabled, "Metering data collection enabled state changed");
         Ok(())

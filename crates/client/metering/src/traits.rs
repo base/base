@@ -7,7 +7,10 @@ use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
 use crate::{MeterBlockResponse, MeteredPriorityFeeResponse};
 
-/// RPC API for transaction metering
+/// RPC API for transaction metering.
+///
+/// The mutating metering methods in this namespace are intended for trusted internal callers only.
+/// Operators should restrict access to them with private networking or authenticated proxying.
 #[rpc(server, namespace = "base")]
 pub trait MeteringApi {
     /// Simulates and meters a bundle of transactions

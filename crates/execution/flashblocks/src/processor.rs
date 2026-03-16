@@ -479,8 +479,10 @@ where
                     pending_blocks_builder.with_execution_time(tx_hash, time_us);
                 }
 
-                // Per-tx state root simulation: compute state root after each
-                // non-deposit transaction, accumulating trie nodes across txs.
+                // Per-tx state root simulation is best-effort instrumentation:
+                // compute the state root after each non-deposit transaction while
+                // accumulating trie nodes across txs, but do not fail flashblock
+                // processing if the measurement itself errors.
                 if self.simulate_state_root && !is_deposit {
                     let db = pending_state_builder.db_mut();
                     db.merge_transitions(BundleRetention::Reverts);
@@ -488,22 +490,30 @@ where
                     let hashed_state = state_provider.hashed_post_state(&db.bundle_state);
 
                     let start = Instant::now();
-                    let (_, trie_updates) =
-                        if let Some((prev_updates, prev_hashed)) = cached_trie.take() {
-                            let mut trie_input = TrieInput::from_state(hashed_state.clone());
-                            trie_input.prepend_cached(prev_updates, prev_hashed);
-                            state_provider
-                                .state_root_from_nodes_with_updates(trie_input)
-                                .map_err(|e| ProviderError::StateProvider(e.to_string()))?
-                        } else {
-                            state_provider
-                                .state_root_with_updates(hashed_state.clone())
-                                .map_err(|e| ProviderError::StateProvider(e.to_string()))?
-                        };
+                    let trie_result = if let Some((prev_updates, prev_hashed)) = cached_trie.take()
+                    {
+                        let mut trie_input = TrieInput::from_state(hashed_state.clone());
+                        trie_input.prepend_cached(prev_updates, prev_hashed);
+                        state_provider.state_root_from_nodes_with_updates(trie_input)
+                    } else {
+                        state_provider.state_root_with_updates(hashed_state.clone())
+                    };
                     let state_root_time_us = start.elapsed().as_micros();
 
-                    cached_trie = Some((trie_updates, hashed_state));
-                    pending_blocks_builder.with_state_root_time(tx_hash, state_root_time_us);
+                    match trie_result {
+                        Ok((_, trie_updates)) => {
+                            cached_trie = Some((trie_updates, hashed_state));
+                            pending_blocks_builder
+                                .with_state_root_time(tx_hash, state_root_time_us);
+                        }
+                        Err(error) => {
+                            warn!(
+                                tx_hash = %tx_hash,
+                                error = %error,
+                                "state root simulation failed; skipping timing for this transaction"
+                            );
+                        }
+                    }
                 }
 
                 for (address, account) in &executed_transaction.state {

@@ -190,14 +190,16 @@ impl MeteringCollector {
             }
             let priority_fee = effective_gas_price.saturating_sub(base_fee as u128);
             let da_bytes = flz_compress_len(raw_tx) as u64;
-            let execution_time_us =
-                if let Some(execution_time_us) = pending.get_execution_time(&tx_hash) {
-                    transactions_with_execution_time += 1;
-                    execution_time_us
-                } else {
+            let execution_time_us = pending.get_execution_time(&tx_hash).map_or_else(
+                || {
                     transactions_missing_execution_time += 1;
                     0
-                };
+                },
+                |execution_time_us| {
+                    transactions_with_execution_time += 1;
+                    execution_time_us
+                },
+            );
 
             // State root time: prefer simulation data from PendingBlocks,
             // fall back to externally-submitted data from setMeteringInformation.
