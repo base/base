@@ -16,10 +16,15 @@ workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-primitives.workspace = true
+alloy-signer-local.workspace = true
 alloy-eips = { workspace = true, features = ["std", "kzg"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
+# base
+base-alloy-signer.workspace = true
+
 # misc
+url.workspace = true
 backon.workspace = true
 metrics.workspace = true
 thiserror.workspace = true
@@ -34,7 +39,6 @@ humantime.workspace = true
 async-trait.workspace = true
 alloy-signer.workspace = true
 alloy-consensus.workspace = true
-alloy-signer-local.workspace = true
 alloy-node-bindings.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread"] }

@@ -62,9 +62,14 @@ Transaction lifecycle management for Base onchain components.
   guard after successful signing to release the lock, or call `rollback()` on failure to
   restore the nonce for reuse. Uses `OwnedMutexGuard` so the guard is `Send` and can cross
   task spawn boundaries.
+- **`SignerConfig`**: Describes how to construct an `EthereumWallet` — either from a local
+  private key (`Local`) or a remote signer endpoint (`Remote`). Passed to `SimpleTxManager::new`
+  to centralise wallet construction.
 - **`SimpleTxManager`**: Default `TxManager` implementation. Holds a `RootProvider`,
   `EthereumWallet`, `TxManagerConfig`, `NonceManager`, chain ID, and a shutdown flag.
-  `new()` validates the config and cross-checks the chain ID against the provider.
+  `new()` builds the wallet from a `SignerConfig`, validates the config, and cross-checks
+  the chain ID against the provider. `from_wallet()` accepts a pre-built `EthereumWallet`
+  directly, which is useful for tests or custom signers.
   `prepare()` wraps `craft_tx()` in a `backon` retry loop (up to 30 attempts, 2-second
   fixed delay) that retries only on transient errors and exits immediately when closed.
   Both methods accept optional fee overrides `(tip, fee_cap)` and return a `PreparedTx`
@@ -197,17 +202,16 @@ base-tx-manager = { git = "https://github.com/base/base" }
 ```rust,ignore
 use std::sync::Arc;
 
-use alloy_network::EthereumWallet;
-use alloy_primitives::{bytes, Address, U256};
+use alloy_primitives::{bytes, Address, B256, U256};
 use alloy_provider::RootProvider;
-use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig};
+use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig};
 
-// Create a SimpleTxManager with a provider, wallet, and config.
+// Create a SimpleTxManager with a provider, signer config, and tx-manager config.
 let provider = RootProvider::new_http("http://localhost:8545".parse()?);
-let wallet = EthereumWallet::from(signer);
+let signer_config = SignerConfig::Local { private_key: B256::repeat_byte(0x01) };
 let config = TxManagerConfig::default();
 let chain_id = 1;
-let manager = SimpleTxManager::new(provider, wallet, config, chain_id, Arc::new(BaseTxMetrics::new("my_service"))).await?;
+let manager = SimpleTxManager::new(provider, signer_config, config, chain_id, Arc::new(BaseTxMetrics::new("my_service"))).await?;
 
 // Build a regular (type-2) transaction candidate.
 let candidate = TxCandidate {

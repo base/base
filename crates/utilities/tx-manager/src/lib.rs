@@ -24,6 +24,9 @@ mod macros;
 mod config;
 pub use config::{ConfigError, GweiParser, TxManagerConfig};
 
+mod signer_config;
+pub use signer_config::SignerConfig;
+
 mod traits;
 pub use traits::{SendHandle, SendResponse, TxManager};
 
