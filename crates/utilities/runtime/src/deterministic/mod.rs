@@ -134,11 +134,55 @@ impl std::fmt::Debug for Context {
 struct CancelState {
     cancelled: AtomicBool,
     wakers: Mutex<Vec<task::Waker>>,
+    children: Mutex<Vec<Weak<Self>>>,
 }
 
 impl Default for CancelState {
     fn default() -> Self {
-        Self { cancelled: AtomicBool::new(false), wakers: Mutex::new(Vec::new()) }
+        Self {
+            cancelled: AtomicBool::new(false),
+            wakers: Mutex::new(Vec::new()),
+            children: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl CancelState {
+    /// Signal cancellation and propagate to all live children.
+    ///
+    /// Holds the `children` lock while setting the flag so that [`new_child`]
+    /// cannot register a new child between the flag write and the propagation
+    /// sweep. Idempotent: a second call is a no-op.
+    fn cancel(&self) {
+        let children = {
+            let mut guard = self.children.lock().unwrap();
+            if self.cancelled.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            std::mem::take(&mut *guard)
+        };
+        for waker in self.wakers.lock().unwrap().drain(..) {
+            waker.wake();
+        }
+        for weak in &children {
+            if let Some(child) = weak.upgrade() {
+                child.cancel();
+            }
+        }
+    }
+
+    /// Create a child `CancelState` that is cancelled when this state is
+    /// cancelled, but can be cancelled independently without affecting this state.
+    fn new_child(&self) -> Arc<Self> {
+        let child = Arc::new(Self::default());
+        let mut guard = self.children.lock().unwrap();
+        if self.cancelled.load(Ordering::Acquire) {
+            // Parent already cancelled; immediately cancel the new child.
+            child.cancelled.store(true, Ordering::Release);
+        } else {
+            guard.push(Arc::downgrade(&child));
+        }
+        child
     }
 }
 
@@ -205,10 +249,7 @@ impl Cancellation for Context {
     }
 
     fn cancel(&self) {
-        self.cancel.cancelled.store(true, Ordering::Release);
-        for waker in self.cancel.wakers.lock().unwrap().drain(..) {
-            waker.wake();
-        }
+        self.cancel.cancel();
     }
 
     fn is_cancelled(&self) -> bool {
@@ -216,7 +257,7 @@ impl Cancellation for Context {
     }
 
     fn child(&self) -> Self {
-        self.clone()
+        Self { executor: Weak::clone(&self.executor), cancel: self.cancel.new_child() }
     }
 }
 
@@ -239,7 +280,7 @@ mod tests {
     fn sleep_does_not_fire_without_time_passing() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let fired = Arc::new(AtomicU32::new(0));
-            let fired2 = fired.clone();
+            let fired2 = Arc::clone(&fired);
             let ctx2 = ctx.clone();
             ctx.spawn(async move {
                 ctx2.sleep(Duration::from_secs(5)).await;
@@ -257,7 +298,7 @@ mod tests {
     fn sleep_fires_after_virtual_time_advances() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let fired = Arc::new(AtomicU32::new(0));
-            let fired2 = fired.clone();
+            let fired2 = Arc::clone(&fired);
             let ctx2 = ctx.clone();
             ctx.spawn(async move {
                 ctx2.sleep(Duration::from_secs(5)).await;
@@ -353,6 +394,26 @@ mod tests {
             // After cancel() fires, the very next poll must resolve.
             ctx.cancelled().await;
             assert!(ctx.is_cancelled());
+        });
+    }
+
+    #[test]
+    fn child_cancels_independently_of_parent() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let child = ctx.child();
+            child.cancel();
+            assert!(child.is_cancelled());
+            assert!(!ctx.is_cancelled(), "child cancel must not affect parent");
+        });
+    }
+
+    #[test]
+    fn parent_cancel_cancels_child() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let child = ctx.child();
+            ctx.cancel();
+            assert!(ctx.is_cancelled());
+            assert!(child.is_cancelled(), "child must be cancelled when parent is");
         });
     }
 

@@ -6,7 +6,7 @@ use crate::{Cancellation, Clock, Spawner};
 ///
 /// Components that need runtime capabilities accept a single `R: Runtime`
 /// bound rather than three separate trait bounds. In production, use
-/// `TokioRuntime`; in tests, use `DeterministicRuntime`.
+/// `TokioRuntime`; in tests, use `Runner::start` with `Context`.
 ///
 /// # Blanket implementation
 ///
