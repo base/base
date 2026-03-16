@@ -1059,7 +1059,7 @@ where
         new_transactions.clone().into_iter().map(|tx| tx.encoded_2718().into()).collect::<Vec<_>>();
 
     let min_tx_index = info.extra.last_flashblock_index as u64;
-    let max_tx_index = min_tx_index + new_transactions_encoded.len() as u64;
+    let max_tx_index = min_tx_index + new_transactions_encoded.len().saturating_sub(1) as u64;
 
     let new_receipts = info.receipts[info.extra.last_flashblock_index..].to_vec();
     info.extra.last_flashblock_index = info.executed_transactions.len();
@@ -1072,13 +1072,13 @@ where
 
     // finalize and build the FAL
     let fal_builder = std::mem::take(&mut info.extra.access_list_builder);
-    let _access_list = fal_builder.build(min_tx_index, max_tx_index);
+    let access_list = fal_builder.build(min_tx_index, max_tx_index);
 
     let metadata: FlashblocksMetadata = FlashblocksMetadata {
         receipts: receipts_with_hash,
         new_account_balances,
         block_number: ctx.parent().number + 1,
-        access_list: None,
+        access_list: Some(access_list),
     };
 
     // Prepare the flashblocks message
@@ -1195,8 +1195,8 @@ mod tests {
         let addr_key = format!("{address:#x}");
         assert!(balances_obj.contains_key(&addr_key), "balance should be keyed by address");
 
-        // access_list is null when None
-        assert!(obj["access_list"].is_null());
+        // access_list should be present in metadata
+        assert!(obj["access_list"].is_object());
     }
 
     /// The client-side [`Metadata`] type must be able to deserialize from
