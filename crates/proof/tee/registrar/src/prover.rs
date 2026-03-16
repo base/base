@@ -27,10 +27,8 @@ pub struct ProverClient {
 impl ProverClient {
     /// Creates a new client for the prover at the given endpoint.
     ///
-    /// `endpoint` is a `host:port` string (e.g.
-    /// `"prover-0.prover-headless.provers.svc.cluster.local:8000"` in K8s mode
-    /// or `"10.0.1.5:8000"` in AWS mode). An `http://` scheme is prepended
-    /// automatically.
+    /// `endpoint` is a `host:port` string (e.g. `"10.0.1.5:8000"`).
+    /// An `http://` scheme is prepended automatically.
     pub fn new(endpoint: &str, timeout: Duration) -> Result<Self> {
         let url = format!("http://{endpoint}");
         let inner =

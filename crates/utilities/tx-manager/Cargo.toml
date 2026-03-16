@@ -27,6 +27,7 @@ base-alloy-signer.workspace = true
 url.workspace = true
 backon.workspace = true
 metrics.workspace = true
+zeroize.workspace = true
 thiserror.workspace = true
 tracing = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "time"] }

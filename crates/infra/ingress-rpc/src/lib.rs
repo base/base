@@ -29,7 +29,7 @@ use base_alloy_network::Base;
 use base_bundles::MeterBundleResponse;
 use clap::Args;
 use tokio::sync::broadcast;
-use tracing::{error, warn};
+use tracing::{debug, error, info, warn};
 use url::Url;
 pub use validation::{AccountInfo, AccountInfoLookup, L1BlockInfoLookup, validate_bundle};
 
@@ -153,6 +153,7 @@ pub struct BuilderConnector;
 impl BuilderConnector {
     /// Spawns a background task that forwards metering data to the builder RPC.
     pub fn connect(metering_rx: broadcast::Receiver<MeterBundleResponse>, builder_rpc: Url) {
+        let rpc_url = builder_rpc.clone();
         let builder: RootProvider<Base> = ProviderBuilder::new()
             .disable_recommended_fillers()
             .network::<Base>()
@@ -160,16 +161,21 @@ impl BuilderConnector {
 
         tokio::spawn(async move {
             let mut event_rx = metering_rx;
+            info!(url = %rpc_url, "BuilderConnector started, waiting for metering data");
             loop {
                 match event_rx.recv().await {
                     Ok(event) => {
                         if event.results.is_empty() {
-                            warn!(message = "received metering information with no transactions", hash=%event.bundle_hash);
+                            warn!(
+                                url = %rpc_url,
+                                hash = %event.bundle_hash,
+                                "Received metering information with no transactions"
+                            );
                             continue;
                         }
 
                         let tx_hash = event.results[0].tx_hash;
-                        if let Err(e) = builder
+                        match builder
                             .client()
                             .request::<(TxHash, MeterBundleResponse), ()>(
                                 "base_setMeteringInformation",
@@ -177,14 +183,28 @@ impl BuilderConnector {
                             )
                             .await
                         {
-                            error!(error = %e, "Failed to set metering information for tx hash: {tx_hash}");
+                            Ok(()) => debug!(
+                                url = %rpc_url,
+                                tx_hash = %tx_hash,
+                                "Forwarded metering information"
+                            ),
+                            Err(e) => error!(
+                                url = %rpc_url,
+                                error = %e,
+                                tx_hash = %tx_hash,
+                                "Failed to set metering information"
+                            ),
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
-                        warn!(skipped = n, "BuilderConnector lagged, skipped messages");
+                        warn!(
+                            url = %rpc_url,
+                            skipped = n,
+                            "BuilderConnector lagged behind, skipped messages"
+                        );
                     }
                     Err(broadcast::error::RecvError::Closed) => {
-                        warn!("BuilderConnector channel closed, shutting down");
+                        info!(url = %rpc_url, "BuilderConnector channel closed, shutting down");
                         break;
                     }
                 }

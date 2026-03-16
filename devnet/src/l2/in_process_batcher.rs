@@ -49,8 +49,8 @@ impl InProcessBatcher {
             // all set by BatcherConfig::default().
             ..BatcherConfig::default()
         };
-        let ready = BatcherService::new(batcher_config).setup().await?;
         let cancellation = CancellationToken::new();
+        let ready = BatcherService::new(batcher_config).setup(cancellation.clone()).await?;
         let cancel = cancellation.clone();
         let handle = tokio::spawn(async move {
             if let Err(e) = ready.run(cancel).await {

@@ -49,6 +49,38 @@ pub struct Args {
     #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
 
+    /// Whole-block gas budget for priority fee estimation.
+    #[arg(
+        long = "metering.gas-limit",
+        requires_all = ["enable_metering", "metering_target_flashblocks_per_block"]
+    )]
+    pub metering_gas_limit: Option<u64>,
+
+    /// Per-flashblock execution time budget in microseconds for priority fee estimation.
+    #[arg(long = "metering.execution-time-us", requires = "enable_metering")]
+    pub metering_execution_time_us: Option<u64>,
+
+    /// Whole-block state root computation budget in microseconds for priority fee estimation.
+    #[arg(
+        long = "metering.state-root-time-us",
+        requires_all = ["enable_metering", "metering_target_flashblocks_per_block"]
+    )]
+    pub metering_state_root_time_us: Option<u64>,
+
+    /// Whole-block data availability byte budget for priority fee estimation.
+    #[arg(
+        long = "metering.da-bytes",
+        requires_all = ["enable_metering", "metering_target_flashblocks_per_block"]
+    )]
+    pub metering_da_bytes: Option<u64>,
+
+    /// Target number of tx-pool flashblocks the builder budgets per block.
+    ///
+    /// This excludes the base flashblock at index `0` and is required when gas, state root
+    /// time, or DA estimation is enabled.
+    #[arg(long = "metering.target-flashblocks-per-block", requires = "enable_metering")]
+    pub metering_target_flashblocks_per_block: Option<usize>,
+
     /// Enable transaction forwarding for mempool nodes to builder RPC endpoints
     #[arg(
         long = "enable-tx-forwarding",

@@ -518,6 +518,13 @@ impl BatchPipeline for BatchEncoder {
     }
 
     fn requeue(&mut self, id: SubmissionId) {
+        // Invariant: each `ReadyChannel` owns its own frame cursor. This
+        // encoder keeps at most one `current_channel` open at a time; when it
+        // closes (by size or timeout) it moves to `ready_channels` as the
+        // newest entry. `pending_ref.channel_idx` therefore always points to
+        // a specific, independent slot in `ready_channels`. Resetting the
+        // cursor on that slot does not affect any other channel and FIFO
+        // ordering across channels is preserved by construction.
         let Some(pending_ref) = self.pending.remove(&id) else {
             warn!(id = ?id, "requeue called for unknown submission id");
             return;
