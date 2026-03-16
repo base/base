@@ -45,9 +45,9 @@ impl<T: TxManager> ChallengeSubmitter<T> {
             ..Default::default()
         };
 
+        metrics::counter!(ChallengerMetrics::NULLIFY_TX_SUBMITTED_TOTAL).increment(1);
         let start = Instant::now();
         let receipt = self.tx_manager.send(candidate).await?;
-        metrics::counter!(ChallengerMetrics::NULLIFY_TX_SUBMITTED_TOTAL).increment(1);
         let latency = start.elapsed();
 
         let tx_hash = receipt.transaction_hash;
