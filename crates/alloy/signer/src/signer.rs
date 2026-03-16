@@ -3,7 +3,7 @@
 use alloy_consensus::{SignableTransaction, TxEnvelope};
 use alloy_eips::Decodable2718;
 use alloy_network::{TransactionBuilder, TxSigner};
-use alloy_primitives::{Address, Bytes, Signature, TxKind};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind};
 use alloy_rpc_client::{ClientBuilder, RpcClient};
 use alloy_rpc_types_eth::TransactionRequest;
 use alloy_transport_http::{Http, reqwest};
@@ -73,8 +73,11 @@ impl RemoteSigner {
             request = request.with_gas_price(gas_price);
         }
 
-        if let Some(max_priority_fee) = tx.max_priority_fee_per_gas() {
+        if tx.is_dynamic_fee() {
             request = request.with_max_fee_per_gas(tx.max_fee_per_gas());
+        }
+
+        if let Some(max_priority_fee) = tx.max_priority_fee_per_gas() {
             request = request.with_max_priority_fee_per_gas(max_priority_fee);
         }
 
@@ -92,7 +95,28 @@ impl RemoteSigner {
             request.blob_versioned_hashes = Some(blob_hashes.to_vec());
         }
 
+        if let Some(auth_list) = tx.authorization_list()
+            && !auth_list.is_empty()
+        {
+            request.authorization_list = Some(auth_list.to_vec());
+        }
+
         request
+    }
+
+    /// Verifies that the signature recovers to the expected signer address.
+    pub fn verify_signature(
+        &self,
+        signature: &Signature,
+        hash: &B256,
+    ) -> Result<(), RemoteSignerError> {
+        let recovered = signature
+            .recover_address_from_prehash(hash)
+            .map_err(|e| RemoteSignerError::Recovery(e.to_string()))?;
+        if recovered != self.address {
+            return Err(RemoteSignerError::SignerMismatch { expected: self.address, recovered });
+        }
+        Ok(())
     }
 }
 
@@ -121,16 +145,7 @@ impl TxSigner<Signature> for RemoteSigner {
 
         let signature = *envelope.signature();
         let hash = tx.signature_hash();
-        let recovered = signature
-            .recover_address_from_prehash(&hash)
-            .map_err(|e| alloy_signer::Error::other(RemoteSignerError::Recovery(e.to_string())))?;
-
-        if recovered != self.address {
-            return Err(alloy_signer::Error::other(RemoteSignerError::SignerMismatch {
-                expected: self.address,
-                recovered,
-            }));
-        }
+        self.verify_signature(&signature, &hash).map_err(alloy_signer::Error::other)?;
 
         Ok(signature)
     }
@@ -142,6 +157,8 @@ mod tests {
     use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
     use alloy_primitives::U256;
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
 
     use super::*;
 
@@ -256,5 +273,33 @@ mod tests {
 
         // Verify that RemoteSigner can be used with EthereumWallet.
         let _wallet = EthereumWallet::from(signer);
+    }
+
+    #[test]
+    fn verify_signature_rejects_mismatch() {
+        let real_signer = PrivateKeySigner::random();
+        let wrong_address = Address::repeat_byte(0x42);
+        let remote = test_signer(wrong_address);
+
+        let hash = B256::repeat_byte(0x01);
+        let sig = real_signer.sign_hash_sync(&hash).unwrap();
+
+        let err = remote.verify_signature(&sig, &hash).unwrap_err();
+        assert!(matches!(
+            err,
+            RemoteSignerError::SignerMismatch { expected, recovered }
+                if expected == wrong_address && recovered == real_signer.address()
+        ));
+    }
+
+    #[test]
+    fn verify_signature_accepts_match() {
+        let real_signer = PrivateKeySigner::random();
+        let remote = test_signer(real_signer.address());
+
+        let hash = B256::repeat_byte(0x01);
+        let sig = real_signer.sign_hash_sync(&hash).unwrap();
+
+        remote.verify_signature(&sig, &hash).unwrap();
     }
 }
