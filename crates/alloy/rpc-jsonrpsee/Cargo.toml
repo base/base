@@ -22,5 +22,5 @@ alloy-rpc-types-eth = { workspace = true, features = ["std", "serde"], optional 
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 
 [features]
-client = ["jsonrpsee/async-client", "jsonrpsee/client"]
-signer = ["dep:alloy-rpc-types-eth"]
+client = [ "jsonrpsee/async-client", "jsonrpsee/client" ]
+signer = [ "dep:alloy-rpc-types-eth" ]

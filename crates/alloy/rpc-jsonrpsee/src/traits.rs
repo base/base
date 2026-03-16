@@ -42,8 +42,8 @@ pub trait MinerApiExt {
     async fn set_gas_limit(&self, gas_limit: U64) -> RpcResult<bool>;
 }
 
-#[cfg(feature = "signer")]
 /// JSON-RPC interface for the `eth_signTransaction` endpoint.
+#[cfg(feature = "signer")]
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "eth"))]
 #[cfg_attr(feature = "client", rpc(server, client, namespace = "eth"))]
 pub trait EthSignerApi {
