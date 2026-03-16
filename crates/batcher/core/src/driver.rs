@@ -293,8 +293,17 @@ where
                         std::future::pending::<()>().await;
                     }
                 } => {
-                    let n = self.safe_head_rx.as_ref().map(|rx| *rx.borrow()).unwrap_or(0);
-                    DriverEvent::SafeHead(n)
+                    if let Some(rx) = &mut self.safe_head_rx {
+                        if rx.has_changed().is_err() {
+                            // Sender dropped; disable this arm permanently.
+                            self.safe_head_rx = None;
+                            continue;
+                        }
+                        let n = *rx.borrow();
+                        DriverEvent::SafeHead(n)
+                    } else {
+                        continue;
+                    }
                 }
             };
             return Ok(event);
@@ -1332,6 +1341,48 @@ mod tests {
             r.safe_numbers.contains(&100),
             "prune_safe must be called with the watch value, got {:?}",
             r.safe_numbers
+        );
+    }
+
+    /// When the safe head sender is dropped while the driver is running, the watch
+    /// arm must disable itself rather than spinning. The driver continues running
+    /// and remains cancellable after the sender disappears.
+    #[tokio::test]
+    async fn test_safe_head_sender_drop_does_not_busyloop() {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+
+        let (safe_tx, safe_rx) = tokio::sync::watch::channel(0u64);
+
+        let cancellation = CancellationToken::new();
+        let driver = make_driver(pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+            .with_safe_head_rx(safe_rx);
+        let handle = tokio::spawn(driver.run(cancellation.clone()));
+
+        // Send one value, then drop the sender while the driver is still running.
+        safe_tx.send(50).unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop(safe_tx);
+
+        // Give the driver time to process the drop. If the arm busy-loops,
+        // prune_safe would be called many additional times here.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let prune_count_after_drop = recorded.lock().unwrap().safe_numbers.len();
+
+        // Cancel and wait — driver must exit cleanly, not hang.
+        cancellation.cancel();
+        assert!(handle.await.unwrap().is_ok(), "driver must exit cleanly after sender drop");
+
+        let r = recorded.lock().unwrap();
+        assert!(
+            r.safe_numbers.contains(&50),
+            "prune_safe must have been called with the sent value"
+        );
+        // After the sender drops, prune_safe must not be called again.
+        assert_eq!(
+            r.safe_numbers.len(),
+            prune_count_after_drop,
+            "prune_safe must not be called after sender drop (arm must be disabled)"
         );
     }
 
