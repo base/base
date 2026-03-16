@@ -1,8 +1,8 @@
 #![doc = "Action tests for the Ecotone hardfork activation boundary."]
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TestRollupConfigBuilder, block_info_from,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
 };
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
 use base_consensus_genesis::HardForkConfig;
@@ -117,7 +117,10 @@ fn ecotone_l1_info_format_transitions_at_activation() {
 /// where `NonEmptyTransitionBlock` *does* fire.
 #[tokio::test]
 async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
 
     // Canyon and Delta active at genesis; Ecotone at ts=6 (block 3).
     // Fjord must be active so the batcher's brotli-compressed frames are
@@ -138,16 +141,14 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     // Blocks 1 and 2: pre-Ecotone, user txs OK.
-    for i in 1..=2u64 {
+    for _ in 1..=2u64 {
         let block = builder.build_next_block().expect("build pre-Ecotone block");
-
         let mut source = ActionL2Source::new();
         source.push(block);
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.advance().expect("encode pre-Ecotone batch");
-        batcher.flush(&mut h.l1);
-        h.l1.mine_block(); // L1 blocks 1 and 2
-        let _ = i;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
+            .advance(&mut h.l1)
+            .await
+            .expect("advance pre-Ecotone batch");
     }
 
     // Block 3 at ts=6 (first Ecotone): build WITH a user tx. Unlike Jovian,
@@ -161,19 +162,19 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
 
     let mut source3 = ActionL2Source::new();
     source3.push(block3_with_user_tx);
-    let mut batcher3 = h.create_batcher(source3, batcher_cfg.clone());
-    batcher3.advance().expect("encode block 3 batch");
-    batcher3.flush(&mut h.l1);
-    h.l1.mine_block(); // L1 block 3: batch for block 3 with user tx
+    Batcher::new(source3, &h.rollup_config, batcher_cfg.clone())
+        .advance(&mut h.l1)
+        .await
+        .expect("advance block 3 batch");
 
     // Block 4: post-Ecotone, user txs OK.
     let block4 = builder.build_next_block().expect("build post-Ecotone block 4");
     let mut source4 = ActionL2Source::new();
     source4.push(block4);
-    let mut batcher4 = h.create_batcher(source4, batcher_cfg);
-    batcher4.advance().expect("encode block 4 batch");
-    batcher4.flush(&mut h.l1);
-    h.l1.mine_block(); // L1 block 4
+    Batcher::new(source4, &h.rollup_config, batcher_cfg)
+        .advance(&mut h.l1)
+        .await
+        .expect("advance block 4 batch");
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -219,7 +220,10 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
 /// All 4 L2 blocks must be derived.
 #[tokio::test]
 async fn ecotone_derivation_crosses_activation_boundary() {
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
 
     // All forks through Delta active at genesis so that at ts=6 only Ecotone
     // is "new". Fjord must be active so the batcher's brotli compression is
@@ -251,10 +255,10 @@ async fn ecotone_derivation_crosses_activation_boundary() {
 
         let mut source = ActionL2Source::new();
         source.push(block);
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.advance().expect("encode batch");
-        batcher.flush(&mut h.l1);
-        h.l1.mine_block();
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
+            .advance(&mut h.l1)
+            .await
+            .expect("advance batch");
     }
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
