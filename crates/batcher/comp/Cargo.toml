@@ -41,6 +41,7 @@ default = []
 std = [
 	"alloy-eips/std",
 	"alloy-primitives?/std",
+	"alloy-rlp/std",
 	"base-alloy-consensus/std",
 	"base-consensus-genesis/std",
 	"base-protocol/std",
@@ -52,14 +53,18 @@ std = [
 ]
 test-utils = [ "base-protocol/test-utils", "dep:alloy-primitives" ]
 serde = [
+	"alloy-eips/serde",
 	"alloy-primitives?/serde",
+	"base-alloy-consensus/serde",
 	"base-consensus-genesis/serde",
 	"base-protocol/serde",
 	"miniz_oxide/serde",
 	"rand/serde",
 ]
 arbitrary = [
+	"alloy-eips/arbitrary",
 	"alloy-primitives?/arbitrary",
+	"base-alloy-consensus/arbitrary",
 	"base-consensus-genesis/arbitrary",
 	"base-protocol/arbitrary",
 ]

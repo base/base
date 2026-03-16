@@ -22,9 +22,21 @@ pub fn parse_precompile_id(s: &str) -> Result<PrecompileId, String> {
 }
 
 fn precompile_address(id: &PrecompileId) -> Address {
-    *id.precompile(PrecompileSpecId::CANCUN)
-        .expect("standard precompiles must have addresses")
-        .address()
+    id.precompile(PrecompileSpecId::CANCUN).map(|p| *p.address()).unwrap_or_else(|| {
+        let byte = match id {
+            PrecompileId::Sha256 => 0x02,
+            PrecompileId::Ripemd160 => 0x03,
+            PrecompileId::Identity => 0x04,
+            PrecompileId::ModExp => 0x05,
+            PrecompileId::Bn254Add => 0x06,
+            PrecompileId::Bn254Mul => 0x07,
+            PrecompileId::Bn254Pairing => 0x08,
+            PrecompileId::Blake2F => 0x09,
+            PrecompileId::KzgPointEvaluation => 0x0a,
+            _ => 0x01,
+        };
+        Address::with_last_byte(byte)
+    })
 }
 
 /// Generates transactions that call EVM precompiled contracts.
@@ -122,13 +134,13 @@ impl Payload for PrecompilePayload {
             PrecompileId::Sha256 | PrecompileId::Ripemd160 => {
                 (Self::encode_sha256_data(rng), 100_000)
             }
-            PrecompileId::EcRec => (Self::encode_ecrecover_data(rng), 3_000),
-            PrecompileId::ModExp => (Self::encode_modexp_data(rng), 200_000),
-            PrecompileId::Bn254Add => (Self::encode_bn254_add_data(), 150),
-            PrecompileId::Bn254Mul => (Self::encode_bn254_mul_data(), 6_000),
-            PrecompileId::Bn254Pairing => (Self::encode_bn254_pairing_data(), 45_000),
-            PrecompileId::Blake2F => (Self::encode_blake2f_data(rng), 100_000),
-            PrecompileId::KzgPointEvaluation => (Self::encode_kzg_data(), 50_000),
+            PrecompileId::EcRec => (Self::encode_ecrecover_data(rng), 30_000),
+            PrecompileId::ModExp => (Self::encode_modexp_data(rng), 250_000),
+            PrecompileId::Bn254Add => (Self::encode_bn254_add_data(), 25_000),
+            PrecompileId::Bn254Mul => (Self::encode_bn254_mul_data(), 30_000),
+            PrecompileId::Bn254Pairing => (Self::encode_bn254_pairing_data(), 70_000),
+            PrecompileId::Blake2F => (Self::encode_blake2f_data(rng), 130_000),
+            PrecompileId::KzgPointEvaluation => (Self::encode_kzg_data(), 75_000),
             _ => (Bytes::from(rng.gen_bytes::<32>().to_vec()), 100_000),
         };
 

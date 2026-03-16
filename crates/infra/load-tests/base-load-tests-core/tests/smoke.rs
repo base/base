@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+//! Smoke tests for load testing core functionality.
 
 use std::time::Duration;
 
