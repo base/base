@@ -7,7 +7,7 @@ use alloy_primitives::{Address, B256};
 use alloy_signer_local::PrivateKeySigner;
 use base_alloy_signer::RemoteSigner;
 use url::Url;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::TxManagerError;
 
@@ -54,8 +54,10 @@ impl SignerConfig {
     ///
     /// The key bytes are wrapped in [`Zeroizing`] internally so callers do not
     /// need to depend on the `zeroize` crate.
-    pub fn local(private_key: B256) -> Self {
-        Self::Local { private_key: Zeroizing::new(private_key.0) }
+    pub fn local(mut private_key: B256) -> Self {
+        let config = Self::Local { private_key: Zeroizing::new(private_key.0) };
+        private_key.0.zeroize();
+        config
     }
 
     /// Builds an [`EthereumWallet`] from this configuration.
@@ -67,8 +69,11 @@ impl SignerConfig {
     pub fn build_wallet(self) -> Result<EthereumWallet, TxManagerError> {
         match self {
             Self::Local { private_key } => {
-                let signer = PrivateKeySigner::from_bytes(&B256::new(*private_key))
-                    .map_err(|e| TxManagerError::WalletConstruction(e.to_string()))?;
+                let mut key = B256::new(*private_key);
+                let result = PrivateKeySigner::from_bytes(&key);
+                key.0.zeroize();
+                let signer =
+                    result.map_err(|e| TxManagerError::WalletConstruction(e.to_string()))?;
                 Ok(EthereumWallet::new(signer))
             }
             Self::Remote { endpoint, address } => {
