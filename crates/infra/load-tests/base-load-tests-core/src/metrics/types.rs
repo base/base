@@ -64,6 +64,8 @@ pub struct ThroughputMetrics {
     pub total_failed: u64,
     /// Transactions per second achieved.
     pub tps: f64,
+    /// Gas per second achieved.
+    pub gps: f64,
     /// Total duration of the test.
     pub duration: Duration,
 }

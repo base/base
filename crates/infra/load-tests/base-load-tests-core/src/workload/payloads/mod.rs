@@ -15,7 +15,7 @@ mod storage;
 pub use storage::StoragePayload;
 
 mod precompile;
-pub use precompile::{PrecompilePayload, PrecompileTarget};
+pub use precompile::{PrecompilePayload, parse_precompile_id};
 
 mod uniswap;
 pub use uniswap::{UniswapV2Payload, UniswapV3Payload};

@@ -9,15 +9,14 @@ use std::{
 
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_provider::Provider;
+use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::TransactionRequest as AlloyTxRequest;
 use alloy_signer_local::PrivateKeySigner;
+use base_tx_manager::NonceManager;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, instrument, warn};
 
-use super::{
-    AdaptiveBackoff, Confirmer, ConfirmerHandle, LoadConfig, NonceTracker, RateLimiter, TxType,
-};
+use super::{AdaptiveBackoff, Confirmer, ConfirmerHandle, LoadConfig, RateLimiter, TxType};
 use crate::{
     BaselineError, Result,
     config::WorkloadConfig,
@@ -34,9 +33,10 @@ struct PreparedTx {
     to: Address,
     value: U256,
     data: Bytes,
-    nonce: u64,
     gas_limit: u64,
 }
+
+const NONCE_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Executes load tests by generating and submitting transactions at a target rate.
 pub struct LoadRunner {
@@ -46,7 +46,7 @@ pub struct LoadRunner {
     generator: WorkloadGenerator,
     collector: MetricsCollector,
     stop_flag: Arc<AtomicBool>,
-    nonce_tracker: NonceTracker,
+    nonce_managers: HashMap<Address, NonceManager>,
     providers: HashMap<Address, WalletProvider>,
     gas_price: u128,
 }
@@ -94,7 +94,7 @@ impl LoadRunner {
             generator,
             collector: MetricsCollector::new(),
             stop_flag: Arc::new(AtomicBool::new(false)),
-            nonce_tracker: NonceTracker::new(),
+            nonce_managers: HashMap::new(),
             providers,
             gas_price: 0,
         })
@@ -144,7 +144,8 @@ impl LoadRunner {
                     );
                 }
                 TxType::Precompile { target } => {
-                    generator = generator.with_payload(PrecompilePayload::new(*target), weight_pct);
+                    generator =
+                        generator.with_payload(PrecompilePayload::new(target.clone()), weight_pct);
                 }
             }
         }
@@ -263,7 +264,9 @@ impl LoadRunner {
             let account_nonce = self.client.get_nonce(account.address).await?;
             account.nonce = account_nonce;
 
-            self.nonce_tracker.init_account(account.address, account_nonce);
+            let provider = RootProvider::new_http(self.config.rpc_url.clone());
+            let nonce_manager = NonceManager::new(provider, account.address, NONCE_RPC_TIMEOUT);
+            self.nonce_managers.insert(account.address, nonce_manager);
 
             debug!(address = %account.address, balance = %balance, nonce = account_nonce, "account state updated");
         }
@@ -273,7 +276,7 @@ impl LoadRunner {
     }
 
     /// Runs the load test and returns metrics summary.
-    #[instrument(skip(self), fields(tps = self.config.tps, duration = ?self.config.duration))]
+    #[instrument(skip(self), fields(target_gps = self.config.target_gps, duration = ?self.config.duration))]
     pub async fn run(&mut self) -> Result<MetricsSummary> {
         self.collector.reset();
         self.collector.start();
@@ -283,8 +286,10 @@ impl LoadRunner {
         info!(gas_price = self.gas_price, "fetched current gas price");
 
         for account in self.accounts.accounts() {
-            if self.nonce_tracker.pending_count(&account.address) == 0 {
-                self.nonce_tracker.init_account(account.address, account.nonce);
+            if !self.nonce_managers.contains_key(&account.address) {
+                let provider = RootProvider::new_http(self.config.rpc_url.clone());
+                let nonce_manager = NonceManager::new(provider, account.address, NONCE_RPC_TIMEOUT);
+                self.nonce_managers.insert(account.address, nonce_manager);
             }
         }
 
@@ -293,19 +298,20 @@ impl LoadRunner {
             mpsc::channel::<TransactionMetrics>(METRICS_CHANNEL_BUFFER);
 
         let sender_addresses: Vec<_> = self.accounts.accounts().iter().map(|a| a.address).collect();
-        let confirmer = Confirmer::new(
-            self.config.rpc_url.clone(),
+        let mut confirmer = Confirmer::new(
             &sender_addresses,
             metrics_tx,
             Arc::clone(&self.stop_flag),
         );
-        let (confirmer_handle, pending_rx) = confirmer.handle();
+        let confirmer_handle = confirmer.handle();
 
-        let confirmer_task = tokio::spawn(confirmer.run(pending_rx));
+        let confirmer_client = RpcClient::new(self.config.rpc_url.clone());
+        let confirmer_task = tokio::spawn(confirmer.run(confirmer_client));
 
         let max_in_flight_per_sender = self.config.max_in_flight_per_sender;
 
-        let mut rate_limiter = RateLimiter::new(self.config.tps);
+        let initial_avg_gas = 21_000u64;
+        let mut rate_limiter = RateLimiter::new(self.config.target_gps, initial_avg_gas);
         let start = Instant::now();
         let mut current_account_idx = 0usize;
         let account_count = self.accounts.len();
@@ -314,6 +320,8 @@ impl LoadRunner {
         let batch_timeout = self.config.batch_timeout;
 
         info!(
+            target_gps = self.config.target_gps,
+            effective_tps = rate_limiter.effective_tps(),
             max_in_flight_per_sender,
             batch_size,
             batch_timeout_ms = batch_timeout.as_millis(),
@@ -323,6 +331,8 @@ impl LoadRunner {
         let mut pending_batch: Vec<PreparedTx> = Vec::with_capacity(batch_size);
         let mut batch_start = Instant::now();
         let mut backoff = AdaptiveBackoff::default();
+
+        let mut consecutive_at_limit = 0usize;
 
         while start.elapsed() < self.config.duration && !self.stop_flag.load(Ordering::SeqCst) {
             let account = &self.accounts.accounts()[current_account_idx];
@@ -336,12 +346,16 @@ impl LoadRunner {
                     "sender in-flight limit reached, skipping to next"
                 );
                 current_account_idx = (current_account_idx + 1) % account_count;
+                consecutive_at_limit += 1;
 
-                if self.all_senders_at_limit(&confirmer_handle, max_in_flight_per_sender) {
+                if consecutive_at_limit >= account_count {
                     tokio::time::sleep(Duration::from_millis(10)).await;
+                    consecutive_at_limit = 0;
                 }
                 continue;
             }
+
+            consecutive_at_limit = 0;
 
             rate_limiter.tick().await;
 
@@ -351,18 +365,11 @@ impl LoadRunner {
 
             let tx_request = self.generator.generate_payload(from, to)?;
 
-            let Some(nonce) = self.nonce_tracker.allocate(&from) else {
-                warn!(address = %from, "failed to allocate nonce");
-                current_account_idx = (current_account_idx + 1) % account_count;
-                continue;
-            };
-
             pending_batch.push(PreparedTx {
                 from,
                 to,
                 value: tx_request.value,
                 data: tx_request.data,
-                nonce,
                 gas_limit: tx_request.gas_limit.unwrap_or(21_000),
             });
 
@@ -385,12 +392,6 @@ impl LoadRunner {
             let submitted = self.submit_batch(pending_batch, &confirmer_handle, &mut backoff).await;
 
             debug!(submitted, "final batch submitted");
-        }
-
-        for account in self.accounts.accounts() {
-            if let Err(e) = self.nonce_tracker.heal(&account.address, &self.client).await {
-                warn!(address = %account.address, error = %e, "failed to heal nonce gaps");
-            }
         }
 
         self.stop_flag.store(true, Ordering::SeqCst);
@@ -437,15 +438,6 @@ impl LoadRunner {
         Ok(self.collector.summarize())
     }
 
-    fn all_senders_at_limit(&self, handle: &ConfirmerHandle, max: u64) -> bool {
-        for account in self.accounts.accounts() {
-            if handle.in_flight_for(&account.address) < max {
-                return false;
-            }
-        }
-        true
-    }
-
     async fn submit_batch(
         &mut self,
         batch: Vec<PreparedTx>,
@@ -461,13 +453,27 @@ impl LoadRunner {
                 continue;
             };
 
+            let Some(nonce_manager) = self.nonce_managers.get(&prepared.from) else {
+                warn!(from = %prepared.from, "no nonce manager for sender");
+                continue;
+            };
+
+            let nonce_guard = match nonce_manager.next_nonce().await {
+                Ok(guard) => guard,
+                Err(e) => {
+                    warn!(from = %prepared.from, error = %e, "failed to acquire nonce");
+                    continue;
+                }
+            };
+            let nonce = nonce_guard.nonce();
+
             let max_fee = self.gas_price.saturating_mul(2);
             let tx = AlloyTxRequest::default()
                 .with_from(prepared.from)
                 .with_to(prepared.to)
                 .with_value(prepared.value)
                 .with_input(prepared.data)
-                .with_nonce(prepared.nonce)
+                .with_nonce(nonce)
                 .with_chain_id(chain_id)
                 .with_max_fee_per_gas(max_fee)
                 .with_max_priority_fee_per_gas((self.gas_price / 10).max(1))
@@ -475,6 +481,7 @@ impl LoadRunner {
 
             let mut attempts = 0;
             let max_attempts = 3;
+            let mut should_rollback = false;
 
             loop {
                 match provider.send_transaction(tx.clone()).await {
@@ -488,7 +495,7 @@ impl LoadRunner {
                         debug!(
                             tx_hash = %tx_hash,
                             from = %prepared.from,
-                            nonce = prepared.nonce,
+                            nonce,
                             "tx submitted"
                         );
 
@@ -508,7 +515,7 @@ impl LoadRunner {
                                 attempt = attempts,
                                 backoff_ms = delay.as_millis(),
                                 from = %prepared.from,
-                                nonce = prepared.nonce,
+                                nonce,
                                 "txpool full, retrying with adaptive backoff"
                             );
                             tokio::time::sleep(delay).await;
@@ -518,25 +525,28 @@ impl LoadRunner {
                         if error_str.contains("nonce too low") {
                             debug!(
                                 from = %prepared.from,
-                                nonce = prepared.nonce,
-                                "nonce too low, marking as confirmed"
+                                nonce,
+                                "nonce too low, already confirmed on chain"
                             );
-                            self.nonce_tracker.confirm(&prepared.from, prepared.nonce);
                             break;
                         }
 
                         warn!(
                             from = %prepared.from,
-                            nonce = prepared.nonce,
+                            nonce,
                             error = %error_str,
                             "tx submission failed"
                         );
-                        self.nonce_tracker.fail(&prepared.from, prepared.nonce);
                         self.collector.record_failed(alloy_primitives::TxHash::ZERO, &error_str);
                         backoff.record_error();
+                        should_rollback = true;
                         break;
                     }
                 }
+            }
+
+            if should_rollback {
+                nonce_guard.rollback();
             }
         }
 

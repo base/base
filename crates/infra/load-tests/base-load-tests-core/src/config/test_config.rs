@@ -1,12 +1,13 @@
 use std::{path::Path, time::Duration};
 
 use alloy_primitives::Address;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
-    workload::PrecompileTarget,
+    workload::parse_precompile_id,
 };
 
 /// Configuration for a load test, loadable from YAML.
@@ -43,9 +44,9 @@ pub struct TestConfig {
     #[serde(default = "default_duration")]
     pub duration: Option<String>,
 
-    /// Target transactions per second.
-    #[serde(default = "default_target_tps")]
-    pub target_tps: Option<u32>,
+    /// Target gas per second.
+    #[serde(default = "default_target_gps")]
+    pub target_gps: Option<u64>,
 
     /// Seed for deterministic account generation (used if mnemonic not provided).
     #[serde(default = "default_seed")]
@@ -111,8 +112,8 @@ const fn default_in_flight_per_sender() -> u32 {
     16
 }
 
-const fn default_seed() -> u64 {
-    42
+fn default_seed() -> u64 {
+    rand::rng().random()
 }
 
 const fn default_calldata_size() -> usize {
@@ -123,8 +124,8 @@ fn default_duration() -> Option<String> {
     Some("30s".to_string())
 }
 
-const fn default_target_tps() -> Option<u32> {
-    Some(100)
+const fn default_target_gps() -> Option<u64> {
+    Some(2_100_000)
 }
 
 fn default_precompile() -> String {
@@ -199,7 +200,7 @@ impl TestConfig {
             mnemonic: self.mnemonic.clone(),
             sender_offset: self.sender_offset as usize,
             transactions,
-            tps: self.target_tps.unwrap_or(100) as u64,
+            target_gps: self.target_gps.unwrap_or(2_100_000),
             duration,
             max_in_flight_per_sender: self.in_flight_per_sender as u64,
             batch_size: 5,
@@ -220,26 +221,11 @@ impl TestConfig {
                 TxType::Erc20 { contract: address }
             }
             TxTypeConfig::Precompile { target } => {
-                let precompile = parse_precompile_target(target)?;
-                TxType::Precompile { target: precompile }
+                let id = parse_precompile_id(target).map_err(BaselineError::Config)?;
+                TxType::Precompile { target: id }
             }
         };
         Ok(TxConfig { weight: weighted.weight, tx_type })
-    }
-}
-
-fn parse_precompile_target(target: &str) -> Result<PrecompileTarget> {
-    match target.to_lowercase().as_str() {
-        "sha256" => Ok(PrecompileTarget::Sha256),
-        "identity" => Ok(PrecompileTarget::Identity),
-        "ecrecover" | "ec_recover" => Ok(PrecompileTarget::EcRecover),
-        "ripemd160" | "ripemd" => Ok(PrecompileTarget::Ripemd160),
-        "modexp" | "mod_exp" => Ok(PrecompileTarget::ModExp),
-        "ecadd" | "ec_add" => Ok(PrecompileTarget::EcAdd),
-        "ecmul" | "ec_mul" => Ok(PrecompileTarget::EcMul),
-        "ecpairing" | "ec_pairing" => Ok(PrecompileTarget::EcPairing),
-        "blake2f" | "blake2" => Ok(PrecompileTarget::Blake2f),
-        _ => Err(BaselineError::Config(format!("unknown precompile target: {target}"))),
     }
 }
 
@@ -270,7 +256,7 @@ sender_count: 20
 sender_offset: 5
 in_flight_per_sender: 32
 duration: "5m"
-target_tps: 100
+target_gps: 2100000
 seed: 12345
 transactions:
   - weight: 70

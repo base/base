@@ -26,11 +26,11 @@ in_flight_per_sender: 16
 # Test duration using humantime format: "30s", "5m", "1h 30m" (default: "30s")
 duration: "30s"
 
-# Target transactions per second (default: 100)
-target_tps: 100
+# Target gas per second (default: 2100000, ~100 simple transfers)
+target_gps: 2100000
 
-# Seed for deterministic account generation when mnemonic not provided (default: 42)
-seed: 42
+# Seed for deterministic account generation when mnemonic not provided (default: random)
+# seed: 12345
 
 # Chain ID - if not provided, fetched from RPC
 chain_id: 11763072

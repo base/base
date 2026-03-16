@@ -1,3 +1,5 @@
+use std::future::Future;
+
 use alloy_network::{Ethereum, EthereumWallet};
 use alloy_primitives::{Address, TxHash, U256};
 use alloy_provider::{
@@ -9,6 +11,27 @@ use tracing::instrument;
 use url::Url;
 
 use crate::utils::{BaselineError, Result};
+
+/// Provider trait for fetching transaction receipts and block data.
+///
+/// This trait abstracts the RPC calls needed by the confirmer, enabling
+/// mock implementations for testing.
+pub trait ReceiptProvider: Send + Sync {
+    /// Fetches the current block number.
+    fn get_block_number(&self) -> impl Future<Output = Result<u64>> + Send;
+
+    /// Fetches all transaction receipts for a given block.
+    fn get_block_receipts(
+        &self,
+        block_number: u64,
+    ) -> impl Future<Output = Result<Option<Vec<TransactionReceipt>>>> + Send;
+
+    /// Fetches the transaction receipt for a given hash.
+    fn get_transaction_receipt(
+        &self,
+        tx_hash: TxHash,
+    ) -> impl Future<Output = Result<Option<TransactionReceipt>>> + Send;
+}
 
 type HttpProvider = FillProvider<
     JoinFill<
@@ -28,7 +51,8 @@ type HttpProvider = FillProvider<
     Ethereum,
 >;
 
-pub(crate) type WalletProvider = FillProvider<
+/// Provider type with wallet signing capability for sending transactions.
+pub type WalletProvider = FillProvider<
     JoinFill<
         JoinFill<
             Identity,
@@ -49,7 +73,8 @@ pub(crate) type WalletProvider = FillProvider<
     Ethereum,
 >;
 
-pub(crate) fn create_wallet_provider(rpc_url: Url, wallet: EthereumWallet) -> WalletProvider {
+/// Creates a wallet provider for the given RPC URL and wallet.
+pub fn create_wallet_provider(rpc_url: Url, wallet: EthereumWallet) -> WalletProvider {
     ProviderBuilder::new().wallet(wallet).connect_http(rpc_url)
 }
 
@@ -137,5 +162,25 @@ impl RpcClient {
 impl std::fmt::Debug for RpcClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RpcClient").field("url", &self.url).finish_non_exhaustive()
+    }
+}
+
+impl ReceiptProvider for RpcClient {
+    async fn get_block_number(&self) -> Result<u64> {
+        self.get_block_number().await
+    }
+
+    async fn get_block_receipts(
+        &self,
+        block_number: u64,
+    ) -> Result<Option<Vec<TransactionReceipt>>> {
+        self.get_block_receipts(block_number).await
+    }
+
+    async fn get_transaction_receipt(
+        &self,
+        tx_hash: TxHash,
+    ) -> Result<Option<TransactionReceipt>> {
+        self.get_transaction_receipt(tx_hash).await
     }
 }

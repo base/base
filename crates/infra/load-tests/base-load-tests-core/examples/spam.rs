@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+//! Example transaction spammer that loads a YAML config and runs a load test.
 
 use std::path::PathBuf;
 
@@ -10,10 +10,13 @@ use eyre::{Result, bail};
 async fn main() -> Result<()> {
     init_tracing();
 
-    let config_path = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/config.yaml"));
+    let config_path = match std::env::args().nth(1) {
+        Some(path) => PathBuf::from(path),
+        None => match option_env!("CARGO_MANIFEST_DIR") {
+            Some(dir) => PathBuf::from(dir).join("examples/config.yaml"),
+            None => bail!("usage: spam <config.yaml>"),
+        },
+    };
 
     if !config_path.exists() {
         bail!("config file not found: {}", config_path.display());
@@ -33,7 +36,7 @@ async fn main() -> Result<()> {
 
     println!("RPC URL: {}", test_config.rpc);
     println!("Chain ID: {}", load_config.chain_id);
-    println!("Target TPS: {}", load_config.tps);
+    println!("Target GPS: {}", load_config.target_gps);
     println!("Duration: {:?}", load_config.duration);
     println!("Accounts: {}", load_config.account_count);
     println!("Max in-flight per sender: {}", load_config.max_in_flight_per_sender);
@@ -58,6 +61,7 @@ async fn main() -> Result<()> {
     println!("Confirmed: {}", summary.throughput.total_confirmed);
     println!("Failed: {}", summary.throughput.total_failed);
     println!("TPS: {:.2}", summary.throughput.tps);
+    println!("GPS: {:.2}", summary.throughput.gps);
     println!("Success Rate: {:.2}%", summary.throughput.success_rate());
     println!();
     println!("Latency:");

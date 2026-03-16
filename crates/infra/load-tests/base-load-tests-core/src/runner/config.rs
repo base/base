@@ -1,17 +1,17 @@
 use std::time::Duration;
 
 use alloy_primitives::Address;
+use revm::precompile::PrecompileId;
 use url::Url;
 
-use crate::{
-    utils::{BaselineError, Result},
-    workload::PrecompileTarget,
-};
+use crate::utils::{BaselineError, Result};
 
 /// Configuration for a single transaction type with its weight.
 #[derive(Debug, Clone)]
 pub struct TxConfig {
-    /// Weight for random selection (higher = more frequent).
+    /// Weight for transaction count selection (higher = more transactions of this type).
+    /// Weights are relative: if Transfer has weight 70 and Calldata has weight 30,
+    /// ~70% of generated transactions will be transfers.
     pub weight: u32,
     /// The transaction type details.
     pub tx_type: TxType,
@@ -35,7 +35,7 @@ pub enum TxType {
     /// Precompile call.
     Precompile {
         /// Target precompile.
-        target: PrecompileTarget,
+        target: PrecompileId,
     },
 }
 
@@ -56,8 +56,8 @@ pub struct LoadConfig {
     pub sender_offset: usize,
     /// Transaction types with weights.
     pub transactions: Vec<TxConfig>,
-    /// Target transactions per second.
-    pub tps: u64,
+    /// Target gas per second.
+    pub target_gps: u64,
     /// Duration of the load test.
     pub duration: Duration,
     /// Maximum in-flight (unconfirmed) transactions per sender.
@@ -79,7 +79,7 @@ impl LoadConfig {
             mnemonic: None,
             sender_offset: 0,
             transactions: vec![TxConfig { weight: 100, tx_type: TxType::Transfer }],
-            tps: 100,
+            target_gps: 2_100_000,
             duration: Duration::from_secs(30),
             max_in_flight_per_sender: 50,
             batch_size: 5,
@@ -97,7 +97,7 @@ impl LoadConfig {
             mnemonic: None,
             sender_offset: 0,
             transactions: vec![TxConfig { weight: 100, tx_type: TxType::Transfer }],
-            tps: 100,
+            target_gps: 2_100_000,
             duration: Duration::from_secs(30),
             max_in_flight_per_sender: 50,
             batch_size: 5,
@@ -110,8 +110,8 @@ impl LoadConfig {
         if self.account_count == 0 {
             return Err(BaselineError::Config("account_count must be > 0".into()));
         }
-        if self.tps == 0 {
-            return Err(BaselineError::Config("tps must be > 0".into()));
+        if self.target_gps == 0 {
+            return Err(BaselineError::Config("target_gps must be > 0".into()));
         }
         if self.duration.is_zero() {
             return Err(BaselineError::Config("duration must be > 0".into()));
@@ -167,9 +167,9 @@ impl LoadConfig {
         self
     }
 
-    /// Sets the target TPS.
-    pub const fn with_tps(mut self, tps: u64) -> Self {
-        self.tps = tps;
+    /// Sets the target gas per second.
+    pub const fn with_target_gps(mut self, gps: u64) -> Self {
+        self.target_gps = gps;
         self
     }
 

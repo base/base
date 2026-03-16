@@ -7,11 +7,8 @@ pub use rate_limiter::RateLimiter;
 mod backoff;
 pub use backoff::AdaptiveBackoff;
 
-mod nonce;
-pub use nonce::NonceTracker;
-
 mod confirmer;
-pub use confirmer::{Confirmer, ConfirmerHandle, PendingTx};
+pub use confirmer::{Confirmer, ConfirmerHandle};
 
 mod load_runner;
 pub use load_runner::LoadRunner;

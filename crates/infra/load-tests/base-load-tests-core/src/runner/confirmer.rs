@@ -12,16 +12,19 @@ use futures::future::join_all;
 use tokio::sync::mpsc;
 use tracing::{debug, trace, warn};
 
-use crate::{metrics::TransactionMetrics, rpc::RpcClient};
+use crate::{metrics::TransactionMetrics, rpc::ReceiptProvider};
 
 /// Default channel buffer size for pending transactions.
 /// Sized for ~2 seconds of throughput at 1000 TPS.
 const PENDING_CHANNEL_BUFFER: usize = 2000;
 
+/// Initial block lookback window on first poll.
+/// Catches transactions confirmed between submission and confirmer startup.
+const INITIAL_BLOCK_LOOKBACK: u64 = 5;
+
 /// Tracks pending transactions and collects confirmation metrics.
 #[derive(Debug)]
 pub struct Confirmer {
-    rpc_url: url::Url,
     pending: HashMap<TxHash, PendingTx>,
     metrics_tx: mpsc::Sender<TransactionMetrics>,
     in_flight_per_sender: HashMap<Address, Arc<AtomicU64>>,
@@ -31,11 +34,13 @@ pub struct Confirmer {
     max_pending_age: Duration,
     last_checked_block: u64,
     max_straggler_lookups: usize,
+    pending_rx: Option<mpsc::Receiver<PendingTx>>,
+    pending_tx: mpsc::Sender<PendingTx>,
 }
 
 /// A pending transaction awaiting confirmation.
 #[derive(Debug)]
-pub struct PendingTx {
+struct PendingTx {
     tx_hash: TxHash,
     from: Address,
     submit_time: Instant,
@@ -85,7 +90,6 @@ impl ConfirmerHandle {
 impl Confirmer {
     /// Creates a new confirmer.
     pub fn new(
-        rpc_url: url::Url,
         sender_addresses: &[Address],
         metrics_tx: mpsc::Sender<TransactionMetrics>,
         stop_flag: Arc<AtomicBool>,
@@ -95,8 +99,9 @@ impl Confirmer {
             in_flight_per_sender.insert(*addr, Arc::new(AtomicU64::new(0)));
         }
 
+        let (pending_tx, pending_rx) = mpsc::channel(PENDING_CHANNEL_BUFFER);
+
         Self {
-            rpc_url,
             pending: HashMap::new(),
             metrics_tx,
             in_flight_per_sender,
@@ -106,23 +111,27 @@ impl Confirmer {
             max_pending_age: Duration::from_secs(60),
             last_checked_block: 0,
             max_straggler_lookups: 10,
+            pending_rx: Some(pending_rx),
+            pending_tx,
         }
     }
 
-    /// Creates a handle for submitting transactions.
-    pub fn handle(&self) -> (ConfirmerHandle, mpsc::Receiver<PendingTx>) {
-        let (pending_tx, pending_rx) = mpsc::channel(PENDING_CHANNEL_BUFFER);
-        let handle = ConfirmerHandle {
-            pending_tx,
+    /// Takes the handle for submitting transactions.
+    ///
+    /// This method can only be called once. Subsequent calls will panic.
+    /// The receiver is stored internally and used by `run()`.
+    pub fn handle(&mut self) -> ConfirmerHandle {
+        ConfirmerHandle {
+            pending_tx: self.pending_tx.clone(),
             in_flight_per_sender: Arc::new(self.in_flight_per_sender.clone()),
             total_in_flight: Arc::clone(&self.total_in_flight),
-        };
-        (handle, pending_rx)
+        }
     }
 
     /// Runs the confirmation loop until stopped.
-    pub async fn run(mut self, mut pending_rx: mpsc::Receiver<PendingTx>) {
-        let client = RpcClient::new(self.rpc_url.clone());
+    pub async fn run(mut self, client: impl ReceiptProvider) {
+        let mut pending_rx =
+            self.pending_rx.take().expect("run() called without pending_rx - was handle() called?");
 
         loop {
             while let Ok(pending) = pending_rx.try_recv() {
@@ -144,7 +153,7 @@ impl Confirmer {
         debug!(confirmed = self.metrics_tx.is_closed(), "confirmer shutting down");
     }
 
-    async fn poll_confirmations(&mut self, client: &RpcClient) {
+    async fn poll_confirmations(&mut self, client: &impl ReceiptProvider) {
         let now = Instant::now();
         let mut confirmed = Vec::new();
         let mut expired = Vec::new();
@@ -164,7 +173,7 @@ impl Confirmer {
         };
 
         let start_block = if self.last_checked_block == 0 {
-            current_block.saturating_sub(5)
+            current_block.saturating_sub(INITIAL_BLOCK_LOOKBACK)
         } else {
             self.last_checked_block + 1
         };
@@ -218,12 +227,18 @@ impl Confirmer {
 
         self.lookup_stragglers(client, &found_in_blocks, &mut confirmed).await;
 
+        let confirmed_hashes: HashSet<TxHash> = confirmed.iter().map(|(hash, _)| *hash).collect();
+
         for (tx_hash, from) in confirmed {
             self.pending.remove(&tx_hash);
             self.decrement_in_flight(&from);
         }
 
         for tx_hash in expired {
+            // Skip if already processed as confirmed to avoid double-decrement
+            if confirmed_hashes.contains(&tx_hash) {
+                continue;
+            }
             if let Some(pending) = self.pending.remove(&tx_hash) {
                 warn!(tx_hash = %tx_hash, from = %pending.from, "transaction expired without confirmation");
                 self.decrement_in_flight(&pending.from);
@@ -231,9 +246,14 @@ impl Confirmer {
         }
     }
 
+    /// Looks up individual receipts for old pending transactions not found in recent blocks.
+    ///
+    /// Block receipt fetching may miss transactions confirmed in blocks before the lookback
+    /// window. This fallback queries receipts directly for transactions pending longer than
+    /// 10 seconds, limited to `max_straggler_lookups` per poll to bound RPC load.
     async fn lookup_stragglers(
         &self,
-        client: &RpcClient,
+        client: &impl ReceiptProvider,
         already_found: &HashSet<TxHash>,
         confirmed: &mut Vec<(TxHash, Address)>,
     ) {
@@ -282,8 +302,12 @@ impl Confirmer {
 
     fn decrement_in_flight(&self, from: &Address) {
         if let Some(counter) = self.in_flight_per_sender.get(from) {
-            counter.fetch_sub(1, Ordering::SeqCst);
+            let _ = counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+                v.checked_sub(1)
+            });
         }
-        self.total_in_flight.fetch_sub(1, Ordering::SeqCst);
+        let _ = self.total_in_flight.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
+            v.checked_sub(1)
+        });
     }
 }

@@ -1,5 +1,4 @@
 mod errors;
 pub use errors::{BaselineError, Result};
 
-mod logging;
-pub use logging::{TracingGuard, init_tracing};
+pub use base_cli_utils::init_test_tracing as init_tracing;

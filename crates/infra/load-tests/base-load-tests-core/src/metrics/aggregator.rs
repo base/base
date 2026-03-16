@@ -36,7 +36,7 @@ impl<'a> MetricsAggregator<'a> {
         let len = latencies.len();
         let sum: Duration = latencies.iter().sum();
 
-        let mean = Duration::from_nanos(sum.as_nanos() as u64 / len as u64);
+        let mean = Duration::from_nanos((sum.as_nanos() / len as u128) as u64);
         LatencyMetrics {
             min: latencies[0],
             max: latencies[len - 1],
@@ -54,10 +54,13 @@ impl<'a> MetricsAggregator<'a> {
         failed: u64,
     ) -> ThroughputMetrics {
         let confirmed = self.transactions.len() as u64;
-        let tps = if duration.as_secs_f64() > 0.0 {
-            confirmed as f64 / duration.as_secs_f64()
+        let total_gas: u64 = self.transactions.iter().map(|t| t.gas_used).sum();
+        let duration_secs = duration.as_secs_f64();
+
+        let (tps, gps) = if duration_secs > 0.0 {
+            (confirmed as f64 / duration_secs, total_gas as f64 / duration_secs)
         } else {
-            0.0
+            (0.0, 0.0)
         };
 
         ThroughputMetrics {
@@ -65,6 +68,7 @@ impl<'a> MetricsAggregator<'a> {
             total_confirmed: confirmed,
             total_failed: failed,
             tps,
+            gps,
             duration,
         }
     }
@@ -88,7 +92,9 @@ impl<'a> MetricsAggregator<'a> {
     }
 
     fn percentile(sorted: &[Duration], pct: usize) -> Duration {
-        let idx = (sorted.len() * pct / 100).saturating_sub(1).max(0);
+        // Use ceiling division to get 1-indexed rank, then convert to 0-indexed
+        let rank = (sorted.len() * pct).div_ceil(100);
+        let idx = rank.saturating_sub(1).min(sorted.len() - 1);
         sorted[idx]
     }
 }
