@@ -75,6 +75,15 @@ impl MetricsCollector {
         self.submitted_count = 0;
         self.failed_count = 0;
     }
+
+    /// Returns the average gas used per confirmed transaction.
+    pub fn avg_gas_used(&self) -> Option<u64> {
+        if self.transactions.is_empty() {
+            return None;
+        }
+        let total: u64 = self.transactions.iter().map(|t| t.gas_used).sum();
+        Some(total / self.transactions.len() as u64)
+    }
 }
 
 impl Default for MetricsCollector {

@@ -154,6 +154,26 @@ impl LoadRunner {
         Ok(generator)
     }
 
+    fn estimate_avg_gas(&self) -> u64 {
+        let total_weight: u32 = self.config.transactions.iter().map(|t| t.weight).sum();
+        if total_weight == 0 {
+            return 21_000;
+        }
+
+        let mut weighted_gas = 0u64;
+        for tx_config in &self.config.transactions {
+            let gas_estimate = match &tx_config.tx_type {
+                TxType::Transfer => 21_000,
+                TxType::Calldata { max_size, .. } => 21_000 + (*max_size as u64 * 16),
+                TxType::Erc20 { .. } => 65_000,
+                TxType::Precompile { .. } => 100_000,
+            };
+            weighted_gas += gas_estimate * tx_config.weight as u64;
+        }
+
+        weighted_gas / total_weight as u64
+    }
+
     /// Funds all accounts from a funding key up to the specified amount.
     #[instrument(skip(self, funding_key), fields(accounts = self.accounts.len()))]
     pub async fn fund_accounts(
@@ -302,13 +322,16 @@ impl LoadRunner {
         let mut confirmer =
             Confirmer::new(&sender_addresses, metrics_tx, Arc::clone(&self.stop_flag));
         let confirmer_handle = confirmer.handle();
+        let confirmer_handle_for_run = confirmer_handle.clone();
 
         let confirmer_client = RpcClient::new(self.config.rpc_url.clone());
-        let confirmer_task = tokio::spawn(confirmer.run(confirmer_client));
+        let confirmer_task = tokio::spawn(async move {
+            confirmer.run(confirmer_client, &confirmer_handle_for_run).await
+        });
 
         let max_in_flight_per_sender = self.config.max_in_flight_per_sender;
 
-        let initial_avg_gas = 21_000u64;
+        let initial_avg_gas = self.estimate_avg_gas();
         let mut rate_limiter = RateLimiter::new(self.config.target_gps, initial_avg_gas);
         let start = Instant::now();
         let mut current_account_idx = 0usize;
@@ -319,6 +342,7 @@ impl LoadRunner {
 
         info!(
             target_gps = self.config.target_gps,
+            initial_avg_gas,
             effective_tps = rate_limiter.effective_tps(),
             max_in_flight_per_sender,
             batch_size,
@@ -332,7 +356,9 @@ impl LoadRunner {
 
         let mut consecutive_at_limit = 0usize;
         let mut last_gas_price_refresh = Instant::now();
+        let mut last_rate_limiter_update = Instant::now();
         const GAS_PRICE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+        const RATE_LIMITER_UPDATE_INTERVAL: Duration = Duration::from_secs(10);
 
         while start.elapsed() < self.config.duration && !self.stop_flag.load(Ordering::SeqCst) {
             if last_gas_price_refresh.elapsed() >= GAS_PRICE_REFRESH_INTERVAL {
@@ -343,6 +369,13 @@ impl LoadRunner {
                     self.gas_price = new_price;
                 }
                 last_gas_price_refresh = Instant::now();
+            }
+
+            if last_rate_limiter_update.elapsed() >= RATE_LIMITER_UPDATE_INTERVAL {
+                if let Some(avg_gas) = self.collector.avg_gas_used() {
+                    rate_limiter.update_avg_gas(avg_gas);
+                }
+                last_rate_limiter_update = Instant::now();
             }
 
             let account = &self.accounts.accounts()[current_account_idx];
@@ -377,7 +410,7 @@ impl LoadRunner {
 
             pending_batch.push(PreparedTx {
                 from,
-                to,
+                to: tx_request.to,
                 value: tx_request.value,
                 data: tx_request.data,
                 gas_limit: tx_request.gas_limit.unwrap_or(21_000),
@@ -477,7 +510,7 @@ impl LoadRunner {
             };
             let nonce = nonce_guard.nonce();
 
-            let max_fee = self.gas_price.saturating_mul(2);
+            let max_fee = self.gas_price.saturating_mul(2).min(self.config.max_gas_price);
             let tx = AlloyTxRequest::default()
                 .with_from(prepared.from)
                 .with_to(prepared.to)

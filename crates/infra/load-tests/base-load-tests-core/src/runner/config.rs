@@ -41,6 +41,9 @@ pub enum TxType {
     },
 }
 
+/// Default maximum gas price cap (1000 gwei).
+pub const DEFAULT_MAX_GAS_PRICE: u128 = 1_000_000_000_000;
+
 /// Configuration for a load test run.
 #[derive(Debug, Clone)]
 pub struct LoadConfig {
@@ -68,6 +71,8 @@ pub struct LoadConfig {
     pub batch_size: usize,
     /// Maximum time to wait for a batch to fill before flushing.
     pub batch_timeout: Duration,
+    /// Maximum gas price cap to prevent overspending during congestion.
+    pub max_gas_price: u128,
 }
 
 impl LoadConfig {
@@ -86,6 +91,7 @@ impl LoadConfig {
             max_in_flight_per_sender: 50,
             batch_size: 5,
             batch_timeout: Duration::from_millis(50),
+            max_gas_price: DEFAULT_MAX_GAS_PRICE,
         }
     }
 
@@ -104,6 +110,7 @@ impl LoadConfig {
             max_in_flight_per_sender: 50,
             batch_size: 5,
             batch_timeout: Duration::from_millis(50),
+            max_gas_price: DEFAULT_MAX_GAS_PRICE,
         }
     }
 

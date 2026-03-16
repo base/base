@@ -116,10 +116,12 @@ impl Confirmer {
         }
     }
 
-    /// Takes the handle for submitting transactions.
+    /// Creates a handle for submitting transactions.
     ///
-    /// This method can only be called once. Subsequent calls will panic.
-    /// The receiver is stored internally and used by `run()`.
+    /// This method can be called multiple times; each handle shares the same
+    /// underlying channel and in-flight counters. At least one handle must
+    /// be created and passed to `run()` to prove the submission channel is
+    /// in use.
     pub fn handle(&mut self) -> ConfirmerHandle {
         ConfirmerHandle {
             pending_tx: self.pending_tx.clone(),
@@ -129,9 +131,13 @@ impl Confirmer {
     }
 
     /// Runs the confirmation loop until stopped.
-    pub async fn run(mut self, client: impl ReceiptProvider) {
+    ///
+    /// Requires a `ConfirmerHandle` as proof that the submission channel is
+    /// in use. The handle itself is not consumed, allowing continued
+    /// submission during the run.
+    pub async fn run(mut self, client: impl ReceiptProvider, _handle: &ConfirmerHandle) {
         let mut pending_rx =
-            self.pending_rx.take().expect("run() called without pending_rx - was handle() called?");
+            self.pending_rx.take().expect("run() called twice on the same Confirmer");
 
         loop {
             while let Ok(pending) = pending_rx.try_recv() {
@@ -150,7 +156,9 @@ impl Confirmer {
 
             self.poll_confirmations(&client).await;
 
-            if !stopped {
+            if stopped {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            } else {
                 tokio::time::sleep(self.poll_interval).await;
             }
         }
@@ -183,7 +191,6 @@ impl Confirmer {
             self.last_checked_block + 1
         };
 
-        let pending_hashes: HashSet<TxHash> = self.pending.keys().copied().collect();
         let mut found_in_blocks = HashSet::new();
 
         for block_num in start_block..=current_block {
@@ -196,26 +203,24 @@ impl Confirmer {
                     );
                     for receipt in receipts {
                         let tx_hash = receipt.transaction_hash;
-                        if pending_hashes.contains(&tx_hash) {
+                        if let Some(pending) = self.pending.get(&tx_hash) {
                             found_in_blocks.insert(tx_hash);
-                            if let Some(pending) = self.pending.get(&tx_hash) {
-                                let latency = pending.submit_time.elapsed();
-                                let metrics = TransactionMetrics::new(
-                                    tx_hash,
-                                    latency,
-                                    receipt.gas_used,
-                                    receipt.effective_gas_price,
-                                    receipt.block_number.unwrap_or(block_num),
-                                );
-                                debug!(
-                                    tx_hash = %tx_hash,
-                                    latency_ms = latency.as_millis(),
-                                    block = block_num,
-                                    "confirmed via block receipts"
-                                );
-                                let _ = self.metrics_tx.send(metrics).await;
-                                confirmed.push((tx_hash, pending.from));
-                            }
+                            let latency = pending.submit_time.elapsed();
+                            let metrics = TransactionMetrics::new(
+                                tx_hash,
+                                latency,
+                                receipt.gas_used,
+                                receipt.effective_gas_price,
+                                receipt.block_number.unwrap_or(block_num),
+                            );
+                            debug!(
+                                tx_hash = %tx_hash,
+                                latency_ms = latency.as_millis(),
+                                block = block_num,
+                                "confirmed via block receipts"
+                            );
+                            let _ = self.metrics_tx.send(metrics).await;
+                            confirmed.push((tx_hash, pending.from));
                         }
                     }
                 }

@@ -1,4 +1,4 @@
-use std::{path::Path, time::Duration};
+use std::{fmt, path::Path, time::Duration};
 
 use alloy_primitives::Address;
 use rand::Rng;
@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// Configuration for a load test, loadable from YAML.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TestConfig {
     /// RPC endpoint URL.
     pub rpc: String,
@@ -60,6 +60,25 @@ pub struct TestConfig {
     /// Transaction types with weights.
     #[serde(default = "default_transactions")]
     pub transactions: Vec<WeightedTxType>,
+}
+
+impl fmt::Debug for TestConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TestConfig")
+            .field("rpc", &self.rpc)
+            .field("mnemonic", &self.mnemonic.as_ref().map(|_| "[REDACTED]"))
+            .field("funder_key", &"[REDACTED]")
+            .field("funding_amount", &self.funding_amount)
+            .field("sender_count", &self.sender_count)
+            .field("sender_offset", &self.sender_offset)
+            .field("in_flight_per_sender", &self.in_flight_per_sender)
+            .field("duration", &self.duration)
+            .field("target_gps", &self.target_gps)
+            .field("seed", &self.seed)
+            .field("chain_id", &self.chain_id)
+            .field("transactions", &self.transactions)
+            .finish()
+    }
 }
 
 /// A transaction type with its weight in the mix.
@@ -213,6 +232,7 @@ impl TestConfig {
             max_in_flight_per_sender: self.in_flight_per_sender as u64,
             batch_size: 5,
             batch_timeout: Duration::from_millis(50),
+            max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
         })
     }
 

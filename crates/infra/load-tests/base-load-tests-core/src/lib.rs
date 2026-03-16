@@ -27,6 +27,6 @@ pub use workload::{
 
 mod runner;
 pub use runner::{
-    AdaptiveBackoff, Confirmer, ConfirmerHandle, LoadConfig, LoadRunner, RateLimiter, TxConfig,
-    TxType,
+    AdaptiveBackoff, Confirmer, ConfirmerHandle, DEFAULT_MAX_GAS_PRICE, LoadConfig, LoadRunner,
+    RateLimiter, TxConfig, TxType,
 };
