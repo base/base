@@ -67,7 +67,9 @@ Transaction lifecycle management for Base onchain components.
   to centralise wallet construction.
 - **`SimpleTxManager`**: Default `TxManager` implementation. Holds a `RootProvider`,
   `EthereumWallet`, `TxManagerConfig`, `NonceManager`, chain ID, and a shutdown flag.
-  `new()` validates the config and cross-checks the chain ID against the provider.
+  `new()` builds the wallet from a `SignerConfig`, validates the config, and cross-checks
+  the chain ID against the provider. `from_wallet()` accepts a pre-built `EthereumWallet`
+  directly, which is useful for tests or custom signers.
   `prepare()` wraps `craft_tx()` in a `backon` retry loop (up to 30 attempts, 2-second
   fixed delay) that retries only on transient errors and exits immediately when closed.
   Both methods accept optional fee overrides `(tip, fee_cap)` and return a `PreparedTx`

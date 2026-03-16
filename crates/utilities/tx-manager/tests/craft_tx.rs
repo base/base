@@ -6,13 +6,13 @@ use alloy_consensus::{SignableTransaction, TxEip1559, TxEip4844Variant, TxEnvelo
 use alloy_eips::{Decodable2718, eip4844::Blob};
 use alloy_network::{EthereumWallet, TxSigner};
 use alloy_node_bindings::Anvil;
-use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
 use base_tx_manager::{
-    FeeCalculator, FeeOverride, GasPriceCaps, NoopTxMetrics, SimpleTxManager, TxCandidate,
-    TxManager, TxManagerConfig, TxManagerError,
+    FeeCalculator, FeeOverride, GasPriceCaps, NoopTxMetrics, SignerConfig, SimpleTxManager,
+    TxCandidate, TxManager, TxManagerConfig, TxManagerError,
 };
 
 /// Helper: spawns an Anvil instance and returns a [`SimpleTxManager`]
@@ -353,6 +353,29 @@ async fn sequential_craft_tx_increments_nonce() {
 
     assert_eq!(decode_eip1559(&prepared1.raw_tx).nonce, 0);
     assert_eq!(decode_eip1559(&prepared2.raw_tx).nonce, 1);
+}
+
+/// Verifies that [`SimpleTxManager::new`] with a [`SignerConfig::Local`]
+/// successfully builds the wallet and creates a functional manager.
+#[tokio::test]
+async fn new_with_signer_config_local_creates_functional_manager() {
+    let anvil = Anvil::new().spawn();
+    let provider = RootProvider::new_http(anvil.endpoint_url());
+    let private_key = anvil.keys()[0].clone();
+    let signer_config =
+        SignerConfig::Local { private_key: B256::from_slice(&private_key.to_bytes()) };
+    let manager = SimpleTxManager::new(
+        provider,
+        signer_config,
+        TxManagerConfig::default(),
+        anvil.chain_id(),
+        Arc::new(NoopTxMetrics),
+    )
+    .await
+    .expect("should create manager via SignerConfig::Local");
+
+    // Sender address should match the Anvil account derived from the key.
+    assert_eq!(manager.sender_address(), anvil.addresses()[0]);
 }
 
 #[tokio::test]

@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 # alloy
-url.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-primitives.workspace = true
@@ -25,6 +24,7 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-alloy-signer.workspace = true
 
 # misc
+url.workspace = true
 backon.workspace = true
 metrics.workspace = true
 thiserror.workspace = true
