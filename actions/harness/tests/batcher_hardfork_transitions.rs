@@ -15,7 +15,7 @@ use base_consensus_genesis::HardForkConfig;
 /// A span batch covering blocks 1–4 where block 3 is the first Jovian block
 /// but **contains user transactions** (which is illegal for the upgrade block)
 /// is partially rejected. The pipeline derives blocks 1–2 from the span batch,
-/// then fails on block 3 (NonEmptyTransitionBlock → FlushChannel under Holocene),
+/// then fails on block 3 (`NonEmptyTransitionBlock` → `FlushChannel` under Holocene),
 /// dropping the span batch's channel. Blocks 3–4 are never derived from the
 /// span batch.
 ///
