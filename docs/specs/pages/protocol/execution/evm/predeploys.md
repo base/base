@@ -11,8 +11,8 @@ implementations as well as allowing for more integration with hardhat/foundry
 network forking.
 
 Predeploy addresses exist in a prefixed namespace `0x4200000000000000000000000000000000000xxx`.
-Proxies are set at the first 2048 addresses in the namespace, except for the addresses reserved for the
-`GovernanceToken` and `WETH` predeploys.
+Proxies are set at the first 2048 addresses in the namespace, except for the address reserved for the
+`WETH` predeploy.
 
 The `LegacyERC20ETH` predeploy lives at a special address `0xDeadDeAddeAddEAddeadDEaDDEAdDeaDDeAD0000`
 and there is no proxy deployed at that account.
@@ -33,7 +33,6 @@ or `Bedrock` or `Canyon`. Deprecated contracts should not be used.
 | OptimismMintableERC20Factory  | 0x4200000000000000000000000000000000000012 | Legacy     | No         | Yes     |
 | L1BlockNumber                 | 0x4200000000000000000000000000000000000013 | Legacy     | Yes        | Yes     |
 | GasPriceOracle                | 0x420000000000000000000000000000000000000F | Legacy     | No         | Yes     |
-| GovernanceToken               | 0x4200000000000000000000000000000000000042 | Legacy     | No         | No      |
 | L1Block                       | 0x4200000000000000000000000000000000000015 | Bedrock    | No         | Yes     |
 | L2ToL1MessagePasser           | 0x4200000000000000000000000000000000000016 | Bedrock    | No         | Yes     |
 | L2ERC721Bridge                | 0x4200000000000000000000000000000000000014 | Legacy     | No         | Yes     |
@@ -327,12 +326,6 @@ Address: `0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02`
 
 The `BeaconBlockRoot` predeploy provides access to the L1 beacon block roots. This was added during the
 Ecotone network upgrade and is specified in [EIP-4788](https://eips.ethereum.org/EIPS/eip-4788).
-
-## Governance Token
-
-Address: 0x4200000000000000000000000000000000000042
-
-See [Governance Token specs](https://specs.optimism.io/governance/gov-token.html).
 
 ## Operator Fee Vault
 
