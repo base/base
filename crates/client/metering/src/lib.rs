@@ -7,6 +7,14 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+use alloy_primitives::TxHash;
+
+pub(crate) const DEFAULT_PENDING_STATE_ROOT_TIMES_CAPACITY: usize = 10_000;
+pub(crate) type PendingStateRootTimes = lru::LruCache<TxHash, u128>;
+
+mod collector;
+pub use collector::MeteringCollector;
+
 mod block;
 pub use block::meter_block;
 

@@ -1,13 +1,16 @@
 //! Traits for the metering RPC module.
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::B256;
+use alloy_primitives::{B256, TxHash};
 use base_bundles::{Bundle, MeterBundleResponse};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
 use crate::{MeterBlockResponse, MeteredPriorityFeeResponse};
 
-/// RPC API for transaction metering
+/// RPC API for transaction metering.
+///
+/// The mutating metering methods in this namespace are intended for trusted internal callers only.
+/// Operators should restrict access to them with private networking or authenticated proxying.
 #[rpc(server, namespace = "base")]
 pub trait MeteringApi {
     /// Simulates and meters a bundle of transactions
@@ -59,4 +62,25 @@ pub trait MeteringApi {
         &self,
         bundle: Bundle,
     ) -> RpcResult<MeteredPriorityFeeResponse>;
+
+    /// Sets metering information for a transaction. Called by trusted ingestion
+    /// infrastructure to push externally measured state root timing for priority
+    /// fee estimation.
+    ///
+    /// Only `meter.state_root_time_us` is consumed here; the full response shape
+    /// matches the existing ingress metering payload.
+    #[method(name = "setMeteringInformation")]
+    async fn set_metering_information(
+        &self,
+        tx_hash: TxHash,
+        meter: MeterBundleResponse,
+    ) -> RpcResult<()>;
+
+    /// Enables or disables metering data collection.
+    #[method(name = "setMeteringEnabled")]
+    async fn set_metering_enabled(&self, enabled: bool) -> RpcResult<()>;
+
+    /// Clears all pending metering information.
+    #[method(name = "clearMeteringInformation")]
+    async fn clear_metering_information(&self) -> RpcResult<()>;
 }

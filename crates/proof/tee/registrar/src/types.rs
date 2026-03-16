@@ -3,15 +3,9 @@ use alloy_primitives::{Address, B256, Bytes};
 /// A prover instance discovered from the infrastructure layer.
 #[derive(Debug, Clone)]
 pub struct ProverInstance {
-    /// Unique identifier for the instance.
-    ///
-    /// K8s mode: pod DNS name (`{name}-{i}.{svc}.{ns}.svc.cluster.local:{port}`).
-    /// AWS mode: EC2 instance ID (e.g. `i-0abc123def456`).
+    /// EC2 instance ID (e.g. `i-0abc123def456`).
     pub instance_id: String,
-    /// HTTP connection endpoint used to contact the instance.
-    ///
-    /// K8s mode: same as `instance_id` (pod DNS:port).
-    /// AWS mode: private IP and port (e.g. `10.0.1.5:8000`).
+    /// Private IP and port for HTTP connection (e.g. `10.0.1.5:8000`).
     pub endpoint: String,
     /// Current health status of the instance.
     pub health_status: InstanceHealthStatus,
@@ -20,13 +14,13 @@ pub struct ProverInstance {
 /// Health status of a discovered prover instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstanceHealthStatus {
-    /// ALB health checks are in progress (AWS mode only — instance just started).
+    /// ALB health checks are in progress — instance just started.
     Initial,
     /// Instance is reachable and passing health checks.
     Healthy,
     /// Instance did not respond to the poll or is failing health checks.
     Unhealthy,
-    /// ALB is draining connections from this instance (AWS mode only).
+    /// ALB is draining connections from this instance.
     Draining,
 }
 

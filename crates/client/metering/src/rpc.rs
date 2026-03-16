@@ -1,10 +1,13 @@
 //! Implementation of the metering RPC API.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use alloy_consensus::{BlockHeader, Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{B256, TxHash, U256};
 use base_alloy_flz::flz_compress_len;
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
 use base_execution_chainspec::OpChainSpec;
@@ -13,6 +16,7 @@ use base_execution_primitives::OpBlock;
 use base_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
 use base_revm::L1BlockInfo;
 use jsonrpsee::core::{RpcResult, async_trait};
+use parking_lot::RwLock;
 use reth_primitives_traits::SealedHeader;
 use reth_provider::{
     BlockReader, BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderFactory,
@@ -20,13 +24,12 @@ use reth_provider::{
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    MeterBlockResponse, MeteredPriorityFeeResponse, PendingState, PendingTrieCache,
-    PriorityFeeEstimator, ResourceDemand, ResourceFeeEstimateResponse, block::meter_block,
-    meter::meter_bundle, traits::MeteringApiServer,
+    MeterBlockResponse, MeteredPriorityFeeResponse, PendingState, PendingStateRootTimes,
+    PendingTrieCache, PriorityFeeEstimator, ResourceDemand, ResourceFeeEstimateResponse,
+    block::meter_block, meter::meter_bundle, traits::MeteringApiServer,
 };
 
 /// Implementation of the metering RPC API.
-#[derive(Debug)]
 pub struct MeteringApiImpl<Provider, FB> {
     provider: Provider,
     flashblocks_api: Arc<FB>,
@@ -35,6 +38,18 @@ pub struct MeteringApiImpl<Provider, FB> {
     pending_trie_cache: PendingTrieCache,
     /// Optional priority fee estimator for `meteredPriorityFeePerGas`.
     priority_fee_estimator: Option<Arc<PriorityFeeEstimator>>,
+    /// Shared cache for externally-submitted state root times.
+    state_root_cache: Option<Arc<RwLock<PendingStateRootTimes>>>,
+    /// Whether metering data collection is enabled.
+    metering_enabled: Arc<AtomicBool>,
+}
+
+impl<Provider, FB> std::fmt::Debug for MeteringApiImpl<Provider, FB> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MeteringApiImpl")
+            .field("metering_enabled", &self.metering_enabled.load(Ordering::Relaxed))
+            .finish_non_exhaustive()
+    }
 }
 
 impl<Provider, FB> MeteringApiImpl<Provider, FB>
@@ -54,6 +69,8 @@ where
             flashblocks_api,
             pending_trie_cache: PendingTrieCache::new(),
             priority_fee_estimator: None,
+            state_root_cache: None,
+            metering_enabled: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -62,12 +79,15 @@ where
         provider: Provider,
         flashblocks_api: Arc<FB>,
         estimator: Arc<PriorityFeeEstimator>,
+        state_root_cache: Arc<RwLock<PendingStateRootTimes>>,
     ) -> Self {
         Self {
             provider,
             flashblocks_api,
             pending_trie_cache: PendingTrieCache::new(),
             priority_fee_estimator: Some(estimator),
+            state_root_cache: Some(state_root_cache),
+            metering_enabled: Arc::new(AtomicBool::new(true)),
         }
     }
 }
@@ -409,6 +429,84 @@ where
             resource_estimates,
         })
     }
+
+    async fn set_metering_information(
+        &self,
+        tx_hash: TxHash,
+        meter: MeterBundleResponse,
+    ) -> RpcResult<()> {
+        // Check if metering is enabled
+        if !self.metering_enabled.load(Ordering::Relaxed) {
+            debug!(tx_hash = %tx_hash, "Ignoring metering info - metering disabled");
+            return Ok(());
+        }
+
+        let Some(cache) = &self.state_root_cache else {
+            warn!("set_metering_information called but no collector configured");
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                "Metering data collection not configured".to_string(),
+                None::<()>,
+            ));
+        };
+
+        // Store state root time for the collector to pick up when
+        // the transaction appears in a flashblock.
+        if meter.state_root_time_us > 0 {
+            let evicted_tx_hash = cache.write().push(tx_hash, meter.state_root_time_us).and_then(
+                |(evicted_tx_hash, _)| (evicted_tx_hash != tx_hash).then_some(evicted_tx_hash),
+            );
+
+            if let Some(evicted_tx_hash) = evicted_tx_hash {
+                warn!(
+                    evicted_tx_hash = %evicted_tx_hash,
+                    "Evicted pending state root time due to cache capacity"
+                );
+            }
+            debug!(
+                tx_hash = %tx_hash,
+                state_root_time_us = meter.state_root_time_us,
+                "Stored external metering info"
+            );
+        }
+        Ok(())
+    }
+
+    async fn set_metering_enabled(&self, enabled: bool) -> RpcResult<()> {
+        if self.state_root_cache.is_none() {
+            warn!("set_metering_enabled called but no collector configured");
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                "Metering data collection not configured".to_string(),
+                None::<()>,
+            ));
+        }
+
+        self.metering_enabled.store(enabled, Ordering::Relaxed);
+        info!(enabled = enabled, "Metering data collection enabled state changed");
+        Ok(())
+    }
+
+    async fn clear_metering_information(&self) -> RpcResult<()> {
+        let Some(cache) = &self.state_root_cache else {
+            warn!("clear_metering_information called but no collector configured");
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                "Metering data collection not configured".to_string(),
+                None::<()>,
+            ));
+        };
+
+        let count = {
+            let mut c = cache.write();
+            let len = c.len();
+            c.clear();
+            len
+        };
+
+        info!(cleared = count, "Cleared pending state root cache");
+        Ok(())
+    }
 }
 
 /// Computes resource demand from bundle metering results.
@@ -516,7 +614,7 @@ mod tests {
     use url::Url;
 
     use super::*;
-    use crate::{MeteringConfig, MeteringExtension};
+    use crate::{MeteringConfig, MeteringExtension, MeteringResourceLimits};
 
     fn create_bundle(txs: Vec<Bytes>, block_number: u64, min_timestamp: Option<u64>) -> Bundle {
         Bundle {
@@ -969,6 +1067,22 @@ mod tests {
         Ok(())
     }
 
+    // === Priority Fee Estimation RPC Tests (PR 1a) ===
+
+    async fn setup_with_estimator() -> eyre::Result<(TestHarness, RpcClient)> {
+        let config = MeteringConfig::enabled()
+            .with_resource_limits(MeteringResourceLimits {
+                gas_limit: Some(30_000_000),
+                execution_time_us: Some(1_000_000),
+                state_root_time_us: None,
+                da_bytes: Some(1_000_000),
+            })
+            .with_target_flashblocks_per_block(4);
+        let harness = TestHarness::builder().with_ext::<MeteringExtension>(config).build().await?;
+        let client = harness.rpc_client()?;
+        Ok((harness, client))
+    }
+
     #[test]
     fn compute_resource_demand_preserves_execution_and_state_root_dimensions() {
         let tx = Bytes::from_static(&[0x02, 0x01, 0x02, 0x03]);
@@ -986,5 +1100,82 @@ mod tests {
         assert_eq!(demand.execution_time_us, Some(123));
         assert_eq!(demand.state_root_time_us, Some(45));
         assert_eq!(demand.data_availability_bytes, Some(flz_compress_len(&tx) as u64));
+    }
+
+    #[tokio::test]
+    async fn test_metered_priority_fee_per_gas_empty_cache_returns_error() -> eyre::Result<()> {
+        let (harness, client) = setup_with_estimator().await?;
+
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
+
+        let bundle = create_bundle(vec![], 0, None);
+
+        let result: Result<serde_json::Value, _> =
+            client.request("base_meteredPriorityFeePerGas", (bundle,)).await;
+
+        // Should error because the metering cache is empty
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("No metering data available"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_metered_priority_fee_per_gas_empty_cache_with_tx_returns_error()
+    -> eyre::Result<()> {
+        let (harness, client) = setup_with_estimator().await?;
+
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
+
+        let sender_secret = Account::Alice.signer_b256();
+
+        let tx = TransactionBuilder::default()
+            .signer(sender_secret)
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(address!("0x1111111111111111111111111111111111111111"))
+            .value(1000)
+            .gas_limit(21_000)
+            .max_fee_per_gas(1_000_000_000)
+            .max_priority_fee_per_gas(1_000_000_000)
+            .into_eip1559();
+
+        let signed_tx =
+            OpTransactionSigned::Eip1559(tx.as_eip1559().expect("eip1559 transaction").clone());
+        let envelope: OpTxEnvelope = signed_tx;
+        let tx_bytes = Bytes::from(envelope.encoded_2718());
+
+        let bundle = create_bundle(vec![tx_bytes], 0, None);
+
+        let result: Result<serde_json::Value, _> =
+            client.request("base_meteredPriorityFeePerGas", (bundle,)).await;
+
+        // Should error because the metering cache is empty
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("No metering data available"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_metered_priority_fee_per_gas_no_estimator_returns_error() -> eyre::Result<()> {
+        // Use setup() which doesn't configure resource limits (no estimator)
+        let (_harness, client) = setup().await?;
+
+        let bundle = create_bundle(vec![], 0, None);
+
+        let result: Result<serde_json::Value, _> =
+            client.request("base_meteredPriorityFeePerGas", (bundle,)).await;
+
+        // Should error because no estimator is configured
+        assert!(result.is_err());
+
+        Ok(())
     }
 }

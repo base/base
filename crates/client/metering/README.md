@@ -175,12 +175,6 @@ The ingestion pipeline works as follows:
 Note: flashblock diffs must include raw transaction bytes for accurate DA-based priority fee
 estimation. These bytes are used to compute compressed transaction size via `flz_compress_len`.
 
-## DA Size Configuration
-
-`MeteringResourceLimits::da_bytes` configures the whole-block DA budget used by the estimator.
-The estimator converts that into cumulative per-flashblock targets using
-`target_flashblocks_per_block`. The `miner_getMaxDASize` RPC can be used to query the
-sequencer's current DA budget.
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

@@ -55,9 +55,10 @@ async fn setup_with_config(
     let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
     let wallet = EthereumWallet::from(signer);
     let chain_id = anvil.chain_id();
-    let manager = SimpleTxManager::new(provider, wallet, config, chain_id, Arc::new(NoopTxMetrics))
-        .await
-        .expect("should create manager");
+    let manager =
+        SimpleTxManager::from_wallet(provider, wallet, config, chain_id, Arc::new(NoopTxMetrics))
+            .await
+            .expect("should create manager");
     (manager, anvil)
 }
 
@@ -101,9 +102,10 @@ async fn setup_with_failing_signer_config(
     let address = anvil.addresses()[0];
     let wallet = EthereumWallet::from(FailingSigner { address });
     let chain_id = anvil.chain_id();
-    let manager = SimpleTxManager::new(provider, wallet, config, chain_id, Arc::new(NoopTxMetrics))
-        .await
-        .expect("should create manager with failing signer");
+    let manager =
+        SimpleTxManager::from_wallet(provider, wallet, config, chain_id, Arc::new(NoopTxMetrics))
+            .await
+            .expect("should create manager with failing signer");
     (manager, anvil)
 }
 

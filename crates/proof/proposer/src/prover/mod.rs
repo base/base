@@ -35,8 +35,10 @@ const ENCLAVE_TIMEOUT: Duration = Duration::from_secs(600);
 /// Prover for generating TEE-signed proposals.
 #[derive(Debug)]
 pub struct Prover<L1, L2, E> {
-    rollup_config: RollupConfig,
     config_hash: B256,
+    /// Pre-built chain config derived from the rollup config (immutable at runtime).
+    chain_config: ChainConfig,
+    rollup_config: RollupConfig,
     l1_client: Arc<L1>,
     l2_client: Arc<L2>,
     enclave_client: E,
@@ -75,10 +77,12 @@ where
     ) -> Self {
         config.force_defaults();
         let config_hash = config.hash();
+        let chain_config = build_chain_config(&rollup_config);
 
         Self {
-            rollup_config,
             config_hash,
+            chain_config,
+            rollup_config,
             l1_client,
             l2_client,
             enclave_client,
@@ -165,14 +169,13 @@ where
         // Serialize current block transactions (excluding deposits)
         let sequenced_txs = serialize_block_transactions(block, false)?;
 
-        let chain_config = build_chain_config(&self.rollup_config);
         let l1_receipt_envelopes = convert_receipts(l1_receipts);
         let mut repairs = 0usize;
         let proposal = loop {
             // Clones here are acceptable: retries are rare (only on missing trie nodes)
             // and the data is small relative to the enclave RPC cost.
             let request = ExecuteStatelessRequest {
-                config: chain_config.clone(),
+                config: self.chain_config.clone(),
                 config_hash: self.config_hash,
                 l1_origin: l1_origin.inner.clone(),
                 l1_receipts: l1_receipt_envelopes.clone(),
@@ -474,11 +477,11 @@ fn build_chain_config(rollup_config: &RollupConfig) -> ChainConfig {
     config
 }
 
-/// Extracts a missing header hash from enclave error text.
+/// Extracts a `B256` hash following a marker string in an error message.
 ///
-/// Looks for the substring "header not found for hash: 0x...".
-fn extract_missing_header_hash(err: &str) -> Option<B256> {
-    let marker = "header not found for hash:";
+/// Searches for `marker` in `err`, then parses the `0x`-prefixed hex hash
+/// that follows it.
+fn extract_hash_after_marker(err: &str, marker: &str) -> Option<B256> {
     let idx = err.find(marker)?;
     let suffix = err.get(idx + marker.len()..)?.trim_start();
     let mut end = suffix.len();
@@ -495,25 +498,14 @@ fn extract_missing_header_hash(err: &str) -> Option<B256> {
     candidate.parse().ok()
 }
 
+/// Extracts a missing header hash from enclave error text.
+fn extract_missing_header_hash(err: &str) -> Option<B256> {
+    extract_hash_after_marker(err, "header not found for hash:")
+}
+
 /// Extracts a missing trie node hash from enclave error text.
-///
-/// Looks for the substring "trie node not found for hash: 0x...".
 fn extract_missing_trie_hash(err: &str) -> Option<B256> {
-    let marker = "trie node not found for hash:";
-    let idx = err.find(marker)?;
-    let suffix = err.get(idx + marker.len()..)?.trim_start();
-    let mut end = suffix.len();
-    for (i, c) in suffix.char_indices() {
-        if !(c.is_ascii_hexdigit() || c == 'x') {
-            end = i;
-            break;
-        }
-    }
-    let candidate = suffix.get(..end)?.trim_end_matches('"').trim_end_matches(',');
-    if !candidate.starts_with("0x") {
-        return None;
-    }
-    candidate.parse().ok()
+    extract_hash_after_marker(err, "trie node not found for hash:")
 }
 
 #[cfg(test)]
