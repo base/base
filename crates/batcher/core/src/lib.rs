@@ -20,6 +20,6 @@ mod throttle_client;
 pub use throttle_client::{NoopThrottleClient, ThrottleClient};
 
 mod driver;
-pub use driver::BatchDriver;
+pub use driver::{BatchDriver, BatchDriverConfig};
 
 pub mod test_utils;

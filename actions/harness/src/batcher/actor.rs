@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use base_batcher_core::{
-    BatchDriver, BatchDriverError, NoopThrottleClient, ThrottleConfig, ThrottleController,
-    ThrottleStrategy,
+    BatchDriver, BatchDriverConfig, BatchDriverError, NoopThrottleClient, ThrottleConfig,
+    ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::{BatchEncoder, BatchType, EncoderConfig};
 use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
@@ -118,8 +118,7 @@ impl<S: L2BlockProvider> Batcher<S> {
             pipeline,
             source,
             tx_manager.clone(),
-            config.inbox_address,
-            16,
+            BatchDriverConfig { inbox: config.inbox_address, max_pending_transactions: 16 },
             throttle,
             NoopThrottleClient,
             l1_source,

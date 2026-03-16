@@ -365,8 +365,10 @@ impl BatcherService {
             encoder,
             source,
             tx_manager,
-            rollup_config.batch_inbox_address,
-            self.config.max_pending_transactions,
+            base_batcher_core::BatchDriverConfig {
+                inbox: rollup_config.batch_inbox_address,
+                max_pending_transactions: self.config.max_pending_transactions,
+            },
             throttle,
             throttle_client,
             l1_head_source,
