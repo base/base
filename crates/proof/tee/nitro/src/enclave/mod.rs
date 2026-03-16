@@ -81,10 +81,7 @@ impl NitroEnclave {
     }
 
     /// Handle a single vsock connection: read request, dispatch, write response.
-    async fn handle_connection(
-        &self,
-        mut stream: tokio_vsock::VsockStream,
-    ) -> eyre::Result<()> {
+    async fn handle_connection(&self, mut stream: tokio_vsock::VsockStream) -> eyre::Result<()> {
         let request: EnclaveRequest =
             timeout(REQUEST_READ_TIMEOUT, Frame::read(&mut stream)).await??;
 
