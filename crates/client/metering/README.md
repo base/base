@@ -114,9 +114,10 @@ the estimator can mirror the builder's flashblock budgeting.
 
 These RPC methods are used to populate the metering cache with transaction resource usage data.
 They are called by an external ingestion pipeline (e.g., tips-ingress) that meters transactions
-as they are processed.
+as they are processed. They are intended for trusted internal callers, not arbitrary public RPC
+clients.
 
-### `base_setMeteringInfo`
+### `base_setMeteringInformation`
 
 Sets metering information for a transaction.
 
@@ -127,9 +128,13 @@ Sets metering information for a transaction.
 **Returns:**
 - `()`: Empty success response
 
-This method stores metering data in a pending map. When a flashblock inclusion event is received
-(via websocket), the annotator correlates the pending data with the actual block/flashblock
-location and inserts it into the cache.
+This method stores pending state root timing data keyed by transaction hash. Only
+`meter.state_root_time_us` is consumed; the full `MeterBundleResponse` shape is accepted to match
+the existing ingress payload.
+
+When a transaction later appears in a `PendingBlocks` flashblock snapshot, `MeteringCollector`
+correlates that pending timing data with the transaction's actual block/flashblock location and
+inserts it into the cache.
 
 ### `base_setMeteringEnabled`
 
@@ -141,7 +146,7 @@ Enables or disables metering data collection.
 **Returns:**
 - `()`: Empty success response
 
-### `base_clearMeteringInfo`
+### `base_clearMeteringInformation`
 
 Clears all pending metering information.
 
@@ -154,17 +159,16 @@ Clears all pending metering information.
 
 The ingestion pipeline works as follows:
 
-1. External service (tips-ingress) meters transactions and calls `base_setMeteringInfo`
-2. Metering data is stored in a pending map indexed by transaction hash
-3. Flashblock websocket feed sends `FlashblockInclusion` events with (block, flashblock, transactions)
-4. `ResourceAnnotator` correlates pending data with flashblock inclusions
-5. DA bytes are computed from the raw transaction bytes in the `FlashblockInclusion`
-6. Matched transactions are inserted into `MeteringCache` at the correct location
+1. External service (tips-ingress) meters transactions and calls `base_setMeteringInformation`
+2. Pending state root timings are stored in a bounded cache indexed by transaction hash
+3. The flashblocks websocket feed updates `PendingBlocks` snapshots for the current pending range
+4. `MeteringCollector` walks newly observed flashblocks from those snapshots
+5. DA bytes are computed from the raw transaction bytes in each flashblock diff
+6. Matched transactions are inserted into `MeteringCache` at the correct block/flashblock location
 7. `base_meteredPriorityFeePerGas` uses the cache to estimate priority fees
 
-Note: The `FlashblockInclusion` must include raw transaction bytes (`IncludedTransaction.raw_tx`)
-for accurate DA-based priority fee estimation. These bytes are used to compute the compressed
-transaction size via `flz_compress_len`.
+Note: flashblock diffs must include raw transaction bytes for accurate DA-based priority fee
+estimation. These bytes are used to compute compressed transaction size via `flz_compress_len`.
 
 ## License
 

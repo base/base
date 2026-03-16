@@ -60,8 +60,12 @@ pub trait MeteringApi {
         bundle: Bundle,
     ) -> RpcResult<MeteredPriorityFeeResponse>;
 
-    /// Sets metering information for a transaction. Called by tips-ingress to push
-    /// transaction resource usage data for priority fee estimation.
+    /// Sets metering information for a transaction. Called by trusted ingestion
+    /// infrastructure to push externally measured state root timing for priority
+    /// fee estimation.
+    ///
+    /// Only `meter.state_root_time_us` is consumed here; the full response shape
+    /// matches the existing ingress metering payload.
     #[method(name = "setMeteringInformation")]
     async fn set_metering_information(
         &self,

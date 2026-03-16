@@ -1,11 +1,8 @@
 //! Implementation of the metering RPC API.
 
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use alloy_consensus::{BlockHeader, Header, Sealed};
@@ -27,9 +24,9 @@ use reth_provider::{
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    MeterBlockResponse, MeteredPriorityFeeResponse, PendingState, PendingTrieCache,
-    PriorityFeeEstimator, ResourceDemand, ResourceFeeEstimateResponse, block::meter_block,
-    meter::meter_bundle, traits::MeteringApiServer,
+    MeterBlockResponse, MeteredPriorityFeeResponse, PendingState, PendingStateRootTimes,
+    PendingTrieCache, PriorityFeeEstimator, ResourceDemand, ResourceFeeEstimateResponse,
+    block::meter_block, meter::meter_bundle, traits::MeteringApiServer,
 };
 
 /// Implementation of the metering RPC API.
@@ -41,8 +38,8 @@ pub struct MeteringApiImpl<Provider, FB> {
     pending_trie_cache: PendingTrieCache,
     /// Optional priority fee estimator for `meteredPriorityFeePerGas`.
     priority_fee_estimator: Option<Arc<PriorityFeeEstimator>>,
-    /// Shared cache for externally-submitted state root times (from `setMeteringInfo`).
-    state_root_cache: Option<Arc<RwLock<HashMap<TxHash, u128>>>>,
+    /// Shared cache for externally-submitted state root times.
+    state_root_cache: Option<Arc<RwLock<PendingStateRootTimes>>>,
     /// Whether metering data collection is enabled.
     metering_enabled: Arc<AtomicBool>,
 }
@@ -82,7 +79,7 @@ where
         provider: Provider,
         flashblocks_api: Arc<FB>,
         estimator: Arc<PriorityFeeEstimator>,
-        state_root_cache: Arc<RwLock<HashMap<TxHash, u128>>>,
+        state_root_cache: Arc<RwLock<PendingStateRootTimes>>,
     ) -> Self {
         Self {
             provider,
@@ -456,7 +453,15 @@ where
         // Store state root time for the collector to pick up when
         // the transaction appears in a flashblock.
         if meter.state_root_time_us > 0 {
-            cache.write().insert(tx_hash, meter.state_root_time_us);
+            if let Some((evicted_tx_hash, _)) =
+                cache.write().push(tx_hash, meter.state_root_time_us)
+                && evicted_tx_hash != tx_hash
+            {
+                warn!(
+                    evicted_tx_hash = %evicted_tx_hash,
+                    "Evicted pending state root time due to cache capacity"
+                );
+            }
         }
 
         debug!(
