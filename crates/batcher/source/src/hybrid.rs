@@ -1,13 +1,13 @@
 //! Hybrid block source that races a subscription stream against interval-based polling.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_alloy_consensus::OpBlock;
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
+use base_runtime::Clock;
 use futures::{StreamExt, stream::BoxStream};
-use tokio::time::{Duration, Interval, interval};
 
 use crate::{BlockSubscription, L2BlockEvent, PollingSource, SourceError, UnsafeBlockSource};
 
@@ -25,8 +25,8 @@ pub struct HybridBlockSource<S, P> {
     _subscription: S,
     /// Polling source for fetching the unsafe head.
     poller: P,
-    /// Polling interval timer.
-    interval: Interval,
+    /// Polling interval stream, yielding `()` every `poll_interval`.
+    interval: BoxStream<'static, ()>,
     /// Block number to hash mapping for deduplication and reorg detection.
     /// Bounded to a sliding window of recent blocks; old entries are pruned.
     seen: HashMap<u64, B256>,
@@ -48,16 +48,14 @@ where
     /// Calls [`BlockSubscription::take_stream`] once to obtain the live block
     /// stream, then retains the subscription to keep any underlying resources
     /// (e.g. a WebSocket provider) alive. Combines the stream with a poller
-    /// that fires at `poll_interval`.
-    pub fn new(mut subscription: S, poller: P, poll_interval: Duration) -> Self {
+    /// that fires at `poll_interval` according to `clock`.
+    ///
+    /// The `clock` is consumed only to create the interval stream and is not
+    /// retained — the interval drives itself from that point forward.
+    pub fn new(clock: impl Clock, mut subscription: S, poller: P, poll_interval: Duration) -> Self {
         let sub = subscription.take_stream();
-        Self {
-            sub,
-            _subscription: subscription,
-            poller,
-            interval: interval(poll_interval),
-            seen: HashMap::new(),
-        }
+        let interval = clock.interval(poll_interval);
+        Self { sub, _subscription: subscription, poller, interval, seen: HashMap::new() }
     }
 
     /// Process a received block, returning an event if the block is new or a reorg.
@@ -143,7 +141,7 @@ where
                         None => return Err(SourceError::Closed),
                     }
                 }
-                _ = self.interval.tick() => {
+                _ = self.interval.next() => {
                     match self.poller.unsafe_head().await {
                         Ok(b) => {
                             if let Some(event) = self.process(b) {
@@ -165,10 +163,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use alloy_consensus::BlockBody;
     use alloy_primitives::Sealed;
     use base_alloy_consensus::{OpTxEnvelope, TxDeposit};
     use base_protocol::L1BlockInfoBedrock;
+    use base_runtime::{Config, Runner};
     use futures::{StreamExt, stream::BoxStream};
 
     use super::*;
@@ -190,8 +191,67 @@ mod tests {
         }
     }
 
+    /// A never-ending pending subscription (interval path tests).
+    fn pending_sub() -> StreamSub {
+        StreamSub(futures::stream::pending::<Result<OpBlock, SourceError>>().boxed())
+    }
+
     /// A polling source that always returns a fixed block.
     struct FixedPoller(OpBlock);
+
+    /// A polling source that returns blocks with a monotonically increasing number on each call.
+    struct IncrementingPoller(Arc<Mutex<u64>>);
+
+    impl IncrementingPoller {
+        fn new() -> Self {
+            Self(Arc::new(Mutex::new(0)))
+        }
+    }
+
+    #[async_trait]
+    impl PollingSource for IncrementingPoller {
+        async fn unsafe_head(&self) -> Result<OpBlock, SourceError> {
+            let mut n = self.0.lock().unwrap();
+            *n += 1;
+            Ok(make_block(*n, B256::ZERO))
+        }
+    }
+
+    /// A polling source that returns a transient [`SourceError::Provider`] on the first call,
+    /// then succeeds with a fixed block on all subsequent calls.
+    struct FalliblePoller {
+        calls: Arc<Mutex<u32>>,
+        block: OpBlock,
+    }
+
+    impl FalliblePoller {
+        fn new(block: OpBlock) -> Self {
+            Self { calls: Arc::new(Mutex::new(0)), block }
+        }
+    }
+
+    #[async_trait]
+    impl PollingSource for FalliblePoller {
+        async fn unsafe_head(&self) -> Result<OpBlock, SourceError> {
+            let mut c = self.calls.lock().unwrap();
+            *c += 1;
+            if *c == 1 {
+                Err(SourceError::Provider("transient rpc error".into()))
+            } else {
+                Ok(self.block.clone())
+            }
+        }
+    }
+
+    /// A polling source that always returns a fatal (non-transient) error.
+    struct ClosedPoller;
+
+    #[async_trait]
+    impl PollingSource for ClosedPoller {
+        async fn unsafe_head(&self) -> Result<OpBlock, SourceError> {
+            Err(SourceError::Closed)
+        }
+    }
 
     #[async_trait]
     impl PollingSource for FixedPoller {
@@ -200,69 +260,98 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_hybrid_new_block() {
-        let block = make_block(1, B256::ZERO);
-        let poller = FixedPoller(block.clone());
-        let stream = futures::stream::once(async move { Ok(block) });
-        let mut source =
-            HybridBlockSource::new(StreamSub(stream.boxed()), poller, Duration::from_secs(100));
-
-        let event = source.next().await.unwrap();
-        assert!(matches!(event, L2BlockEvent::Block(_)));
+    #[test]
+    fn test_hybrid_new_block() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let block = make_block(1, B256::ZERO);
+            let poller = FixedPoller(block.clone());
+            let stream = futures::stream::once(std::future::ready(Ok(block)));
+            let mut source = HybridBlockSource::new(
+                ctx,
+                StreamSub(stream.boxed()),
+                poller,
+                Duration::from_secs(100),
+            );
+            let event = source.next().await.unwrap();
+            assert!(matches!(event, L2BlockEvent::Block(_)));
+        });
     }
 
-    #[tokio::test]
-    async fn test_hybrid_duplicate_skipped() {
-        let block = make_block(1, B256::ZERO);
-        let poller = FixedPoller(block.clone());
-        // Two identical blocks in sequence — second should be skipped, stream ends.
-        let stream = futures::stream::iter(vec![Ok(block.clone()), Ok(block)]);
-        let mut source =
-            HybridBlockSource::new(StreamSub(stream.boxed()), poller, Duration::from_secs(100));
+    #[test]
+    fn test_hybrid_duplicate_skipped() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let block = make_block(1, B256::ZERO);
+            let poller = FixedPoller(block.clone());
+            // Two identical blocks in sequence — second should be skipped, stream ends.
+            let stream = futures::stream::iter(vec![Ok(block.clone()), Ok(block)]);
+            let mut source = HybridBlockSource::new(
+                ctx,
+                StreamSub(stream.boxed()),
+                poller,
+                Duration::from_secs(100),
+            );
+            // First call returns the block.
+            let event = source.next().await.unwrap();
+            assert!(matches!(event, L2BlockEvent::Block(_)));
 
-        // First call returns the block.
-        let event = source.next().await.unwrap();
-        assert!(matches!(event, L2BlockEvent::Block(_)));
-
-        // Second call: duplicate is skipped, stream exhausted -> Closed.
-        let err = source.next().await.unwrap_err();
-        assert!(matches!(err, SourceError::Closed));
+            // Second call: duplicate is skipped, stream exhausted -> Closed.
+            let err = source.next().await.unwrap_err();
+            assert!(matches!(err, SourceError::Closed));
+        });
     }
 
-    #[tokio::test]
-    async fn test_hybrid_reorg_detected() {
-        let block1 = make_block(1, B256::ZERO);
-        // Different block at same number (different parent hash -> different hash).
-        let block2 = make_block(1, B256::from([1u8; 32]));
-        let poller = FixedPoller(block1.clone());
-        let stream = futures::stream::iter(vec![Ok(block1), Ok(block2)]);
-        let mut source =
-            HybridBlockSource::new(StreamSub(stream.boxed()), poller, Duration::from_secs(100));
+    #[test]
+    fn test_hybrid_reorg_detected() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let block1 = make_block(1, B256::ZERO);
+            // Different block at same number (different parent hash -> different hash).
+            let block2 = make_block(1, B256::from([1u8; 32]));
+            let poller = FixedPoller(block1.clone());
+            let stream = futures::stream::iter(vec![Ok(block1), Ok(block2)]);
+            let mut source = HybridBlockSource::new(
+                ctx,
+                StreamSub(stream.boxed()),
+                poller,
+                Duration::from_secs(100),
+            );
+            let event = source.next().await.unwrap();
+            assert!(matches!(event, L2BlockEvent::Block(_)));
 
-        // First block.
-        let event = source.next().await.unwrap();
-        assert!(matches!(event, L2BlockEvent::Block(_)));
-
-        // Second block at same number with different hash -> reorg.
-        let event = source.next().await.unwrap();
-        assert!(matches!(event, L2BlockEvent::Reorg { .. }));
+            // Second block at same number with different hash -> reorg.
+            let event = source.next().await.unwrap();
+            assert!(matches!(event, L2BlockEvent::Reorg { .. }));
+        });
     }
 
-    #[tokio::test]
-    async fn test_hybrid_stream_error() {
-        let stream =
-            futures::stream::once(async { Err(SourceError::Provider("rpc down".to_string())) });
-        let poller = FixedPoller(make_block(1, B256::ZERO));
-        let mut source =
-            HybridBlockSource::new(StreamSub(stream.boxed()), poller, Duration::from_secs(100));
-
-        let err = source.next().await.unwrap_err();
-        assert!(matches!(err, SourceError::Provider(_)));
+    #[test]
+    fn test_hybrid_stream_error() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let stream = futures::stream::once(std::future::ready(Err(SourceError::Provider(
+                "rpc down".to_string(),
+            ))));
+            let poller = FixedPoller(make_block(1, B256::ZERO));
+            let mut source = HybridBlockSource::new(
+                ctx,
+                StreamSub(stream.boxed()),
+                poller,
+                Duration::from_secs(100),
+            );
+            // The subscription error and the interval's immediate first tick may both be
+            // ready simultaneously. If the interval branch wins the select!, a block event
+            // arrives first; the subscription error propagates on the very next call because
+            // the next interval tick is 100s away and no time is advanced.
+            let err = loop {
+                match source.next().await {
+                    Ok(_) => {}
+                    Err(e) => break e,
+                }
+            };
+            assert!(matches!(err, SourceError::Provider(_)));
+        });
     }
 
-    #[tokio::test]
-    async fn test_reorg_safe_head_has_l1_origin() {
+    #[test]
+    fn test_reorg_safe_head_has_l1_origin() {
         let l1_number = 42u64;
         let l1_hash = B256::from([0xABu8; 32]);
         let calldata = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::new_from_number_and_block_hash(
@@ -291,21 +380,99 @@ mod tests {
             body: BlockBody { transactions: vec![deposit], ..Default::default() },
         };
 
-        let poller = FixedPoller(block1.clone());
-        let stream = futures::stream::iter(vec![Ok(block1), Ok(block2)]);
-        let mut source =
-            HybridBlockSource::new(StreamSub(stream.boxed()), poller, Duration::from_secs(100));
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let poller = FixedPoller(block1.clone());
+            let stream = futures::stream::iter(vec![Ok(block1), Ok(block2)]);
+            let mut source = HybridBlockSource::new(
+                ctx,
+                StreamSub(stream.boxed()),
+                poller,
+                Duration::from_secs(100),
+            );
 
-        // First block arrives normally.
-        let event = source.next().await.unwrap();
-        assert!(matches!(event, L2BlockEvent::Block(_)));
+            // First block arrives normally.
+            let event = source.next().await.unwrap();
+            assert!(matches!(event, L2BlockEvent::Block(_)));
 
-        // Second block at same number with different hash → reorg.
-        let event = source.next().await.unwrap();
-        let L2BlockEvent::Reorg { new_safe_head } = event else {
-            panic!("expected Reorg event");
-        };
-        assert_eq!(new_safe_head.l1_origin.number, l1_number);
-        assert_eq!(new_safe_head.l1_origin.hash, l1_hash);
+            // Second block at same number with different hash → reorg.
+            let event = source.next().await.unwrap();
+            let L2BlockEvent::Reorg { new_safe_head } = event else {
+                panic!("expected Reorg event");
+            };
+            assert_eq!(new_safe_head.l1_origin.number, l1_number);
+            assert_eq!(new_safe_head.l1_origin.hash, l1_hash);
+        });
+    }
+
+    // --- Interval / polling path tests ---
+
+    #[test]
+    fn test_poll_fires_on_initial_tick() {
+        // The interval's first tick fires immediately (at t=0), so the poller
+        // is called without any time advance when the subscription has no pending events.
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let block = make_block(1, B256::ZERO);
+            let mut source = HybridBlockSource::new(
+                ctx,
+                pending_sub(),
+                FixedPoller(block),
+                Duration::from_secs(100),
+            );
+            let event = source.next().await.unwrap();
+            assert!(matches!(event, L2BlockEvent::Block(ref b) if b.header.number == 1));
+        });
+    }
+
+    #[test]
+    fn test_poll_fires_again_after_time_advance() {
+        // After the initial tick, the poller is not called again until virtual
+        // time advances past the interval period. The deterministic executor
+        // skips idle time automatically.
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut source = HybridBlockSource::new(
+                ctx,
+                pending_sub(),
+                IncrementingPoller::new(),
+                Duration::from_secs(1),
+            );
+            // First tick fires immediately — block #1.
+            let event = source.next().await.unwrap();
+            assert!(matches!(event, L2BlockEvent::Block(ref b) if b.header.number == 1));
+            // Executor skips idle time to the next interval tick — block #2.
+            let event = source.next().await.unwrap();
+            assert!(matches!(event, L2BlockEvent::Block(ref b) if b.header.number == 2));
+        });
+    }
+
+    #[test]
+    fn test_transient_poller_error_is_swallowed() {
+        // A SourceError::Provider from the poller is logged and ignored;
+        // next() loops back into the select! waiting for the next tick
+        // rather than propagating the error to the caller.
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let block = make_block(1, B256::ZERO);
+            let mut source = HybridBlockSource::new(
+                ctx,
+                pending_sub(),
+                FalliblePoller::new(block),
+                Duration::from_secs(1),
+            );
+            // Initial tick fires immediately; poller fails with a transient error
+            // (swallowed). Executor skips idle time to the next tick; poller succeeds.
+            let event = source.next().await.unwrap();
+            assert!(matches!(event, L2BlockEvent::Block(ref b) if b.header.number == 1));
+        });
+    }
+
+    #[test]
+    fn test_fatal_poller_error_propagates() {
+        // A non-Provider error from the poller is returned immediately from
+        // next() rather than being swallowed.
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let mut source =
+                HybridBlockSource::new(ctx, pending_sub(), ClosedPoller, Duration::from_secs(100));
+            let err = source.next().await.unwrap_err();
+            assert!(matches!(err, SourceError::Closed));
+        });
     }
 }

@@ -71,13 +71,11 @@ impl Spawner for TokioRuntime {
         F::Output: Send + 'static,
     {
         let handle = tokio::spawn(future);
-        TaskHandle {
-            inner: Box::pin(async move {
-                handle.await.map_err(|e| {
-                    if e.is_cancelled() { TaskError::Cancelled } else { TaskError::Panicked }
-                })
-            }),
-        }
+        TaskHandle::new(async move {
+            handle.await.map_err(|e| {
+                if e.is_cancelled() { TaskError::Cancelled } else { TaskError::Panicked }
+            })
+        })
     }
 }
 

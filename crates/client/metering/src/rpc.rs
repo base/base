@@ -22,7 +22,9 @@ use tracing::{debug, error, info};
 use crate::{
     MeterBlockResponse, MeteredPriorityFeeResponse, MeteredTransaction, PendingState,
     PendingTrieCache, ResourceDemand, ResourceFeeEstimateResponse, ResourceLimits,
-    block::meter_block, estimator::estimate_from_transactions, meter::meter_bundle,
+    block::meter_block,
+    estimator::{assert_valid_percentile, estimate_from_transactions},
+    meter::meter_bundle,
     traits::MeteringApiServer,
 };
 
@@ -74,6 +76,7 @@ where
         percentile: f64,
         default_fee: U256,
     ) -> Self {
+        assert_valid_percentile(percentile);
         Self {
             provider,
             flashblocks_api,
@@ -243,6 +246,10 @@ where
         } else {
             U256::from(0)
         };
+        let total_execution_time_us = output
+            .results
+            .iter()
+            .fold(0u128, |acc, result| acc.saturating_add(result.execution_time_us));
 
         debug!(
             bundle_hash = %output.bundle_hash,
@@ -264,7 +271,7 @@ where
             state_block_number: header.number,
             state_flashblock_index: pending_blocks.as_ref().map(|pb| pb.latest_flashblock_index()),
             total_gas_used: output.total_gas_used,
-            total_execution_time_us: output.total_time_us,
+            total_execution_time_us,
             state_root_time_us: output.state_root_time_us,
         })
     }
@@ -398,6 +405,7 @@ where
             .transactions
             .iter()
             .map(|tx| MeteredTransaction {
+                tx_hash: tx.tx_hash,
                 priority_fee_per_gas: U256::ZERO,
                 gas_used: tx.gas_used,
                 execution_time_us: tx.execution_time_us,
@@ -478,7 +486,7 @@ fn compute_resource_demand(bundle: &Bundle, meter_result: &MeterBundleResponse) 
     ResourceDemand {
         gas_used: Some(meter_result.total_gas_used),
         execution_time_us: Some(meter_result.total_execution_time_us),
-        state_root_time_us: None, // Not available per-bundle
+        state_root_time_us: Some(meter_result.state_root_time_us),
         data_availability_bytes: Some(da_bytes),
     }
 }
@@ -672,6 +680,10 @@ mod tests {
         assert_eq!(response.results.len(), 1);
         assert_eq!(response.total_gas_used, 21_000);
         assert!(response.total_execution_time_us > 0);
+        assert_eq!(
+            response.total_execution_time_us,
+            response.results.iter().map(|result| result.execution_time_us).sum::<u128>()
+        );
 
         let result = &response.results[0];
         assert_eq!(result.from_address, sender_address);
@@ -738,6 +750,10 @@ mod tests {
         assert_eq!(response.results.len(), 2);
         assert_eq!(response.total_gas_used, 42_000);
         assert!(response.total_execution_time_us > 0);
+        assert_eq!(
+            response.total_execution_time_us,
+            response.results.iter().map(|result| result.execution_time_us).sum::<u128>()
+        );
 
         let result1 = &response.results[0];
         assert_eq!(result1.from_address, address1);
@@ -1017,5 +1033,24 @@ mod tests {
         assert_eq!(response.state_flashblock_index, Some(0));
 
         Ok(())
+    }
+
+    #[test]
+    fn compute_resource_demand_preserves_execution_and_state_root_dimensions() {
+        let tx = Bytes::from_static(&[0x02, 0x01, 0x02, 0x03]);
+        let bundle = create_bundle(vec![tx.clone()], 0, None);
+        let meter_result = MeterBundleResponse {
+            total_gas_used: 21_000,
+            total_execution_time_us: 123,
+            state_root_time_us: 45,
+            ..Default::default()
+        };
+
+        let demand = compute_resource_demand(&bundle, &meter_result);
+
+        assert_eq!(demand.gas_used, Some(21_000));
+        assert_eq!(demand.execution_time_us, Some(123));
+        assert_eq!(demand.state_root_time_us, Some(45));
+        assert_eq!(demand.data_availability_bytes, Some(flz_compress_len(&tx) as u64));
     }
 }

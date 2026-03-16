@@ -19,13 +19,13 @@ virtual time, task spawning, and structured cancellation.
 The production implementation, `TokioRuntime`, wraps `tokio::time`, `tokio::spawn`, and
 `tokio_util::sync::CancellationToken`. It supports child cancellation tokens so that
 individual pipeline stages can be shut down independently while a parent runtime remains
-live. The test implementation, `DeterministicRuntime`, is also backed by tokio but uses
-tokio's paused-clock mode, requiring `#[tokio::test(start_paused = true)]`. Virtual time
-only advances when `advance_time` is called explicitly, so timer-driven logic — polling
-intervals, channel timeouts, backoff delays — can be exercised at precise granularity in
-tests that complete in real milliseconds. Cancellation in `DeterministicRuntime` uses
-`tokio::sync::watch` rather than `CancellationToken`, which allows the signal to remain
-valid even when no receivers are subscribed at the moment `cancel` is called.
+live. The test implementation uses a fully custom async executor — no tokio involvement —
+with a seeded RNG that shuffles the ready-task queue before each polling round. The same
+seed always produces the same task polling order, making races and timing bugs
+reproducible. Virtual time only advances when the executor has no ready tasks, jumping
+directly to the next alarm deadline so a 100-second interval test completes in
+microseconds. The entry point is `Runner::start`; the runtime handle passed to tasks is
+`Context`, which implements all three traits.
 
 The `tokio::select!` macro is fully compatible with this abstraction because it generates
 standard `std::task::Poll` code rather than calling into any tokio-specific executor API.
@@ -45,25 +45,23 @@ let rt = TokioRuntime::new();
 
 ### Deterministic tests
 
-```rust
-use base_runtime::DeterministicRuntime;
+```rust,ignore
+use base_runtime::{Config, Runner, Clock, Spawner};
 use std::time::Duration;
 
-#[tokio::test(start_paused = true)]
-async fn test_timer_fires_on_advance() {
-    let rt = DeterministicRuntime::new();
-    let rt2 = rt.clone();
-
-    let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
-    tokio::spawn(async move {
-        rt2.sleep(Duration::from_secs(5)).await;
-        let _ = tx.send(());
+#[test]
+fn test_timer_fires() {
+    Runner::start(Config::seeded(42), |ctx| async move {
+        let ctx2 = ctx.clone();
+        let handle = ctx.spawn(async move {
+            ctx2.sleep(Duration::from_secs(5)).await;
+            99u32
+        });
+        // Executor skips idle time to t=5s, wakes the spawned sleep, then
+        // resolves the handle. No wall-clock time is consumed.
+        let result = handle.await.unwrap();
+        assert_eq!(result, 99);
+        assert_eq!(ctx.now(), Duration::from_secs(5));
     });
-
-    tokio::task::yield_now().await;
-    assert!(rx.try_recv().is_err(), "timer must not fire without advance");
-
-    rt.advance_time(Duration::from_secs(5)).await;
-    assert!(rx.try_recv().is_ok(), "timer must fire after advance");
 }
 ```
