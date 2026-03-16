@@ -15,11 +15,6 @@ type NodeInfo = {
   items: SidebarItem[]
 }
 
-type BuildTreeOptions = {
-  excludeDirs?: Set<string>
-  excludeFiles?: Set<string>
-}
-
 function toPosix(path: string) {
   return path.split(sep).join('/')
 }
@@ -62,13 +57,10 @@ function sortName(a: string, b: string) {
   return an.localeCompare(bn)
 }
 
-function buildTree(dirPath: string, options: BuildTreeOptions = {}): NodeInfo {
-  const { excludeDirs, excludeFiles } = options
+function buildTree(dirPath: string): NodeInfo {
   const entries = readdirSync(dirPath).sort(sortName)
-  const files = entries.filter((entry) => /\.(md|mdx)$/i.test(entry) && !excludeFiles?.has(entry))
-  const dirs = entries.filter(
-    (entry) => statSync(join(dirPath, entry)).isDirectory() && !excludeDirs?.has(entry),
-  )
+  const files = entries.filter((entry) => /\.(md|mdx)$/i.test(entry))
+  const dirs = entries.filter((entry) => statSync(join(dirPath, entry)).isDirectory())
 
   let hasIndex = false
   let indexTitle: string | undefined
@@ -113,34 +105,6 @@ function sectionItem(section: string, text: string): SidebarItem {
     ...(tree.items.length ? { items: tree.items } : {}),
   }
 }
-
-function sectionItemWithoutDirs(
-  section: string,
-  text: string,
-  excludedDirs: string[],
-  excludedFiles: string[] = [],
-): SidebarItem {
-  const sectionPath = join(pagesDir, section)
-  const tree = buildTree(sectionPath, {
-    excludeDirs: new Set(excludedDirs),
-    excludeFiles: new Set(excludedFiles),
-  })
-  return {
-    text,
-    ...(tree.hasIndex ? { link: `/${section}` } : {}),
-    ...(tree.items.length ? { items: tree.items } : {}),
-  }
-}
-
-const hiddenProtocolFiles = ['access-lists.md']
-
-const protocolTodoExcludedDirs = ['bridging', 'configuration', 'consensus', 'execution', 'fault-proof']
-
-const protocolTodoExcludedFiles = [
-  ...hiddenProtocolFiles,
-  'overview.md',
-  'batcher.md',
-]
 
 const bridgingSection: SidebarItem = {
   text: 'Bridging',
@@ -204,7 +168,6 @@ const sidebar: SidebarItem[] = [
       { text: 'Canyon', link: '/upgrades/canyon/overview' },
     ],
   },
-  sectionItemWithoutDirs('protocol', 'TODO', protocolTodoExcludedDirs, protocolTodoExcludedFiles),
   sectionItem('reference', 'Reference'),
 ]
 

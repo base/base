@@ -84,7 +84,7 @@ brevity. A Dispute Game can go from being a Proper Game to later *not* being an 
 if it is invalidated by being [blacklisted](#blacklisted-game) or [retired](#retired-game).
 
 **ALL** Dispute Games **TEMPORARILY** become Improper Games while the
-[Pause Mechanism](../../stage-1.md#pause-mechanism) is active. However, this is
+Pause Mechanism is active. However, this is
 a *temporary* condition such that Registered Games that are not invalidated by
 [blacklisting](#blacklisted-game) or [retirement](#retired-game) will become Proper Games again
 once the pause is lifted. The Pause Mechanism is therefore a way to *temporarily* prevent Dispute
@@ -96,7 +96,7 @@ A Game is considered to be a Proper Game if all of the following are true:
 - The game is a [Registered Game](#registered-game)
 - The game is **NOT** a [Blacklisted Game](#blacklisted-game)
 - The game is **NOT** a [Retired Game](#retired-game)
-- The [Pause Mechanism](../../stage-1.md#pause-mechanism) is not active
+- The Pause Mechanism is not active
 
 ### Resolved Game
 

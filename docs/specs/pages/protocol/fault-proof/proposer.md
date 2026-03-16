@@ -1,10 +1,10 @@
-# L2 Output Root Proposals Specification
+# Proposer
 
 
 
-[g-rollup-node]: ../reference/glossary.md#rollup-node
-[g-mpt]: ../reference/glossary.md#merkle-patricia-trie
-[header-withdrawals-root]: ../upgrades/isthmus/exec-engine.md#l2tol1messagepasser-storage-root-in-header
+[g-rollup-node]: ../../reference/glossary.md#rollup-node
+[g-mpt]: ../../reference/glossary.md#merkle-patricia-trie
+[header-withdrawals-root]: ../../upgrades/isthmus/exec-engine.md#l2tol1messagepasser-storage-root-in-header
 
 ## Overview
 
@@ -27,8 +27,8 @@ are part of later specification milestones.
 
 The proposer's role is to construct and submit output roots, which are commitments to the L2's state,
 to the `L2OutputOracle` contract on L1 (the settlement layer). To do this, the proposer periodically
-queries the [rollup node](consensus/index.md) for the latest output root derived from the latest
-[finalized](consensus/index.md#finalization-guarantees) L1 block. It then takes the output root and
+queries the [rollup node](../consensus/index.md) for the latest output root derived from the latest
+[finalized](../consensus/index.md#finalization-guarantees) L1 block. It then takes the output root and
 submits it to the `L2OutputOracle` contract on the settlement layer (L1).
 
 ### L2OutputOracle v1.0.0
@@ -93,7 +93,7 @@ where:
    L2 state root on L1.
 
 1. The `withdrawal_storage_root` (`bytes32`) elevates the Merkle-Patricia-Trie ([MPT][g-mpt]) root of the [Message
-   Passer contract](bridging/withdrawals.md#the-l2tol1messagepasser-contract) storage. Instead of making an MPT proof for a
+   Passer contract](../bridging/withdrawals.md#the-l2tol1messagepasser-contract) storage. Instead of making an MPT proof for a
    withdrawal against the state root (proving first the storage root of the L2toL1MessagePasser against the state root,
    then the withdrawal against that storage root), we can prove against the L2toL1MessagePasser's storage root directly,
    thus reducing the verification cost of withdrawals on L1.

@@ -772,7 +772,7 @@ cf. [L1 Attributes Predeployed Contract Specification](../protocol/bridging/depo
 
 A 32 byte value which serves as a commitment to the current state of the L2 chain.
 
-cf. [Proposing L2 output commitments](../protocol/proposals.md#l2-output-root-proposals-specification)
+cf. [Proposer](../protocol/fault-proof/proposer.md)
 
 ### L2 Output Oracle Contract
 
