@@ -2,10 +2,8 @@
 
 use std::sync::Arc;
 
-use alloy_network::EthereumWallet;
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
-use alloy_signer_local::PrivateKeySigner;
 use base_alloy_consensus::OpBlock;
 use base_alloy_network::Base;
 use base_batcher_core::{
@@ -15,7 +13,7 @@ use base_batcher_core::{
 use base_batcher_encoder::BatchEncoder;
 use base_batcher_source::{BlockSubscription, HybridBlockSource, HybridL1HeadSource, SourceError};
 use base_consensus_genesis::RollupConfig;
-use base_tx_manager::{NoopTxMetrics, SimpleTxManager, TxManagerConfig};
+use base_tx_manager::{NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -335,10 +333,8 @@ impl BatcherService {
             self.config.poll_interval,
         );
 
-        // Build the batcher wallet from the configured private key.
-        let signer = PrivateKeySigner::from_bytes(&self.config.batcher_private_key.0)
-            .map_err(|e| eyre::eyre!("invalid batcher private key: {e}"))?;
-        let wallet = EthereumWallet::new(signer);
+        // Build the signer config from the configured private key.
+        let signer_config = SignerConfig::Local { private_key: self.config.batcher_private_key.0 };
 
         // Fetch L1 chain ID and construct the tx manager.
         let l1_chain_id = l1_provider
@@ -352,7 +348,7 @@ impl BatcherService {
         };
         let tx_manager = SimpleTxManager::new(
             l1_provider,
-            wallet,
+            signer_config,
             tx_manager_config,
             l1_chain_id,
             Arc::new(NoopTxMetrics),

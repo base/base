@@ -102,6 +102,15 @@ pub enum TxManagerError {
     #[error("invalid config: {0}")]
     InvalidConfig(String),
 
+    /// Wallet construction failed.
+    ///
+    /// Returned when the [`SignerConfig`](crate::SignerConfig) cannot build
+    /// an [`EthereumWallet`](alloy_network::EthereumWallet) — e.g. an
+    /// invalid private key or unreachable remote signer endpoint.
+    /// Non-retryable because the configuration is deterministically wrong.
+    #[error("wallet construction failed: {0}")]
+    WalletConstruction(String),
+
     // ── Fee / replacement errors (retryable) ─────────────────────────────
     /// Fee too low to enter the mempool.
     #[error("transaction underpriced")]
@@ -324,6 +333,7 @@ mod tests {
     #[case::unsupported(TxManagerError::Unsupported("test".to_string()), false)]
     #[case::sign(TxManagerError::Sign("test".to_string()), false)]
     #[case::invalid_config(TxManagerError::InvalidConfig("test".to_string()), false)]
+    #[case::wallet_construction(TxManagerError::WalletConstruction("test".to_string()), false)]
     #[case::send_timeout(TxManagerError::SendTimeout, false)]
     #[case::underpriced(TxManagerError::Underpriced, true)]
     #[case::replacement_underpriced(TxManagerError::ReplacementUnderpriced, true)]
@@ -399,6 +409,10 @@ mod tests {
     #[case::invalid_config(
         TxManagerError::InvalidConfig("bad value".to_string()),
         "invalid config: bad value"
+    )]
+    #[case::wallet_construction(
+        TxManagerError::WalletConstruction("bad key".to_string()),
+        "wallet construction failed: bad key"
     )]
     fn display_output(#[case] error: TxManagerError, #[case] expected: &str) {
         assert_eq!(error.to_string(), expected);

@@ -18,11 +18,9 @@ futures.workspace = true
 serde_json.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
-alloy-network.workspace = true
 base-tx-manager.workspace = true
 base-batcher-core.workspace = true
 base-alloy-network.workspace = true
-alloy-signer-local.workspace = true
 base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
 tracing = { workspace = true, features = ["std"] }

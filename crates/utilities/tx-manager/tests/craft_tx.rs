@@ -26,9 +26,10 @@ async fn setup_with_config(
     let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
     let wallet = EthereumWallet::from(signer);
     let chain_id = anvil.chain_id();
-    let manager = SimpleTxManager::new(provider, wallet, config, chain_id, Arc::new(NoopTxMetrics))
-        .await
-        .expect("should create manager");
+    let manager =
+        SimpleTxManager::from_wallet(provider, wallet, config, chain_id, Arc::new(NoopTxMetrics))
+            .await
+            .expect("should create manager");
     (manager, anvil)
 }
 
@@ -365,10 +366,15 @@ async fn new_rejects_chain_id_mismatch() {
 
     // Anvil uses chain_id 31337 by default; supply a wrong one.
     let wrong_chain_id = 999;
-    let err =
-        SimpleTxManager::new(provider, wallet, config, wrong_chain_id, Arc::new(NoopTxMetrics))
-            .await
-            .expect_err("should reject mismatched chain_id");
+    let err = SimpleTxManager::from_wallet(
+        provider,
+        wallet,
+        config,
+        wrong_chain_id,
+        Arc::new(NoopTxMetrics),
+    )
+    .await
+    .expect_err("should reject mismatched chain_id");
 
     match &err {
         TxManagerError::InvalidConfig(msg) => {
@@ -450,7 +456,7 @@ async fn new_rejects_invalid_config() {
 
     let invalid_config = TxManagerConfig { num_confirmations: 0, ..TxManagerConfig::default() };
 
-    let err = SimpleTxManager::new(
+    let err = SimpleTxManager::from_wallet(
         provider,
         wallet,
         invalid_config,
@@ -555,7 +561,7 @@ async fn setup_with_failing_signer() -> (SimpleTxManager, alloy_node_bindings::A
     let address = anvil.addresses()[0];
     let wallet = EthereumWallet::from(FailingSigner { address });
     let chain_id = anvil.chain_id();
-    let manager = SimpleTxManager::new(
+    let manager = SimpleTxManager::from_wallet(
         provider,
         wallet,
         TxManagerConfig::default(),
