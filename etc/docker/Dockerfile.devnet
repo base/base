@@ -1,4 +1,4 @@
-FROM public.ecr.aws/docker/library/golang:1.25-alpine AS builder
+FROM public.ecr.aws/docker/library/golang:1.26-alpine AS builder
 
 # Install build dependencies for CGO (required for BLS library)
 RUN apk add --no-cache git make gcc g++ musl-dev linux-headers curl ca-certificates
@@ -7,6 +7,9 @@ RUN apk add --no-cache git make gcc g++ musl-dev linux-headers curl ca-certifica
 # URL format: op-deployer-{version_no_v}-linux-{arch}.tar.gz
 # Tarball contains: op-deployer-{version}-linux-{arch}/op-deployer
 ARG OP_DEPLOYER_VERSION=0.6.0-rc.3
+ARG ETH_BEACON_GENESIS_COMMIT=f57c0fb4606f9a28e5eecb61546efa9b658183b2
+ARG ETH2_VAL_TOOLS_TAG=v0.2.0
+ARG ETH2_VAL_TOOLS_COMMIT=db4f5fa6b8a6096a5f22c0a60f6494bf489c407b
 RUN ARCH=$(uname -m | sed 's/x86_64/amd64/g' | sed 's/aarch64/arm64/g') && \
     curl -L -o /tmp/op-deployer.tar.gz \
     "https://github.com/ethereum-optimism/optimism/releases/download/op-deployer/v${OP_DEPLOYER_VERSION}/op-deployer-${OP_DEPLOYER_VERSION}-linux-${ARCH}.tar.gz" && \
@@ -17,16 +20,20 @@ RUN ARCH=$(uname -m | sed 's/x86_64/amd64/g' | sed 's/aarch64/arm64/g') && \
 
 # Build eth-beacon-genesis from source (has replace directives, can't use go install)
 WORKDIR /build
-RUN git clone --depth 1 https://github.com/ethpandaops/eth-beacon-genesis.git .
+RUN git clone https://github.com/ethpandaops/eth-beacon-genesis.git . && \
+    git checkout "${ETH_BEACON_GENESIS_COMMIT}" && \
+    test "$(git rev-parse HEAD)" = "${ETH_BEACON_GENESIS_COMMIT}"
 ENV CGO_ENABLED=1
 RUN go build -o /go/bin/eth-genesis-state-generator ./cmd/eth-genesis-state-generator
 
 # Build eth2-val-tools for validator keystore generation
 WORKDIR /build2
-RUN git clone --depth 1 https://github.com/protolambda/eth2-val-tools.git .
+RUN git clone https://github.com/protolambda/eth2-val-tools.git --branch "${ETH2_VAL_TOOLS_TAG}" --single-branch . && \
+    git switch -c "branch-${ETH2_VAL_TOOLS_TAG}" "${ETH2_VAL_TOOLS_COMMIT}" && \
+    test "$(git rev-parse HEAD)" = "${ETH2_VAL_TOOLS_COMMIT}"
 RUN go build -o /go/bin/eth2-val-tools .
 
-FROM public.ecr.aws/docker/library/alpine:3.21
+FROM public.ecr.aws/docker/library/alpine:3.21.3
 
 RUN apk add --no-cache bash jq openssl curl gettext
 

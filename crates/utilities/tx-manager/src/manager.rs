@@ -52,7 +52,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     BlobTxBuilder, BumpedFees, FeeCalculator, FeeOverride, GasPriceCaps, NonceManager,
-    RpcErrorClassifier, SendHandle, SendResponse, SendState, TxCandidate, TxManager,
+    RpcErrorClassifier, SendHandle, SendResponse, SendState, SignerConfig, TxCandidate, TxManager,
     TxManagerConfig, TxManagerError, TxManagerResult, TxMetrics,
 };
 
@@ -169,20 +169,42 @@ impl SimpleTxManager {
     /// Fixed delay between retry attempts in [`Self::prepare`].
     pub const PREPARE_RETRY_DELAY: Duration = Duration::from_secs(2);
 
-    /// Creates a new [`SimpleTxManager`].
+    /// Creates a new [`SimpleTxManager`] from a [`SignerConfig`].
     ///
-    /// Internally creates a [`NonceManager`] using the wallet's default
-    /// signer address and the config's `network_timeout`. Fetches the
-    /// chain ID from the provider and validates it against the supplied
-    /// `chain_id` to prevent constructing transactions with the wrong
-    /// chain ID.
+    /// Builds the [`EthereumWallet`] from `signer_config`, then delegates
+    /// to [`from_wallet`](Self::from_wallet).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TxManagerError::WalletConstruction`] if the wallet cannot
+    /// be built. See [`from_wallet`](Self::from_wallet) for other error
+    /// conditions.
+    pub async fn new(
+        provider: RootProvider,
+        signer_config: SignerConfig,
+        config: TxManagerConfig,
+        chain_id: u64,
+        metrics: Arc<dyn TxMetrics>,
+    ) -> TxManagerResult<Self> {
+        let wallet = signer_config.build_wallet()?;
+        Self::from_wallet(provider, wallet, config, chain_id, metrics).await
+    }
+
+    /// Creates a new [`SimpleTxManager`] from a pre-built [`EthereumWallet`].
+    ///
+    /// This is the primary constructor used by tests and callers that need
+    /// custom signers (e.g. `FailingSigner`). Internally creates a
+    /// [`NonceManager`] using the wallet's default signer address and the
+    /// config's `network_timeout`. Fetches the chain ID from the provider
+    /// and validates it against the supplied `chain_id` to prevent
+    /// constructing transactions with the wrong chain ID.
     ///
     /// # Errors
     ///
     /// Returns [`TxManagerError::InvalidConfig`] if config validation
     /// fails or the chain ID does not match the provider. Returns
     /// [`TxManagerError::Rpc`] if the provider is unreachable.
-    pub async fn new(
+    pub async fn from_wallet(
         provider: RootProvider,
         wallet: EthereumWallet,
         config: TxManagerConfig,
@@ -1562,7 +1584,7 @@ mod tests {
         let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
         let wallet = EthereumWallet::from(signer);
         let chain_id = anvil.chain_id();
-        let manager = SimpleTxManager::new(
+        let manager = SimpleTxManager::from_wallet(
             provider,
             wallet,
             TxManagerConfig::default(),

@@ -2640,11 +2640,9 @@ dependencies = [
 name = "base-batcher-service"
 version = "0.0.0"
 dependencies = [
- "alloy-network",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types-eth",
- "alloy-signer-local",
  "async-trait",
  "base-alloy-consensus",
  "base-alloy-network",
@@ -4699,6 +4697,7 @@ dependencies = [
  "alloy-signer-local",
  "async-trait",
  "backon",
+ "base-alloy-signer",
  "clap",
  "humantime",
  "metrics",
@@ -4708,6 +4707,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
