@@ -148,6 +148,66 @@ impl ThrottleController {
     }
 }
 
+/// Wraps a [`ThrottleController`] and a [`ThrottleClient`] with a dedup cache
+/// to avoid redundant RPC calls when DA limits have not changed.
+#[derive(Debug)]
+pub struct DaThrottle<TC: crate::ThrottleClient> {
+    controller: ThrottleController,
+    client: TC,
+    last_applied: Option<(u64, u64)>,
+}
+
+impl<TC: crate::ThrottleClient> DaThrottle<TC> {
+    /// Create a new [`DaThrottle`].
+    pub const fn new(controller: ThrottleController, client: TC) -> Self {
+        Self { controller, client, last_applied: None }
+    }
+
+    /// Compute new DA limits from `backlog_bytes` and push them to the client
+    /// only when they differ from the last applied limits.
+    ///
+    /// Logs throttle on/off transitions.
+    pub async fn apply(&mut self, backlog_bytes: u64) {
+        let throttle_params = self.controller.update(backlog_bytes);
+        let is_throttling = throttle_params.as_ref().is_some_and(ThrottleParams::is_throttling);
+
+        let (max_tx_size, max_block_size) = throttle_params.as_ref().map_or_else(
+            || {
+                (
+                    self.controller.config().tx_size_upper_limit,
+                    self.controller.config().block_size_upper_limit,
+                )
+            },
+            |p| (p.max_tx_size, p.max_block_size),
+        );
+
+        let new_limits = (max_tx_size, max_block_size);
+        if self.last_applied == Some(new_limits) {
+            return;
+        }
+
+        if let Err(e) = self.client.set_max_da_size(max_tx_size, max_block_size).await {
+            tracing::warn!(error = %e, "failed to apply DA size limits to block builder");
+        } else {
+            if is_throttling {
+                tracing::info!(
+                    intensity = throttle_params.as_ref().unwrap().intensity,
+                    max_block_size,
+                    max_tx_size,
+                    "DA throttle activated"
+                );
+            } else {
+                tracing::info!(
+                    max_block_size,
+                    max_tx_size,
+                    "DA throttle deactivated, limits reset"
+                );
+            }
+            self.last_applied = Some(new_limits);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

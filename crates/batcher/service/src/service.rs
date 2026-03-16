@@ -12,18 +12,19 @@ use base_batcher_core::{
 };
 use base_batcher_encoder::BatchEncoder;
 use base_batcher_source::{BlockSubscription, HybridBlockSource, HybridL1HeadSource, SourceError};
-use base_consensus_genesis::RollupConfig;
+use base_consensus_rpc::RollupNodeApiClient;
 use base_runtime::TokioRuntime;
 use base_tx_manager::{NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
-use serde_json::Value;
+use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
 
 use crate::{
     BatcherConfig, NullL1HeadSubscription, NullSubscription, RpcL1HeadPollingSource,
-    RpcPollingSource, RpcThrottleClient, WsBlockSubscription, WsL1HeadSubscription,
+    RpcPollingSource, RpcThrottleClient, SafeHeadPoller, WsBlockSubscription, WsL1HeadSubscription,
 };
 
 /// Service-internal throttle client variant: either a no-op or an RPC client.
@@ -237,7 +238,10 @@ impl BatcherService {
     /// validates the private key, and constructs the driver. Returns an error
     /// if any of those steps fail — the caller sees the failure immediately,
     /// before any background work is spawned.
-    pub async fn setup(self) -> eyre::Result<ReadyBatcher> {
+    ///
+    /// The `cancellation` token is forwarded to the safe-head poller spawned
+    /// here so it stops cleanly when the batcher shuts down.
+    pub async fn setup(self, cancellation: CancellationToken) -> eyre::Result<ReadyBatcher> {
         self.config.encoder_config.validate()?;
 
         info!(
@@ -257,9 +261,6 @@ impl BatcherService {
                 .await?,
         );
 
-        // Build the L2 polling source.
-        let poller = RpcPollingSource::new(Arc::clone(&l2_provider));
-
         // Build the L2 block subscription. When l2_ws_url is configured the
         // subscription owns its provider Arc so the connection stays live for
         // the full driver run.
@@ -267,36 +268,57 @@ impl BatcherService {
             Self::build_l2_subscription(self.config.l2_ws_url.as_ref(), Arc::clone(&l2_provider))
                 .await;
 
+        // Connect to the rollup node using a typed jsonrpsee HTTP client so that
+        // `optimism_rollupConfig` and `optimism_syncStatus` are called through the
+        // generated `RollupNodeApiClient` trait rather than raw JSON requests.
+        let rollup_client: HttpClient = HttpClientBuilder::default()
+            .build(self.config.rollup_rpc_url.as_str())
+            .map_err(|e| eyre::eyre!("failed to build rollup RPC client: {e}"))?;
+        info!(rollup_rpc = %self.config.rollup_rpc_url, "fetching rollup config");
+        let rollup_config = Arc::new(
+            rollup_client
+                .op_rollup_config()
+                .await
+                .map_err(|e| eyre::eyre!("optimism_rollupConfig RPC failed: {e}"))?,
+        );
+        info!(
+            inbox = %rollup_config.batch_inbox_address,
+            "rollup config loaded"
+        );
+
+        // Fetch sync status to determine the safe L2 head for startup backfill.
+        let sync_status = rollup_client
+            .op_sync_status()
+            .await
+            .map_err(|e| eyre::eyre!("optimism_syncStatus RPC failed: {e}"))?;
+        let safe_l2_number = sync_status.safe_l2.block_info.number;
+        info!(safe_l2 = %safe_l2_number, "fetched safe L2 head");
+
+        // Get the current L2 latest block to decide whether historical backfill is needed.
+        let latest_l2 = l2_provider
+            .get_block_number()
+            .await
+            .map_err(|e| eyre::eyre!("failed to fetch L2 latest block number: {e}"))?;
+
+        // Build the L2 polling source. If blocks between safe_head+1 and latest
+        // were not yet submitted, use sequential catchup mode to avoid skipping them.
+        let poller = if safe_l2_number < latest_l2 {
+            info!(
+                safe_l2 = %safe_l2_number,
+                latest_l2 = %latest_l2,
+                "starting sequential backfill from safe L2 head"
+            );
+            RpcPollingSource::new_from(Arc::clone(&l2_provider), safe_l2_number + 1)
+        } else {
+            RpcPollingSource::new(Arc::clone(&l2_provider))
+        };
+
         // Assemble the hybrid L2 block source.
         let source = HybridBlockSource::new(
             TokioRuntime::new(),
             l2_subscription,
             poller,
             self.config.poll_interval,
-        );
-
-        // Fetch the rollup config from the rollup node via `optimism_rollupConfig`.
-        // Uses a plain HTTP provider so no network-typed provider is needed — the
-        // rollup node endpoint is different from the L2 execution node.
-        let rollup_config = {
-            let rollup_provider: RootProvider = ProviderBuilder::new()
-                .disable_recommended_fillers()
-                .connect(self.config.rollup_rpc_url.as_str())
-                .await
-                .map_err(|e| eyre::eyre!("failed to connect to rollup node: {e}"))?;
-            info!(rollup_rpc = %self.config.rollup_rpc_url, "fetching rollup config");
-            let raw: Value = rollup_provider
-                .raw_request("optimism_rollupConfig".into(), ())
-                .await
-                .map_err(|e| eyre::eyre!("optimism_rollupConfig RPC failed: {e}"))?;
-            Arc::new(
-                serde_json::from_value::<RollupConfig>(raw)
-                    .map_err(|e| eyre::eyre!("failed to deserialize rollup config: {e}"))?,
-            )
-        };
-        info!(
-            inbox = %rollup_config.batch_inbox_address,
-            "rollup config loaded"
         );
         let encoder =
             BatchEncoder::new(Arc::clone(&rollup_config), self.config.encoder_config.clone());
@@ -362,6 +384,16 @@ impl BatcherService {
         .await
         .map_err(|e| eyre::eyre!("failed to create tx manager: {e}"))?;
 
+        // Create a safe-head watch channel for runtime pruning of confirmed blocks.
+        let (safe_head_tx, safe_head_rx) = watch::channel::<u64>(safe_l2_number);
+
+        // Spawn the safe-head poller. It polls `optimism_syncStatus` at the
+        // configured interval and advances the watch when the safe L2 head
+        // moves forward, allowing the encoder to prune confirmed blocks.
+        // The CancellationToken ensures the task exits when the batcher shuts down.
+        SafeHeadPoller::new(rollup_client, self.config.poll_interval, safe_head_tx)
+            .spawn(cancellation);
+
         // Build the driver — all fallible setup is complete at this point.
         let driver = BatchDriver::new(
             encoder,
@@ -370,11 +402,13 @@ impl BatcherService {
             base_batcher_core::BatchDriverConfig {
                 inbox: rollup_config.batch_inbox_address,
                 max_pending_transactions: self.config.max_pending_transactions,
+                drain_timeout: self.config.resubmission_timeout * 2,
             },
             throttle,
             throttle_client,
             l1_head_source,
-        );
+        )
+        .with_safe_head_rx(safe_head_rx);
 
         info!("batcher service components initialized");
         Ok(ReadyBatcher { driver })

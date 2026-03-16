@@ -15,7 +15,6 @@ workspace = true
 url.workspace = true
 eyre.workspace = true
 futures.workspace = true
-serde_json.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
 base-tx-manager.workspace = true
@@ -29,9 +28,10 @@ alloy-primitives = { workspace = true, features = ["std"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-alloy-consensus = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+base-consensus-rpc = { workspace = true, features = ["client"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 base-alloy-rpc-jsonrpsee = { workspace = true, features = ["client"] }
-base-consensus-genesis = { workspace = true, features = ["std", "serde"] }
 
 [dev-dependencies]
 httpmock.workspace = true
