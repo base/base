@@ -97,6 +97,53 @@ pub enum SigningConfig {
     },
 }
 
+impl SigningConfig {
+    /// Validates and builds a [`SigningConfig`] from CLI arguments.
+    ///
+    /// Exactly one of `private_key` or (`signer_endpoint` + `signer_address`) must be provided.
+    pub fn build(
+        private_key: Option<&str>,
+        signer_endpoint: Option<Url>,
+        signer_address: Option<&Address>,
+    ) -> Result<Self, ConfigError> {
+        match (private_key, signer_endpoint, signer_address) {
+            (Some(pk), None, None) => {
+                let hex_str = pk.strip_prefix("0x").unwrap_or(pk);
+                let key_bytes = Zeroizing::new(
+                    hex::decode(hex_str)
+                        .map_err(|e| ConfigError::Signing(format!("invalid private key hex: {e}")))?,
+                );
+                let signing_key = SigningKey::from_slice(&key_bytes)
+                    .map_err(|e| ConfigError::Signing(format!("invalid private key: {e}")))?;
+                let signer = PrivateKeySigner::from_signing_key(signing_key);
+                Ok(Self::Local { signer })
+            }
+            (None, Some(endpoint), Some(address)) => {
+                let endpoint =
+                    Validated::try_from(endpoint).map_err(|e| ConfigError::InvalidUrl {
+                        field: "signer-endpoint",
+                        reason: e.to_string(),
+                    })?;
+                Ok(Self::Remote { endpoint, address: *address })
+            }
+            (None, None, None) => Err(ConfigError::Signing(
+                "one of CHALLENGER_PRIVATE_KEY or (--signer-endpoint + --signer-address) must be provided"
+                    .to_string(),
+            )),
+            (Some(_), Some(_), _) | (Some(_), _, Some(_)) => Err(ConfigError::Signing(
+                "CHALLENGER_PRIVATE_KEY is mutually exclusive with --signer-endpoint/--signer-address"
+                    .to_string(),
+            )),
+            (None, Some(_), None) => {
+                Err(ConfigError::Signing("--signer-endpoint requires --signer-address".to_string()))
+            }
+            (None, None, Some(_)) => {
+                Err(ConfigError::Signing("--signer-address requires --signer-endpoint".to_string()))
+            }
+        }
+    }
+}
+
 impl std::fmt::Debug for SigningConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -222,7 +269,7 @@ impl ChallengerConfig {
         }
 
         // Validate and extract signing config
-        let signing = build_signing_config(
+        let signing = SigningConfig::build(
             private_key.as_deref().map(String::as_str),
             cli.challenger.signer_endpoint,
             cli.challenger.signer_address.as_ref(),
@@ -246,51 +293,6 @@ impl ChallengerConfig {
             log: LogConfig::from(cli.logging),
             metrics: cli.metrics.into(),
         })
-    }
-}
-
-/// Validate and build [`SigningConfig`] from CLI arguments.
-///
-/// Exactly one of `private_key` or (`signer_endpoint` + `signer_address`) must be provided.
-fn build_signing_config(
-    private_key: Option<&str>,
-    signer_endpoint: Option<Url>,
-    signer_address: Option<&Address>,
-) -> Result<SigningConfig, ConfigError> {
-    match (private_key, signer_endpoint, signer_address) {
-        (Some(pk), None, None) => {
-            let hex_str = pk.strip_prefix("0x").unwrap_or(pk);
-            let key_bytes = Zeroizing::new(
-                hex::decode(hex_str)
-                    .map_err(|e| ConfigError::Signing(format!("invalid private key hex: {e}")))?,
-            );
-            let signing_key = SigningKey::from_slice(&key_bytes)
-                .map_err(|e| ConfigError::Signing(format!("invalid private key: {e}")))?;
-            let signer = PrivateKeySigner::from_signing_key(signing_key);
-            Ok(SigningConfig::Local { signer })
-        }
-        (None, Some(endpoint), Some(address)) => {
-            let endpoint =
-                Validated::try_from(endpoint).map_err(|e| ConfigError::InvalidUrl {
-                    field: "signer-endpoint",
-                    reason: e.to_string(),
-                })?;
-            Ok(SigningConfig::Remote { endpoint, address: *address })
-        }
-        (None, None, None) => Err(ConfigError::Signing(
-            "one of CHALLENGER_PRIVATE_KEY or (--signer-endpoint + --signer-address) must be provided"
-                .to_string(),
-        )),
-        (Some(_), Some(_), _) | (Some(_), _, Some(_)) => Err(ConfigError::Signing(
-            "CHALLENGER_PRIVATE_KEY is mutually exclusive with --signer-endpoint/--signer-address"
-                .to_string(),
-        )),
-        (None, Some(_), None) => {
-            Err(ConfigError::Signing("--signer-endpoint requires --signer-address".to_string()))
-        }
-        (None, None, Some(_)) => {
-            Err(ConfigError::Signing("--signer-address requires --signer-endpoint".to_string()))
-        }
     }
 }
 
@@ -461,7 +463,7 @@ mod tests {
     ) {
         let url = url_str.map(|s| Url::parse(s).unwrap());
         let addr: Option<Address> = addr_str.map(|s| s.parse().unwrap());
-        let result = build_signing_config(pk, url, addr.as_ref());
+        let result = SigningConfig::build(pk, url, addr.as_ref());
         if should_succeed {
             assert!(result.is_ok(), "expected Ok, got {result:?}");
         } else {
@@ -489,7 +491,7 @@ mod tests {
     #[test]
     fn test_signing_config_debug_shows_address() {
         let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-        let signing = build_signing_config(Some(pk), None, None).unwrap();
+        let signing = SigningConfig::build(Some(pk), None, None).unwrap();
         let debug_output = format!("{signing:?}");
         assert!(debug_output.contains("address"));
         assert!(

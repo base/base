@@ -1,3 +1,5 @@
+//! Challenger metrics constants and startup recording.
+
 /// Challenger metrics helpers.
 #[derive(Debug)]
 pub struct ChallengerMetrics;
