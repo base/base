@@ -148,8 +148,7 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
     let frame_count = batcher.pending_count();
     assert!(
         frame_count >= 3,
-        "need ≥3 frames to skip frame 1; got {} (decrease max_frame_size)",
-        frame_count
+        "need ≥3 frames to skip frame 1; got {frame_count} (decrease max_frame_size)"
     );
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(

@@ -233,8 +233,7 @@ async fn blob_da_channel_timeout() {
     let frame_count = batcher.pending_count();
     assert!(
         frame_count >= 2,
-        "expected multi-frame channel with max_frame_size=80, got {} frames",
-        frame_count
+        "expected multi-frame channel with max_frame_size=80, got {frame_count} frames"
     );
 
     // Submit ONLY frame 0 as a blob sidecar in L1 block 1.
