@@ -65,7 +65,7 @@ where
         }
 
         let mut i = 0;
-        while i < self.queue.len() - 1 {
+        while i + 1 < self.queue.len() {
             let prev_frame = &self.queue[i];
             let next_frame = &self.queue[i + 1];
             let extends_channel = prev_frame.id == next_frame.id;
@@ -551,5 +551,19 @@ pub(crate) mod tests {
             .build();
         assert.holocene_active(true);
         assert.next_frames().await;
+    }
+
+    #[test]
+    fn test_holocene_prune_empty_queue_no_panic() {
+        let cfg = Arc::new(RollupConfig {
+            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            ..Default::default()
+        });
+        let mock = TestFrameQueueProvider::new(vec![]);
+        let mut frame_queue = FrameQueue::new(mock, cfg);
+
+        frame_queue.prune(BlockInfo::default());
+
+        assert!(frame_queue.queue.is_empty());
     }
 }
