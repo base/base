@@ -220,10 +220,7 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
     type Error = AlloyL2ChainProviderError;
 
     async fn l2_block_info_by_number(&mut self, number: u64) -> Result<L2BlockInfo, Self::Error> {
-        let block = self
-            .block_by_number(number)
-            .await
-            .map_err(|_| AlloyL2ChainProviderError::BlockNotFound(number))?;
+        let block = self.block_by_number(number).await?;
         L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis)
             .map_err(|_| AlloyL2ChainProviderError::L2BlockInfoConstruction(number))
     }
@@ -262,10 +259,7 @@ impl L2ChainProvider for AlloyL2ChainProvider {
         number: u64,
         rollup_config: Arc<RollupConfig>,
     ) -> Result<SystemConfig, <Self as BatchValidationProvider>::Error> {
-        let block = self
-            .block_by_number(number)
-            .await
-            .map_err(|_| AlloyL2ChainProviderError::BlockNotFound(number))?;
+        let block = self.block_by_number(number).await?;
         to_system_config(&block, &rollup_config)
             .map_err(|_| AlloyL2ChainProviderError::SystemConfigConversion(number))
     }
@@ -273,7 +267,15 @@ impl L2ChainProvider for AlloyL2ChainProvider {
 
 #[cfg(test)]
 mod tests {
+    use httpmock::prelude::*;
+    use serde_json::json;
+
     use super::*;
+
+    fn test_provider(base_url: &str) -> AlloyL2ChainProvider {
+        let inner = RootProvider::<Base>::new_http(base_url.parse().unwrap());
+        AlloyL2ChainProvider::new(inner, Arc::new(RollupConfig::default()), 1)
+    }
 
     #[test]
     fn test_from_alloy_l2_chain_provider_error() {
@@ -299,6 +301,56 @@ mod tests {
         assert!(
             matches!(kind, PipelineErrorKind::Reset(_)),
             "L2 BlockNotFound must map to Reset (block disappeared due to reorg)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_l2_block_info_by_number_preserves_rpc_errors() {
+        let server = MockServer::start();
+        let rpc_mock = server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).json_body(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": {
+                    "code": -32000,
+                    "message": "upstream unavailable"
+                }
+            }));
+        });
+
+        let mut provider = test_provider(&server.base_url());
+        let result = provider.l2_block_info_by_number(42).await;
+        rpc_mock.assert();
+
+        assert!(
+            matches!(result, Err(AlloyL2ChainProviderError::Transport(_))),
+            "expected RPC failure to stay Transport, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_system_config_by_number_preserves_rpc_errors() {
+        let server = MockServer::start();
+        let rpc_mock = server.mock(|when, then| {
+            when.method(POST).path("/");
+            then.status(200).json_body(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": {
+                    "code": -32000,
+                    "message": "upstream unavailable"
+                }
+            }));
+        });
+
+        let mut provider = test_provider(&server.base_url());
+        let result = provider.system_config_by_number(42, Arc::new(RollupConfig::default())).await;
+        rpc_mock.assert();
+
+        assert!(
+            matches!(result, Err(AlloyL2ChainProviderError::Transport(_))),
+            "expected RPC failure to stay Transport, got {result:?}"
         );
     }
 }
