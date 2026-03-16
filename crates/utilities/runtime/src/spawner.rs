@@ -25,8 +25,17 @@ pub enum TaskError {
 /// Analogous to `tokio::task::JoinHandle<T>`. Dropping the handle does not
 /// cancel the underlying task (fire-and-forget semantics).
 pub struct TaskHandle<T> {
-    /// The underlying future representing the task's completion.
-    pub inner: Pin<Box<dyn Future<Output = Result<T, TaskError>> + Send>>,
+    inner: Pin<Box<dyn Future<Output = Result<T, TaskError>> + Send>>,
+}
+
+impl<T> TaskHandle<T> {
+    /// Construct a [`TaskHandle`] from any future that produces `Result<T, TaskError>`.
+    ///
+    /// This is the only way to create a `TaskHandle`. Spawner implementations
+    /// use this to wrap the underlying runtime handle.
+    pub fn new(fut: impl Future<Output = Result<T, TaskError>> + Send + 'static) -> Self {
+        Self { inner: Box::pin(fut) }
+    }
 }
 
 impl<T> fmt::Debug for TaskHandle<T> {

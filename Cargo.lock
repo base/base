@@ -2652,6 +2652,7 @@ dependencies = [
  "async-trait",
  "base-alloy-consensus",
  "base-protocol",
+ "base-runtime",
  "futures",
  "thiserror 2.0.18",
  "tokio",
@@ -4623,6 +4624,7 @@ name = "base-runtime"
 version = "0.0.0"
 dependencies = [
  "futures",
+ "rand 0.9.2",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",

@@ -15,6 +15,7 @@ workspace = true
 futures.workspace = true
 thiserror.workspace = true
 
+rand = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }
 tokio-stream = { workspace = true, optional = true }
@@ -26,11 +27,11 @@ tokio = { workspace = true, features = ["rt", "macros", "time", "sync"] }
 default = [ "tokio" ]
 tokio = [
 	"dep:tokio",
-	"dep:tokio-stream",
-	"dep:tokio-util",
-	"tokio/macros",
 	"tokio/rt",
 	"tokio/sync",
 	"tokio/time",
+	"tokio/macros",
+	"dep:tokio-util",
+	"dep:tokio-stream",
 ]
-test-utils = [ "tokio", "tokio/test-util" ]
+test-utils = [ "dep:rand" ]
