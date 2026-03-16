@@ -69,11 +69,8 @@ impl SignerConfig {
     pub fn build_wallet(self) -> Result<EthereumWallet, TxManagerError> {
         match self {
             Self::Local { private_key } => {
-                let mut key = B256::new(*private_key);
-                let result = PrivateKeySigner::from_bytes(&key);
-                key.0.zeroize();
-                let signer =
-                    result.map_err(|e| TxManagerError::WalletConstruction(e.to_string()))?;
+                let signer = PrivateKeySigner::from_slice(&*private_key)
+                    .map_err(|e| TxManagerError::WalletConstruction(e.to_string()))?;
                 Ok(EthereumWallet::new(signer))
             }
             Self::Remote { endpoint, address } => {
