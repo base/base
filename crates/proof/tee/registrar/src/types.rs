@@ -14,13 +14,13 @@ pub struct ProverInstance {
 /// Health status of a discovered prover instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstanceHealthStatus {
-    /// ALB health checks are in progress (AWS mode only — instance just started).
+    /// ALB health checks are in progress — instance just started.
     Initial,
     /// Instance is reachable and passing health checks.
     Healthy,
     /// Instance did not respond to the poll or is failing health checks.
     Unhealthy,
-    /// ALB is draining connections from this instance (AWS mode only).
+    /// ALB is draining connections from this instance.
     Draining,
 }
 
