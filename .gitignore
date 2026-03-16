@@ -7,5 +7,4 @@ eif.bin
 docs/specs/node_modules/
 docs/specs/dist/
 docs/specs/.vocs/
-docs/specs/bun.lock
 *.log
