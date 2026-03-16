@@ -123,15 +123,6 @@ pub struct Args {
         requires = "enable_tx_forwarding"
     )]
     pub tx_forwarding_max_rps: u32,
-
-    /// Maximum time to wait before sending an incomplete batch in ms
-    #[arg(
-        long = "tx-forwarding-batch-timeout-ms",
-        value_name = "TX_FORWARDING_BATCH_TIMEOUT_MS",
-        default_value = "50",
-        requires = "enable_tx_forwarding"
-    )]
-    pub tx_forwarding_batch_timeout_ms: u64,
 }
 
 impl From<&Args> for Option<FlashblocksConfig> {

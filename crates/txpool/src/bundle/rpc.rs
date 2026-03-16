@@ -186,11 +186,7 @@ where
             .try_into_recovered()
             .map_err(|_| rpc_err(ErrorCode::InvalidParams, "failed to recover signer"))?;
 
-        #[expect(
-            clippy::clone_on_copy,
-            reason = "tx_hash() returns &B256; * goes through Deref to [u8; 32]"
-        )]
-        let tx_hash = recovered.tx_hash().clone();
+        let tx_hash = TxHash::from(*recovered.tx_hash());
         let encoded_len = raw.len();
 
         let pool_tx = BasePooledTransaction::new(recovered, encoded_len).with_bundle_metadata(

@@ -1,3 +1,5 @@
+//! Bundle transaction types and lifecycle management for `eth_sendBundle` RPC support.
+
 mod rpc;
 pub use rpc::{SendBundleApiImpl, SendBundleApiServer, SendBundleRequest};
 
