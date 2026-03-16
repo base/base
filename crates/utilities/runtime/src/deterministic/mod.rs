@@ -15,13 +15,20 @@ mod executor;
 use std::{
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex, Weak, atomic::{AtomicBool, Ordering}},
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
     task,
     task::Poll,
     time::Duration,
 };
 
-use futures::{StreamExt, channel::oneshot, stream::{self, BoxStream}};
+use futures::{
+    StreamExt,
+    channel::oneshot,
+    stream::{self, BoxStream},
+};
 
 use crate::{Cancellation, Clock, Spawner, TaskError, TaskHandle};
 use executor::{Executor, Sleeper};
@@ -146,11 +153,7 @@ impl Clock for Context {
 
     fn sleep(&self, duration: Duration) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         let deadline = self.now() + duration;
-        Box::pin(Sleeper {
-            executor: Weak::clone(&self.executor),
-            deadline,
-            registered: false,
-        })
+        Box::pin(Sleeper { executor: Weak::clone(&self.executor), deadline, registered: false })
     }
 
     fn interval(&self, period: Duration) -> BoxStream<'static, ()> {
@@ -196,11 +199,7 @@ impl Future for CancelFuture {
         self.state.wakers.lock().unwrap().push(cx.waker().clone());
         // Re-check after registering to close the race between the check above
         // and a concurrent `cancel()` call.
-        if self.state.cancelled.load(Ordering::Acquire) {
-            Poll::Ready(())
-        } else {
-            Poll::Pending
-        }
+        if self.state.cancelled.load(Ordering::Acquire) { Poll::Ready(()) } else { Poll::Pending }
     }
 }
 
@@ -228,7 +227,10 @@ impl Cancellation for Context {
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::{Arc, atomic::{AtomicU32, Ordering}},
+        sync::{
+            Arc,
+            atomic::{AtomicU32, Ordering},
+        },
         time::Duration,
     };
 
@@ -324,7 +326,9 @@ mod tests {
         Runner::start(Config::seeded(0), |ctx| async move {
             let ctx2 = ctx.clone();
             assert!(!ctx.is_cancelled());
-            ctx.spawn(async move { ctx2.cancel(); });
+            ctx.spawn(async move {
+                ctx2.cancel();
+            });
             ctx.cancelled().await;
             assert!(ctx.is_cancelled());
         });

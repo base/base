@@ -205,10 +205,11 @@ impl Future for Sleeper {
         }
         if !self.registered {
             self.registered = true;
-            executor.sleeping.lock().unwrap().push(Alarm {
-                time: self.deadline,
-                waker: cx.waker().clone(),
-            });
+            executor
+                .sleeping
+                .lock()
+                .unwrap()
+                .push(Alarm { time: self.deadline, waker: cx.waker().clone() });
         }
         Poll::Pending
     }
