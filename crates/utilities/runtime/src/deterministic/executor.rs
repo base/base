@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeMap, BinaryHeap},
+    fmt,
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex, Weak},
@@ -14,11 +15,12 @@ use futures::task::ArcWake;
 use rand::{SeedableRng, rngs::StdRng, seq::SliceRandom};
 
 /// Core executor state shared across all components.
-pub(super) struct Executor {
+#[derive(Debug)]
+pub struct Executor {
     /// Current virtual time. Only advanced by `skip_idle_time`.
-    pub(super) time: Mutex<Duration>,
+    pub time: Mutex<Duration>,
     /// All live tasks, keyed by monotonic ID.
-    pub(super) tasks: Arc<Tasks>,
+    pub tasks: Arc<Tasks>,
     /// Registered sleep alarms, stored as a min-heap (earliest deadline first).
     sleeping: Mutex<BinaryHeap<Alarm>>,
     /// Seeded RNG used to shuffle the ready queue before each polling round.
@@ -26,7 +28,8 @@ pub(super) struct Executor {
 }
 
 impl Executor {
-    pub(super) fn new(seed: u64) -> Arc<Self> {
+    /// Create a new executor with a seeded RNG for deterministic task scheduling.
+    pub fn new(seed: u64) -> Arc<Self> {
         Arc::new(Self {
             time: Mutex::new(Duration::ZERO),
             tasks: Arc::new(Tasks::default()),
@@ -39,7 +42,7 @@ impl Executor {
     ///
     /// Tasks that complete are removed from `running`. Tasks that are still
     /// pending remain registered via their waker.
-    pub(super) fn poll_ready(self: &Arc<Self>) {
+    pub fn poll_ready(self: &Arc<Self>) {
         let mut queue = self.tasks.drain();
         if queue.len() > 1 {
             queue.shuffle(&mut *self.rng.lock().unwrap());
@@ -61,19 +64,19 @@ impl Executor {
     }
 
     /// If no tasks are ready, jump virtual time to the next alarm deadline.
-    pub(super) fn skip_idle_time(&self) {
-        if !self.tasks.has_ready() {
-            if let Some(alarm) = self.sleeping.lock().unwrap().peek() {
-                let mut time = self.time.lock().unwrap();
-                if alarm.time > *time {
-                    *time = alarm.time;
-                }
+    pub fn skip_idle_time(&self) {
+        if !self.tasks.has_ready()
+            && let Some(alarm) = self.sleeping.lock().unwrap().peek()
+        {
+            let mut time = self.time.lock().unwrap();
+            if alarm.time > *time {
+                *time = alarm.time;
             }
         }
     }
 
     /// Wake every sleeper whose deadline is at or before the current virtual time.
-    pub(super) fn wake_ready_sleepers(&self) {
+    pub fn wake_ready_sleepers(&self) {
         let now = *self.time.lock().unwrap();
         let mut sleeping = self.sleeping.lock().unwrap();
         while sleeping.peek().is_some_and(|a| a.time <= now) {
@@ -82,7 +85,7 @@ impl Executor {
     }
 
     /// Panic if there are no ready tasks and no pending sleepers (deadlock).
-    pub(super) fn assert_liveness(&self) {
+    pub fn assert_liveness(&self) {
         if !self.tasks.has_ready() && self.sleeping.lock().unwrap().is_empty() {
             panic!("runtime stalled: no ready tasks and no pending sleepers");
         }
@@ -90,10 +93,12 @@ impl Executor {
 }
 
 /// Task queue: counter, ready set, and running map.
-pub(super) struct Tasks {
+#[derive(Debug)]
+pub struct Tasks {
     counter: Mutex<u128>,
     ready: Mutex<Vec<u128>>,
-    pub(super) running: Mutex<BTreeMap<u128, Arc<Task>>>,
+    /// All live tasks, keyed by monotonic ID.
+    pub running: Mutex<BTreeMap<u128, Arc<Task>>>,
 }
 
 impl Default for Tasks {
@@ -108,7 +113,7 @@ impl Default for Tasks {
 
 impl Tasks {
     /// Insert a new task into the running map and push it onto the ready queue.
-    pub(super) fn insert(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
+    pub fn insert(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
         let id = {
             let mut c = self.counter.lock().unwrap();
             let id = *c;
@@ -120,23 +125,31 @@ impl Tasks {
     }
 
     /// Push a task ID onto the ready queue (called by `TaskWaker`).
-    pub(super) fn queue(&self, id: u128) {
+    pub fn queue(&self, id: u128) {
         self.ready.lock().unwrap().push(id);
     }
 
     /// Drain the entire ready queue into a `Vec` for the current polling round.
-    pub(super) fn drain(&self) -> Vec<u128> {
+    pub fn drain(&self) -> Vec<u128> {
         std::mem::take(&mut *self.ready.lock().unwrap())
     }
 
-    pub(super) fn has_ready(&self) -> bool {
+    /// Returns `true` if there is at least one task waiting to be polled.
+    pub fn has_ready(&self) -> bool {
         !self.ready.lock().unwrap().is_empty()
     }
 }
 
 /// A single boxed future with its execution state.
-pub(super) struct Task {
-    pub(super) future: Mutex<Pin<Box<dyn Future<Output = ()> + Send>>>,
+pub struct Task {
+    /// The pinned future being driven to completion.
+    pub future: Mutex<Pin<Box<dyn Future<Output = ()> + Send>>>,
+}
+
+impl fmt::Debug for Task {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Task").finish_non_exhaustive()
+    }
 }
 
 /// Waker that re-queues a task ID when woken.
@@ -157,9 +170,12 @@ impl ArcWake for TaskWaker {
 ///
 /// `Ord` is reversed so the heap acts as a min-heap: the earliest deadline
 /// is always at the top.
-pub(super) struct Alarm {
-    pub(super) time: Duration,
-    pub(super) waker: Waker,
+#[derive(Debug)]
+pub struct Alarm {
+    /// The virtual time at which this alarm fires.
+    pub time: Duration,
+    /// Waker to notify when the alarm fires.
+    pub waker: Waker,
 }
 
 impl PartialEq for Alarm {
@@ -187,10 +203,14 @@ impl Ord for Alarm {
 /// On first poll, registers an [`Alarm`] in the executor's sleep heap. The
 /// executor calls `skip_idle_time` + `wake_ready_sleepers` to advance virtual
 /// time and wake this future without spinning.
-pub(super) struct Sleeper {
-    pub(super) executor: Weak<Executor>,
-    pub(super) deadline: Duration,
-    pub(super) registered: bool,
+#[derive(Debug)]
+pub struct Sleeper {
+    /// Weak reference to the executor managing virtual time.
+    pub executor: Weak<Executor>,
+    /// The virtual time at which this sleeper should wake.
+    pub deadline: Duration,
+    /// Whether this sleeper has already registered its alarm.
+    pub registered: bool,
 }
 
 impl Future for Sleeper {
@@ -205,6 +225,12 @@ impl Future for Sleeper {
         }
         if !self.registered {
             self.registered = true;
+            // SAFETY: The waker is not updated on subsequent polls. This is
+            // sound because every TaskWaker for a given task ID has identical
+            // behaviour (tasks.queue(id)), so waking via a waker from any
+            // earlier poll has the same effect as waking via the most recent
+            // one. Updating the waker in-place is also not possible with
+            // BinaryHeap, which provides no random-access mutation.
             executor
                 .sleeping
                 .lock()

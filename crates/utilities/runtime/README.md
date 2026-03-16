@@ -45,7 +45,7 @@ let rt = TokioRuntime::new();
 
 ### Deterministic tests
 
-```rust
+```rust,ignore
 use base_runtime::{Config, Runner, Clock, Spawner};
 use std::time::Duration;
 

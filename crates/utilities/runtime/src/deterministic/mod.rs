@@ -11,7 +11,6 @@
 //! handle passed to tasks.
 
 mod executor;
-
 use std::{
     future::Future,
     pin::Pin,
@@ -24,6 +23,7 @@ use std::{
     time::Duration,
 };
 
+pub use executor::{Alarm, Executor, Sleeper, Task, Tasks};
 use futures::{
     StreamExt,
     channel::oneshot,
@@ -31,7 +31,6 @@ use futures::{
 };
 
 use crate::{Cancellation, Clock, Spawner, TaskError, TaskHandle};
-use executor::{Executor, Sleeper};
 
 /// Configuration for a [`Runner`] execution.
 #[derive(Debug)]
@@ -43,7 +42,7 @@ pub struct Config {
 
 impl Config {
     /// Create a configuration with the given seed.
-    pub fn seeded(seed: u64) -> Self {
+    pub const fn seeded(seed: u64) -> Self {
         Self { seed }
     }
 }
@@ -145,10 +144,7 @@ impl Default for CancelState {
 
 impl Clock for Context {
     fn now(&self) -> Duration {
-        match self.executor.upgrade() {
-            Some(e) => *e.time.lock().unwrap(),
-            None => Duration::ZERO,
-        }
+        self.executor.upgrade().map_or(Duration::ZERO, |e| *e.time.lock().unwrap())
     }
 
     fn sleep(&self, duration: Duration) -> Pin<Box<dyn Future<Output = ()> + Send>> {
@@ -381,7 +377,7 @@ mod tests {
 
             h2.await.unwrap();
             assert_eq!(ctx.now(), Duration::from_secs(2), "2s task must complete at t=2");
-            assert_eq!(ctx.now() < Duration::from_secs(5), true, "5s task must not have fired");
+            assert!(ctx.now() < Duration::from_secs(5), "5s task must not have fired");
 
             h5.await.unwrap();
             assert_eq!(ctx.now(), Duration::from_secs(5), "5s task must complete at t=5");

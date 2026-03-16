@@ -15,6 +15,7 @@ use base_batcher_core::{
 use base_batcher_encoder::BatchEncoder;
 use base_batcher_source::{BlockSubscription, HybridBlockSource, HybridL1HeadSource, SourceError};
 use base_consensus_genesis::RollupConfig;
+use base_runtime::TokioRuntime;
 use base_tx_manager::{NoopTxMetrics, SimpleTxManager, TxManagerConfig};
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use serde_json::Value;
@@ -269,7 +270,12 @@ impl BatcherService {
                 .await;
 
         // Assemble the hybrid L2 block source.
-        let source = HybridBlockSource::new(l2_subscription, poller, self.config.poll_interval);
+        let source = HybridBlockSource::new(
+            TokioRuntime::new(),
+            l2_subscription,
+            poller,
+            self.config.poll_interval,
+        );
 
         // Fetch the rollup config from the rollup node via `optimism_rollupConfig`.
         // Uses a plain HTTP provider so no network-typed provider is needed — the

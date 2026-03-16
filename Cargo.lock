@@ -2631,6 +2631,7 @@ dependencies = [
  "base-batcher-encoder",
  "base-batcher-source",
  "base-consensus-genesis",
+ "base-runtime",
  "base-tx-manager",
  "eyre",
  "futures",

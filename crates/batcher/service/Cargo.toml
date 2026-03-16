@@ -26,6 +26,7 @@ alloy-signer-local.workspace = true
 base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
 tracing = { workspace = true, features = ["std"] }
+base-runtime = { workspace = true, features = ["tokio"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
