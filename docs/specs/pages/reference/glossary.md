@@ -424,12 +424,10 @@ The **L2 Gas Limit** defines the maximum amount of gas that can be used in a sin
 This parameter ensures that L2 blocks remain of reasonable size to be processed and proven.
 
 Changes to the L2 gas limit are fully applied in the first L2 block with the L1 origin that
-introduced the change, as opposed to the 1/1024 adjustments towards a target as seen in limit
-updates of L1 blocks.
+introduced the change.
 
 The gas limit may not be set to a value larger than the
-[maximum gas limit](../protocol/consensus/derivation.md#system-configuration). This is to ensure that L2 blocks are fault
-provable and of reasonable size to be processed by the client software.
+[maximum gas limit](../protocol/consensus/derivation.md#system-configuration). This is to ensure that L2 blocks are provable and can be processed by consensus and execution software.
 
 ### Customizable Feature
 
