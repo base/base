@@ -711,7 +711,9 @@ const fn limit_at_block_end(total_limit: u128, total_flashblock_count: usize) ->
     )
 }
 
-fn estimate_competitiveness_key(estimate: &ResourceEstimate) -> (U256, U256, usize, usize, u128) {
+const fn estimate_competitiveness_key(
+    estimate: &ResourceEstimate,
+) -> (U256, U256, usize, usize, u128) {
     (
         estimate.recommended_priority_fee,
         estimate.threshold_priority_fee,
