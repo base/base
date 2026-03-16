@@ -99,6 +99,8 @@ impl RemoteSigner {
             request.authorization_list = Some(auth_list.to_vec());
         }
 
+        request.transaction_type = Some(tx.ty());
+
         request
     }
 
@@ -189,7 +191,7 @@ mod tests {
     }
 
     fn test_signer(address: Address) -> RemoteSigner {
-        RemoteSigner::new(Url::parse("http://localhost:8080").unwrap(), address)
+        RemoteSigner::new(Url::parse("http://127.0.0.1:1").unwrap(), address)
     }
 
     fn default_test_tx() -> TxEip1559 {
@@ -230,6 +232,7 @@ mod tests {
         assert_eq!(request.max_priority_fee_per_gas, Some(10));
         assert_eq!(request.value, Some(U256::from(1000)));
         assert_eq!(request.chain_id, Some(1));
+        assert_eq!(request.transaction_type, Some(2));
     }
 
     #[test]
@@ -270,6 +273,7 @@ mod tests {
 
         assert_eq!(request.gas_price, Some(50));
         assert_eq!(request.nonce, Some(5));
+        assert_eq!(request.transaction_type, Some(0));
     }
 
     #[tokio::test]
@@ -335,7 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn sign_transaction_transport_failure() {
-        // test_signer points at localhost:8080 which is not running.
+        // test_signer points at 127.0.0.1:1 which is not running.
         let signer = test_signer(Address::repeat_byte(0x01));
         let mut tx = default_test_tx();
 
