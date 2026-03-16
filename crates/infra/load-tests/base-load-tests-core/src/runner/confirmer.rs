@@ -302,12 +302,10 @@ impl Confirmer {
 
     fn decrement_in_flight(&self, from: &Address) {
         if let Some(counter) = self.in_flight_per_sender.get(from) {
-            let _ = counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
-                v.checked_sub(1)
-            });
+            let _ = counter.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1));
         }
-        let _ = self.total_in_flight.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
-            v.checked_sub(1)
-        });
+        let _ = self
+            .total_in_flight
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_sub(1));
     }
 }

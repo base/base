@@ -177,10 +177,7 @@ impl ReceiptProvider for RpcClient {
         self.get_block_receipts(block_number).await
     }
 
-    async fn get_transaction_receipt(
-        &self,
-        tx_hash: TxHash,
-    ) -> Result<Option<TransactionReceipt>> {
+    async fn get_transaction_receipt(&self, tx_hash: TxHash) -> Result<Option<TransactionReceipt>> {
         self.get_transaction_receipt(tx_hash).await
     }
 }

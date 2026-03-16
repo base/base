@@ -15,8 +15,11 @@ impl RateLimiter {
     /// Creates a new rate limiter for the target gas per second.
     pub fn new(target_gps: u64, avg_gas_per_tx: u64) -> Self {
         let tps = if avg_gas_per_tx > 0 { target_gps / avg_gas_per_tx } else { 100 };
-        let interval =
-            if tps == 0 { Duration::from_secs(1) } else { Duration::from_secs_f64(1.0 / tps as f64) };
+        let interval = if tps == 0 {
+            Duration::from_secs(1)
+        } else {
+            Duration::from_secs_f64(1.0 / tps as f64)
+        };
         Self { target_gps, avg_gas_per_tx, interval, last_tick: None }
     }
 
@@ -56,11 +59,7 @@ impl RateLimiter {
 
     /// Returns the current effective TPS based on target GPS and avg gas.
     pub const fn effective_tps(&self) -> u64 {
-        if self.avg_gas_per_tx > 0 {
-            self.target_gps / self.avg_gas_per_tx
-        } else {
-            0
-        }
+        if self.avg_gas_per_tx > 0 { self.target_gps / self.avg_gas_per_tx } else { 0 }
     }
 }
 

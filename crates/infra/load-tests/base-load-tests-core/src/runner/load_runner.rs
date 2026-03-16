@@ -298,11 +298,8 @@ impl LoadRunner {
             mpsc::channel::<TransactionMetrics>(METRICS_CHANNEL_BUFFER);
 
         let sender_addresses: Vec<_> = self.accounts.accounts().iter().map(|a| a.address).collect();
-        let mut confirmer = Confirmer::new(
-            &sender_addresses,
-            metrics_tx,
-            Arc::clone(&self.stop_flag),
-        );
+        let mut confirmer =
+            Confirmer::new(&sender_addresses, metrics_tx, Arc::clone(&self.stop_flag));
         let confirmer_handle = confirmer.handle();
 
         let confirmer_client = RpcClient::new(self.config.rpc_url.clone());
