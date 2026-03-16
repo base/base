@@ -245,9 +245,15 @@ where
                     DaType::Calldata => {
                         // Calldata mode: one frame per submission (enforced by
                         // EncoderConfig::validate).
+                        let Some(frame) = sub.frames.first() else {
+                            warn!(id = %id.0, "empty calldata submission, requeueing");
+                            self.pipeline.requeue(id);
+                            drop(permit);
+                            continue;
+                        };
                         TxCandidate {
                             to: Some(self.inbox),
-                            tx_data: FrameEncoder::to_calldata(&sub.frames[0]),
+                            tx_data: FrameEncoder::to_calldata(frame),
                             value: U256::ZERO,
                             gas_limit: 0,
                             blobs: vec![].into(),
@@ -742,6 +748,15 @@ mod tests {
         }
     }
 
+    fn make_calldata_submission_with_id(id: u64, frames: Vec<Arc<Frame>>) -> BatchSubmission {
+        BatchSubmission {
+            id: SubmissionId(id),
+            channel_id: ChannelId::default(),
+            da_type: base_batcher_encoder::DaType::Calldata,
+            frames,
+        }
+    }
+
     fn noop_throttle() -> ThrottleController {
         ThrottleController::new(
             ThrottleConfig { threshold_bytes: 0, max_intensity: 0.0, ..Default::default() },
@@ -906,6 +921,36 @@ mod tests {
         let recorded = recorded.lock().unwrap();
         assert_eq!(recorded.dequeued.len(), 2, "both submissions must be dequeued");
         assert_eq!(recorded.l1_heads.len(), 2, "both submissions must be confirmed");
+    }
+
+    /// Empty calldata submissions must be requeued instead of panicking on frame indexing.
+    #[tokio::test]
+    async fn test_empty_calldata_submission_requeues_submission() {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+        pipeline
+            .submissions
+            .push_back(make_calldata_submission_with_id(11, vec![]));
+
+        let cancellation = CancellationToken::new();
+        let handle = tokio::spawn(
+            make_driver(pipeline, ImmediateConfirmTxManager { l1_block: 1 }).run(cancellation.clone()),
+        );
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancellation.cancel();
+
+        assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+        let recorded = recorded.lock().unwrap();
+        assert_eq!(
+            recorded.requeued,
+            vec![SubmissionId(11)],
+            "empty calldata submission must be requeued"
+        );
+        assert!(
+            recorded.l1_heads.is_empty(),
+            "empty calldata submission must not produce confirmations"
+        );
     }
 
     /// The semaphore must prevent more concurrent in-flight submissions than
