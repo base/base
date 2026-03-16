@@ -475,19 +475,6 @@ mod tests {
         }
     }
 
-    /// Creates a mock L2 provider with a single block and returns the expected
-    /// output root for that block.
-    fn mock_with_block(block_number: u64) -> (MockL2Provider, B256) {
-        let storage_hash = B256::repeat_byte(0xBB);
-        let (header, account) = test_header_and_account(block_number, storage_hash);
-        let expected_root = output_root_v0(&header, storage_hash);
-
-        let mut provider = MockL2Provider::new();
-        provider.insert_block(block_number, header, account);
-
-        (provider, expected_root)
-    }
-
     /// Creates a mock L2 provider with multiple blocks and returns a vec of
     /// expected output roots (one per block).
     fn mock_with_blocks(block_numbers: &[u64]) -> (MockL2Provider, Vec<B256>) {
@@ -514,7 +501,8 @@ mod tests {
         #[case] wrong_root: Option<B256>,
         #[case] expect_valid: bool,
     ) {
-        let (provider, expected_root) = mock_with_block(100);
+        let (provider, roots) = mock_with_blocks(&[100]);
+        let expected_root = roots[0];
         let validator = OutputValidator::new(Arc::new(provider));
         let game_address = Address::repeat_byte(0x01);
         let claimed_root = wrong_root.unwrap_or(expected_root);

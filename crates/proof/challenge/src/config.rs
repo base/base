@@ -274,6 +274,10 @@ mod tests {
 
     /// Parse a mock CLI command with required args plus any overrides.
     ///
+    /// The base defaults do **not** include signer flags (`--signer-endpoint` /
+    /// `--signer-address`). Tests that need a remote signer should pass those
+    /// flags via `extra_args`.
+    ///
     /// Keys present in `extra_args` replace their base defaults so clap never
     /// sees the same flag twice.
     fn cli_from_args(extra_args: &[&str]) -> Cli {
@@ -284,8 +288,6 @@ mod tests {
             ("--dispute-game-factory-addr", "0x1234567890123456789012345678901234567890"),
             ("--anchor-state-registry-addr", "0x2234567890123456789012345678901234567890"),
             ("--zk-proof-service-endpoint", "http://localhost:5000"),
-            ("--signer-endpoint", "http://localhost:8546"),
-            ("--signer-address", "0x1234567890123456789012345678901234567890"),
         ];
 
         let mut args = vec!["challenger"];
@@ -299,9 +301,17 @@ mod tests {
         Cli::try_parse_from(args).unwrap()
     }
 
+    /// Remote signer CLI flags for tests that need a valid signing configuration.
+    const SIGNER_ARGS: [&str; 4] = [
+        "--signer-endpoint",
+        "http://localhost:8546",
+        "--signer-address",
+        "0x1234567890123456789012345678901234567890",
+    ];
+
     #[test]
     fn test_valid_config() {
-        let cli = cli_from_args(&[]);
+        let cli = cli_from_args(&SIGNER_ARGS);
         let config = ChallengerConfig::from_cli(cli, None).unwrap();
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.zk_connect_timeout, Duration::from_secs(10));
@@ -326,7 +336,8 @@ mod tests {
     #[case::enabled(&["--metrics.enabled", "--metrics.port", "0"], true)]
     #[case::disabled(&["--metrics.port", "0"], false)]
     fn test_metrics_port_zero(#[case] args: &[&str], #[case] expect_error: bool) {
-        let cli = cli_from_args(args);
+        let all_args = [args, &SIGNER_ARGS].concat();
+        let cli = cli_from_args(&all_args);
         let result = ChallengerConfig::from_cli(cli, None);
         if expect_error {
             assert!(matches!(result, Err(ConfigError::Metrics(_))));
@@ -401,31 +412,10 @@ mod tests {
         assert_eq!(error.to_string(), expected);
     }
 
-    /// Build a CLI without signer flags (no --signer-endpoint / --signer-address).
-    fn cli_without_signer(extra_args: &[&str]) -> Cli {
-        let mut args = vec![
-            "challenger",
-            "--l1-eth-rpc",
-            "http://localhost:8545",
-            "--l2-eth-rpc",
-            "http://localhost:9545",
-            "--rollup-rpc",
-            "http://localhost:7545",
-            "--dispute-game-factory-addr",
-            "0x1234567890123456789012345678901234567890",
-            "--anchor-state-registry-addr",
-            "0x2234567890123456789012345678901234567890",
-            "--zk-proof-service-endpoint",
-            "http://localhost:5000",
-        ];
-        args.extend_from_slice(extra_args);
-        Cli::try_parse_from(args).unwrap()
-    }
-
     #[test]
     fn test_signing_config_local() {
         let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-        let cli = cli_without_signer(&[]);
+        let cli = cli_from_args(&[]);
         let result = ChallengerConfig::from_cli(cli, Some(Zeroizing::new(pk.to_string())));
         assert!(result.is_ok(), "expected Ok, got {result:?}");
         assert!(matches!(result.unwrap().signing, SignerConfig::Local { .. }));
@@ -433,7 +423,7 @@ mod tests {
 
     #[test]
     fn test_signing_config_remote() {
-        let cli = cli_from_args(&[]);
+        let cli = cli_from_args(&SIGNER_ARGS);
         let result = ChallengerConfig::from_cli(cli, None);
         assert!(result.is_ok(), "expected Ok, got {result:?}");
         assert!(matches!(result.unwrap().signing, SignerConfig::Remote { .. }));
@@ -441,7 +431,7 @@ mod tests {
 
     #[test]
     fn test_signing_config_none_provided() {
-        let cli = cli_without_signer(&[]);
+        let cli = cli_from_args(&[]);
         let result = ChallengerConfig::from_cli(cli, None);
         assert!(matches!(result, Err(ConfigError::Signing(_))));
     }
@@ -449,14 +439,14 @@ mod tests {
     #[test]
     fn test_signing_config_both_provided() {
         let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-        let cli = cli_from_args(&[]);
+        let cli = cli_from_args(&SIGNER_ARGS);
         let result = ChallengerConfig::from_cli(cli, Some(Zeroizing::new(pk.to_string())));
         assert!(matches!(result, Err(ConfigError::Signing(_))));
     }
 
     #[test]
     fn test_signing_config_endpoint_without_address() {
-        let cli = cli_without_signer(&["--signer-endpoint", "http://localhost:8546"]);
+        let cli = cli_from_args(&["--signer-endpoint", "http://localhost:8546"]);
         let result = ChallengerConfig::from_cli(cli, None);
         assert!(matches!(result, Err(ConfigError::Signing(_))));
     }
@@ -473,7 +463,9 @@ mod tests {
 
     #[test]
     fn test_health_addr_configurable() {
-        let cli = cli_from_args(&["--health.addr", "127.0.0.1", "--health.port", "9090"]);
+        let args =
+            [&SIGNER_ARGS[..], &["--health.addr", "127.0.0.1", "--health.port", "9090"]].concat();
+        let cli = cli_from_args(&args);
         let config = ChallengerConfig::from_cli(cli, None).unwrap();
         assert_eq!(config.health_addr, "127.0.0.1:9090".parse::<SocketAddr>().unwrap());
     }
