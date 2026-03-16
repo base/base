@@ -118,15 +118,20 @@ impl BundleEvent {
     /// Generates a unique event key for this event.
     pub fn generate_event_key(&self) -> String {
         match self {
-            Self::BlockIncluded { bundle_id, block_hash, .. } => {
-                format!("{bundle_id}-{block_hash}")
+            Self::Received { bundle_id, .. } => format!("{bundle_id}-received"),
+            Self::Cancelled { bundle_id, .. } => format!("{bundle_id}-cancelled"),
+            Self::BuilderIncluded { bundle_id, builder, block_number, flashblock_index } => {
+                format!("{bundle_id}-builder-included-{builder}-{block_number}-{flashblock_index}")
             }
-            _ => {
-                format!(
-                    "{}-{}",
-                    self.bundle_id(),
-                    Uuid::new_v5(&Uuid::NAMESPACE_OID, self.bundle_id().as_bytes())
-                )
+            Self::BlockIncluded { bundle_id, block_hash, .. } => {
+                format!("{bundle_id}-block-included-{block_hash}")
+            }
+            Self::Dropped { bundle_id, reason } => {
+                let reason = match reason {
+                    DropReason::TimedOut => "timed-out",
+                    DropReason::Reverted => "reverted",
+                };
+                format!("{bundle_id}-dropped-{reason}")
             }
         }
     }

@@ -509,6 +509,43 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_event_key_is_unique_across_bundle_lifecycle_events() {
+        let bundle = create_bundle_from_txn_data();
+        let bundle_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, bundle.bundle_hash().as_slice());
+
+        let received = BundleEvent::Received { bundle_id, bundle: Box::new(bundle.clone()) };
+        let cancelled = BundleEvent::Cancelled { bundle_id };
+        let builder_included = BundleEvent::BuilderIncluded {
+            bundle_id,
+            builder: "test-builder".to_string(),
+            block_number: 12345,
+            flashblock_index: 1,
+        };
+        let block_included = BundleEvent::BlockIncluded {
+            bundle_id,
+            block_number: 12345,
+            block_hash: TxHash::from([2u8; 32]),
+        };
+        let dropped_timed_out = BundleEvent::Dropped { bundle_id, reason: DropReason::TimedOut };
+        let dropped_reverted = BundleEvent::Dropped { bundle_id, reason: DropReason::Reverted };
+
+        let keys = vec![
+            received.generate_event_key(),
+            cancelled.generate_event_key(),
+            builder_included.generate_event_key(),
+            block_included.generate_event_key(),
+            dropped_timed_out.generate_event_key(),
+            dropped_reverted.generate_event_key(),
+        ];
+
+        for i in 0..keys.len() {
+            for j in (i + 1)..keys.len() {
+                assert_ne!(keys[i], keys[j], "event key collision between {i} and {j}");
+            }
+        }
+    }
+
+    #[test]
     fn test_update_transaction_metadata_transform_adds_new_bundle() {
         let metadata = TransactionMetadata { bundle_ids: vec![] };
         let bundle = create_bundle_from_txn_data();
