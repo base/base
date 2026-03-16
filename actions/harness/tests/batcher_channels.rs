@@ -46,8 +46,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
     let frame_count = batcher.pending_count();
     assert!(
         frame_count >= 2,
-        "expected multi-frame channel with max_frame_size=80, got {} frames",
-        frame_count
+        "expected multi-frame channel with max_frame_size=80, got {frame_count} frames",
     );
 
     // L1 block 1: submit only frame 0.
@@ -143,8 +142,7 @@ async fn channel_timeout_recovery_resubmits_successfully() {
     let frame_count = batcher.pending_count();
     assert!(
         frame_count >= 2,
-        "expected multi-frame channel with max_frame_size=80, got {} frames",
-        frame_count
+        "expected multi-frame channel with max_frame_size=80, got {frame_count} frames",
     );
 
     // L1 block 1: submit only frame 0 — channel stays incomplete.
@@ -298,8 +296,7 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
     let frame_count = batcher.pending_count();
     assert!(
         frame_count >= 2,
-        "need at least 2 frames for this test; got {} (increase payload or decrease max_frame_size)",
-        frame_count
+        "need at least 2 frames for this test; got {frame_count} (increase payload or decrease max_frame_size)",
     );
 
     // L1 block 1: frame 0 only.
