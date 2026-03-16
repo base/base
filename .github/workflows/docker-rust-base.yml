@@ -69,6 +69,7 @@ jobs:
         with:
           context: .
           file: etc/docker/Dockerfile.rust-base
+          tags: ${{ env.RUST_BASE_IMAGE }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: ${{ matrix.settings.arch }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
