@@ -105,8 +105,11 @@ impl L1BlockInfoLookup for RootProvider<Base> {
 pub fn validate_bundle(bundle: &Bundle, bundle_gas: u64, tx_hashes: Vec<B256>) -> RpcResult<()> {
     // Don't allow bundles to be submitted over 1 hour into the future
     // TODO: make the window configurable
-    let valid_timestamp_window = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
-        + Duration::from_secs(3600).as_secs();
+    let current_timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| Duration::from_secs(0))
+        .as_secs();
+    let valid_timestamp_window = current_timestamp + Duration::from_secs(3600).as_secs();
     if let Some(max_timestamp) = bundle.max_timestamp
         && max_timestamp > valid_timestamp_window
     {
@@ -152,7 +155,7 @@ pub fn validate_bundle(bundle: &Bundle, bundle_gas: u64, tx_hashes: Vec<B256>) -
 
 #[cfg(test)]
 mod tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
     use alloy_primitives::{Bytes, bytes};
@@ -167,7 +170,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_err_bundle_max_timestamp_too_far_in_the_future() {
-        let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_else(|_| Duration::from_secs(0))
+            .as_secs();
         let too_far_in_the_future = current_time + 3601;
         let bundle = Bundle {
             txs: vec![],
@@ -181,6 +187,23 @@ mod tests {
             )
             .into_rpc_err())
         );
+    }
+
+    #[tokio::test]
+    async fn test_ok_bundle_max_timestamp_at_window_boundary() {
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_else(|_| Duration::from_secs(0))
+            .as_secs();
+        let at_window_boundary = current_time + 3600;
+        let bundle = Bundle {
+            txs: vec![],
+            max_timestamp: Some(at_window_boundary),
+            ..Default::default()
+        };
+
+        let result = validate_bundle(&bundle, 0, vec![]);
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
