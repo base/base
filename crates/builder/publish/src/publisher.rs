@@ -11,8 +11,14 @@ use tracing::info;
 
 use crate::{Listener, PublishingMetrics};
 
-/// Position key for a flashblock: `(block_number, flashblock_index)`.
-pub type FlashblockPosition = (u64, u64);
+/// Position key for a flashblock within a block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FlashblockPosition {
+    /// The L2 block number.
+    pub block_number: u64,
+    /// The index of the flashblock within the block.
+    pub flashblock_index: u64,
+}
 
 /// A broadcast payload paired with its position.
 pub type PositionedPayload = (FlashblockPosition, Utf8Bytes);
@@ -102,7 +108,7 @@ impl WebSocketPublisher {
         let json = serde_json::to_string(payload)?;
         let size = json.len();
         let utf8_bytes = Utf8Bytes::from(json);
-        let position = (block_number, flashblock_index);
+        let position = FlashblockPosition { block_number, flashblock_index };
 
         {
             let mut buf = self.ring_buffer.write();
@@ -226,7 +232,9 @@ mod tests {
         let buf = publisher.ring_buffer.read();
         assert_eq!(buf.len(), 3);
 
-        let entries: Vec<_> = buf.entries_after(&(100, 0)).collect();
+        let entries: Vec<_> = buf
+            .entries_after(&FlashblockPosition { block_number: 100, flashblock_index: 0 })
+            .collect();
         assert_eq!(entries.len(), 2);
     }
 }

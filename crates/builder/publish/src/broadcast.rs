@@ -137,10 +137,19 @@ impl BroadcastLoop {
         // Phase 1: snapshot ring buffer and replay.
         // `Utf8Bytes` is reference-counted (`bytes::Bytes`), so cloning is O(1)
         // per entry. Lock hold time is bounded by entry count, not payload size.
-        let snapshot: Vec<_> = {
+        let (snapshot, stale) = {
             let buf = self.ring_buffer.read();
-            buf.positioned_entries_after(cutoff).map(|(pos, val)| (*pos, val.clone())).collect()
+            let snapshot: Vec<_> = buf
+                .positioned_entries_after(cutoff)
+                .map(|(pos, val)| (*pos, val.clone()))
+                .collect();
+            let stale =
+                snapshot.is_empty() && buf.oldest_position().is_some_and(|oldest| cutoff < oldest);
+            (snapshot, stale)
         };
+        if stale {
+            self.metrics.on_replay_stale_position();
+        }
         let mut sent_positions = HashSet::with_capacity(snapshot.len());
         for (pos, val) in snapshot {
             sent_positions.insert(pos);
@@ -268,7 +277,11 @@ mod tests {
 
         let (mut client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
 
-        tx.send(((1, 0), Utf8Bytes::from("hello"))).unwrap();
+        tx.send((
+            FlashblockPosition { block_number: 1, flashblock_index: 0 },
+            Utf8Bytes::from("hello"),
+        ))
+        .unwrap();
 
         let msg = client.next().await.unwrap().unwrap();
         assert_eq!(msg, Message::Text(Utf8Bytes::from("hello")));
@@ -349,7 +362,10 @@ mod tests {
         let (_client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
 
         for i in 0..5 {
-            let _ = tx.send(((1, i), Utf8Bytes::from(format!("msg{i}"))));
+            let _ = tx.send((
+                FlashblockPosition { block_number: 1, flashblock_index: i },
+                Utf8Bytes::from(format!("msg{i}")),
+            ));
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         assert!(metrics.lagged.load(Ordering::Relaxed) > 0);

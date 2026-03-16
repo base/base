@@ -100,8 +100,8 @@ impl Listener {
                         if let Some(ref pos) = resume_from {
                             debug!(
                                 peer_addr = %peer_addr,
-                                block_number = pos.0,
-                                flashblock_index = pos.1,
+                                block_number = pos.block_number,
+                                flashblock_index = pos.flashblock_index,
                                 "Client requesting replay"
                             );
                         }
@@ -147,7 +147,7 @@ fn parse_resume_position(request: &http::Request<()>) -> Option<FlashblockPositi
         }
     }
 
-    Some((block_number?, flashblock_index?))
+    Some(FlashblockPosition { block_number: block_number?, flashblock_index: flashblock_index? })
 }
 
 #[cfg(test)]
@@ -223,7 +223,11 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        tx.send(((1, 0), Utf8Bytes::from("test-payload"))).unwrap();
+        tx.send((
+            FlashblockPosition { block_number: 1, flashblock_index: 0 },
+            Utf8Bytes::from("test-payload"),
+        ))
+        .unwrap();
 
         let msg = client.next().await.unwrap().unwrap();
         assert_eq!(msg, Message::Text(Utf8Bytes::from("test-payload")));
@@ -271,7 +275,11 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        tx.send(((1, 0), Utf8Bytes::from("broadcast-msg"))).unwrap();
+        tx.send((
+            FlashblockPosition { block_number: 1, flashblock_index: 0 },
+            Utf8Bytes::from("broadcast-msg"),
+        ))
+        .unwrap();
 
         let msg1 = client1.next().await.unwrap().unwrap();
         let msg2 = client2.next().await.unwrap().unwrap();
@@ -288,7 +296,10 @@ mod tests {
             .uri("ws://localhost/ws?block_number=100&flashblock_index=3")
             .body(())
             .unwrap();
-        assert_eq!(parse_resume_position(&req), Some((100, 3)));
+        assert_eq!(
+            parse_resume_position(&req),
+            Some(FlashblockPosition { block_number: 100, flashblock_index: 3 })
+        );
     }
 
     #[test]
@@ -317,7 +328,10 @@ mod tests {
             .uri("ws://localhost/ws?token=abc&block_number=42&flashblock_index=0&extra=1")
             .body(())
             .unwrap();
-        assert_eq!(parse_resume_position(&req), Some((42, 0)));
+        assert_eq!(
+            parse_resume_position(&req),
+            Some(FlashblockPosition { block_number: 42, flashblock_index: 0 })
+        );
     }
 
     #[tokio::test]
@@ -331,9 +345,18 @@ mod tests {
         // Pre-populate the ring buffer with entries.
         {
             let mut buf = ring_buffer.write();
-            buf.push((100, 0), Utf8Bytes::from("msg-100-0"));
-            buf.push((100, 1), Utf8Bytes::from("msg-100-1"));
-            buf.push((101, 0), Utf8Bytes::from("msg-101-0"));
+            buf.push(
+                FlashblockPosition { block_number: 100, flashblock_index: 0 },
+                Utf8Bytes::from("msg-100-0"),
+            );
+            buf.push(
+                FlashblockPosition { block_number: 100, flashblock_index: 1 },
+                Utf8Bytes::from("msg-100-1"),
+            );
+            buf.push(
+                FlashblockPosition { block_number: 101, flashblock_index: 0 },
+                Utf8Bytes::from("msg-101-0"),
+            );
         }
 
         let handle = tokio::spawn({

@@ -36,6 +36,11 @@ impl<I, V> RingBuffer<I, V> {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    /// Returns the position of the oldest (front) entry, or `None` if empty.
+    pub fn oldest_position(&self) -> Option<&I> {
+        self.entries.front().map(|(pos, _)| pos)
+    }
 }
 
 impl<I, V> RingBuffer<I, V>
@@ -124,6 +129,30 @@ mod tests {
         assert!(rb.is_empty());
         let vals: Vec<_> = rb.entries_after(&0).collect();
         assert!(vals.is_empty());
+    }
+
+    #[test]
+    fn oldest_position_empty() {
+        let rb = RingBuffer::<u64, &str>::new(cap(4));
+        assert_eq!(rb.oldest_position(), None);
+    }
+
+    #[test]
+    fn oldest_position_after_push() {
+        let mut rb = RingBuffer::new(cap(4));
+        rb.push(10u64, "a");
+        rb.push(20, "b");
+        rb.push(30, "c");
+        assert_eq!(rb.oldest_position(), Some(&10));
+    }
+
+    #[test]
+    fn oldest_position_after_eviction() {
+        let mut rb = RingBuffer::new(cap(2));
+        rb.push(10u64, "a");
+        rb.push(20, "b");
+        rb.push(30, "c"); // evicts 10
+        assert_eq!(rb.oldest_position(), Some(&20));
     }
 
     #[test]

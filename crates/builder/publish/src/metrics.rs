@@ -30,6 +30,12 @@ pub trait PublisherMetrics: Send + Sync {
     fn on_send_error(&self);
     /// Called when a WebSocket handshake fails.
     fn on_handshake_error(&self);
+
+    /// Called when a subscriber's resume position is older than the ring
+    /// buffer's oldest entry, causing a silent gap in the replay.
+    ///
+    /// Useful for tuning ring buffer capacity.
+    fn on_replay_stale_position(&self) {}
 }
 
 /// No-op implementation of [`PublisherMetrics`].
@@ -57,6 +63,7 @@ impl PublisherMetrics for NoopPublisherMetrics {
 pub struct PublishingMetrics {
     messages_sent_count: metrics::Counter,
     replay_messages_sent_count: metrics::Counter,
+    replay_stale_position_count: metrics::Counter,
     ws_connections_active: metrics::Gauge,
     ws_lagged_count: metrics::Counter,
     ws_payload_byte_size: metrics::Histogram,
@@ -71,6 +78,9 @@ impl Default for PublishingMetrics {
             messages_sent_count: metrics::counter!("base_builder_messages_sent_count"),
             replay_messages_sent_count: metrics::counter!(
                 "base_builder_replay_messages_sent_count"
+            ),
+            replay_stale_position_count: metrics::counter!(
+                "base_builder_replay_stale_position_count"
             ),
             ws_connections_active: metrics::gauge!("base_builder_ws_connections_active"),
             ws_lagged_count: metrics::counter!("base_builder_ws_lagged_count"),
@@ -121,6 +131,10 @@ impl PublisherMetrics for PublishingMetrics {
     fn on_handshake_error(&self) {
         self.ws_handshake_error_count.increment(1);
     }
+
+    fn on_replay_stale_position(&self) {
+        self.replay_stale_position_count.increment(1);
+    }
 }
 
 #[cfg(test)]
@@ -138,6 +152,7 @@ mod tests {
         metrics.on_payload_size(1024);
         metrics.on_send_error();
         metrics.on_handshake_error();
+        metrics.on_replay_stale_position();
     }
 
     #[test]
@@ -151,5 +166,6 @@ mod tests {
         metrics.on_payload_size(1024);
         metrics.on_send_error();
         metrics.on_handshake_error();
+        metrics.on_replay_stale_position();
     }
 }
