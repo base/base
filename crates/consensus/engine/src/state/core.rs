@@ -78,45 +78,40 @@ impl EngineSyncState {
         }
     }
 
-    /// Applies the update to the provided sync state, using the current state values if the update
-    /// is not specified. Returns the new sync state.
-    pub fn apply_update(self, sync_state_update: EngineSyncStateUpdate) -> Self {
+    /// Applies the update to the sync state in place, keeping current field values for any
+    /// fields not specified in the update.
+    pub fn apply_update(&mut self, sync_state_update: EngineSyncStateUpdate) {
         if let Some(unsafe_head) = sync_state_update.unsafe_head {
             Self::update_block_label_metric(
                 Metrics::UNSAFE_BLOCK_LABEL,
                 unsafe_head.block_info.number,
             );
+            self.unsafe_head = unsafe_head;
         }
         if let Some(cross_unsafe_head) = sync_state_update.cross_unsafe_head {
             Self::update_block_label_metric(
                 Metrics::CROSS_UNSAFE_BLOCK_LABEL,
                 cross_unsafe_head.block_info.number,
             );
+            self.cross_unsafe_head = cross_unsafe_head;
         }
         if let Some(local_safe_head) = sync_state_update.local_safe_head {
             Self::update_block_label_metric(
                 Metrics::LOCAL_SAFE_BLOCK_LABEL,
                 local_safe_head.block_info.number,
             );
+            self.local_safe_head = local_safe_head;
         }
         if let Some(safe_head) = sync_state_update.safe_head {
             Self::update_block_label_metric(Metrics::SAFE_BLOCK_LABEL, safe_head.block_info.number);
+            self.safe_head = safe_head;
         }
         if let Some(finalized_head) = sync_state_update.finalized_head {
             Self::update_block_label_metric(
                 Metrics::FINALIZED_BLOCK_LABEL,
                 finalized_head.block_info.number,
             );
-        }
-
-        Self {
-            unsafe_head: sync_state_update.unsafe_head.unwrap_or(self.unsafe_head),
-            cross_unsafe_head: sync_state_update
-                .cross_unsafe_head
-                .unwrap_or(self.cross_unsafe_head),
-            local_safe_head: sync_state_update.local_safe_head.unwrap_or(self.local_safe_head),
-            safe_head: sync_state_update.safe_head.unwrap_or(self.safe_head),
-            finalized_head: sync_state_update.finalized_head.unwrap_or(self.finalized_head),
+            self.finalized_head = finalized_head;
         }
     }
 
@@ -193,7 +188,7 @@ mod test {
     impl EngineState {
         /// Set the unsafe head.
         pub fn set_unsafe_head(&mut self, unsafe_head: L2BlockInfo) {
-            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
+            self.sync_state.apply_update(EngineSyncStateUpdate {
                 unsafe_head: Some(unsafe_head),
                 ..Default::default()
             });
@@ -201,7 +196,7 @@ mod test {
 
         /// Set the cross-verified unsafe head.
         pub fn set_cross_unsafe_head(&mut self, cross_unsafe_head: L2BlockInfo) {
-            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
+            self.sync_state.apply_update(EngineSyncStateUpdate {
                 cross_unsafe_head: Some(cross_unsafe_head),
                 ..Default::default()
             });
@@ -209,7 +204,7 @@ mod test {
 
         /// Set the local safe head.
         pub fn set_local_safe_head(&mut self, local_safe_head: L2BlockInfo) {
-            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
+            self.sync_state.apply_update(EngineSyncStateUpdate {
                 local_safe_head: Some(local_safe_head),
                 ..Default::default()
             });
@@ -217,7 +212,7 @@ mod test {
 
         /// Set the safe head.
         pub fn set_safe_head(&mut self, safe_head: L2BlockInfo) {
-            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
+            self.sync_state.apply_update(EngineSyncStateUpdate {
                 safe_head: Some(safe_head),
                 ..Default::default()
             });
@@ -225,7 +220,7 @@ mod test {
 
         /// Set the finalized head.
         pub fn set_finalized_head(&mut self, finalized_head: L2BlockInfo) {
-            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
+            self.sync_state.apply_update(EngineSyncStateUpdate {
                 finalized_head: Some(finalized_head),
                 ..Default::default()
             });

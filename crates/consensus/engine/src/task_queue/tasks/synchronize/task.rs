@@ -33,7 +33,7 @@ use crate::{
 /// forkchoice management in most user scenarios.
 ///
 /// [`InsertTask`]: crate::InsertTask
-/// [`ConsolidateTask`]: crate::ConsolidateTask  
+/// [`ConsolidateTask`]: crate::ConsolidateTask
 /// [`FinalizeTask`]: crate::FinalizeTask
 /// [`BuildTask`]: crate::BuildTask
 #[derive(Debug, Clone, Constructor)]
@@ -85,8 +85,11 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
     type Error = SynchronizeTaskError;
 
     async fn execute(&self, state: &mut EngineState) -> Result<Self::Output, SynchronizeTaskError> {
-        // Apply the sync state update to the engine state.
-        let new_sync_state = state.sync_state.apply_update(self.state_update);
+        // Save the current sync state so we can detect no-ops and restore on failure.
+        let old_sync_state = state.sync_state;
+
+        // Apply the sync state update to the engine state in place.
+        state.sync_state.apply_update(self.state_update);
 
         // Check if a forkchoice update is not needed, return early.
         // A forkchoice update is not needed if...
@@ -98,25 +101,27 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         // We shouldn't retry the synchronize task there. Since the `sync_state` is only updated
         // inside the `SynchronizeTask` (except inside the ConsolidateTask, when the block is not
         // the last in the batch) - the engine will get stuck retrying the `SynchronizeTask`
-        if state.sync_state != Default::default() && state.sync_state == new_sync_state {
-            debug!(target: "engine", ?new_sync_state, "No forkchoice update needed");
+        if old_sync_state != Default::default() && old_sync_state == state.sync_state {
+            debug!(target: "engine", sync_state = ?state.sync_state, "No forkchoice update needed");
             return Ok(());
         }
 
         // Check if the head is behind the finalized head.
-        if new_sync_state.unsafe_head().block_info.number
-            < new_sync_state.finalized_head().block_info.number
+        if state.sync_state.unsafe_head().block_info.number
+            < state.sync_state.finalized_head().block_info.number
         {
-            return Err(SynchronizeTaskError::FinalizedAheadOfUnsafe(
-                new_sync_state.unsafe_head().block_info.number,
-                new_sync_state.finalized_head().block_info.number,
-            ));
+            let err = SynchronizeTaskError::FinalizedAheadOfUnsafe(
+                state.sync_state.unsafe_head().block_info.number,
+                state.sync_state.finalized_head().block_info.number,
+            );
+            state.sync_state = old_sync_state;
+            return Err(err);
         }
 
         let fcu_time_start = Instant::now();
 
         // Send the forkchoice update through the input.
-        let forkchoice = new_sync_state.create_forkchoice_state();
+        let forkchoice = state.sync_state.create_forkchoice_state();
 
         // Handle the forkchoice update result.
         // NOTE: it doesn't matter which version we use here, because we're not sending any
@@ -124,25 +129,31 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         // attributes are provided.
         let response = self.client.fork_choice_updated_v3(forkchoice, None).await;
 
-        let valid_response = response.map_err(|e| {
-            // Fatal forkchoice update error.
-            let error = e
-                .as_error_resp()
-                .and_then(|e| {
-                    (e.code == INVALID_FORK_CHOICE_STATE_ERROR as i64)
-                        .then_some(SynchronizeTaskError::InvalidForkchoiceState)
-                })
-                .unwrap_or_else(|| SynchronizeTaskError::ForkchoiceUpdateFailed(e));
+        let valid_response = match response {
+            Ok(r) => r,
+            Err(e) => {
+                // Fatal forkchoice update error.
+                let error = e
+                    .as_error_resp()
+                    .and_then(|e| {
+                        (e.code == INVALID_FORK_CHOICE_STATE_ERROR as i64)
+                            .then_some(SynchronizeTaskError::InvalidForkchoiceState)
+                    })
+                    .unwrap_or_else(|| SynchronizeTaskError::ForkchoiceUpdateFailed(e));
 
-            debug!(target: "engine", error = ?error, "Unexpected forkchoice update error");
+                debug!(target: "engine", error = ?error, "Unexpected forkchoice update error");
 
-            error
-        })?;
+                state.sync_state = old_sync_state;
+                return Err(error);
+            }
+        };
 
-        self.check_forkchoice_updated_status(state, &valid_response.payload_status.status)?;
-
-        // Apply the new sync state to the engine state.
-        state.sync_state = new_sync_state;
+        if let Err(e) =
+            self.check_forkchoice_updated_status(state, &valid_response.payload_status.status)
+        {
+            state.sync_state = old_sync_state;
+            return Err(e);
+        }
 
         let fcu_duration = fcu_time_start.elapsed();
         debug!(

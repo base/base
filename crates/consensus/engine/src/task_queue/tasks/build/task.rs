@@ -104,14 +104,14 @@ impl<EngineClient_: EngineClient> BuildTask<EngineClient_> {
         }
 
         // When inserting a payload, we advertise the parent's unsafe head as the current unsafe
-        // head to build on top of.
-        let new_forkchoice = state
-            .sync_state
-            .apply_update(EngineSyncStateUpdate {
-                unsafe_head: Some(attributes_envelope.parent),
-                ..Default::default()
-            })
-            .create_forkchoice_state();
+        // head to build on top of. We copy the sync state (Copy type) and apply the update to the
+        // copy so that the engine state itself is not mutated by the build task.
+        let mut temp_sync_state = state.sync_state;
+        temp_sync_state.apply_update(EngineSyncStateUpdate {
+            unsafe_head: Some(attributes_envelope.parent),
+            ..Default::default()
+        });
+        let new_forkchoice = temp_sync_state.create_forkchoice_state();
 
         let forkchoice_version = EngineForkchoiceVersion::from_cfg(
             &self.cfg,
