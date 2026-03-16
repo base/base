@@ -47,16 +47,13 @@ impl<T: TxManager> ChallengeSubmitter<T> {
 
         metrics::counter!(ChallengerMetrics::NULLIFY_TX_SUBMITTED_TOTAL).increment(1);
         let start = Instant::now();
-        let receipt = self.tx_manager.send(candidate).await?;
+        let result = self.tx_manager.send(candidate).await;
         let latency = start.elapsed();
 
-        let tx_hash = receipt.transaction_hash;
-        let success = receipt.inner.status();
-
-        let status_label = if success {
-            ChallengerMetrics::STATUS_SUCCESS
-        } else {
-            ChallengerMetrics::STATUS_REVERTED
+        let status_label = match &result {
+            Ok(receipt) if receipt.inner.status() => ChallengerMetrics::STATUS_SUCCESS,
+            Ok(_) => ChallengerMetrics::STATUS_REVERTED,
+            Err(_) => ChallengerMetrics::STATUS_ERROR,
         };
         metrics::counter!(
             ChallengerMetrics::NULLIFY_TX_CONFIRMED_TOTAL,
@@ -66,7 +63,10 @@ impl<T: TxManager> ChallengeSubmitter<T> {
         metrics::histogram!(ChallengerMetrics::NULLIFY_TX_LATENCY_SECONDS)
             .record(latency.as_secs_f64());
 
-        if !success {
+        let receipt = result?;
+        let tx_hash = receipt.transaction_hash;
+
+        if !receipt.inner.status() {
             return Err(ChallengeSubmitError::TxReverted { tx_hash });
         }
 

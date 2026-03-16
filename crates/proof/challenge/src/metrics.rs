@@ -44,6 +44,9 @@ impl ChallengerMetrics {
     /// Label value for a reverted transaction.
     pub const STATUS_REVERTED: &str = "reverted";
 
+    /// Label value for a transaction that failed to send.
+    pub const STATUS_ERROR: &str = "error";
+
     /// Label key for version.
     pub const LABEL_VERSION: &str = "version";
 
