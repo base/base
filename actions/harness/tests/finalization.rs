@@ -1,8 +1,8 @@
 #![doc = "Action tests for L2 finalization via the verifier pipeline."]
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TestRollupConfigBuilder, block_info_from,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
 };
 
 /// When multiple L2 blocks share the same L1 epoch (`l1_origin`), finalizing the
@@ -11,7 +11,10 @@ use base_action_harness::{
 /// L1 origin is at or before the finalized L1 number.
 #[tokio::test]
 async fn finalization_advances_with_multiple_l2_blocks_per_epoch() {
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -28,13 +31,11 @@ async fn finalization_advances_with_multiple_l2_blocks_per_epoch() {
     assert_eq!(sequencer.head().l1_origin.number, 0, "all blocks should be in epoch 0");
 
     // Submit each block in a separate L1 inclusion block.
-    for block in &blocks {
+    for block in blocks {
         let mut source = ActionL2Source::new();
-        source.push(block.clone());
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.advance().expect("batcher encode");
-        batcher.flush(&mut h.l1);
-        h.l1.mine_block();
+        source.push(block);
+        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.advance(&mut h.l1).await.expect("advance");
     }
 
     // Create verifier after mining so it observes the hashes the sequencer already registered.
@@ -77,7 +78,10 @@ async fn finalization_advances_with_multiple_l2_blocks_per_epoch() {
 /// finalized.
 #[tokio::test]
 async fn finalization_advances_incrementally_with_l1_epochs() {
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -109,13 +113,12 @@ async fn finalization_advances_incrementally_with_l1_epochs() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    for block in &blocks {
+    for block in blocks {
         let mut source = ActionL2Source::new();
-        source.push(block.clone());
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.advance().expect("batcher encode");
-        batcher.flush(&mut h.l1);
-        h.mine_and_push(&chain);
+        source.push(block);
+        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.advance(&mut h.l1).await.expect("advance");
+        chain.push(h.l1.tip().clone());
     }
 
     verifier.initialize().await.expect("initialize");
@@ -158,7 +161,10 @@ async fn finalization_advances_incrementally_with_l1_epochs() {
 /// finalized signal references a block far ahead of what has been derived.
 #[tokio::test]
 async fn finalization_does_not_exceed_safe_head() {
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -173,10 +179,8 @@ async fn finalization_does_not_exceed_safe_head() {
     for block in [block1, block2] {
         let mut source = ActionL2Source::new();
         source.push(block);
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.advance().expect("encode");
-        batcher.flush(&mut h.l1);
-        h.l1.mine_block();
+        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.advance(&mut h.l1).await.expect("advance");
     }
 
     // Mine many more L1 blocks without any corresponding L2 derivation data.
@@ -221,7 +225,10 @@ async fn finalization_does_not_exceed_safe_head() {
 /// back to genesis. After re-deriving blocks, finalization can proceed again.
 #[tokio::test]
 async fn finalization_reorg_clears_state() {
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
@@ -236,10 +243,8 @@ async fn finalization_reorg_clears_state() {
     for block in [block1, block2] {
         let mut source = ActionL2Source::new();
         source.push(block);
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.advance().expect("encode");
-        batcher.flush(&mut h.l1);
-        h.l1.mine_block();
+        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.advance(&mut h.l1).await.expect("advance");
     }
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -285,13 +290,13 @@ async fn finalization_reorg_clears_state() {
     let mut sequencer_fresh = h.create_l2_sequencer(l1_chain_fresh);
     let block1_fresh = sequencer_fresh.build_next_block().expect("build fresh block 1");
 
+    // Register the block hash before mining so the verifier can validate it.
+    verifier.register_block_hash(1, block1_fresh.header.hash_slow());
+
     let mut source = ActionL2Source::new();
     source.push(block1_fresh);
-    let mut batcher_fresh = h.create_batcher(source, batcher_cfg.clone());
-    batcher_fresh.advance().expect("encode fresh");
-    batcher_fresh.flush(&mut h.l1);
-    verifier.register_block_hash(1, sequencer_fresh.head().block_info.hash);
-    h.l1.mine_block();
+    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    batcher.advance(&mut h.l1).await.expect("advance after reorg");
 
     // Push the new block to the shared chain.
     chain.truncate_to(0);
@@ -316,7 +321,10 @@ async fn finalization_reorg_clears_state() {
 /// finalized must not regress the finalized L2 head.
 #[tokio::test]
 async fn finalization_does_not_regress() {
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -339,13 +347,12 @@ async fn finalization_does_not_regress() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    for block in &blocks {
+    for block in blocks {
         let mut source = ActionL2Source::new();
-        source.push(block.clone());
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.advance().expect("batcher encode");
-        batcher.flush(&mut h.l1);
-        h.mine_and_push(&chain);
+        source.push(block);
+        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.advance(&mut h.l1).await.expect("advance");
+        chain.push(h.l1.tip().clone());
     }
 
     verifier.initialize().await.expect("initialize");

@@ -71,6 +71,14 @@ pub trait BatchPipeline: Send {
     /// in-flight submissions to settle (confirm or requeue) before calling reset.
     fn reset(&mut self);
 
+    /// Prune blocks confirmed safe on L2 to prevent unbounded queue growth.
+    ///
+    /// Drains blocks from the front of the input queue whose block number is
+    /// `<= safe_l2_number` **and** that have already been fed into a channel
+    /// (i.e. are before the encoding cursor). Blocks that have not yet been
+    /// encoded are never pruned, even if their number is below the safe head.
+    fn prune_safe(&mut self, safe_l2_number: u64);
+
     /// Returns the estimated DA backlog in bytes.
     ///
     /// Sum of estimated byte lengths for blocks in the input queue that have not yet been

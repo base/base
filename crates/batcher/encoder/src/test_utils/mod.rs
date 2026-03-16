@@ -26,6 +26,8 @@ pub struct MockBatchPipeline {
     pub resets: usize,
     /// L1 heads that were advanced to.
     pub l1_heads: Vec<u64>,
+    /// Safe L2 block numbers that were pruned to.
+    pub safe_l2_numbers_pruned: Vec<u64>,
 }
 
 impl BatchPipeline for MockBatchPipeline {
@@ -55,6 +57,10 @@ impl BatchPipeline for MockBatchPipeline {
 
     fn advance_l1_head(&mut self, l1_block: u64) {
         self.l1_heads.push(l1_block);
+    }
+
+    fn prune_safe(&mut self, safe_l2_number: u64) {
+        self.safe_l2_numbers_pruned.push(safe_l2_number);
     }
 
     fn reset(&mut self) {

@@ -22,7 +22,7 @@ use base_comp::{
     BatchComposer, ChannelOut, CompressionAlgo, CompressorType, Config, ShadowCompressor,
 };
 use base_consensus_genesis::RollupConfig;
-use base_protocol::{Batch, ChannelId, SingleBatch, SpanBatch};
+use base_protocol::{Batch, ChannelId, Frame, SingleBatch, SpanBatch};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, warn};
 
@@ -112,6 +112,33 @@ impl BatchEncoder {
             span_raw_bytes: 0,
             span_opened_at_l1: None,
         }
+    }
+
+    /// Step the encoder until idle, force-close the current channel, and return
+    /// all frames from every available submission.
+    ///
+    /// Convenience wrapper for tests and one-shot batch pipelines that have
+    /// already added all blocks via [`BatchPipeline::add_block`] and want all
+    /// output frames in a single call.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`StepError`] encountered during encoding. On error the
+    /// encoder state is left as-is; previously ready submissions remain available
+    /// via [`BatchPipeline::next_submission`].
+    pub fn encode_and_drain(&mut self) -> Result<Vec<Arc<Frame>>, StepError> {
+        loop {
+            match self.step()? {
+                StepResult::Idle => break,
+                StepResult::BlockEncoded | StepResult::ChannelClosed => {}
+            }
+        }
+        self.force_close_channel();
+        let mut frames = Vec::new();
+        while let Some(sub) = self.next_submission() {
+            frames.extend(sub.frames);
+        }
+        Ok(frames)
     }
 
     /// Close the current channel, drain its frames, and push it to `ready_channels`.
@@ -545,6 +572,33 @@ impl BatchPipeline for BatchEncoder {
         // share an ID with any pre-reset in-flight submission, eliminating
         // stale-confirm silent corruption.
         self.rng = SmallRng::from_os_rng();
+    }
+
+    fn prune_safe(&mut self, safe_l2_number: u64) {
+        // Count how many leading blocks are both safe (number <= safe_l2_number) and
+        // already past the encoding cursor (index < block_cursor). We must not prune
+        // blocks that haven't been fed into a channel yet or we'd silently skip them.
+        let prune_count = self
+            .blocks
+            .iter()
+            .take(self.block_cursor)
+            .take_while(|b| b.header.number <= safe_l2_number)
+            .count();
+
+        if prune_count == 0 {
+            return;
+        }
+
+        debug!(prune_count, safe_l2_number, "pruning safe blocks from input queue");
+
+        self.blocks.drain(..prune_count);
+        self.block_cursor -= prune_count;
+
+        // Adjust block_range high-water marks in ready channels so that confirm()
+        // does not over-prune later. This mirrors the adjustment in confirm().
+        for ch in &mut self.ready_channels {
+            ch.block_range.end = ch.block_range.end.saturating_sub(prune_count);
+        }
     }
 
     fn da_backlog_bytes(&self) -> u64 {
@@ -1350,5 +1404,191 @@ mod tests {
 
         let resub = encoder.next_submission();
         assert!(resub.is_some(), "requeued span frames must be available again");
+    }
+
+    // --- prune_safe tests ---
+
+    fn make_numbered_block(parent_hash: B256, number: u64) -> OpBlock {
+        let calldata = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default()).encode_calldata();
+        let deposit =
+            OpTxEnvelope::Deposit(Sealed::new(TxDeposit { input: calldata, ..Default::default() }));
+        OpBlock {
+            header: Header { parent_hash, number, ..Default::default() },
+            body: BlockBody { transactions: vec![deposit], ..Default::default() },
+        }
+    }
+
+    /// `prune_safe` must drain leading blocks whose number is <= the safe head
+    /// and that have already been encoded (index < `block_cursor`).
+    #[test]
+    fn test_prune_safe_drains_encoded_blocks() {
+        let mut encoder = default_encoder();
+
+        let b1 = make_numbered_block(B256::ZERO, 1);
+        let b1_hash = b1.header.hash_slow();
+        encoder.add_block(b1).unwrap();
+
+        let b2 = make_numbered_block(b1_hash, 2);
+        let b2_hash = b2.header.hash_slow();
+        encoder.add_block(b2).unwrap();
+
+        let b3 = make_numbered_block(b2_hash, 3);
+        encoder.add_block(b3).unwrap();
+
+        // Encode all three blocks.
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert_eq!(encoder.block_cursor, 3);
+
+        // Prune blocks 1 and 2 (safe head = 2).
+        encoder.prune_safe(2);
+
+        assert_eq!(encoder.blocks.len(), 1, "only block 3 should remain");
+        assert_eq!(encoder.blocks[0].header.number, 3);
+        assert_eq!(encoder.block_cursor, 1, "cursor must be adjusted by prune count");
+    }
+
+    /// `prune_safe` must not prune blocks that have not yet been encoded
+    /// (index >= `block_cursor`), even if their number is below the safe head.
+    #[test]
+    fn test_prune_safe_does_not_prune_unencoded_blocks() {
+        let mut encoder = default_encoder();
+
+        let b1 = make_numbered_block(B256::ZERO, 1);
+        let b1_hash = b1.header.hash_slow();
+        encoder.add_block(b1).unwrap();
+
+        let b2 = make_numbered_block(b1_hash, 2);
+        encoder.add_block(b2).unwrap();
+
+        // Encode only block 1 (cursor = 1).
+        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        assert_eq!(encoder.block_cursor, 1);
+
+        // Prune with safe_l2_number = 5 — block 2 is below safe head but not encoded.
+        encoder.prune_safe(5);
+
+        assert_eq!(encoder.blocks.len(), 1, "block 2 must not be pruned (not yet encoded)");
+        assert_eq!(encoder.blocks[0].header.number, 2);
+        assert_eq!(encoder.block_cursor, 0, "cursor adjusted after pruning block 1");
+    }
+
+    /// `prune_safe` with a safe head below all block numbers is a no-op.
+    #[test]
+    fn test_prune_safe_noop_when_below_all_blocks() {
+        let mut encoder = default_encoder();
+
+        let b1 = make_numbered_block(B256::ZERO, 10);
+        encoder.add_block(b1).unwrap();
+        encoder.step().unwrap();
+
+        encoder.prune_safe(5);
+
+        assert_eq!(encoder.blocks.len(), 1, "no blocks should be pruned");
+        assert_eq!(encoder.block_cursor, 1, "cursor must be unchanged");
+    }
+
+    /// `prune_safe` on an empty encoder is a no-op.
+    #[test]
+    fn test_prune_safe_noop_when_empty() {
+        let mut encoder = default_encoder();
+        encoder.prune_safe(100);
+        assert!(encoder.blocks.is_empty());
+        assert_eq!(encoder.block_cursor, 0);
+    }
+
+    /// `prune_safe` must adjust `block_range.end` on ready channels so that
+    /// a subsequent `confirm()` does not over-prune.
+    #[test]
+    fn test_prune_safe_adjusts_ready_channel_block_ranges() {
+        let mut encoder = default_encoder();
+
+        let b1 = make_numbered_block(B256::ZERO, 1);
+        let b1_hash = b1.header.hash_slow();
+        encoder.add_block(b1).unwrap();
+
+        let b2 = make_numbered_block(b1_hash, 2);
+        encoder.add_block(b2).unwrap();
+
+        // Encode both blocks.
+        encoder.step().unwrap();
+        encoder.step().unwrap();
+        assert_eq!(encoder.block_cursor, 2);
+
+        // Close the channel so we get a ready channel with block_range 0..2.
+        encoder.advance_l1_head(100);
+        assert!(!encoder.ready_channels.is_empty());
+        assert_eq!(encoder.ready_channels[0].block_range.end, 2);
+
+        // Prune block 1 (safe head = 1).
+        encoder.prune_safe(1);
+        assert_eq!(encoder.blocks.len(), 1);
+        assert_eq!(encoder.block_cursor, 1);
+
+        // The ready channel's block_range.end must be adjusted.
+        assert_eq!(
+            encoder.ready_channels[0].block_range.end, 1,
+            "block_range.end must be reduced by prune count"
+        );
+
+        // Confirm the channel — should prune the remaining block.
+        let sub = encoder.next_submission().unwrap();
+        encoder.confirm(sub.id, 101);
+        assert!(encoder.blocks.is_empty(), "confirm after prune_safe must finish pruning");
+    }
+
+    /// `encode_and_drain` steps until idle, force-closes, and returns all frames.
+    #[test]
+    fn test_encode_and_drain_returns_frames() {
+        let mut encoder = default_encoder();
+        encoder.add_block(make_block_with_user_tx(B256::ZERO)).expect("add block");
+        let frames = encoder.encode_and_drain().expect("encode_and_drain");
+        assert!(!frames.is_empty(), "encode_and_drain must return at least one frame");
+    }
+
+    /// `encode_and_drain` with no blocks added returns empty (Idle immediately).
+    #[test]
+    fn test_encode_and_drain_no_blocks_returns_empty() {
+        let mut encoder = default_encoder();
+        let frames = encoder.encode_and_drain().expect("encode_and_drain");
+        assert!(frames.is_empty(), "no blocks → encode_and_drain must return empty");
+    }
+
+    /// `encode_and_drain` in Span mode accumulates and drains frames correctly.
+    #[test]
+    fn test_encode_and_drain_span_mode() {
+        let rollup_config = Arc::new(RollupConfig::default());
+        let config = EncoderConfig { batch_type: BatchType::Span, ..EncoderConfig::default() };
+        let mut encoder = BatchEncoder::new(rollup_config, config);
+        encoder.add_block(make_block_with_user_tx(B256::ZERO)).expect("add block 1");
+        let hash = make_block_with_user_tx(B256::ZERO).header.hash_slow();
+        encoder.add_block(make_block_with_user_tx(hash)).expect("add block 2");
+        let frames = encoder.encode_and_drain().expect("encode_and_drain span");
+        assert!(!frames.is_empty(), "span encode_and_drain must produce frames");
+    }
+
+    /// Encoding with a small `max_frame_size` fragments a multi-block channel
+    /// into multiple frames, proving the encoder respects the frame-size limit.
+    #[test]
+    fn frame_fragmentation_with_small_frame_size() {
+        let rollup_config = Arc::new(RollupConfig::default());
+        let config = EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() };
+        let mut encoder = BatchEncoder::new(rollup_config, config);
+
+        // Add 5 L2 blocks with a user tx in each to produce non-trivial payload.
+        let mut parent = B256::ZERO;
+        for _ in 0..5 {
+            let block = make_block_with_user_tx(parent);
+            parent = block.header.hash_slow();
+            encoder.add_block(block).expect("add block");
+        }
+
+        let frames = encoder.encode_and_drain().expect("encode_and_drain");
+        assert!(
+            frames.len() >= 3,
+            "expected at least 3 frames with max_frame_size=80, got {}",
+            frames.len()
+        );
     }
 }

@@ -1,10 +1,9 @@
 #![doc = "Action tests for blob DA submission and mixed calldata/blob derivation."]
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TestRollupConfigBuilder, block_info_from,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
 };
-use base_batcher_encoder::EncoderConfig;
 
 // ---------------------------------------------------------------------------
 // Blob DA end-to-end
@@ -12,42 +11,30 @@ use base_batcher_encoder::EncoderConfig;
 
 /// Encode 3 L2 blocks as EIP-4844 blobs (one blob per L2 block, each in its
 /// own L1 block) and verify that the blob verifier pipeline derives all three.
-///
-/// Follows the same one-block-per-L1-block pattern as the calldata derivation
-/// tests.  Block hashes from the sequencer are registered with the verifier so
-/// that parent-hash validation succeeds for blocks 2 and 3.
 #[tokio::test]
 async fn batcher_blob_da_end_to_end() {
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig::default(); // DaType::Blob by default
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
-    // Build and submit each L2 block in its own L1 blob block.
+    // One Batcher per L2 block so each lands in a separate L1 block.
     for _ in 1..=3u64 {
         let block = sequencer.build_next_block().expect("build L2 block");
-
         let mut source = ActionL2Source::new();
         source.push(block);
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        let frames = batcher.encode_frames().expect("encode frames");
-        batcher.submit_blob_frames(&frames);
-        batcher.flush(&mut h.l1);
-
-        h.l1.mine_block();
+        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.advance(&mut h.l1).await.expect("advance");
     }
 
-    // Create the blob verifier AFTER mining so the SharedL1Chain snapshot
-    // includes all L1 blocks with their blob sidecars.
     let (mut verifier, _chain) = h.create_blob_verifier_from_sequencer(
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
     verifier.initialize().await.expect("initialize");
 
-    // Drive derivation one L1 block at a time.
     for i in 1..=3u64 {
         let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
         verifier.act_l1_head_signal(l1_block).await.expect("signal L1 block");
@@ -64,14 +51,6 @@ async fn batcher_blob_da_end_to_end() {
 
 /// Force channel fragmentation via a tiny `max_frame_size`, then submit all
 /// resulting frames as separate blob sidecars in a single L1 block.
-///
-/// The blob verifier must read every blob sidecar from that L1 block, reassemble
-/// the channel fragments, and derive the encoded L2 block.  This exercises the
-/// path where a single L1 block carries multiple blob sidecars from the same
-/// channel.
-///
-/// An empty L1 block 2 is mined after the blob block so the `BatchQueue` has
-/// a next epoch boundary available when it emits the derived L2 block.
 #[tokio::test]
 async fn batcher_multi_blob_packing() {
     let batcher_cfg = BatcherConfig {
@@ -83,35 +62,27 @@ async fn batcher_multi_blob_packing() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-
-    // Build 1 L2 block and encode it into multiple frames (tiny max_frame_size).
     let block = sequencer.build_next_block().expect("build L2 block");
 
     let mut source = ActionL2Source::new();
     source.push(block);
-    let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-    let frames = batcher.encode_frames().expect("encode frames");
+    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    batcher.advance(&mut h.l1).await.expect("advance");
+
+    // With max_frame_size=80, the block must have been fragmented into multiple
+    // blob sidecars in the mined L1 block.
     assert!(
-        frames.len() >= 2,
-        "expected multiple frames with max_frame_size=80, got {}",
-        frames.len()
+        h.l1.tip().blob_sidecars.len() >= 2,
+        "expected multiple blob sidecars with max_frame_size=80, got {}",
+        h.l1.tip().blob_sidecars.len()
     );
-    // All frames go into the same L1 block as separate blob sidecars.
-    batcher.submit_blob_frames(&frames);
-    batcher.flush(&mut h.l1);
 
-    h.l1.mine_block(); // L1 block 1: all blob sidecars for the fragmented channel
-
-    // Create verifier AFTER mining so the snapshot includes the blob block.
     let (mut verifier, _chain) = h.create_blob_verifier_from_sequencer(
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
     verifier.initialize().await.expect("initialize");
 
-    // Signal L1 block 1: the pipeline reads all blob sidecars, reassembles the
-    // fragmented channel, and emits the batch.  L1 block 1 is the "next epoch"
-    // after epoch 0, so BatchQueue can emit as soon as it has all frames.
     let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("L1 block 1"));
     verifier.act_l1_head_signal(l1_block_1).await.expect("signal L1 block 1");
     let derived = verifier.act_l2_pipeline_full().await.expect("step after L1 block 1");
@@ -124,32 +95,27 @@ async fn batcher_multi_blob_packing() {
 // Calldata DA (explicit)
 // ---------------------------------------------------------------------------
 
-/// Encode 3 L2 blocks as calldata frames (one calldata tx per L2 block, each
-/// in its own L1 block) and verify that the calldata verifier pipeline derives
-/// all three.
-///
-/// This mirrors `batcher_blob_da_end_to_end` but uses the calldata DA path,
-/// making both paths explicit and comparable in the test suite.
+/// Encode 3 L2 blocks as calldata frames and verify the calldata verifier
+/// pipeline derives all three.
 #[tokio::test]
 async fn batcher_calldata_da() {
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
+    // One Batcher per L2 block so each lands in a separate L1 block.
     for _ in 1..=3u64 {
         let block = sequencer.build_next_block().expect("build L2 block");
-
         let mut source = ActionL2Source::new();
         source.push(block);
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        let frames = batcher.encode_frames().expect("encode frames");
-        batcher.submit_frames(&frames);
-        batcher.flush(&mut h.l1);
-
-        h.l1.mine_block();
+        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.advance(&mut h.l1).await.expect("advance");
     }
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -174,53 +140,38 @@ async fn batcher_calldata_da() {
 
 /// Submit 3 L2 blocks as calldata and 3 more as blobs, each in separate L1
 /// blocks, then derive all 6 using the blob verifier pipeline.
-///
-/// The blob verifier pipeline reads both calldata (`batcher_txs`) and blob
-/// sidecars from each L1 block, making it suitable for mixed-DA sequences
-/// without any pipeline configuration changes.
-///
-/// This exercises the DA-switching scenario: the pipeline must process calldata
-/// from L1 blocks 1-3 and blob data from L1 blocks 4-6 to produce all 6 L2
-/// blocks in order.
 #[tokio::test]
 async fn batcher_da_switching() {
-    let batcher_cfg = BatcherConfig::default();
-    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&BatcherConfig::default()).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
-    // One sequencer for all 6 blocks ensures a contiguous parent-hash chain.
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
-    // Blocks 1-3: submit as calldata (one block per L1 block).
+    let calldata_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let blob_cfg = BatcherConfig::default(); // DaType::Blob by default
+
+    // Blocks 1-3: submit as calldata.
     for _ in 1..=3u64 {
         let block = sequencer.build_next_block().expect("build calldata block");
-
         let mut source = ActionL2Source::new();
         source.push(block);
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        let frames = batcher.encode_frames().expect("encode calldata frames");
-        batcher.submit_frames(&frames);
-        batcher.flush(&mut h.l1);
-        h.l1.mine_block();
+        let mut batcher = Batcher::new(source, &h.rollup_config, calldata_cfg.clone());
+        batcher.advance(&mut h.l1).await.expect("advance calldata");
     }
 
-    // Blocks 4-6: submit as blobs (one block per L1 block).
+    // Blocks 4-6: submit as blobs.
     for _ in 4..=6u64 {
         let block = sequencer.build_next_block().expect("build blob block");
-
         let mut source = ActionL2Source::new();
         source.push(block);
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        let frames = batcher.encode_frames().expect("encode blob frames");
-        batcher.submit_blob_frames(&frames);
-        batcher.flush(&mut h.l1);
-        h.l1.mine_block();
+        let mut batcher = Batcher::new(source, &h.rollup_config, blob_cfg.clone());
+        batcher.advance(&mut h.l1).await.expect("advance blob");
     }
 
-    // The blob verifier handles both calldata (batcher_txs) and blobs
-    // (blob_sidecars) from each block, making it capable of deriving the
-    // full mixed sequence without any pipeline changes.
     let (mut verifier, _chain) = h.create_blob_verifier_from_sequencer(
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),

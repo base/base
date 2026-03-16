@@ -4,9 +4,11 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use alloy_primitives::{Address, Bytes, U256};
 use base_batcher_encoder::{BatchPipeline, DaType, FrameEncoder, StepResult, SubmissionId};
-use base_batcher_source::{L2BlockEvent, SourceError, UnsafeBlockSource};
+use base_batcher_source::{
+    L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
+};
 use base_blobs::BlobEncoder;
-use base_tx_manager::{TxCandidate, TxManager};
+use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
@@ -20,17 +22,19 @@ type InFlight = FuturesUnordered<Pin<Box<dyn Future<Output = (SubmissionId, TxOu
 /// Async orchestration loop for the batcher.
 ///
 /// Combines a [`BatchPipeline`] (encoding), an [`UnsafeBlockSource`] (L2 block delivery),
-/// and a [`TxManager`] (L1 submission) into a single `tokio::select!` task.
+/// an [`L1HeadSource`] (L1 chain head tracking), and a [`TxManager`] (L1 submission)
+/// into a single `tokio::select!` task.
 ///
 /// Uses [`FuturesUnordered`] for concurrent receipt tracking and a [`Semaphore`]
 /// for pending transaction backpressure.
 #[derive(Debug)]
-pub struct BatchDriver<P, S, TM, TC>
+pub struct BatchDriver<P, S, TM, TC, L>
 where
     P: BatchPipeline,
     S: UnsafeBlockSource,
     TM: TxManager,
     TC: ThrottleClient,
+    L: L1HeadSource,
 {
     /// The encoding pipeline.
     pipeline: P,
@@ -50,6 +54,16 @@ where
     throttle_client: TC,
     /// Last applied DA limits (`max_tx_size`, `max_block_size`) to avoid redundant RPC calls.
     last_applied_da_limits: Option<(u64, u64)>,
+    /// L1 head source for chain head advancement.
+    ///
+    /// Set to `None` after the source returns [`SourceError::Exhausted`] or
+    /// [`SourceError::Closed`], causing the driver to park that select arm forever.
+    l1_head_source: Option<L>,
+    /// Optional external L2 safe head feed for pruning confirmed blocks.
+    safe_head_rx: Option<tokio::sync::watch::Receiver<u64>>,
+    /// Set when the txpool reports a stuck nonce slot. No new submissions are
+    /// attempted until [`TxManager::cancel_tx`] clears the blockage.
+    txpool_blocked: bool,
 }
 
 /// Maximum number of encoding steps to run synchronously per outer loop iteration
@@ -57,12 +71,13 @@ where
 /// starving receipt processing and cancellation checks.
 const STEP_BUDGET: usize = 128;
 
-impl<P, S, TM, TC> BatchDriver<P, S, TM, TC>
+impl<P, S, TM, TC, L> BatchDriver<P, S, TM, TC, L>
 where
     P: BatchPipeline,
     S: UnsafeBlockSource,
     TM: TxManager,
     TC: ThrottleClient,
+    L: L1HeadSource,
 {
     /// Create a new [`BatchDriver`].
     pub fn new(
@@ -73,6 +88,7 @@ where
         max_pending_transactions: usize,
         throttle: ThrottleController,
         throttle_client: TC,
+        l1_head_source: L,
     ) -> Self {
         Self {
             pipeline,
@@ -84,7 +100,20 @@ where
             throttle,
             throttle_client,
             last_applied_da_limits: None,
+            l1_head_source: Some(l1_head_source),
+            safe_head_rx: None,
+            txpool_blocked: false,
         }
+    }
+
+    /// Attach an external L2 safe head watch channel.
+    ///
+    /// When the receiver fires, the pipeline's [`prune_safe`](BatchPipeline::prune_safe)
+    /// is called with the new safe L2 block number, allowing the encoder to
+    /// free blocks that are confirmed safe on L2.
+    pub fn with_safe_head_rx(mut self, rx: tokio::sync::watch::Receiver<u64>) -> Self {
+        self.safe_head_rx = Some(rx);
+        self
     }
 
     /// Run the batch driver loop.
@@ -92,7 +121,7 @@ where
     /// This method drives the full batcher lifecycle:
     /// 1. Drains encoding steps synchronously.
     /// 2. Submits any ready frames non-blocking (`try_acquire_owned`).
-    /// 3. Selects on cancellation, block source events, and receipt completion.
+    /// 3. Selects on cancellation, block source events, receipt completion, and L1 head updates.
     /// 4. Returns `Ok(())` on cancellation or `Err` on source/encoding failure.
     pub async fn run(mut self, cancellation: CancellationToken) -> Result<(), BatchDriverError> {
         // Set when InMemoryBlockSource (or any bounded source) signals Exhausted.
@@ -156,6 +185,20 @@ where
                 }
             }
 
+            // Attempt to clear a txpool blockage before submitting new frames.
+            // Called once per outer loop iteration so the driver doesn't spin.
+            if self.txpool_blocked {
+                match self.tx_manager.cancel_tx().await {
+                    Ok(()) => {
+                        self.txpool_blocked = false;
+                        info!("txpool unblocked after cancellation tx");
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "cancel_tx failed, txpool remains blocked");
+                    }
+                }
+            }
+
             // Submit all ready frames without blocking. Using try_acquire_owned
             // avoids the hot-loop that would occur if acquire_owned were polled
             // inside select! when there are no submissions ready: the semaphore
@@ -164,6 +207,9 @@ where
             // preventing pipeline state mutation from being interleaved with other
             // async events mid-select.
             loop {
+                if self.txpool_blocked {
+                    break; // Wait for cancel_tx to clear the blockage.
+                }
                 let Ok(permit) = Arc::clone(&self.semaphore).try_acquire_owned() else {
                     break; // All slots occupied; wait for a receipt to free one.
                 };
@@ -212,6 +258,10 @@ where
                                     });
                                     TxOutcome::Confirmed { l1_block }
                                 }
+                                Err(TxManagerError::AlreadyReserved) => {
+                                    warn!(id = %id.0, "txpool nonce slot already reserved");
+                                    TxOutcome::TxpoolBlocked
+                                }
                                 Err(e) => {
                                     warn!(id = %id.0, error = %e, "submission failed");
                                     TxOutcome::Failed
@@ -238,12 +288,17 @@ where
                             self.pipeline.requeue(id);
                             warn!(id = %id.0, "submission failed, requeued (drain)");
                         }
+                        TxOutcome::TxpoolBlocked => {
+                            self.pipeline.requeue(id);
+                            self.txpool_blocked = true;
+                            warn!(id = %id.0, "submission blocked by txpool, requeued (drain)");
+                        }
                     }
                 }
                 return Ok(());
             }
 
-            // Block on I/O: cancellation, new blocks, or receipt completions.
+            // Block on I/O: cancellation, new blocks, receipt completions, and L1/L2 head updates.
             tokio::select! {
                 biased;
 
@@ -276,6 +331,10 @@ where
                                     let _ = self.pipeline.add_block(*block);
                                 }
                             }
+                        }
+                        Ok(L2BlockEvent::Flush) => {
+                            self.pipeline.force_close_channel();
+                            debug!("flush signal received, force-closed channel");
                         }
                         Ok(L2BlockEvent::Reorg { new_safe_head }) => {
                             warn!(
@@ -315,6 +374,47 @@ where
                             self.pipeline.requeue(id);
                             warn!(id = %id.0, "submission failed, requeued");
                         }
+                        TxOutcome::TxpoolBlocked => {
+                            self.pipeline.requeue(id);
+                            self.txpool_blocked = true;
+                            warn!(id = %id.0, "submission blocked by txpool, requeued");
+                        }
+                    }
+                }
+
+                l1_event = async {
+                    if let Some(ref mut src) = self.l1_head_source {
+                        src.next().await
+                    } else {
+                        std::future::pending::<Result<L1HeadEvent, SourceError>>().await
+                    }
+                } => {
+                    match l1_event {
+                        Ok(L1HeadEvent::NewHead(head)) => {
+                            self.pipeline.advance_l1_head(head);
+                            debug!(l1_head = %head, "L1 head advanced via source");
+                        }
+                        Err(SourceError::Exhausted | SourceError::Closed) => {
+                            debug!("L1 head source closed, disabling arm");
+                            self.l1_head_source = None;
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "L1 head source error");
+                        }
+                    }
+                }
+
+                _ = async {
+                    if let Some(ref mut rx) = self.safe_head_rx {
+                        rx.changed().await.ok();
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    if let Some(ref rx) = self.safe_head_rx {
+                        let safe = *rx.borrow();
+                        self.pipeline.prune_safe(safe);
+                        debug!(safe_l2_number = %safe, "pruned safe blocks via watch");
                     }
                 }
             }
@@ -338,7 +438,10 @@ mod tests {
     use base_batcher_encoder::{
         BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId,
     };
-    use base_batcher_source::{L2BlockEvent, SourceError, UnsafeBlockSource};
+    use base_batcher_source::{
+        ChannelL1HeadSource, L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError,
+        UnsafeBlockSource,
+    };
     use base_protocol::{ChannelId, Frame};
     use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
     use tokio::sync::{mpsc, oneshot};
@@ -360,6 +463,8 @@ mod tests {
         dequeued: Vec<SubmissionId>,
         /// Number of times `reset()` was called.
         resets: usize,
+        /// Safe L2 block numbers passed to `prune_safe`.
+        safe_numbers: Vec<u64>,
     }
 
     // ---- Pipeline that records advance_l1_head calls via shared state ----
@@ -403,6 +508,9 @@ mod tests {
         fn advance_l1_head(&mut self, l1_block: u64) {
             self.recorded.lock().unwrap().l1_heads.push(l1_block);
         }
+        fn prune_safe(&mut self, safe_l2_number: u64) {
+            self.recorded.lock().unwrap().safe_numbers.push(safe_l2_number);
+        }
         fn reset(&mut self) {
             self.recorded.lock().unwrap().resets += 1;
         }
@@ -441,6 +549,7 @@ mod tests {
         fn requeue(&mut self, _: SubmissionId) {}
         fn force_close_channel(&mut self) {}
         fn advance_l1_head(&mut self, _: u64) {}
+        fn prune_safe(&mut self, _: u64) {}
         fn reset(&mut self) {
             self.recorded.lock().unwrap().resets += 1;
         }
@@ -482,6 +591,18 @@ mod tests {
     #[async_trait]
     impl UnsafeBlockSource for PendingSource {
         async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+            std::future::pending().await
+        }
+    }
+
+    // ---- L1 head source that parks forever (default for tests not testing L1 head) ----
+
+    #[derive(Debug)]
+    struct PendingL1HeadSource;
+
+    #[async_trait]
+    impl L1HeadSource for PendingL1HeadSource {
+        async fn next(&mut self) -> Result<L1HeadEvent, SourceError> {
             std::future::pending().await
         }
     }
@@ -623,7 +744,13 @@ mod tests {
     fn make_driver<TM: TxManager>(
         pipeline: TrackingPipeline,
         tx_manager: TM,
-    ) -> BatchDriver<TrackingPipeline, PendingSource, TM, Arc<NoopThrottleClient>> {
+    ) -> BatchDriver<
+        TrackingPipeline,
+        PendingSource,
+        TM,
+        Arc<NoopThrottleClient>,
+        PendingL1HeadSource,
+    > {
         BatchDriver::new(
             pipeline,
             PendingSource,
@@ -632,6 +759,7 @@ mod tests {
             1,
             noop_throttle(),
             Arc::new(NoopThrottleClient),
+            PendingL1HeadSource,
         )
     }
 
@@ -639,7 +767,13 @@ mod tests {
         pipeline: TrackingPipeline,
         tx_manager: TM,
         max_pending: usize,
-    ) -> BatchDriver<TrackingPipeline, PendingSource, TM, Arc<NoopThrottleClient>> {
+    ) -> BatchDriver<
+        TrackingPipeline,
+        PendingSource,
+        TM,
+        Arc<NoopThrottleClient>,
+        PendingL1HeadSource,
+    > {
         BatchDriver::new(
             pipeline,
             PendingSource,
@@ -648,6 +782,7 @@ mod tests {
             max_pending,
             noop_throttle(),
             Arc::new(NoopThrottleClient),
+            PendingL1HeadSource,
         )
     }
 
@@ -870,6 +1005,7 @@ mod tests {
         fn requeue(&mut self, _: SubmissionId) {}
         fn force_close_channel(&mut self) {}
         fn advance_l1_head(&mut self, _: u64) {}
+        fn prune_safe(&mut self, _: u64) {}
         fn reset(&mut self) {
             *self.resets.lock().unwrap() += 1;
         }
@@ -897,6 +1033,7 @@ mod tests {
             1,
             noop_throttle(),
             Arc::new(NoopThrottleClient),
+            PendingL1HeadSource,
         );
         let handle = tokio::spawn(driver.run(cancellation.clone()));
 
@@ -929,6 +1066,7 @@ mod tests {
             1,
             noop_throttle(),
             Arc::new(NoopThrottleClient),
+            PendingL1HeadSource,
         );
         let handle = tokio::spawn(driver.run(cancellation.clone()));
 
@@ -966,6 +1104,7 @@ mod tests {
             1,
             throttle,
             Arc::new(throttle_client),
+            PendingL1HeadSource,
         );
         let handle = tokio::spawn(driver.run(cancellation.clone()));
 
@@ -1005,6 +1144,7 @@ mod tests {
             1,
             throttle,
             Arc::new(throttle_client),
+            PendingL1HeadSource,
         );
         let handle = tokio::spawn(driver.run(cancellation.clone()));
 
@@ -1046,6 +1186,7 @@ mod tests {
             1,
             throttle,
             Arc::new(throttle_client),
+            PendingL1HeadSource,
         );
         let handle = tokio::spawn(driver.run(cancellation.clone()));
 
@@ -1085,6 +1226,7 @@ mod tests {
             1,
             throttle,
             Arc::new(throttle_client),
+            PendingL1HeadSource,
         );
         let handle = tokio::spawn(driver.run(cancellation.clone()));
 
@@ -1136,6 +1278,8 @@ mod tests {
 
             fn advance_l1_head(&mut self, _: u64) {}
 
+            fn prune_safe(&mut self, _: u64) {}
+
             fn reset(&mut self) {}
 
             fn da_backlog_bytes(&self) -> u64 {
@@ -1178,6 +1322,7 @@ mod tests {
             1,
             throttle,
             Arc::new(throttle_client),
+            PendingL1HeadSource,
         );
         let handle = tokio::spawn(driver.run(cancellation.clone()));
 
@@ -1212,5 +1357,94 @@ mod tests {
         let (last_tx, last_block) = *calls.last().unwrap();
         assert_eq!(last_block, 130_000, "last call should reset block limit to upper bound");
         assert_eq!(last_tx, 20_000, "last call should reset tx limit to upper bound");
+    }
+
+    // ---- L1 head source + safe head watch receiver tests ----
+
+    /// When the L1 head source delivers a new head, the driver must call
+    /// `advance_l1_head` on the pipeline with the new value.
+    #[tokio::test]
+    async fn test_l1_head_source_advances_pipeline() {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+
+        let (l1_source, l1_tx) = ChannelL1HeadSource::new();
+
+        let cancellation = CancellationToken::new();
+        let driver = BatchDriver::new(
+            pipeline,
+            PendingSource,
+            ImmediateConfirmTxManager { l1_block: 1 },
+            Address::ZERO,
+            1,
+            noop_throttle(),
+            Arc::new(NoopThrottleClient),
+            l1_source,
+        );
+        let handle = tokio::spawn(driver.run(cancellation.clone()));
+
+        // Send a new L1 head via the channel.
+        l1_tx.send(L1HeadEvent::NewHead(42)).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancellation.cancel();
+
+        assert!(handle.await.unwrap().is_ok());
+        let r = recorded.lock().unwrap();
+        assert!(
+            r.l1_heads.contains(&42),
+            "advance_l1_head must be called with the source value, got {:?}",
+            r.l1_heads
+        );
+    }
+
+    /// When a safe head watch receiver fires, the driver must call
+    /// `prune_safe` on the pipeline with the new value.
+    #[tokio::test]
+    async fn test_safe_head_watch_prunes_pipeline() {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+
+        let (safe_tx, safe_rx) = tokio::sync::watch::channel(0u64);
+
+        let cancellation = CancellationToken::new();
+        let driver = make_driver(pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+            .with_safe_head_rx(safe_rx);
+        let handle = tokio::spawn(driver.run(cancellation.clone()));
+
+        // Send a new safe head.
+        safe_tx.send(100).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancellation.cancel();
+
+        assert!(handle.await.unwrap().is_ok());
+        let r = recorded.lock().unwrap();
+        assert!(
+            r.safe_numbers.contains(&100),
+            "prune_safe must be called with the watch value, got {:?}",
+            r.safe_numbers
+        );
+    }
+
+    /// Without a safe head receiver, confirmation-based L1 head advancement must
+    /// still work normally. The driver uses `PendingL1HeadSource` (parks forever)
+    /// so only submission confirmations drive `advance_l1_head`.
+    #[tokio::test]
+    async fn test_no_safe_head_receiver_driver_runs_normally() {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+        pipeline.submissions.push_back(make_submission());
+
+        let cancellation = CancellationToken::new();
+        // No .with_safe_head_rx() — safe_head remains None.
+        let driver = make_driver(pipeline, ImmediateConfirmTxManager { l1_block: 7 });
+        let handle = tokio::spawn(driver.run(cancellation.clone()));
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        cancellation.cancel();
+
+        assert!(handle.await.unwrap().is_ok());
+        let r = recorded.lock().unwrap();
+        assert_eq!(r.l1_heads, vec![7], "confirmation-based advance_l1_head must still work");
+        assert!(r.safe_numbers.is_empty(), "prune_safe must not be called without a receiver");
     }
 }

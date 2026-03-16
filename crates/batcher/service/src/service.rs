@@ -13,7 +13,7 @@ use base_batcher_core::{
     ThrottleStrategy,
 };
 use base_batcher_encoder::BatchEncoder;
-use base_batcher_source::{BlockSubscription, HybridBlockSource, SourceError};
+use base_batcher_source::{BlockSubscription, HybridBlockSource, HybridL1HeadSource, SourceError};
 use base_consensus_genesis::RollupConfig;
 use base_tx_manager::{NoopTxMetrics, SimpleTxManager, TxManagerConfig};
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
@@ -23,7 +23,8 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    BatcherConfig, NullSubscription, RpcPollingSource, RpcThrottleClient, WsBlockSubscription,
+    BatcherConfig, NullL1HeadSubscription, NullSubscription, RpcL1HeadPollingSource,
+    RpcPollingSource, RpcThrottleClient, WsBlockSubscription, WsL1HeadSubscription,
 };
 
 /// Service-internal throttle client variant: either a no-op or an RPC client.
@@ -48,7 +49,7 @@ impl ThrottleClient for ServiceThrottle {
     }
 }
 
-/// Batcher-internal subscription variant: either a live WS subscription or a no-op.
+/// Batcher-internal L2 subscription variant: either a live WS subscription or a no-op.
 ///
 /// Using a concrete enum avoids heap allocation while still allowing
 /// `build_subscription` to return either branch to `start`.
@@ -66,6 +67,21 @@ impl BlockSubscription for Subscription {
     }
 }
 
+/// Batcher-internal L1 subscription variant: either a live WS subscription or a no-op.
+enum L1Subscription {
+    Ws(WsL1HeadSubscription),
+    Null(NullL1HeadSubscription),
+}
+
+impl base_batcher_source::L1HeadSubscription for L1Subscription {
+    fn take_stream(&mut self) -> BoxStream<'static, Result<u64, SourceError>> {
+        match self {
+            Self::Ws(ws) => ws.take_stream(),
+            Self::Null(null) => null.take_stream(),
+        }
+    }
+}
+
 /// Concrete driver type produced by [`BatcherService::setup`].
 ///
 /// Private — callers interact only through [`ReadyBatcher`].
@@ -74,6 +90,7 @@ type ServiceDriver = BatchDriver<
     HybridBlockSource<Subscription, RpcPollingSource>,
     SimpleTxManager,
     ServiceThrottle,
+    HybridL1HeadSource<L1Subscription, RpcL1HeadPollingSource>,
 >;
 
 /// A fully-initialised batcher ready to run the submission loop.
@@ -103,7 +120,7 @@ impl ReadyBatcher {
 
 /// The batcher service.
 ///
-/// Wires the encoder, block source, transaction manager, and driver.
+/// Wires the encoder, block source, L1 head source, transaction manager, and driver.
 /// Call [`setup`](Self::setup) to initialise all components, then call
 /// [`ReadyBatcher::run`] to enter the submission loop.
 #[derive(Debug)]
@@ -132,7 +149,7 @@ impl BatcherService {
     /// to polling.
     ///
     /// [`HybridBlockSource`]: base_batcher_source::HybridBlockSource
-    async fn build_subscription(
+    async fn build_l2_subscription(
         url: Option<&Url>,
         fetch_provider: Arc<dyn Provider<Base> + Send + Sync>,
     ) -> Subscription {
@@ -143,7 +160,7 @@ impl BatcherService {
         let ws_provider = match ProviderBuilder::new().connect(url.as_str()).await {
             Ok(p) => Arc::new(p),
             Err(e) => {
-                warn!(error = %e, l2_rpc = %url, "failed to connect WS provider; falling back to polling");
+                warn!(error = %e, l2_rpc = %url, "failed to connect L2 WS provider; falling back to polling");
                 return Subscription::Null(NullSubscription);
             }
         };
@@ -151,7 +168,7 @@ impl BatcherService {
         let sub = match ws_provider.subscribe_blocks().await {
             Ok(s) => s,
             Err(e) => {
-                warn!(error = %e, "failed to subscribe to new blocks; falling back to polling");
+                warn!(error = %e, "failed to subscribe to new L2 blocks; falling back to polling");
                 return Subscription::Null(NullSubscription);
             }
         };
@@ -179,6 +196,42 @@ impl BatcherService {
         Subscription::Ws(WsBlockSubscription::new(ws_provider, stream))
     }
 
+    /// Build an L1 head subscription for the given optional L1 WebSocket URL.
+    ///
+    /// When `url` is `Some`, connects a dedicated WS provider, subscribes to
+    /// new L1 block headers, and streams their block numbers. The provider is
+    /// wrapped in a [`WsL1HeadSubscription`] to keep the connection alive.
+    ///
+    /// When `url` is `None`, or if the WS connection fails, returns a
+    /// [`NullL1HeadSubscription`] so that [`HybridL1HeadSource`] falls back
+    /// entirely to polling.
+    ///
+    /// [`HybridL1HeadSource`]: base_batcher_source::HybridL1HeadSource
+    async fn build_l1_subscription(url: Option<&Url>) -> L1Subscription {
+        let Some(url) = url else {
+            return L1Subscription::Null(NullL1HeadSubscription);
+        };
+
+        let ws_provider = match ProviderBuilder::new().connect(url.as_str()).await {
+            Ok(p) => Arc::new(p),
+            Err(e) => {
+                warn!(error = %e, l1_ws = %url, "failed to connect L1 WS provider; falling back to polling");
+                return L1Subscription::Null(NullL1HeadSubscription);
+            }
+        };
+
+        let sub = match ws_provider.subscribe_blocks().await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(error = %e, "failed to subscribe to new L1 blocks; falling back to polling");
+                return L1Subscription::Null(NullL1HeadSubscription);
+            }
+        };
+
+        let stream = sub.into_stream().map(|header| Ok(header.number)).boxed();
+        L1Subscription::Ws(WsL1HeadSubscription::new(ws_provider, stream))
+    }
+
     /// Initialise all batcher components and return a [`ReadyBatcher`].
     ///
     /// Connects to the L2 and L1 RPC endpoints, fetches the rollup config,
@@ -192,6 +245,7 @@ impl BatcherService {
             l1_rpc = %self.config.l1_rpc_url,
             l2_rpc = %self.config.l2_rpc_url,
             l2_ws = self.config.l2_ws_url.as_ref().map(|u| u.as_str()),
+            l1_ws = self.config.l1_ws_url.as_ref().map(|u| u.as_str()),
             "starting batcher service"
         );
 
@@ -204,19 +258,18 @@ impl BatcherService {
                 .await?,
         );
 
-        // Build the polling source.
+        // Build the L2 polling source.
         let poller = RpcPollingSource::new(Arc::clone(&l2_provider));
 
-        // Build a block subscription. When l2_ws_url is configured the
+        // Build the L2 block subscription. When l2_ws_url is configured the
         // subscription owns its provider Arc so the connection stays live for
-        // the full driver run. Without a WS URL a NullSubscription is returned
-        // and HybridBlockSource relies entirely on the polling path.
-        let subscription =
-            Self::build_subscription(self.config.l2_ws_url.as_ref(), Arc::clone(&l2_provider))
+        // the full driver run.
+        let l2_subscription =
+            Self::build_l2_subscription(self.config.l2_ws_url.as_ref(), Arc::clone(&l2_provider))
                 .await;
 
-        // Assemble the hybrid block source.
-        let source = HybridBlockSource::new(subscription, poller, self.config.poll_interval);
+        // Assemble the hybrid L2 block source.
+        let source = HybridBlockSource::new(l2_subscription, poller, self.config.poll_interval);
 
         // Fetch the rollup config from the rollup node via `optimism_rollupConfig`.
         // Uses a plain HTTP provider so no network-typed provider is needed — the
@@ -266,6 +319,22 @@ impl BatcherService {
             .await
             .map_err(|e| eyre::eyre!("failed to connect to L1: {e}"))?;
 
+        // Build the L1 head source: a hybrid of optional WS subscription + polling.
+        let l1_head_subscription =
+            Self::build_l1_subscription(self.config.l1_ws_url.as_ref()).await;
+        let l1_head_poller = RpcL1HeadPollingSource::new(Arc::new(
+            ProviderBuilder::new()
+                .disable_recommended_fillers()
+                .connect(self.config.l1_rpc_url.as_str())
+                .await
+                .map_err(|e| eyre::eyre!("failed to connect to L1 for polling: {e}"))?,
+        ));
+        let l1_head_source = HybridL1HeadSource::new(
+            l1_head_subscription,
+            l1_head_poller,
+            self.config.poll_interval,
+        );
+
         // Build the batcher wallet from the configured private key.
         let signer = PrivateKeySigner::from_bytes(&self.config.batcher_private_key.0)
             .map_err(|e| eyre::eyre!("invalid batcher private key: {e}"))?;
@@ -300,6 +369,7 @@ impl BatcherService {
             self.config.max_pending_transactions,
             throttle,
             throttle_client,
+            l1_head_source,
         );
 
         info!("batcher service components initialized");

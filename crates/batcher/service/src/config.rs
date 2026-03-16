@@ -38,6 +38,12 @@ pub struct BatcherConfig {
     /// L2 HTTP RPC endpoint. Used for all JSON-RPC calls including throttle
     /// control (`miner_setMaxDASize`). Must be an HTTP or HTTPS URL.
     pub l2_rpc_url: Url,
+    /// Optional L1 WebSocket endpoint for new-block subscriptions.
+    ///
+    /// When set, the batcher subscribes to new L1 block headers over this
+    /// connection to advance the pipeline's L1 head, falling back to polling
+    /// [`l1_rpc_url`] only on failure. When absent, polling is used exclusively.
+    pub l1_ws_url: Option<Url>,
     /// Optional L2 WebSocket endpoint for new-block subscriptions.
     ///
     /// When set, the batcher subscribes to new block headers over this
@@ -68,6 +74,7 @@ impl Default for BatcherConfig {
     fn default() -> Self {
         Self {
             l1_rpc_url: "http://localhost:8545".parse().expect("valid default URL"),
+            l1_ws_url: None,
             l2_rpc_url: "http://localhost:9545".parse().expect("valid default URL"),
             l2_ws_url: None,
             rollup_rpc_url: "http://localhost:7545".parse().expect("valid default URL"),

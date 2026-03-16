@@ -2,8 +2,8 @@
 
 use alloy_primitives::{Address, B256, LogData};
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TestRollupConfigBuilder, block_info_from,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
 };
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
 use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
@@ -352,6 +352,10 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
     sys_cfg.operator_fee_scalar = Some(OPERATOR_FEE_SCALAR);
     sys_cfg.operator_fee_constant = Some(OPERATOR_FEE_CONSTANT);
 
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..batcher_cfg
+    };
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
@@ -361,11 +365,8 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
         // All blocks carry user transactions — Isthmus allows user txs at transition.
         let mut source = ActionL2Source::new();
         source.push(builder.build_next_block().expect("build L2 block"));
-
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.advance().expect("batcher encode");
-        batcher.flush(&mut h.l1);
-        h.l1.mine_block();
+        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.advance(&mut h.l1).await.expect("advance");
     }
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -428,6 +429,10 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     // fires and a deposit-only block is generated for any pending L2 slot.
     rollup_cfg.seq_window_size = 4;
 
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..batcher_cfg
+    };
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
@@ -438,11 +443,8 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     for _ in 1u64..=3 {
         let mut source = ActionL2Source::new();
         source.push(builder.build_next_block().expect("build L2 block"));
-
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.advance().expect("batcher encode");
-        batcher.flush(&mut h.l1);
-        h.l1.mine_block();
+        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.advance(&mut h.l1).await.expect("advance");
     }
 
     // Mine L1 block 4 (no batch). This closes the epoch-0 sequencing window
@@ -616,22 +618,28 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
     // L2 block 6 (ts=12): epoch 1, epoch change — NEW config from L1 block 1's receipts.
     let block6 = sequencer.build_next_block().expect("build block 6");
 
-    // Batch all epoch-0 blocks into L1 block 2 and block 6 into L1 block 3.
-    let mut source = ActionL2Source::new();
-    for block in epoch0_blocks {
-        source.push(block);
-    }
-    let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-    batcher.advance().expect("encode blocks 1–5");
-    batcher.flush(&mut h.l1);
-    h.l1.mine_block(); // L1 block 2, ts=24
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..batcher_cfg.encoder.clone() },
+        ..batcher_cfg
+    };
 
-    let mut source = ActionL2Source::new();
-    source.push(block6);
-    let mut batcher = h.create_batcher(source, batcher_cfg);
-    batcher.advance().expect("encode block 6");
-    batcher.flush(&mut h.l1);
-    h.l1.mine_block(); // L1 block 3, ts=36
+    // Batch all epoch-0 blocks into L1 block 2 (one Batcher with all 5 blocks).
+    {
+        let mut source = ActionL2Source::new();
+        for block in epoch0_blocks {
+            source.push(block);
+        }
+        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.advance(&mut h.l1).await.expect("advance blocks 1–5"); // L1 block 2, ts=24
+    }
+
+    // Batch block 6 into L1 block 3.
+    {
+        let mut source = ActionL2Source::new();
+        source.push(block6);
+        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.advance(&mut h.l1).await.expect("advance block 6"); // L1 block 3, ts=36
+    }
 
     // Verifier snapshot includes all L1 blocks 0–3.
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(

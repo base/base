@@ -25,4 +25,25 @@ pub use subscription::BlockSubscription;
 mod hybrid;
 pub use hybrid::HybridBlockSource;
 
+mod channel;
+pub use channel::ChannelBlockSource;
+
+mod l1_event;
+pub use l1_event::L1HeadEvent;
+
+mod l1_source;
+pub use l1_source::L1HeadSource;
+
+mod l1_polling;
+pub use l1_polling::L1HeadPolling;
+
+mod l1_subscription;
+pub use l1_subscription::L1HeadSubscription;
+
+mod l1_hybrid;
+pub use l1_hybrid::HybridL1HeadSource;
+
+mod l1_channel;
+pub use l1_channel::ChannelL1HeadSource;
+
 pub mod test_utils;

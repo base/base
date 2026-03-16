@@ -1,8 +1,8 @@
 #![doc = "TDD action test skeletons for sequencer drift scenarios."]
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TestRollupConfigBuilder, block_info_from,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
 };
 
 // ---------------------------------------------------------------------------
@@ -37,7 +37,10 @@ use base_action_harness::{
 #[tokio::test]
 async fn sequencer_drift_produces_deposit_only_blocks() {
     let l1_cfg = L1MinerConfig { block_time: 4 };
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let rollup_cfg =
         TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_block_time(300).build();
     let mut h = ActionTestHarness::new(l1_cfg, rollup_cfg.clone());
@@ -70,18 +73,14 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
+    // Collect all 8 blocks and batch them in one L1 block.
+    let mut source = ActionL2Source::new();
     for _ in 1u64..=8 {
-        // Build with user transactions — the pipeline decides what to accept.
-        let block = sequencer.build_next_block().expect("build L2 block");
-
-        // Submit each block as a separate batch in its own L1 block.
-        let mut source = ActionL2Source::new();
-        source.push(block);
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.advance().expect("batcher encode");
-        batcher.flush(&mut h.l1);
-        h.mine_and_push(&chain);
+        source.push(sequencer.build_next_block().expect("build L2 block"));
     }
+    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    batcher.advance(&mut h.l1).await.expect("batcher advance");
+    chain.push(h.l1.tip().clone());
 
     verifier.initialize().await.expect("initialize");
 
@@ -131,7 +130,10 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
 #[tokio::test]
 async fn sequencer_drift_forced_empty_blocks_accepted() {
     let l1_cfg = L1MinerConfig { block_time: 4 };
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let rollup_cfg =
         TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_block_time(300).build();
     let mut h = ActionTestHarness::new(l1_cfg, rollup_cfg);
@@ -151,30 +153,20 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
 
     // Build 6 normal blocks (within drift, ts=300..1800) + 2 empty blocks
     // (over drift, ts=2100, 2400). block_time=300 s, max_drift=1800 s.
+    let mut source = ActionL2Source::new();
     for _ in 1u64..=6 {
-        let block = sequencer.build_next_block().expect("build normal block");
-
-        let mut source = ActionL2Source::new();
-        source.push(block);
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.advance().expect("encode");
-        batcher.flush(&mut h.l1);
-        h.mine_and_push(&chain);
+        source.push(sequencer.build_next_block().expect("build normal block"));
     }
-
-    // Build empty blocks past the drift boundary.
+    // Build empty blocks past the drift boundary. The empty block has only
+    // the deposit tx — the batcher encodes it but the pipeline drops it
+    // (stale epoch) and produces a default block.
     for _ in 7u64..=8 {
-        let block = sequencer.build_empty_block().expect("build empty block");
-
-        // The empty block has only the deposit tx — the batcher encodes it
-        // but the pipeline will drop it (stale epoch) and produce a default block.
-        let mut source = ActionL2Source::new();
-        source.push(block);
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.advance().expect("encode empty block");
-        batcher.flush(&mut h.l1);
-        h.mine_and_push(&chain);
+        source.push(sequencer.build_empty_block().expect("build empty block"));
     }
+
+    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    batcher.advance(&mut h.l1).await.expect("batcher advance");
+    chain.push(h.l1.tip().clone());
 
     verifier.initialize().await.expect("initialize");
 

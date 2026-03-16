@@ -2373,7 +2373,6 @@ dependencies = [
  "base-batcher-encoder",
  "base-batcher-source",
  "base-blobs",
- "base-comp",
  "base-consensus-derive",
  "base-consensus-genesis",
  "base-consensus-registry",

@@ -1,8 +1,8 @@
 #![doc = "Action tests for hardfork activation gating and cascade semantics."]
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatchType, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TestRollupConfigBuilder, block_info_from,
+    ActionL2Source, ActionTestHarness, BatchType, Batcher, BatcherConfig, DaType, EncoderConfig,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
 };
 use base_consensus_genesis::{HardForkConfig, RollupConfig};
 use base_consensus_registry::Registry;
@@ -265,16 +265,19 @@ async fn span_batch_rejected_before_delta() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
+
+    let span_cfg = BatcherConfig {
+        batch_type: BatchType::Span,
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..batcher_cfg.clone()
+    };
+
+    // Both blocks in one source, one advance produces a span batch.
     let mut source = ActionL2Source::new();
     source.push(builder.build_next_block().expect("build L2 block 1"));
     source.push(builder.build_next_block().expect("build L2 block 2"));
-
-    let span_cfg = BatcherConfig { batch_type: BatchType::Span, ..batcher_cfg.clone() };
-    let mut batcher = h.create_batcher(source, span_cfg);
-    batcher.advance().expect("batcher should encode span batch");
-    batcher.flush(&mut h.l1);
-
-    h.l1.mine_block();
+    let mut batcher = Batcher::new(source, &h.rollup_config, span_cfg);
+    batcher.advance(&mut h.l1).await.expect("advance");
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -307,16 +310,18 @@ async fn span_batch_derives_after_delta() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
+    let span_cfg = BatcherConfig {
+        batch_type: BatchType::Span,
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..batcher_cfg.clone()
+    };
+
+    // Both blocks in one source → one span batch in one L1 block.
     let mut source = ActionL2Source::new();
     source.push(builder.build_next_block().expect("build L2 block 1"));
     source.push(builder.build_next_block().expect("build L2 block 2"));
-
-    let span_cfg = BatcherConfig { batch_type: BatchType::Span, ..batcher_cfg.clone() };
-    let mut batcher = h.create_batcher(source, span_cfg);
-    batcher.advance().expect("batcher encode span batch");
-    batcher.flush(&mut h.l1);
-
-    h.l1.mine_block();
+    let mut batcher = Batcher::new(source, &h.rollup_config, span_cfg);
+    batcher.advance(&mut h.l1).await.expect("advance");
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -334,7 +339,10 @@ async fn span_batch_derives_after_delta() {
 /// one L2 block per L1 block, regardless of span batch gating.
 #[tokio::test]
 async fn single_batch_derives_with_fjord() {
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let hardforks = HardForkConfig { fjord_time: Some(0), ..Default::default() };
     let rollup_cfg =
         TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
@@ -346,11 +354,8 @@ async fn single_batch_derives_with_fjord() {
     for _ in 0..2 {
         let mut source = ActionL2Source::new();
         source.push(builder.build_next_block().expect("build L2 block"));
-
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.advance().expect("batcher advance");
-        batcher.flush(&mut h.l1);
-        h.l1.mine_block();
+        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.advance(&mut h.l1).await.expect("advance");
     }
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -385,7 +390,10 @@ async fn single_batch_derives_with_fjord() {
 /// attribute set.
 #[tokio::test]
 async fn jovian_derivation_crosses_activation_boundary() {
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
 
     // All forks through Isthmus active from genesis so that at ts=6 only
     // Jovian is "new". With block_time=2 and L2 genesis at ts=0:
@@ -404,19 +412,17 @@ async fn jovian_derivation_crosses_activation_boundary() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     for i in 1..=4u64 {
-        let mut source = ActionL2Source::new();
         let block = if i == 3 {
             // First Jovian block: must contain no user transactions.
             builder.build_empty_block().expect("build empty Jovian transition block")
         } else {
             builder.build_next_block().expect("build L2 block")
         };
-        source.push(block);
 
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.advance().expect("batcher encode");
-        batcher.flush(&mut h.l1);
-        h.l1.mine_block();
+        let mut source = ActionL2Source::new();
+        source.push(block);
+        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.advance(&mut h.l1).await.expect("advance");
     }
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(

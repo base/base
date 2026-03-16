@@ -1,54 +1,24 @@
 use std::sync::Arc;
 
-use alloy_eips::eip4844::Blob;
-use alloy_primitives::{Address, B256, Bytes};
 use base_batcher_core::{
     BatchDriver, BatchDriverError, NoopThrottleClient, ThrottleConfig, ThrottleController,
     ThrottleStrategy,
 };
-use base_batcher_encoder::{
-    BatchEncoder, BatchPipeline, BatchType, EncoderConfig, FrameEncoder, ReorgError, StepError,
-    StepResult, SubmissionId,
-};
-use base_batcher_source::test_utils::InMemoryBlockSource;
-use base_blobs::BlobEncoder;
-use base_comp::BatchComposeError;
+use base_batcher_encoder::{BatchEncoder, BatchType, EncoderConfig};
+use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_consensus_genesis::RollupConfig;
-use base_protocol::{DERIVATION_VERSION_0, Frame};
 use tokio_util::sync::CancellationToken;
-use tracing::info;
 
-use crate::{Action, L1Miner, L1MinerTxManager, L2BlockProvider, PendingTx};
-
-/// Selects the kind of invalid frame data submitted by
-/// [`Batcher::submit_garbage_frames`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GarbageKind {
-    /// 200 bytes of `0xDE` — random-looking, no valid structure.
-    Random,
-    /// Valid `DERIVATION_VERSION_0` prefix + 16-byte channel ID, then EOF.
-    Truncated,
-    /// Valid frame header (channel ID + frame num + length), invalid RLP body.
-    MalformedRlp,
-    /// Valid frame header, brotli magic byte `0x00`, then random bytes.
-    InvalidBrotli,
-    /// Frame data without the `DERIVATION_VERSION_0` prefix byte.
-    /// The derivation pipeline checks for the version byte first and ignores
-    /// transactions that don't start with it.
-    StripVersion,
-    /// Valid `DERIVATION_VERSION_0` prefix + complete frame, then appended garbage bytes.
-    /// The extra trailing bytes should be silently dropped by the frame parser.
-    DirtyAppend,
-}
+use crate::{L1Miner, L1MinerTxManager, L2BlockProvider};
 
 /// Configuration for the [`Batcher`] actor.
 #[derive(Debug, Clone)]
 pub struct BatcherConfig {
     /// Address of the batcher account. Used as the `from` field on L1
     /// transactions so the derivation pipeline can filter by sender.
-    pub batcher_address: Address,
+    pub batcher_address: alloy_primitives::Address,
     /// Batch inbox address on L1. Used as the `to` field on L1 transactions.
-    pub inbox_address: Address,
+    pub inbox_address: alloy_primitives::Address,
     /// Whether to encode blocks as [`SingleBatch`](base_protocol::SingleBatch)es
     /// or a [`SpanBatch`](base_protocol::SpanBatch).
     pub batch_type: BatchType,
@@ -59,453 +29,180 @@ pub struct BatcherConfig {
 impl Default for BatcherConfig {
     fn default() -> Self {
         Self {
-            batcher_address: Address::repeat_byte(0xBA),
-            inbox_address: Address::repeat_byte(0xCA),
+            batcher_address: alloy_primitives::Address::repeat_byte(0xBA),
+            inbox_address: alloy_primitives::Address::repeat_byte(0xCA),
             batch_type: BatchType::Single,
             encoder: EncoderConfig::default(),
         }
     }
 }
 
-/// Errors returned by [`Batcher::advance`] and [`Batcher::advance_full`].
+/// Errors returned by [`Batcher::advance`].
 #[derive(Debug, thiserror::Error)]
 pub enum BatcherError {
     /// The L2 source was exhausted before any blocks could be batched.
     #[error("no L2 blocks available to batch")]
     NoBlocks,
-    /// Conversion from L2 block to single batch failed.
-    #[error("batch compose error: {0}")]
-    Compose(#[from] BatchComposeError),
-    /// An L2 reorg was detected during block ingestion.
-    #[error("reorg: {0}")]
-    Reorg(#[from] ReorgError),
-    /// The spawned [`BatchDriver`] task panicked.
-    #[error("batch driver task panicked")]
-    DriverPanicked,
-    /// The [`BatchDriver`] returned an error.
-    #[error("batch driver error: {0}")]
-    Driver(#[from] BatchDriverError),
 }
 
-impl From<StepError> for BatcherError {
-    fn from(e: StepError) -> Self {
-        match e {
-            StepError::CompositionFailed { source, .. } => Self::Compose(source),
-        }
+/// Batcher actor that drives a persistent [`BatchDriver`] through [`L1Miner`].
+///
+/// On construction, `Batcher` spawns a [`BatchDriver`] as a background tokio
+/// task backed by a [`ChannelBlockSource`] for L2 block delivery and a
+/// [`ChannelL1HeadSource`] fed by [`L1MinerTxManager`]. This mirrors the op-batcher
+/// production architecture: the driver owns its encoding pipeline and
+/// transaction manager and runs its own async loop.
+///
+/// Each call to [`advance`] drives one complete batch cycle:
+/// 1. Drain the L2 source and forward each block to the driver via the channel.
+/// 2. Send a [`L2BlockEvent::Flush`] to force-close the current channel.
+/// 3. Yield to let the driver encode blocks, submit frames, and suspend.
+/// 4. Mine one L1 block via the shared [`L1MinerTxManager`], firing all
+///    receipt oneshots and delivering an [`L1HeadEvent::NewHead`] to the driver.
+/// 5. Yield to let the driver confirm receipts and advance its L1 head.
+///
+/// The driver's [`BatchEncoder`] state is persistent across `advance()` calls.
+/// The driver task continues running between cycles, waiting for new events.
+///
+/// [`advance`]: Batcher::advance
+/// [`BatchDriver`]: base_batcher_core::BatchDriver
+/// [`ChannelL1HeadSource`]: base_batcher_source::ChannelL1HeadSource
+/// [`L1HeadEvent::NewHead`]: base_batcher_source::L1HeadEvent
+/// [`L2BlockEvent::Flush`]: base_batcher_source::L2BlockEvent::Flush
+pub struct Batcher<S: L2BlockProvider> {
+    /// The L2 block source to drain on each [`advance`](Batcher::advance) cycle.
+    l2_source: S,
+    /// Channel sender for forwarding L2 block events to the background driver task.
+    block_tx: tokio::sync::mpsc::UnboundedSender<L2BlockEvent>,
+    /// Shared tx manager — used to mine blocks and fire receipt/L1 head events.
+    tx_manager: L1MinerTxManager,
+    /// Background driver task handle.
+    driver_task: tokio::task::JoinHandle<Result<(), BatchDriverError>>,
+    /// Token used to cancel the background driver on drop.
+    cancel: CancellationToken,
+}
+
+impl<S: L2BlockProvider + std::fmt::Debug> std::fmt::Debug for Batcher<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Batcher")
+            .field("l2_source", &self.l2_source)
+            .field("tx_manager", &self.tx_manager)
+            .finish_non_exhaustive()
     }
 }
 
-/// Batcher actor for action tests.
-///
-/// `Batcher` drains [`OpBlock`]s from an [`L2BlockProvider`], encodes each
-/// one as a [`SingleBatch`] via [`BatchEncoder`] (or accumulates them into a
-/// [`SpanBatch`] when configured for span mode), compresses batches into a
-/// channel, and buffers the resulting frame data internally.
-///
-/// Call [`flush`] to drain the pending transactions and blobs into an
-/// [`L1Miner`].
-///
-/// A single call to [`advance`] (or [`Action::act`]) runs one full encode
-/// cycle: drain all available L2 blocks → encode → buffer submissions.
-/// Callers then call [`flush`] and mine an L1 block to include the submitted
-/// transactions.
-///
-/// [`advance`]: Batcher::advance
-/// [`flush`]: Batcher::flush
-/// [`OpBlock`]: base_alloy_consensus::OpBlock
-#[derive(Debug)]
-pub struct Batcher<S: L2BlockProvider> {
-    l2_source: S,
-    pipeline: BatchEncoder,
-    rollup_config: Arc<RollupConfig>,
-    config: BatcherConfig,
-    pending_txs: Vec<PendingTx>,
-    pending_blobs: Vec<(B256, Box<Blob>)>,
-    /// Submissions drained from the pipeline but not yet confirmed.
-    ///
-    /// Each entry is `(id, frame_count)` so that [`flush`](Batcher::flush)
-    /// can confirm only the submissions whose frames were fully covered by
-    /// [`submit_frames`](Batcher::submit_frames) / [`submit_blob_frames`](Batcher::submit_blob_frames),
-    /// and requeue the rest.
-    pending_submissions: Vec<(SubmissionId, usize)>,
-    /// Running count of frames buffered since the last [`flush`](Batcher::flush).
-    ///
-    /// Incremented by [`submit_frames`](Batcher::submit_frames) and
-    /// [`submit_blob_frames`](Batcher::submit_blob_frames). Consumed frame-by-frame
-    /// in [`flush`](Batcher::flush) to determine which submission IDs are fully
-    /// covered and should be confirmed vs. requeued.
-    submitted_frame_count: usize,
-}
-
 impl<S: L2BlockProvider> Batcher<S> {
-    /// Create a new [`Batcher`].
+    /// Create a new [`Batcher`] backed by a persistent [`BatchDriver`] task.
     ///
-    /// Pending transactions and blobs are buffered internally. Call [`flush`]
-    /// to drain them into an [`L1Miner`].
+    /// Spawns the driver immediately. The driver will not process any events
+    /// until the first [`advance`] call.
     ///
-    /// [`flush`]: Batcher::flush
+    /// [`advance`]: Batcher::advance
     pub fn new(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
         let rollup_config = Arc::new(rollup_config.clone());
         let mut encoder_config = config.encoder.clone();
         encoder_config.batch_type = config.batch_type;
-        let pipeline = BatchEncoder::new(Arc::clone(&rollup_config), encoder_config);
-        Self {
-            l2_source,
-            pipeline,
-            rollup_config,
-            config,
-            pending_txs: Vec::new(),
-            pending_blobs: Vec::new(),
-            pending_submissions: Vec::new(),
-            submitted_frame_count: 0,
-        }
-    }
+        let pipeline = BatchEncoder::new(rollup_config, encoder_config);
 
-    /// Drain all available L2 blocks and encode them into frames without
-    /// submitting to L1.
-    ///
-    /// Blocks are fed through [`BatchEncoder`], which handles both
-    /// [`SingleBatch`](base_protocol::SingleBatch) and
-    /// [`SpanBatch`](base_protocol::SpanBatch) modes via its internal
-    /// [`EncoderConfig`].
-    ///
-    /// Returns the encoded frames so callers can inspect or submit them
-    /// selectively. Use [`submit_frames`] to submit a subset of frames to
-    /// the pending buffer.
-    ///
-    /// [`submit_frames`]: Batcher::submit_frames
-    ///
-    /// # Errors
-    ///
-    /// Returns [`BatcherError::NoBlocks`] if the L2 source is empty.
-    /// Returns [`BatcherError::Compose`] if the first tx is not a valid deposit.
-    /// Returns [`BatcherError::Reorg`] if a block parent hash mismatch is detected.
-    pub fn encode_frames(&mut self) -> Result<Vec<Arc<Frame>>, BatcherError> {
-        let mut block_count = 0u64;
+        let (source, block_tx) = ChannelBlockSource::new();
 
-        while let Some(block) = self.l2_source.next_block() {
-            self.pipeline.add_block(block).map_err(|(e, _)| e)?;
-            block_count += 1;
-        }
+        // L1 head source: mine_block() sends L1HeadEvent::NewHead; the driver
+        // calls advance_l1_head() when the channel delivers an event.
+        let (l1_source, l1_head_tx) = ChannelL1HeadSource::new();
 
-        if block_count == 0 {
-            return Err(BatcherError::NoBlocks);
-        }
+        let tx_manager = L1MinerTxManager::new(config.batcher_address, config.inbox_address)
+            .with_l1_head_tx(l1_head_tx);
 
-        // Step until all blocks are encoded into the current channel.
-        loop {
-            match self.pipeline.step()? {
-                StepResult::Idle => break,
-                StepResult::BlockEncoded | StepResult::ChannelClosed => {}
-            }
-        }
-
-        // Force-close the current channel so all encoded blocks are immediately
-        // available as submissions, without advancing the L1 head tracker.
-        self.pipeline.force_close_channel();
-
-        let mut frames = Vec::new();
-        while let Some(sub) = self.pipeline.next_submission() {
-            let frame_count = sub.frames.len();
-            self.pending_submissions.push((sub.id, frame_count));
-            frames.extend(sub.frames);
-        }
-
-        info!(blocks = block_count, frames = frames.len(), "batcher encoded frames");
-        Ok(frames)
-    }
-
-    /// Buffer the given frames as pending L1 transactions.
-    ///
-    /// Each frame is buffered as a separate [`PendingTx`]. Call [`flush`] to
-    /// drain them into an [`L1Miner`].
-    ///
-    /// # Ordering invariant
-    ///
-    /// `frames` must be an **in-order prefix** of the slice returned by the most
-    /// recent [`encode_frames`](Batcher::encode_frames) call. [`flush`] accounts
-    /// for submitted frames by consuming a positional counter (`submitted_frame_count`)
-    /// against the ordered list of pending submissions — it has no way to detect
-    /// which individual frames were passed here. Submitting an out-of-order subset
-    /// (e.g. `&frames[1..]` while skipping frame 0) will cause [`flush`] to confirm
-    /// the wrong submission IDs and requeue the wrong ones.
-    ///
-    /// [`flush`]: Batcher::flush
-    pub fn submit_frames(&mut self, frames: &[Arc<Frame>]) {
-        for frame in frames {
-            self.pending_txs.push(PendingTx {
-                from: self.config.batcher_address,
-                to: self.config.inbox_address,
-                input: FrameEncoder::to_calldata(frame),
-            });
-        }
-        self.submitted_frame_count += frames.len();
-        info!(frames = frames.len(), "batcher buffered frames");
-    }
-
-    /// Buffer the given frames as EIP-4844 blob sidecars.
-    ///
-    /// Each frame is encoded into one blob using [`BlobEncoder::encode_frames`].
-    /// Call [`flush`] to drain them into an [`L1Miner`].
-    ///
-    /// # Ordering invariant
-    ///
-    /// Same constraint as [`submit_frames`](Batcher::submit_frames): `frames` must
-    /// be an in-order prefix of the [`encode_frames`](Batcher::encode_frames) output.
-    ///
-    /// [`flush`]: Batcher::flush
-    pub fn submit_blob_frames(&mut self, frames: &[Arc<Frame>]) {
-        let blobs =
-            BlobEncoder::encode_frames(frames).expect("frame data fits within blob capacity");
-        for blob in blobs {
-            self.pending_blobs.push((B256::ZERO, Box::new(blob)));
-        }
-        self.submitted_frame_count += frames.len();
-        info!(frames = frames.len(), "batcher buffered frames as blobs");
-    }
-
-    /// Drain all pending transactions and blobs into the given [`L1Miner`], then
-    /// confirm or requeue each buffered submission with the encoding pipeline.
-    ///
-    /// Submissions are confirmed only when every frame they contain was actually
-    /// passed to [`submit_frames`](Batcher::submit_frames) or
-    /// [`submit_blob_frames`](Batcher::submit_blob_frames). Submissions whose
-    /// frames were not (fully) submitted are requeued so the encoder can rewind
-    /// their frame cursor and re-emit them on the next drain.
-    ///
-    /// This distinction matters for partial-frame tests (e.g., channel timeout
-    /// scenarios that submit only the first frame and let the rest expire): without
-    /// requeue, the encoder would incorrectly treat unsubmitted frames as confirmed,
-    /// permanently corrupting its internal block deque and `pending` map.
-    ///
-    /// The `l1_block` passed to [`BatchPipeline::confirm`] is `u64::MAX` — matching
-    /// the value already used by `encode_frames` to force-close the channel. The
-    /// [`BatchEncoder`] implementation does not use the `l1_block` argument to
-    /// `confirm()`, so the exact value is irrelevant here.
-    pub fn flush(&mut self, l1: &mut L1Miner) {
-        for tx in self.pending_txs.drain(..) {
-            l1.submit_tx(tx);
-        }
-        for (hash, blob) in self.pending_blobs.drain(..) {
-            l1.enqueue_blob(hash, blob);
-        }
-
-        // Walk submissions in drain order. Each submission contributed `frame_count`
-        // frames to the flat frame list returned by `encode_frames()`. Consume
-        // `submitted_frame_count` one submission at a time: if this submission's
-        // frames were fully covered, confirm it; otherwise requeue it so the
-        // encoder rewinds the frame cursor for future re-submission.
-        let mut remaining = self.submitted_frame_count;
-        for (id, frame_count) in self.pending_submissions.drain(..) {
-            if remaining >= frame_count {
-                remaining -= frame_count;
-                self.pipeline.confirm(id, u64::MAX);
-            } else {
-                self.pipeline.requeue(id);
-            }
-        }
-        self.submitted_frame_count = 0;
-    }
-
-    /// Drain any submissions that were requeued by the last [`flush`](Batcher::flush).
-    ///
-    /// After a partial-frame flush, the encoder rewinds the frame cursor for
-    /// unsubmitted submissions. Calling this method pulls those frames back out of
-    /// the pipeline so they can be re-submitted via [`submit_frames`](Batcher::submit_frames).
-    ///
-    /// Returns an empty [`Vec`] when no requeued submissions are pending.
-    pub fn drain_requeued_frames(&mut self) -> Vec<Arc<Frame>> {
-        let mut frames = Vec::new();
-        while let Some(sub) = self.pipeline.next_submission() {
-            let frame_count = sub.frames.len();
-            self.pending_submissions.push((sub.id, frame_count));
-            frames.extend(sub.frames);
-        }
-        frames
-    }
-
-    /// Encode and submit all frames as blobs in one step.
-    ///
-    /// Equivalent to calling [`encode_frames`] followed by [`submit_blob_frames`].
-    ///
-    /// [`encode_frames`]: Batcher::encode_frames
-    /// [`submit_blob_frames`]: Batcher::submit_blob_frames
-    pub fn advance_blob(&mut self) -> Result<Vec<Arc<Frame>>, BatcherError> {
-        let frames = self.encode_frames()?;
-        self.submit_blob_frames(&frames);
-        Ok(frames)
-    }
-
-    /// Run one full batch cycle using the production [`BatchDriver`].
-    ///
-    /// All available L2 blocks are loaded into an [`InMemoryBlockSource`], then a
-    /// [`BatchDriver`] is spawned with the provided [`L1MinerTxManager`]. After
-    /// yielding to let the driver process blocks and queue submissions,
-    /// [`L1MinerTxManager::mine_block`] mines an L1 block and fires all pending
-    /// receipt oneshots. The driver drains its in-flight receipts and exits.
-    ///
-    /// This path exercises [`BatchDriver`], [`TxCandidate`], [`TxManager`], and
-    /// delivers real L1 block numbers to [`BatchPipeline::confirm`].
-    ///
-    /// # Runtime requirement
-    ///
-    /// Must be called from a `current_thread` tokio runtime (the default for
-    /// `#[tokio::test]`). One `yield_now()` is sufficient to let the driver
-    /// complete the full encoding and submission loop before receipts are fired,
-    /// because [`InMemoryBlockSource::next`] and [`L1MinerTxManager::send_async`]
-    /// both return without suspending.
-    ///
-    /// [`TxCandidate`]: base_batcher_core::TxCandidate
-    /// [`TxManager`]: base_batcher_core::TxManager
-    pub async fn advance_full(
-        &mut self,
-        l1: &mut L1Miner,
-        tx_manager: &L1MinerTxManager,
-    ) -> Result<(), BatcherError> {
-        let mut source = InMemoryBlockSource::new();
-        let mut block_count = 0u64;
-        while let Some(block) = self.l2_source.next_block() {
-            source.push_block(block);
-            block_count += 1;
-        }
-        if block_count == 0 {
-            return Err(BatcherError::NoBlocks);
-        }
-
-        let mut encoder_config = self.config.encoder.clone();
-        encoder_config.batch_type = self.config.batch_type;
-        let pipeline = BatchEncoder::new(Arc::clone(&self.rollup_config), encoder_config);
-        let cancel = CancellationToken::new();
+        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Off);
         let driver = BatchDriver::new(
             pipeline,
             source,
             tx_manager.clone(),
-            self.config.inbox_address,
-            /* max_pending_transactions */ 16,
-            ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Off),
+            config.inbox_address,
+            16,
+            throttle,
             NoopThrottleClient,
+            l1_source,
         );
 
-        let driver_task = tokio::spawn(driver.run(cancel));
+        let cancel = CancellationToken::new();
+        let driver_cancel = cancel.clone();
+        let driver_task = tokio::spawn(async move { driver.run(driver_cancel).await });
 
-        // Yield to give the driver one scheduling turn. With the current_thread
-        // runtime, InMemoryBlockSource::next() and L1MinerTxManager::send_async()
-        // both complete without suspending, so the driver runs through the full
-        // encode-and-submit loop before suspending on in_flight.next().await.
+        Self { l2_source, block_tx, tx_manager, driver_task, cancel }
+    }
+
+    /// Drain the L2 source and forward all blocks to the driver, then flush.
+    ///
+    /// Performs steps 1–3 of [`advance`] without mining: sends all L2 blocks,
+    /// sends [`L2BlockEvent::Flush`], and yields once so the driver encodes the
+    /// blocks and calls [`send_async`] for each submission. After this returns,
+    /// [`pending_count`] reflects how many frame transactions are waiting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BatcherError::NoBlocks`] if the L2 source is empty.
+    ///
+    /// [`advance`]: Batcher::advance
+    /// [`pending_count`]: Batcher::pending_count
+    /// [`send_async`]: crate::L1MinerTxManager::send_async
+    pub async fn encode_only(&mut self) -> Result<(), BatcherError> {
+        let mut block_count = 0u64;
+        while let Some(block) = self.l2_source.next_block() {
+            self.block_tx.send(L2BlockEvent::Block(Box::new(block))).expect("driver task alive");
+            block_count += 1;
+        }
+        if block_count == 0 {
+            return Err(BatcherError::NoBlocks);
+        }
+        self.block_tx.send(L2BlockEvent::Flush).expect("driver task alive");
         tokio::task::yield_now().await;
-
-        // Mine the L1 block — submits pending txs/blobs and fires all receipt oneshots.
-        tx_manager.mine_block(l1);
-
-        // The driver wakes, drains receipts, and exits Ok(()).
-        driver_task.await.map_err(|_| BatcherError::DriverPanicked)??;
-
         Ok(())
     }
 
-    /// Buffer intentionally malformed frame data as a pending L1 transaction.
-    ///
-    /// These garbage frames should be silently dropped by the derivation
-    /// pipeline. Use them to test that invalid data does not corrupt channel
-    /// state or advance the safe head.
-    ///
-    /// Call [`flush`] to drain pending transactions into an [`L1Miner`].
-    ///
-    /// [`flush`]: Batcher::flush
-    pub fn submit_garbage_frames(&mut self, kind: GarbageKind) {
-        let input = match kind {
-            GarbageKind::Random => {
-                // 200 bytes of 0xDE — no valid structure.
-                Bytes::from(vec![0xDE_u8; 200])
-            }
-            GarbageKind::Truncated => {
-                // DERIVATION_VERSION_0 prefix + 16-byte channel ID, then EOF.
-                let mut v = vec![DERIVATION_VERSION_0];
-                v.extend_from_slice(&[0u8; 16]); // channel ID
-                Bytes::from(v)
-            }
-            GarbageKind::MalformedRlp => {
-                // Valid frame header bytes then invalid RLP body.
-                // Header: channel_id(16) + frame_number(2) + frame_data_length(4)
-                // Body: 0xFF bytes (invalid RLP for a byte-string context).
-                let mut v = vec![DERIVATION_VERSION_0];
-                v.extend_from_slice(&[0u8; 16]); // channel ID
-                v.extend_from_slice(&[0u8, 0u8]); // frame number = 0
-                v.extend_from_slice(&[0u8, 0u8, 0u8, 10u8]); // frame data length = 10
-                v.extend_from_slice(&[0xFFu8; 10]); // invalid RLP
-                v.push(0u8); // is_last = false
-                Bytes::from(v)
-            }
-            GarbageKind::InvalidBrotli => {
-                // Valid frame header, brotli magic `0x00`, then random bytes.
-                let mut v = vec![DERIVATION_VERSION_0];
-                v.extend_from_slice(&[0u8; 16]); // channel ID
-                v.extend_from_slice(&[0u8, 0u8]); // frame number = 0
-                v.extend_from_slice(&[0u8, 0u8, 0u8, 20u8]); // frame data length = 20
-                v.push(0x00); // brotli version prefix
-                v.extend_from_slice(&[0xDE_u8; 19]); // random body
-                v.push(1u8); // is_last = true
-                Bytes::from(v)
-            }
-            GarbageKind::StripVersion => {
-                // Frame data without the DERIVATION_VERSION_0 prefix.
-                // Starts directly with a channel ID — no version byte, so the
-                // derivation pipeline discards the tx before parsing any frames.
-                let mut v = vec![];
-                v.extend_from_slice(&[0u8; 16]); // channel ID (no version prefix)
-                v.extend_from_slice(&[0u8, 0u8]); // frame number = 0
-                v.extend_from_slice(&[0u8, 0u8, 0u8, 0u8]); // frame data length = 0
-                v.push(1u8); // is_last = true
-                Bytes::from(v)
-            }
-            GarbageKind::DirtyAppend => {
-                // Valid DERIVATION_VERSION_0 + a minimal complete frame, then 50 garbage
-                // bytes appended. The extra trailing bytes follow the valid frame.
-                let mut v = vec![DERIVATION_VERSION_0];
-                v.extend_from_slice(&[0u8; 16]); // channel ID
-                v.extend_from_slice(&[0u8, 0u8]); // frame number = 0
-                v.extend_from_slice(&[0u8, 0u8, 0u8, 0u8]); // frame data length = 0
-                v.push(1u8); // is_last = true
-                v.extend_from_slice(&[0xBE_u8; 50]); // appended garbage
-                Bytes::from(v)
-            }
-        };
-
-        self.pending_txs.push(PendingTx {
-            from: self.config.batcher_address,
-            to: self.config.inbox_address,
-            input,
-        });
-        info!(kind = ?kind, "batcher buffered garbage frame");
+    /// Returns the number of encoded-but-not-yet-staged pending frame submissions.
+    pub fn pending_count(&self) -> usize {
+        self.tx_manager.pending_count()
     }
 
-    /// Return the estimated number of unsubmitted data bytes in the encoding pipeline.
-    ///
-    /// Delegates to [`BatchEncoder::da_backlog_bytes`]. Useful for testing the
-    /// throttle controller's backlog detection.
-    pub fn da_backlog_bytes(&self) -> u64 {
-        self.pipeline.da_backlog_bytes()
+    /// Submit the first `n` pending frame txs/blobs to the L1 miner's queue
+    /// without mining. Returns the actual count staged.
+    pub fn stage_n_frames(&self, l1: &mut L1Miner, n: usize) -> usize {
+        self.tx_manager.stage_n_to_l1(l1, n)
     }
 
-    /// Encode and buffer all frames in one step (convenience wrapper).
+    /// Fire receipts for all staged items at `block_number` and yield to let
+    /// the driver process confirmations and the L1 head event.
+    pub async fn confirm_staged(&self, block_number: u64) {
+        self.tx_manager.confirm_all(block_number);
+        tokio::task::yield_now().await;
+    }
+
+    /// Run one full batch cycle through the production [`BatchDriver`] path.
     ///
-    /// Equivalent to calling [`encode_frames`] followed by [`submit_frames`]
-    /// with all produced frames.
+    /// # Errors
     ///
-    /// [`encode_frames`]: Batcher::encode_frames
-    /// [`submit_frames`]: Batcher::submit_frames
-    pub fn advance(&mut self) -> Result<Vec<Arc<Frame>>, BatcherError> {
-        let frames = self.encode_frames()?;
-        self.submit_frames(&frames);
-        Ok(frames)
+    /// Returns [`BatcherError::NoBlocks`] if the L2 source is empty.
+    ///
+    /// [`advance`]: Batcher::advance
+    pub async fn advance(&mut self, l1: &mut L1Miner) -> Result<(), BatcherError> {
+        self.encode_only().await?;
+
+        // Mine one L1 block: submits all pending txs/blobs, fires receipt
+        // oneshots, and publishes the block number to the L1 head watch.
+        self.tx_manager.mine_block(l1);
+
+        // Yield to let the driver process receipts (in_flight.next())
+        // and the L1 head update (l1_head_rx.changed()).
+        tokio::task::yield_now().await;
+
+        Ok(())
     }
 }
 
-impl<S: L2BlockProvider> Action for Batcher<S> {
-    type Output = Vec<Arc<Frame>>;
-    type Error = BatcherError;
-
-    fn act(&mut self) -> Result<Vec<Arc<Frame>>, BatcherError> {
-        self.advance()
+impl<S: L2BlockProvider> Drop for Batcher<S> {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+        self.driver_task.abort();
     }
 }

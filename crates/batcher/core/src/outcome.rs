@@ -10,4 +10,8 @@ pub enum TxOutcome {
     },
     /// Transaction failed or timed out; frames should be requeued.
     Failed,
+    /// The txpool rejected the transaction because the nonce slot is already
+    /// reserved by a stuck transaction. Frames are requeued and no new
+    /// submissions are attempted until the blockage is cleared.
+    TxpoolBlocked,
 }

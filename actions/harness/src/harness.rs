@@ -5,9 +5,9 @@ use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 use base_protocol::{BlockInfo, L2BlockInfo};
 
 use crate::{
-    ActionBlobDataSource, ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, Batcher,
-    BatcherConfig, BlobVerifierPipeline, L1Miner, L1MinerConfig, L2BlockProvider, L2Sequencer,
-    L2Verifier, SharedL1Chain, VerifierPipeline, block_info_from,
+    ActionBlobDataSource, ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider,
+    BlobVerifierPipeline, L1Miner, L1MinerConfig, L2Sequencer, L2Verifier, SharedL1Chain,
+    VerifierPipeline, block_info_from,
 };
 
 /// Top-level test harness that owns all actors for a single action test.
@@ -80,22 +80,6 @@ impl ActionTestHarness {
             l1_origin: BlockNumHash { number: genesis_l1.number, hash: genesis_l1.hash },
             seq_num: 0,
         }
-    }
-
-    /// Create a [`Batcher`] backed by the supplied L2 block source.
-    ///
-    /// Unlike the previous `create_batcher` that consumed an internal
-    /// `MockL2Source`, this accepts any [`L2BlockProvider`] so tests can wire
-    /// an [`L2BlockBuilder`] or a hand-rolled source directly.
-    ///
-    /// The returned batcher buffers pending transactions and blobs internally.
-    /// Call [`Batcher::flush`] to drain them into `self.l1`.
-    pub fn create_batcher<S: L2BlockProvider>(
-        &self,
-        source: S,
-        config: BatcherConfig,
-    ) -> Batcher<S> {
-        Batcher::new(source, &self.rollup_config, config)
     }
 
     /// Create an [`L2Sequencer`] starting from L2 genesis, wired to a

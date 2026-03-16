@@ -46,6 +46,14 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "l2-rpc-url", env = "BATCHER_L2_RPC_URL")]
     pub l2_rpc_url: Url,
 
+    /// Optional L1 WebSocket endpoint for new-block subscriptions.
+    ///
+    /// When provided, the batcher subscribes to new L1 block headers over this
+    /// WebSocket connection to advance the pipeline's L1 head. Without it,
+    /// polling is used exclusively.
+    #[arg(long = "l1-ws-url", env = "BATCHER_L1_WS_URL")]
+    pub l1_ws_url: Option<Url>,
+
     /// Optional L2 WebSocket endpoint for new-block subscriptions.
     ///
     /// When provided, the batcher subscribes to new block headers over this
@@ -147,6 +155,7 @@ impl BatcherArgs {
         encoder_config.validate()?;
         Ok(BatcherConfig {
             l1_rpc_url: self.l1_rpc_url,
+            l1_ws_url: self.l1_ws_url,
             l2_rpc_url: self.l2_rpc_url,
             l2_ws_url: self.l2_ws_url,
             rollup_rpc_url: self.rollup_rpc_url,

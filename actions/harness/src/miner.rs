@@ -1,7 +1,11 @@
+use std::sync::Arc;
+
 use alloy_consensus::{Header, Receipt};
 use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bytes, Log};
-use base_protocol::BlockInfo;
+use base_batcher_encoder::FrameEncoder;
+use base_blobs::BlobEncoder;
+use base_protocol::{BlockInfo, Frame};
 use tracing::info;
 
 use crate::Action;
@@ -351,6 +355,42 @@ impl L1Miner {
     /// correctly for the pipeline to pick up the frames.
     pub fn submit_tx(&mut self, tx: PendingTx) {
         self.pending.push(tx);
+    }
+
+    /// Encode frames as calldata and enqueue them as pending L1 transactions.
+    ///
+    /// Each frame becomes one [`PendingTx`] with `from = batcher_addr` and
+    /// `to = inbox_addr`. The frames are included in the next [`mine_block`]
+    /// call.
+    ///
+    /// [`mine_block`]: L1Miner::mine_block
+    pub fn submit_calldata_frames(
+        &mut self,
+        frames: &[Arc<Frame>],
+        batcher_addr: Address,
+        inbox_addr: Address,
+    ) {
+        for frame in frames {
+            self.submit_tx(PendingTx {
+                from: batcher_addr,
+                to: inbox_addr,
+                input: FrameEncoder::to_calldata(frame),
+            });
+        }
+    }
+
+    /// Encode frames as EIP-4844 blobs and enqueue them as pending blob sidecars.
+    ///
+    /// Each frame is packed into one blob. The blobs are attached to the next
+    /// [`mine_block`] call.
+    ///
+    /// [`mine_block`]: L1Miner::mine_block
+    pub fn submit_blob_frames(&mut self, frames: &[Arc<Frame>]) {
+        let blobs =
+            BlobEncoder::encode_frames(frames).expect("frame data fits within blob capacity");
+        for blob in blobs {
+            self.enqueue_blob(B256::ZERO, Box::new(blob));
+        }
     }
 
     /// Mine the next L1 block, consuming all pending batcher transactions.

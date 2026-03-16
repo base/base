@@ -1,8 +1,8 @@
 #![doc = "Action tests for L2 unsafe-head gossip simulation."]
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TestRollupConfigBuilder, block_info_from,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
 };
 
 /// Simulates the full op-e2e gossip pattern:
@@ -17,7 +17,10 @@ use base_action_harness::{
 async fn test_unsafe_chain_advances_safe_catches_up() {
     const L2_BLOCK_COUNT: u64 = 5;
 
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
@@ -29,25 +32,23 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
         blocks.push(sequencer.build_next_block().expect("build L2 block"));
     }
 
+    // Create the verifier before any mining so chain updates are visible.
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
     // --- Phase 2 (setup): Batch + mine so the verifier can later derive. ---
     // All 5 blocks are encoded into one batcher transaction and mined into
-    // a single L1 block before the verifier is created.
+    // a single L1 block before the verifier is used for derivation.
     let mut source = ActionL2Source::new();
     for block in &blocks {
         source.push(block.clone());
     }
-    let mut batcher = h.create_batcher(source, batcher_cfg);
-    batcher.advance().expect("batcher should encode all blocks");
-    batcher.flush(&mut h.l1);
-    h.l1.mine_block();
+    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    batcher.advance(&mut h.l1).await.expect("batcher should submit all blocks");
+    chain.push(h.l1.tip().clone());
     let l1_block_1 = block_info_from(h.l1.tip());
-
-    // Create the verifier AFTER mining so the SharedL1Chain snapshot already
-    // contains the L1 block with the batch.
-    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
-        &sequencer,
-        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
-    );
 
     // Initialize: seed the genesis SystemConfig and drain the empty genesis
     // L1 block so IndexedTraversal is ready for new block signals.
