@@ -2,10 +2,12 @@
 
 use std::sync::{Arc, atomic::AtomicBool};
 
+use alloy_provider::{Provider, RootProvider};
+use base_tx_manager::{NoopTxMetrics, SimpleTxManager, TxManagerConfig};
 use eyre::Result;
 use tracing::info;
 
-use crate::ChallengerConfig;
+use crate::{ChallengeSubmitter, ChallengerConfig};
 
 /// Top-level challenger service.
 #[derive(Debug)]
@@ -48,7 +50,25 @@ impl ChallengerService {
         // Record startup metrics (no-ops if no recorder installed).
         crate::ChallengerMetrics::record_startup(env!("CARGO_PKG_VERSION"));
 
-        // ── 2. Start health HTTP server ──────────────────────────────────────
+        // ── 2. Construct tx-manager and challenge submitter ──────────────────
+        let l1_provider = RootProvider::new_http(config.l1_eth_rpc.as_ref().clone());
+        let signer_config = config.signing;
+        let chain_id = l1_provider
+            .get_chain_id()
+            .await
+            .map_err(|e| eyre::eyre!("failed to fetch L1 chain ID: {e}"))?;
+        let tx_manager = SimpleTxManager::new(
+            l1_provider,
+            signer_config,
+            TxManagerConfig::default(),
+            chain_id,
+            Arc::new(NoopTxMetrics),
+        )
+        .await
+        .map_err(|e| eyre::eyre!("failed to construct tx manager: {e}"))?;
+        let _submitter = ChallengeSubmitter::new(tx_manager);
+
+        // ── 3. Start health HTTP server ──────────────────────────────────────
         // Ready flag is hardcoded to false — no driver is wired yet.
         let ready = Arc::new(AtomicBool::new(false));
         let health_handle = {
@@ -59,7 +79,7 @@ impl ChallengerService {
 
         info!("Service initialised, waiting for shutdown signal");
 
-        // ── 3. Await health server (runs until runtime shutdown) ─────────────
+        // ── 4. Await health server (runs until runtime shutdown) ─────────────
         match health_handle.await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => return Err(e),

@@ -10,7 +10,10 @@ mod cli;
 pub use cli::{ChallengerArgs, Cli, LogArgs, MetricsArgs};
 
 mod config;
-pub use config::{ChallengerConfig, ConfigError, SigningConfig, UrlValidationError, Validated};
+pub use config::{ChallengerConfig, ConfigError, UrlValidationError, Validated};
+
+mod error;
+pub use error::ChallengeSubmitError;
 
 mod health;
 pub use health::HealthServer;
@@ -23,6 +26,9 @@ pub use scanner::{CandidateGame, GameScanner, ScannerConfig};
 
 mod service;
 pub use service::ChallengerService;
+
+mod submitter;
+pub use submitter::ChallengeSubmitter;
 
 mod validator;
 pub use validator::{

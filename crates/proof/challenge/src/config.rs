@@ -2,10 +2,9 @@
 
 use std::{fmt, net::SocketAddr, ops::Deref, time::Duration};
 
-use alloy_primitives::Address;
-use alloy_signer::k256::ecdsa::SigningKey;
-use alloy_signer_local::PrivateKeySigner;
+use alloy_primitives::{Address, B256};
 use base_cli_utils::{LogConfig, MetricsConfig};
+use base_tx_manager::SignerConfig;
 use thiserror::Error;
 use url::Url;
 use zeroize::Zeroizing;
@@ -81,84 +80,6 @@ pub enum ConfigError {
     Signing(String),
 }
 
-/// Signing configuration for L1 transaction submission.
-pub enum SigningConfig {
-    /// Local signing with an in-process private key (development).
-    Local {
-        /// The parsed private-key signer, ready for transaction signing.
-        signer: PrivateKeySigner,
-    },
-    /// Remote signing via a signer sidecar JSON-RPC endpoint (production).
-    Remote {
-        /// URL of the signer sidecar.
-        endpoint: Validated<Url>,
-        /// Address of the signer account.
-        address: Address,
-    },
-}
-
-impl SigningConfig {
-    /// Validates and builds a [`SigningConfig`] from CLI arguments.
-    ///
-    /// Exactly one of `private_key` or (`signer_endpoint` + `signer_address`) must be provided.
-    pub fn build(
-        private_key: Option<&str>,
-        signer_endpoint: Option<Url>,
-        signer_address: Option<&Address>,
-    ) -> Result<Self, ConfigError> {
-        match (private_key, signer_endpoint, signer_address) {
-            (Some(pk), None, None) => {
-                let hex_str = pk.strip_prefix("0x").unwrap_or(pk);
-                let key_bytes = Zeroizing::new(
-                    hex::decode(hex_str)
-                        .map_err(|e| ConfigError::Signing(format!("invalid private key hex: {e}")))?,
-                );
-                let signing_key = SigningKey::from_slice(&key_bytes)
-                    .map_err(|e| ConfigError::Signing(format!("invalid private key: {e}")))?;
-                let signer = PrivateKeySigner::from_signing_key(signing_key);
-                Ok(Self::Local { signer })
-            }
-            (None, Some(endpoint), Some(address)) => {
-                let endpoint =
-                    Validated::try_from(endpoint).map_err(|e| ConfigError::InvalidUrl {
-                        field: "signer-endpoint",
-                        reason: e.to_string(),
-                    })?;
-                Ok(Self::Remote { endpoint, address: *address })
-            }
-            (None, None, None) => Err(ConfigError::Signing(
-                "one of CHALLENGER_PRIVATE_KEY or (--signer-endpoint + --signer-address) must be provided"
-                    .to_string(),
-            )),
-            (Some(_), Some(_), _) | (Some(_), _, Some(_)) => Err(ConfigError::Signing(
-                "CHALLENGER_PRIVATE_KEY is mutually exclusive with --signer-endpoint/--signer-address"
-                    .to_string(),
-            )),
-            (None, Some(_), None) => {
-                Err(ConfigError::Signing("--signer-endpoint requires --signer-address".to_string()))
-            }
-            (None, None, Some(_)) => {
-                Err(ConfigError::Signing("--signer-address requires --signer-endpoint".to_string()))
-            }
-        }
-    }
-}
-
-impl std::fmt::Debug for SigningConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Local { signer } => {
-                f.debug_struct("Local").field("address", &signer.address()).finish()
-            }
-            Self::Remote { endpoint, address } => f
-                .debug_struct("Remote")
-                .field("endpoint", endpoint)
-                .field("address", address)
-                .finish(),
-        }
-    }
-}
-
 /// Validated challenger configuration.
 #[derive(Debug)]
 pub struct ChallengerConfig {
@@ -181,7 +102,7 @@ pub struct ChallengerConfig {
     /// Timeout for individual gRPC requests to the ZK proof service.
     pub zk_request_timeout: Duration,
     /// Signing configuration for L1 transaction submission.
-    pub signing: SigningConfig,
+    pub signing: SignerConfig,
     /// Number of past games to scan on startup.
     pub lookback_games: u64,
     /// Health server socket address.
@@ -269,11 +190,57 @@ impl ChallengerConfig {
         }
 
         // Validate and extract signing config
-        let signing = SigningConfig::build(
-            private_key.as_deref().map(String::as_str),
+        let signing = match (
+            private_key,
             cli.challenger.signer_endpoint,
-            cli.challenger.signer_address.as_ref(),
-        )?;
+            cli.challenger.signer_address,
+        ) {
+            (Some(pk), None, None) => {
+                let hex_str = pk.strip_prefix("0x").unwrap_or(&pk);
+                let key_bytes =
+                    Zeroizing::new(hex::decode(hex_str).map_err(|e| {
+                        ConfigError::Signing(format!("invalid private key hex: {e}"))
+                    })?);
+                if key_bytes.len() != 32 {
+                    return Err(ConfigError::Signing(format!(
+                        "private key must be 32 bytes, got {}",
+                        key_bytes.len()
+                    )));
+                }
+                SignerConfig::Local { private_key: B256::from_slice(&key_bytes) }
+            }
+            (None, Some(endpoint), Some(address)) => {
+                if endpoint.host().is_none() {
+                    return Err(ConfigError::InvalidUrl {
+                        field: "signer-endpoint",
+                        reason: "missing host".to_string(),
+                    });
+                }
+                SignerConfig::Remote { endpoint, address }
+            }
+            (None, None, None) => {
+                return Err(ConfigError::Signing(
+                    "one of CHALLENGER_PRIVATE_KEY or (--signer-endpoint + --signer-address) must be provided"
+                        .to_string(),
+                ));
+            }
+            (Some(_), Some(_), _) | (Some(_), _, Some(_)) => {
+                return Err(ConfigError::Signing(
+                    "CHALLENGER_PRIVATE_KEY is mutually exclusive with --signer-endpoint/--signer-address"
+                        .to_string(),
+                ));
+            }
+            (None, Some(_), None) => {
+                return Err(ConfigError::Signing(
+                    "--signer-endpoint requires --signer-address".to_string(),
+                ));
+            }
+            (None, None, Some(_)) => {
+                return Err(ConfigError::Signing(
+                    "--signer-address requires --signer-endpoint".to_string(),
+                ));
+            }
+        };
 
         let health_addr = SocketAddr::new(cli.challenger.health_addr, cli.challenger.health_port);
 
@@ -341,7 +308,7 @@ mod tests {
         assert_eq!(config.zk_request_timeout, Duration::from_secs(30));
         assert_eq!(config.lookback_games, 1000);
         assert_eq!(config.health_addr, "0.0.0.0:8080".parse::<SocketAddr>().unwrap());
-        assert!(matches!(config.signing, SigningConfig::Remote { .. }));
+        assert!(matches!(config.signing, SignerConfig::Remote { .. }));
     }
 
     #[rstest]
@@ -434,41 +401,64 @@ mod tests {
         assert_eq!(error.to_string(), expected);
     }
 
-    #[rstest]
-    #[case::local(
-        Some("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
-        None,
-        None,
-        true
-    )]
-    #[case::remote(
-        None,
-        Some("http://localhost:8546"),
-        Some("0x1234567890123456789012345678901234567890"),
-        true
-    )]
-    #[case::none_provided(None, None, None, false)]
-    #[case::both_provided(
-        Some("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"),
-        Some("http://localhost:8546"),
-        None,
-        false
-    )]
-    #[case::endpoint_without_address(None, Some("http://localhost:8546"), None, false)]
-    fn test_signing_config(
-        #[case] pk: Option<&str>,
-        #[case] url_str: Option<&str>,
-        #[case] addr_str: Option<&str>,
-        #[case] should_succeed: bool,
-    ) {
-        let url = url_str.map(|s| Url::parse(s).unwrap());
-        let addr: Option<Address> = addr_str.map(|s| s.parse().unwrap());
-        let result = SigningConfig::build(pk, url, addr.as_ref());
-        if should_succeed {
-            assert!(result.is_ok(), "expected Ok, got {result:?}");
-        } else {
-            assert!(matches!(result, Err(ConfigError::Signing(_))));
-        }
+    /// Build a CLI without signer flags (no --signer-endpoint / --signer-address).
+    fn cli_without_signer(extra_args: &[&str]) -> Cli {
+        let mut args = vec![
+            "challenger",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l2-eth-rpc",
+            "http://localhost:9545",
+            "--rollup-rpc",
+            "http://localhost:7545",
+            "--dispute-game-factory-addr",
+            "0x1234567890123456789012345678901234567890",
+            "--anchor-state-registry-addr",
+            "0x2234567890123456789012345678901234567890",
+            "--zk-proof-service-endpoint",
+            "http://localhost:5000",
+        ];
+        args.extend_from_slice(extra_args);
+        Cli::try_parse_from(args).unwrap()
+    }
+
+    #[test]
+    fn test_signing_config_local() {
+        let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let cli = cli_without_signer(&[]);
+        let result = ChallengerConfig::from_cli(cli, Some(Zeroizing::new(pk.to_string())));
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+        assert!(matches!(result.unwrap().signing, SignerConfig::Local { .. }));
+    }
+
+    #[test]
+    fn test_signing_config_remote() {
+        let cli = cli_from_args(&[]);
+        let result = ChallengerConfig::from_cli(cli, None);
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+        assert!(matches!(result.unwrap().signing, SignerConfig::Remote { .. }));
+    }
+
+    #[test]
+    fn test_signing_config_none_provided() {
+        let cli = cli_without_signer(&[]);
+        let result = ChallengerConfig::from_cli(cli, None);
+        assert!(matches!(result, Err(ConfigError::Signing(_))));
+    }
+
+    #[test]
+    fn test_signing_config_both_provided() {
+        let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let cli = cli_from_args(&[]);
+        let result = ChallengerConfig::from_cli(cli, Some(Zeroizing::new(pk.to_string())));
+        assert!(matches!(result, Err(ConfigError::Signing(_))));
+    }
+
+    #[test]
+    fn test_signing_config_endpoint_without_address() {
+        let cli = cli_without_signer(&["--signer-endpoint", "http://localhost:8546"]);
+        let result = ChallengerConfig::from_cli(cli, None);
+        assert!(matches!(result, Err(ConfigError::Signing(_))));
     }
 
     #[test]
@@ -486,17 +476,5 @@ mod tests {
         let cli = cli_from_args(&["--health.addr", "127.0.0.1", "--health.port", "9090"]);
         let config = ChallengerConfig::from_cli(cli, None).unwrap();
         assert_eq!(config.health_addr, "127.0.0.1:9090".parse::<SocketAddr>().unwrap());
-    }
-
-    #[test]
-    fn test_signing_config_debug_shows_address() {
-        let pk = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-        let signing = SigningConfig::build(Some(pk), None, None).unwrap();
-        let debug_output = format!("{signing:?}");
-        assert!(debug_output.contains("address"));
-        assert!(
-            !debug_output
-                .contains("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
-        );
     }
 }
