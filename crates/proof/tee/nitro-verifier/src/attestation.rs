@@ -35,7 +35,7 @@ impl CoseSign1 {
     /// `[protected, unprotected, payload, signature]`.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let value: CborValue = ciborium::de::from_reader(bytes)
-            .map_err(|e| VerifierError::CborDecode(format!("`COSE_Sign1`: {e}")))?;
+            .map_err(|e| VerifierError::Cbor(format!("`COSE_Sign1`: {e}")))?;
 
         // Unwrap optional CBOR tag 18 (`COSE_Sign1`).
         let array = match value {
@@ -80,7 +80,7 @@ impl CoseSign1 {
 
         let mut buf = Vec::new();
         ciborium::ser::into_writer(&structure, &mut buf)
-            .map_err(|e| VerifierError::CborDecode(format!("sig_structure encode: {e}")))?;
+            .map_err(|e| VerifierError::Cbor(format!("sig_structure encode: {e}")))?;
         Ok(buf)
     }
 

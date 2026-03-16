@@ -5,9 +5,9 @@ use thiserror::Error;
 /// Errors that can occur during attestation parsing and verification.
 #[derive(Debug, Error)]
 pub enum VerifierError {
-    /// CBOR decoding failed.
-    #[error("CBOR decode error: {0}")]
-    CborDecode(String),
+    /// CBOR encoding or decoding failed.
+    #[error("CBOR error: {0}")]
+    Cbor(String),
 
     /// `COSE_Sign1` envelope is malformed.
     #[error("COSE format error: {0}")]
