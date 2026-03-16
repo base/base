@@ -46,6 +46,69 @@ impl PrecompilePayload {
     fn encode_sha256_data(rng: &mut SeededRng) -> Bytes {
         Bytes::from(rng.gen_bytes::<64>().to_vec())
     }
+
+    fn encode_ecrecover_data(rng: &mut SeededRng) -> Bytes {
+        let mut data = vec![0u8; 128];
+        data[0..32].copy_from_slice(&rng.gen_bytes::<32>());
+        data[63] = 27 + (rng.gen_range(0..=1) as u8);
+        data[64..96].copy_from_slice(&rng.gen_bytes::<32>());
+        data[96..128].copy_from_slice(&rng.gen_bytes::<32>());
+        Bytes::from(data)
+    }
+
+    fn encode_modexp_data(rng: &mut SeededRng) -> Bytes {
+        let base_len = rng.gen_range(1..=32);
+        let exp_len = rng.gen_range(1..=32);
+        let mod_len = rng.gen_range(1..=32);
+
+        let mut data = vec![0u8; 96 + base_len + exp_len + mod_len];
+
+        data[31] = base_len as u8;
+        data[63] = exp_len as u8;
+        data[95] = mod_len as u8;
+
+        for i in 0..base_len {
+            data[96 + i] = rng.gen_range(0..=255);
+        }
+        for i in 0..exp_len {
+            data[96 + base_len + i] = rng.gen_range(0..=255);
+        }
+        data[96 + base_len + exp_len] = rng.gen_range(1..=255);
+        for i in 1..mod_len {
+            data[96 + base_len + exp_len + i] = rng.gen_range(0..=255);
+        }
+
+        Bytes::from(data)
+    }
+
+    fn encode_bn254_add_data() -> Bytes {
+        Bytes::from(vec![0u8; 128])
+    }
+
+    fn encode_bn254_mul_data() -> Bytes {
+        Bytes::from(vec![0u8; 96])
+    }
+
+    const fn encode_bn254_pairing_data() -> Bytes {
+        Bytes::new()
+    }
+
+    fn encode_blake2f_data(rng: &mut SeededRng) -> Bytes {
+        let mut data = vec![0u8; 213];
+        let rounds = rng.gen_range(1..=12) as u32;
+        data[0..4].copy_from_slice(&rounds.to_be_bytes());
+
+        for byte in &mut data[4..212] {
+            *byte = rng.gen_range(0..=255);
+        }
+        data[212] = 1;
+
+        Bytes::from(data)
+    }
+
+    fn encode_kzg_data() -> Bytes {
+        Bytes::from(vec![0u8; 192])
+    }
 }
 
 impl Payload for PrecompilePayload {
@@ -54,13 +117,22 @@ impl Payload for PrecompilePayload {
     }
 
     fn generate(&self, rng: &mut SeededRng, _from: Address, _to: Address) -> TransactionRequest {
-        let data = match self.id {
-            PrecompileId::Identity => Self::encode_identity_data(rng),
-            PrecompileId::Sha256 | PrecompileId::Ripemd160 => Self::encode_sha256_data(rng),
-            _ => Bytes::from(rng.gen_bytes::<32>().to_vec()),
+        let (data, gas_limit) = match self.id {
+            PrecompileId::Identity => (Self::encode_identity_data(rng), 100_000),
+            PrecompileId::Sha256 | PrecompileId::Ripemd160 => {
+                (Self::encode_sha256_data(rng), 100_000)
+            }
+            PrecompileId::EcRec => (Self::encode_ecrecover_data(rng), 3_000),
+            PrecompileId::ModExp => (Self::encode_modexp_data(rng), 200_000),
+            PrecompileId::Bn254Add => (Self::encode_bn254_add_data(), 150),
+            PrecompileId::Bn254Mul => (Self::encode_bn254_mul_data(), 6_000),
+            PrecompileId::Bn254Pairing => (Self::encode_bn254_pairing_data(), 45_000),
+            PrecompileId::Blake2F => (Self::encode_blake2f_data(rng), 100_000),
+            PrecompileId::KzgPointEvaluation => (Self::encode_kzg_data(), 50_000),
+            _ => (Bytes::from(rng.gen_bytes::<32>().to_vec()), 100_000),
         };
 
         TransactionRequest::contract_call(precompile_address(&self.id), data)
-            .with_gas_limit(100_000)
+            .with_gas_limit(gas_limit)
     }
 }

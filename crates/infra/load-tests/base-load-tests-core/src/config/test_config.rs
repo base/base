@@ -18,10 +18,11 @@ pub struct TestConfig {
 
     /// Mnemonic phrase for deriving sender accounts.
     /// If not provided, accounts are generated from seed.
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub mnemonic: Option<String>,
 
     /// Private key for the funder account (hex with 0x prefix).
+    #[serde(skip_serializing)]
     pub funder_key: String,
 
     /// Amount to fund each sender account (in wei, as string).
@@ -84,6 +85,9 @@ pub enum TxTypeConfig {
         /// Maximum calldata size in bytes.
         #[serde(default = "default_calldata_size")]
         max_size: usize,
+        /// Number of times to repeat the random sequence for compressibility.
+        #[serde(default = "default_repeat_count")]
+        repeat_count: usize,
     },
 
     /// ERC20 token transfer (requires deployed contract).
@@ -118,6 +122,10 @@ fn default_seed() -> u64 {
 
 const fn default_calldata_size() -> usize {
     128
+}
+
+const fn default_repeat_count() -> usize {
+    1
 }
 
 fn default_duration() -> Option<String> {
@@ -211,7 +219,9 @@ impl TestConfig {
     fn convert_tx_type(&self, weighted: &WeightedTxType) -> Result<TxConfig> {
         let tx_type = match &weighted.tx_type {
             TxTypeConfig::Transfer => TxType::Transfer,
-            TxTypeConfig::Calldata { max_size } => TxType::Calldata { max_size: *max_size },
+            TxTypeConfig::Calldata { max_size, repeat_count } => {
+                TxType::Calldata { max_size: *max_size, repeat_count: *repeat_count }
+            }
             TxTypeConfig::Erc20 { contract } => {
                 let address = contract.parse::<Address>().map_err(|e| {
                     BaselineError::Config(format!(

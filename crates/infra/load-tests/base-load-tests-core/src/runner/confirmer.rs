@@ -140,7 +140,12 @@ impl Confirmer {
 
             let stopped = self.stop_flag.load(Ordering::SeqCst);
             if stopped && self.pending.is_empty() {
-                break;
+                while let Ok(pending) = pending_rx.try_recv() {
+                    self.pending.insert(pending.tx_hash, pending);
+                }
+                if self.pending.is_empty() {
+                    break;
+                }
             }
 
             self.poll_confirmations(&client).await;

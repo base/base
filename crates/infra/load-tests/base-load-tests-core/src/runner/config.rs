@@ -26,6 +26,8 @@ pub enum TxType {
     Calldata {
         /// Maximum calldata size in bytes.
         max_size: usize,
+        /// Repeat count for compressibility (1 = no repetition).
+        repeat_count: usize,
     },
     /// ERC20 token transfer.
     Erc20 {

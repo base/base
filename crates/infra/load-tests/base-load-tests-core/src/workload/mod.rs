@@ -1,3 +1,5 @@
+//! Workload generation, account management, and transaction payloads.
+
 mod accounts;
 pub use accounts::{AccountPool, FundedAccount};
 

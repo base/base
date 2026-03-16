@@ -14,25 +14,23 @@ pub struct RateLimiter {
 impl RateLimiter {
     /// Creates a new rate limiter for the target gas per second.
     pub fn new(target_gps: u64, avg_gas_per_tx: u64) -> Self {
-        let tps = if avg_gas_per_tx > 0 { target_gps / avg_gas_per_tx } else { 100 };
-        let interval = if tps == 0 {
-            Duration::from_secs(1)
-        } else {
-            Duration::from_secs_f64(1.0 / tps as f64)
-        };
+        let interval = Self::compute_interval(target_gps, avg_gas_per_tx);
         Self { target_gps, avg_gas_per_tx, interval, last_tick: None }
+    }
+
+    fn compute_interval(target_gps: u64, avg_gas_per_tx: u64) -> Duration {
+        if avg_gas_per_tx == 0 {
+            return Duration::from_millis(10);
+        }
+        let tps = target_gps as f64 / avg_gas_per_tx as f64;
+        if tps <= 0.0 { Duration::from_secs(1) } else { Duration::from_secs_f64(1.0 / tps) }
     }
 
     /// Updates the average gas per transaction and recalculates the interval.
     pub fn update_avg_gas(&mut self, avg_gas: u64) {
         if avg_gas > 0 && avg_gas != self.avg_gas_per_tx {
             self.avg_gas_per_tx = avg_gas;
-            let tps = self.target_gps / avg_gas;
-            self.interval = if tps == 0 {
-                Duration::from_secs(1)
-            } else {
-                Duration::from_secs_f64(1.0 / tps as f64)
-            };
+            self.interval = Self::compute_interval(self.target_gps, avg_gas);
         }
     }
 
@@ -58,8 +56,12 @@ impl RateLimiter {
     }
 
     /// Returns the current effective TPS based on target GPS and avg gas.
-    pub const fn effective_tps(&self) -> u64 {
-        if self.avg_gas_per_tx > 0 { self.target_gps / self.avg_gas_per_tx } else { 0 }
+    pub fn effective_tps(&self) -> f64 {
+        if self.avg_gas_per_tx > 0 {
+            self.target_gps as f64 / self.avg_gas_per_tx as f64
+        } else {
+            0.0
+        }
     }
 }
 
@@ -70,11 +72,16 @@ mod tests {
     #[test]
     fn rate_limiter_interval() {
         let limiter = RateLimiter::new(210_000, 21_000);
-        assert_eq!(limiter.effective_tps(), 10);
+        assert!((limiter.effective_tps() - 10.0).abs() < 0.001);
         assert_eq!(limiter.interval(), Duration::from_millis(100));
 
         let limiter = RateLimiter::new(2_100_000, 21_000);
-        assert_eq!(limiter.effective_tps(), 100);
+        assert!((limiter.effective_tps() - 100.0).abs() < 0.001);
         assert_eq!(limiter.interval(), Duration::from_millis(10));
+
+        // Test non-exact division (previously truncated to 1 TPS, now correctly ~1.9 TPS)
+        let limiter = RateLimiter::new(40_000, 21_000);
+        assert!((limiter.effective_tps() - 1.905).abs() < 0.001);
+        assert!(limiter.interval() < Duration::from_millis(526));
     }
 }

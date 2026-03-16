@@ -134,8 +134,9 @@ impl LoadRunner {
                 TxType::Transfer => {
                     generator = generator.with_payload(TransferPayload::default(), weight_pct);
                 }
-                TxType::Calldata { max_size } => {
-                    generator = generator.with_payload(CalldataPayload::new(*max_size), weight_pct);
+                TxType::Calldata { max_size, repeat_count } => {
+                    let payload = CalldataPayload::new(*max_size).with_repeat_count(*repeat_count);
+                    generator = generator.with_payload(payload, weight_pct);
                 }
                 TxType::Erc20 { contract } => {
                     generator = generator.with_payload(
@@ -330,8 +331,20 @@ impl LoadRunner {
         let mut backoff = AdaptiveBackoff::default();
 
         let mut consecutive_at_limit = 0usize;
+        let mut last_gas_price_refresh = Instant::now();
+        const GAS_PRICE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
         while start.elapsed() < self.config.duration && !self.stop_flag.load(Ordering::SeqCst) {
+            if last_gas_price_refresh.elapsed() >= GAS_PRICE_REFRESH_INTERVAL {
+                if let Ok(new_price) = self.client.get_gas_price().await
+                    && new_price != self.gas_price
+                {
+                    debug!(old_price = self.gas_price, new_price, "gas price updated");
+                    self.gas_price = new_price;
+                }
+                last_gas_price_refresh = Instant::now();
+            }
+
             let account = &self.accounts.accounts()[current_account_idx];
             let sender_in_flight = confirmer_handle.in_flight_for(&account.address);
 

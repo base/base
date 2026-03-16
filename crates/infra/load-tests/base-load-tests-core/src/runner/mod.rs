@@ -1,3 +1,5 @@
+//! Load test execution, rate limiting, and transaction confirmation.
+
 mod config;
 pub use config::{LoadConfig, TxConfig, TxType};
 

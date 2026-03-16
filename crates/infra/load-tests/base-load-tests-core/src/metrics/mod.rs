@@ -1,3 +1,5 @@
+//! Metrics collection for latency, throughput, and gas usage.
+
 mod types;
 pub use types::{GasMetrics, LatencyMetrics, ThroughputMetrics, TransactionMetrics};
 

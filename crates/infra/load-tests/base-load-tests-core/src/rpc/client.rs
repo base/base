@@ -4,7 +4,7 @@ use alloy_network::{Ethereum, EthereumWallet};
 use alloy_primitives::{Address, TxHash, U256};
 use alloy_provider::{
     Identity, Provider, ProviderBuilder, RootProvider,
-    fillers::{FillProvider, JoinFill, WalletFiller},
+    fillers::{ChainIdFiller, FillProvider, JoinFill, WalletFiller},
 };
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionReceipt};
 use tracing::instrument;
@@ -33,49 +33,26 @@ pub trait ReceiptProvider: Send + Sync {
     ) -> impl Future<Output = Result<Option<TransactionReceipt>>> + Send;
 }
 
-type HttpProvider = FillProvider<
-    JoinFill<
-        Identity,
-        JoinFill<
-            alloy_provider::fillers::GasFiller,
-            JoinFill<
-                alloy_provider::fillers::BlobGasFiller,
-                JoinFill<
-                    alloy_provider::fillers::NonceFiller,
-                    alloy_provider::fillers::ChainIdFiller,
-                >,
-            >,
-        >,
-    >,
-    RootProvider<Ethereum>,
-    Ethereum,
->;
+type HttpProvider = RootProvider<Ethereum>;
 
 /// Provider type with wallet signing capability for sending transactions.
+///
+/// Uses only `ChainIdFiller` and `WalletFiller`. `GasFiller` and `NonceFiller`
+/// are intentionally omitted since nonce and gas are explicitly managed by
+/// the load runner to avoid redundant RPC calls.
 pub type WalletProvider = FillProvider<
-    JoinFill<
-        JoinFill<
-            Identity,
-            JoinFill<
-                alloy_provider::fillers::GasFiller,
-                JoinFill<
-                    alloy_provider::fillers::BlobGasFiller,
-                    JoinFill<
-                        alloy_provider::fillers::NonceFiller,
-                        alloy_provider::fillers::ChainIdFiller,
-                    >,
-                >,
-            >,
-        >,
-        WalletFiller<EthereumWallet>,
-    >,
+    JoinFill<JoinFill<Identity, ChainIdFiller>, WalletFiller<EthereumWallet>>,
     RootProvider<Ethereum>,
     Ethereum,
 >;
 
 /// Creates a wallet provider for the given RPC URL and wallet.
 pub fn create_wallet_provider(rpc_url: Url, wallet: EthereumWallet) -> WalletProvider {
-    ProviderBuilder::new().wallet(wallet).connect_http(rpc_url)
+    ProviderBuilder::new()
+        .disable_recommended_fillers()
+        .filler(ChainIdFiller::default())
+        .wallet(wallet)
+        .connect_http(rpc_url)
 }
 
 /// RPC client for read-only interactions with Ethereum nodes.
@@ -87,7 +64,7 @@ pub struct RpcClient {
 impl RpcClient {
     /// Creates a new RPC client.
     pub fn new(url: Url) -> Self {
-        let provider = ProviderBuilder::new().connect_http(url.clone());
+        let provider = RootProvider::new_http(url.clone());
         Self { provider, url }
     }
 

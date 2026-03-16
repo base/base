@@ -12,12 +12,15 @@ pub struct CalldataPayload {
     pub max_size: usize,
     /// Minimum calldata size in bytes.
     pub min_size: usize,
+    /// Number of times to repeat the random sequence (1 = no repetition).
+    /// Higher values produce more compressible data.
+    pub repeat_count: usize,
 }
 
 impl CalldataPayload {
     /// Creates a new calldata payload with the given maximum size.
     pub const fn new(max_size: usize) -> Self {
-        Self { max_size, min_size: 0 }
+        Self { max_size, min_size: 0, repeat_count: 1 }
     }
 
     /// Sets the minimum calldata size.
@@ -25,11 +28,17 @@ impl CalldataPayload {
         self.min_size = min_size;
         self
     }
+
+    /// Sets the repeat count for compressibility (1 = no repetition).
+    pub const fn with_repeat_count(mut self, repeat_count: usize) -> Self {
+        self.repeat_count = if repeat_count == 0 { 1 } else { repeat_count };
+        self
+    }
 }
 
 impl Default for CalldataPayload {
     fn default() -> Self {
-        Self { max_size: 128, min_size: 0 }
+        Self { max_size: 128, min_size: 0, repeat_count: 1 }
     }
 }
 
@@ -45,7 +54,13 @@ impl Payload for CalldataPayload {
             rng.gen_range(self.min_size..=self.max_size)
         };
 
-        let data: Vec<u8> = (0..size).map(|_| rng.gen_range(0..=255)).collect();
+        let data: Vec<u8> = if self.repeat_count <= 1 {
+            (0..size).map(|_| rng.gen_range(0..=255)).collect()
+        } else {
+            let chunk_size = size.div_ceil(self.repeat_count);
+            let chunk: Vec<u8> = (0..chunk_size).map(|_| rng.gen_range(0..=255)).collect();
+            chunk.iter().cycle().take(size).copied().collect()
+        };
         let gas_limit = 21_000 + (size as u64 * GAS_PER_NONZERO_BYTE);
 
         TransactionRequest {

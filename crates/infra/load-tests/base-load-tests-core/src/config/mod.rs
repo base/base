@@ -1,3 +1,5 @@
+//! Configuration types for load tests and workloads.
+
 mod workload;
 pub use workload::WorkloadConfig;
 

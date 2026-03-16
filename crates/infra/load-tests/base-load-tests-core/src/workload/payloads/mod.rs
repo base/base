@@ -1,3 +1,5 @@
+//! Transaction payload types for different workload scenarios.
+
 use alloy_primitives::Address;
 
 use crate::{rpc::TransactionRequest, workload::SeededRng};
