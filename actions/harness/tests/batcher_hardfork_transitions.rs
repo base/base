@@ -1,8 +1,8 @@
 #![doc = "Action tests for batch format transitions across hardfork boundaries."]
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatchType, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TestRollupConfigBuilder, block_info_from,
+    ActionL2Source, ActionTestHarness, BatchType, Batcher, BatcherConfig, DaType, EncoderConfig,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
 };
 use base_consensus_genesis::HardForkConfig;
 
@@ -48,7 +48,10 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
         jovian_time: Some(jovian_time),
         ..Default::default()
     };
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let rollup_cfg =
         TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
@@ -77,11 +80,12 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
         source.push(block2.clone());
         source.push(block3_invalid);
         source.push(block4.clone());
-        let mut batcher = h.create_batcher(source, span_cfg);
-        batcher.advance().expect("encode span batch with invalid block 3");
-        batcher.flush(&mut h.l1);
+        Batcher::new(source, &h.rollup_config, span_cfg)
+            .advance(&mut h.l1)
+            .await
+            .expect("encode span batch with invalid block 3");
     }
-    h.mine_and_push(&chain); // L1 block 1: span batch with invalid block 3
+    chain.push(h.l1.tip().clone()); // L1 block 1: span batch with invalid block 3
 
     verifier.initialize().await.expect("initialize");
     let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
@@ -121,11 +125,12 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
         let mut source = ActionL2Source::new();
         source.push(block3_empty);
         source.push(block4_recovery);
-        let mut batcher = h.create_batcher(source, span_cfg);
-        batcher.advance().expect("encode recovery span batch");
-        batcher.flush(&mut h.l1);
+        Batcher::new(source, &h.rollup_config, span_cfg)
+            .advance(&mut h.l1)
+            .await
+            .expect("encode recovery span batch");
     }
-    h.mine_and_push(&chain); // L1 block 2: recovery span batch (blocks 3–4)
+    chain.push(h.l1.tip().clone()); // L1 block 2: recovery span batch (blocks 3–4)
 
     let l1_block_2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
     verifier.act_l1_head_signal(l1_block_2).await.expect("signal block 2");
@@ -154,7 +159,10 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
 /// all 2 L2 blocks regardless of which format each batch uses.
 #[tokio::test]
 async fn mixed_singular_and_span_batches_after_delta() {
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     // Fjord cascades: Canyon, Delta, Ecotone, Fjord all active at genesis.
     let hardforks = HardForkConfig { fjord_time: Some(0), ..Default::default() };
     let rollup_cfg =
@@ -177,22 +185,24 @@ async fn mixed_singular_and_span_batches_after_delta() {
         let singular_cfg = BatcherConfig { batch_type: BatchType::Single, ..batcher_cfg.clone() };
         let mut source = ActionL2Source::new();
         source.push(block1);
-        let mut batcher = h.create_batcher(source, singular_cfg);
-        batcher.advance().expect("encode singular batch");
-        batcher.flush(&mut h.l1);
+        Batcher::new(source, &h.rollup_config, singular_cfg)
+            .advance(&mut h.l1)
+            .await
+            .expect("encode singular batch");
     }
-    h.mine_and_push(&chain); // L1 block 1: singular batch for L2 block 1
+    chain.push(h.l1.tip().clone()); // L1 block 1: singular batch for L2 block 1
 
     // L1 block 2: block 2 as a SPAN batch.
     {
         let span_cfg = BatcherConfig { batch_type: BatchType::Span, ..batcher_cfg };
         let mut source = ActionL2Source::new();
         source.push(block2);
-        let mut batcher = h.create_batcher(source, span_cfg);
-        batcher.advance().expect("encode span batch");
-        batcher.flush(&mut h.l1);
+        Batcher::new(source, &h.rollup_config, span_cfg)
+            .advance(&mut h.l1)
+            .await
+            .expect("encode span batch");
     }
-    h.mine_and_push(&chain); // L1 block 2: span batch for L2 block 2
+    chain.push(h.l1.tip().clone()); // L1 block 2: span batch for L2 block 2
 
     verifier.initialize().await.expect("initialize");
 

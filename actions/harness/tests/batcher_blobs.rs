@@ -228,24 +228,26 @@ async fn blob_da_channel_timeout() {
     // Encode the L2 block into multiple frames (tiny max_frame_size).
     let mut source = ActionL2Source::new();
     source.push(block.clone());
-    let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-    let frames = batcher.encode_frames().expect("encode multi-frame channel");
+    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    batcher.encode_only().await.expect("encode multi-frame channel");
+    let frame_count = batcher.pending_count();
     assert!(
-        frames.len() >= 2,
+        frame_count >= 2,
         "expected multi-frame channel with max_frame_size=80, got {} frames",
-        frames.len()
+        frame_count
     );
 
     // Submit ONLY frame 0 as a blob sidecar in L1 block 1.
-    batcher.submit_blob_frames(&frames[..1]);
-    batcher.flush(&mut h.l1);
+    batcher.stage_n_frames(&mut h.l1, 1);
 
     let (mut verifier, chain) = h.create_blob_verifier_from_sequencer(
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    h.mine_and_push(&chain); // L1 block 1: blob with frame 0 only
+    let block_1_num = h.l1.mine_block().number();
+    batcher.confirm_staged(block_1_num).await;
+    chain.push(h.l1.tip().clone()); // L1 block 1: blob with frame 0 only
 
     verifier.initialize().await.expect("initialize");
     let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
@@ -269,13 +271,10 @@ async fn blob_da_channel_timeout() {
     }
 
     // Submit remaining frames as blobs — channel already timed out; silently dropped.
-    {
-        let empty_source = ActionL2Source::new();
-        let mut late_batcher = h.create_batcher(empty_source, batcher_cfg.clone());
-        late_batcher.submit_blob_frames(&frames[1..]);
-        late_batcher.flush(&mut h.l1);
-    }
-    h.mine_and_push(&chain); // L1 block 5: late blob frames
+    batcher.stage_n_frames(&mut h.l1, frame_count - 1);
+    let block_5_num = h.l1.mine_block().number();
+    batcher.confirm_staged(block_5_num).await;
+    chain.push(h.l1.tip().clone()); // L1 block 5: late blob frames
 
     let l1_block_5 = block_info_from(h.l1.block_by_number(5).expect("block 5"));
     verifier.act_l1_head_signal(l1_block_5).await.expect("signal block 5");
@@ -285,11 +284,11 @@ async fn blob_da_channel_timeout() {
     // Recovery: resubmit all frames as blobs in a fresh channel.
     let mut source2 = ActionL2Source::new();
     source2.push(block);
-    let mut batcher2 = h.create_batcher(source2, batcher_cfg);
-    let recovery_frames = batcher2.encode_frames().expect("encode recovery channel");
-    batcher2.submit_blob_frames(&recovery_frames);
-    batcher2.flush(&mut h.l1);
-    h.mine_and_push(&chain); // L1 block 6: fresh blob channel with all frames
+    Batcher::new(source2, &h.rollup_config, batcher_cfg)
+        .advance(&mut h.l1)
+        .await
+        .expect("encode recovery channel");
+    chain.push(h.l1.tip().clone()); // L1 block 6: fresh blob channel with all frames
 
     let l1_block_6 = block_info_from(h.l1.block_by_number(6).expect("block 6"));
     verifier.act_l1_head_signal(l1_block_6).await.expect("signal block 6");

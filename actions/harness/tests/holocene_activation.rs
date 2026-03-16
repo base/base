@@ -1,10 +1,9 @@
 #![doc = "Action tests for the Holocene hardfork activation and Holocene-specific protocol changes."]
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TestRollupConfigBuilder, block_info_from,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
 };
-use base_batcher_encoder::EncoderConfig;
 use base_consensus_genesis::HardForkConfig;
 
 // ---------------------------------------------------------------------------
@@ -32,7 +31,10 @@ use base_consensus_genesis::HardForkConfig;
 /// [`ChannelAssembler`]: base_consensus_derive::stages::ChannelAssembler
 #[tokio::test]
 async fn holocene_derivation_crosses_activation_boundary() {
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
 
     // All forks through Granite at genesis; Holocene at ts=6 (block 3).
     // Fjord is needed so the batcher's brotli compression is accepted.
@@ -53,22 +55,24 @@ async fn holocene_derivation_crosses_activation_boundary() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &builder,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
     // Build and submit 4 L2 blocks; no upgrade-tx constraint at Holocene,
     // so user txs are valid in all blocks including block 3.
     for _ in 1..=4u64 {
         let block = builder.build_next_block().expect("build L2 block");
         let mut source = ActionL2Source::new();
         source.push(block);
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.advance().expect("encode batch");
-        batcher.flush(&mut h.l1);
-        h.l1.mine_block();
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
+            .advance(&mut h.l1)
+            .await
+            .expect("encode batch");
+        chain.push(h.l1.tip().clone());
     }
 
-    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
-        &builder,
-        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
-    );
     verifier.initialize().await.expect("initialize");
 
     for i in 1..=4u64 {
@@ -111,7 +115,11 @@ async fn holocene_derivation_crosses_activation_boundary() {
 #[tokio::test]
 async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
     let batcher_cfg = BatcherConfig {
-        encoder: EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() },
+        encoder: EncoderConfig {
+            max_frame_size: 80,
+            da_type: DaType::Calldata,
+            ..EncoderConfig::default()
+        },
         ..BatcherConfig::default()
     };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
@@ -132,33 +140,32 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let block = sequencer.build_next_block().expect("build L2 block 1");
 
+    // Encode the block into frames without mining.
     let mut source = ActionL2Source::new();
     source.push(block);
-    let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-    let frames = batcher.encode_frames().expect("encode multi-frame channel");
+    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    batcher.encode_only().await.expect("encode multi-frame channel");
+    let frame_count = batcher.pending_count();
     assert!(
-        frames.len() >= 3,
+        frame_count >= 3,
         "need ≥3 frames to skip frame 1; got {} (decrease max_frame_size)",
-        frames.len()
+        frame_count
     );
-
-    // Submit frame 0 and frame 2 in the same L1 block — skipping frame 1.
-    // Under Holocene, FrameQueue::prune removes frame 2 because
-    // frame 0.number + 1 != frame 2.number (0 + 1 = 1 ≠ 2).
-    {
-        let empty_source = ActionL2Source::new();
-        let mut submitter = h.create_batcher(empty_source, batcher_cfg.clone());
-        submitter.submit_frames(&frames[0..1]); // frame 0
-        submitter.submit_frames(&frames[2..3]); // frame 2 (non-sequential)
-        submitter.flush(&mut h.l1);
-    }
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    h.mine_and_push(&chain); // L1 block 1: frames 0 and 2
+    // Submit frame 0 and frame 2 in the same L1 block — skipping frame 1.
+    // Under Holocene, FrameQueue::prune removes frame 2 because
+    // frame 0.number + 1 != frame 2.number (0 + 1 = 1 ≠ 2).
+    batcher.stage_n_frames(&mut h.l1, 1); // frame 0
+    batcher.drop_n_frames(1); // drop frame 1
+    batcher.stage_n_frames(&mut h.l1, 1); // frame 2 (non-sequential)
+    let block_1_num = h.l1.mine_block().number();
+    batcher.confirm_staged(block_1_num).await;
+    chain.push(h.l1.tip().clone()); // L1 block 1: frames 0 and 2
 
     verifier.initialize().await.expect("initialize");
     let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
@@ -219,7 +226,11 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
 #[tokio::test]
 async fn holocene_new_channel_abandons_incomplete_old_channel() {
     let batcher_cfg = BatcherConfig {
-        encoder: EncoderConfig { max_frame_size: 80, ..EncoderConfig::default() },
+        encoder: EncoderConfig {
+            max_frame_size: 80,
+            da_type: DaType::Calldata,
+            ..EncoderConfig::default()
+        },
         ..BatcherConfig::default()
     };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
@@ -243,24 +254,20 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     let block_b = sequencer.build_next_block().expect("build L2 block B");
 
     // Encode channel A (block A) and channel B (block B) separately.
-    // Each encoder instance generates a distinct random channel ID.
-    let frames_a = {
-        let mut source = ActionL2Source::new();
-        source.push(block_a);
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.encode_frames().expect("encode channel A")
-    };
-    let frames_b = {
-        let mut source = ActionL2Source::new();
-        source.push(block_b);
-        let mut batcher = h.create_batcher(source, batcher_cfg.clone());
-        batcher.encode_frames().expect("encode channel B")
-    };
+    // Each Batcher instance generates a distinct random channel ID.
+    let mut source_a = ActionL2Source::new();
+    source_a.push(block_a);
+    let mut batcher_a = Batcher::new(source_a, &h.rollup_config, batcher_cfg.clone());
+    batcher_a.encode_only().await.expect("encode channel A");
 
-    assert!(frames_a.len() >= 2, "channel A needs ≥2 frames; got {}", frames_a.len());
+    let mut source_b = ActionL2Source::new();
+    source_b.push(block_b);
+    let mut batcher_b = Batcher::new(source_b, &h.rollup_config, batcher_cfg.clone());
+    batcher_b.encode_only().await.expect("encode channel B");
 
-    // Channels must have distinct IDs for the pruning rule to apply.
-    assert_ne!(frames_a[0].id, frames_b[0].id, "channel A and B must have distinct IDs");
+    let n_a = batcher_a.pending_count();
+    let n_b = batcher_b.pending_count();
+    assert!(n_a >= 2, "channel A needs ≥2 frames; got {n_a}");
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &sequencer,
@@ -268,13 +275,10 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     );
 
     // L1 block 1: only frame 0 of channel A (channel is incomplete).
-    {
-        let empty_source = ActionL2Source::new();
-        let mut submitter = h.create_batcher(empty_source, batcher_cfg.clone());
-        submitter.submit_frames(&frames_a[0..1]);
-        submitter.flush(&mut h.l1);
-    }
-    h.mine_and_push(&chain);
+    batcher_a.stage_n_frames(&mut h.l1, 1); // frame 0 of channel A
+    let block_1_num = h.l1.mine_block().number();
+    batcher_a.confirm_staged(block_1_num).await;
+    chain.push(h.l1.tip().clone()); // L1 block 1: frame 0 of channel A
 
     verifier.initialize().await.expect("initialize");
     let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
@@ -292,15 +296,12 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     // Under Holocene pruning: channel A's frame 0 is in the queue. When
     // channel B's frame 0 arrives (different ID, B is not last), the queue
     // drains all of channel A's frames. Channel B assembles and derives.
-    {
-        let empty_source = ActionL2Source::new();
-        let mut submitter = h.create_batcher(empty_source, batcher_cfg.clone());
-        for frame in &frames_b {
-            submitter.submit_frames(std::slice::from_ref(frame));
-        }
-        submitter.flush(&mut h.l1);
+    for _ in 0..n_b {
+        batcher_b.stage_n_frames(&mut h.l1, 1);
     }
-    h.mine_and_push(&chain);
+    let block_2_num = h.l1.mine_block().number();
+    batcher_b.confirm_staged(block_2_num).await;
+    chain.push(h.l1.tip().clone()); // L1 block 2: all frames of channel B
 
     let l1_block_2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
     verifier.act_l1_head_signal(l1_block_2).await.expect("signal block 2");

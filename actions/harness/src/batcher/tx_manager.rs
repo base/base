@@ -102,6 +102,17 @@ impl L1MinerTxManager {
         self.inner.lock().unwrap().pending.len()
     }
 
+    /// Drop the first `n` pending submissions without staging them to L1.
+    ///
+    /// Returns the actual number dropped (≤ `n`). Use this to skip specific
+    /// frame positions when testing non-sequential frame submission.
+    pub fn drop_n(&self, n: usize) -> usize {
+        let mut inner = self.inner.lock().unwrap();
+        let count = n.min(inner.pending.len());
+        inner.pending.drain(..count);
+        count
+    }
+
     /// Move the first `n` pending submissions to the L1 miner's tx/blob queue
     /// and into the internal `staged` buffer. Does **not** mine a block.
     ///

@@ -170,6 +170,14 @@ impl<S: L2BlockProvider> Batcher<S> {
         self.tx_manager.stage_n_to_l1(l1, n)
     }
 
+    /// Drop the first `n` pending frame submissions without staging them to L1.
+    ///
+    /// Returns the actual number dropped. Use this to skip specific frame
+    /// positions when testing non-sequential frame submission scenarios.
+    pub fn drop_n_frames(&self, n: usize) -> usize {
+        self.tx_manager.drop_n(n)
+    }
+
     /// Fire receipts for all staged items at `block_number` and yield to let
     /// the driver process confirmations and the L1 head event.
     pub async fn confirm_staged(&self, block_number: u64) {

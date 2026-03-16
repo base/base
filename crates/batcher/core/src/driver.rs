@@ -455,7 +455,7 @@ mod tests {
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::sync::CancellationToken;
 
-    use super::BatchDriver;
+    use super::{BatchDriver, BatchDriverConfig};
     use crate::{
         NoopThrottleClient, ThrottleConfig, ThrottleController, ThrottleStrategy,
         test_utils::TrackingThrottleClient,

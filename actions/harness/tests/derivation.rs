@@ -2415,7 +2415,11 @@ async fn pipeline_l1_origin_advance_observable_after_epoch_exhausted() {
 /// block set.
 #[tokio::test]
 async fn span_batch_crossing_l1_epoch_boundary() {
-    let batcher_cfg = BatcherConfig { batch_type: BatchType::Span, ..BatcherConfig::default() };
+    let batcher_cfg = BatcherConfig {
+        batch_type: BatchType::Span,
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -2439,10 +2443,11 @@ async fn span_batch_crossing_l1_epoch_boundary() {
     );
 
     // Encode all 6 blocks as a single span batch and submit in L1 block 2.
-    let mut batcher = h.create_batcher(source, batcher_cfg);
-    batcher.advance().expect("encode multi-epoch span batch");
-    batcher.flush(&mut h.l1);
-    h.mine_and_push(&chain); // L1 block 2: span batch for all 6 L2 blocks
+    Batcher::new(source, &h.rollup_config, batcher_cfg)
+        .advance(&mut h.l1)
+        .await
+        .expect("encode multi-epoch span batch");
+    chain.push(h.l1.tip().clone()); // L1 block 2: span batch for all 6 L2 blocks
 
     verifier.initialize().await.expect("initialize");
 
@@ -2484,7 +2489,11 @@ async fn span_batch_crossing_l1_epoch_boundary() {
 /// [`BatchQueue`]: base_consensus_derive::BatchQueue
 #[tokio::test]
 async fn out_of_order_span_batches_reordered_by_batch_queue() {
-    let span_cfg = BatcherConfig { batch_type: BatchType::Span, ..BatcherConfig::default() };
+    let span_cfg = BatcherConfig {
+        batch_type: BatchType::Span,
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&span_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -2503,21 +2512,23 @@ async fn out_of_order_span_batches_reordered_by_batch_queue() {
     {
         let mut source = ActionL2Source::new();
         source.push(block2);
-        let mut batcher = h.create_batcher(source, span_cfg.clone());
-        batcher.advance().expect("encode future span batch");
-        batcher.flush(&mut h.l1);
+        Batcher::new(source, &h.rollup_config, span_cfg.clone())
+            .advance(&mut h.l1)
+            .await
+            .expect("encode future span batch");
     }
-    h.mine_and_push(&chain); // L1 block 1: future span batch
+    chain.push(h.l1.tip().clone()); // L1 block 1: future span batch
 
     // L1 block 2: span batch for L2 block 1 (the expected-next batch).
     {
         let mut source = ActionL2Source::new();
         source.push(block1);
-        let mut batcher = h.create_batcher(source, span_cfg);
-        batcher.advance().expect("encode present span batch");
-        batcher.flush(&mut h.l1);
+        Batcher::new(source, &h.rollup_config, span_cfg)
+            .advance(&mut h.l1)
+            .await
+            .expect("encode present span batch");
     }
-    h.mine_and_push(&chain); // L1 block 2: present span batch
+    chain.push(h.l1.tip().clone()); // L1 block 2: present span batch
 
     verifier.initialize().await.expect("initialize");
 
@@ -2573,7 +2584,10 @@ async fn out_of_order_span_batches_reordered_by_batch_queue() {
 /// op-e2e ref: `LargeL1Gaps`
 #[tokio::test]
 async fn large_l1_gaps_within_sequence_window() {
-    let batcher_cfg = BatcherConfig::default();
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -2598,10 +2612,11 @@ async fn large_l1_gaps_within_sequence_window() {
     let mut source = ActionL2Source::new();
     source.push(block1);
     source.push(block2);
-    let mut batcher = h.create_batcher(source, batcher_cfg);
-    batcher.advance().expect("encode batches");
-    batcher.flush(&mut h.l1);
-    h.mine_and_push(&chain); // L1 block 16: batches for L2 blocks 1 and 2
+    Batcher::new(source, &h.rollup_config, batcher_cfg)
+        .advance(&mut h.l1)
+        .await
+        .expect("encode batches");
+    chain.push(h.l1.tip().clone()); // L1 block 16: batches for L2 blocks 1 and 2
 
     verifier.initialize().await.expect("initialize");
 
