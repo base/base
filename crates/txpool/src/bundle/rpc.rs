@@ -179,12 +179,12 @@ where
 
         let raw = &bundle.txs[0];
         let consensus_tx = OpTransactionSigned::decode_2718(&mut raw.as_ref()).map_err(|e| {
-            rpc_err(ErrorCode::InvalidParams, format!("failed to decode transaction: {e}"))
+            rpc_err(ErrorCode::InvalidParams, format!("failed to decode transaction: {e:?}"))
         })?;
 
-        let recovered = consensus_tx
-            .try_into_recovered()
-            .map_err(|e| rpc_err(ErrorCode::InvalidParams, format!("failed to recover signer: {e}")))?;
+        let recovered = consensus_tx.try_into_recovered().map_err(|e| {
+            rpc_err(ErrorCode::InvalidParams, format!("failed to recover signer: {e:?}"))
+        })?;
 
         let tx_hash = TxHash::from(*recovered.tx_hash());
         let encoded_len = raw.len();
