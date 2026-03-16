@@ -1,5 +1,7 @@
 //! Remote signer implementation that delegates signing to an external signer sidecar.
 
+use std::time::Duration;
+
 use alloy_consensus::{SignableTransaction, TxEnvelope};
 use alloy_eips::Decodable2718;
 use alloy_network::{TransactionBuilder, TxSigner};
@@ -36,6 +38,7 @@ impl RemoteSigner {
     /// Creates a new [`RemoteSigner`] with a default HTTP client.
     pub fn new(endpoint: Url, address: Address) -> Result<Self, RemoteSignerError> {
         let client = HttpClientBuilder::default()
+            .request_timeout(Duration::from_secs(5))
             .build(endpoint.as_str())
             .map_err(RemoteSignerError::Client)?;
         Ok(Self { client, address })
@@ -148,7 +151,13 @@ impl TxSigner<Signature> for RemoteSigner {
     ) -> alloy_signer::Result<Signature> {
         let request = self.build_tx_request(tx);
 
-        debug!(address = %self.address, "signing transaction via remote signer");
+        debug!(
+            address = %self.address,
+            nonce = ?request.nonce,
+            chain_id = ?request.chain_id,
+            tx_type = ?request.transaction_type,
+            "signing transaction via remote signer",
+        );
 
         let bytes: Bytes = EthSignerApiClient::sign_transaction(&self.client, request)
             .await
