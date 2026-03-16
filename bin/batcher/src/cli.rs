@@ -31,6 +31,9 @@ impl Cli {
     /// Run the batcher CLI.
     pub(crate) fn run(self) -> eyre::Result<()> {
         LogConfig::from(self.args.logging.clone()).init_tracing_subscriber()?;
+        base_cli_utils::MetricsConfig::from(self.args.metrics.clone()).init_with(|| {
+            base_cli_utils::register_version_metrics!();
+        })?;
         RuntimeManager::run_until_ctrl_c(self.args.exec())
     }
 }
@@ -174,7 +177,6 @@ impl BatcherArgs {
                     ..Default::default()
                 })
             },
-            metrics_port: self.metrics.port,
         })
     }
 

@@ -14,7 +14,7 @@ use base_batcher_encoder::BatchEncoder;
 use base_batcher_source::{BlockSubscription, HybridBlockSource, HybridL1HeadSource, SourceError};
 use base_consensus_genesis::RollupConfig;
 use base_runtime::TokioRuntime;
-use base_tx_manager::{NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
+use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -357,7 +357,7 @@ impl BatcherService {
             signer_config,
             tx_manager_config,
             l1_chain_id,
-            Arc::new(NoopTxMetrics),
+            Arc::new(BaseTxMetrics::new("batcher")),
         )
         .await
         .map_err(|e| eyre::eyre!("failed to create tx manager: {e}"))?;
