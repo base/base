@@ -1,4 +1,7 @@
-use alloy_primitives::{B256, Bytes, U64};
+#[cfg(feature = "signer")]
+use alloy_primitives::Bytes;
+use alloy_primitives::{B256, U64};
+#[cfg(feature = "signer")]
 use alloy_rpc_types_eth::TransactionRequest;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
@@ -39,6 +42,7 @@ pub trait MinerApiExt {
     async fn set_gas_limit(&self, gas_limit: U64) -> RpcResult<bool>;
 }
 
+#[cfg(feature = "signer")]
 /// JSON-RPC interface for the `eth_signTransaction` endpoint.
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "eth"))]
 #[cfg_attr(feature = "client", rpc(server, client, namespace = "eth"))]

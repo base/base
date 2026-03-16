@@ -23,7 +23,7 @@ alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # Base
-base-alloy-rpc-jsonrpsee = { workspace = true, features = ["client"] }
+base-alloy-rpc-jsonrpsee = { workspace = true, features = ["client", "signer"] }
 
 # External
 url.workspace = true
