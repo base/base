@@ -36,9 +36,9 @@ jobs:
       - name: Install dependencies
         working-directory: docs/specs
         run: bun ci
-      - name: Install Playwright browsers
+      - name: Install Playwright system dependencies
         working-directory: docs/specs
-        run: bunx playwright install chromium --with-deps
+        run: bunx playwright install --with-deps chromium
       - name: Build specs site
         working-directory: docs/specs
         run: bun run build

@@ -7,10 +7,12 @@
   },
   "scripts": {
     "dev": "vocs dev",
+    "postinstall": "bunx playwright install chromium",
     "build": "vocs build",
     "preview": "vocs preview"
   },
   "devDependencies": {
+    "playwright": "^1.58.0",
     "rehype-katex": "^7.0.1",
     "remark-math": "^6.0.0",
     "vocs": "^1.4.1"
@@ -22,5 +24,8 @@
     "katex": "0.16.33",
     "mlly": "1.8.0",
     "node-releases": "2.0.27"
-  }
+  },
+  "trustedDependencies": [
+    "playwright"
+  ]
 }
