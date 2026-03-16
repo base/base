@@ -1,0 +1,28 @@
+[package]
+name = "base-proof-tee-nitro-verifier"
+description = "Pure verification logic for AWS Nitro Enclave attestation documents"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Parsing
+serde = { workspace = true, features = ["derive"] }
+ciborium.workspace = true
+serde_bytes.workspace = true
+
+# Types
+alloy-primitives = { workspace = true, default-features = false }
+alloy-sol-types = { workspace = true, features = ["json"] }
+
+# Error
+thiserror.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true
