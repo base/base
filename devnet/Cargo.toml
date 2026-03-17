@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
+base-runtime.workspace = true
 base-batcher-service.workspace = true
 base-txpool-rpc.workspace = true
 base-flashblocks.workspace = true

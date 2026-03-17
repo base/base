@@ -7,6 +7,7 @@ use alloy_primitives::{Address, B256};
 use alloy_signer_local::PrivateKeySigner;
 use base_alloy_signer::RemoteSigner;
 use url::Url;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::TxManagerError;
 
@@ -17,9 +18,12 @@ use crate::TxManagerError;
 /// sites do not need to duplicate private-key parsing or remote-signer setup.
 pub enum SignerConfig {
     /// Local signer backed by a raw secp256k1 private key.
+    ///
+    /// The key bytes are wrapped in [`Zeroizing`] so they are securely erased
+    /// from memory when this variant is dropped.
     Local {
-        /// The 32-byte private key.
-        private_key: B256,
+        /// The 32-byte private key, zeroized on drop.
+        private_key: Zeroizing<[u8; 32]>,
     },
     /// Remote signer sidecar via `eth_signTransaction` JSON-RPC.
     Remote {
@@ -46,6 +50,16 @@ impl fmt::Debug for SignerConfig {
 }
 
 impl SignerConfig {
+    /// Creates a [`Local`](Self::Local) signer config from a raw private key.
+    ///
+    /// The key bytes are wrapped in [`Zeroizing`] internally so callers do not
+    /// need to depend on the `zeroize` crate.
+    pub fn local(mut private_key: B256) -> Self {
+        let config = Self::Local { private_key: Zeroizing::new(private_key.0) };
+        private_key.0.zeroize();
+        config
+    }
+
     /// Builds an [`EthereumWallet`] from this configuration.
     ///
     /// # Errors
@@ -55,7 +69,7 @@ impl SignerConfig {
     pub fn build_wallet(self) -> Result<EthereumWallet, TxManagerError> {
         match self {
             Self::Local { private_key } => {
-                let signer = PrivateKeySigner::from_bytes(&private_key)
+                let signer = PrivateKeySigner::from_slice(&*private_key)
                     .map_err(|e| TxManagerError::WalletConstruction(e.to_string()))?;
                 Ok(EthereumWallet::new(signer))
             }
@@ -75,14 +89,13 @@ mod tests {
     #[test]
     fn local_valid_key_produces_wallet() {
         // Use a well-known non-zero private key.
-        let key = B256::repeat_byte(0x01);
-        let config = SignerConfig::Local { private_key: key };
+        let config = SignerConfig::local(B256::repeat_byte(0x01));
         assert!(config.build_wallet().is_ok());
     }
 
     #[test]
     fn local_zero_key_returns_error() {
-        let config = SignerConfig::Local { private_key: B256::ZERO };
+        let config = SignerConfig::local(B256::ZERO);
         let err = config.build_wallet().expect_err("zero key should fail");
         assert!(
             matches!(err, TxManagerError::WalletConstruction(_)),

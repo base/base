@@ -31,6 +31,7 @@ fn env_vars_use_custom_prefix() {
         ("tx-manager.tx-send-timeout", "CUSTOM_PREFIX_TX_SEND_TIMEOUT"),
         ("tx-manager.tx-not-in-mempool-timeout", "CUSTOM_PREFIX_TX_NOT_IN_MEMPOOL_TIMEOUT"),
         ("tx-manager.confirmation-timeout", "CUSTOM_PREFIX_CONFIRMATION_TIMEOUT"),
+        ("tx-manager.min-blob-fee", "CUSTOM_PREFIX_MIN_BLOB_FEE"),
     ];
 
     for (long_name, expected_env) in cases {

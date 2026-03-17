@@ -481,11 +481,8 @@ async fn wait_for_tx_does_not_panic_on_dropped_receiver() {
 /// `query_receipt` returns `Err` when the provider is unreachable.
 #[tokio::test]
 async fn query_receipt_returns_error_on_unreachable_provider() {
-    // Spawn Anvil to get a valid endpoint, then drop it to close the port.
-    let anvil = Anvil::new().spawn();
-    let url = anvil.endpoint_url();
-    let provider = RootProvider::new_http(url);
-    drop(anvil);
+    // Port 1 is never listening — connection refused is immediate and deterministic.
+    let provider = RootProvider::new_http("http://127.0.0.1:1".parse().expect("valid url"));
 
     let send_state = SendState::new(3).expect("should create send state");
     let fake_hash = B256::with_last_byte(0xFF);

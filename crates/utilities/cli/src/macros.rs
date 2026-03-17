@@ -182,3 +182,30 @@ macro_rules! define_log_args {
         }
     };
 }
+
+/// Generates a local `cli_env!` macro that prepends a fixed component prefix to
+/// every env-var suffix, so you can write `env = cli_env!("L1_ETH_RPC")` instead
+/// of `env = "BASE_CHALLENGER_L1_ETH_RPC"`.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// base_cli_utils::define_cli_env!("BASE_CHALLENGER");
+///
+/// #[arg(long = "l1-eth-rpc", env = cli_env!("L1_ETH_RPC"))]
+/// pub l1_eth_rpc: Url,
+/// // expands to env = "BASE_CHALLENGER_L1_ETH_RPC"
+/// ```
+#[macro_export]
+macro_rules! define_cli_env {
+    ($prefix:literal) => {
+        $crate::define_cli_env!(@dollar $prefix $);
+    };
+    (@dollar $prefix:literal $d:tt) => {
+        macro_rules! cli_env {
+            ($d var:literal) => {
+                concat!($prefix, "_", $d var)
+            };
+        }
+    };
+}

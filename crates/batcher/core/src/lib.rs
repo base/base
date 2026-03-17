@@ -14,12 +14,18 @@ mod outcome;
 pub use outcome::TxOutcome;
 
 mod throttle;
-pub use throttle::{ThrottleConfig, ThrottleController, ThrottleParams, ThrottleStrategy};
+pub use throttle::{
+    DaThrottle, ThrottleConfig, ThrottleController, ThrottleParams, ThrottleStrategy,
+};
 
 mod throttle_client;
 pub use throttle_client::{NoopThrottleClient, ThrottleClient};
 
+mod submissions;
+pub use submissions::SubmissionQueue;
+
 mod driver;
+pub use base_batcher_encoder::BatcherMetrics;
 pub use driver::{BatchDriver, BatchDriverConfig};
 
 pub mod test_utils;

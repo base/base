@@ -4,13 +4,12 @@ use std::process::Command;
 
 use eyre::{Result, ensure};
 
-use crate::containers::{L1_BEACON_NAME, L1_RETH_NAME, L1_VALIDATOR_NAME, L2_BATCHER_NAME};
+use crate::containers::{L1_BEACON_NAME, L1_RETH_NAME, L1_VALIDATOR_NAME};
 
 /// Docker network name for devnet.
 pub const DEVNET_NETWORK: &str = "devnet-network";
 
-const DEVNET_CONTAINER_NAMES: &[&str] =
-    &[L1_RETH_NAME, L1_BEACON_NAME, L1_VALIDATOR_NAME, L2_BATCHER_NAME];
+const DEVNET_CONTAINER_NAMES: &[&str] = &[L1_RETH_NAME, L1_BEACON_NAME, L1_VALIDATOR_NAME];
 
 /// Lists all devnet containers (running or stopped).
 pub fn list_devnet_containers() -> Result<Vec<String>> {

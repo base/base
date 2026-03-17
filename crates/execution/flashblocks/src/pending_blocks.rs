@@ -43,6 +43,8 @@ pub struct PendingBlocksBuilder {
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
     transaction_results: HashMap<B256, ExecutionResult<OpHaltReason>>,
+    execution_times: HashMap<B256, u128>,
+    state_root_times: HashMap<B256, u128>,
 
     bundle_state: BundleState,
 }
@@ -67,6 +69,8 @@ impl PendingBlocksBuilder {
             transaction_state: HashMap::new(),
             transaction_senders: HashMap::new(),
             transaction_results: HashMap::new(),
+            execution_times: HashMap::new(),
+            state_root_times: HashMap::new(),
             state_overrides: None,
             bundle_state: BundleState::default(),
         }
@@ -86,27 +90,31 @@ impl PendingBlocksBuilder {
         self
     }
 
+    /// Stores a transaction in the builder.
     #[inline]
-    pub(crate) fn with_transaction(&mut self, transaction: Transaction) -> &Self {
+    pub fn with_transaction(&mut self, transaction: Transaction) -> &Self {
         self.transactions_by_hash.insert(transaction.tx_hash(), transaction.clone());
         self.transactions.push(transaction);
         self
     }
 
+    /// Stores the EVM state changes produced by a transaction.
     #[inline]
-    pub(crate) fn with_transaction_state(&mut self, hash: B256, state: EvmState) -> &Self {
+    pub fn with_transaction_state(&mut self, hash: B256, state: EvmState) -> &Self {
         self.transaction_state.insert(hash, state);
         self
     }
 
+    /// Records the sender of a transaction.
     #[inline]
-    pub(crate) fn with_transaction_sender(&mut self, hash: B256, sender: Address) -> &Self {
+    pub fn with_transaction_sender(&mut self, hash: B256, sender: Address) -> &Self {
         self.transaction_senders.insert(hash, sender);
         self
     }
 
+    /// Increments the pending nonce for an account.
     #[inline]
-    pub(crate) fn increment_nonce(&mut self, sender: Address) -> &Self {
+    pub fn increment_nonce(&mut self, sender: Address) -> &Self {
         let zero = U256::from(0);
         let current_count = self.transaction_count.get(&sender).unwrap_or(&zero);
 
@@ -114,37 +122,56 @@ impl PendingBlocksBuilder {
         self
     }
 
+    /// Stores the receipt for a transaction.
     #[inline]
-    pub(crate) fn with_receipt(&mut self, hash: B256, receipt: OpTransactionReceipt) -> &Self {
+    pub fn with_receipt(&mut self, hash: B256, receipt: OpTransactionReceipt) -> &Self {
         self.transaction_receipts.insert(hash, receipt);
         self
     }
 
+    /// Records the balance of an account after execution.
     #[inline]
-    pub(crate) fn with_account_balance(&mut self, address: Address, balance: U256) -> &Self {
+    pub fn with_account_balance(&mut self, address: Address, balance: U256) -> &Self {
         self.account_balances.insert(address, balance);
         self
     }
 
+    /// Sets state overrides for the pending blocks.
     #[inline]
-    pub(crate) fn with_state_overrides(&mut self, state_overrides: StateOverride) -> &Self {
+    pub fn with_state_overrides(&mut self, state_overrides: StateOverride) -> &Self {
         self.state_overrides = Some(state_overrides);
         self
     }
 
+    /// Sets the accumulated bundle state.
     #[inline]
-    pub(crate) fn with_bundle_state(&mut self, bundle_state: BundleState) -> &Self {
+    pub fn with_bundle_state(&mut self, bundle_state: BundleState) -> &Self {
         self.bundle_state = bundle_state;
         self
     }
 
+    /// Stores the execution result for a transaction.
     #[inline]
-    pub(crate) fn with_transaction_result(
+    pub fn with_transaction_result(
         &mut self,
         hash: B256,
         result: ExecutionResult<OpHaltReason>,
     ) -> &Self {
         self.transaction_results.insert(hash, result);
+        self
+    }
+
+    /// Stores per-transaction EVM execution time.
+    #[inline]
+    pub fn with_execution_time(&mut self, hash: B256, time_us: u128) -> &Self {
+        self.execution_times.insert(hash, time_us);
+        self
+    }
+
+    /// Stores per-transaction state root simulation time.
+    #[inline]
+    pub fn with_state_root_time(&mut self, hash: B256, time_us: u128) -> &Self {
+        self.state_root_times.insert(hash, time_us);
         self
     }
 
@@ -171,6 +198,8 @@ impl PendingBlocksBuilder {
             state_overrides: self.state_overrides,
             bundle_state: self.bundle_state,
             transaction_results: self.transaction_results,
+            execution_times: self.execution_times,
+            state_root_times: self.state_root_times,
         })
     }
 }
@@ -192,6 +221,8 @@ pub struct PendingBlocks {
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
     transaction_results: HashMap<B256, ExecutionResult<OpHaltReason>>,
+    execution_times: HashMap<B256, u128>,
+    state_root_times: HashMap<B256, u128>,
 
     bundle_state: BundleState,
 }
@@ -309,6 +340,16 @@ impl PendingBlocks {
         self.transaction_results.get(tx_hash)
     }
 
+    /// Returns the per-transaction EVM execution time in microseconds.
+    pub fn get_execution_time(&self, tx_hash: &B256) -> Option<u128> {
+        self.execution_times.get(tx_hash).copied()
+    }
+
+    /// Returns the per-transaction state root simulation time in microseconds.
+    pub fn get_state_root_time(&self, tx_hash: &B256) -> Option<u128> {
+        self.state_root_times.get(tx_hash).copied()
+    }
+
     /// Returns the receipt and state for a transaction.
     pub fn get_op_tx_result(&self, tx_hash: &B256) -> Option<OpTxResult<OpHaltReason, OpTxType>> {
         let (((result, state), tx), sender) = self
@@ -317,6 +358,8 @@ impl PendingBlocks {
             .zip(self.get_transaction_by_hash(*tx_hash))
             .zip(self.get_transaction_sender(tx_hash))?;
 
+        // Use blob_gas_used from receipt (DA footprint for Jovian) instead of
+        // hardcoding 0, so that CachedExecutor correctly accumulates da_footprint_used.
         let blob_gas_used =
             self.get_receipt(*tx_hash).and_then(|r| r.inner.blob_gas_used).unwrap_or_default();
 

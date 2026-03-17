@@ -38,12 +38,17 @@ pub struct Config {
     /// Seed for the task-scheduling RNG. The same seed always produces the
     /// same task polling order, making test failures reproducible.
     pub seed: u64,
+    /// Panic after this many polling cycles. Guards against busy-loop livelocks.
+    /// Recommended: `Some(1_000_000)` for tests.
+    pub cycle_limit: Option<u64>,
+    /// Panic if virtual time exceeds this duration. Guards against runaway sleepers.
+    pub timeout: Option<Duration>,
 }
 
 impl Config {
-    /// Create a configuration with the given seed.
+    /// Create a configuration with the given seed and no limits.
     pub const fn seeded(seed: u64) -> Self {
-        Self { seed }
+        Self { seed, cycle_limit: None, timeout: None }
     }
 }
 
@@ -96,6 +101,7 @@ impl Runner {
             let _ = tx.send(output);
         }));
 
+        let mut cycles: u64 = 0;
         loop {
             executor.poll_ready();
 
@@ -104,10 +110,20 @@ impl Runner {
             }
 
             if executor.tasks.has_ready() {
+                cycles += 1;
+                if let Some(limit) = config.cycle_limit {
+                    assert!(cycles < limit, "runtime stalled: cycle limit {limit} exceeded");
+                }
                 continue;
             }
 
             executor.skip_idle_time();
+            if let Some(timeout) = config.timeout {
+                assert!(
+                    *executor.time.lock().unwrap() <= timeout,
+                    "runtime stalled: virtual time exceeded {timeout:?}"
+                );
+            }
             executor.wake_ready_sleepers();
             executor.assert_liveness();
         }
@@ -236,7 +252,12 @@ impl Future for CancelFuture {
         if self.state.cancelled.load(Ordering::Acquire) {
             return Poll::Ready(());
         }
-        self.state.wakers.lock().unwrap().push(cx.waker().clone());
+        let mut wakers = self.state.wakers.lock().unwrap();
+        // Replace any stale waker from a previous poll of this exact future so
+        // the wakers list does not accumulate duplicates across select! iterations.
+        wakers.retain(|w| !w.will_wake(cx.waker()));
+        wakers.push(cx.waker().clone());
+        drop(wakers);
         // Re-check after registering to close the race between the check above
         // and a concurrent `cancel()` call.
         if self.state.cancelled.load(Ordering::Acquire) { Poll::Ready(()) } else { Poll::Pending }

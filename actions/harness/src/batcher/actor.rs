@@ -1,12 +1,13 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use base_batcher_core::{
-    BatchDriver, BatchDriverConfig, BatchDriverError, NoopThrottleClient, ThrottleConfig,
-    ThrottleController, ThrottleStrategy,
+    BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
+    ThrottleConfig, ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::{BatchEncoder, BatchType, EncoderConfig};
 use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_consensus_genesis::RollupConfig;
+use base_runtime::TokioRuntime;
 use tokio_util::sync::CancellationToken;
 
 use crate::{L1Miner, L1MinerTxManager, L2BlockProvider};
@@ -113,20 +114,25 @@ impl<S: L2BlockProvider> Batcher<S> {
         let tx_manager = L1MinerTxManager::new(config.batcher_address, config.inbox_address)
             .with_l1_head_tx(l1_head_tx);
 
+        let cancel = CancellationToken::new();
+        let runtime = TokioRuntime::with_token(cancel.clone());
+
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Off);
         let driver = BatchDriver::new(
+            runtime,
             pipeline,
             source,
             tx_manager.clone(),
-            BatchDriverConfig { inbox: config.inbox_address, max_pending_transactions: 16 },
-            throttle,
-            NoopThrottleClient,
+            BatchDriverConfig {
+                inbox: config.inbox_address,
+                max_pending_transactions: 16,
+                drain_timeout: Duration::from_secs(10),
+            },
+            DaThrottle::new(throttle, Arc::new(NoopThrottleClient)),
             l1_source,
         );
 
-        let cancel = CancellationToken::new();
-        let driver_cancel = cancel.clone();
-        let driver_task = tokio::spawn(async move { driver.run(driver_cancel).await });
+        let driver_task = tokio::spawn(async move { driver.run().await });
 
         Self { l2_source, block_tx, tx_manager, driver_task, cancel }
     }
@@ -183,6 +189,30 @@ impl<S: L2BlockProvider> Batcher<S> {
     pub async fn confirm_staged(&self, block_number: u64) {
         self.tx_manager.confirm_all(block_number);
         tokio::task::yield_now().await;
+    }
+
+    /// Simulate an L1 reorg back to `block_number`.
+    ///
+    /// Truncates the L1 chain via [`L1Miner::reorg_to`], fires failure
+    /// receipts for every item in `pending` and `staged`, and publishes
+    /// [`L1HeadEvent::NewHead`] to the driver.
+    ///
+    /// Items already confirmed via [`confirm_staged`] (and thus living in
+    /// the driver's own `in_flight` set) are **not** covered — see
+    /// [`L1MinerTxManager::reorg_to`] for details.
+    ///
+    /// This method is synchronous. After returning, call
+    /// `tokio::task::yield_now().await` (or an equivalent) to give the
+    /// driver's `run()` loop a scheduling turn to process the head event.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `block_number` exceeds the current L1 chain tip
+    /// (`ReorgError::BeyondTip`).
+    ///
+    /// [`confirm_staged`]: Batcher::confirm_staged
+    pub fn reorg(&self, block_number: u64, l1: &mut L1Miner) {
+        self.tx_manager.reorg_to(block_number, l1);
     }
 
     /// Run one full batch cycle through the production [`BatchDriver`] path.

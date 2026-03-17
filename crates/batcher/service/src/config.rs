@@ -66,8 +66,6 @@ pub struct BatcherConfig {
     pub resubmission_timeout: Duration,
     /// Throttle configuration (optional).
     pub throttle: Option<ThrottleConfig>,
-    /// Metrics server port.
-    pub metrics_port: u16,
 }
 
 impl Default for BatcherConfig {
@@ -85,7 +83,6 @@ impl Default for BatcherConfig {
             num_confirmations: 1,
             resubmission_timeout: Duration::from_secs(48),
             throttle: Some(ThrottleConfig::default()),
-            metrics_port: 7300,
         }
     }
 }

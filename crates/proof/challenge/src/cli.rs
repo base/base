@@ -1,9 +1,8 @@
 //! CLI argument definitions for the challenger.
 //!
-//! All challenger-specific flags use the `CHALLENGER_` environment-variable
-//! prefix (e.g. `CHALLENGER_L1_ETH_RPC`). Logging and metrics flags use the
-//! `BASE_CHALLENGER_` prefix via [`base_cli_utils`] macros. The default
-//! metrics port is **7310** (distinct from the proposer's 7300).
+//! All flags use the `BASE_CHALLENGER_` environment-variable prefix
+//! (e.g. `BASE_CHALLENGER_L1_ETH_RPC`). The default metrics port is **7310**
+//! (distinct from the proposer's 7300).
 
 use std::{net::IpAddr, time::Duration};
 
@@ -12,8 +11,11 @@ use base_cli_utils::CliStyles;
 use clap::Parser;
 use url::Url;
 
+base_cli_utils::define_cli_env!("BASE_CHALLENGER");
 base_cli_utils::define_log_args!("BASE_CHALLENGER");
 base_cli_utils::define_metrics_args!("BASE_CHALLENGER", 7310);
+base_tx_manager::define_signer_cli!("BASE_CHALLENGER");
+base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER");
 
 /// Challenger - ZK-proof dispute game challenger for Base.
 #[derive(Parser)]
@@ -49,43 +51,43 @@ impl std::fmt::Debug for Cli {
 #[command(next_help_heading = "Challenger")]
 pub struct ChallengerArgs {
     /// URL of the L1 Ethereum RPC endpoint.
-    #[arg(long = "l1-eth-rpc", env = "CHALLENGER_L1_ETH_RPC")]
+    #[arg(long = "l1-eth-rpc", env = cli_env!("L1_ETH_RPC"))]
     pub l1_eth_rpc: Url,
 
     /// URL of the L2 Ethereum RPC endpoint.
-    #[arg(long = "l2-eth-rpc", env = "CHALLENGER_L2_ETH_RPC")]
+    #[arg(long = "l2-eth-rpc", env = cli_env!("L2_ETH_RPC"))]
     pub l2_eth_rpc: Url,
 
     /// URL of the rollup RPC endpoint.
-    #[arg(long = "rollup-rpc", env = "CHALLENGER_ROLLUP_RPC")]
+    #[arg(long = "rollup-rpc", env = cli_env!("ROLLUP_RPC"))]
     pub rollup_rpc: Url,
 
     /// Address of the `DisputeGameFactory` contract on L1.
-    #[arg(long = "dispute-game-factory-addr", env = "CHALLENGER_DISPUTE_GAME_FACTORY_ADDR")]
+    #[arg(long = "dispute-game-factory-addr", env = cli_env!("DISPUTE_GAME_FACTORY_ADDR"))]
     pub dispute_game_factory_addr: Address,
 
     /// Address of the `AnchorStateRegistry` contract on L1.
-    #[arg(long = "anchor-state-registry-addr", env = "CHALLENGER_ANCHOR_STATE_REGISTRY_ADDR")]
+    #[arg(long = "anchor-state-registry-addr", env = cli_env!("ANCHOR_STATE_REGISTRY_ADDR"))]
     pub anchor_state_registry_addr: Address,
 
     /// Polling interval for new dispute games (e.g., "12s", "1m").
     #[arg(
         long = "poll-interval",
-        env = "CHALLENGER_POLL_INTERVAL",
+        env = cli_env!("POLL_INTERVAL"),
         default_value = "12s",
         value_parser = humantime::parse_duration
     )]
     pub poll_interval: Duration,
 
     /// URL of the ZK proof service endpoint.
-    #[arg(long = "zk-proof-service-endpoint", env = "CHALLENGER_ZK_PROOF_SERVICE_ENDPOINT")]
+    #[arg(long = "zk-proof-service-endpoint", env = cli_env!("ZK_PROOF_SERVICE_ENDPOINT"))]
     pub zk_proof_service_endpoint: Url,
 
     /// Timeout for establishing the initial gRPC connection to the ZK proof
     /// service (e.g., "10s", "1m").
     #[arg(
         long = "zk-connect-timeout",
-        env = "CHALLENGER_ZK_CONNECT_TIMEOUT",
+        env = cli_env!("ZK_CONNECT_TIMEOUT"),
         default_value = "10s",
         value_parser = humantime::parse_duration
     )]
@@ -95,32 +97,30 @@ pub struct ChallengerArgs {
     /// (e.g., "30s", "1m").
     #[arg(
         long = "zk-request-timeout",
-        env = "CHALLENGER_ZK_REQUEST_TIMEOUT",
+        env = cli_env!("ZK_REQUEST_TIMEOUT"),
         default_value = "30s",
         value_parser = humantime::parse_duration
     )]
     pub zk_request_timeout: Duration,
 
-    /// URL of the signer sidecar JSON-RPC endpoint (for production).
-    /// Must be used together with --signer-address.
-    #[arg(long = "signer-endpoint", env = "CHALLENGER_SIGNER_ENDPOINT")]
-    pub signer_endpoint: Option<Url>,
+    /// Signer configuration (local private key or remote sidecar).
+    #[command(flatten)]
+    pub signer: SignerCli,
 
-    /// Address of the signer account on the signer sidecar.
-    /// Must be used together with --signer-endpoint.
-    #[arg(long = "signer-address", env = "CHALLENGER_SIGNER_ADDRESS")]
-    pub signer_address: Option<Address>,
+    /// Transaction manager configuration (fee limits, confirmations, timeouts).
+    #[command(flatten)]
+    pub tx_manager: TxManagerCli,
 
     /// Number of past games to scan on startup.
-    #[arg(long = "lookback-games", env = "CHALLENGER_LOOKBACK_GAMES", default_value = "1000")]
+    #[arg(long = "lookback-games", env = cli_env!("LOOKBACK_GAMES"), default_value = "1000")]
     pub lookback_games: u64,
 
     /// Health server bind address.
-    #[arg(long = "health.addr", env = "CHALLENGER_HEALTH_ADDR", default_value = "0.0.0.0")]
+    #[arg(long = "health.addr", env = cli_env!("HEALTH_ADDR"), default_value = "0.0.0.0")]
     pub health_addr: IpAddr,
 
     /// Health server port.
-    #[arg(long = "health.port", env = "CHALLENGER_HEALTH_PORT", default_value = "8080")]
+    #[arg(long = "health.port", env = cli_env!("HEALTH_PORT"), default_value = "8080")]
     pub health_port: u16,
 }
 
@@ -136,8 +136,8 @@ impl std::fmt::Debug for ChallengerArgs {
             .field("zk_proof_service_endpoint", &self.zk_proof_service_endpoint)
             .field("zk_connect_timeout", &self.zk_connect_timeout)
             .field("zk_request_timeout", &self.zk_request_timeout)
-            .field("signer_endpoint", &self.signer_endpoint)
-            .field("signer_address", &self.signer_address)
+            .field("signer", &self.signer)
+            .field("tx_manager", &self.tx_manager)
             .field("lookback_games", &self.lookback_games)
             .field("health_addr", &self.health_addr)
             .field("health_port", &self.health_port)

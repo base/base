@@ -41,7 +41,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7594::BlobTransactionSidecarVariant};
+use alloy_consensus::TxEnvelope;
+use alloy_eips::{
+    BlockNumberOrTag, Decodable2718, Encodable2718, eip7594::BlobTransactionSidecarEip7594,
+};
 use alloy_network::{Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
@@ -91,7 +94,14 @@ pub struct PreparedTx {
     /// copy rather than a deep clone (~800 KB per blob). One deep clone per
     /// `craft_tx` call is unavoidable because alloy's
     /// `TransactionRequest::sidecar` requires an owned value.
-    pub sidecar: Option<Arc<BlobTransactionSidecarVariant>>,
+    pub sidecar: Option<Arc<BlobTransactionSidecarEip7594>>,
+}
+
+impl PreparedTx {
+    /// Decodes the signed transaction bytes into a [`TxEnvelope`].
+    pub fn to_envelope(&self) -> Result<TxEnvelope, alloy_eips::eip2718::Eip2718Error> {
+        TxEnvelope::decode_2718(&mut self.raw_tx.as_ref())
+    }
 }
 
 /// Mutable fee-bump state tracked across iterations in the send loop.
@@ -115,7 +125,7 @@ struct BumpState {
     nonce: u64,
     /// Cached blob sidecar. See [`PreparedTx::sidecar`] for rationale on
     /// the `Arc` wrapper.
-    sidecar: Option<Arc<BlobTransactionSidecarVariant>>,
+    sidecar: Option<Arc<BlobTransactionSidecarEip7594>>,
 }
 
 impl BumpState {
@@ -148,7 +158,7 @@ pub struct SimpleTxManager {
     /// Validated runtime configuration.
     config: TxManagerConfig,
     /// Nonce manager for sequential nonce allocation.
-    nonce_manager: NonceManager,
+    nonce_manager: NonceManager<RootProvider>,
     /// Chain ID for transaction construction.
     chain_id: u64,
     /// Shutdown flag shared across the manager and any spawned background
@@ -229,7 +239,7 @@ impl SimpleTxManager {
 
         let address = <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(&wallet);
         let nonce_manager = NonceManager::new(provider.clone(), address, config.network_timeout);
-        let blob_builder = BlobTxBuilder::new(config.cell_proofs_activation_timestamp);
+        let blob_builder = BlobTxBuilder::new();
         Ok(Self {
             provider,
             wallet,
@@ -258,7 +268,7 @@ impl SimpleTxManager {
     }
 
     /// Returns a reference to the nonce manager.
-    pub const fn nonce_manager(&self) -> &NonceManager {
+    pub const fn nonce_manager(&self) -> &NonceManager<RootProvider> {
         &self.nonce_manager
     }
 
@@ -384,7 +394,7 @@ impl SimpleTxManager {
         fee_overrides: Option<FeeOverride>,
         mut initial_caps: Option<GasPriceCaps>,
         nonce_override: Option<u64>,
-        cached_sidecar: Option<Arc<BlobTransactionSidecarVariant>>,
+        cached_sidecar: Option<Arc<BlobTransactionSidecarEip7594>>,
     ) -> TxManagerResult<PreparedTx> {
         (|| {
             let caps = initial_caps.take();
@@ -514,15 +524,12 @@ impl SimpleTxManager {
             None => (None, None),
         };
 
-        let block_timestamp = latest_block.header.timestamp;
-
         Ok(GasPriceCaps {
             gas_tip_cap: tip_cap,
             gas_fee_cap,
             raw_gas_fee_cap,
             blob_fee_cap,
             raw_blob_fee_cap,
-            block_timestamp,
         })
     }
 
@@ -665,7 +672,7 @@ impl SimpleTxManager {
         fee_overrides: Option<FeeOverride>,
         caps: Option<GasPriceCaps>,
         nonce_override: Option<u64>,
-        cached_sidecar: Option<Arc<BlobTransactionSidecarVariant>>,
+        cached_sidecar: Option<Arc<BlobTransactionSidecarEip7594>>,
     ) -> TxManagerResult<PreparedTx> {
         let is_blob = !candidate.blobs.is_empty();
 
@@ -749,33 +756,13 @@ impl SimpleTxManager {
         // Step 4b: Attach blob sidecar and blob-specific fields.
         //
         // Reuse a cached sidecar when available (fee bump iterations) to
-        // avoid recomputing KZG proofs from the same blob data. If the
-        // cached sidecar's proof variant no longer matches the current
-        // block timestamp (e.g. fork activation crossed mid-send-loop),
-        // discard it and rebuild.
+        // avoid recomputing KZG proofs from the same blob data.
         let built_sidecar = if is_blob {
-            let sidecar =
-                match cached_sidecar {
-                    Some(cached)
-                        if self.blob_builder.is_sidecar_valid(&cached, caps.block_timestamp) =>
-                    {
-                        cached
-                    }
-                    cached => {
-                        if let Some(ref stale) = cached {
-                            info!(
-                                block_timestamp = caps.block_timestamp,
-                                cached_is_eip7594 = stale.is_eip7594(),
-                                "cached sidecar proof type stale, rebuilding"
-                            );
-                        }
-                        Arc::new(self.blob_builder.make_sidecar_auto(
-                            Arc::clone(&candidate.blobs),
-                            caps.block_timestamp,
-                        )?)
-                    }
-                };
-            tx_request.sidecar = Some((*sidecar).clone());
+            let sidecar = match cached_sidecar {
+                Some(cached) => cached,
+                None => Arc::new(self.blob_builder.build_sidecar(Arc::clone(&candidate.blobs))?),
+            };
+            tx_request.sidecar = Some((*sidecar).clone().into());
             tx_request.populate_blob_hashes();
             tx_request.max_fee_per_blob_gas = blob_fee_cap;
             Some(sidecar)
@@ -1340,7 +1327,7 @@ impl SimpleTxManager {
                 let err = self.rpc_error("send_raw_transaction timed out");
                 send_state.process_send_error(&err);
                 self.metrics.record_publish_error();
-                warn!("publish timed out");
+                warn!(error = %err, "publish timed out");
                 Err(err)
             }
         }
@@ -1565,16 +1552,15 @@ impl TxManager for SimpleTxManager {
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::{TxEip1559, TxEnvelope};
-    use alloy_eips::Decodable2718;
+    use alloy_consensus::TxEip1559;
     use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
-    use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+    use alloy_primitives::{Address, B256, TxKind, U256};
     use alloy_provider::RootProvider;
     use alloy_signer_local::PrivateKeySigner;
     use rstest::rstest;
 
-    use super::{BumpState, SimpleTxManager};
+    use super::{BumpState, PreparedTx, SimpleTxManager, TxEnvelope};
     use crate::{GasPriceCaps, NoopTxMetrics, TxCandidate, TxManagerConfig, TxManagerError};
 
     async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
@@ -1596,10 +1582,8 @@ mod tests {
         (manager, anvil)
     }
 
-    fn decode_eip1559(raw: &Bytes) -> TxEip1559 {
-        let envelope =
-            TxEnvelope::decode_2718(&mut raw.as_ref()).expect("should decode as valid TxEnvelope");
-        match envelope {
+    fn decode_eip1559(prepared: &PreparedTx) -> TxEip1559 {
+        match prepared.to_envelope().expect("should decode as valid TxEnvelope") {
             TxEnvelope::Eip1559(signed) => signed.strip_signature(),
             other => panic!("expected EIP-1559, got {other:?}"),
         }
@@ -1718,14 +1702,13 @@ mod tests {
             raw_gas_fee_cap: 15_000_000_000_000,
             blob_fee_cap: None,
             raw_blob_fee_cap: None,
-            block_timestamp: 0,
         };
 
         let prepared = manager
             .prepare_with_initial_caps(&candidate, None, Some(caps.clone()), None, None)
             .await
             .expect("should prepare tx using supplied caps");
-        let tx = decode_eip1559(&prepared.raw_tx);
+        let tx = decode_eip1559(&prepared);
 
         assert_eq!(tx.to, TxKind::Call(Address::with_last_byte(0x42)));
         assert_eq!(prepared.gas_tip_cap, caps.gas_tip_cap);

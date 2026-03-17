@@ -1,3 +1,5 @@
+//! Challenger metrics constants and startup recording.
+
 /// Challenger metrics helpers.
 #[derive(Debug)]
 pub struct ChallengerMetrics;
@@ -23,6 +25,27 @@ impl ChallengerMetrics {
 
     /// Histogram: latency in seconds for output root validation.
     pub const VALIDATION_LATENCY_SECONDS: &str = "base_challenger_validation_latency_seconds";
+
+    /// Counter: total number of nullify transactions submitted.
+    pub const NULLIFY_TX_SUBMITTED_TOTAL: &str = "base_challenger_nullify_tx_submitted_total";
+
+    /// Counter: total number of nullify transaction outcomes (labelled by status).
+    pub const NULLIFY_TX_OUTCOME_TOTAL: &str = "base_challenger_nullify_tx_outcome_total";
+
+    /// Histogram: latency in seconds for nullify transaction confirmation.
+    pub const NULLIFY_TX_LATENCY_SECONDS: &str = "base_challenger_nullify_tx_latency_seconds";
+
+    /// Label key for status.
+    pub const LABEL_STATUS: &str = "status";
+
+    /// Label value for a successfully confirmed transaction.
+    pub const STATUS_SUCCESS: &str = "success";
+
+    /// Label value for a reverted transaction.
+    pub const STATUS_REVERTED: &str = "reverted";
+
+    /// Label value for a transaction that failed to send.
+    pub const STATUS_ERROR: &str = "error";
 
     /// Label key for version.
     pub const LABEL_VERSION: &str = "version";

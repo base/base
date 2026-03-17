@@ -44,6 +44,16 @@ If you want to work on something that doesn't have an issue yet, open an issue f
 1. Check for existing issues or PRs that address the same problem
 2. If you are assigned an issue but no longer have time to work on it, please let us know so we can unassign it
 
+### Developer Setup
+
+- Rust `1.93` or newer
+- [`just`](https://github.com/casey/just)
+- Foundry (`forge`) for Solidity-based test fixtures
+- Bun and Node.js `22+` if you want to run the spec site locally
+- Docker if you want to use the local devnet or build container images
+- Run `just setup` to install other deps
+
+
 ### Making Changes
 
 1. Fork the repository and create your branch from `main`

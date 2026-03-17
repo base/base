@@ -5,8 +5,8 @@ use std::time::Duration;
 use base_batcher_core::ThrottleConfig;
 use base_batcher_service::{BatcherConfig, BatcherService, SecretKey};
 use base_cli_utils::{LogConfig, RuntimeManager};
+use base_runtime::TokioRuntime;
 use clap::{Args, Parser};
-use tokio_util::sync::CancellationToken;
 use tracing::info;
 use url::Url;
 
@@ -31,6 +31,9 @@ impl Cli {
     /// Run the batcher CLI.
     pub(crate) fn run(self) -> eyre::Result<()> {
         LogConfig::from(self.args.logging.clone()).init_tracing_subscriber()?;
+        base_cli_utils::MetricsConfig::from(self.args.metrics.clone()).init_with(|| {
+            base_cli_utils::register_version_metrics!();
+        })?;
         RuntimeManager::run_until_ctrl_c(self.args.exec())
     }
 }
@@ -174,7 +177,6 @@ impl BatcherArgs {
                     ..Default::default()
                 })
             },
-            metrics_port: self.metrics.port,
         })
     }
 
@@ -187,10 +189,10 @@ impl BatcherArgs {
             "batcher configured"
         );
 
-        let cancellation = CancellationToken::new();
-        let _signal_handle = RuntimeManager::install_signal_handler(cancellation.clone());
+        let rt = TokioRuntime::new();
+        let _signal_handle = RuntimeManager::install_signal_handler(rt.token().clone());
 
         let service = BatcherService::new(config);
-        service.setup().await?.run(cancellation).await
+        service.setup(rt).await?.run().await
     }
 }

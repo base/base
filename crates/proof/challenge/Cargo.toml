@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 # Alloy
+alloy-provider.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-eth.workspace = true
@@ -31,18 +32,15 @@ serde.workspace = true
 eyre.workspace = true
 thiserror.workspace = true
 
-# Crypto
-hex.workspace = true
-zeroize.workspace = true
-alloy-signer.workspace = true
-alloy-signer-local.workspace = true
-
 # CLI
 clap.workspace = true
 base-cli-utils.workspace = true
 
 # Contracts
 base-proof-contracts.workspace = true
+
+# Transaction management
+base-tx-manager.workspace = true
 
 # RPC
 base-proof-rpc.workspace = true

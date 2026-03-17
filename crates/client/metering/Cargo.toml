@@ -52,9 +52,11 @@ metrics-derive.workspace = true
 # misc
 eyre.workspace = true
 arc-swap.workspace = true
+lru.workspace = true
 parking_lot.workspace = true
 derive_more.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 serde = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 
@@ -71,18 +73,21 @@ reth-db = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
 # revm
+revm.workspace = true
 revm-bytecode.workspace = true
 revm-context-interface.workspace = true
 
 # alloy
 alloy-rpc-client.workspace = true
 alloy-genesis = { workspace = true, features = ["std"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # base-alloy
 base-alloy-network.workspace = true
 base-alloy-consensus.workspace = true
+base-alloy-rpc-types.workspace = true
 
 # misc
 url.workspace = true
 rand.workspace = true
-tokio.workspace = true
+serde_json.workspace = true

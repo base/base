@@ -1,3 +1,9 @@
+x-rust-service-build: &rust-service-build
+  context: ../..
+  dockerfile: etc/docker/Dockerfile.rust-services
+  args:
+    PROFILE: "${CARGO_PROFILE:-dev}"
+
 services:
   setup-l1:
     build:
@@ -155,11 +161,10 @@ services:
     entrypoint: ["/usr/local/bin/setup-l2.sh"]
 
   base-builder:
+    image: base-builder:local
     build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.builder
-      args:
-        - PROFILE=${CARGO_PROFILE:-dev}
+      <<: *rust-service-build
+      target: builder
     container_name: base-builder
     depends_on:
       setup-l2:
@@ -220,11 +225,10 @@ services:
     restart: unless-stopped
 
   base-builder-cl:
+    image: base-consensus:local
     build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.consensus
-      args:
-        - PROFILE=${CARGO_PROFILE:-dev}
+      <<: *rust-service-build
+      target: consensus
     container_name: base-builder-cl
     depends_on:
       base-builder:
@@ -290,32 +294,32 @@ services:
       start_period: 250ms
     restart: unless-stopped
 
-  op-batcher:
-    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.3
-    container_name: op-batcher
+  base-batcher:
+    image: base-batcher:local
+    build:
+      <<: *rust-service-build
+      target: batcher
+    container_name: base-batcher
     depends_on:
       base-builder-cl:
         condition: service_healthy
     ports:
       - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
-    volumes:
-      - ../../.devnet/l1/configs:/genesis:ro
     command:
-      - op-batcher
-      - --l1-eth-rpc
+      - --l1-rpc-url
       - http://l1-el:${L1_HTTP_PORT}
-      - --l2-eth-rpc
+      - --l2-rpc-url
       - http://base-builder:${L2_BUILDER_HTTP_PORT}
-      - --rollup-rpc
+      - --rollup-rpc-url
       - http://base-builder-cl:${L2_BUILDER_CL_RPC_PORT}
       - --private-key
       - ${BATCHER_KEY}
       - --max-channel-duration
       - "2"
       - --poll-interval
-      - 1s
+      - "1"
       - --sub-safety-margin
-      - "4"
+      - "0"
       - --num-confirmations
       - "1"
       - --metrics.enabled
@@ -326,11 +330,10 @@ services:
     restart: unless-stopped
 
   base-client:
+    image: base-reth-node:local
     build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.client
-      args:
-        - PROFILE=${CARGO_PROFILE:-dev}
+      <<: *rust-service-build
+      target: client
     container_name: base-client
     depends_on:
       setup-l2:
@@ -357,7 +360,9 @@ services:
       - --http
       - --http.addr=0.0.0.0
       - --http.port=${L2_CLIENT_HTTP_PORT}
-      - --http.api=admin,eth,web3,net,rpc,debug,txpool
+      # Devnet keeps `miner` on HTTP so local services can read and update
+      # the dynamic DA and gas-limit knobs end-to-end.
+      - --http.api=admin,eth,web3,net,rpc,debug,txpool,miner
       - --http.corsdomain=*
       - --ws
       - --ws.addr=0.0.0.0
@@ -377,6 +382,11 @@ services:
       - --trusted-peers=enode://${BUILDER_ENODE_ID}@base-builder:${L2_BUILDER_P2P_PORT}
       - --rollup.sequencer=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - --enable-metering
+      - --metering.gas-limit=${METERING_GAS_LIMIT}
+      - --metering.execution-time-us=${METERING_EXECUTION_TIME_US}
+      - --metering.state-root-time-us=${METERING_STATE_ROOT_TIME_US}
+      - --metering.da-bytes=${METERING_DA_BYTES}
+      - --metering.target-flashblocks-per-block=${METERING_TARGET_FLASHBLOCKS_PER_BLOCK}
       - --color=never
       - -vvv
     healthcheck:
@@ -388,11 +398,10 @@ services:
     restart: unless-stopped
 
   base-client-cl:
+    image: base-consensus:local
     build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.consensus
-      args:
-        - PROFILE=${CARGO_PROFILE:-dev}
+      <<: *rust-service-build
+      target: consensus
     container_name: base-client-cl
     depends_on:
       base-client:

@@ -7,8 +7,9 @@ use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bloom};
 use alloy_rpc_types_eth::TransactionReceipt;
 use base_batcher_source::L1HeadEvent;
-use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
+use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
 use tokio::sync::{mpsc, oneshot};
+use tracing::info;
 
 use crate::{L1Miner, PendingTx};
 
@@ -172,6 +173,55 @@ impl L1MinerTxManager {
         if let Some(tx) = &self.l1_head_tx {
             let _ = tx.send(L1HeadEvent::NewHead(block_number));
         }
+    }
+
+    /// Simulate an L1 reorg back to `block_number`.
+    ///
+    /// Calls [`L1Miner::reorg_to`] to truncate the canonical chain, fires a
+    /// failure receipt for every pending and staged submission (since their
+    /// inclusion block has been discarded or they are no longer valid), and
+    /// publishes [`L1HeadEvent::NewHead`] so the [`BatchDriver`] observes
+    /// the reorg.
+    ///
+    /// Both `pending` (not yet staged) and `staged` (submitted to L1 but not
+    /// yet confirmed) items are drained. This ensures no [`SendHandle`] is
+    /// left dangling, which would block the driver's `in_flight.next()`.
+    ///
+    /// # Ordering
+    ///
+    /// Failure receipts are fired *before* `L1HeadEvent::NewHead` is sent.
+    /// This is intentional: the driver's `select!` loop prioritises receipt
+    /// processing over head events, so firing receipts first ensures the
+    /// driver requeues any failed frames before it advances its L1 head.
+    ///
+    /// # In-flight items
+    ///
+    /// This method only covers items still in the `pending` or `staged`
+    /// queues. Items that have already been confirmed via [`confirm_all`]
+    /// and are living in the driver's own `in_flight` set are not touched.
+    /// Call this method *before* `confirm_staged` (or immediately after a
+    /// yield has let the driver drain `in_flight`) to avoid leaving the
+    /// driver in an inconsistent state.
+    ///
+    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    /// [`SendHandle`]: base_tx_manager::SendHandle
+    /// [`confirm_all`]: L1MinerTxManager::confirm_all
+    pub fn reorg_to(&self, block_number: u64, l1: &mut L1Miner) {
+        l1.reorg_to(block_number).expect("reorg_to should not fail");
+        let (pending, staged) = {
+            let mut inner = self.inner.lock().unwrap();
+            let pending: Vec<Pending> = inner.pending.drain(..).collect();
+            let staged: Vec<Pending> = inner.staged.drain(..).collect();
+            (pending, staged)
+        };
+        let drained = pending.len() + staged.len();
+        for p in pending.into_iter().chain(staged) {
+            let _ = p.responder.send(Err(TxManagerError::Rpc("reorg".to_string())));
+        }
+        if let Some(tx) = &self.l1_head_tx {
+            let _ = tx.send(L1HeadEvent::NewHead(block_number));
+        }
+        info!(block_number = %block_number, drained = %drained, "simulated L1 reorg");
     }
 
     /// Submit all pending transactions/blobs to `l1`, mine one block, resolve

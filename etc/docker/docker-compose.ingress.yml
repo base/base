@@ -1,3 +1,9 @@
+x-rust-service-build: &rust-service-build
+  context: ../..
+  dockerfile: etc/docker/Dockerfile.rust-services
+  args:
+    PROFILE: "${CARGO_PROFILE:-dev}"
+
 services:
   kafka:
     image: apache/kafka:3.9.0
@@ -71,11 +77,10 @@ services:
       "
 
   ingress-rpc:
+    image: ingress-rpc:local
     build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.ingress-rpc
-      args:
-        - PROFILE=dev
+      <<: *rust-service-build
+      target: ingress-rpc
     container_name: ingress-rpc
     depends_on:
       base-builder:
@@ -96,7 +101,9 @@ services:
       - TIPS_INGRESS_METRICS_PORT=${L2_INGRESS_METRICS_PORT}
       - TIPS_INGRESS_RPC_MEMPOOL=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - TIPS_INGRESS_RPC_SIMULATION=http://base-client:${L2_CLIENT_HTTP_PORT}
-      - TIPS_INGRESS_BUILDER_RPCS=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      # Fan out metering data to both builder and client; both expose
+      # `base_setMeteringInformation` for trusted ingestion.
+      - TIPS_INGRESS_BUILDER_RPCS=http://base-builder:${L2_BUILDER_HTTP_PORT},http://base-client:${L2_CLIENT_HTTP_PORT}
       # proxyd routes transactions to the builder and optimistically forwards a
       # copy to ingress-rpc, matching the production topology. Ingress does not
       # need to submit transactions itself.
@@ -142,11 +149,10 @@ services:
     restart: unless-stopped
 
   audit-archiver:
+    image: audit-archiver:local
     build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.audit-archiver
-      args:
-        - PROFILE=dev
+      <<: *rust-service-build
+      target: audit-archiver
     container_name: audit-archiver
     depends_on:
       kafka-init:

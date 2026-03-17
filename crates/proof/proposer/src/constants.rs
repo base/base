@@ -20,9 +20,6 @@ pub const BLOCKHASH_SAFETY_MARGIN: u64 = 100;
 /// Maximum time to wait for a proposal to be included on-chain.
 pub const PROPOSAL_TIMEOUT: Duration = Duration::from_secs(600);
 
-/// Default poll interval for checking new blocks.
-pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(12);
-
 /// Sentinel value for the parent game index when creating the first game from
 /// the anchor state registry (i.e., no parent game exists).
 /// This is `uint32.max` per the `DisputeGameFactory` contract.
@@ -41,13 +38,3 @@ pub const NO_PARENT_INDEX: u32 = 0xFFFF_FFFF;
 /// further to ensure the proposer can always find and resume from its most recent
 /// game after a restart.
 pub const MAX_GAME_RECOVERY_LOOKBACK: u64 = 5000;
-
-// ============================================================================
-// Gas Estimation Constants
-// ============================================================================
-
-/// Gas limit multiplier numerator (120% = 6/5).
-pub const GAS_LIMIT_MULTIPLIER_NUMERATOR: u64 = 6;
-
-/// Gas limit multiplier denominator (120% = 6/5).
-pub const GAS_LIMIT_MULTIPLIER_DENOMINATOR: u64 = 5;

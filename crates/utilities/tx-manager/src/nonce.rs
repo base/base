@@ -3,7 +3,7 @@
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
-use alloy_provider::{Provider, RootProvider};
+use alloy_provider::Provider;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use tracing::{debug, info, warn};
 
@@ -54,14 +54,14 @@ pub struct NonceState {
 /// returned [`NonceGuard`], ensuring sequential nonce assignment even
 /// under concurrent access.
 #[derive(Debug, Clone)]
-pub struct NonceManager {
+pub struct NonceManager<P> {
     inner: Arc<Mutex<NonceState>>,
-    provider: RootProvider,
+    provider: P,
     address: Address,
     rpc_timeout: Duration,
 }
 
-impl NonceManager {
+impl<P: Provider> NonceManager<P> {
     /// Creates a new [`NonceManager`] with no cached nonce.
     ///
     /// The `rpc_timeout` bounds the `get_transaction_count` RPC call
@@ -69,7 +69,7 @@ impl NonceManager {
     ///
     /// The first call to [`next_nonce`](Self::next_nonce) will fetch the
     /// current transaction count from the provider.
-    pub fn new(provider: RootProvider, address: Address, rpc_timeout: Duration) -> Self {
+    pub fn new(provider: P, address: Address, rpc_timeout: Duration) -> Self {
         Self { inner: Arc::new(Mutex::new(NonceState::default())), provider, address, rpc_timeout }
     }
 
@@ -365,10 +365,11 @@ mod tests {
     };
 
     use alloy_node_bindings::Anvil;
+    use alloy_provider::RootProvider;
 
     use super::*;
 
-    impl NonceManager {
+    impl NonceManager<RootProvider> {
         /// Creates a [`NonceManager`] with the cache pre-seeded to `nonce`.
         ///
         /// Test-only: allows exercising edge-case nonce values (e.g.

@@ -12,7 +12,7 @@ pub enum SequencerAdminQuery {
     /// A query to check if the sequencer is active.
     SequencerActive(oneshot::Sender<Result<bool, SequencerAdminAPIError>>),
     /// A query to start the sequencer.
-    StartSequencer(oneshot::Sender<Result<(), SequencerAdminAPIError>>),
+    StartSequencer(B256, oneshot::Sender<Result<(), SequencerAdminAPIError>>),
     /// A query to stop the sequencer.
     StopSequencer(oneshot::Sender<Result<B256, SequencerAdminAPIError>>),
     /// A query to check if the conductor is enabled.
@@ -58,8 +58,8 @@ where
                     warn!(target: "sequencer", "Failed to send response for is_sequencer_active query");
                 }
             }
-            SequencerAdminQuery::StartSequencer(tx) => {
-                if tx.send(self.start_sequencer().await).is_err() {
+            SequencerAdminQuery::StartSequencer(unsafe_head, tx) => {
+                if tx.send(self.start_sequencer(unsafe_head).await).is_err() {
                     warn!(target: "sequencer", "Failed to send response for start_sequencer query");
                 }
             }
@@ -112,13 +112,22 @@ where
     }
 
     /// Starts the sequencer in an idempotent fashion.
-    pub(super) async fn start_sequencer(&mut self) -> Result<(), SequencerAdminAPIError> {
+    ///
+    /// `unsafe_head` identifies the block the caller intends to start sequencing from.
+    /// Note: the forkchoice update to `unsafe_head` is not yet implemented (see TODO in body).
+    pub(super) async fn start_sequencer(
+        &mut self,
+        unsafe_head: B256,
+    ) -> Result<(), SequencerAdminAPIError> {
         if self.is_active {
-            info!(target: "sequencer", "received request to start sequencer, but it is already started");
+            info!(target: "sequencer", unsafe_head = %unsafe_head, "received request to start sequencer, but it is already started");
             return Ok(());
         }
 
-        info!(target: "sequencer", "Starting sequencer");
+        // TODO: call self.engine_client to update the engine forkchoice to unsafe_head before
+        // setting is_active, matching op-node behavior where the caller's intended starting point
+        // is honored. See reset_derivation_pipeline() for the engine_client pattern.
+        info!(target: "sequencer", unsafe_head = %unsafe_head, "Starting sequencer");
         self.is_active = true;
 
         self.update_metrics();

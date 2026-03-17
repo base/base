@@ -208,7 +208,7 @@ use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxCandidate,
 
 // Create a SimpleTxManager with a provider, signer config, and tx-manager config.
 let provider = RootProvider::new_http("http://localhost:8545".parse()?);
-let signer_config = SignerConfig::Local { private_key: B256::repeat_byte(0x01) };
+let signer_config = SignerConfig::local(B256::repeat_byte(0x01));
 let config = TxManagerConfig::default();
 let chain_id = 1;
 let manager = SimpleTxManager::new(provider, signer_config, config, chain_id, Arc::new(BaseTxMetrics::new("my_service"))).await?;

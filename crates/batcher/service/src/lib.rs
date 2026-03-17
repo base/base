@@ -22,5 +22,8 @@ pub use l1_source::{NullL1HeadSubscription, RpcL1HeadPollingSource, WsL1HeadSubs
 mod throttle;
 pub use throttle::RpcThrottleClient;
 
+mod safe_head_poller;
+pub use safe_head_poller::{SafeHeadPoller, SafeHeadProvider};
+
 mod service;
 pub use service::{BatcherService, ReadyBatcher};

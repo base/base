@@ -41,8 +41,14 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
-    let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_block_time(300).build();
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_block_time(300)
+        // Small sequence window so the pipeline generates deposit-only blocks for the
+        // over-drift slots once the window expires. With seq_window_size=2 and the batch
+        // submitted in L1 block 2, the window expires at L1 block 3 (epoch 0 + 2 < 3),
+        // prompting the pipeline to auto-generate default blocks for slots 7 and 8.
+        .with_seq_window_size(2)
+        .build();
     let mut h = ActionTestHarness::new(l1_cfg, rollup_cfg.clone());
 
     // Mine L1 block 1 (ts=4) so the sequencer has an epoch to reference,
@@ -82,6 +88,13 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
     batcher.advance(&mut h.l1).await.expect("batcher advance");
     chain.push(h.l1.tip().clone());
 
+    // Mine 2 extra empty L1 blocks (seq_window_size=2, batch epoch=0, batch
+    // in L1 block 2 → window expires at L1 block 3). The pipeline needs to
+    // see L1 blocks 3 and 4 to auto-generate deposit-only blocks for slots 7-8:
+    // block 3 produces slot 7, block 4 produces slot 8.
+    h.mine_and_push(&chain);
+    h.mine_and_push(&chain);
+
     verifier.initialize().await.expect("initialize");
 
     // Drive derivation through all L1 blocks.
@@ -96,11 +109,12 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
     // batcher's submitted batches. Blocks 7-8 are generated as deposit-only
     // default blocks because the non-empty batches are dropped for exceeding
     // max_sequencer_drift.
-    assert!(
-        verifier.l2_safe().block_info.number >= 6,
-        "at least 6 L2 blocks should be derived (within drift)"
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        8,
+        "all 8 L2 blocks must be derived (blocks 7-8 as deposit-only over-drift blocks)"
     );
-    assert!(total_derived >= 6, "at least 6 blocks derived");
+    assert_eq!(total_derived, 8, "all 8 blocks derived");
 
     // Verify deposit-only behaviour: blocks 1-6 carry 2 txs each (deposit +
     // user tx), blocks 7-8 must carry exactly 1 tx (L1 info deposit only).

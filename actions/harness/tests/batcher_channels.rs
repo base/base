@@ -329,3 +329,103 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
     assert_eq!(derived, 1, "multi-block channel must yield 1 L2 block");
     assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head must advance to 1");
 }
+
+// ---------------------------------------------------------------------------
+// E. Multi-frame channel with an empty L1 gap between submissions
+// ---------------------------------------------------------------------------
+
+/// Frames from a single channel are submitted to L1 in two separate L1 blocks
+/// with an **empty L1 block** between them. The derivation pipeline must
+/// correctly reassemble the channel across the gap.
+///
+/// Note: `encode_only()` sends a `Flush` event that closes the channel
+/// immediately, so all frames are in the pending queue before any L1 head
+/// events arrive. This means this test exercises the multi-frame split
+/// submission scenario (frame 0 in block 1, empty block 2, rest in block 3),
+/// not duration-based channel closure — that would require the channel to
+/// remain open while L1 blocks are mined.
+#[tokio::test]
+async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig {
+            da_type: DaType::Calldata,
+            max_frame_size: 80,
+            ..EncoderConfig::default()
+        },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let block = sequencer.build_next_block().expect("build L2 block 1");
+
+    // Create verifier before any mining so all future blocks are pushed to chain.
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
+    // Encode block — produces multiple frames with max_frame_size=80.
+    // The Flush from encode_only() closes the channel; frames become pending.
+    let mut source = ActionL2Source::new();
+    source.push(block);
+    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    batcher.encode_only().await.expect("encode");
+
+    let frame_count = batcher.pending_count();
+    assert!(
+        frame_count >= 2,
+        "expected multi-frame channel with max_frame_size=80, got {frame_count} frames",
+    );
+
+    // L1 block 1: submit only frame 0.
+    batcher.stage_n_frames(&mut h.l1, 1);
+    let block_1_num = h.l1.mine_block().number();
+    chain.push(h.l1.tip().clone());
+    batcher.confirm_staged(block_1_num).await;
+
+    verifier.initialize().await.expect("initialize");
+    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
+    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.act_l2_pipeline_full().await.expect("step block 1");
+
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        0,
+        "incomplete channel after block 1; safe head must stay at genesis"
+    );
+
+    // Mine an empty L1 block 2. The channel was already closed by encode_only()
+    // (which sent Flush), so no staged items are confirmed here. The call to
+    // confirm_staged is used solely to advance the driver's L1 head to block 2
+    // via L1HeadEvent::NewHead — confirm_all fires zero receipts and just sends
+    // the head event. The remaining frames are already in `pending`.
+    h.l1.mine_block();
+    chain.push(h.l1.tip().clone());
+    batcher.confirm_staged(h.l1.latest_number()).await;
+
+    // L1 block 3: submit the remaining frames.
+    let remaining = batcher.pending_count();
+    batcher.stage_n_frames(&mut h.l1, remaining);
+    let block_3_num = h.l1.mine_block().number();
+    chain.push(h.l1.tip().clone());
+    batcher.confirm_staged(block_3_num).await;
+
+    // Signal verifier for all L1 blocks. Track the total L2 blocks derived
+    // to confirm exactly one block was produced across the 3-block span.
+    let mut total_derived = 0usize;
+    for i in 2..=h.l1.latest_number() {
+        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
+        verifier.act_l1_head_signal(blk).await.expect("signal block");
+        total_derived += verifier.act_l2_pipeline_full().await.expect("step block");
+    }
+
+    assert_eq!(total_derived, 1, "exactly one L2 block must be derived across the 3-block span");
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        1,
+        "frames split across 3 L1 blocks (with an empty intermediate block) must derive L2 block 1"
+    );
+}

@@ -13,7 +13,7 @@ use rayon::prelude::*;
 
 /// Helper: spawns an Anvil instance and returns a [`NonceManager`] wired to
 /// the first default account.
-fn setup() -> (NonceManager, alloy_node_bindings::AnvilInstance) {
+fn setup() -> (NonceManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
     let anvil = Anvil::new().spawn();
     let url = anvil.endpoint_url();
     let provider = RootProvider::new_http(url);

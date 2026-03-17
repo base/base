@@ -40,6 +40,15 @@ jobs:
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
 
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 1
+
+      - name: Prepare image labels
+        id: image-labels
+        run: |
+          echo "source=https://github.com/${{ github.repository }}" >> $GITHUB_OUTPUT
+          echo "revision=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
@@ -51,29 +60,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5.9.0
-        with:
-          images: ${{ env.REGISTRY_IMAGE }}
-
       - name: Build and push Docker image
-        id: build
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
-        with:
-          context: .
-          file: etc/docker/Dockerfile.client
-          tags: ${{ env.REGISTRY_IMAGE }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ matrix.settings.arch }}
-          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/node-reth-dev:cache-${{ env.PLATFORM_PAIR }}
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/node-reth-dev:cache-${{ env.PLATFORM_PAIR }},mode=max
+        run: |
+          docker buildx bake -f etc/docker/docker-bake.hcl client \
+            --set client.tags=${{ env.REGISTRY_IMAGE }} \
+            --set client.platform=${{ matrix.settings.arch }} \
+            --set client.output=type=image,push-by-digest=true,name-canonical=true,push=true \
+            --set client.cache-to=type=registry,ref=${{ env.REGISTRY_IMAGE }}:cache-${{ env.PLATFORM_PAIR }},mode=max \
+            --set client.labels.org.opencontainers.image.source=${{ steps.image-labels.outputs.source }} \
+            --set client.labels.org.opencontainers.image.revision=${{ steps.image-labels.outputs.revision }} \
+            --set client.labels.org.opencontainers.image.created=${{ steps.image-labels.outputs.created }} \
+            --metadata-file ${{ runner.temp }}/client-metadata.json
 
       - name: Export digest
         run: |
           mkdir -p ${{ runner.temp }}/digests
-          digest="${{ steps.build.outputs.digest }}"
+          digest="$(jq -er '."client"."containerimage.digest"' ${{ runner.temp }}/client-metadata.json)"
           touch "${{ runner.temp }}/digests/${digest#sha256:}"
 
       - name: Upload digest
@@ -99,6 +101,8 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 1
 
       - name: Download digests
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0

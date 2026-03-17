@@ -282,8 +282,11 @@ where
                 }
             };
 
+        // Fetch the safe head once per tick and reuse it throughout.
+        let latest_safe = self.latest_safe_block().await?;
+
         // Generate proofs for blocks in the range.
-        if let Err(e) = self.generate_outputs(starting_block_number).await {
+        if let Err(e) = self.generate_outputs(starting_block_number, &latest_safe).await {
             warn!(error = %e, "Error generating outputs");
             return Err(e);
         }
@@ -294,11 +297,10 @@ where
         if !fresh_roots.is_empty() {
             self.cached_intermediate_roots = fresh_roots;
         }
-        let intermediate_roots = self.cached_intermediate_roots.clone();
 
         // Check if we have enough proofs to aggregate and propose.
-        match self.next_output(starting_block_number, starting_root, &intermediate_roots).await {
-            Ok(Some(proposal)) => {
+        match self.next_output(starting_block_number, starting_root, &latest_safe).await {
+            Ok(Some((proposal, intermediate_roots))) => {
                 self.propose_output(&proposal, parent_index, &intermediate_roots).await;
             }
             Ok(None) => {}
@@ -345,7 +347,11 @@ where
     }
 
     /// Generates single-block proofs, filling the pending queue.
-    async fn generate_outputs(&mut self, starting_block_number: u64) -> Result<(), ProposerError> {
+    async fn generate_outputs(
+        &mut self,
+        starting_block_number: u64,
+        latest_safe: &L2BlockRef,
+    ) -> Result<(), ProposerError> {
         // Clear pending if not contiguous with starting point.
         if let Some(front) = self.pending.front()
             && front.from.number.saturating_sub(1) != starting_block_number
@@ -394,12 +400,7 @@ where
 
             let proposal = self.prover.generate(&block).await?;
 
-            let blocks_behind = match self.latest_safe_block_number().await {
-                Ok(safe_number) if safe_number > proposal.to.number => {
-                    safe_number - proposal.to.number
-                }
-                _ => 0,
-            };
+            let blocks_behind = latest_safe.number.saturating_sub(proposal.to.number);
 
             info!(
                 block_number = proposal.to.number,
@@ -419,13 +420,17 @@ where
     }
 
     /// Determines the next output to propose, aggregating if needed.
+    ///
+    /// On success, returns the proposal along with the intermediate roots to use
+    /// for submission. The intermediate roots are cloned only when a proposal is
+    /// actually ready, avoiding unnecessary allocations on ticks where no
+    /// proposal is produced.
     async fn next_output(
         &mut self,
         starting_block_number: u64,
         starting_root: B256,
-        intermediate_roots: &[B256],
-    ) -> Result<Option<ProverProposal>, ProposerError> {
-        let latest_safe = self.latest_safe_block().await?;
+        latest_safe: &L2BlockRef,
+    ) -> Result<Option<(ProverProposal, Vec<B256>)>, ProposerError> {
         let latest_safe_number = latest_safe.number;
 
         // We need exactly block_interval proofs to propose.
@@ -434,14 +439,11 @@ where
             .ok_or_else(|| ProposerError::Internal("overflow computing target block".into()))?;
 
         // Count pending proposals up to the target block and safe head.
-        let mut count = 0;
-        for p in &self.pending {
-            if p.to.number <= target && p.to.number <= latest_safe_number {
-                count += 1;
-            } else {
-                break;
-            }
-        }
+        let mut count = self
+            .pending
+            .iter()
+            .take_while(|p| p.to.number <= target && p.to.number <= latest_safe_number)
+            .count();
 
         if count == 0 {
             return Ok(None);
@@ -460,6 +462,7 @@ where
         }
 
         // Aggregate proposals in batches.
+        let intermediate_roots = &self.cached_intermediate_roots;
         let prev_block_number = starting_block_number;
         while count > 1 {
             let batch_length = count.min(AGGREGATE_BATCH_SIZE);
@@ -467,7 +470,7 @@ where
 
             // Only include intermediate roots in the final aggregation round.
             let is_final_batch = count == batch_length;
-            let batch_roots = if is_final_batch { intermediate_roots.to_vec() } else { vec![] };
+            let batch_roots = if is_final_batch { intermediate_roots.clone() } else { vec![] };
 
             match self.prover.aggregate(starting_root, prev_block_number, batch, batch_roots).await
             {
@@ -540,7 +543,11 @@ where
             return Ok(None);
         }
 
-        Ok(Some(self.pending[0].clone()))
+        // Clone the intermediate roots only when we're actually going to propose.
+        let roots = self.cached_intermediate_roots.clone();
+        // Pop instead of clone: the pending queue is cleared after submission anyway.
+        let proposal = self.pending.pop_front().unwrap();
+        Ok(Some((proposal, roots)))
     }
 
     /// Returns the latest safe L2 block reference.
@@ -551,11 +558,6 @@ where
         } else {
             Ok(sync_status.finalized_l2)
         }
-    }
-
-    /// Returns the latest safe L2 block number.
-    async fn latest_safe_block_number(&self) -> Result<u64, ProposerError> {
-        self.latest_safe_block().await.map(|b| b.number)
     }
 
     /// Submits a proposal by creating a dispute game via the factory.
@@ -796,8 +798,8 @@ mod tests {
         prover::{Prover, test_helpers::test_proposal},
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-            MockOutputProposer, MockRollupClient, test_anchor_root, test_per_chain_config,
-            test_sync_status,
+            MockOutputProposer, MockRollupClient, test_anchor_root, test_l2_block_ref,
+            test_per_chain_config, test_sync_status,
         },
     };
 
@@ -932,7 +934,8 @@ mod tests {
         assert_eq!(driver.pending.len(), 3);
 
         // generate_outputs(10): front.from(15) - 1 = 14 != 10, so queue is cleared
-        let result = driver.generate_outputs(10).await;
+        let safe = test_l2_block_ref(200, B256::ZERO);
+        let result = driver.generate_outputs(10, &safe).await;
         assert!(result.is_ok());
         assert_eq!(driver.pending.len(), 0);
     }
@@ -947,7 +950,8 @@ mod tests {
         driver.pending.push_back(test_proposal(12, 12, false));
         assert_eq!(driver.pending.len(), 2);
 
-        let result = driver.generate_outputs(10).await;
+        let safe = test_l2_block_ref(200, B256::ZERO);
+        let result = driver.generate_outputs(10, &safe).await;
         assert!(result.is_ok());
         // Queue preserved (contiguous), no new blocks generated (MockL2 returns BlockNotFound)
         assert_eq!(driver.pending.len(), 2);
@@ -955,11 +959,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_next_output_returns_none_when_empty() {
-        let sync_status = test_sync_status(200, B256::ZERO);
-        let mut driver = test_driver(1000, sync_status, None);
+        let mut driver = test_driver(1000, test_sync_status(200, B256::ZERO), None);
+        let safe = test_l2_block_ref(200, B256::ZERO);
 
         // Empty pending queue
-        let result = driver.next_output(100, B256::ZERO, &[]).await;
+        let result = driver.next_output(100, B256::ZERO, &safe).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -968,12 +972,13 @@ mod tests {
     async fn test_next_output_returns_none_when_target_not_reached() {
         // target = 100 + 10 = 110, safe=200, but pending only goes up to 105
         let canonical_hash = B256::repeat_byte(0x30);
-        let sync_status = test_sync_status(200, canonical_hash);
-        let mut driver = test_driver(1000, sync_status, Some(canonical_hash));
+        let safe = test_l2_block_ref(200, canonical_hash);
+        let mut driver =
+            test_driver(1000, test_sync_status(200, canonical_hash), Some(canonical_hash));
 
         driver.pending.push_back(test_proposal(101, 105, false));
 
-        let result = driver.next_output(100, B256::ZERO, &[]).await;
+        let result = driver.next_output(100, B256::ZERO, &safe).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -982,12 +987,13 @@ mod tests {
     async fn test_next_output_returns_none_when_target_not_safe() {
         // target = 100 + 10 = 110, but safe_number = 105 (not safe yet)
         let canonical_hash = B256::repeat_byte(0x30);
-        let sync_status = test_sync_status(105, canonical_hash);
-        let mut driver = test_driver(1000, sync_status, Some(canonical_hash));
+        let safe = test_l2_block_ref(105, canonical_hash);
+        let mut driver =
+            test_driver(1000, test_sync_status(105, canonical_hash), Some(canonical_hash));
 
         driver.pending.push_back(test_proposal(101, 110, false));
 
-        let result = driver.next_output(100, B256::ZERO, &[]).await;
+        let result = driver.next_output(100, B256::ZERO, &safe).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -996,14 +1002,14 @@ mod tests {
     async fn test_next_output_reorg_detection() {
         // Proposal has to.hash = 0x30, but canonical hash is 0xBB => mismatch
         let canonical_hash = B256::repeat_byte(0xBB);
-        let sync_status = test_sync_status(200, B256::ZERO);
-        let mut driver = test_driver(1000, sync_status, Some(canonical_hash));
+        let safe = test_l2_block_ref(200, B256::ZERO);
+        let mut driver = test_driver(1000, test_sync_status(200, B256::ZERO), Some(canonical_hash));
 
         // test_proposal sets to.hash = B256::repeat_byte(0x30) which != 0xBB
         driver.pending.push_back(test_proposal(101, 110, false));
         assert_eq!(driver.pending.len(), 1);
 
-        let result = driver.next_output(100, B256::ZERO, &[]).await;
+        let result = driver.next_output(100, B256::ZERO, &safe).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
         // Queue should be cleared due to reorg detection
@@ -1016,14 +1022,15 @@ mod tests {
         // Threshold = 10000 - (8191-100) = 10000 - 8091 = 1909
         // 1000 <= 1909 → rejected (L1 origin too old)
         let canonical_hash = B256::repeat_byte(0x30);
-        let sync_status = test_sync_status(200, canonical_hash);
-        let mut driver = test_driver(10000, sync_status, Some(canonical_hash));
+        let safe = test_l2_block_ref(200, canonical_hash);
+        let mut driver =
+            test_driver(10000, test_sync_status(200, canonical_hash), Some(canonical_hash));
 
         let mut proposal = test_proposal(101, 110, false);
         proposal.to.l1origin.number = 1000;
         driver.pending.push_back(proposal);
 
-        let result = driver.next_output(100, B256::ZERO, &[]).await;
+        let result = driver.next_output(100, B256::ZERO, &safe).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
         // Queue NOT cleared — blockhash window gating doesn't clear the queue
@@ -1035,34 +1042,35 @@ mod tests {
         // target = 100 + 10 = 110, safe = 200, l1_latest = 1000
         // test_proposal sets l1origin.number = 100 + to_number = 210, well within BLOCKHASH window
         let canonical_hash = B256::repeat_byte(0x30);
-        let sync_status = test_sync_status(200, canonical_hash);
-        let mut driver = test_driver(1000, sync_status, Some(canonical_hash));
+        let safe = test_l2_block_ref(200, canonical_hash);
+        let mut driver =
+            test_driver(1000, test_sync_status(200, canonical_hash), Some(canonical_hash));
 
         driver.pending.push_back(test_proposal(101, 110, false));
         assert_eq!(driver.pending.len(), 1);
 
-        let result = driver.next_output(100, B256::ZERO, &[]).await;
+        let result = driver.next_output(100, B256::ZERO, &safe).await;
         assert!(result.is_ok());
-        let proposal = result.unwrap();
-        assert!(proposal.is_some(), "expected Some(proposal)");
-        let proposal = proposal.unwrap();
+        let output = result.unwrap();
+        assert!(output.is_some(), "expected Some(proposal)");
+        let (proposal, _roots) = output.unwrap();
         assert_eq!(proposal.from.number, 101);
         assert_eq!(proposal.to.number, 110);
-        // Pending still has the item (next_output clones, doesn't pop)
-        assert_eq!(driver.pending.len(), 1);
+        // Pending is now empty (next_output pops the proposal)
+        assert_eq!(driver.pending.len(), 0);
     }
 
     #[tokio::test]
     async fn test_next_output_with_aggregation() {
         let canonical_hash = B256::repeat_byte(0x30);
-        let sync_status = test_sync_status(103, canonical_hash);
+        let safe = test_l2_block_ref(103, canonical_hash);
         let cancel = CancellationToken::new();
 
         let mut driver = test_driver_custom(
             MockEnclaveForAggregation,
             DriverConfig { block_interval: 3, ..Default::default() },
             400,
-            sync_status,
+            test_sync_status(103, canonical_hash),
             Some(canonical_hash),
             Arc::new(MockOutputProposer),
             cancel,
@@ -1075,15 +1083,15 @@ mod tests {
         assert_eq!(driver.pending.len(), 3);
 
         // target = 100 + 3 = 103, safe = 103, all gates pass
-        let result = driver.next_output(100, B256::ZERO, &[]).await;
+        let result = driver.next_output(100, B256::ZERO, &safe).await;
         assert!(result.is_ok());
-        let proposal = result.unwrap();
-        assert!(proposal.is_some(), "expected Some(proposal) after aggregation");
-        let proposal = proposal.unwrap();
+        let output = result.unwrap();
+        assert!(output.is_some(), "expected Some(proposal) after aggregation");
+        let (proposal, _roots) = output.unwrap();
         assert_eq!(proposal.from.number, 101);
         assert_eq!(proposal.to.number, 103);
-        // Pending should have 1 aggregated item
-        assert_eq!(driver.pending.len(), 1);
+        // Pending is empty after pop
+        assert_eq!(driver.pending.len(), 0);
     }
 
     #[tokio::test]

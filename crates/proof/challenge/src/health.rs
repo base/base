@@ -41,6 +41,13 @@ impl ServerState {
             StatusCode::SERVICE_UNAVAILABLE
         }
     }
+
+    fn router(self) -> Router {
+        Router::new()
+            .route("/healthz", get(Self::liveness))
+            .route("/readyz", get(Self::readiness))
+            .with_state(self)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -65,12 +72,7 @@ impl HealthServer {
     ///
     /// Returns an error if the TCP listener cannot bind to `addr`.
     pub async fn serve(addr: SocketAddr, ready: Arc<AtomicBool>) -> eyre::Result<()> {
-        let state = ServerState { ready };
-
-        let app = Router::new()
-            .route("/healthz", get(ServerState::liveness))
-            .route("/readyz", get(ServerState::readiness))
-            .with_state(state);
+        let app = ServerState { ready }.router();
 
         let listener = TcpListener::bind(addr).await?;
         info!(%addr, "Health server started");
@@ -92,6 +94,7 @@ mod tests {
         },
     };
 
+    use rstest::rstest;
     use tokio::task::JoinHandle;
 
     use super::*;
@@ -101,12 +104,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let state = ServerState { ready };
-
-        let app = Router::new()
-            .route("/healthz", get(ServerState::liveness))
-            .route("/readyz", get(ServerState::readiness))
-            .with_state(state);
+        let app = ServerState { ready }.router();
 
         let handle = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -115,35 +113,21 @@ mod tests {
         (addr, handle)
     }
 
+    #[rstest]
+    #[case::liveness_always_ok(false, "/healthz", 200)]
+    #[case::readiness_not_ready(false, "/readyz", 503)]
+    #[case::readiness_ready(true, "/readyz", 200)]
     #[tokio::test]
-    async fn test_liveness_always_ok() {
-        let ready = Arc::new(AtomicBool::new(false));
+    async fn test_health_endpoint(
+        #[case] initial_ready: bool,
+        #[case] endpoint: &str,
+        #[case] expected_status: u16,
+    ) {
+        let ready = Arc::new(AtomicBool::new(initial_ready));
         let (addr, handle) = start_test_server(ready).await;
 
-        let resp = reqwest::get(format!("http://{addr}/healthz")).await.unwrap();
-        assert_eq!(resp.status(), 200);
-
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn test_readiness_not_ready() {
-        let ready = Arc::new(AtomicBool::new(false));
-        let (addr, handle) = start_test_server(ready).await;
-
-        let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
-        assert_eq!(resp.status(), 503);
-
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn test_readiness_ready() {
-        let ready = Arc::new(AtomicBool::new(true));
-        let (addr, handle) = start_test_server(ready).await;
-
-        let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
-        assert_eq!(resp.status(), 200);
+        let resp = reqwest::get(format!("http://{addr}{endpoint}")).await.unwrap();
+        assert_eq!(resp.status(), expected_status);
 
         handle.abort();
     }

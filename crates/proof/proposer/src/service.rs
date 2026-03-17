@@ -9,6 +9,7 @@ use std::{
 };
 
 use alloy_primitives::Address;
+use alloy_provider::Provider;
 use base_cli_utils::RuntimeManager;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
@@ -17,6 +18,7 @@ use base_proof_contracts::{
 use base_proof_rpc::{
     L1Client, L1ClientConfig, L2ClientConfig, RollupClient, RollupClientConfig, RollupProvider,
 };
+use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxManager};
 use eyre::Result;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -24,12 +26,12 @@ use tracing::{info, warn};
 
 use crate::{
     balance::balance_monitor,
-    config::{ProposerConfig, SigningConfig},
+    config::ProposerConfig,
     driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl},
     enclave::{create_enclave_client, rollup_config_to_per_chain_config},
     health::serve,
     metrics::record_startup_metrics,
-    output_proposer::create_output_proposer,
+    output_proposer::ProposalSubmitter,
     prover::Prover,
     rpc::L2ClientKind,
 };
@@ -153,12 +155,25 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let factory_client = Arc::new(factory_client);
     let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
 
-    // ── 5. Create prover and output proposer ─────────────────────────────
-    let proposer_address = match &config.signing {
-        SigningConfig::Local { signer } => signer.address(),
-        SigningConfig::Remote { address, .. } => *address,
-    };
+    // ── 5a. Construct tx-manager ─────────────────────────────────────────
+    let l1_tx_provider = alloy_provider::RootProvider::new_http(config.l1_eth_rpc.clone());
+    let l1_chain_id = l1_tx_provider
+        .get_chain_id()
+        .await
+        .map_err(|e| eyre::eyre!("failed to fetch L1 chain ID: {e}"))?;
+    let tx_manager = SimpleTxManager::new(
+        l1_tx_provider,
+        config.signing,
+        config.tx_manager,
+        l1_chain_id,
+        Arc::new(BaseTxMetrics::new("proposer")),
+    )
+    .await
+    .map_err(|e| eyre::eyre!("failed to construct tx manager: {e}"))?;
+    let proposer_address = tx_manager.sender_address();
+    info!(%proposer_address, "Transaction manager initialized");
 
+    // ── 5b. Create prover ────────────────────────────────────────────────
     let prover = Arc::new(Prover::new(
         per_chain_config,
         chain_config.clone(),
@@ -170,14 +185,13 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     ));
     info!(config_hash = ?prover.config_hash(), proposer = %proposer_address, "Prover initialized");
 
-    let output_proposer = create_output_proposer(
-        config.l1_eth_rpc.clone(),
+    // ── 5c. Create output proposer ──────────────────────────────────────
+    let output_proposer: Arc<dyn crate::OutputProposer> = Arc::new(ProposalSubmitter::new(
+        tx_manager,
         config.dispute_game_factory_addr,
         config.game_type,
         init_bond,
-        config.signing.clone(),
-        config.retry.clone(),
-    )?;
+    ));
     info!("Output proposer initialized");
 
     // ── 6. Create driver ───────────────────────────────────────────────────

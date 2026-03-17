@@ -96,6 +96,10 @@ pub struct Follow {
     #[command(flatten)]
     pub logging: LogArgs,
 
+    /// Metrics configuration.
+    #[command(flatten)]
+    pub metrics: MetricsArgs,
+
     /// Gate sync behind proofs progress via `debug_proofsSyncStatus`.
     #[arg(long = "proofs", env = "BASE_NODE_PROOFS")]
     pub proofs: bool,
@@ -132,6 +136,15 @@ impl Follow {
         // Initialize logging from global arguments.
         LogConfig::from(self.logging.clone()).init_tracing_subscriber()?;
 
+        // Initialize unified metrics for the follow-node subsystems.
+        base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
+            base_consensus_engine::Metrics::init();
+            base_consensus_node::Metrics::init();
+            base_consensus_derive::Metrics::init();
+            base_consensus_providers::Metrics::init();
+            base_cli_utils::register_version_metrics!();
+        })?;
+
         // Run the subcommand.
         RuntimeManager::run_until_ctrl_c(self.exec())
     }
@@ -139,6 +152,10 @@ impl Follow {
     /// Run the Follow subcommand.
     pub async fn exec(&self) -> eyre::Result<()> {
         let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
+
+        if self.metrics.enabled {
+            init_rollup_config_metrics(&cfg);
+        }
 
         if !self.proofs {
             warn!(
