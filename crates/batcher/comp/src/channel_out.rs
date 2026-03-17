@@ -164,10 +164,10 @@ where
             data.push(v);
         }
 
-        // Read `max_size` bytes from the compressed data.
+        // Read up to `max_size` bytes from the compressed data.
         let mut buf = vec![0u8; max_size];
-        self.compressor.read(&mut buf).map_err(ChannelOutError::Compression)?;
-        data.extend_from_slice(&buf);
+        let bytes_read = self.compressor.read(&mut buf).map_err(ChannelOutError::Compression)?;
+        data.extend_from_slice(&buf[..bytes_read]);
 
         // `is_last` is only true when the channel is closed AND all
         // compressed data has been consumed (ready_bytes == 0 after read).
@@ -346,5 +346,62 @@ mod tests {
 
         let err = channel.add_batch(large_batch).unwrap_err();
         assert_eq!(err, ChannelOutError::ExceedsMaxRlpBytesPerChannel);
+    }
+
+    #[derive(Debug, Clone)]
+    struct PartialReadCompressor {
+        compressed: Vec<u8>,
+    }
+
+    impl CompressorWriter for PartialReadCompressor {
+        fn write(&mut self, data: &[u8]) -> crate::CompressorResult<usize> {
+            self.compressed.extend_from_slice(data);
+            Ok(data.len())
+        }
+
+        fn flush(&mut self) -> crate::CompressorResult<()> {
+            Ok(())
+        }
+
+        fn close(&mut self) -> crate::CompressorResult<()> {
+            Ok(())
+        }
+
+        fn reset(&mut self) {
+            self.compressed.clear();
+        }
+
+        fn len(&self) -> usize {
+            self.compressed.len()
+        }
+
+        fn read(&mut self, buf: &mut [u8]) -> crate::CompressorResult<usize> {
+            let available = self.compressed.len();
+            if available == 0 || buf.is_empty() {
+                return Ok(0);
+            }
+            let to_read = available.min(buf.len()).min(1);
+            buf[..to_read].copy_from_slice(&self.compressed[..to_read]);
+            self.compressed.drain(..to_read);
+            Ok(to_read)
+        }
+    }
+
+    impl ChannelCompressor for PartialReadCompressor {
+        fn get_compressed(&self) -> Vec<u8> {
+            self.compressed.clone()
+        }
+    }
+
+    #[test]
+    fn test_output_frame_partial_read_uses_actual_bytes_read() {
+        let mut channel = ChannelOut::new(
+            ChannelId::default(),
+            Arc::new(RollupConfig::default()),
+            PartialReadCompressor { compressed: vec![0xAA, 0xBB, 0xCC] },
+        );
+
+        let frame = channel.output_frame(FRAME_V0_OVERHEAD + 3).unwrap();
+        assert_eq!(frame.data, vec![0xAA]);
     }
 }
