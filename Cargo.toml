@@ -439,6 +439,7 @@ c-kzg = { version = "2.1.5", default-features = false }
 http = "1.4"
 hyper = "1.8"
 tower = "0.5"
+http-body = "1.0"
 hyper-util = "0.1.11"
 http-body-util = "0.1.3"
 tower-http = { version = "0.6", features = ["limit"] }

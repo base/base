@@ -12,6 +12,16 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+http.workspace = true
+tower.workspace = true
+bytes.workspace = true
+futures.workspace = true
+http-body.workspace = true
 async-trait.workspace = true
 serde = { workspace = true, features = ["derive"] }
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+jsonrpsee = { workspace = true, features = ["http-client"] }
+alloy-transport-http = { workspace = true, features = ["reqwest"] }
