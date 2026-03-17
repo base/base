@@ -1,44 +1,9 @@
-//! Enclave client types for TEE proof generation.
+//! Enclave configuration types for TEE proof generation.
 
 use alloy_primitives::{B256, U256};
-use async_trait::async_trait;
-use base_enclave::{
-    AggregateRequest, BlockId, ExecuteStatelessRequest, Genesis, GenesisSystemConfig,
-    PerChainConfig, RollupConfig,
-};
-use base_enclave_client::{ClientError, EnclaveClient};
-use base_proof_primitives::Proposal;
+use base_enclave::{BlockId, Genesis, GenesisSystemConfig, PerChainConfig, RollupConfig};
 
 use crate::error::ProposerError;
-
-/// Trait abstracting the enclave RPC client for testability.
-///
-/// This follows the same pattern as [`base_proof_rpc::L1Client`] and [`base_proof_rpc::L2Client`].
-#[async_trait]
-pub trait EnclaveClientTrait: Send + Sync {
-    /// Executes stateless block validation in the enclave.
-    async fn execute_stateless(
-        &self,
-        req: ExecuteStatelessRequest,
-    ) -> Result<Proposal, ClientError>;
-
-    /// Aggregates multiple proposals into a single batched proposal.
-    async fn aggregate(&self, request: AggregateRequest) -> Result<Proposal, ClientError>;
-}
-
-#[async_trait]
-impl EnclaveClientTrait for EnclaveClient {
-    async fn execute_stateless(
-        &self,
-        req: ExecuteStatelessRequest,
-    ) -> Result<Proposal, ClientError> {
-        self.execute_stateless(req).await
-    }
-
-    async fn aggregate(&self, request: AggregateRequest) -> Result<Proposal, ClientError> {
-        self.aggregate(request).await
-    }
-}
 
 /// Convert a [`RollupConfig`] (from RPC) to [`PerChainConfig`].
 ///
@@ -79,32 +44,4 @@ pub fn rollup_config_to_per_chain_config(
         deposit_contract_address,
         l1_system_config_address,
     })
-}
-
-/// Creates an enclave client with the given configuration.
-///
-/// # Arguments
-///
-/// * `url` - The URL of the enclave RPC server
-/// * `skip_tls_verify` - Whether to skip TLS certificate verification
-///
-/// # Errors
-///
-/// Returns an error if the client cannot be created.
-///
-/// # Warning
-///
-/// Setting `skip_tls_verify` to `true` disables TLS certificate verification,
-/// making the connection vulnerable to man-in-the-middle attacks.
-/// This should ONLY be used in development/testing environments.
-pub fn create_enclave_client(
-    url: &str,
-    skip_tls_verify: bool,
-) -> Result<EnclaveClient, ProposerError> {
-    if skip_tls_verify {
-        tracing::warn!("TLS certificate verification is disabled for enclave RPC connection");
-    }
-
-    EnclaveClient::with_tls_config(url, 10 * 1024 * 1024, skip_tls_verify)
-        .map_err(|e| ProposerError::Enclave(e.to_string()))
 }

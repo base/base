@@ -1,30 +1,18 @@
-use alloy_primitives::{Address, B256, Bytes};
+//! L2 client implementations for the proposer.
+
+use alloy_primitives::{Address, B256};
 use alloy_rpc_types_eth::Header;
 use async_trait::async_trait;
-use base_enclave::{AccountResult, ExecutionWitness};
+use base_enclave::AccountResult;
 use base_proof_rpc::{L2Client, L2ClientConfig, L2Provider, OpBlock, RpcResult};
-
-mod prover_l2_client;
-pub use prover_l2_client::ProverL2Provider;
-
-// Impl-only: provides ProverL2Provider impl for L2Client.
-mod l2_client_ext;
 
 mod reth_client;
 pub use reth_client::RethL2Client;
 
-mod types;
-pub use types::RethExecutionWitness;
-
-/// Enum dispatch for [`ProverL2Provider`], replacing `Box<dyn ProverL2Provider>`.
-///
-/// Since there are only two concrete implementations, enum dispatch avoids
-/// trait-object boilerplate and the fragile supertrait delegation it requires.
+/// Enum dispatch for L2 provider implementations.
 #[derive(Debug)]
 pub enum L2ClientKind {
-    /// Standard geth-compatible L2 client.
     Standard(L2Client),
-    /// Reth-specific L2 client with witness format conversion.
     Reth(RethL2Client),
 }
 
@@ -73,23 +61,6 @@ impl L2Provider for L2ClientKind {
 
     async fn block_by_hash(&self, hash: B256) -> RpcResult<OpBlock> {
         self.as_l2_client().block_by_hash(hash).await
-    }
-}
-
-#[async_trait]
-impl ProverL2Provider for L2ClientKind {
-    async fn execution_witness(&self, block_number: u64) -> RpcResult<ExecutionWitness> {
-        match self {
-            Self::Standard(c) => c.execution_witness(block_number).await,
-            Self::Reth(c) => c.execution_witness(block_number).await,
-        }
-    }
-
-    async fn db_get(&self, key: B256) -> RpcResult<Bytes> {
-        match self {
-            Self::Standard(c) => c.db_get(key).await,
-            Self::Reth(c) => c.db_get(key).await,
-        }
     }
 }
 

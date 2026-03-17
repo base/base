@@ -36,14 +36,16 @@ base-tx-manager.workspace = true
 # Proof
 base-proof-rpc.workspace = true
 base-proof-contracts.workspace = true
-base-proof-primitives = { workspace = true, features = ["serde"] }
+base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
 # Consensus
 base-protocol.workspace = true
 
 # Enclave
 base-enclave.workspace = true
-base-enclave-client.workspace = true
+
+# JSON-RPC
+jsonrpsee.workspace = true
 
 # Async
 tokio.workspace = true

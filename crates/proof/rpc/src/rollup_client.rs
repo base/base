@@ -16,7 +16,7 @@ use super::{
     config::RetryConfig,
     error::{RpcError, RpcResult},
     traits::RollupProvider,
-    types::SyncStatus,
+    types::{OutputAtBlock, SyncStatus},
 };
 
 /// Configuration for the rollup client.
@@ -141,6 +141,28 @@ impl RollupProvider for RollupClient {
         .when(|e| e.is_retryable())
         .notify(|err, dur| {
             tracing::debug!(error = %err, delay = ?dur, "Retrying RollupClient::sync_status");
+        })
+        .await
+    }
+
+    async fn output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
+        let backoff = self.retry_config.to_backoff_builder();
+
+        (|| async {
+            self.provider
+                .raw_request::<_, OutputAtBlock>(
+                    "optimism_outputAtBlock".into(),
+                    (format!("0x{block_number:x}"),),
+                )
+                .await
+                .map_err(|e| {
+                    RpcError::InvalidResponse(format!("Failed to get output at block: {e}"))
+                })
+        })
+        .retry(backoff)
+        .when(|e| e.is_retryable())
+        .notify(|err, dur| {
+            tracing::debug!(error = %err, delay = ?dur, "Retrying RollupClient::output_at_block");
         })
         .await
     }

@@ -11,9 +11,9 @@ pub enum ProposerError {
     #[error("RPC error: {0}")]
     Rpc(#[from] RpcError),
 
-    /// Enclave communication error.
-    #[error("Enclave error: {0}")]
-    Enclave(String),
+    /// Prover server communication error.
+    #[error("Prover error: {0}")]
+    Prover(String),
 
     /// Contract interaction error.
     #[error("Contract error: {0}")]

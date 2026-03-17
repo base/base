@@ -27,7 +27,10 @@ mod driver;
 pub use driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl, RecoveredGame};
 
 mod enclave;
-pub use enclave::{EnclaveClientTrait, create_enclave_client, rollup_config_to_per_chain_config};
+pub use enclave::rollup_config_to_per_chain_config;
+
+mod prover_client;
+pub use prover_client::{ProverClient, RpcProverClient};
 
 mod error;
 pub use error::*;
@@ -45,7 +48,7 @@ mod prover;
 pub use prover::{Prover, ProverProposal};
 
 mod rpc;
-pub use rpc::{L2ClientKind, ProverL2Provider, RethExecutionWitness, RethL2Client};
+pub use rpc::{L2ClientKind, RethL2Client};
 
 mod service;
 pub use service::run;

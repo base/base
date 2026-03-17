@@ -74,6 +74,16 @@ pub struct GenesisL2BlockRef {
     pub number: u64,
 }
 
+/// Output root at a specific L2 block, from `optimism_outputAtBlock`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputAtBlock {
+    /// The output root at this block.
+    pub output_root: B256,
+    /// The L2 block reference.
+    pub block_ref: L2BlockRef,
+}
+
 /// Sync status from `optimism_syncStatus`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

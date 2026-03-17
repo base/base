@@ -33,5 +33,5 @@ pub use rollup_client::{RollupClient, RollupClientConfig};
 mod types;
 pub use types::{
     GenesisL2BlockRef, HttpProvider, L1BlockId, L1BlockRef, L2BlockRef, L2HttpProvider, OpBlock,
-    SyncStatus,
+    OutputAtBlock, SyncStatus,
 };

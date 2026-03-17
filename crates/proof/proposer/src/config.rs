@@ -50,8 +50,8 @@ pub enum ConfigError {
 pub struct ProposerConfig {
     /// Allow proposals based on non-finalized L1 data.
     pub allow_non_finalized: bool,
-    /// URL of the enclave RPC endpoint.
-    pub enclave_rpc: Url,
+    /// URL of the prover RPC endpoint.
+    pub prover_rpc: Url,
     /// URL of the L1 Ethereum RPC endpoint.
     pub l1_eth_rpc: Url,
     /// URL of the L2 Ethereum RPC endpoint.
@@ -94,7 +94,7 @@ impl ProposerConfig {
     /// Create a validated configuration from CLI arguments.
     pub fn from_cli(cli: Cli) -> Result<Self, ConfigError> {
         // Validate URLs have scheme and host
-        validate_url(&cli.proposer.enclave_rpc, "enclave-rpc")?;
+        validate_url(&cli.proposer.prover_rpc, "prover-rpc")?;
         validate_url(&cli.proposer.l1_eth_rpc, "l1-eth-rpc")?;
         validate_url(&cli.proposer.l2_eth_rpc, "l2-eth-rpc")?;
 
@@ -136,7 +136,7 @@ impl ProposerConfig {
 
         Ok(Self {
             allow_non_finalized: cli.proposer.allow_non_finalized,
-            enclave_rpc: cli.proposer.enclave_rpc,
+            prover_rpc: cli.proposer.prover_rpc,
             l1_eth_rpc: cli.proposer.l1_eth_rpc,
             l2_eth_rpc: cli.proposer.l2_eth_rpc,
             l2_reth: cli.proposer.l2_reth,
@@ -216,7 +216,7 @@ mod tests {
         Cli {
             proposer: ProposerArgs {
                 allow_non_finalized: false,
-                enclave_rpc: Url::parse("http://localhost:8080").unwrap(),
+                prover_rpc: Url::parse("http://localhost:8080").unwrap(),
                 l1_eth_rpc: Url::parse("http://localhost:8545").unwrap(),
                 l2_eth_rpc: Url::parse("http://localhost:9545").unwrap(),
                 l2_reth: false,
@@ -382,8 +382,8 @@ mod tests {
     #[test]
     fn test_config_error_display() {
         let error =
-            ConfigError::InvalidUrl { field: "enclave-rpc", reason: "missing host".to_string() };
-        assert_eq!(error.to_string(), "invalid enclave-rpc URL: missing host");
+            ConfigError::InvalidUrl { field: "prover-rpc", reason: "missing host".to_string() };
+        assert_eq!(error.to_string(), "invalid prover-rpc URL: missing host");
 
         let error = ConfigError::OutOfRange {
             field: "poll-interval",

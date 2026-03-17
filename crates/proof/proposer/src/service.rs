@@ -20,6 +20,7 @@ use base_proof_rpc::{
 };
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxManager};
 use eyre::Result;
+use jsonrpsee::http_client::HttpClientBuilder;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -28,11 +29,12 @@ use crate::{
     balance::balance_monitor,
     config::ProposerConfig,
     driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl},
-    enclave::{create_enclave_client, rollup_config_to_per_chain_config},
+    enclave::rollup_config_to_per_chain_config,
     health::serve,
     metrics::record_startup_metrics,
     output_proposer::ProposalSubmitter,
     prover::Prover,
+    prover_client::RpcProverClient,
     rpc::L2ClientKind,
 };
 
@@ -40,7 +42,7 @@ use crate::{
 ///
 /// Steps:
 /// 1. Initialise logging, TLS, and metrics
-/// 2. Create RPC clients (L1, L2, rollup, enclave)
+/// 2. Create RPC clients (L1, L2, rollup, prover)
 /// 3. Read onchain config (`BLOCK_INTERVAL`, `initBond`)
 /// 4. Create prover, output proposer, and driver
 /// 5. Start health / admin HTTP server
@@ -100,9 +102,12 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let per_chain_config = rollup_config_to_per_chain_config(&chain_config)?;
     info!(chain_id = %per_chain_config.chain_id, "Chain configuration loaded");
 
-    let enclave_client =
-        create_enclave_client(config.enclave_rpc.as_str(), config.skip_tls_verify)?;
-    info!(endpoint = %config.enclave_rpc, "Enclave client initialized");
+    let prover_client = RpcProverClient::new(
+        HttpClientBuilder::default()
+            .build(config.prover_rpc.as_str())
+            .map_err(|e| eyre::eyre!("failed to create prover RPC client: {e}"))?,
+    );
+    info!(endpoint = %config.prover_rpc, "Prover RPC client initialized");
 
     // ── 4. Create contract clients and read onchain config ──────────────
     let anchor_registry = Arc::new(AnchorStateRegistryContractClient::new(
@@ -174,15 +179,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     info!(%proposer_address, "Transaction manager initialized");
 
     // ── 5b. Create prover ────────────────────────────────────────────────
-    let prover = Arc::new(Prover::new(
-        per_chain_config,
-        chain_config.clone(),
-        Arc::clone(&l1_client),
-        Arc::clone(&l2_client),
-        enclave_client,
-        proposer_address,
-        config.tee_image_hash,
-    ));
+    let prover = Arc::new(Prover::new(per_chain_config, Arc::new(prover_client)));
     info!(config_hash = ?prover.config_hash(), proposer = %proposer_address, "Prover initialized");
 
     // ── 5c. Create output proposer ──────────────────────────────────────

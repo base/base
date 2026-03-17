@@ -1,10 +1,30 @@
-use jsonrpsee::{core::RpcResult, proc_macros::rpc};
+// The jsonrpsee `rpc` proc macro rewrites the trait depending on which variant
+// is selected (`server`, `client`, or both).  We must pick exactly the right
+// combination for the enabled feature set so the generated code only references
+// dependencies that are actually compiled in.
+//
+// `RpcResult` is only used by the *server* side of the generated code; when
+// only `rpc-client` is active the macro rewrites signatures to use its own
+// client return type, so the import would be dead code.
+#[cfg(feature = "rpc-server")]
+use jsonrpsee::core::RpcResult;
+use jsonrpsee::proc_macros::rpc;
 
 use crate::{ProofRequest, ProofResult};
 
+#[cfg_attr(
+    all(feature = "rpc-server", feature = "rpc-client"),
+    rpc(server, client, namespace = "prover")
+)]
+#[cfg_attr(
+    all(feature = "rpc-server", not(feature = "rpc-client")),
+    rpc(server, namespace = "prover")
+)]
+#[cfg_attr(
+    all(feature = "rpc-client", not(feature = "rpc-server")),
+    rpc(client, namespace = "prover")
+)]
 /// JSON-RPC interface shared by all proof backends.
-#[cfg_attr(not(feature = "rpc-client"), rpc(server, namespace = "prover"))]
-#[cfg_attr(feature = "rpc-client", rpc(server, client, namespace = "prover"))]
 pub trait ProverApi {
     /// Run the proof pipeline for a single request.
     #[method(name = "prove")]
@@ -12,11 +32,20 @@ pub trait ProverApi {
 }
 
 /// JSON-RPC interface for querying enclave signer information.
-///
+#[cfg_attr(
+    all(feature = "rpc-server", feature = "rpc-client"),
+    rpc(server, client, namespace = "enclave")
+)]
+#[cfg_attr(
+    all(feature = "rpc-server", not(feature = "rpc-client")),
+    rpc(server, namespace = "enclave")
+)]
+#[cfg_attr(
+    all(feature = "rpc-client", not(feature = "rpc-server")),
+    rpc(client, namespace = "enclave")
+)]
 /// Exposed by the host-side prover server; the registrar calls these endpoints
 /// to obtain the signer public key and attestation for on-chain registration.
-#[cfg_attr(not(feature = "rpc-client"), rpc(server, namespace = "enclave"))]
-#[cfg_attr(feature = "rpc-client", rpc(server, client, namespace = "enclave"))]
 pub trait EnclaveApi {
     /// Return the 65-byte uncompressed ECDSA public key for the enclave signer.
     #[method(name = "signerPublicKey")]

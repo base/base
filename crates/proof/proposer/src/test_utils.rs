@@ -1,29 +1,20 @@
 //! Shared test utilities: reusable mock stubs for L1/L2 clients and a `test_prover` helper.
 
-use std::sync::Arc;
-
 use alloy_primitives::{Address, B256, Bytes, U256};
 use async_trait::async_trait;
 use base_enclave::{
-    AccountResult, BlockId, ExecutionWitness, Genesis, GenesisSystemConfig, PerChainConfig,
-    RollupConfig,
+    AccountResult, BlockId, Genesis, GenesisSystemConfig, PerChainConfig, RollupConfig,
 };
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorRoot, AnchorStateRegistryClient, ContractError,
     DisputeGameFactoryClient, GameAtIndex, GameInfo,
 };
 use base_proof_rpc::{
-    L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OpBlock, RollupProvider, RpcError,
-    RpcResult, SyncStatus,
+    L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OpBlock, OutputAtBlock,
+    RollupProvider, RpcError, RpcResult, SyncStatus,
 };
 
-use crate::{
-    enclave::EnclaveClientTrait,
-    error::ProposerError,
-    output_proposer::OutputProposer,
-    prover::{Prover, ProverProposal},
-    rpc::ProverL2Provider,
-};
+use crate::{error::ProposerError, output_proposer::OutputProposer, prover::ProverProposal};
 
 /// Mock L1 client with configurable `block_number()` return.
 pub(crate) struct MockL1 {
@@ -90,16 +81,6 @@ impl L2Provider for MockL2 {
     }
 }
 
-#[async_trait]
-impl ProverL2Provider for MockL2 {
-    async fn execution_witness(&self, _: u64) -> RpcResult<ExecutionWitness> {
-        unimplemented!()
-    }
-    async fn db_get(&self, _: B256) -> RpcResult<Bytes> {
-        unimplemented!()
-    }
-}
-
 /// Mock rollup client that returns a configurable `SyncStatus`.
 pub(crate) struct MockRollupClient {
     pub sync_status: SyncStatus,
@@ -112,6 +93,12 @@ impl RollupProvider for MockRollupClient {
     }
     async fn sync_status(&self) -> RpcResult<SyncStatus> {
         Ok(self.sync_status.clone())
+    }
+    async fn output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
+        Ok(OutputAtBlock {
+            output_root: B256::repeat_byte(block_number as u8),
+            block_ref: test_l2_block_ref(block_number, B256::repeat_byte(block_number as u8)),
+        })
     }
 }
 
@@ -198,19 +185,6 @@ pub(crate) fn test_per_chain_config() -> PerChainConfig {
         deposit_contract_address: Address::ZERO,
         l1_system_config_address: Address::ZERO,
     }
-}
-
-/// Build a `Prover` with mock L1/L2 clients and the given enclave mock.
-pub(crate) fn test_prover<E: EnclaveClientTrait>(enclave: E) -> Prover<MockL1, MockL2, E> {
-    Prover::new(
-        test_per_chain_config(),
-        RollupConfig::default(),
-        Arc::new(MockL1 { latest_block_number: 0 }),
-        Arc::new(MockL2 { block_not_found: false, canonical_hash: None }),
-        enclave,
-        Address::ZERO,
-        B256::ZERO,
-    )
 }
 
 pub(crate) fn test_l1_block_ref(number: u64) -> L1BlockRef {

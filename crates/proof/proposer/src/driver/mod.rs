@@ -24,7 +24,8 @@ use async_trait::async_trait;
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient,
 };
-use base_proof_rpc::{L1Provider, L2BlockRef, RollupProvider, RpcError};
+use base_proof_primitives::ProofRequest;
+use base_proof_rpc::{L1Provider, L2BlockRef, L2Provider, RollupProvider, RpcError};
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle, time::sleep};
 use tokio_util::sync::CancellationToken;
@@ -32,15 +33,13 @@ use tracing::{debug, info, warn};
 
 use crate::{
     constants::{
-        AGGREGATE_BATCH_SIZE, BLOCKHASH_SAFETY_MARGIN, BLOCKHASH_WINDOW,
-        MAX_GAME_RECOVERY_LOOKBACK, NO_PARENT_INDEX, PROPOSAL_TIMEOUT,
+        BLOCKHASH_SAFETY_MARGIN, BLOCKHASH_WINDOW, MAX_GAME_RECOVERY_LOOKBACK, NO_PARENT_INDEX,
+        PROPOSAL_TIMEOUT,
     },
-    enclave::EnclaveClientTrait,
     error::ProposerError,
     metrics as proposer_metrics,
     output_proposer::{OutputProposer, is_game_already_exists},
-    prover::{Prover, ProverProposal},
-    rpc::ProverL2Provider,
+    prover::{Prover, ProverProposal, check_withdrawals},
 };
 
 /// Driver configuration.
@@ -86,17 +85,16 @@ pub struct RecoveredGame {
 }
 
 /// The main driver that coordinates proposal generation.
-pub struct Driver<L1, L2, E, R, ASR, F>
+pub struct Driver<L1, L2, R, ASR, F>
 where
     L1: L1Provider,
-    L2: ProverL2Provider,
-    E: EnclaveClientTrait,
+    L2: L2Provider,
     R: RollupProvider,
     ASR: AnchorStateRegistryClient,
     F: DisputeGameFactoryClient,
 {
     config: DriverConfig,
-    prover: Arc<Prover<L1, L2, E>>,
+    prover: Arc<Prover>,
     l1_client: Arc<L1>,
     l2_client: Arc<L2>,
     rollup_client: Arc<R>,
@@ -111,11 +109,10 @@ where
     cached_intermediate_roots: Vec<B256>,
 }
 
-impl<L1, L2, E, R, ASR, F> std::fmt::Debug for Driver<L1, L2, E, R, ASR, F>
+impl<L1, L2, R, ASR, F> std::fmt::Debug for Driver<L1, L2, R, ASR, F>
 where
     L1: L1Provider,
-    L2: ProverL2Provider,
-    E: EnclaveClientTrait,
+    L2: L2Provider,
     R: RollupProvider,
     ASR: AnchorStateRegistryClient,
     F: DisputeGameFactoryClient,
@@ -128,11 +125,10 @@ where
     }
 }
 
-impl<L1, L2, E, R, ASR, F> Driver<L1, L2, E, R, ASR, F>
+impl<L1, L2, R, ASR, F> Driver<L1, L2, R, ASR, F>
 where
     L1: L1Provider + 'static,
-    L2: ProverL2Provider + 'static,
-    E: EnclaveClientTrait + 'static,
+    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
@@ -141,7 +137,7 @@ where
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: DriverConfig,
-        prover: Arc<Prover<L1, L2, E>>,
+        prover: Arc<Prover>,
         l1_client: Arc<L1>,
         l2_client: Arc<L2>,
         rollup_client: Arc<R>,
@@ -398,7 +394,34 @@ where
                 }
             };
 
-            let proposal = self.prover.generate(&block).await?;
+            let header = &block.header.inner;
+            let has_withdrawals = check_withdrawals(header);
+
+            let prev_number = number.saturating_sub(1);
+
+            let agreed_output = self
+                .rollup_client
+                .output_at_block(prev_number)
+                .await
+                .map_err(ProposerError::Rpc)?;
+            let claimed_output =
+                self.rollup_client.output_at_block(number).await.map_err(ProposerError::Rpc)?;
+
+            let l1_head =
+                self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc)?;
+
+            let request = ProofRequest {
+                l1_head: l1_head.hash,
+                agreed_l2_head_hash: agreed_output.block_ref.hash,
+                agreed_l2_output_root: agreed_output.output_root,
+                claimed_l2_output_root: claimed_output.output_root,
+                claimed_l2_block_number: number,
+            };
+
+            let from = agreed_output.block_ref;
+            let to = claimed_output.block_ref;
+
+            let proposal = self.prover.prove(request, from, to, has_withdrawals).await?;
 
             let blocks_behind = latest_safe.number.saturating_sub(proposal.to.number);
 
@@ -428,7 +451,7 @@ where
     async fn next_output(
         &mut self,
         starting_block_number: u64,
-        starting_root: B256,
+        _starting_root: B256,
         latest_safe: &L2BlockRef,
     ) -> Result<Option<(ProverProposal, Vec<B256>)>, ProposerError> {
         let latest_safe_number = latest_safe.number;
@@ -439,7 +462,7 @@ where
             .ok_or_else(|| ProposerError::Internal("overflow computing target block".into()))?;
 
         // Count pending proposals up to the target block and safe head.
-        let mut count = self
+        let count = self
             .pending
             .iter()
             .take_while(|p| p.to.number <= target && p.to.number <= latest_safe_number)
@@ -459,42 +482,6 @@ where
         // Target must be safe before we submit.
         if target > latest_safe_number {
             return Ok(None);
-        }
-
-        // Aggregate proposals in batches.
-        let intermediate_roots = &self.cached_intermediate_roots;
-        let prev_block_number = starting_block_number;
-        while count > 1 {
-            let batch_length = count.min(AGGREGATE_BATCH_SIZE);
-            let batch: Vec<ProverProposal> = self.pending.drain(..batch_length).collect();
-
-            // Only include intermediate roots in the final aggregation round.
-            let is_final_batch = count == batch_length;
-            let batch_roots = if is_final_batch { intermediate_roots.clone() } else { vec![] };
-
-            match self.prover.aggregate(starting_root, prev_block_number, batch, batch_roots).await
-            {
-                Ok(aggregated) => {
-                    info!(
-                        output_root = ?aggregated.output.output_root,
-                        blocks = batch_length,
-                        remaining = count - batch_length,
-                        has_withdrawals = aggregated.has_withdrawals,
-                        from = aggregated.from.number,
-                        to = aggregated.to.number,
-                        "Aggregated proofs"
-                    );
-                    self.pending.push_front(aggregated);
-                    count -= batch_length - 1;
-                }
-                Err(e) => {
-                    if matches!(e, ProposerError::Enclave(_)) {
-                        warn!(error = %e, "Non-recoverable error aggregating proofs");
-                        self.pending.clear();
-                    }
-                    return Err(e);
-                }
-            }
         }
 
         let proposal = &self.pending[0];
@@ -645,17 +632,16 @@ pub trait ProposerDriverControl: Send + Sync {
 ///
 /// Internally the driver is placed behind a [`TokioMutex`] so it can be moved
 /// into a spawned task for the duration of a session.
-pub struct DriverHandle<L1, L2, E, R, ASR, F>
+pub struct DriverHandle<L1, L2, R, ASR, F>
 where
     L1: L1Provider + 'static,
-    L2: ProverL2Provider + 'static,
-    E: EnclaveClientTrait + 'static,
+    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
     #[allow(clippy::type_complexity)]
-    driver: Arc<TokioMutex<Driver<L1, L2, E, R, ASR, F>>>,
+    driver: Arc<TokioMutex<Driver<L1, L2, R, ASR, F>>>,
     /// Cancel token for the *current* driver session (child of global).
     session_cancel: TokioMutex<CancellationToken>,
     /// Top-level cancel token (SIGTERM / SIGINT).
@@ -666,11 +652,10 @@ where
     running: Arc<AtomicBool>,
 }
 
-impl<L1, L2, E, R, ASR, F> std::fmt::Debug for DriverHandle<L1, L2, E, R, ASR, F>
+impl<L1, L2, R, ASR, F> std::fmt::Debug for DriverHandle<L1, L2, R, ASR, F>
 where
     L1: L1Provider + 'static,
-    L2: ProverL2Provider + 'static,
-    E: EnclaveClientTrait + 'static,
+    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
@@ -682,11 +667,10 @@ where
     }
 }
 
-impl<L1, L2, E, R, ASR, F> DriverHandle<L1, L2, E, R, ASR, F>
+impl<L1, L2, R, ASR, F> DriverHandle<L1, L2, R, ASR, F>
 where
     L1: L1Provider + 'static,
-    L2: ProverL2Provider + 'static,
-    E: EnclaveClientTrait + 'static,
+    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
@@ -696,7 +680,7 @@ where
     /// The driver is **not** started automatically — call
     /// [`start_proposer`](ProposerDriverControl::start_proposer) to begin the
     /// polling loop.
-    pub fn new(driver: Driver<L1, L2, E, R, ASR, F>, global_cancel: CancellationToken) -> Self {
+    pub fn new(driver: Driver<L1, L2, R, ASR, F>, global_cancel: CancellationToken) -> Self {
         let session_cancel = global_cancel.child_token();
         Self {
             driver: Arc::new(TokioMutex::new(driver)),
@@ -709,11 +693,10 @@ where
 }
 
 #[async_trait]
-impl<L1, L2, E, R, ASR, F> ProposerDriverControl for DriverHandle<L1, L2, E, R, ASR, F>
+impl<L1, L2, R, ASR, F> ProposerDriverControl for DriverHandle<L1, L2, R, ASR, F>
 where
     L1: L1Provider + 'static,
-    L2: ProverL2Provider + 'static,
-    E: EnclaveClientTrait + 'static,
+    L2: L2Provider + 'static,
     R: RollupProvider + 'static,
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
@@ -783,19 +766,17 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_primitives::{Address, B256, Bytes};
+    use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
-    use base_enclave::{ExecuteStatelessRequest, RollupConfig};
-    use base_enclave_client::ClientError;
     use base_proof_contracts::GameAtIndex;
-    use base_proof_primitives::Proposal;
     use base_proof_rpc::SyncStatus;
+    use jsonrpsee::http_client::HttpClientBuilder;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::{
-        enclave::EnclaveClientTrait,
         prover::{Prover, test_helpers::test_proposal},
+        prover_client::RpcProverClient,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockRollupClient, test_anchor_root, test_l2_block_ref,
@@ -803,80 +784,27 @@ mod tests {
         },
     };
 
-    // ---- Mock infrastructure ----
-
-    /// Mock enclave whose methods are never called in most tests.
-    struct MockEnclave;
-
-    #[async_trait]
-    impl EnclaveClientTrait for MockEnclave {
-        async fn execute_stateless(
-            &self,
-            _: ExecuteStatelessRequest,
-        ) -> Result<Proposal, ClientError> {
-            unimplemented!()
-        }
-        async fn aggregate(
-            &self,
-            _: base_enclave::AggregateRequest,
-        ) -> Result<Proposal, ClientError> {
-            unimplemented!()
-        }
-    }
-
-    /// Mock enclave that returns a valid `Proposal` from `aggregate()`.
-    /// Used for testing the aggregation code path in `next_output()`.
-    struct MockEnclaveForAggregation;
-
-    #[async_trait]
-    impl EnclaveClientTrait for MockEnclaveForAggregation {
-        async fn execute_stateless(
-            &self,
-            _: ExecuteStatelessRequest,
-        ) -> Result<Proposal, ClientError> {
-            unimplemented!()
-        }
-        async fn aggregate(
-            &self,
-            request: base_enclave::AggregateRequest,
-        ) -> Result<Proposal, ClientError> {
-            let last = request.proposals.last().unwrap();
-            Ok(Proposal {
-                output_root: last.output_root,
-                signature: Bytes::from(vec![0xab; 65]),
-                l1_origin_hash: last.l1_origin_hash,
-                l1_origin_number: last.l1_origin_number,
-                l2_block_number: last.l2_block_number,
-                prev_output_root: last.prev_output_root,
-                config_hash: last.config_hash,
-            })
-        }
-    }
-
     // ---- Helpers ----
 
-    /// Generic driver constructor that accepts a custom enclave, config, and mocks.
-    fn test_driver_custom<E: EnclaveClientTrait + 'static>(
-        enclave: E,
+    fn test_prover() -> Prover {
+        let client =
+            HttpClientBuilder::default().build("http://localhost:19999").expect("valid URL");
+        let prover_client = RpcProverClient::new(client);
+        Prover::new(test_per_chain_config(), Arc::new(prover_client))
+    }
+
+    fn test_driver_custom(
         driver_config: DriverConfig,
         l1_block_number: u64,
         sync_status: SyncStatus,
         canonical_hash: Option<B256>,
         output_proposer: Arc<dyn OutputProposer>,
         cancel: CancellationToken,
-    ) -> Driver<MockL1, MockL2, E, MockRollupClient, MockAnchorStateRegistry, MockDisputeGameFactory>
+    ) -> Driver<MockL1, MockL2, MockRollupClient, MockAnchorStateRegistry, MockDisputeGameFactory>
     {
         let l1 = Arc::new(MockL1 { latest_block_number: l1_block_number });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash });
-        let prover = Arc::new(Prover::new(
-            test_per_chain_config(),
-            RollupConfig::default(),
-            Arc::clone(&l1),
-            Arc::clone(&l2),
-            enclave,
-            alloy_primitives::Address::ZERO,
-            B256::ZERO,
-        ));
+        let prover = Arc::new(test_prover());
         let rollup = Arc::new(MockRollupClient { sync_status });
         let anchor_registry =
             Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
@@ -896,21 +824,13 @@ mod tests {
         )
     }
 
-    /// Convenience wrapper with sensible defaults.
     fn test_driver(
         l1_block_number: u64,
         sync_status: SyncStatus,
         canonical_hash: Option<B256>,
-    ) -> Driver<
-        MockL1,
-        MockL2,
-        MockEnclave,
-        MockRollupClient,
-        MockAnchorStateRegistry,
-        MockDisputeGameFactory,
-    > {
+    ) -> Driver<MockL1, MockL2, MockRollupClient, MockAnchorStateRegistry, MockDisputeGameFactory>
+    {
         test_driver_custom(
-            MockEnclave,
             DriverConfig { block_interval: 10, ..Default::default() },
             l1_block_number,
             sync_status,
@@ -1061,40 +981,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_next_output_with_aggregation() {
-        let canonical_hash = B256::repeat_byte(0x30);
-        let safe = test_l2_block_ref(103, canonical_hash);
-        let cancel = CancellationToken::new();
-
-        let mut driver = test_driver_custom(
-            MockEnclaveForAggregation,
-            DriverConfig { block_interval: 3, ..Default::default() },
-            400,
-            test_sync_status(103, canonical_hash),
-            Some(canonical_hash),
-            Arc::new(MockOutputProposer),
-            cancel,
-        );
-
-        // Pre-populate 3 single-block proposals: blocks 101, 102, 103
-        driver.pending.push_back(test_proposal(101, 101, false));
-        driver.pending.push_back(test_proposal(102, 102, false));
-        driver.pending.push_back(test_proposal(103, 103, true));
-        assert_eq!(driver.pending.len(), 3);
-
-        // target = 100 + 3 = 103, safe = 103, all gates pass
-        let result = driver.next_output(100, B256::ZERO, &safe).await;
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(output.is_some(), "expected Some(proposal) after aggregation");
-        let (proposal, _roots) = output.unwrap();
-        assert_eq!(proposal.from.number, 101);
-        assert_eq!(proposal.to.number, 103);
-        // Pending is empty after pop
-        assert_eq!(driver.pending.len(), 0);
-    }
-
-    #[tokio::test]
     async fn test_step_calls_output_proposer() {
         struct TrackingOutputProposer {
             called: AtomicBool,
@@ -1118,7 +1004,6 @@ mod tests {
         let tracking = Arc::new(TrackingOutputProposer { called: AtomicBool::new(false) });
 
         let mut driver = test_driver_custom(
-            MockEnclave,
             DriverConfig { block_interval: 10, ..Default::default() },
             1000,
             sync_status,
@@ -1164,19 +1049,9 @@ mod tests {
         let tracking =
             Arc::new(TrackingOutputProposer { parent_index: std::sync::Mutex::new(None) });
 
-        // Build a driver whose factory has zero games so recover_latest_game()
-        // returns None and step() must fall back to the anchor registry.
         let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: Some(canonical_hash) });
-        let prover = Arc::new(Prover::new(
-            test_per_chain_config(),
-            RollupConfig::default(),
-            Arc::clone(&l1),
-            Arc::clone(&l2),
-            MockEnclave,
-            Address::ZERO,
-            B256::ZERO,
-        ));
+        let prover = Arc::new(test_prover());
         let factory = Arc::new(MockDisputeGameFactory { game_count: 0 });
 
         let mut driver = Driver::new(
@@ -1223,7 +1098,6 @@ mod tests {
         let sync_status = test_sync_status(200, canonical_hash);
 
         let mut driver = test_driver_custom(
-            MockEnclave,
             DriverConfig { block_interval: 10, ..Default::default() },
             1000,
             sync_status,
@@ -1253,7 +1127,6 @@ mod tests {
         let cancel = CancellationToken::new();
 
         let mut driver = test_driver_custom(
-            MockEnclave,
             DriverConfig {
                 poll_interval: Duration::from_secs(3600),
                 block_interval: 10,
@@ -1277,22 +1150,19 @@ mod tests {
 
     // ---- DriverHandle tests ----
 
-    /// Helper that builds a `DriverHandle` using mock components.
     fn test_driver_handle(
         global_cancel: CancellationToken,
     ) -> DriverHandle<
         MockL1,
         MockL2,
-        MockEnclave,
         MockRollupClient,
         MockAnchorStateRegistry,
         MockDisputeGameFactory,
     > {
         let sync_status = test_sync_status(200, B256::ZERO);
         let driver = test_driver_custom(
-            MockEnclave,
             DriverConfig {
-                poll_interval: Duration::from_secs(3600), // long interval; won't tick in tests
+                poll_interval: Duration::from_secs(3600),
                 block_interval: 10,
                 ..Default::default()
             },
@@ -1402,7 +1272,6 @@ mod tests {
     async fn test_extract_intermediate_roots_full_queue() {
         let sync_status = test_sync_status(200, B256::ZERO);
         let mut driver = test_driver_custom(
-            MockEnclave,
             DriverConfig {
                 block_interval: 10,
                 intermediate_block_interval: 5,
@@ -1442,7 +1311,6 @@ mod tests {
     async fn test_extract_intermediate_roots_partial_queue() {
         let sync_status = test_sync_status(200, B256::ZERO);
         let mut driver = test_driver_custom(
-            MockEnclave,
             DriverConfig {
                 block_interval: 10,
                 intermediate_block_interval: 5,
@@ -1575,26 +1443,12 @@ mod tests {
         factory: RecoveryMockFactory,
         verifier: RecoveryMockVerifier,
         game_type: u32,
-    ) -> Driver<
-        MockL1,
-        MockL2,
-        MockEnclave,
-        MockRollupClient,
-        MockAnchorStateRegistry,
-        RecoveryMockFactory,
-    > {
+    ) -> Driver<MockL1, MockL2, MockRollupClient, MockAnchorStateRegistry, RecoveryMockFactory>
+    {
         let sync_status = test_sync_status(200, B256::ZERO);
         let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover = Arc::new(Prover::new(
-            test_per_chain_config(),
-            RollupConfig::default(),
-            Arc::clone(&l1),
-            Arc::clone(&l2),
-            MockEnclave,
-            alloy_primitives::Address::ZERO,
-            B256::ZERO,
-        ));
+        let prover = Arc::new(test_prover());
 
         Driver::new(
             DriverConfig { game_type, block_interval: 10, ..Default::default() },
@@ -1745,7 +1599,6 @@ mod tests {
     async fn test_extract_intermediate_roots_interval_equals_block_interval() {
         let sync_status = test_sync_status(200, B256::ZERO);
         let mut driver = test_driver_custom(
-            MockEnclave,
             DriverConfig {
                 block_interval: 10,
                 intermediate_block_interval: 10,

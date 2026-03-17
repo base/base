@@ -7,7 +7,7 @@ use base_enclave::{AccountResult, RollupConfig};
 
 use super::{
     error::RpcResult,
-    types::{OpBlock, SyncStatus},
+    types::{OpBlock, OutputAtBlock, SyncStatus},
 };
 
 /// L1 RPC provider trait for interacting with Ethereum.
@@ -72,4 +72,7 @@ pub trait RollupProvider: Send + Sync {
 
     /// Gets the sync status via `optimism_syncStatus`.
     async fn sync_status(&self) -> RpcResult<SyncStatus>;
+
+    /// Gets the output root at a specific L2 block via `optimism_outputAtBlock`.
+    async fn output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock>;
 }

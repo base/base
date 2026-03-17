@@ -48,9 +48,9 @@ pub struct ProposerArgs {
     )]
     pub allow_non_finalized: bool,
 
-    /// URL of the enclave RPC endpoint.
-    #[arg(long = "enclave-rpc", env = cli_env!("ENCLAVE_RPC"))]
-    pub enclave_rpc: Url,
+    /// URL of the prover RPC endpoint.
+    #[arg(long = "prover-rpc", env = cli_env!("PROVER_RPC"))]
+    pub prover_rpc: Url,
 
     /// URL of the L1 Ethereum RPC endpoint.
     #[arg(long = "l1-eth-rpc", env = cli_env!("L1_ETH_RPC"))]
@@ -188,7 +188,7 @@ mod tests {
         // Test that we can construct minimal CLI args (requires all required fields)
         let args = vec![
             "proposer",
-            "--enclave-rpc",
+            "--prover-rpc",
             "http://localhost:8080",
             "--l1-eth-rpc",
             "http://localhost:8545",
@@ -251,7 +251,7 @@ mod tests {
     fn test_cli_missing_rollup_rpc() {
         let args = vec![
             "proposer",
-            "--enclave-rpc",
+            "--prover-rpc",
             "http://localhost:8080",
             "--l1-eth-rpc",
             "http://localhost:8545",
