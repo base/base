@@ -1,10 +1,10 @@
 #![doc = "Action tests for batch format transitions across hardfork boundaries."]
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatchType, Batcher, BatcherConfig, DaType, EncoderConfig,
-    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
+    ActionL2Source, ActionTestHarness, BatchType, Batcher, BatcherConfig, DaType, DerivedBlock,
+    EncoderConfig, L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
 };
-use base_consensus_genesis::HardForkConfig;
+use base_consensus_genesis::{GRANITE_CHANNEL_TIMEOUT, HardForkConfig};
 
 // ---------------------------------------------------------------------------
 // A. Span batch with non-empty hardfork transition block is rejected
@@ -219,5 +219,309 @@ async fn mixed_singular_and_span_batches_after_delta() {
         verifier.l2_safe().block_info.number,
         2,
         "mixed singular + span batches must both derive; safe head should reach 2"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// C. Granite channel timeout enforcement
+//
+// Verifies that the post-Granite 50-block channel timeout is enforced.
+// ---------------------------------------------------------------------------
+
+/// After Granite activates, the channel timeout drops from 300 to 50 blocks.
+/// A channel whose first frame is included in L1 block 1 must time out when
+/// 51 or more additional L1 blocks pass without the channel being completed
+/// (i.e., origin.number > `open_block` + 50).
+///
+/// Setup: All forks through Fjord active at genesis; Granite activates at
+/// timestamp 6 (L2 block 3 with `block_time=2`). Because the default L1
+/// `block_time` is 12 seconds, L1 block 1's timestamp is 12 — well past
+/// Granite activation — so the 50-block timeout applies from the first L1
+/// block that contains batch data.
+///
+/// Phase 1: encode one L2 block into a multi-frame channel (`max_frame_size=80`),
+/// submit only frame 0 in L1 block 1, then mine 51 more empty L1 blocks.
+/// The channel's `open_block_number` is 1 and `1 + 50 = 51 < 52`, so the
+/// channel is timed out by the time the pipeline reaches L1 block 52.
+///
+/// Phase 2 (recovery): a new batcher submits all frames in a single L1 block
+/// and derivation advances the safe head to 1.
+#[tokio::test]
+async fn granite_channel_timeout_enforced() {
+    // All forks through Fjord at genesis, Granite at timestamp 6.
+    // The pre-Granite channel_timeout (300) is never exercised because every
+    // L1 origin processed by the pipeline has timestamp >= 12 > 6.
+    let hardforks = HardForkConfig {
+        canyon_time: Some(0),
+        delta_time: Some(0),
+        ecotone_time: Some(0),
+        fjord_time: Some(0),
+        granite_time: Some(6),
+        ..Default::default()
+    };
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig {
+            da_type: DaType::Calldata,
+            max_frame_size: 80,
+            ..EncoderConfig::default()
+        },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg =
+        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+
+    // Verify the config has the expected timeout values.
+    assert_eq!(
+        rollup_cfg.granite_channel_timeout, GRANITE_CHANNEL_TIMEOUT,
+        "granite_channel_timeout must be {GRANITE_CHANNEL_TIMEOUT}"
+    );
+    assert_eq!(
+        rollup_cfg.channel_timeout, 300,
+        "pre-Granite channel_timeout must be 300 (Base mainnet default)"
+    );
+
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let block = sequencer.build_next_block().expect("build L2 block 1");
+
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
+    // Encode block into multiple frames (max_frame_size=80 forces multi-frame).
+    let mut source = ActionL2Source::new();
+    source.push(block.clone());
+    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    batcher.encode_only().await.expect("encode");
+
+    let frame_count = batcher.pending_count();
+    assert!(
+        frame_count >= 2,
+        "expected multi-frame channel with max_frame_size=80, got {frame_count} frames",
+    );
+
+    // L1 block 1: submit only frame 0. Channel opens at block 1.
+    batcher.stage_n_frames(&mut h.l1, 1);
+    let block_1_num = h.l1.mine_block().number();
+    chain.push(h.l1.tip().clone());
+    batcher.confirm_staged(block_1_num).await;
+
+    verifier.initialize().await.expect("initialize");
+    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
+    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.act_l2_pipeline_full().await.expect("step block 1");
+
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        0,
+        "incomplete channel should not advance safe head"
+    );
+
+    // Mine 51 empty L1 blocks (blocks 2..=52). After block 52, the channel
+    // opened at block 1 has been open for 51 blocks: 1 + 50 = 51 < 52,
+    // triggering timeout under Granite's 50-block limit.
+    for _ in 0..51 {
+        h.mine_and_push(&chain);
+    }
+
+    // Signal all empty blocks to the verifier.
+    for i in 2..=52u64 {
+        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
+        verifier.act_l1_head_signal(blk).await.expect("signal empty block");
+        verifier.act_l2_pipeline_full().await.expect("step empty block");
+    }
+
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        0,
+        "channel must have timed out under Granite's 50-block limit; safe head stays at 0"
+    );
+
+    // Submit remaining frames — they arrive after the channel timed out.
+    // ChannelBank silently drops frames for timed-out channels (lazy eviction:
+    // the timeout check fires in read() before any frame is delivered). If the
+    // timed-out entry was already flushed, the late frames would create a new
+    // incomplete channel starting from a non-zero frame number, which can also
+    // never become ready. Either way, no L2 block is derived.
+    batcher.stage_n_frames(&mut h.l1, frame_count - 1);
+    let late_block_num = h.l1.mine_block().number();
+    chain.push(h.l1.tip().clone());
+    batcher.confirm_staged(late_block_num).await;
+
+    let late_blk = block_info_from(h.l1.block_by_number(late_block_num).expect("late block"));
+    verifier.act_l1_head_signal(late_blk).await.expect("signal late block");
+    let derived = verifier.act_l2_pipeline_full().await.expect("step late block");
+    assert_eq!(
+        derived, 0,
+        "late non-zero frames after timeout create an incomplete channel; no L2 block derived"
+    );
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        0,
+        "safe head must still be at genesis before recovery; channel timed out"
+    );
+
+    // --- Recovery: new batcher, all frames in one L1 block ---
+    let mut source2 = ActionL2Source::new();
+    source2.push(block);
+    Batcher::new(source2, &h.rollup_config, batcher_cfg)
+        .advance(&mut h.l1)
+        .await
+        .expect("recovery advance");
+    chain.push(h.l1.tip().clone());
+
+    let recovery_num = h.l1.latest_number();
+    let recovery_blk = block_info_from(h.l1.block_by_number(recovery_num).expect("recovery block"));
+    verifier.act_l1_head_signal(recovery_blk).await.expect("signal recovery");
+    let recovered = verifier.act_l2_pipeline_full().await.expect("step recovery");
+
+    assert_eq!(recovered, 1, "recovery channel should derive L2 block 1");
+    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head should recover to 1");
+}
+
+// ---------------------------------------------------------------------------
+// D. Jovian SingleBatch transition block is deposit-only
+//
+// op-e2e ref: TestHardforkMiddleOfSingularBatch
+// ---------------------------------------------------------------------------
+
+/// When a `SingleBatch` is submitted for the first Jovian upgrade block (block 3
+/// at ts=6) containing user transactions, derivation drops the batch
+/// (`NonEmptyTransitionBlock`) and generates a deposit-only block in its place
+/// once the sequencer window expires. Unlike span batches (test A above), only
+/// the offending block is dropped — the remaining singular batches for blocks
+/// 1, 2, and 4 derive successfully.
+///
+/// Setup: all forks through Isthmus active at genesis, Jovian at timestamp 6
+/// (L2 block 3 with `block_time=2`). Each L2 block is submitted as a separate
+/// `SingleBatch` channel. A small `seq_window_size` (4) ensures the sequencer
+/// window expires quickly so the pipeline can force-generate the deposit-only
+/// block for block 3 without mining thousands of L1 blocks.
+///
+/// After the pipeline drops block 3's batch and the sequencer window expires,
+/// it auto-generates a deposit-only block 3 and then derives block 4 from its
+/// submitted batch. Safe head reaches 4.
+#[tokio::test]
+async fn jovian_single_batch_transition_block_deposit_only() {
+    let jovian_time = 6u64;
+    let hardforks = HardForkConfig {
+        canyon_time: Some(0),
+        delta_time: Some(0),
+        ecotone_time: Some(0),
+        fjord_time: Some(0),
+        granite_time: Some(0),
+        holocene_time: Some(0),
+        isthmus_time: Some(0),
+        jovian_time: Some(jovian_time),
+        ..Default::default()
+    };
+    let batcher_cfg = BatcherConfig {
+        batch_type: BatchType::Single,
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    // Use a small seq_window_size so the pipeline can force-generate deposit-only
+    // blocks without needing to mine thousands of empty L1 blocks.
+    //
+    // L1 block_time=2 ensures L1 timestamps closely track L2 timestamps and
+    // don't create a wide gap that would generate many spurious empty L2 blocks
+    // when the sequencer window expires.
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_hardforks(hardforks)
+        .with_seq_window_size(4)
+        .build();
+    let l1_config = L1MinerConfig { block_time: 2 };
+    let mut h = ActionTestHarness::new(l1_config, rollup_cfg);
+
+    // The sequencer is initialized with the L1 chain at genesis (before any
+    // L1 blocks are mined). As a result every L2 block built by `builder` will
+    // have L1 origin = genesis (block 0). This means the sequencer window
+    // [0, 0 + seq_window_size) governs *all* four L2 blocks, which is the
+    // behaviour the deposit-only assertion relies on.
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut builder = h.create_l2_sequencer(l1_chain);
+
+    // Build 4 L2 blocks. build_next_block() includes a user transaction in
+    // every block. Block 3 (ts=6) is the first Jovian block — including a
+    // user tx is the deliberate error that derivation must handle.
+    let block1 = builder.build_next_block().expect("build L2 block 1"); // ts=2
+    let block2 = builder.build_next_block().expect("build L2 block 2"); // ts=4
+    let block3_invalid = builder.build_next_block().expect("build L2 block 3 (invalid)"); // ts=6
+    let block4 = builder.build_next_block().expect("build L2 block 4"); // ts=8
+
+    // Precondition: block 3 must contain at least one user transaction (deposits
+    // don't count). If build_next_block() ever started returning empty blocks,
+    // this test would silently stop exercising the NonEmptyTransitionBlock path.
+    assert!(
+        block3_invalid.body.transactions.len() > 1,
+        "block 3 must have deposit tx + at least one user tx to trigger NonEmptyTransitionBlock; \
+         got {} txs",
+        block3_invalid.body.transactions.len(),
+    );
+
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &builder,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
+    // Submit each block as a separate SingleBatch channel, one L1 block each.
+    // L1 blocks 1–4 each contain one singular batch.
+    for (i, block) in [block1, block2, block3_invalid, block4].into_iter().enumerate() {
+        let mut source = ActionL2Source::new();
+        source.push(block);
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
+            .advance(&mut h.l1)
+            .await
+            .unwrap_or_else(|e| panic!("encode singular batch for L2 block {}: {e}", i + 1));
+        chain.push(h.l1.tip().clone());
+    }
+
+    // Mine additional empty L1 blocks so the sequencer window (size=4) expires
+    // for block 3's epoch. The sequencer is initialized with only L1 genesis in
+    // its view, so all L2 blocks have L1 origin = genesis (epoch 0). The window
+    // expires at L1 block 0 + 4 = 4; the pipeline generates the deposit-only block
+    // when processing L1 block 5 (the first block past the window). We already
+    // have L1 blocks 1–4 from batch submission; mine 2 more (blocks 5-6) to
+    // ensure the window expires before the pipeline tip.
+    for _ in 0..2 {
+        h.mine_and_push(&chain);
+    }
+
+    verifier.initialize().await.expect("initialize");
+
+    // Signal all L1 blocks to the verifier and drive derivation.
+    let tip = h.l1.latest_number();
+    for i in 1..=tip {
+        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
+        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l2_pipeline_full().await.expect("pipeline");
+    }
+
+    // With singular batches and the Holocene batch validator: the pipeline
+    // derives blocks 1 and 2 from their submitted batches; drops block 3's
+    // batch (NonEmptyTransitionBlock for the first Jovian block containing
+    // user txs); force-generates a deposit-only block 3 once the sequencer
+    // window expires; then derives block 4 from its submitted batch.
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        4,
+        "singular batches: safe head must reach 4 (block 3 replaced with deposit-only)"
+    );
+
+    // Verify that block 3 is genuinely deposit-only — not that the pipeline
+    // accepted the invalid batch and derived a normal block. Without this
+    // assertion, removing the NonEmptyTransitionBlock validation would still
+    // produce safe_head == 4.
+    let block3: DerivedBlock = verifier
+        .derived_block(3)
+        .expect("block 3 must have been derived before safe head reached 4");
+    assert!(
+        block3.is_deposit_only(),
+        "block 3 must be deposit-only (NonEmptyTransitionBlock batch dropped); \
+         got {} user txs",
+        block3.user_tx_count,
     );
 }

@@ -25,4 +25,4 @@ scrape_configs:
 
   - job_name: 'batcher'
     static_configs:
-      - targets: ['op-batcher:6060']
+      - targets: ['base-batcher:6060']

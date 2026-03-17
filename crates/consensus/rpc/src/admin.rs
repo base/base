@@ -56,6 +56,11 @@ where
     }
 }
 
+/// Returns an RPC error indicating the sequencer is not available on this node.
+fn sequencer_unavailable() -> ErrorObject<'static> {
+    ErrorObject::owned(-32001, "sequencer not available on this node", None::<()>)
+}
+
 #[async_trait]
 impl<SequencerAdminAPIClient_> AdminApiServer for AdminRpc<SequencerAdminAPIClient_>
 where
@@ -65,6 +70,8 @@ where
         &self,
         payload: OpExecutionPayloadEnvelope,
     ) -> RpcResult<()> {
+        // Note: intentionally no sequencer guard here. Posting an unsafe payload is a P2P/gossip
+        // operation that is valid on both sequencer and validator nodes.
         base_macros::inc!(gauge, base_consensus_gossip::Metrics::RPC_CALLS, "method" => "admin_postUnsafePayload");
         self.network_sender
             .send(NetworkAdminQuery::PostUnsafePayload { payload })
@@ -75,7 +82,7 @@ where
     async fn admin_sequencer_active(&self) -> RpcResult<bool> {
         // If the sequencer is not enabled (mode runs in validator mode), return an error.
         let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(ErrorObject::from(ErrorCode::MethodNotFound));
+            return Err(sequencer_unavailable());
         };
 
         sequencer_client
@@ -84,14 +91,14 @@ where
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
     }
 
-    async fn admin_start_sequencer(&self) -> RpcResult<()> {
+    async fn admin_start_sequencer(&self, unsafe_head: B256) -> RpcResult<()> {
         // If the sequencer is not enabled (mode runs in validator mode), return an error.
         let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(ErrorObject::from(ErrorCode::MethodNotFound));
+            return Err(sequencer_unavailable());
         };
 
         sequencer_client
-            .start_sequencer()
+            .start_sequencer(unsafe_head)
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
     }
@@ -99,7 +106,7 @@ where
     async fn admin_stop_sequencer(&self) -> RpcResult<B256> {
         // If the sequencer is not enabled (mode runs in validator mode), return an error.
         let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(ErrorObject::from(ErrorCode::MethodNotFound));
+            return Err(sequencer_unavailable());
         };
 
         sequencer_client
@@ -111,7 +118,7 @@ where
     async fn admin_conductor_enabled(&self) -> RpcResult<bool> {
         // If the sequencer is not enabled (mode runs in validator mode), return an error.
         let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(ErrorObject::from(ErrorCode::MethodNotFound));
+            return Err(sequencer_unavailable());
         };
 
         sequencer_client
@@ -123,7 +130,7 @@ where
     async fn admin_recover_mode(&self) -> RpcResult<bool> {
         // If the sequencer is not enabled (mode runs in validator mode), return an error.
         let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(ErrorObject::from(ErrorCode::MethodNotFound));
+            return Err(sequencer_unavailable());
         };
 
         sequencer_client
@@ -135,7 +142,7 @@ where
     async fn admin_set_recover_mode(&self, mode: bool) -> RpcResult<()> {
         // If the sequencer is not enabled (mode runs in validator mode), return an error.
         let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(ErrorObject::from(ErrorCode::MethodNotFound));
+            return Err(sequencer_unavailable());
         };
 
         sequencer_client
@@ -147,7 +154,7 @@ where
     async fn admin_override_leader(&self) -> RpcResult<()> {
         // If the sequencer is not enabled (mode runs in validator mode), return an error.
         let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(ErrorObject::from(ErrorCode::MethodNotFound));
+            return Err(sequencer_unavailable());
         };
 
         sequencer_client
@@ -159,7 +166,7 @@ where
     async fn admin_reset_derivation_pipeline(&self) -> RpcResult<()> {
         // If the sequencer is not enabled (mode runs in validator mode), return an error.
         let Some(ref sequencer_client) = self.sequencer_admin_client else {
-            return Err(ErrorObject::from(ErrorCode::MethodNotFound));
+            return Err(sequencer_unavailable());
         };
 
         sequencer_client

@@ -48,7 +48,7 @@ pub trait SequencerAdminAPIClient: Send + Sync + Debug {
     async fn is_recovery_mode(&self) -> Result<bool, SequencerAdminAPIError>;
 
     /// Start the sequencer.
-    async fn start_sequencer(&self) -> Result<(), SequencerAdminAPIError>;
+    async fn start_sequencer(&self, unsafe_head: B256) -> Result<(), SequencerAdminAPIError>;
 
     /// Stop the sequencer.
     async fn stop_sequencer(&self) -> Result<B256, SequencerAdminAPIError>;

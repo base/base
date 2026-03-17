@@ -294,32 +294,32 @@ services:
       start_period: 250ms
     restart: unless-stopped
 
-  op-batcher:
-    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.3
-    container_name: op-batcher
+  base-batcher:
+    image: base-batcher:local
+    build:
+      <<: *rust-service-build
+      target: batcher
+    container_name: base-batcher
     depends_on:
       base-builder-cl:
         condition: service_healthy
     ports:
       - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
-    volumes:
-      - ../../.devnet/l1/configs:/genesis:ro
     command:
-      - op-batcher
-      - --l1-eth-rpc
+      - --l1-rpc-url
       - http://l1-el:${L1_HTTP_PORT}
-      - --l2-eth-rpc
+      - --l2-rpc-url
       - http://base-builder:${L2_BUILDER_HTTP_PORT}
-      - --rollup-rpc
+      - --rollup-rpc-url
       - http://base-builder-cl:${L2_BUILDER_CL_RPC_PORT}
       - --private-key
       - ${BATCHER_KEY}
       - --max-channel-duration
       - "2"
       - --poll-interval
-      - 1s
+      - "1"
       - --sub-safety-margin
-      - "4"
+      - "0"
       - --num-confirmations
       - "1"
       - --metrics.enabled

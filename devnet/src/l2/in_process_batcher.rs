@@ -45,7 +45,7 @@ impl InProcessBatcher {
             l2_rpc_url: config.l2_rpc_url,
             rollup_rpc_url: config.rollup_rpc_url,
             batcher_private_key: SecretKey(config.batcher_key),
-            // Devnet defaults match op-batcher Docker args:
+            // Devnet defaults come from the shared batcher config:
             // poll_interval: 1s, num_confirmations: 1, resubmission_timeout: 48s —
             // all set by BatcherConfig::default().
             ..BatcherConfig::default()

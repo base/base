@@ -218,7 +218,6 @@ impl DevnetBuilder {
                 let l2_config = L2ContainerConfig {
                     use_stable_names: true,
                     network_name: Some(config.network_name.clone()),
-                    batcher_metrics_port: Some(config.ports.batcher_metrics),
                     builder_http_port: Some(config.ports.l2_builder_http),
                     builder_ws_port: Some(config.ports.l2_builder_ws),
                     builder_auth_port: Some(config.ports.l2_builder_auth),

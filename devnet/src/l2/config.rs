@@ -8,9 +8,6 @@ pub struct L2ContainerConfig {
     /// Network name for all containers
     pub network_name: Option<String>,
 
-    /// Host port for batcher metrics
-    pub batcher_metrics_port: Option<u16>,
-
     /// L2 Builder HTTP RPC port
     pub builder_http_port: Option<u16>,
     /// L2 Builder WebSocket port

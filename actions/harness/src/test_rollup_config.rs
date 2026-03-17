@@ -132,6 +132,15 @@ impl TestRollupConfigBuilder {
         self
     }
 
+    /// Sets the Base V1 activation timestamp.
+    ///
+    /// Base V1 is a standalone Base-specific fork, independent of the OP
+    /// cascade chain. Chaining after any `through_*` method is fine.
+    pub fn with_base_v1_at(mut self, t: u64) -> Self {
+        self.config.hardforks.base.get_or_insert_with(BaseHardforkConfig::default).v1 = Some(t);
+        self
+    }
+
     /// Activates every scheduled fork from genesis for tests that need it.
     ///
     /// `base_mainnet` intentionally keeps the harness's existing "Canyon through

@@ -191,6 +191,30 @@ impl<S: L2BlockProvider> Batcher<S> {
         tokio::task::yield_now().await;
     }
 
+    /// Simulate an L1 reorg back to `block_number`.
+    ///
+    /// Truncates the L1 chain via [`L1Miner::reorg_to`], fires failure
+    /// receipts for every item in `pending` and `staged`, and publishes
+    /// [`L1HeadEvent::NewHead`] to the driver.
+    ///
+    /// Items already confirmed via [`confirm_staged`] (and thus living in
+    /// the driver's own `in_flight` set) are **not** covered — see
+    /// [`L1MinerTxManager::reorg_to`] for details.
+    ///
+    /// This method is synchronous. After returning, call
+    /// `tokio::task::yield_now().await` (or an equivalent) to give the
+    /// driver's `run()` loop a scheduling turn to process the head event.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `block_number` exceeds the current L1 chain tip
+    /// (`ReorgError::BeyondTip`).
+    ///
+    /// [`confirm_staged`]: Batcher::confirm_staged
+    pub fn reorg(&self, block_number: u64, l1: &mut L1Miner) {
+        self.tx_manager.reorg_to(block_number, l1);
+    }
+
     /// Run one full batch cycle through the production [`BatchDriver`] path.
     ///
     /// # Errors

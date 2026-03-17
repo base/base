@@ -41,6 +41,7 @@ use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database as _;
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
@@ -263,11 +264,17 @@ where
         ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
         ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
 
+        // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
+        let (flashblocks_per_block, first_flashblock_offset) =
+            self.calculate_flashblocks(timestamp);
+
+        let skip_flashblocks_building = ctx.attributes().no_tx_pool || flashblocks_per_block == 0;
+
         let (payload, fb_payload) = build_block(
             &mut state,
             &ctx,
             &mut info,
-            ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+            skip_flashblocks_building, // need to calculate state root for CL sync or if not building flashblocks
         )?;
 
         self.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
@@ -284,27 +291,48 @@ where
             let flashblock_byte_size =
                 self.ws_pub.publish(&fb_payload).map_err(PayloadBuilderError::other)?;
             ctx.metrics.flashblock_byte_size_histogram.record(flashblock_byte_size as f64);
-        }
-
-        if ctx.attributes().no_tx_pool {
-            finalized_cell.set(payload);
-
+            ctx.metrics
+                .first_flashblock_time_offset
+                .record(first_flashblock_offset.as_millis() as f64);
+            ctx.metrics
+                .reduced_flashblocks_number
+                .record(self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block)
+                    as f64);
+        } else {
             info!(
                 target: "payload_builder",
                 "No transaction pool, skipping transaction pool processing",
             );
+            ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
+            ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
+        }
 
+        // fcu just arrived late, not syncing
+        if flashblocks_per_block == 0 && !ctx.attributes().no_tx_pool {
+            error!(
+                target: "payload_builder",
+                message = "FCU arrived too late or system clock are unsynced, building 0 flashblocks",
+                timestamp,
+            );
+
+            self.record_flashblocks_metrics(
+                &ctx,
+                &info,
+                flashblocks_per_block,
+                &span,
+                "FCU arrived too late or system clock are unsynced, building 0 flashblocks",
+            );
+        }
+
+        if skip_flashblocks_building {
+            finalized_cell.set(payload);
             let total_block_building_time = block_build_start_time.elapsed();
             ctx.metrics.total_block_built_duration.record(total_block_building_time);
             ctx.metrics.total_block_built_gauge.set(total_block_building_time);
-            ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
-            ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
 
             return Ok(());
         }
-        // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
-        let (flashblocks_per_block, first_flashblock_offset) =
-            self.calculate_flashblocks(timestamp);
+
         info!(
             target: "payload_builder",
             message = "Performed flashblocks timing derivation",
@@ -312,10 +340,7 @@ where
             first_flashblock_offset = first_flashblock_offset.as_millis(),
             flashblocks_interval = self.config.flashblocks_interval.as_millis(),
         );
-        ctx.metrics.reduced_flashblocks_number.record(
-            self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block) as f64,
-        );
-        ctx.metrics.first_flashblock_time_offset.record(first_flashblock_offset.as_millis() as f64);
+
         let gas_per_batch = ctx.block_gas_limit() / flashblocks_per_block;
         let da_per_batch = ctx
             .builder_config
@@ -794,14 +819,10 @@ where
         let Some(time_drift) =
             target_time.duration_since(now).ok().filter(|duration| duration.as_millis() > 0)
         else {
-            error!(
-                target: "payload_builder",
-                message = "FCU arrived too late or system clock are unsynced",
-                ?target_time,
-                ?now,
-            );
-            return (self.config.flashblocks_per_block(), self.config.flashblocks_interval);
+            // in this case, we have no time to produce any flashblocks
+            return (0, Duration::ZERO);
         };
+
         self.metrics.flashblocks_time_drift.record(
             self.config.block_time.as_millis().saturating_sub(time_drift.as_millis()) as f64,
         );
@@ -845,12 +866,16 @@ where
     }
 }
 
-// TODO: unify with `base_primitives::Metadata` once receipts and balances are added to the shared type
+#[skip_serializing_none]
 #[derive(Debug, Serialize, Deserialize)]
 struct FlashblocksMetadata {
-    receipts: HashMap<B256, OpReceipt>,
-    new_account_balances: HashMap<Address, U256>,
+    /// Receipts for transactions in this flashblock (removed in Base 1.0)
+    receipts: Option<HashMap<B256, OpReceipt>>,
+    /// Changed account balances (removed in Base 1.0)
+    new_account_balances: Option<HashMap<Address, U256>>,
+    /// The block number this flashblock belongs to
     block_number: u64,
+    /// The flashblock access list
     access_list: Option<FlashblockAccessList>,
 }
 
@@ -1072,14 +1097,24 @@ where
 
     // finalize and build the FAL
     let fal_builder = std::mem::take(&mut info.extra.access_list_builder);
-    let _access_list = fal_builder.build(min_tx_index, max_tx_index);
+    let access_list = fal_builder.build(min_tx_index, max_tx_index);
 
-    let metadata: FlashblocksMetadata = FlashblocksMetadata {
-        receipts: receipts_with_hash,
-        new_account_balances,
-        block_number: ctx.parent().number + 1,
-        access_list: None,
-    };
+    let metadata: FlashblocksMetadata =
+        if ctx.chain_spec.is_base_v1_active_at_timestamp(ctx.attributes().timestamp()) {
+            FlashblocksMetadata {
+                block_number: ctx.parent().number + 1,
+                access_list: Some(access_list),
+                receipts: None,
+                new_account_balances: None,
+            }
+        } else {
+            FlashblocksMetadata {
+                block_number: ctx.parent().number + 1,
+                access_list: None,
+                new_account_balances: Some(new_account_balances),
+                receipts: Some(receipts_with_hash),
+            }
+        };
 
     // Prepare the flashblocks message
     let fb_payload = FlashblocksPayloadV1 {
@@ -1160,8 +1195,8 @@ mod tests {
         balances.insert(address, U256::from(1_000_000_000_000_000_000u128));
 
         let metadata = FlashblocksMetadata {
-            receipts,
-            new_account_balances: balances,
+            receipts: Some(receipts),
+            new_account_balances: Some(balances),
             block_number: 42,
             access_list: None,
         };
@@ -1174,7 +1209,7 @@ mod tests {
         keys.sort();
         assert_eq!(
             keys,
-            vec!["access_list", "block_number", "new_account_balances", "receipts"],
+            vec!["block_number", "new_account_balances", "receipts"],
             "metadata field names changed"
         );
 
@@ -1194,9 +1229,6 @@ mod tests {
         let balances_obj = obj["new_account_balances"].as_object().unwrap();
         let addr_key = format!("{address:#x}");
         assert!(balances_obj.contains_key(&addr_key), "balance should be keyed by address");
-
-        // access_list is null when None
-        assert!(obj["access_list"].is_null());
     }
 
     /// The client-side [`Metadata`] type must be able to deserialize from
@@ -1204,8 +1236,8 @@ mod tests {
     #[test]
     fn client_metadata_deserializes_from_builder_metadata() {
         let metadata = FlashblocksMetadata {
-            receipts: HashMap::default(),
-            new_account_balances: HashMap::default(),
+            receipts: Some(HashMap::default()),
+            new_account_balances: Some(HashMap::default()),
             block_number: 99,
             access_list: None,
         };

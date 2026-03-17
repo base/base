@@ -41,7 +41,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7594::BlobTransactionSidecarEip7594};
+use alloy_consensus::TxEnvelope;
+use alloy_eips::{
+    BlockNumberOrTag, Decodable2718, Encodable2718, eip7594::BlobTransactionSidecarEip7594,
+};
 use alloy_network::{Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
@@ -92,6 +95,13 @@ pub struct PreparedTx {
     /// `craft_tx` call is unavoidable because alloy's
     /// `TransactionRequest::sidecar` requires an owned value.
     pub sidecar: Option<Arc<BlobTransactionSidecarEip7594>>,
+}
+
+impl PreparedTx {
+    /// Decodes the signed transaction bytes into a [`TxEnvelope`].
+    pub fn to_envelope(&self) -> Result<TxEnvelope, alloy_eips::eip2718::Eip2718Error> {
+        TxEnvelope::decode_2718(&mut self.raw_tx.as_ref())
+    }
 }
 
 /// Mutable fee-bump state tracked across iterations in the send loop.
@@ -1542,16 +1552,15 @@ impl TxManager for SimpleTxManager {
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::{TxEip1559, TxEnvelope};
-    use alloy_eips::Decodable2718;
+    use alloy_consensus::TxEip1559;
     use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
-    use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+    use alloy_primitives::{Address, B256, TxKind, U256};
     use alloy_provider::RootProvider;
     use alloy_signer_local::PrivateKeySigner;
     use rstest::rstest;
 
-    use super::{BumpState, SimpleTxManager};
+    use super::{BumpState, PreparedTx, SimpleTxManager, TxEnvelope};
     use crate::{GasPriceCaps, NoopTxMetrics, TxCandidate, TxManagerConfig, TxManagerError};
 
     async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
@@ -1573,10 +1582,8 @@ mod tests {
         (manager, anvil)
     }
 
-    fn decode_eip1559(raw: &Bytes) -> TxEip1559 {
-        let envelope =
-            TxEnvelope::decode_2718(&mut raw.as_ref()).expect("should decode as valid TxEnvelope");
-        match envelope {
+    fn decode_eip1559(prepared: &PreparedTx) -> TxEip1559 {
+        match prepared.to_envelope().expect("should decode as valid TxEnvelope") {
             TxEnvelope::Eip1559(signed) => signed.strip_signature(),
             other => panic!("expected EIP-1559, got {other:?}"),
         }
@@ -1701,7 +1708,7 @@ mod tests {
             .prepare_with_initial_caps(&candidate, None, Some(caps.clone()), None, None)
             .await
             .expect("should prepare tx using supplied caps");
-        let tx = decode_eip1559(&prepared.raw_tx);
+        let tx = decode_eip1559(&prepared);
 
         assert_eq!(tx.to, TxKind::Call(Address::with_last_byte(0x42)));
         assert_eq!(prepared.gas_tip_cap, caps.gas_tip_cap);

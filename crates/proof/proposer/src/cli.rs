@@ -7,6 +7,7 @@ use base_cli_utils::CliStyles;
 use clap::Parser;
 use url::Url;
 
+base_cli_utils::define_cli_env!("BASE_PROPOSER");
 base_cli_utils::define_log_args!("BASE_PROPOSER");
 base_cli_utils::define_metrics_args!("BASE_PROPOSER", 7300);
 base_tx_manager::define_signer_cli!("BASE_PROPOSER");
@@ -42,47 +43,47 @@ pub struct ProposerArgs {
     /// Allow proposals based on non-finalized L1 data.
     #[arg(
         long = "allow-non-finalized",
-        env = "BASE_PROPOSER_ALLOW_NON_FINALIZED",
+        env = cli_env!("ALLOW_NON_FINALIZED"),
         default_value = "false"
     )]
     pub allow_non_finalized: bool,
 
     /// URL of the enclave RPC endpoint.
-    #[arg(long = "enclave-rpc", env = "BASE_PROPOSER_ENCLAVE_RPC")]
+    #[arg(long = "enclave-rpc", env = cli_env!("ENCLAVE_RPC"))]
     pub enclave_rpc: Url,
 
     /// URL of the L1 Ethereum RPC endpoint.
-    #[arg(long = "l1-eth-rpc", env = "BASE_PROPOSER_L1_ETH_RPC")]
+    #[arg(long = "l1-eth-rpc", env = cli_env!("L1_ETH_RPC"))]
     pub l1_eth_rpc: Url,
 
     /// URL of the L2 Ethereum RPC endpoint.
-    #[arg(long = "l2-eth-rpc", env = "BASE_PROPOSER_L2_ETH_RPC")]
+    #[arg(long = "l2-eth-rpc", env = cli_env!("L2_ETH_RPC"))]
     pub l2_eth_rpc: Url,
 
     /// Use reth-specific RPC calls for L2.
-    #[arg(long = "l2-reth", env = "BASE_PROPOSER_L2_RETH", default_value = "false")]
+    #[arg(long = "l2-reth", env = cli_env!("L2_RETH"), default_value = "false")]
     pub l2_reth: bool,
 
     /// Address of the `AnchorStateRegistry` contract on L1.
-    #[arg(long = "anchor-state-registry-addr", env = "BASE_PROPOSER_ANCHOR_STATE_REGISTRY_ADDR")]
+    #[arg(long = "anchor-state-registry-addr", env = cli_env!("ANCHOR_STATE_REGISTRY_ADDR"))]
     pub anchor_state_registry_addr: Address,
 
     /// Address of the `DisputeGameFactory` contract on L1.
-    #[arg(long = "dispute-game-factory-addr", env = "BASE_PROPOSER_DISPUTE_GAME_FACTORY_ADDR")]
+    #[arg(long = "dispute-game-factory-addr", env = cli_env!("DISPUTE_GAME_FACTORY_ADDR"))]
     pub dispute_game_factory_addr: Address,
 
     /// Game type ID for `AggregateVerifier` dispute games.
-    #[arg(long = "game-type", env = "BASE_PROPOSER_GAME_TYPE")]
+    #[arg(long = "game-type", env = cli_env!("GAME_TYPE"))]
     pub game_type: u32,
 
     /// Keccak256 hash of the TEE image PCR0 (0x-prefixed hex).
-    #[arg(long = "tee-image-hash", env = "BASE_PROPOSER_TEE_IMAGE_HASH")]
+    #[arg(long = "tee-image-hash", env = cli_env!("TEE_IMAGE_HASH"))]
     pub tee_image_hash: B256,
 
     /// Polling interval for new blocks (e.g., "12s", "1m").
     #[arg(
         long = "poll-interval",
-        env = "BASE_PROPOSER_POLL_INTERVAL",
+        env = cli_env!("POLL_INTERVAL"),
         default_value = "12s",
         value_parser = humantime::parse_duration
     )]
@@ -91,36 +92,36 @@ pub struct ProposerArgs {
     /// RPC request timeout (e.g., "30s", "1m").
     #[arg(
         long = "rpc-timeout",
-        env = "BASE_PROPOSER_RPC_TIMEOUT",
+        env = cli_env!("RPC_TIMEOUT"),
         default_value = "30s",
         value_parser = humantime::parse_duration
     )]
     pub rpc_timeout: Duration,
 
     /// URL of the rollup RPC endpoint.
-    #[arg(long = "rollup-rpc", env = "BASE_PROPOSER_ROLLUP_RPC")]
+    #[arg(long = "rollup-rpc", env = cli_env!("ROLLUP_RPC"))]
     pub rollup_rpc: Url,
 
     /// Skip TLS certificate verification.
     #[arg(
         long = "skip-tls-verify",
-        env = "BASE_PROPOSER_SKIP_TLS_VERIFY",
+        env = cli_env!("SKIP_TLS_VERIFY"),
         default_value = "false"
     )]
     pub skip_tls_verify: bool,
 
     /// Wait for node sync before starting.
-    #[arg(long = "wait-node-sync", env = "BASE_PROPOSER_WAIT_NODE_SYNC", default_value = "false")]
+    #[arg(long = "wait-node-sync", env = cli_env!("WAIT_NODE_SYNC"), default_value = "false")]
     pub wait_node_sync: bool,
 
     /// Maximum number of retry attempts for RPC operations.
-    #[arg(long = "rpc-max-retries", env = "BASE_PROPOSER_RPC_MAX_RETRIES", default_value = "5")]
+    #[arg(long = "rpc-max-retries", env = cli_env!("RPC_MAX_RETRIES"), default_value = "5")]
     pub rpc_max_retries: u32,
 
     /// Initial delay for exponential backoff (e.g., "100ms", "1s").
     #[arg(
         long = "rpc-retry-initial-delay",
-        env = "BASE_PROPOSER_RPC_RETRY_INITIAL_DELAY",
+        env = cli_env!("RPC_RETRY_INITIAL_DELAY"),
         default_value = "100ms",
         value_parser = humantime::parse_duration
     )]
@@ -129,7 +130,7 @@ pub struct ProposerArgs {
     /// Maximum delay between retry attempts (e.g., "10s", "1m").
     #[arg(
         long = "rpc-retry-max-delay",
-        env = "BASE_PROPOSER_RPC_RETRY_MAX_DELAY",
+        env = cli_env!("RPC_RETRY_MAX_DELAY"),
         default_value = "10s",
         value_parser = humantime::parse_duration
     )]
@@ -152,7 +153,7 @@ pub struct RpcServerArgs {
     #[arg(
         id = "rpc_enable_admin",
         long = "rpc.enable-admin",
-        env = "BASE_PROPOSER_RPC_ENABLE_ADMIN",
+        env = cli_env!("RPC_ENABLE_ADMIN"),
         default_value = "false"
     )]
     pub enable_admin: bool,
@@ -161,7 +162,7 @@ pub struct RpcServerArgs {
     #[arg(
         id = "rpc_addr",
         long = "rpc.addr",
-        env = "BASE_PROPOSER_RPC_ADDR",
+        env = cli_env!("RPC_ADDR"),
         default_value = "127.0.0.1"
     )]
     pub addr: IpAddr,
@@ -170,7 +171,7 @@ pub struct RpcServerArgs {
     #[arg(
         id = "rpc_port",
         long = "rpc.port",
-        env = "BASE_PROPOSER_RPC_PORT",
+        env = cli_env!("RPC_PORT"),
         default_value = "8545"
     )]
     pub port: u16,

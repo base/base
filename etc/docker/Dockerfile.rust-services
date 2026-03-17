@@ -81,6 +81,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --profile $PROFILE --package audit-archiver --bin audit-archiver && \
     cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/audit-archiver /app/audit-archiver
 
+FROM source AS batcher-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=batcher-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-batcher-bin --bin base-batcher && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-batcher /app/base-batcher
+
 FROM public.ecr.aws/docker/library/debian:trixie-slim AS runtime-base
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl && \
@@ -117,3 +125,7 @@ ENTRYPOINT ["./ingress-rpc"]
 FROM runtime-base AS audit-archiver
 COPY --from=audit-archiver-builder --chown=base:base /app/audit-archiver ./audit-archiver
 ENTRYPOINT ["./audit-archiver"]
+
+FROM runtime-base AS batcher
+COPY --from=batcher-builder --chown=base:base /app/base-batcher ./base-batcher
+ENTRYPOINT ["./base-batcher"]
