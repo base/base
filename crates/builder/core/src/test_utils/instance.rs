@@ -10,6 +10,7 @@ use std::sync::{Arc, LazyLock};
 
 use alloy_primitives::B256;
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
+use async_trait::async_trait;
 use base_alloy_flashblocks::FlashblocksPayloadV1;
 use base_alloy_network::Base;
 use base_execution_chainspec::OpChainSpec;
@@ -65,8 +66,37 @@ pub struct LocalInstance {
     runtime: Option<Runtime>,
     exit_future: NodeExitFuture,
     _node_handle: Box<dyn Any + Send>,
+    pool_handle: Arc<dyn ExternalTransactionPool>,
     pool_observer: TransactionPoolObserver,
     metering_provider: SharedMeteringProvider,
+}
+
+struct PoolHandle<P> {
+    pool: P,
+}
+
+impl<P: core::fmt::Debug> core::fmt::Debug for PoolHandle<P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PoolHandle").field("pool", &self.pool).finish()
+    }
+}
+
+#[async_trait]
+pub trait ExternalTransactionPool: Send + Sync + core::fmt::Debug {
+    async fn add_external_transaction(&self, tx: BasePooledTransaction) -> eyre::Result<()>;
+}
+
+#[async_trait]
+impl<P> ExternalTransactionPool for PoolHandle<P>
+where
+    P: TransactionPool<Transaction = BasePooledTransaction> + Send + Sync + core::fmt::Debug,
+{
+    async fn add_external_transaction(&self, tx: BasePooledTransaction) -> eyre::Result<()> {
+        TransactionPool::add_external_transaction(&self.pool, tx)
+            .await
+            .map(|_| ())
+            .map_err(|err| eyre::eyre!("pool rejected transaction: {err}"))
+    }
 }
 
 impl LocalInstance {
@@ -96,6 +126,8 @@ impl LocalInstance {
         let (rpc_ready_tx, rpc_ready_rx) = oneshot::channel::<()>();
         let (txpool_ready_tx, txpool_ready_rx) =
             oneshot::channel::<AllTransactionsEvents<BasePooledTransaction>>();
+        let (pool_handle_tx, pool_handle_rx) =
+            oneshot::channel::<Arc<dyn ExternalTransactionPool>>();
 
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
@@ -128,6 +160,10 @@ impl LocalInstance {
                     .send(ctx.pool.all_transactions_event_listener())
                     .expect("Failed to send txpool ready signal");
 
+                let pool_handle: Arc<dyn ExternalTransactionPool> =
+                    Arc::new(PoolHandle { pool: ctx.pool });
+                pool_handle_tx.send(pool_handle).expect("Failed to send pool handle");
+
                 Ok(())
             });
 
@@ -139,12 +175,14 @@ impl LocalInstance {
         // Wait for all required components to be ready
         rpc_ready_rx.await.expect("Failed to receive ready signal");
         let pool_monitor = txpool_ready_rx.await.expect("Failed to receive txpool ready signal");
+        let pool_handle = pool_handle_rx.await.expect("Failed to receive pool handle");
 
         Ok(Self {
             builder_config,
             node_config,
             exit_future,
             _node_handle: node_handle,
+            pool_handle,
             runtime: Some(runtime),
             pool_observer: TransactionPoolObserver::new(pool_monitor),
             metering_provider,
@@ -195,6 +233,10 @@ impl LocalInstance {
 
     pub const fn pool(&self) -> &TransactionPoolObserver {
         &self.pool_observer
+    }
+
+    pub fn pool_handle(&self) -> Arc<dyn ExternalTransactionPool> {
+        Arc::clone(&self.pool_handle)
     }
 
     pub fn metering_provider(&self) -> &SharedMeteringProvider {
