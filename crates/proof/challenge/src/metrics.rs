@@ -29,8 +29,8 @@ impl ChallengerMetrics {
     /// Counter: total number of nullify transactions submitted.
     pub const NULLIFY_TX_SUBMITTED_TOTAL: &str = "base_challenger_nullify_tx_submitted_total";
 
-    /// Counter: total number of nullify transactions confirmed (labelled by status).
-    pub const NULLIFY_TX_CONFIRMED_TOTAL: &str = "base_challenger_nullify_tx_confirmed_total";
+    /// Counter: total number of nullify transaction outcomes (labelled by status).
+    pub const NULLIFY_TX_OUTCOME_TOTAL: &str = "base_challenger_nullify_tx_outcome_total";
 
     /// Histogram: latency in seconds for nullify transaction confirmation.
     pub const NULLIFY_TX_LATENCY_SECONDS: &str = "base_challenger_nullify_tx_latency_seconds";
