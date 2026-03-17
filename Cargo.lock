@@ -3223,6 +3223,7 @@ dependencies = [
  "base-consensus-providers",
  "base-consensus-rpc",
  "base-consensus-sources",
+ "base-health",
  "base-macros",
  "base-protocol",
  "derive_more",
@@ -3919,9 +3920,16 @@ dependencies = [
 name = "base-health"
 version = "0.7.0"
 dependencies = [
+ "alloy-transport-http",
  "async-trait",
+ "bytes",
+ "futures",
+ "http 1.4.0",
+ "http-body 1.0.1",
  "jsonrpsee",
  "serde",
+ "tokio",
+ "tower",
 ]
 
 [[package]]
