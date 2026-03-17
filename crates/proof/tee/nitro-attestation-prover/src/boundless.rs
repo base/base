@@ -47,7 +47,7 @@ pub struct BoundlessProver {
 impl fmt::Debug for BoundlessProver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BoundlessProver")
-            .field("rpc_url", &self.rpc_url)
+            .field("rpc_url", &self.rpc_url.origin().unicode_serialization())
             .field("signer", &self.signer.address())
             .field("verifier_program_url", &self.verifier_program_url)
             .field("image_id", &self.image_id)
@@ -208,7 +208,19 @@ mod tests {
         assert_eq!(cloned.timeout, prover.timeout);
     }
 
-    // ── Debug shows address, not raw key ────────────────────────────────
+    // ── Debug redaction ──────────────────────────────────────────────────
+
+    #[rstest]
+    fn debug_redacts_rpc_url_path() {
+        let api_key = "s3cret-api-key-12345";
+        let rpc_with_key = format!("https://mainnet.infura.io/v3/{api_key}");
+        let mut prover = prover();
+        prover.rpc_url = Url::parse(&rpc_with_key).unwrap();
+
+        let debug = format!("{prover:?}");
+        assert!(!debug.contains(api_key), "RPC URL path (API key) must not appear in Debug output");
+        assert!(debug.contains("mainnet.infura.io"), "RPC host should still be visible");
+    }
 
     #[rstest]
     fn debug_shows_address_not_key(prover: BoundlessProver) {
