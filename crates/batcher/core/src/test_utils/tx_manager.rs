@@ -6,7 +6,7 @@ use alloy_rpc_types_eth::TransactionReceipt;
 use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
 use tokio::sync::oneshot;
 
-fn stub_receipt(block_number: u64) -> TransactionReceipt {
+const fn stub_receipt(block_number: u64) -> TransactionReceipt {
     let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
         receipt: Receipt {
             status: Eip658Value::Eip658(true),

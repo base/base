@@ -1,7 +1,9 @@
 //! Test [`UnsafeBlockSource`] and [`L1HeadSource`] implementations.
 
 use async_trait::async_trait;
-use base_batcher_source::{L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource};
+use base_batcher_source::{
+    L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
+};
 
 /// [`UnsafeBlockSource`] that parks the select arm forever.
 ///
@@ -29,7 +31,7 @@ pub struct OneBlockSource {
 
 impl OneBlockSource {
     /// Create a new source that has not yet delivered its block.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { delivered: false }
     }
 }

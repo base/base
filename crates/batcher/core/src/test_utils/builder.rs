@@ -45,8 +45,14 @@ impl DriverFixture {
         runtime: R,
         pipeline: TrackingPipeline,
         tx_manager: TM,
-    ) -> BatchDriver<R, TrackingPipeline, PendingSource, TM, Arc<NoopThrottleClient>, PendingL1HeadSource>
-    {
+    ) -> BatchDriver<
+        R,
+        TrackingPipeline,
+        PendingSource,
+        TM,
+        Arc<NoopThrottleClient>,
+        PendingL1HeadSource,
+    > {
         Self::build_with_max_pending(runtime, pipeline, tx_manager, 1)
     }
 
@@ -56,8 +62,14 @@ impl DriverFixture {
         pipeline: TrackingPipeline,
         tx_manager: TM,
         max_pending: usize,
-    ) -> BatchDriver<R, TrackingPipeline, PendingSource, TM, Arc<NoopThrottleClient>, PendingL1HeadSource>
-    {
+    ) -> BatchDriver<
+        R,
+        TrackingPipeline,
+        PendingSource,
+        TM,
+        Arc<NoopThrottleClient>,
+        PendingL1HeadSource,
+    > {
         BatchDriver::new(
             runtime,
             pipeline,

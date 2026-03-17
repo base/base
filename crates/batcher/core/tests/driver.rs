@@ -8,6 +8,15 @@ use std::{
 use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
 use base_alloy_consensus::OpBlock;
+use base_batcher_core::{
+    BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient, ThrottleConfig,
+    ThrottleController, ThrottleStrategy,
+    test_utils::{
+        DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager, NeverConfirmTxManager,
+        OneBlockSource, OneReorgPipeline, PendingL1HeadSource, PendingSource, Recorded,
+        ReorgPipeline, SubmissionStub, TrackingPipeline, TrackingThrottleClient,
+    },
+};
 use base_batcher_encoder::{
     BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId,
 };
@@ -21,16 +30,6 @@ use base_runtime::{
     deterministic::{Config, Runner},
 };
 use tokio::sync::mpsc;
-
-use base_batcher_core::{
-    BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient, ThrottleConfig,
-    ThrottleController, ThrottleStrategy,
-    test_utils::{
-        DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager, NeverConfirmTxManager,
-        OneBlockSource, OneReorgPipeline, PendingL1HeadSource, PendingSource, Recorded,
-        ReorgPipeline, SubmissionStub, TrackingPipeline, TrackingThrottleClient,
-    },
-};
 
 // ---- Reorg tests ----
 
@@ -121,8 +120,7 @@ fn test_throttle_client_called_on_high_backlog() {
         // 2 MB backlog — above the default 1 MB threshold.
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(2_000_000);
 
-        let throttle =
-            ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
+        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
         let driver = BatchDriver::new(
@@ -166,8 +164,7 @@ fn test_throttle_client_called_with_upper_limits_on_zero_backlog() {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(0);
 
-        let throttle =
-            ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
+        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
         let driver = BatchDriver::new(
@@ -211,8 +208,7 @@ fn test_throttle_not_called_redundantly() {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(0);
 
-        let throttle =
-            ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
+        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
         let driver = BatchDriver::new(
@@ -351,8 +347,7 @@ fn test_throttle_transitions_from_active_to_inactive() {
         let backlog = Arc::new(Mutex::new(2_000_000u64));
         let pipeline = DynamicPipeline { backlog: Arc::clone(&backlog) };
 
-        let throttle =
-            ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
+        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
         let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
         let driver = BatchDriver::new(
@@ -395,10 +390,7 @@ fn test_throttle_transitions_from_active_to_inactive() {
             first_block < 130_000,
             "first call should apply throttled block limit, got {first_block}"
         );
-        assert!(
-            first_tx < 20_000,
-            "first call should apply throttled tx limit, got {first_tx}"
-        );
+        assert!(first_tx < 20_000, "first call should apply throttled tx limit, got {first_tx}");
 
         // Last call must reset to upper limits (throttle deactivated).
         let (last_tx, last_block) = *calls.last().unwrap();
@@ -651,11 +643,8 @@ fn test_l2_reorg_event_resets_pipeline() {
         );
         let handle = ctx.spawn(driver.run());
 
-        let reorg_head = L2BlockInfo::new(
-            BlockInfo::new(B256::ZERO, 5, B256::ZERO, 0),
-            Default::default(),
-            0,
-        );
+        let reorg_head =
+            L2BlockInfo::new(BlockInfo::new(B256::ZERO, 5, B256::ZERO, 0), Default::default(), 0);
         source_tx.send(L2BlockEvent::Reorg { new_safe_head: reorg_head }).unwrap();
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();

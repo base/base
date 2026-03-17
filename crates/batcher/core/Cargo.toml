@@ -49,4 +49,8 @@ name = "driver"
 required-features = ["test-utils"]
 
 [features]
-test-utils = ["dep:async-trait", "dep:alloy-consensus", "dep:alloy-rpc-types-eth"]
+test-utils = [
+	"dep:alloy-consensus",
+	"dep:alloy-rpc-types-eth",
+	"dep:async-trait",
+]

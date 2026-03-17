@@ -13,8 +13,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     BatchDriverConfig, BatchDriverError, DaThrottle, SubmissionQueue, ThrottleClient,
+    event::DriverEvent,
 };
-use crate::event::DriverEvent;
 
 /// Async orchestration loop for the batcher.
 ///
@@ -292,7 +292,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::{Arc, Mutex}, time::Duration};
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     use base_batcher_encoder::{BatchSubmission, DaType, SubmissionId};
     use base_protocol::{ChannelId, Frame};
@@ -316,8 +319,12 @@ mod tests {
             pipeline.submissions.push_back(SubmissionStub::new());
 
             let handle = ctx.spawn(
-                DriverFixture::build(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 42 })
-                    .run(),
+                DriverFixture::build(
+                    ctx.clone(),
+                    pipeline,
+                    ImmediateConfirmTxManager { l1_block: 42 },
+                )
+                .run(),
             );
 
             ctx.sleep(Duration::from_millis(50)).await;
@@ -341,8 +348,8 @@ mod tests {
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
             pipeline.submissions.push_back(SubmissionStub::new());
 
-            let handle =
-                ctx.spawn(DriverFixture::build(ctx.clone(), pipeline, ImmediateFailTxManager).run());
+            let handle = ctx
+                .spawn(DriverFixture::build(ctx.clone(), pipeline, ImmediateFailTxManager).run());
 
             ctx.sleep(Duration::from_millis(50)).await;
             ctx.cancel();
@@ -377,8 +384,12 @@ mod tests {
             });
 
             let handle = ctx.spawn(
-                DriverFixture::build(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                    .run(),
+                DriverFixture::build(
+                    ctx.clone(),
+                    pipeline,
+                    ImmediateConfirmTxManager { l1_block: 1 },
+                )
+                .run(),
             );
 
             ctx.sleep(Duration::from_millis(50)).await;
@@ -444,8 +455,13 @@ mod tests {
             pipeline.submissions.push_back(SubmissionStub::with_id(1));
 
             let handle = ctx.spawn(
-                DriverFixture::build_with_max_pending(ctx.clone(), pipeline, NeverConfirmTxManager, 1)
-                    .run(),
+                DriverFixture::build_with_max_pending(
+                    ctx.clone(),
+                    pipeline,
+                    NeverConfirmTxManager,
+                    1,
+                )
+                .run(),
             );
 
             ctx.sleep(Duration::from_millis(50)).await;

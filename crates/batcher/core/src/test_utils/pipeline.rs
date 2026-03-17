@@ -46,7 +46,7 @@ impl TrackingPipeline {
     }
 
     /// Set the value returned by `da_backlog_bytes`.
-    pub fn with_da_backlog(mut self, value: u64) -> Self {
+    pub const fn with_da_backlog(mut self, value: u64) -> Self {
         self.da_backlog_bytes_value = value;
         self
     }
@@ -106,7 +106,7 @@ pub struct ReorgPipeline {
 
 impl ReorgPipeline {
     /// Create a new pipeline that records resets into `recorded`.
-    pub fn new(recorded: Arc<Mutex<Recorded>>) -> Self {
+    pub const fn new(recorded: Arc<Mutex<Recorded>>) -> Self {
         Self { recorded }
     }
 }
@@ -158,7 +158,7 @@ pub struct OneReorgPipeline {
 
 impl OneReorgPipeline {
     /// Create a new pipeline backed by the given shared counters.
-    pub fn new(blocks_accepted: Arc<Mutex<usize>>, resets: Arc<Mutex<usize>>) -> Self {
+    pub const fn new(blocks_accepted: Arc<Mutex<usize>>, resets: Arc<Mutex<usize>>) -> Self {
         Self { blocks_accepted, fail_next: true, resets }
     }
 }
@@ -168,10 +168,7 @@ impl BatchPipeline for OneReorgPipeline {
         if self.fail_next {
             self.fail_next = false;
             return Err((
-                ReorgError::ParentMismatch {
-                    expected: B256::ZERO,
-                    got: B256::with_last_byte(1),
-                },
+                ReorgError::ParentMismatch { expected: B256::ZERO, got: B256::with_last_byte(1) },
                 Box::new(block),
             ));
         }
