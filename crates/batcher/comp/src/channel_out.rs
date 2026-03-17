@@ -146,16 +146,15 @@ where
     ///
     /// [`ready_bytes`]: ChannelOut::ready_bytes
     pub fn output_frame(&mut self, max_size: usize) -> Result<Frame, ChannelOutError> {
-        if max_size < FRAME_V0_OVERHEAD {
-            return Err(ChannelOutError::MaxFrameSizeTooSmall);
-        }
-
-        // The first frame carries the channel version prefix (if any) so that
-        // the reader can identify the compression format.  For brotli this is
-        // `0x01`; zlib data is self-identifying and needs no prefix.
+        // The first frame may carry a channel version prefix (e.g. brotli: 0x01).
+        // Account for that before computing payload capacity to avoid underflow.
         let version_byte =
             if self.frame_number == 0 { self.compressor.channel_version_byte() } else { None };
         let prefix_len = usize::from(version_byte.is_some());
+
+        if max_size < FRAME_V0_OVERHEAD + prefix_len {
+            return Err(ChannelOutError::MaxFrameSizeTooSmall);
+        }
 
         let max_size = (max_size - FRAME_V0_OVERHEAD - prefix_len).min(self.ready_bytes());
 
@@ -346,5 +345,58 @@ mod tests {
 
         let err = channel.add_batch(large_batch).unwrap_err();
         assert_eq!(err, ChannelOutError::ExceedsMaxRlpBytesPerChannel);
+    }
+
+    #[derive(Debug, Clone, Default)]
+    struct VersionedMockCompressor {
+        inner: MockCompressor,
+    }
+
+    impl CompressorWriter for VersionedMockCompressor {
+        fn write(&mut self, data: &[u8]) -> crate::CompressorResult<usize> {
+            self.inner.write(data)
+        }
+
+        fn flush(&mut self) -> crate::CompressorResult<()> {
+            self.inner.flush()
+        }
+
+        fn close(&mut self) -> crate::CompressorResult<()> {
+            self.inner.close()
+        }
+
+        fn reset(&mut self) {
+            self.inner.reset();
+        }
+
+        fn len(&self) -> usize {
+            self.inner.len()
+        }
+
+        fn read(&mut self, buf: &mut [u8]) -> crate::CompressorResult<usize> {
+            self.inner.read(buf)
+        }
+    }
+
+    impl ChannelCompressor for VersionedMockCompressor {
+        fn get_compressed(&self) -> Vec<u8> {
+            self.inner.get_compressed()
+        }
+
+        fn channel_version_byte(&self) -> Option<u8> {
+            Some(0x01)
+        }
+    }
+
+    #[test]
+    fn test_output_frame_max_size_too_small_with_version_prefix() {
+        let mut channel = ChannelOut::new(
+            ChannelId::default(),
+            Arc::new(RollupConfig::default()),
+            VersionedMockCompressor { inner: MockCompressor { compressed: Some(Default::default()), ..Default::default() } },
+        );
+
+        let err = channel.output_frame(FRAME_V0_OVERHEAD).unwrap_err();
+        assert_eq!(err, ChannelOutError::MaxFrameSizeTooSmall);
     }
 }
