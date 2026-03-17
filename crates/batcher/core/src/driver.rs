@@ -12,9 +12,7 @@ use base_runtime::Runtime;
 use base_tx_manager::TxManager;
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    BatchDriverError, DaThrottle, SubmissionQueue, ThrottleClient, ThrottleController, TxOutcome,
-};
+use crate::{BatchDriverError, DaThrottle, SubmissionQueue, ThrottleClient, TxOutcome};
 
 /// Configuration for a [`BatchDriver`] instance.
 #[derive(Debug, Clone)]
@@ -110,8 +108,7 @@ where
         source: S,
         tx_manager: TM,
         config: BatchDriverConfig,
-        throttle: ThrottleController,
-        throttle_client: TC,
+        throttle: DaThrottle<TC>,
         l1_head_source: L,
     ) -> Self {
         Self {
@@ -123,7 +120,7 @@ where
                 config.inbox,
                 config.max_pending_transactions,
             ),
-            throttle: DaThrottle::new(throttle, throttle_client),
+            throttle,
             l1_head_source: Some(l1_head_source),
             safe_head_rx: None,
             drain_timeout: config.drain_timeout,
@@ -354,7 +351,7 @@ mod tests {
 
     use super::{BatchDriver, BatchDriverConfig};
     use crate::{
-        NoopThrottleClient, ThrottleConfig, ThrottleController, ThrottleStrategy,
+        DaThrottle, NoopThrottleClient, ThrottleConfig, ThrottleController, ThrottleStrategy,
         test_utils::TrackingThrottleClient,
     };
 
@@ -667,8 +664,7 @@ mod tests {
                 max_pending_transactions: 1,
                 drain_timeout: Duration::from_millis(10),
             },
-            noop_throttle(),
-            Arc::new(NoopThrottleClient),
+            DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
             PendingL1HeadSource,
         )
     }
@@ -696,8 +692,7 @@ mod tests {
                 max_pending_transactions: max_pending,
                 drain_timeout: Duration::from_millis(10),
             },
-            noop_throttle(),
-            Arc::new(NoopThrottleClient),
+            DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
             PendingL1HeadSource,
         )
     }
@@ -965,8 +960,7 @@ mod tests {
                     max_pending_transactions: 1,
                     drain_timeout: Duration::from_millis(10),
                 },
-                noop_throttle(),
-                Arc::new(NoopThrottleClient),
+                DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
                 PendingL1HeadSource,
             );
             let handle = ctx.spawn(driver.run());
@@ -1003,8 +997,7 @@ mod tests {
                     max_pending_transactions: 1,
                     drain_timeout: Duration::from_millis(10),
                 },
-                noop_throttle(),
-                Arc::new(NoopThrottleClient),
+                DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
                 PendingL1HeadSource,
             );
             let handle = ctx.spawn(driver.run());
@@ -1047,8 +1040,7 @@ mod tests {
                     max_pending_transactions: 1,
                     drain_timeout: Duration::from_millis(10),
                 },
-                throttle,
-                Arc::new(throttle_client),
+                DaThrottle::new(throttle, Arc::new(throttle_client)),
                 PendingL1HeadSource,
             );
             let handle = ctx.spawn(driver.run());
@@ -1093,8 +1085,7 @@ mod tests {
                     max_pending_transactions: 1,
                     drain_timeout: Duration::from_millis(10),
                 },
-                throttle,
-                Arc::new(throttle_client),
+                DaThrottle::new(throttle, Arc::new(throttle_client)),
                 PendingL1HeadSource,
             );
             let handle = ctx.spawn(driver.run());
@@ -1141,8 +1132,7 @@ mod tests {
                     max_pending_transactions: 1,
                     drain_timeout: Duration::from_millis(10),
                 },
-                throttle,
-                Arc::new(throttle_client),
+                DaThrottle::new(throttle, Arc::new(throttle_client)),
                 PendingL1HeadSource,
             );
             let handle = ctx.spawn(driver.run());
@@ -1186,8 +1176,7 @@ mod tests {
                     max_pending_transactions: 1,
                     drain_timeout: Duration::from_millis(10),
                 },
-                throttle,
-                Arc::new(throttle_client),
+                DaThrottle::new(throttle, Arc::new(throttle_client)),
                 PendingL1HeadSource,
             );
             let handle = ctx.spawn(driver.run());
@@ -1288,8 +1277,7 @@ mod tests {
                     max_pending_transactions: 1,
                     drain_timeout: Duration::from_millis(10),
                 },
-                throttle,
-                Arc::new(throttle_client),
+                DaThrottle::new(throttle, Arc::new(throttle_client)),
                 PendingL1HeadSource,
             );
             let handle = ctx.spawn(driver.run());
@@ -1353,8 +1341,7 @@ mod tests {
                     max_pending_transactions: 1,
                     drain_timeout: Duration::from_millis(10),
                 },
-                noop_throttle(),
-                Arc::new(NoopThrottleClient),
+                DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
                 l1_source,
             );
             let handle = ctx.spawn(driver.run());
@@ -1492,8 +1479,7 @@ mod tests {
                     max_pending_transactions: 1,
                     drain_timeout: Duration::from_millis(10),
                 },
-                noop_throttle(),
-                Arc::new(NoopThrottleClient),
+                DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
                 PendingL1HeadSource,
             );
 
@@ -1530,8 +1516,7 @@ mod tests {
                     max_pending_transactions: 1,
                     drain_timeout: Duration::from_millis(10),
                 },
-                noop_throttle(),
-                Arc::new(NoopThrottleClient),
+                DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
                 PendingL1HeadSource,
             );
             let handle = ctx.spawn(driver.run());
@@ -1571,8 +1556,7 @@ mod tests {
                     max_pending_transactions: 1,
                     drain_timeout: Duration::from_millis(10),
                 },
-                noop_throttle(),
-                Arc::new(NoopThrottleClient),
+                DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
                 PendingL1HeadSource,
             );
             let handle = ctx.spawn(driver.run());
@@ -1615,8 +1599,7 @@ mod tests {
                     max_pending_transactions: 1,
                     drain_timeout: Duration::from_millis(10),
                 },
-                noop_throttle(),
-                Arc::new(NoopThrottleClient),
+                DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
                 l1_source,
             );
             let handle = ctx.spawn(driver.run());

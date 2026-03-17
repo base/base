@@ -1,8 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
 use base_batcher_core::{
-    BatchDriver, BatchDriverConfig, BatchDriverError, NoopThrottleClient, ThrottleConfig,
-    ThrottleController, ThrottleStrategy,
+    BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
+    ThrottleConfig, ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::{BatchEncoder, BatchType, EncoderConfig};
 use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
@@ -128,8 +128,7 @@ impl<S: L2BlockProvider> Batcher<S> {
                 max_pending_transactions: 16,
                 drain_timeout: Duration::from_secs(10),
             },
-            throttle,
-            Arc::new(NoopThrottleClient),
+            DaThrottle::new(throttle, Arc::new(NoopThrottleClient)),
             l1_source,
         );
 

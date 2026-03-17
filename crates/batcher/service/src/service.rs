@@ -7,8 +7,8 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_alloy_consensus::OpBlock;
 use base_alloy_network::Base;
 use base_batcher_core::{
-    BatchDriver, NoopThrottleClient, ThrottleClient, ThrottleConfig, ThrottleController,
-    ThrottleStrategy,
+    BatchDriver, DaThrottle, NoopThrottleClient, ThrottleClient, ThrottleConfig,
+    ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::BatchEncoder;
 use base_batcher_source::{BlockSubscription, HybridBlockSource, HybridL1HeadSource, SourceError};
@@ -406,8 +406,7 @@ impl BatcherService {
                 max_pending_transactions: self.config.max_pending_transactions,
                 drain_timeout: self.config.resubmission_timeout * 2,
             },
-            throttle,
-            throttle_client,
+            DaThrottle::new(throttle, throttle_client),
             l1_head_source,
         )
         .with_safe_head_rx(safe_head_rx);
