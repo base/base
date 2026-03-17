@@ -6,6 +6,7 @@
 
 use alloy_primitives::B256;
 use base_batcher_service::{BatcherConfig, BatcherService, SecretKey};
+use base_runtime::TokioRuntime;
 use eyre::Result;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -50,10 +51,10 @@ impl InProcessBatcher {
             ..BatcherConfig::default()
         };
         let cancellation = CancellationToken::new();
-        let ready = BatcherService::new(batcher_config).setup(cancellation.clone()).await?;
-        let cancel = cancellation.clone();
+        let runtime = TokioRuntime::with_token(cancellation.clone());
+        let ready = BatcherService::new(batcher_config).setup(runtime).await?;
         let handle = tokio::spawn(async move {
-            if let Err(e) = ready.run(cancel).await {
+            if let Err(e) = ready.run().await {
                 tracing::error!(error = %e, "in-process batcher exited with error");
             }
         });

@@ -7,6 +7,7 @@ use base_batcher_core::{
 use base_batcher_encoder::{BatchEncoder, BatchType, EncoderConfig};
 use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_consensus_genesis::RollupConfig;
+use base_runtime::TokioRuntime;
 use tokio_util::sync::CancellationToken;
 
 use crate::{L1Miner, L1MinerTxManager, L2BlockProvider};
@@ -113,8 +114,12 @@ impl<S: L2BlockProvider> Batcher<S> {
         let tx_manager = L1MinerTxManager::new(config.batcher_address, config.inbox_address)
             .with_l1_head_tx(l1_head_tx);
 
+        let cancel = CancellationToken::new();
+        let runtime = TokioRuntime::with_token(cancel.clone());
+
         let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Off);
         let driver = BatchDriver::new(
+            runtime,
             pipeline,
             source,
             tx_manager.clone(),
@@ -124,13 +129,11 @@ impl<S: L2BlockProvider> Batcher<S> {
                 drain_timeout: Duration::from_secs(10),
             },
             throttle,
-            NoopThrottleClient,
+            Arc::new(NoopThrottleClient),
             l1_source,
         );
 
-        let cancel = CancellationToken::new();
-        let driver_cancel = cancel.clone();
-        let driver_task = tokio::spawn(async move { driver.run(driver_cancel).await });
+        let driver_task = tokio::spawn(async move { driver.run().await });
 
         Self { l2_source, block_tx, tx_manager, driver_task, cancel }
     }
