@@ -45,6 +45,9 @@ base-tx-manager.workspace = true
 # RPC
 base-proof-rpc.workspace = true
 
+# ZK proof client
+base-zk-client.workspace = true
+
 # Protocol
 base-protocol.workspace = true
 
@@ -56,6 +59,9 @@ metrics.workspace = true
 
 # TLS
 rustls = { workspace = true, features = ["ring"] }
+
+# Shutdown
+tokio-util.workspace = true
 
 # Misc
 url.workspace = true

@@ -12,6 +12,9 @@ pub use cli::{ChallengerArgs, Cli, LogArgs, MetricsArgs, SignerCli};
 mod config;
 pub use config::{ChallengerConfig, ConfigError, UrlValidationError, Validated};
 
+mod driver;
+pub use driver::{Driver, DriverConfig};
+
 mod error;
 pub use error::ChallengeSubmitError;
 

@@ -2904,6 +2904,7 @@ dependencies = [
  "base-proof-rpc",
  "base-protocol",
  "base-tx-manager",
+ "base-zk-client",
  "clap",
  "eyre",
  "futures",
@@ -2916,6 +2917,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
 ]

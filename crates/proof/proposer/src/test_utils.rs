@@ -174,6 +174,9 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn read_intermediate_block_interval(&self, _: Address) -> Result<u64, ContractError> {
         Ok(512)
     }
+    async fn intermediate_output_roots(&self, _: Address) -> Result<Vec<B256>, ContractError> {
+        Ok(vec![])
+    }
 }
 
 /// Build a default `PerChainConfig` for tests.
