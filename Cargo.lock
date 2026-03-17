@@ -3030,6 +3030,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-bundle-extension"
+version = "0.0.0"
+dependencies = [
+ "base-node-runner",
+ "base-txpool",
+ "reth-chain-state",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "base-bundles"
 version = "0.0.0"
 dependencies = [
@@ -4849,6 +4862,7 @@ dependencies = [
 name = "base-reth-node"
 version = "0.0.0"
 dependencies = [
+ "base-bundle-extension",
  "base-cli-utils",
  "base-execution-cli",
  "base-flashblocks",

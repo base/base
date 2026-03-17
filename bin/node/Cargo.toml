@@ -26,6 +26,7 @@ base-tx-forwarding.workspace = true
 base-txpool-tracing.workspace = true
 base-flashblocks-node.workspace = true
 base-proofs-extension.workspace = true
+base-bundle-extension.workspace = true
 
 # reth
 base-node-core.workspace = true

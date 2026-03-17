@@ -177,6 +177,7 @@ base-builder-publish = { path = "crates/builder/publish" }
 base-builder-metering = { path = "crates/builder/metering" }
 
 # Client
+base-bundle-extension = { path = "crates/client/bundle" }
 base-client-cli = { path = "crates/client/cli" }
 base-metering = { path = "crates/client/metering" }
 base-tx-forwarding = { path = "crates/client/tx-forwarding" }

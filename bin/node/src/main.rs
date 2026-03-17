@@ -5,6 +5,7 @@
 
 pub mod cli;
 
+use base_bundle_extension::BundleExtension;
 use base_execution_cli::{Cli, chainspec::OpChainSpecParser};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
@@ -60,6 +61,7 @@ fn main() {
             MeteringConfig::disabled()
         };
         runner.install_ext::<MeteringExtension>(metering_config);
+        runner.install_ext::<BundleExtension>(());
         runner.install_ext::<TxForwardingExtension>((&args).into());
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<ProofsHistoryExtension>(args.rollup_args);
