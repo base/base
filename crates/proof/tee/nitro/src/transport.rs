@@ -64,7 +64,7 @@ impl Frame {
 
     /// Read a value from a length-prefixed bincode frame.
     ///
-    /// The peer-supplied length can be up to `u32::MAX` (~4 GiB). This is safe
+    /// The peer-supplied length can be up to `u32::MAX` (~4 `GiB`). This is safe
     /// because all transport peers are local (enclave ↔ host over vsock) and
     /// witness bundles can legitimately be very large.
     pub async fn read<T: serde::de::DeserializeOwned>(
