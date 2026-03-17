@@ -303,13 +303,21 @@ where
                 message = "FCU arrived too late or system clock are unsynced, building 0 flashblocks"
             );
             ctx.metrics
-                .reduced_flashblocks_number
-                .record(self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block)
-                    as f64);
-            ctx.metrics
                 .first_flashblock_time_offset
                 .record(first_flashblock_offset.as_millis() as f64);
+
+            self.record_flashblocks_metrics(
+                &ctx,
+                &info,
+                flashblocks_per_block,
+                &span,
+                "FCU arrived too late or system clock are unsynced, building 0 flashblocks",
+            );
         }
+
+        ctx.metrics.reduced_flashblocks_number.record(
+            self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block) as f64,
+        );
 
         if skip_flashblocks_building {
             finalized_cell.set(payload);
