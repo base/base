@@ -199,6 +199,10 @@ skip = [
     "tracing-subscriber",
     "wasm-streams",
     "zip",
+    "addr2line",
+    "embedded-io",
+    "gimli",
+    "object",
 ]
 
 [sources]
