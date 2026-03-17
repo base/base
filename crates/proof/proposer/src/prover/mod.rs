@@ -29,6 +29,7 @@ pub struct Prover {
 }
 
 impl Prover {
+    /// Creates a new [`Prover`] from the given chain configuration and prover client.
     #[must_use]
     pub fn new(mut config: PerChainConfig, client: Arc<dyn ProverClient>) -> Self {
         config.force_defaults();
@@ -36,6 +37,7 @@ impl Prover {
         Self { config_hash, client }
     }
 
+    /// Returns the configuration hash used for proposal verification.
     #[must_use]
     pub const fn config_hash(&self) -> B256 {
         self.config_hash

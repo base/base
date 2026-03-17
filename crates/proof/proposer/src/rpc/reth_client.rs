@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use base_enclave::AccountResult;
 use base_proof_rpc::{L2Client, L2ClientConfig, L2Provider, OpBlock, RpcResult};
 
+/// Reth-specific L2 client that wraps a standard [`L2Client`].
 pub struct RethL2Client {
     inner: L2Client,
 }
@@ -22,6 +23,7 @@ impl RethL2Client {
         Ok(Self { inner: L2Client::new(config)? })
     }
 
+    /// Returns a reference to the inner [`L2Client`].
     pub const fn as_l2_client(&self) -> &L2Client {
         &self.inner
     }

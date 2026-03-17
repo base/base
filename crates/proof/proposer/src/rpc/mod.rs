@@ -12,7 +12,9 @@ pub use reth_client::RethL2Client;
 /// Enum dispatch for L2 provider implementations.
 #[derive(Debug)]
 pub enum L2ClientKind {
+    /// Standard op-node compatible L2 client.
     Standard(L2Client),
+    /// Reth-specific L2 client.
     Reth(RethL2Client),
 }
 

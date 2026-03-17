@@ -14,11 +14,13 @@ pub trait ProverClient: Send + Sync {
 }
 
 /// JSON-RPC client for the prover server.
+#[derive(Debug)]
 pub struct RpcProverClient {
     client: HttpClient,
 }
 
 impl RpcProverClient {
+    /// Creates a new [`RpcProverClient`] from the given HTTP client.
     pub const fn new(client: HttpClient) -> Self {
         Self { client }
     }
