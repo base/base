@@ -1,0 +1,27 @@
+[package]
+name = "base-health"
+description = "Shared health check RPC endpoint for JSON-RPC servers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+http.workspace = true
+tower.workspace = true
+bytes.workspace = true
+futures.workspace = true
+http-body.workspace = true
+async-trait.workspace = true
+serde = { workspace = true, features = ["derive"] }
+jsonrpsee = { workspace = true, features = ["server", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+jsonrpsee = { workspace = true, features = ["http-client"] }
+alloy-transport-http = { workspace = true, features = ["reqwest"] }

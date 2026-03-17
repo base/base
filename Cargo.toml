@@ -222,6 +222,7 @@ base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }
 
 # Utilities
+base-health = { path = "crates/utilities/health" }
 base-jwt = { path = "crates/utilities/jwt" }
 base-cli-utils = { path = "crates/utilities/cli" }
 base-test-utils = { path = "crates/utilities/test-utils" }
@@ -390,6 +391,7 @@ c-kzg = { version = "2.1.5", default-features = false }
 http = "1.4"
 hyper = "1.8"
 tower = "0.5"
+http-body = "1.0"
 hyper-util = "0.1.11"
 http-body-util = "0.1.3"
 tower-http = { version = "0.6", features = ["limit"] }
