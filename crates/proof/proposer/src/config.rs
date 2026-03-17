@@ -40,6 +40,9 @@ pub enum ConfigError {
     /// Invalid signing configuration.
     #[error("invalid signing config: {0}")]
     Signing(String),
+    /// Invalid transaction manager configuration.
+    #[error("invalid tx manager config: {0}")]
+    TxManager(String),
 }
 
 /// Validated proposer configuration.
@@ -83,6 +86,8 @@ pub struct ProposerConfig {
     pub retry: RetryConfig,
     /// Signing configuration for L1 transaction submission.
     pub signing: base_tx_manager::SignerConfig,
+    /// Transaction manager configuration.
+    pub tx_manager: base_tx_manager::TxManagerConfig,
 }
 
 impl ProposerConfig {
@@ -125,6 +130,10 @@ impl ProposerConfig {
         let signing = base_tx_manager::SignerConfig::try_from(cli.proposer.signer)
             .map_err(|e| ConfigError::Signing(e.to_string()))?;
 
+        // Validate and extract tx manager config
+        let tx_manager = base_tx_manager::TxManagerConfig::try_from(cli.proposer.tx_manager)
+            .map_err(|e| ConfigError::TxManager(e.to_string()))?;
+
         Ok(Self {
             allow_non_finalized: cli.proposer.allow_non_finalized,
             enclave_rpc: cli.proposer.enclave_rpc,
@@ -139,6 +148,7 @@ impl ProposerConfig {
             rpc_timeout: cli.proposer.rpc_timeout,
             retry,
             signing,
+            tx_manager,
             rollup_rpc: cli.proposer.rollup_rpc,
             skip_tls_verify: cli.proposer.skip_tls_verify,
             wait_node_sync: cli.proposer.wait_node_sync,
@@ -200,7 +210,7 @@ mod tests {
     use base_cli_utils::LogFormat;
 
     use super::*;
-    use crate::cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, SignerCli};
+    use crate::cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, SignerCli, TxManagerCli};
 
     fn minimal_cli() -> Cli {
         Cli {
@@ -234,6 +244,7 @@ mod tests {
                     signer_endpoint: None,
                     signer_address: None,
                 },
+                tx_manager: TxManagerCli::default(),
             },
             logging: LogArgs {
                 level: 3,

@@ -18,7 +18,7 @@ use base_proof_contracts::{
 use base_proof_rpc::{
     L1Client, L1ClientConfig, L2ClientConfig, RollupClient, RollupClientConfig, RollupProvider,
 };
-use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxManager, TxManagerConfig};
+use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxManager};
 use eyre::Result;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -164,7 +164,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let tx_manager = SimpleTxManager::new(
         l1_tx_provider,
         config.signing,
-        TxManagerConfig::default(),
+        config.tx_manager,
         l1_chain_id,
         Arc::new(BaseTxMetrics::new("proposer")),
     )

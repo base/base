@@ -10,6 +10,7 @@ use url::Url;
 base_cli_utils::define_log_args!("BASE_PROPOSER");
 base_cli_utils::define_metrics_args!("BASE_PROPOSER", 7300);
 base_tx_manager::define_signer_cli!("BASE_PROPOSER");
+base_tx_manager::define_tx_manager_cli!("BASE_PROPOSER");
 
 /// Proposer - TEE-based output proposal generation for Base.
 #[derive(Debug, Clone, Parser)]
@@ -165,6 +166,10 @@ pub struct ProposerArgs {
     /// Signer configuration (local key or remote sidecar).
     #[command(flatten)]
     pub signer: SignerCli,
+
+    /// Transaction manager configuration.
+    #[command(flatten)]
+    pub tx_manager: TxManagerCli,
 }
 
 /// RPC server configuration arguments.
