@@ -129,7 +129,7 @@ macro_rules! impl_abi_codec {
 
             /// ABI-decodes from raw bytes.
             pub fn decode(buf: &[u8]) -> crate::Result<Self> {
-                <Self as SolValue>::abi_decode(buf)
+                <Self as SolValue>::abi_decode_validate(buf)
                     .map_err(|e| crate::VerifierError::AttestationFormat(e.to_string()))
             }
         }

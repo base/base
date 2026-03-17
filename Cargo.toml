@@ -235,10 +235,10 @@ base-enclave-client = { path = "crates/proof/tee/client" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-tee-nitro = { path = "crates/proof/tee/nitro" }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
-base-proof-tee-nitro-verifier = { path = "crates/proof/tee/nitro-verifier" }
 base-proof = { path = "crates/proof/proof", default-features = false }
 base-proof-mpt = { path = "crates/proof/mpt", default-features = false }
 base-proof-host = { path = "crates/proof/host", default-features = false }
+base-proof-tee-nitro-verifier = { path = "crates/proof/tee/nitro-verifier" }
 base-proof-client = { path = "crates/proof/client", default-features = false }
 base-proof-driver = { path = "crates/proof/driver", default-features = false }
 base-proof-executor = { path = "crates/proof/executor", default-features = false }
