@@ -4,7 +4,7 @@ use alloy_consensus::Header;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_primitives::{OpPrimitives, OpTransactionSigned};
 use base_node_core::OpEngineTypes;
-use base_txpool::OpPooledTx;
+use base_txpool::{BundleTransaction, OpPooledTx};
 use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_payload_util::PayloadTransactions;
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
@@ -29,22 +29,23 @@ impl<T> NodeBounds for T where
 }
 
 pub trait PoolBounds:
-    TransactionPool<Transaction: OpPooledTx<Consensus = OpTransactionSigned>>
+    TransactionPool<Transaction: OpPooledTx<Consensus = OpTransactionSigned> + BundleTransaction>
     + TransactionPoolExt
     + Unpin
     + 'static
 where
-    <Self as TransactionPool>::Transaction: OpPooledTx,
+    <Self as TransactionPool>::Transaction: OpPooledTx + BundleTransaction,
 {
 }
 
 impl<T> PoolBounds for T
 where
-    T: TransactionPool<Transaction: OpPooledTx<Consensus = OpTransactionSigned>>
-        + TransactionPoolExt
+    T: TransactionPool<
+            Transaction: OpPooledTx<Consensus = OpTransactionSigned> + BundleTransaction,
+        > + TransactionPoolExt
         + Unpin
         + 'static,
-    <Self as TransactionPool>::Transaction: OpPooledTx,
+    <Self as TransactionPool>::Transaction: OpPooledTx + BundleTransaction,
 {
 }
 
@@ -65,11 +66,13 @@ impl<T> ClientBounds for T where
 }
 
 pub trait PayloadTxsBounds:
-    PayloadTransactions<Transaction: OpPooledTx<Consensus = OpTransactionSigned>>
+    PayloadTransactions<Transaction: OpPooledTx<Consensus = OpTransactionSigned> + BundleTransaction>
 {
 }
 
 impl<T> PayloadTxsBounds for T where
-    T: PayloadTransactions<Transaction: OpPooledTx<Consensus = OpTransactionSigned>>
+    T: PayloadTransactions<
+        Transaction: OpPooledTx<Consensus = OpTransactionSigned> + BundleTransaction,
+    >
 {
 }

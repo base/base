@@ -16,7 +16,7 @@ use base_execution_payload_builder::error::OpPayloadBuilderError;
 use base_execution_primitives::{OpReceipt, OpTransactionSigned};
 use base_node_core::OpPayloadBuilderAttributes;
 use base_revm::{L1BlockInfo, OpSpecId};
-use base_txpool::estimated_da_size::DataAvailabilitySized;
+use base_txpool::{BundleTransaction, estimated_da_size::DataAvailabilitySized};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
@@ -481,6 +481,47 @@ impl OpPayloadBuilderCtx {
         );
 
         while let Some(tx) = best_txs.next(()) {
+            // Skip bundle transactions that are not valid for this block.
+            let block_number = as_u64_saturated!(self.evm_env.block_env.number);
+            let block_timestamp = self.attributes().timestamp();
+
+            if let Some(target) = tx.target_block_number()
+                && target != block_number
+            {
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx.hash(),
+                    target_block = target,
+                    current_block = block_number,
+                    "skipping bundle tx: wrong target block"
+                );
+                best_txs.mark_invalid(tx.sender(), tx.nonce());
+                continue;
+            }
+
+            if tx.is_bundle_expired(block_number, block_timestamp) {
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx.hash(),
+                    block = block_number,
+                    timestamp = block_timestamp,
+                    "skipping bundle tx: expired"
+                );
+                best_txs.mark_invalid(tx.sender(), tx.nonce());
+                continue;
+            }
+
+            if tx.is_bundle_not_yet_valid(block_timestamp) {
+                trace!(
+                    target: "payload_builder",
+                    tx_hash = ?tx.hash(),
+                    block = block_number,
+                    timestamp = block_timestamp,
+                    "deferring bundle tx: not yet valid"
+                );
+                continue;
+            }
+
             let tx_da_size = tx.estimated_da_size();
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
