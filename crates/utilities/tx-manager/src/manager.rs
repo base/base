@@ -148,7 +148,7 @@ pub struct SimpleTxManager {
     /// Validated runtime configuration.
     config: TxManagerConfig,
     /// Nonce manager for sequential nonce allocation.
-    nonce_manager: NonceManager,
+    nonce_manager: NonceManager<RootProvider>,
     /// Chain ID for transaction construction.
     chain_id: u64,
     /// Shutdown flag shared across the manager and any spawned background
@@ -258,7 +258,7 @@ impl SimpleTxManager {
     }
 
     /// Returns a reference to the nonce manager.
-    pub const fn nonce_manager(&self) -> &NonceManager {
+    pub const fn nonce_manager(&self) -> &NonceManager<RootProvider> {
         &self.nonce_manager
     }
 
