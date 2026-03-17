@@ -293,6 +293,22 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             None => return Ok(()),
         };
 
+        // Check if the game is still challengeable before doing any work.
+        let (status, zk_prover) = tokio::try_join!(
+            self.verifier_client.status(game_address),
+            self.verifier_client.zk_prover(game_address),
+        )?;
+        if status != GameScanner::STATUS_IN_PROGRESS {
+            debug!(game = %game_address, status = status, "game no longer in progress, dropping pending proof");
+            self.pending_proofs.remove(&game_address);
+            return Ok(());
+        }
+        if zk_prover != Address::ZERO {
+            debug!(game = %game_address, zk_prover = %zk_prover, "game already challenged, dropping pending proof");
+            self.pending_proofs.remove(&game_address);
+            return Ok(());
+        }
+
         // Resolve the proof bytes to submit — either by polling the ZK
         // service or by extracting them from an already-obtained proof.
         let proof_bytes = match pending.phase {
@@ -402,7 +418,7 @@ mod tests {
         test_utils::{
             MockAggregateVerifier, MockDisputeGameFactory, MockGameState, MockL2Provider,
             MockTxManager, MockZkProofProvider, addr, build_test_header_and_account, factory_game,
-            receipt_with_status,
+            mock_state, receipt_with_status,
         },
     };
 
@@ -802,6 +818,53 @@ mod tests {
         assert!(
             !driver.pending_proofs.contains_key(&addr(0)),
             "entry should be removed after successful submission"
+        );
+    }
+
+    /// Builds a driver with a single pending `ReadyToSubmit` proof at `addr(0)`
+    /// whose verifier reports the given `game_state`.
+    fn driver_with_ready_proof(
+        game_state: MockGameState,
+    ) -> Driver<MockL2Provider, MockZkProofProvider, MockTxManager> {
+        let (l2, factory, _verifier) = invalid_game_mocks();
+        let verifier_games = HashMap::from([(addr(0), game_state)]);
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+        let mut driver =
+            test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
+        driver.pending_proofs.insert(
+            addr(0),
+            PendingProof {
+                phase: ProofPhase::ReadyToSubmit {
+                    proof_bytes: Bytes::from_static(&[0x01, 0xDE, 0xAD]),
+                },
+                invalid_index: 1,
+                expected_root: B256::repeat_byte(0xEE),
+            },
+        );
+        driver
+    }
+
+    #[tokio::test]
+    async fn test_poll_or_submit_drops_resolved_game() {
+        // Game has resolved (status=1 CHALLENGER_WINS) — driver should drop the
+        // pending proof without attempting submission.
+        let mut driver = driver_with_ready_proof(mock_state(1, Address::ZERO, 20));
+        driver.step().await.unwrap();
+        assert!(
+            !driver.pending_proofs.contains_key(&addr(0)),
+            "resolved game should be removed from pending_proofs"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_poll_or_submit_drops_already_challenged_game() {
+        // Game is still IN_PROGRESS but already challenged (zk_prover != ZERO)
+        // — driver should drop the pending proof.
+        let mut driver = driver_with_ready_proof(mock_state(0, Address::repeat_byte(0xCC), 20));
+        driver.step().await.unwrap();
+        assert!(
+            !driver.pending_proofs.contains_key(&addr(0)),
+            "already-challenged game should be removed from pending_proofs"
         );
     }
 

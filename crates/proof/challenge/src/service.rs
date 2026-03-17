@@ -18,8 +18,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    ChallengeSubmitter, ChallengerConfig, Driver, GameScanner, OutputValidator, ScannerConfig,
-    driver::DriverConfig,
+    ChallengeSubmitter, ChallengerConfig, Driver, DriverConfig, GameScanner, OutputValidator,
+    ScannerConfig,
 };
 
 /// Top-level challenger service.
@@ -146,6 +146,7 @@ impl ChallengerService {
 
         // The driver runs until its cancellation token (child of `cancel`) fires.
         driver.run().await;
+        cancel.cancel(); // ensure all child tasks shut down
 
         // ── 10. Graceful shutdown ────────────────────────────────────────────
         info!("Driver stopped, shutting down...");
