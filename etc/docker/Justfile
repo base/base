@@ -22,6 +22,10 @@ down:
 status:
     ./etc/scripts/devnet/status.sh
 
+# Shows devnet container status
+ps *services:
+    docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml ps {{ services }}
+
 # Shows funded test accounts with live balances and nonces
 accounts:
     ./etc/scripts/devnet/accounts.sh
@@ -67,12 +71,11 @@ ingress-logs *containers:
 build-image target='client' profile='release':
     ./etc/docker/build-rust-images.sh {{ target }} {{ profile }}
 
-# Pre-pulls Docker images needed for devnet tests
-pull-images:
+# Prepares Docker images needed for devnet tests
+pull-images: (_build-rust-images "devnet" "dev")
     docker build -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
     docker pull ghcr.io/paradigmxyz/reth:v1.11.3
     docker pull sigp/lighthouse:v8.0.1
-    docker pull us-docker.pkg.dev/oplabs-tools-artifacts/images/op-batcher:v1.16.3
 
 # Runs devnet tests (requires Docker)
 tests: _install-nextest _build-contracts

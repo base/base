@@ -27,15 +27,16 @@ group "rust-services" {
     "websocket-proxy",
     "ingress-rpc",
     "audit-archiver",
+    "batcher",
   ]
 }
 
 group "devnet" {
-  targets = ["builder", "consensus", "client"]
+  targets = ["builder", "consensus", "client", "batcher"]
 }
 
 group "ingress" {
-  targets = ["builder", "consensus", "client", "ingress-rpc", "audit-archiver"]
+  targets = ["builder", "consensus", "client", "ingress-rpc", "audit-archiver", "batcher"]
 }
 
 target "_rust-service-common" {
@@ -88,4 +89,10 @@ target "audit-archiver" {
   inherits = ["_rust-service-common"]
   target = "audit-archiver"
   tags = ["audit-archiver:local"]
+}
+
+target "batcher" {
+  inherits = ["_rust-service-common"]
+  target = "batcher"
+  tags = ["base-batcher:local"]
 }
