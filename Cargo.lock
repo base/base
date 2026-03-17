@@ -4626,6 +4626,7 @@ dependencies = [
  "aws-sdk-ec2",
  "aws-sdk-elasticloadbalancingv2",
  "base-proof-primitives",
+ "base-proof-tee-nitro-attestation-prover",
  "hex-literal 1.1.0",
  "jsonrpsee",
  "k256",

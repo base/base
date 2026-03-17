@@ -83,15 +83,6 @@ pub struct AttestationResponse {
     pub signer_address: Address,
 }
 
-/// ZK proof ready for on-chain registration via `TEEProverRegistry.registerSigner`.
-#[derive(Debug, Clone)]
-pub struct AttestationProof {
-    /// ABI-encoded `VerifierJournal` output from the Boundless / Automata SDK.
-    pub output: Bytes,
-    /// ZK proof bytes for submission alongside `output`.
-    pub proof_bytes: Bytes,
-}
-
 /// A signer currently registered on-chain via `TEEProverRegistry`.
 #[derive(Debug, Clone)]
 pub struct RegisteredSigner {

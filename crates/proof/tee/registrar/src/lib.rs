@@ -19,9 +19,12 @@ mod registry;
 pub use registry::{RegistryClient, RegistryContractClient};
 
 mod traits;
-pub use traits::{AttestationProofProvider, InstanceDiscovery};
+pub use traits::InstanceDiscovery;
 
 mod types;
-pub use types::{
-    AttestationProof, AttestationResponse, InstanceHealthStatus, ProverInstance, RegisteredSigner,
+// Re-exported from `base-proof-tee-nitro-attestation-prover`. Previously
+// defined in this crate; the prover crate is now the single source of truth.
+pub use base_proof_tee_nitro_attestation_prover::{
+    AttestationProof, AttestationProofProvider, BoundlessProver, DirectProver, ProverError,
 };
+pub use types::{AttestationResponse, InstanceHealthStatus, ProverInstance, RegisteredSigner};
