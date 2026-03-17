@@ -175,7 +175,7 @@ async fn query_receipt_returns_receipt_after_reorg_reinclusion() {
     revert(manager.provider(), snap).await;
 
     // Re-submit the same raw tx (Anvil may not restore the mempool on revert).
-    manager
+    let _ = manager
         .provider()
         .send_raw_transaction(&prepared.raw_tx)
         .await
