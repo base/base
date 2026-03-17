@@ -22,7 +22,6 @@ base-proof-tee-nitro-verifier.workspace = true
 
 # Types
 url.workspace = true
-alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 

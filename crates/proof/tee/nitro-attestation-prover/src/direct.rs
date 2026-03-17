@@ -11,7 +11,6 @@
 use std::sync::Arc;
 
 use alloy_primitives::Bytes;
-use alloy_sol_types::SolValue;
 use base_proof_tee_nitro_verifier::VerifierInput;
 use risc0_zkvm::{ExecutorEnv, ProverOpts, compute_image_id, default_prover};
 
@@ -65,9 +64,9 @@ impl AttestationProofProvider for DirectProver {
         let (journal_bytes, seal) = tokio::task::spawn_blocking(move || {
             let input = VerifierInput {
                 trustedCertsPrefixLen: trusted_certs_prefix_len,
-                attestationReport: Bytes::copy_from_slice(&attestation_owned),
+                attestationReport: Bytes::from(attestation_owned),
             };
-            let input_bytes = SolValue::abi_encode(&input);
+            let input_bytes = input.encode();
 
             let env = ExecutorEnv::builder()
                 .write_slice(&input_bytes)

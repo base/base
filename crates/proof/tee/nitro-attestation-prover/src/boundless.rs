@@ -7,7 +7,6 @@ use std::{fmt, time::Duration};
 
 use alloy_primitives::{Bytes, U256};
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::SolValue;
 use base_proof_tee_nitro_verifier::VerifierInput;
 use boundless_market::{
     Client,
@@ -66,7 +65,7 @@ impl AttestationProofProvider for BoundlessProver {
             trustedCertsPrefixLen: self.trusted_certs_prefix_len,
             attestationReport: Bytes::copy_from_slice(attestation_bytes),
         };
-        let input_bytes = SolValue::abi_encode(&input);
+        let input_bytes = input.encode();
 
         let image_id = Digest::from(self.image_id);
 
