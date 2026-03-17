@@ -73,6 +73,9 @@ impl BuilderConfig {
         if self.block_time.as_millis() == 0 {
             return 0;
         }
+        if self.flashblocks_interval.as_millis() == 0 {
+            return 0;
+        }
         (self.block_time.as_millis() / self.flashblocks_interval.as_millis()) as u64
     }
 }
