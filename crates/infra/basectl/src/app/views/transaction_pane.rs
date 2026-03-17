@@ -11,15 +11,8 @@ use tokio::sync::mpsc;
 use crate::{
     commands::common::{COLOR_ACTIVE_BORDER, COLOR_ROW_SELECTED},
     rpc::TxSummary,
-    tui::{Toast, ToastState},
+    tui::Toast,
 };
-
-pub(crate) const REVERTED_TX_TOAST_MESSAGE: &str = "\u{26A0} - tx reverted";
-
-#[derive(Debug)]
-enum TransactionPaneUpdate {
-    Transactions(Result<Vec<TxSummary>, String>),
-}
 
 /// Reusable transaction list pane that can be embedded in any block-listing view.
 ///
@@ -35,7 +28,7 @@ pub(crate) struct TransactionPane {
     table_state: TableState,
     loading: bool,
     load_error: Option<String>,
-    rx: Option<mpsc::Receiver<TransactionPaneUpdate>>,
+    rx: Option<mpsc::Receiver<Result<Vec<TxSummary>, String>>>,
     /// Optional range to slice the fetched transactions (for flashblock-specific views).
     tx_range: Option<Range<usize>>,
     /// Block explorer base URL for opening transactions in a browser (e.g.
@@ -79,13 +72,7 @@ impl TransactionPane {
         let (tx, rx) = mpsc::channel(1);
         let rpc = l2_rpc.to_string();
         tokio::spawn(async move {
-            let (inner_tx, mut inner_rx) = mpsc::channel(1);
-            crate::rpc::fetch_block_transactions(rpc, block_number, inner_tx).await;
-            let txns = inner_rx
-                .recv()
-                .await
-                .unwrap_or_else(|| Err("Failed to fetch transactions".to_string()));
-            let _ = tx.send(TransactionPaneUpdate::Transactions(txns)).await;
+            crate::rpc::fetch_block_transactions(rpc, block_number, tx).await;
         });
 
         let mut table_state = TableState::default();
@@ -144,34 +131,27 @@ impl TransactionPane {
     /// Polls background fetch channels for results.
     pub(crate) fn poll(&mut self) {
         if let Some(ref mut rx) = self.rx
-            && let Ok(update) = rx.try_recv()
+            && let Ok(txns) = rx.try_recv()
         {
-            match update {
-                TransactionPaneUpdate::Transactions(txns) => {
-                    match txns {
-                        Ok(txns) => {
-                            self.transactions = match &self.tx_range {
-                                Some(range) => {
-                                    txns.into_iter().skip(range.start).take(range.len()).collect()
-                                }
-                                None => txns,
-                            };
-                            self.load_error = None;
+            match txns {
+                Ok(txns) => {
+                    self.transactions = match &self.tx_range {
+                        Some(range) => {
+                            txns.into_iter().skip(range.start).take(range.len()).collect()
                         }
-                        Err(error) => {
-                            self.transactions.clear();
-                            self.load_error = Some(error);
-                        }
-                    }
-                    self.loading = false;
-                    self.rx = None;
+                        None => txns,
+                    };
+                    self.load_error = None;
+                }
+                Err(error) => {
+                    self.transactions.clear();
+                    self.load_error = Some(error);
                 }
             }
+            self.loading = false;
+            self.rx = None;
         }
     }
-
-    /// Keeps the reverted hover toast in sync with the current selection.
-    pub(crate) const fn sync_hovered_revert_toast(&self, _toasts: &mut ToastState) {}
 
     /// Handles keyboard input directed at this pane.
     ///

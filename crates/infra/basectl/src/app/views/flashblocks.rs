@@ -7,10 +7,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{
-        Action, Resources, View,
-        views::{REVERTED_TX_TOAST_MESSAGE, TransactionPane},
-    },
+    app::{Action, Resources, View, views::TransactionPane},
     commands::common::{
         COLOR_ACTIVE_BORDER, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED, block_color,
         block_color_bright, build_gas_bar, format_gas, format_gwei, render_gas_usage_bar,
@@ -98,7 +95,6 @@ impl View for FlashblocksView {
         match key.code {
             KeyCode::Left | KeyCode::Char('h') if self.tx_pane.is_some() => {
                 self.focused_on_txns = false;
-                resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
                 Action::None
             }
             KeyCode::Right | KeyCode::Char('l') if self.tx_pane.is_some() => {
@@ -113,9 +109,6 @@ impl View for FlashblocksView {
                 if should_close {
                     self.tx_pane = None;
                     self.focused_on_txns = false;
-                    resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
-                } else {
-                    pane.sync_hovered_revert_toast(&mut resources.toasts);
                 }
                 Action::None
             }
@@ -198,9 +191,6 @@ impl View for FlashblocksView {
                         entry.decode_txs(),
                         resources.config.explorer_base_url(),
                     ));
-                    if let Some(pane) = self.tx_pane.as_ref() {
-                        pane.sync_hovered_revert_toast(&mut resources.toasts);
-                    }
                     self.focused_on_txns = true;
                 }
                 Action::None
@@ -212,11 +202,6 @@ impl View for FlashblocksView {
     fn tick(&mut self, resources: &mut Resources) -> Action {
         if let Some(ref mut pane) = self.tx_pane {
             pane.poll();
-            if self.focused_on_txns {
-                pane.sync_hovered_revert_toast(&mut resources.toasts);
-            }
-        } else {
-            resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
         }
         if self.auto_scroll && !resources.flash.entries.is_empty() {
             self.table_state.select(Some(0));

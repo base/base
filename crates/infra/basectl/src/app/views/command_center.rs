@@ -9,10 +9,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{
-        Action, Resources, View,
-        views::{REVERTED_TX_TOAST_MESSAGE, TransactionPane},
-    },
+    app::{Action, Resources, View, views::TransactionPane},
     commands::common::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED,
         L1_BLOCK_WINDOW, L1BlockFilter, L1BlocksTableParams, RATE_WINDOW_2M, backlog_size_color,
@@ -46,6 +43,7 @@ enum Panel {
 }
 
 /// Combined monitoring view with flashblocks, DA, and L1 block panels.
+#[derive(Debug)]
 pub(crate) struct CommandCenterView {
     focused_panel: Panel,
     da_table_state: TableState,
@@ -257,9 +255,6 @@ impl View for CommandCenterView {
                 if should_close {
                     self.tx_pane = None;
                     self.focused_panel = self.tx_origin_panel.take().unwrap_or(Panel::Da);
-                    resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
-                } else {
-                    pane.sync_hovered_revert_toast(&mut resources.toasts);
                 }
                 Action::None
             }
@@ -356,9 +351,6 @@ impl View for CommandCenterView {
                                 entry.decode_txs(),
                                 resources.config.explorer_base_url(),
                             ));
-                            if let Some(pane) = self.tx_pane.as_ref() {
-                                pane.sync_hovered_revert_toast(&mut resources.toasts);
-                            }
                             self.tx_origin_panel = Some(Panel::Flashblocks);
                             self.focused_panel = Panel::Txns;
                         }
@@ -371,9 +363,6 @@ impl View for CommandCenterView {
                                 resources.config.rpc.as_str(),
                                 resources.config.explorer_base_url(),
                             ));
-                            if let Some(pane) = self.tx_pane.as_ref() {
-                                pane.sync_hovered_revert_toast(&mut resources.toasts);
-                            }
                             self.tx_origin_panel = Some(Panel::Da);
                             self.focused_panel = Panel::Txns;
                         }
@@ -389,13 +378,6 @@ impl View for CommandCenterView {
     fn tick(&mut self, resources: &mut Resources) -> Action {
         if let Some(ref mut pane) = self.tx_pane {
             pane.poll();
-            if self.focused_panel == Panel::Txns {
-                pane.sync_hovered_revert_toast(&mut resources.toasts);
-            } else {
-                resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
-            }
-        } else {
-            resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
         }
         let at_top = self.selected_row(self.focused_panel) == 0;
         if at_top {

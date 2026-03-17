@@ -8,10 +8,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{
-        Action, Resources, View,
-        views::{REVERTED_TX_TOAST_MESSAGE, TransactionPane},
-    },
+    app::{Action, Resources, View, views::TransactionPane},
     commands::common::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, L1_BLOCK_WINDOW, L1BlockFilter,
         L1BlocksTableParams, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S, format_duration,
@@ -187,9 +184,6 @@ impl View for DaMonitorView {
                         resources.config.rpc.as_str(),
                         resources.config.explorer_base_url(),
                     ));
-                    if let Some(pane) = self.tx_pane.as_ref() {
-                        pane.sync_hovered_revert_toast(&mut resources.toasts);
-                    }
                     self.selected_panel = Panel::Txns;
                 }
                 Action::None
@@ -210,9 +204,6 @@ impl View for DaMonitorView {
                 if should_close {
                     self.tx_pane = None;
                     self.selected_panel = Panel::L2Blocks;
-                    resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
-                } else {
-                    pane.sync_hovered_revert_toast(&mut resources.toasts);
                 }
                 Action::None
             }
@@ -257,16 +248,9 @@ impl View for DaMonitorView {
         }
     }
 
-    fn tick(&mut self, resources: &mut Resources) -> Action {
+    fn tick(&mut self, _resources: &mut Resources) -> Action {
         if let Some(ref mut pane) = self.tx_pane {
             pane.poll();
-            if self.selected_panel == Panel::Txns {
-                pane.sync_hovered_revert_toast(&mut resources.toasts);
-            } else {
-                resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
-            }
-        } else {
-            resources.toasts.dismiss_message(REVERTED_TX_TOAST_MESSAGE);
         }
         Action::None
     }
