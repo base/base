@@ -4,6 +4,7 @@ use base_proof_preimage::PreimageKey;
 use base_proof_primitives::ProofResult;
 use tokio::io::{BufReader, BufWriter};
 use tokio_vsock::{VsockAddr, VsockStream};
+use tracing::info;
 
 use crate::{
     NitroError,
@@ -50,6 +51,16 @@ impl VsockTransport {
         &self,
         preimages: Vec<(PreimageKey, Vec<u8>)>,
     ) -> Result<ProofResult, NitroError> {
+        let preimage_count = preimages.len();
+        let total_value_bytes: usize = preimages.iter().map(|(_, v)| v.len()).sum();
+        info!(
+            preimage_count = preimage_count,
+            total_value_bytes = total_value_bytes,
+            cid = self.cid,
+            port = self.port,
+            "sending prove request to enclave"
+        );
+
         let stream = self.connect().await?;
         let (reader, writer) = tokio::io::split(stream);
         let mut reader = BufReader::new(reader);

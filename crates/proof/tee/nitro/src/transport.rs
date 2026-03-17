@@ -1,5 +1,6 @@
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tracing::info;
 
 /// Result type for proof transport operations.
 pub type TransportResult<T> = Result<T, TransportError>;
@@ -34,9 +35,11 @@ impl Frame {
         let len = u32::try_from(payload.len())
             .map_err(|_| TransportError::Codec("payload exceeds u32::MAX".into()))?;
 
+        info!(payload_bytes = payload.len(), "frame write start");
         writer.write_u32(len).await?;
         writer.write_all(&payload).await?;
         writer.flush().await?;
+        info!(payload_bytes = payload.len(), "frame write complete");
         Ok(())
     }
 
@@ -50,6 +53,7 @@ impl Frame {
         reader: &mut (impl AsyncReadExt + Unpin),
     ) -> TransportResult<T> {
         let len = reader.read_u32().await? as usize;
+        info!(payload_bytes = len, "frame read start");
 
         let mut payload = vec![0u8; len];
         reader.read_exact(&mut payload).await?;
@@ -57,6 +61,7 @@ impl Frame {
         let (value, _) = bincode::serde::decode_from_slice(&payload, bincode::config::standard())
             .map_err(|e| TransportError::Codec(e.to_string()))?;
 
+        info!(payload_bytes = len, "frame read complete");
         Ok(value)
     }
 }
