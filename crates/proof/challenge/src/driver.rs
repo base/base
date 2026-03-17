@@ -5,7 +5,6 @@
 //! submitting nullification transactions — into a single polling loop.
 
 use std::{
-    collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -13,51 +12,20 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, B256};
 use base_proof_contracts::AggregateVerifierClient;
 use base_proof_rpc::L2Provider;
 use base_tx_manager::TxManager;
-use base_zk_client::{
-    GetProofRequest, ProofJobStatus, ProofType, ProveBlockRequest, ReceiptType, ZkProofProvider,
-};
+use base_zk_client::{ProofType, ProveBlockRequest, ZkProofProvider};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
     CandidateGame, ChallengeSubmitter, ChallengerMetrics, GameScanner,
-    IntermediateValidationParams, OutputValidator, ValidatorError,
+    IntermediateValidationParams, OutputValidator, PendingProof, PendingProofs, ProofUpdate,
+    ValidatorError,
 };
-
-/// Proof type discriminator byte prepended to ZK proof receipts.
-const ZK_PROOF_TYPE_BYTE: u8 = 0x01;
-
-/// Phase of a pending proof: either awaiting the ZK service or ready for
-/// on-chain submission.
-#[derive(Debug, Clone)]
-pub enum ProofPhase {
-    /// Waiting for the ZK proof service to complete.
-    AwaitingProof {
-        /// Session ID returned by the ZK proof service.
-        session_id: String,
-    },
-    /// Proof obtained — receipt bytes are ready for nullification submission.
-    ReadyToSubmit {
-        /// Type-prefixed proof receipt bytes.
-        proof_bytes: Bytes,
-    },
-}
-
-/// State for an in-flight proof session.
-#[derive(Debug, Clone)]
-pub struct PendingProof {
-    /// Current phase of this proof lifecycle.
-    pub phase: ProofPhase,
-    /// The index of the invalid intermediate root.
-    pub invalid_index: u64,
-    /// The expected correct root at that index.
-    pub expected_root: B256,
-}
 
 /// Configuration for the challenger [`Driver`].
 #[derive(Debug)]
@@ -88,7 +56,7 @@ where
     /// Client for the aggregate verifier contract.
     pub verifier_client: Arc<dyn AggregateVerifierClient>,
     /// In-flight proof sessions keyed by game address.
-    pub pending_proofs: HashMap<Address, PendingProof>,
+    pub pending_proofs: PendingProofs,
     /// Interval between polling cycles.
     pub poll_interval: Duration,
     /// Token used to signal graceful shutdown.
@@ -125,7 +93,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             zk_prover,
             submitter,
             verifier_client,
-            pending_proofs: HashMap::new(),
+            pending_proofs: PendingProofs::new(),
             poll_interval: config.poll_interval,
             cancel: config.cancel,
             ready: config.ready,
@@ -193,7 +161,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
 
     /// Polls all in-flight proof sessions for completion or retries submission.
     async fn poll_pending_proofs(&mut self) {
-        let addresses: Vec<Address> = self.pending_proofs.keys().copied().collect();
+        let addresses = self.pending_proofs.addresses();
 
         for game_address in addresses {
             if let Err(e) = self.poll_or_submit(game_address).await {
@@ -305,11 +273,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             "proof job initiated"
         );
 
-        let pending = PendingProof {
-            phase: ProofPhase::AwaitingProof { session_id },
-            invalid_index,
-            expected_root,
-        };
+        let pending = PendingProof::awaiting(session_id, invalid_index, expected_root);
         self.pending_proofs.insert(game_address, pending);
 
         self.poll_or_submit(game_address).await
@@ -348,68 +312,26 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             return Ok(());
         }
 
-        // Resolve the proof bytes to submit — either by polling the ZK
-        // service or by extracting them from an already-obtained proof.
-        let proof_bytes = match pending.phase {
-            ProofPhase::AwaitingProof { ref session_id } => {
-                let get_proof_request = GetProofRequest {
-                    session_id: session_id.clone(),
-                    receipt_type: Some(ReceiptType::Snark as i32),
-                };
-
-                let proof_response = self.zk_prover.get_proof(get_proof_request).await?;
-                let status = ProofJobStatus::try_from(proof_response.status)
-                    .unwrap_or(ProofJobStatus::Unspecified);
-
-                match status {
-                    ProofJobStatus::Succeeded => {
-                        let mut raw = Vec::with_capacity(1 + proof_response.receipt.len());
-                        raw.push(ZK_PROOF_TYPE_BYTE);
-                        raw.extend_from_slice(&proof_response.receipt);
-                        let proof_bytes = Bytes::from(raw);
-
-                        info!(
-                            game = %game_address,
-                            session_id = %session_id,
-                            proof_len = proof_bytes.len(),
-                            "proof succeeded, submitting nullification"
-                        );
-
-                        // Transition to ReadyToSubmit (keeps entry in the map).
-                        self.pending_proofs.insert(
-                            game_address,
-                            PendingProof {
-                                phase: ProofPhase::ReadyToSubmit {
-                                    proof_bytes: proof_bytes.clone(),
-                                },
-                                invalid_index: pending.invalid_index,
-                                expected_root: pending.expected_root,
-                            },
-                        );
-
-                        proof_bytes
-                    }
-                    ProofJobStatus::Failed => {
-                        self.pending_proofs.remove(&game_address);
-                        warn!(
-                            game = %game_address,
-                            session_id = %session_id,
-                            "proof job failed, will retry next tick"
-                        );
-                        return Ok(());
-                    }
-                    other => {
-                        debug!(
-                            game = %game_address,
-                            session_id = %session_id,
-                            status = ?other,
-                            "proof not ready, will retry next tick"
-                        );
-                        return Ok(());
-                    }
-                }
+        // Resolve the proof bytes — either by polling the ZK service or
+        // extracting them from an already-obtained proof.
+        let proof_bytes = match self.pending_proofs.poll(game_address, &*self.zk_prover).await? {
+            Some(ProofUpdate::Ready(proof_bytes)) => {
+                info!(
+                    game = %game_address,
+                    proof_len = proof_bytes.len(),
+                    "proof ready, submitting nullification"
+                );
+                proof_bytes
             }
-            ProofPhase::ReadyToSubmit { proof_bytes } => proof_bytes,
+            Some(ProofUpdate::Failed) => {
+                warn!(game = %game_address, "proof job failed, will retry next tick");
+                return Ok(());
+            }
+            Some(ProofUpdate::Pending) => {
+                debug!(game = %game_address, "proof not ready, will retry next tick");
+                return Ok(());
+            }
+            None => return Ok(()),
         };
 
         // ── Submit nullification ─────────────────────────────────────────

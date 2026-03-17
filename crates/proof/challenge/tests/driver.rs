@@ -9,7 +9,7 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
     ChallengeSubmitter, Driver, DriverConfig, GameScanner, OutputValidator, PendingProof,
-    ProofPhase, ScannerConfig,
+    ScannerConfig,
     test_utils::{
         MockAggregateVerifier, MockDisputeGameFactory, MockGameState, MockL2Provider,
         MockTxManager, MockZkProofProvider, addr, build_test_header_and_account, factory_game,
@@ -114,13 +114,7 @@ fn driver_with_ready_proof(
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
     driver.pending_proofs.insert(
         addr(0),
-        PendingProof {
-            phase: ProofPhase::ReadyToSubmit {
-                proof_bytes: Bytes::from_static(&[0x01, 0xDE, 0xAD]),
-            },
-            invalid_index: 1,
-            expected_root: B256::repeat_byte(0xEE),
-        },
+        PendingProof::ready(Bytes::from_static(&[0x01, 0xDE, 0xAD]), 1, B256::repeat_byte(0xEE)),
     );
     driver
 }
@@ -422,10 +416,7 @@ async fn test_step_nullification_failure_preserves_proof() {
 
     // Entry must still be in pending_proofs as ReadyToSubmit.
     let entry = driver.pending_proofs.get(&addr(0)).expect("proof should be preserved");
-    assert!(
-        matches!(entry.phase, ProofPhase::ReadyToSubmit { .. }),
-        "phase should be ReadyToSubmit after tx failure"
-    );
+    assert!(entry.is_ready(), "phase should be ReadyToSubmit after tx failure");
 
     // Step 2: poll_pending_proofs re-submits, now the tx succeeds.
     driver.step().await.unwrap();
