@@ -410,6 +410,9 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                 }
             }
             Err(e) => {
+                if let Some(p) = self.pending_proofs.get_mut(&game_address) {
+                    p.retry_count += 1;
+                }
                 warn!(
                     error = %e,
                     game = %game_address,
