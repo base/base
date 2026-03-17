@@ -48,6 +48,24 @@ pub enum RpcError {
 }
 
 impl RpcError {
+    /// Maximum length for error messages stored in [`RpcError`] variants.
+    ///
+    /// RPC error payloads (e.g. from `debug_executionWitness`) can contain multi-MB
+    /// JSON responses. Truncating at the conversion boundary prevents large strings
+    /// from propagating through retry loops, log lines, and error chains.
+    pub const MAX_ERROR_MSG_LEN: usize = 500;
+
+    /// Truncates a string to [`Self::MAX_ERROR_MSG_LEN`], appending a `(truncated)`
+    /// suffix if it exceeds the limit.
+    pub fn truncate_msg(mut msg: String) -> String {
+        if msg.len() > Self::MAX_ERROR_MSG_LEN {
+            let end = msg.floor_char_boundary(Self::MAX_ERROR_MSG_LEN);
+            msg.truncate(end);
+            msg.push_str("... (truncated)");
+        }
+        msg
+    }
+
     /// Returns true if this error is transient and the operation should be retried.
     ///
     /// Only transport-level errors (network issues, timeouts, connection failures)
@@ -58,24 +76,6 @@ impl RpcError {
     }
 }
 
-/// Maximum length for error messages stored in [`RpcError`] variants.
-///
-/// RPC error payloads (e.g. from `debug_executionWitness`) can contain multi-MB
-/// JSON responses. Truncating at the conversion boundary prevents large strings
-/// from propagating through retry loops, log lines, and error chains.
-const MAX_ERROR_MSG_LEN: usize = 500;
-
-/// Truncates a string to [`MAX_ERROR_MSG_LEN`], appending a `(truncated)` suffix
-/// if it exceeds the limit.
-fn truncate_error_msg(msg: String) -> String {
-    if msg.len() > MAX_ERROR_MSG_LEN {
-        let end = msg.floor_char_boundary(MAX_ERROR_MSG_LEN);
-        format!("{}... (truncated)", &msg[..end])
-    } else {
-        msg
-    }
-}
-
 impl From<TransportError> for RpcError {
     fn from(err: TransportError) -> Self {
         match err {
@@ -83,7 +83,7 @@ impl From<TransportError> for RpcError {
             AlloyRpcError::DeserError { err, .. } => Self::InvalidResponse(err.to_string()),
             AlloyRpcError::NullResp => Self::InvalidResponse("null response".into()),
             AlloyRpcError::ErrorResp(payload) => {
-                Self::InvalidResponse(truncate_error_msg(payload.to_string()))
+                Self::InvalidResponse(Self::truncate_msg(payload.to_string()))
             }
             err @ (AlloyRpcError::Transport(_)
             | AlloyRpcError::UnsupportedFeature(_)
