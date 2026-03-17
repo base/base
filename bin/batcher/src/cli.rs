@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use base_batcher_core::ThrottleConfig;
 use base_batcher_service::{BatcherConfig, BatcherService, SecretKey};
-use base_cli_utils::{LogConfig, MetricsConfig, RuntimeManager};
+use base_cli_utils::{LogConfig, RuntimeManager};
 use clap::{Args, Parser};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
