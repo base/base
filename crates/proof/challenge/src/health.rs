@@ -41,6 +41,13 @@ impl ServerState {
             StatusCode::SERVICE_UNAVAILABLE
         }
     }
+
+    fn router(self) -> Router {
+        Router::new()
+            .route("/healthz", get(Self::liveness))
+            .route("/readyz", get(Self::readiness))
+            .with_state(self)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -65,12 +72,7 @@ impl HealthServer {
     ///
     /// Returns an error if the TCP listener cannot bind to `addr`.
     pub async fn serve(addr: SocketAddr, ready: Arc<AtomicBool>) -> eyre::Result<()> {
-        let state = ServerState { ready };
-
-        let app = Router::new()
-            .route("/healthz", get(ServerState::liveness))
-            .route("/readyz", get(ServerState::readiness))
-            .with_state(state);
+        let app = ServerState { ready }.router();
 
         let listener = TcpListener::bind(addr).await?;
         info!(%addr, "Health server started");
@@ -101,12 +103,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let state = ServerState { ready };
-
-        let app = Router::new()
-            .route("/healthz", get(ServerState::liveness))
-            .route("/readyz", get(ServerState::readiness))
-            .with_state(state);
+        let app = ServerState { ready }.router();
 
         let handle = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();

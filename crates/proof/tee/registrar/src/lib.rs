@@ -3,12 +3,11 @@
 
 mod config;
 pub use config::{
-    AwsDiscoveryConfig, BoundlessConfig, DiscoveryConfig, K8sDiscoveryConfig, RegistrarConfig,
-    RemoteSignerConfig, SigningConfig,
+    AwsDiscoveryConfig, BoundlessConfig, RegistrarConfig, RemoteSignerConfig, SigningConfig,
 };
 
 mod discovery;
-pub use discovery::{AwsTargetGroupDiscovery, K8sStatefulSetDiscovery};
+pub use discovery::AwsTargetGroupDiscovery;
 
 mod error;
 pub use error::{RegistrarError, Result};

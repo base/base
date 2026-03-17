@@ -362,8 +362,7 @@ async fn new_with_signer_config_local_creates_functional_manager() {
     let anvil = Anvil::new().spawn();
     let provider = RootProvider::new_http(anvil.endpoint_url());
     let private_key = anvil.keys()[0].clone();
-    let signer_config =
-        SignerConfig::Local { private_key: B256::from_slice(&private_key.to_bytes()) };
+    let signer_config = SignerConfig::local(B256::from_slice(&private_key.to_bytes()));
     let manager = SimpleTxManager::new(
         provider,
         signer_config,

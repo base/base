@@ -339,9 +339,8 @@ impl<L2: L2Provider> OutputValidator<L2> {
         }
 
         if intermediate_roots.is_empty() {
-            let mismatch = self.validate_output_roots(game_address, &[]).await?;
             return Ok(ValidationResult {
-                is_valid: mismatch.is_none(),
+                is_valid: true,
                 expected_root: claimed_root,
                 claimed_root,
                 invalid_intermediate_index: None,

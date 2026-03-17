@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{
     Block, Header, TxReceipt,
@@ -43,6 +43,16 @@ pub struct ExecutedPendingTransaction {
     pub state: EvmState,
     /// The execution result of the transaction.
     pub result: ExecutionResult<OpHaltReason>,
+    /// Per-transaction EVM execution time, if known.
+    pub execution_time_us: Option<u128>,
+}
+
+#[derive(Debug)]
+struct CachedTransactionExecution {
+    receipt: OpTransactionReceipt,
+    state: EvmState,
+    result: ExecutionResult<OpHaltReason>,
+    execution_time_us: Option<u128>,
 }
 
 /// Executes or fetches cached values for transactions in a flashblock.
@@ -95,6 +105,11 @@ where
         (self.evm.into_db(), self.state_overrides)
     }
 
+    /// Returns a mutable reference to the underlying database.
+    pub fn db_mut(&mut self) -> &mut DB {
+        self.evm.db_mut()
+    }
+
     /// Executes a single transaction and updates internal state.
     /// Should be called in order for each transaction.
     #[instrument(level = "debug", skip_all, fields(tx_hash = %transaction.tx_hash(), idx = idx))]
@@ -117,25 +132,20 @@ where
                 .unwrap_or_else(|| transaction.max_fee_per_gas())
         };
 
-        // Check if we have all the data we need (receipt + state)
-        let cached_data = self.prev_pending_blocks.as_ref().and_then(|p| {
-            let receipt = p.get_receipt(tx_hash)?;
-            let state = p.get_transaction_state(&tx_hash)?;
-            let result = p.get_transaction_result(&tx_hash)?;
-            Some((receipt, state, result))
+        // Check if we have all the data we need to reuse the previous execution.
+        let cached_execution = self.prev_pending_blocks.as_ref().and_then(|p| {
+            Some(CachedTransactionExecution {
+                receipt: p.get_receipt(tx_hash)?.clone(),
+                state: p.get_transaction_state(&tx_hash)?,
+                result: p.get_transaction_result(&tx_hash)?.clone(),
+                execution_time_us: p.get_execution_time(&tx_hash),
+            })
         });
 
         // If cached, we can fill out pending block data using previous execution results
         // If not cached, we need to execute the transaction and build pending block data from scratch
-        if let Some((receipt, state, result)) = cached_data {
-            self.execute_with_cached_data(
-                transaction,
-                receipt.clone(),
-                state,
-                result.clone(),
-                idx,
-                effective_gas_price,
-            )
+        if let Some(cached_execution) = cached_execution {
+            self.execute_with_cached_data(transaction, cached_execution, idx, effective_gas_price)
         } else {
             self.execute_with_evm(transaction, idx, effective_gas_price)
         }
@@ -177,12 +187,13 @@ where
     fn execute_with_cached_data(
         &mut self,
         transaction: Recovered<OpTxEnvelope>,
-        receipt: OpTransactionReceipt,
-        state: EvmState,
-        result: ExecutionResult<OpHaltReason>,
+        cached_execution: CachedTransactionExecution,
         idx: usize,
         effective_gas_price: u128,
     ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
+        let CachedTransactionExecution { receipt, state, result, execution_time_us } =
+            cached_execution;
+
         let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
             let OpReceipt::Deposit(deposit_receipt) = &receipt.inner.inner.receipt else {
                 return Err(ExecutionError::DepositReceiptMismatch.into());
@@ -211,7 +222,13 @@ where
             .ok_or(ExecutionError::GasOverflow)?;
         self.next_log_index += receipt.inner.logs().len();
 
-        Ok(ExecutedPendingTransaction { rpc_transaction, receipt, state, result })
+        Ok(ExecutedPendingTransaction {
+            rpc_transaction,
+            receipt,
+            state,
+            result,
+            execution_time_us,
+        })
     }
 
     fn jovian_da_footprint_estimation(
@@ -260,7 +277,11 @@ where
             0
         };
 
-        match self.evm.transact(&transaction) {
+        let start = Instant::now();
+        let transact_result = self.evm.transact(&transaction);
+        let elapsed_us = start.elapsed().as_micros();
+
+        match transact_result {
             Ok(ResultAndState { state, result }) => {
                 let gas_used = result.gas_used();
                 for (addr, acc) in &state {
@@ -353,6 +374,7 @@ where
                     receipt: op_receipt,
                     state,
                     result,
+                    execution_time_us: Some(elapsed_us),
                 })
             }
             Err(e) => Err(ExecutionError::TransactionFailed {
@@ -372,7 +394,11 @@ mod tests {
     use alloy_consensus::{Block, BlockBody, Header, Signed};
     use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, BEACON_ROOTS_CODE};
     use alloy_primitives::{Address, B256, TxKind, U256, address};
+    use alloy_rpc_types_engine::PayloadId;
     use base_alloy_consensus::OpTxEnvelope;
+    use base_alloy_flashblocks::{
+        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
+    };
     use base_execution_chainspec::OpChainSpecBuilder;
     use base_execution_evm::OpEvmConfig;
     use base_revm::L1BlockInfo;
@@ -520,6 +546,102 @@ mod tests {
         ));
 
         alloy_consensus::transaction::Recovered::new_unchecked(envelope, Address::ZERO)
+    }
+
+    #[test]
+    fn cached_execute_transaction_preserves_execution_time_from_prev_pending_blocks() {
+        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
+
+        let header = Header {
+            number: 1,
+            timestamp: 100,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(1_000_000_000),
+            ..Default::default()
+        };
+
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            Address::ZERO,
+            AccountInfo {
+                balance: U256::from(1_000_000_000_000_000_000u128),
+                ..Default::default()
+            },
+        );
+
+        let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
+        let evm = evm_config.evm_with_env(db, evm_env);
+        let pending_block = Block { header: header.clone(), body: Default::default() };
+        let mut first_builder = PendingStateBuilder::new(
+            (*chain_spec).clone(),
+            evm,
+            pending_block,
+            None,
+            L1BlockInfo::default(),
+            StateOverride::default(),
+        );
+
+        let tx = create_legacy_tx();
+        let tx_hash = tx.tx_hash();
+        let first_result =
+            first_builder.execute_transaction(0, tx).expect("transaction execution failed");
+
+        let mut pending_blocks_builder = crate::PendingBlocksBuilder::new();
+        pending_blocks_builder
+            .with_header(alloy_consensus::Sealed::new_unchecked(header.clone(), B256::ZERO));
+        pending_blocks_builder.with_flashblocks([Flashblock {
+            payload_id: PayloadId::default(),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::ZERO,
+                parent_hash: B256::ZERO,
+                fee_recipient: Address::ZERO,
+                prev_randao: B256::ZERO,
+                block_number: header.number,
+                gas_limit: header.gas_limit,
+                timestamp: header.timestamp,
+                extra_data: Default::default(),
+                base_fee_per_gas: U256::from(header.base_fee_per_gas.unwrap_or_default()),
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                state_root: B256::ZERO,
+                receipts_root: B256::ZERO,
+                logs_bloom: Default::default(),
+                gas_used: first_result.receipt.inner.gas_used,
+                block_hash: B256::ZERO,
+                transactions: vec![],
+                withdrawals: vec![],
+                withdrawals_root: B256::ZERO,
+                blob_gas_used: None,
+            },
+            metadata: Metadata { block_number: header.number },
+        }]);
+        pending_blocks_builder.with_receipt(tx_hash, first_result.receipt.clone());
+        pending_blocks_builder.with_transaction_state(tx_hash, first_result.state.clone());
+        pending_blocks_builder.with_transaction_result(tx_hash, first_result.result);
+        pending_blocks_builder.with_execution_time(tx_hash, 1_234);
+
+        let prev_pending_blocks =
+            Arc::new(pending_blocks_builder.build().expect("should build cached pending blocks"));
+
+        let second_evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
+        let second_evm = evm_config.evm_with_env(InMemoryDB::default(), second_evm_env);
+        let second_pending_block = Block { header, body: Default::default() };
+        let mut second_builder = PendingStateBuilder::new(
+            (*chain_spec).clone(),
+            second_evm,
+            second_pending_block,
+            Some(prev_pending_blocks),
+            L1BlockInfo::default(),
+            StateOverride::default(),
+        );
+
+        let cached_result = second_builder
+            .execute_transaction(0, create_legacy_tx())
+            .expect("cached transaction execution failed");
+
+        assert_eq!(cached_result.execution_time_us, Some(1_234));
     }
 
     #[test]

@@ -4,13 +4,14 @@
 use std::{num::NonZeroUsize, sync::Arc};
 
 use alloy_primitives::U256;
-use base_flashblocks::{FlashblocksConfig, FlashblocksState};
+use base_flashblocks::{FlashblocksAPI, FlashblocksConfig, FlashblocksState};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use parking_lot::RwLock;
-use tracing::info;
+use tracing::{debug, info, warn};
 
 use crate::{
-    MeteringApiImpl, MeteringApiServer, MeteringCache, PriorityFeeEstimator, ResourceLimits,
+    DEFAULT_PENDING_STATE_ROOT_TIMES_CAPACITY, MeteringApiImpl, MeteringApiServer, MeteringCache,
+    MeteringCollector, PendingStateRootTimes, PriorityFeeEstimator, ResourceLimits,
     estimator::assert_valid_percentile,
 };
 
@@ -221,7 +222,39 @@ impl BaseNodeExtension for MeteringExtension {
                     target_flashblocks_per_block,
                 ));
 
-                MeteringApiImpl::with_estimator(ctx.provider().clone(), fb_state, estimator)
+                let state_root_cache = Arc::new(RwLock::new(PendingStateRootTimes::new(
+                    NonZeroUsize::new(DEFAULT_PENDING_STATE_ROOT_TIMES_CAPACITY)
+                        .expect("pending state root time cache capacity must be greater than 0"),
+                )));
+
+                // Spawn the metering collector if flashblocks are configured
+                if let Some(ref cfg) = flashblocks_config {
+                    let flashblock_rx = cfg.state.subscribe_to_flashblocks();
+                    let collector = MeteringCollector::new(
+                        Arc::clone(&cache),
+                        Arc::clone(&state_root_cache),
+                        flashblock_rx,
+                    );
+                    let collector_handle = tokio::spawn(collector.run());
+                    tokio::spawn(async move {
+                        match collector_handle.await {
+                            Ok(()) => debug!("metering collector task exited"),
+                            Err(error) if error.is_cancelled() => {
+                                debug!(error = %error, "metering collector task cancelled")
+                            }
+                            Err(error) => {
+                                warn!(error = %error, "metering collector task exited unexpectedly")
+                            }
+                        }
+                    });
+                }
+
+                MeteringApiImpl::with_estimator(
+                    ctx.provider().clone(),
+                    fb_state,
+                    estimator,
+                    state_root_cache,
+                )
             } else {
                 info!(message = "Starting Metering RPC (priority fee estimation disabled)");
                 MeteringApiImpl::new(ctx.provider().clone(), fb_state)

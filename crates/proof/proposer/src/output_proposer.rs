@@ -6,7 +6,10 @@
 //! - **Local**: Signs with an in-process private key via [`EthereumWallet`].
 //! - **Remote**: Calls a signer sidecar's `eth_signTransaction` JSON-RPC method.
 
-use std::{future::Future, sync::Arc};
+use std::{
+    future::Future,
+    sync::{Arc, LazyLock},
+};
 
 use alloy_eips::Encodable2718;
 use alloy_network::{EthereumWallet, TransactionBuilder};
@@ -38,6 +41,10 @@ const fn apply_gas_margin(estimated: u64) -> u64 {
     estimated.saturating_mul(GAS_LIMIT_MULTIPLIER_NUMERATOR) / GAS_LIMIT_MULTIPLIER_DENOMINATOR
 }
 
+/// Hex-encoded `GameAlreadyExists` selector, computed once.
+static GAME_ALREADY_EXISTS_HEX: LazyLock<String> =
+    LazyLock::new(|| alloy_primitives::hex::encode(game_already_exists_selector()));
+
 /// Classifies a contract-interaction error into a structured [`ProposerError`] variant.
 ///
 /// Checks whether the error string contains the `GameAlreadyExists` selector,
@@ -45,8 +52,7 @@ const fn apply_gas_margin(estimated: u64) -> u64 {
 /// [`ProposerError::Contract`] with the provided context.
 fn classify_contract_error(context: &str, err: impl std::fmt::Display) -> ProposerError {
     let msg = err.to_string();
-    let selector_hex = alloy_primitives::hex::encode(game_already_exists_selector());
-    if msg.contains(&selector_hex) || msg.contains("GameAlreadyExists") {
+    if msg.contains(GAME_ALREADY_EXISTS_HEX.as_str()) || msg.contains("GameAlreadyExists") {
         return ProposerError::GameAlreadyExists;
     }
     ProposerError::Contract(format!("{context}: {msg}"))

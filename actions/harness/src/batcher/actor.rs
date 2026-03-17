@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use base_batcher_core::{
     BatchDriver, BatchDriverConfig, BatchDriverError, NoopThrottleClient, ThrottleConfig,
@@ -118,7 +118,11 @@ impl<S: L2BlockProvider> Batcher<S> {
             pipeline,
             source,
             tx_manager.clone(),
-            BatchDriverConfig { inbox: config.inbox_address, max_pending_transactions: 16 },
+            BatchDriverConfig {
+                inbox: config.inbox_address,
+                max_pending_transactions: 16,
+                drain_timeout: Duration::from_secs(10),
+            },
             throttle,
             NoopThrottleClient,
             l1_source,
