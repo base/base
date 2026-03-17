@@ -20,17 +20,7 @@ impl ProverL2Provider for L2Client {
                     (BlockNumberOrTag::Number(block_number),),
                 )
                 .await
-                .map_err(|e| {
-                    // Truncate the error to avoid logging multi-MB witness JSON in error messages.
-                    let msg = e.to_string();
-                    let truncated = if msg.len() > 500 {
-                        let end = msg.floor_char_boundary(500);
-                        format!("{}... (truncated)", &msg[..end])
-                    } else {
-                        msg
-                    };
-                    RpcError::WitnessNotFound(format!("Block {block_number}: {truncated}"))
-                })
+                .map_err(RpcError::from)
         })
         .retry(backoff)
         .when(|e| e.is_retryable())
@@ -38,6 +28,7 @@ impl ProverL2Provider for L2Client {
             tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::execution_witness");
         })
         .await
+        .map_err(|e| RpcError::WitnessNotFound(format!("Block {block_number}: {e}")))
     }
 
     async fn db_get(&self, key: B256) -> RpcResult<Bytes> {
@@ -47,7 +38,7 @@ impl ProverL2Provider for L2Client {
             self.provider()
                 .raw_request::<_, Bytes>("debug_dbGet".into(), (key,))
                 .await
-                .map_err(|e| RpcError::InvalidResponse(format!("Failed to db_get key {key}: {e}")))
+                .map_err(RpcError::from)
         })
         .retry(backoff)
         .when(|e| e.is_retryable())
@@ -55,5 +46,6 @@ impl ProverL2Provider for L2Client {
             tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::db_get");
         })
         .await
+        .map_err(|e| RpcError::InvalidResponse(format!("Failed to db_get key {key}: {e}")))
     }
 }
