@@ -13,7 +13,7 @@ mod config;
 pub use config::{ChallengerConfig, ConfigError, UrlValidationError, Validated};
 
 mod driver;
-pub use driver::{Driver, DriverConfig, PendingProof};
+pub use driver::{Driver, DriverConfig, PendingProof, ProofPhase};
 
 mod error;
 pub use error::ChallengeSubmitError;

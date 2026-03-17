@@ -25,11 +25,27 @@ use crate::{
 /// Proof type discriminator byte prepended to ZK proof receipts.
 const ZK_PROOF_TYPE_BYTE: u8 = 0x01;
 
+/// Phase of a pending proof: either awaiting the ZK service or ready for
+/// on-chain submission.
+#[derive(Debug, Clone)]
+pub enum ProofPhase {
+    /// Waiting for the ZK proof service to complete.
+    AwaitingProof {
+        /// Session ID returned by the ZK proof service.
+        session_id: String,
+    },
+    /// Proof obtained — receipt bytes are ready for nullification submission.
+    ReadyToSubmit {
+        /// Type-prefixed proof receipt bytes.
+        proof_bytes: Bytes,
+    },
+}
+
 /// State for an in-flight proof session.
 #[derive(Debug, Clone)]
 pub struct PendingProof {
-    /// The session ID returned by the ZK proof service.
-    pub session_id: String,
+    /// Current phase of this proof lifecycle.
+    pub phase: ProofPhase,
     /// The index of the invalid intermediate root.
     pub invalid_index: usize,
     /// The expected correct root at that index.
@@ -142,17 +158,16 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         Ok(())
     }
 
-    /// Polls all in-flight proof sessions for completion.
+    /// Polls all in-flight proof sessions for completion or retries submission.
     async fn poll_pending_proofs(&mut self) {
-        let pending: Vec<(Address, PendingProof)> =
-            self.pending_proofs.iter().map(|(k, v)| (*k, v.clone())).collect();
+        let addresses: Vec<Address> = self.pending_proofs.keys().copied().collect();
 
-        for (game_address, pending_proof) in pending {
-            if let Err(e) = self.poll_proof(game_address, pending_proof).await {
+        for game_address in addresses {
+            if let Err(e) = self.poll_or_submit(game_address).await {
                 warn!(
                     error = %e,
                     game = %game_address,
-                    "failed to poll pending proof"
+                    "failed to poll/submit pending proof"
                 );
             }
         }
@@ -251,73 +266,118 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             "proof job initiated"
         );
 
-        let pending = PendingProof { session_id, invalid_index, expected_root };
-        self.pending_proofs.insert(game_address, pending.clone());
+        let pending = PendingProof {
+            phase: ProofPhase::AwaitingProof { session_id },
+            invalid_index,
+            expected_root,
+        };
+        self.pending_proofs.insert(game_address, pending);
 
-        self.poll_proof(game_address, pending).await
+        self.poll_or_submit(game_address).await
     }
 
-    /// Polls the ZK proof service for a session's status and acts on the result.
+    /// Advances a pending proof through its lifecycle.
     ///
-    /// - `Succeeded` → removes the session from `pending_proofs` and submits
-    ///   the nullification transaction.
-    /// - `Failed` → removes the session so a fresh `prove_block` is issued
-    ///   next cycle.
-    /// - Intermediate (`Created`/`Pending`/`Running`) → keeps the session in
-    ///   `pending_proofs` and returns early.
-    async fn poll_proof(
-        &mut self,
-        game_address: Address,
-        pending: PendingProof,
-    ) -> eyre::Result<()> {
-        let get_proof_request = GetProofRequest {
-            session_id: pending.session_id.clone(),
-            receipt_type: Some(ReceiptType::Snark as i32),
+    /// - **`AwaitingProof`** — polls the ZK service:
+    ///   - `Succeeded` → transitions to `ReadyToSubmit` and falls through to
+    ///     submission.
+    ///   - `Failed` → removes the entry so a fresh `prove_block` is issued
+    ///     next cycle.
+    ///   - Intermediate (`Created`/`Pending`/`Running`) → returns early.
+    /// - **`ReadyToSubmit`** — submits the nullification tx:
+    ///   - On success → removes the entry.
+    ///   - On failure → leaves the entry so it is retried next tick.
+    async fn poll_or_submit(&mut self, game_address: Address) -> eyre::Result<()> {
+        let pending = match self.pending_proofs.get(&game_address) {
+            Some(p) => p.clone(),
+            None => return Ok(()),
         };
 
-        let proof_response = self.zk_prover.get_proof(get_proof_request).await?;
-        let status =
-            ProofJobStatus::try_from(proof_response.status).unwrap_or(ProofJobStatus::Unspecified);
+        // Resolve the proof bytes to submit — either by polling the ZK
+        // service or by extracting them from an already-obtained proof.
+        let proof_bytes = match pending.phase {
+            ProofPhase::AwaitingProof { ref session_id } => {
+                let get_proof_request = GetProofRequest {
+                    session_id: session_id.clone(),
+                    receipt_type: Some(ReceiptType::Snark as i32),
+                };
 
-        match status {
-            ProofJobStatus::Succeeded => {
-                self.pending_proofs.remove(&game_address);
+                let proof_response = self.zk_prover.get_proof(get_proof_request).await?;
+                let status = ProofJobStatus::try_from(proof_response.status)
+                    .unwrap_or(ProofJobStatus::Unspecified);
 
-                let mut proof_bytes = Vec::with_capacity(1 + proof_response.receipt.len());
-                proof_bytes.push(ZK_PROOF_TYPE_BYTE);
-                proof_bytes.extend_from_slice(&proof_response.receipt);
+                match status {
+                    ProofJobStatus::Succeeded => {
+                        let mut raw = Vec::with_capacity(1 + proof_response.receipt.len());
+                        raw.push(ZK_PROOF_TYPE_BYTE);
+                        raw.extend_from_slice(&proof_response.receipt);
+                        let proof_bytes = Bytes::from(raw);
 
-                info!(
-                    game = %game_address,
-                    session_id = %pending.session_id,
-                    proof_len = proof_bytes.len(),
-                    "proof succeeded, submitting nullification"
-                );
+                        info!(
+                            game = %game_address,
+                            session_id = %session_id,
+                            proof_len = proof_bytes.len(),
+                            "proof succeeded, submitting nullification"
+                        );
 
-                self.submitter
-                    .submit_nullification(
-                        game_address,
-                        Bytes::from(proof_bytes),
-                        pending.invalid_index as u64,
-                        pending.expected_root,
-                    )
-                    .await?;
+                        // Transition to ReadyToSubmit (keeps entry in the map).
+                        self.pending_proofs.insert(
+                            game_address,
+                            PendingProof {
+                                phase: ProofPhase::ReadyToSubmit {
+                                    proof_bytes: proof_bytes.clone(),
+                                },
+                                invalid_index: pending.invalid_index,
+                                expected_root: pending.expected_root,
+                            },
+                        );
+
+                        proof_bytes
+                    }
+                    ProofJobStatus::Failed => {
+                        self.pending_proofs.remove(&game_address);
+                        warn!(
+                            game = %game_address,
+                            session_id = %session_id,
+                            "proof job failed, will retry next tick"
+                        );
+                        return Ok(());
+                    }
+                    other => {
+                        debug!(
+                            game = %game_address,
+                            session_id = %session_id,
+                            status = ?other,
+                            "proof not ready, will retry next tick"
+                        );
+                        return Ok(());
+                    }
+                }
             }
-            ProofJobStatus::Failed => {
+            ProofPhase::ReadyToSubmit { proof_bytes } => proof_bytes,
+        };
+
+        // ── Submit nullification ─────────────────────────────────────────
+        match self
+            .submitter
+            .submit_nullification(
+                game_address,
+                proof_bytes,
+                pending.invalid_index as u64,
+                pending.expected_root,
+            )
+            .await
+        {
+            Ok(_) => {
                 self.pending_proofs.remove(&game_address);
+            }
+            Err(e) => {
                 warn!(
+                    error = %e,
                     game = %game_address,
-                    session_id = %pending.session_id,
-                    "proof job failed, will retry next tick"
+                    "nullification tx failed, will retry next tick"
                 );
-            }
-            other => {
-                debug!(
-                    game = %game_address,
-                    session_id = %pending.session_id,
-                    status = ?other,
-                    "proof not ready, will retry next tick"
-                );
+                // Leave entry as ReadyToSubmit for retry.
             }
         }
 
@@ -333,6 +393,7 @@ mod tests {
     };
 
     use alloy_primitives::{Address, B256};
+    use base_enclave::output_root_v0;
     use base_proof_contracts::GameAtIndex;
 
     use super::*;
@@ -386,6 +447,43 @@ mod tests {
 
     fn default_tx_manager() -> MockTxManager {
         MockTxManager::new(Ok(receipt_with_status(true, B256::repeat_byte(0xAA))))
+    }
+
+    /// Builds the common L2, factory, and verifier mocks for an invalid-game
+    /// scenario: starting=10, `l2_block=20`, interval=5, checkpoints at 15 and
+    /// 20 with a correct root at 15 and a bogus root at 20 (invalid index 1).
+    fn invalid_game_mocks()
+    -> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, Arc<MockAggregateVerifier>) {
+        let storage_hash = B256::repeat_byte(0xBB);
+        let (header_15, account_15) = build_test_header_and_account(15, storage_hash);
+        let root_15 = output_root_v0(&header_15, storage_hash);
+        let (header_20, account_20) = build_test_header_and_account(20, storage_hash);
+
+        let mut l2 = MockL2Provider::new();
+        l2.insert_block(15, header_15, account_15);
+        l2.insert_block(20, header_20, account_20);
+        let l2 = Arc::new(l2);
+
+        let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+        let mut verifier_games = HashMap::new();
+        verifier_games.insert(
+            addr(0),
+            MockGameState {
+                status: 0,
+                zk_prover: Address::ZERO,
+                tee_prover: Address::ZERO,
+                game_info: base_proof_contracts::GameInfo {
+                    root_claim: B256::repeat_byte(0x01),
+                    l2_block_number: 20,
+                    parent_index: 0,
+                },
+                starting_block_number: 10,
+                intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
+            },
+        );
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+        (l2, factory, verifier)
     }
 
     #[tokio::test]
@@ -484,44 +582,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_step_invalid_game_proof_succeeded() {
-        // Game: starting=10, l2_block=20, interval=5 → checkpoints at 15, 20.
-        // Provide correct root at 15 but wrong root at 20 → invalid at index 1.
         // Proof succeeds → nullification submitted.
-        use base_enclave::output_root_v0;
+        let (l2, factory, verifier) = invalid_game_mocks();
 
-        let storage_hash = B256::repeat_byte(0xBB);
-
-        let (header_15, account_15) = build_test_header_and_account(15, storage_hash);
-        let root_15 = output_root_v0(&header_15, storage_hash);
-        let (header_20, account_20) = build_test_header_and_account(20, storage_hash);
-
-        let mut l2 = MockL2Provider::new();
-        l2.insert_block(15, header_15, account_15);
-        l2.insert_block(20, header_20, account_20);
-        let l2 = Arc::new(l2);
-
-        // Game: starting=10, l2_block=20, interval=5 → checkpoints at 15, 20
-        // Provide correct root at 15 but wrong root at 20 → invalid at index 1
-        let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
-        let mut verifier_games = HashMap::new();
-        verifier_games.insert(
-            addr(0),
-            MockGameState {
-                status: 0,
-                zk_prover: Address::ZERO,
-                tee_prover: Address::ZERO,
-                game_info: base_proof_contracts::GameInfo {
-                    root_claim: B256::repeat_byte(0x01),
-                    l2_block_number: 20,
-                    parent_index: 0,
-                },
-                starting_block_number: 10,
-                intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
-            },
-        );
-        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
-
-        // ZK prover returns succeeded
         let zk = Arc::new(MockZkProofProvider {
             session_id: "proof-123".to_string(),
             proof_status: Mutex::new(ProofJobStatus::Succeeded as i32),
@@ -540,40 +603,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_step_invalid_game_proof_failed() {
-        // Same game setup as proof_succeeded, but ZK prover returns Failed
-        // → no nullification submitted.
-        use base_enclave::output_root_v0;
+        // ZK prover returns Failed → no nullification submitted.
+        let (l2, factory, verifier) = invalid_game_mocks();
 
-        let storage_hash = B256::repeat_byte(0xBB);
-        let (header_15, account_15) = build_test_header_and_account(15, storage_hash);
-        let root_15 = output_root_v0(&header_15, storage_hash);
-        let (header_20, account_20) = build_test_header_and_account(20, storage_hash);
-
-        let mut l2 = MockL2Provider::new();
-        l2.insert_block(15, header_15, account_15);
-        l2.insert_block(20, header_20, account_20);
-        let l2 = Arc::new(l2);
-
-        let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
-        let mut verifier_games = HashMap::new();
-        verifier_games.insert(
-            addr(0),
-            MockGameState {
-                status: 0,
-                zk_prover: Address::ZERO,
-                tee_prover: Address::ZERO,
-                game_info: base_proof_contracts::GameInfo {
-                    root_claim: B256::repeat_byte(0x01),
-                    l2_block_number: 20,
-                    parent_index: 0,
-                },
-                starting_block_number: 10,
-                intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
-            },
-        );
-        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
-
-        // ZK prover returns Failed
         let zk = Arc::new(MockZkProofProvider {
             session_id: "proof-fail".to_string(),
             proof_status: Mutex::new(ProofJobStatus::Failed as i32),
@@ -695,41 +727,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_step_pending_proof_skips_prove_block() {
-        // First step: invalid game → proof initiated (status=Created, not ready).
-        // Second step: same game re-discovered → should poll existing session
-        // without calling prove_block again. This time proof succeeds.
-        use base_enclave::output_root_v0;
+        // First step: proof initiated (status=Created, not ready).
+        // Second step: same game re-discovered → polls existing session,
+        // proof succeeds, nullification submitted.
+        let (l2, factory, verifier) = invalid_game_mocks();
 
-        let storage_hash = B256::repeat_byte(0xBB);
-        let (header_15, account_15) = build_test_header_and_account(15, storage_hash);
-        let root_15 = output_root_v0(&header_15, storage_hash);
-        let (header_20, account_20) = build_test_header_and_account(20, storage_hash);
-
-        let mut l2 = MockL2Provider::new();
-        l2.insert_block(15, header_15, account_15);
-        l2.insert_block(20, header_20, account_20);
-        let l2 = Arc::new(l2);
-
-        let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
-        let mut verifier_games = HashMap::new();
-        verifier_games.insert(
-            addr(0),
-            MockGameState {
-                status: 0,
-                zk_prover: Address::ZERO,
-                tee_prover: Address::ZERO,
-                game_info: base_proof_contracts::GameInfo {
-                    root_claim: B256::repeat_byte(0x01),
-                    l2_block_number: 20,
-                    parent_index: 0,
-                },
-                starting_block_number: 10,
-                intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
-            },
-        );
-        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
-
-        // First call: Created (not ready). Second call: Succeeded.
         let zk = Arc::new(MockZkProofProvider {
             session_id: "pending-session".to_string(),
             proof_status: Mutex::new(ProofJobStatus::Created as i32),
@@ -757,6 +759,49 @@ mod tests {
         assert!(
             !driver.pending_proofs.contains_key(&addr(0)),
             "session should be removed after proof succeeded"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_step_nullification_failure_preserves_proof() {
+        // Proof succeeds on first step but nullification tx fails.
+        // The entry should stay in pending_proofs as ReadyToSubmit.
+        // On the next step the tx succeeds without re-proving.
+        let (l2, factory, verifier) = invalid_game_mocks();
+
+        let zk = Arc::new(MockZkProofProvider {
+            session_id: "proof-ok".to_string(),
+            proof_status: Mutex::new(ProofJobStatus::Succeeded as i32),
+            receipt: Mutex::new(vec![0xDE, 0xAD]),
+        });
+
+        // First tx call fails (NonceTooLow), second succeeds.
+        let tx_manager = crate::test_utils::MockTxManager::with_responses(vec![
+            Err(base_tx_manager::TxManagerError::NonceTooLow),
+            Ok(receipt_with_status(true, B256::repeat_byte(0xCC))),
+        ]);
+
+        let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
+
+        // Step 1: proof succeeds, but nullification tx fails.
+        // The error is swallowed by `step` (logged as a warning) because
+        // `poll_or_submit` returns Ok — only poll_pending_proofs logs it.
+        // But initiate_proof calls poll_or_submit directly, so its error
+        // propagates up through process_candidate → step logs it.
+        driver.step().await.unwrap();
+
+        // Entry must still be in pending_proofs as ReadyToSubmit.
+        let entry = driver.pending_proofs.get(&addr(0)).expect("proof should be preserved");
+        assert!(
+            matches!(entry.phase, ProofPhase::ReadyToSubmit { .. }),
+            "phase should be ReadyToSubmit after tx failure"
+        );
+
+        // Step 2: poll_pending_proofs re-submits, now the tx succeeds.
+        driver.step().await.unwrap();
+        assert!(
+            !driver.pending_proofs.contains_key(&addr(0)),
+            "entry should be removed after successful submission"
         );
     }
 

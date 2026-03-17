@@ -14,6 +14,7 @@ use std::{
 
 use axum::{Router, extract::State, http::StatusCode, routing::get};
 use tokio::net::TcpListener;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 // ---------------------------------------------------------------------------
@@ -61,23 +62,31 @@ pub struct HealthServer;
 impl HealthServer {
     /// Starts the health HTTP server.
     ///
-    /// The server binds to `addr` and runs until the task is aborted.
+    /// The server binds to `addr` and runs until the cancellation token is
+    /// fired.
     ///
     /// # Arguments
     ///
-    /// * `addr`  — socket address to listen on (e.g. `0.0.0.0:8080`)
-    /// * `ready` — shared flag; `/readyz` returns 200 when this is `true`
+    /// * `addr`   — socket address to listen on (e.g. `0.0.0.0:8080`)
+    /// * `ready`  — shared flag; `/readyz` returns 200 when this is `true`
+    /// * `cancel` — token that triggers graceful shutdown
     ///
     /// # Errors
     ///
     /// Returns an error if the TCP listener cannot bind to `addr`.
-    pub async fn serve(addr: SocketAddr, ready: Arc<AtomicBool>) -> eyre::Result<()> {
+    pub async fn serve(
+        addr: SocketAddr,
+        ready: Arc<AtomicBool>,
+        cancel: CancellationToken,
+    ) -> eyre::Result<()> {
         let app = ServerState { ready }.router();
 
         let listener = TcpListener::bind(addr).await?;
         info!(%addr, "Health server started");
 
-        axum::serve(listener, app).await?;
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move { cancel.cancelled().await })
+            .await?;
 
         info!("Health server stopped");
         Ok(())
@@ -96,21 +105,30 @@ mod tests {
 
     use rstest::rstest;
     use tokio::task::JoinHandle;
+    use tokio_util::sync::CancellationToken;
 
     use super::*;
 
-    /// Starts the health server on an ephemeral port and returns its address.
-    async fn start_test_server(ready: Arc<AtomicBool>) -> (SocketAddr, JoinHandle<()>) {
+    /// Starts the health server on an ephemeral port and returns its address
+    /// along with a cancellation token for graceful shutdown.
+    async fn start_test_server(
+        ready: Arc<AtomicBool>,
+    ) -> (SocketAddr, JoinHandle<()>, CancellationToken) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         let app = ServerState { ready }.router();
+        let cancel = CancellationToken::new();
+        let cancel_for_shutdown = cancel.clone();
 
         let handle = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move { cancel_for_shutdown.cancelled().await })
+                .await
+                .unwrap();
         });
 
-        (addr, handle)
+        (addr, handle, cancel)
     }
 
     #[rstest]
@@ -124,18 +142,18 @@ mod tests {
         #[case] expected_status: u16,
     ) {
         let ready = Arc::new(AtomicBool::new(initial_ready));
-        let (addr, handle) = start_test_server(ready).await;
+        let (addr, _handle, cancel) = start_test_server(ready).await;
 
         let resp = reqwest::get(format!("http://{addr}{endpoint}")).await.unwrap();
         assert_eq!(resp.status(), expected_status);
 
-        handle.abort();
+        cancel.cancel();
     }
 
     #[tokio::test]
     async fn test_readiness_transitions() {
         let ready = Arc::new(AtomicBool::new(false));
-        let (addr, handle) = start_test_server(Arc::clone(&ready)).await;
+        let (addr, _handle, cancel) = start_test_server(Arc::clone(&ready)).await;
 
         // Initially not ready
         let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
@@ -153,6 +171,6 @@ mod tests {
         let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
         assert_eq!(resp.status(), 503);
 
-        handle.abort();
+        cancel.cancel();
     }
 }

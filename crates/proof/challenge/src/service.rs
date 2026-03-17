@@ -131,7 +131,10 @@ impl ChallengerService {
         let health_handle = {
             let addr = config.health_addr;
             let ready_flag = Arc::clone(&ready);
-            tokio::spawn(async move { crate::HealthServer::serve(addr, ready_flag).await })
+            let health_cancel = cancel.clone();
+            tokio::spawn(async move {
+                crate::HealthServer::serve(addr, ready_flag, health_cancel).await
+            })
         };
 
         // ── 9. Run driver ────────────────────────────────────────────────────

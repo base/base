@@ -2,7 +2,7 @@
 //! tests.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
 };
 
@@ -317,20 +317,27 @@ impl ZkProofProvider for MockZkProofProvider {
 /// Mock transaction manager for testing the driver and submitter.
 #[derive(Debug)]
 pub struct MockTxManager {
-    /// The response returned by [`send`](TxManager::send).
-    pub response: Mutex<Option<SendResponse>>,
+    /// Queue of responses returned by [`send`](TxManager::send).
+    pub responses: Mutex<VecDeque<SendResponse>>,
 }
 
 impl MockTxManager {
-    /// Creates a new mock with the given pre-configured response.
+    /// Creates a new mock with a single pre-configured response.
     pub fn new(response: SendResponse) -> Self {
-        Self { response: Mutex::new(Some(response)) }
+        let mut q = VecDeque::new();
+        q.push_back(response);
+        Self { responses: Mutex::new(q) }
+    }
+
+    /// Creates a new mock with multiple responses returned in order.
+    pub fn with_responses(responses: Vec<SendResponse>) -> Self {
+        Self { responses: Mutex::new(VecDeque::from(responses)) }
     }
 }
 
 impl TxManager for MockTxManager {
     async fn send(&self, _candidate: TxCandidate) -> SendResponse {
-        self.response.lock().unwrap().take().expect("MockTxManager response already consumed")
+        self.responses.lock().unwrap().pop_front().expect("MockTxManager has no more responses")
     }
 
     async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
