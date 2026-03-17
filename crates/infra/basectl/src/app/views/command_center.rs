@@ -28,7 +28,7 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "↓/j", description: "Move down" },
     Keybinding { key: "g/G", description: "Top/Bottom" },
     Keybinding { key: "Space", description: "Pause flashblocks" },
-    Keybinding { key: "y", description: "Copy block number" },
+    Keybinding { key: "y", description: "Copy block/tx hash" },
     Keybinding { key: "o", description: "Open in explorer" },
     Keybinding { key: "f", description: "Filter L1 blocks" },
     Keybinding { key: "Enter", description: "View transactions" },
@@ -422,8 +422,8 @@ impl View for CommandCenterView {
         render_config_panel(frame, info_chunks[0], resources);
         render_stats_panel(frame, info_chunks[1], resources);
 
-        let panel_chunks = if self.tx_pane.is_some() {
-            Layout::default()
+        let (panel_chunks, tx_pane_area) = if self.tx_pane.is_some() {
+            let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
                     Constraint::Percentage(25),
@@ -431,16 +431,19 @@ impl View for CommandCenterView {
                     Constraint::Percentage(13),
                     Constraint::Percentage(50),
                 ])
-                .split(main_chunks[3])
+                .split(main_chunks[3]);
+            let tx_pane_area = chunks[3];
+            (chunks, Some(tx_pane_area))
         } else {
-            Layout::default()
+            let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
                     Constraint::Percentage(50),
                     Constraint::Percentage(25),
                     Constraint::Percentage(25),
                 ])
-                .split(main_chunks[3])
+                .split(main_chunks[3]);
+            (chunks, None)
         };
 
         render_flash_panel(
@@ -474,8 +477,8 @@ impl View for CommandCenterView {
             },
         );
 
-        if let Some(ref mut pane) = self.tx_pane {
-            pane.render(frame, panel_chunks[3], self.focused_panel == Panel::Txns);
+        if let (Some(ref mut pane), Some(tx_pane_area)) = (self.tx_pane.as_mut(), tx_pane_area) {
+            pane.render(frame, tx_pane_area, self.focused_panel == Panel::Txns);
         }
     }
 }

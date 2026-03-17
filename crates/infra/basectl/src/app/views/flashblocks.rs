@@ -31,7 +31,7 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "PgUp", description: "Page up" },
     Keybinding { key: "PgDn", description: "Page down" },
     Keybinding { key: "Home/g", description: "Top (auto-scroll)" },
-    Keybinding { key: "y", description: "Copy block number" },
+    Keybinding { key: "y", description: "Copy block/tx hash" },
 ];
 
 /// View for displaying the live flashblocks stream with gas usage.

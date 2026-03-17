@@ -29,6 +29,7 @@ pub(crate) struct TransactionPane {
     loading: bool,
     load_error: Option<String>,
     rx: Option<mpsc::Receiver<Result<Vec<TxSummary>, String>>>,
+    abort_handle: Option<tokio::task::AbortHandle>,
     /// Optional range to slice the fetched transactions (for flashblock-specific views).
     tx_range: Option<Range<usize>>,
     /// Block explorer base URL for opening transactions in a browser (e.g.
@@ -71,9 +72,10 @@ impl TransactionPane {
     ) -> Self {
         let (tx, rx) = mpsc::channel(1);
         let rpc = l2_rpc.to_string();
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             crate::rpc::fetch_block_transactions(rpc, block_number, tx).await;
         });
+        let abort_handle = Some(handle.abort_handle());
 
         let mut table_state = TableState::default();
         table_state.select(Some(0));
@@ -86,6 +88,7 @@ impl TransactionPane {
             loading: true,
             load_error: None,
             rx: Some(rx),
+            abort_handle,
             tx_range,
             explorer_base_url: explorer_base_url.map(String::from),
         }
@@ -109,6 +112,7 @@ impl TransactionPane {
             loading: false,
             load_error: None,
             rx: None,
+            abort_handle: None,
             tx_range: None,
             explorer_base_url: explorer_base_url.map(String::from),
         }
@@ -329,6 +333,14 @@ impl TransactionPane {
 
         let table = Table::new(rows, widths).header(header);
         frame.render_stateful_widget(table, inner, &mut self.table_state);
+    }
+}
+
+impl Drop for TransactionPane {
+    fn drop(&mut self) {
+        if let Some(abort_handle) = self.abort_handle.take() {
+            abort_handle.abort();
+        }
     }
 }
 

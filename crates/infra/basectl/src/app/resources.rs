@@ -307,7 +307,7 @@ impl DaState {
             self.tracker.block_contributions.iter_mut().find(|c| c.block_number == block_number)
         {
             contrib.da_bytes = contrib.da_bytes.saturating_add(da_bytes);
-            contrib.tx_count += tx_count;
+            contrib.tx_count = contrib.tx_count.saturating_add(tx_count);
             if block_number > self.tracker.safe_l2_block {
                 self.tracker.da_backlog_bytes =
                     self.tracker.da_backlog_bytes.saturating_add(da_bytes);
