@@ -3,7 +3,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, Mutex},
+    sync::Mutex,
 };
 
 use alloy_consensus::{
@@ -25,8 +25,6 @@ use base_zk_client::{
     GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse, ZkProofError,
     ZkProofProvider,
 };
-
-use crate::scanner::{GameScanner, ScannerConfig};
 
 /// Per-game state for the mock verifier.
 #[derive(Debug, Clone)]
@@ -153,12 +151,12 @@ pub fn factory_game(index: u64, game_type: u32) -> GameAtIndex {
 }
 
 /// Helper to build mock game state for the verifier.
-pub fn mock_state(status: u8, zk_prover: Address, block_number: u64) -> MockGameState {
+pub const fn mock_state(status: u8, zk_prover: Address, block_number: u64) -> MockGameState {
     mock_state_with_tee(status, zk_prover, Address::ZERO, block_number)
 }
 
 /// Helper to build mock game state with an explicit TEE prover address.
-pub fn mock_state_with_tee(
+pub const fn mock_state_with_tee(
     status: u8,
     zk_prover: Address,
     tee_prover: Address,
@@ -350,7 +348,7 @@ impl TxManager for MockTxManager {
 }
 
 /// Builds a minimal [`TransactionReceipt`] with the given status and hash.
-pub fn receipt_with_status(success: bool, tx_hash: B256) -> TransactionReceipt {
+pub const fn receipt_with_status(success: bool, tx_hash: B256) -> TransactionReceipt {
     let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
         receipt: Receipt {
             status: Eip658Value::Eip658(success),
@@ -452,7 +450,10 @@ pub fn build_test_header_and_account(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::scanner::{GameScanner, ScannerConfig};
 
     /// Happy path: mixed games, only `IN_PROGRESS` / unchallenged returned.
     #[tokio::test]

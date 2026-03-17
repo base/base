@@ -2898,6 +2898,7 @@ dependencies = [
  "alloy-trie",
  "async-trait",
  "axum",
+ "base-challenger",
  "base-cli-utils",
  "base-enclave",
  "base-proof-contracts",
