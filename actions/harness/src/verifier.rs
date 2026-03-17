@@ -90,7 +90,7 @@ impl DerivedBlock {
     /// They are force-generated when a submitted batch is rejected (e.g.
     /// `NonEmptyTransitionBlock` at a hardfork boundary) or when the
     /// sequencer window expires without a valid batch.
-    pub fn is_deposit_only(&self) -> bool {
+    pub const fn is_deposit_only(&self) -> bool {
         self.user_tx_count == 0
     }
 }
@@ -690,11 +690,8 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     ///
     /// [`act_l2_pipeline_full`]: L2Verifier::act_l2_pipeline_full
     pub fn derived_block(&self, number: u64) -> Option<DerivedBlock> {
-        let tx_count = self
-            .derived_tx_counts
-            .iter()
-            .find(|(n, _)| *n == number)
-            .map(|(_, c)| *c)?;
+        let tx_count =
+            self.derived_tx_counts.iter().find(|(n, _)| *n == number).map(|(_, c)| *c)?;
         let user_tx_count = self
             .derived_user_tx_counts
             .iter()

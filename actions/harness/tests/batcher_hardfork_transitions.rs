@@ -354,7 +354,10 @@ async fn granite_channel_timeout_enforced() {
     let late_blk = block_info_from(h.l1.block_by_number(late_block_num).expect("late block"));
     verifier.act_l1_head_signal(late_blk).await.expect("signal late block");
     let derived = verifier.act_l2_pipeline_full().await.expect("step late block");
-    assert_eq!(derived, 0, "late non-zero frames after timeout create an incomplete channel; no L2 block derived");
+    assert_eq!(
+        derived, 0,
+        "late non-zero frames after timeout create an incomplete channel; no L2 block derived"
+    );
     assert_eq!(
         verifier.l2_safe().block_info.number,
         0,
