@@ -89,14 +89,3 @@ target "audit-archiver" {
   target = "audit-archiver"
   tags = ["audit-archiver:local"]
 }
-
-target "client-ci" {
-  inherits = ["client"]
-  tags = ["node-reth-dev:ci"]
-}
-
-target "client-publish" {
-  inherits = ["client"]
-  tags = ["${REGISTRY_IMAGE}"]
-  cache-to = ["type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR},mode=max"]
-}

@@ -172,7 +172,7 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker buildx bake -f etc/docker/docker-bake.hcl client-ci --load
+          docker buildx bake -f etc/docker/docker-bake.hcl client --load
 
   bench:
     name: Benchmarks
