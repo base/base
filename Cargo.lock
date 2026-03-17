@@ -4586,7 +4586,7 @@ dependencies = [
  "async-trait",
  "base-proof-tee-nitro-verifier",
  "boundless-market",
- "risc0-ethereum-contracts 3.0.1 (git+https://github.com/risc0/risc0-ethereum?tag=v3.0.1)",
+ "risc0-ethereum-contracts",
  "risc0-zkvm",
  "rstest",
  "thiserror 2.0.18",
@@ -5668,7 +5668,7 @@ dependencies = [
  "reqwest-retry",
  "risc0-aggregation",
  "risc0-binfmt",
- "risc0-ethereum-contracts 3.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "risc0-ethereum-contracts",
  "risc0-zkvm",
  "rmp-serde",
  "serde",
@@ -16882,20 +16882,6 @@ dependencies = [
  "risc0-aggregation",
  "risc0-zkvm",
  "serde",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
-name = "risc0-ethereum-contracts"
-version = "3.0.1"
-source = "git+https://github.com/risc0/risc0-ethereum?tag=v3.0.1#365e7b2db4f620fa256580c27558d2623362b9ae"
-dependencies = [
- "alloy",
- "alloy-sol-types",
- "anyhow",
- "cfg-if",
- "risc0-zkvm",
  "thiserror 2.0.18",
  "tracing",
 ]
