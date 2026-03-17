@@ -49,6 +49,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ inputs.tag }}
+          fetch-depth: 1
 
       - name: Install system dependencies (Linux)
         if: matrix.target.os == 'linux'
@@ -113,6 +114,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ inputs.tag }}
+          fetch-depth: 1
 
       - name: Prepare image labels
         id: image-labels
