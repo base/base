@@ -7,8 +7,8 @@ use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_alloy_consensus::OpBlock;
 use base_alloy_network::Base;
 use base_batcher_core::{
-    BatchDriver, NoopThrottleClient, ThrottleClient, ThrottleConfig, ThrottleController,
-    ThrottleStrategy,
+    BatchDriver, DaThrottle, NoopThrottleClient, ThrottleClient, ThrottleConfig,
+    ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::BatchEncoder;
 use base_batcher_source::{BlockSubscription, HybridBlockSource, HybridL1HeadSource, SourceError};
@@ -18,7 +18,6 @@ use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerCon
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tokio::sync::watch;
-use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
 
@@ -86,6 +85,7 @@ impl base_batcher_source::L1HeadSubscription for L1Subscription {
 ///
 /// Private — callers interact only through [`ReadyBatcher`].
 type ServiceDriver = BatchDriver<
+    TokioRuntime,
     BatchEncoder,
     HybridBlockSource<Subscription, RpcPollingSource>,
     SimpleTxManager,
@@ -109,10 +109,10 @@ impl std::fmt::Debug for ReadyBatcher {
 }
 
 impl ReadyBatcher {
-    /// Run the batch submission loop until `cancellation` is triggered.
-    pub async fn run(self, cancellation: CancellationToken) -> eyre::Result<()> {
+    /// Run the batch submission loop until the runtime is cancelled.
+    pub async fn run(self) -> eyre::Result<()> {
         info!("batcher driver running");
-        self.driver.run(cancellation).await?;
+        self.driver.run().await?;
         info!("batcher service shutting down");
         Ok(())
     }
@@ -239,9 +239,9 @@ impl BatcherService {
     /// if any of those steps fail — the caller sees the failure immediately,
     /// before any background work is spawned.
     ///
-    /// The `cancellation` token is forwarded to the safe-head poller spawned
-    /// here so it stops cleanly when the batcher shuts down.
-    pub async fn setup(self, cancellation: CancellationToken) -> eyre::Result<ReadyBatcher> {
+    /// The runtime's cancellation token is forwarded to the safe-head poller
+    /// spawned here so it stops cleanly when the batcher shuts down.
+    pub async fn setup(self, runtime: TokioRuntime) -> eyre::Result<ReadyBatcher> {
         self.config.encoder_config.validate()?;
 
         info!(
@@ -390,12 +390,14 @@ impl BatcherService {
         // Spawn the safe-head poller. It polls `optimism_syncStatus` at the
         // configured interval and advances the watch when the safe L2 head
         // moves forward, allowing the encoder to prune confirmed blocks.
-        // The CancellationToken ensures the task exits when the batcher shuts down.
+        // Extract the raw token so the poller can use it before the runtime
+        // moves into the driver below.
         SafeHeadPoller::new(rollup_client, self.config.poll_interval, safe_head_tx)
-            .spawn(cancellation);
+            .spawn(runtime.token().clone());
 
         // Build the driver — all fallible setup is complete at this point.
         let driver = BatchDriver::new(
+            runtime,
             encoder,
             source,
             tx_manager,
@@ -404,8 +406,7 @@ impl BatcherService {
                 max_pending_transactions: self.config.max_pending_transactions,
                 drain_timeout: self.config.resubmission_timeout * 2,
             },
-            throttle,
-            throttle_client,
+            DaThrottle::new(throttle, throttle_client),
             l1_head_source,
         )
         .with_safe_head_rx(safe_head_rx);

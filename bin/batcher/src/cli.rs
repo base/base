@@ -5,8 +5,8 @@ use std::time::Duration;
 use base_batcher_core::ThrottleConfig;
 use base_batcher_service::{BatcherConfig, BatcherService, SecretKey};
 use base_cli_utils::{LogConfig, RuntimeManager};
+use base_runtime::TokioRuntime;
 use clap::{Args, Parser};
-use tokio_util::sync::CancellationToken;
 use tracing::info;
 use url::Url;
 
@@ -189,10 +189,10 @@ impl BatcherArgs {
             "batcher configured"
         );
 
-        let cancellation = CancellationToken::new();
-        let _signal_handle = RuntimeManager::install_signal_handler(cancellation.clone());
+        let rt = TokioRuntime::new();
+        let _signal_handle = RuntimeManager::install_signal_handler(rt.token().clone());
 
         let service = BatcherService::new(config);
-        service.setup(cancellation.clone()).await?.run(cancellation).await
+        service.setup(rt).await?.run().await
     }
 }

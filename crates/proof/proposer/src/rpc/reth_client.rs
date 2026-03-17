@@ -200,14 +200,15 @@ impl ProverL2Provider for RethL2Client {
                     (BlockNumberOrTag::Number(block_number),),
                 )
                 .await
-                .map_err(|e| RpcError::WitnessNotFound(format!("Block {block_number}: {e}")))
+                .map_err(RpcError::from)
         })
         .retry(backoff)
         .when(|e| e.is_retryable())
         .notify(|err, dur| {
             tracing::debug!(error = %err, delay = ?dur, "Retrying RethL2Client::execution_witness");
         })
-        .await?;
+        .await
+        .map_err(|e| RpcError::WitnessNotFound(format!("Block {block_number}: {e}")))?;
 
         tracing::info!(
             block_number,

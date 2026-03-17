@@ -33,6 +33,7 @@ base-consensus-genesis = { workspace = true, features = ["std"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }
 base-consensus-registry.workspace = true
 base-blobs.workspace = true
+base-runtime.workspace = true
 base-batcher-core.workspace = true
 base-batcher-encoder.workspace = true
 base-batcher-source.workspace = true

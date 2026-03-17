@@ -55,6 +55,46 @@ pub enum VerifierError {
     GossipDecodeFailed,
 }
 
+/// A lightweight view of a derived L2 block's transaction counts.
+///
+/// Returned by [`L2Verifier::derived_block`]. Use [`is_deposit_only`] to assert
+/// that derivation force-generated a deposit-only block rather than consuming a
+/// submitted batch (e.g. after a `NonEmptyTransitionBlock` rejection or a
+/// sequencer-drift violation).
+///
+/// [`is_deposit_only`]: DerivedBlock::is_deposit_only
+#[derive(Debug, Clone, Copy)]
+pub struct DerivedBlock {
+    /// L2 block number.
+    pub number: u64,
+    /// Total number of transactions as recorded in the payload attributes.
+    ///
+    /// Reflects `attributes.transactions.len()`. Is `0` when the attribute
+    /// list was `None` (not an empty `Vec`), which does not occur for normal
+    /// derived blocks but can happen in test-only synthetic attributes.
+    pub tx_count: usize,
+    /// Number of user transactions (excludes the L1 info deposit, which is
+    /// identified by the `0x7E` type prefix).
+    ///
+    /// `0` means the block is deposit-only. When `attributes.transactions`
+    /// was `None`, this field defaults to `0` (see [`derived_block`]).
+    ///
+    /// [`derived_block`]: L2Verifier::derived_block
+    pub user_tx_count: usize,
+}
+
+impl DerivedBlock {
+    /// Returns `true` if this block contains no user transactions.
+    ///
+    /// Deposit-only blocks contain only the mandatory L1 info deposit.
+    /// They are force-generated when a submitted batch is rejected (e.g.
+    /// `NonEmptyTransitionBlock` at a hardfork boundary) or when the
+    /// sequencer window expires without a valid batch.
+    pub const fn is_deposit_only(&self) -> bool {
+        self.user_tx_count == 0
+    }
+}
+
 /// In-process rollup node for action tests.
 ///
 /// `L2Verifier` couples the real 8-stage derivation pipeline with an in-memory
@@ -376,6 +416,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         // Clear stale finalization state so a subsequent act_l1_finalized_signal
         // cannot promote an L2 block that no longer exists on the canonical chain.
         self.safe_head_history.clear();
+        self.derived_tx_counts.clear();
         self.derived_user_tx_counts.clear();
         self.derived_l1_info_txs.clear();
         self.finalized_head = l2_safe_head;
@@ -631,6 +672,33 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     /// generated at a hardfork upgrade boundary.
     pub fn derived_user_tx_counts(&self) -> &[(u64, usize)] {
         &self.derived_user_tx_counts
+    }
+
+    /// Look up the derived-block summary for the given L2 block number.
+    ///
+    /// Returns `None` if no block with that number has been derived in this
+    /// session (i.e. it was never produced by [`act_l2_pipeline_full`]).
+    ///
+    /// Use [`DerivedBlock::is_deposit_only`] to assert that derivation
+    /// force-generated a deposit-only block rather than consuming a submitted
+    /// batch.
+    ///
+    /// When the payload attributes had `transactions: None`, the returned
+    /// `DerivedBlock::user_tx_count` defaults to `0` (deposit-only by
+    /// convention). In practice every derived block has a non-`None`
+    /// transaction list because the L1 info deposit is always included.
+    ///
+    /// [`act_l2_pipeline_full`]: L2Verifier::act_l2_pipeline_full
+    pub fn derived_block(&self, number: u64) -> Option<DerivedBlock> {
+        let tx_count =
+            self.derived_tx_counts.iter().find(|(n, _)| *n == number).map(|(_, c)| *c)?;
+        let user_tx_count = self
+            .derived_user_tx_counts
+            .iter()
+            .find(|(n, _)| *n == number)
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        Some(DerivedBlock { number, tx_count, user_tx_count })
     }
 
     /// Return the decoded L1 info transactions for each derived L2 block.

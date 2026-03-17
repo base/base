@@ -1,6 +1,6 @@
 //! Submission lifecycle management for the batch driver.
 
-use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use alloy_primitives::{Address, Bytes, U256};
 use base_batcher_encoder::{BatchPipeline, DaType, FrameEncoder, SubmissionId};
@@ -183,14 +183,17 @@ impl<TM: TxManager> SubmissionQueue<TM> {
     /// Confirmed receipts call `pipeline.confirm` + `pipeline.advance_l1_head`.
     /// Failed or txpool-blocked submissions are logged and abandoned — no requeue
     /// because the process is shutting down.
-    pub async fn drain<P: BatchPipeline>(&mut self, pipeline: &mut P, timeout: Duration) {
-        let deadline = tokio::time::Instant::now() + timeout;
+    pub async fn drain<P: BatchPipeline>(
+        &mut self,
+        pipeline: &mut P,
+        mut timeout_fut: Pin<Box<dyn Future<Output = ()> + Send>>,
+    ) {
         loop {
             if self.in_flight.is_empty() {
                 break;
             }
             tokio::select! {
-                _ = tokio::time::sleep_until(deadline) => {
+                _ = &mut timeout_fut => {
                     warn!(remaining = %self.in_flight.len(), "drain timeout reached, abandoning in-flight submissions");
                     break;
                 }

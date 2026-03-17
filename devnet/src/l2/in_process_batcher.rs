@@ -6,6 +6,7 @@
 
 use alloy_primitives::B256;
 use base_batcher_service::{BatcherConfig, BatcherService, SecretKey};
+use base_runtime::TokioRuntime;
 use eyre::Result;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -44,16 +45,16 @@ impl InProcessBatcher {
             l2_rpc_url: config.l2_rpc_url,
             rollup_rpc_url: config.rollup_rpc_url,
             batcher_private_key: SecretKey(config.batcher_key),
-            // Devnet defaults match op-batcher Docker args:
+            // Devnet defaults come from the shared batcher config:
             // poll_interval: 1s, num_confirmations: 1, resubmission_timeout: 48s —
             // all set by BatcherConfig::default().
             ..BatcherConfig::default()
         };
         let cancellation = CancellationToken::new();
-        let ready = BatcherService::new(batcher_config).setup(cancellation.clone()).await?;
-        let cancel = cancellation.clone();
+        let runtime = TokioRuntime::with_token(cancellation.clone());
+        let ready = BatcherService::new(batcher_config).setup(runtime).await?;
         let handle = tokio::spawn(async move {
-            if let Err(e) = ready.run(cancel).await {
+            if let Err(e) = ready.run().await {
                 tracing::error!(error = %e, "in-process batcher exited with error");
             }
         });

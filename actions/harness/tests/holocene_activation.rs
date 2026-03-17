@@ -322,3 +322,124 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
          block B (L2 block 2) is a future batch and cannot be emitted"
     );
 }
+
+// ---------------------------------------------------------------------------
+// D. Holocene frame pruning: non-sequential frame pruned, then recovery
+//
+// op-e2e ref: holocene_frame_test.go (extended)
+// ---------------------------------------------------------------------------
+
+/// Same scenario as [`holocene_non_sequential_frame_pruned_channel_never_completes`]:
+/// a non-sequential frame causes the channel to be pruned and the safe head
+/// stays at genesis.
+///
+/// The **recovery step** creates a brand-new [`Batcher`] (new channel ID) that
+/// re-encodes the same L2 block and submits all frames sequentially in one L1
+/// block. After the verifier processes the new L1 block the safe head must
+/// advance to 1, proving the pipeline recovers once valid data arrives.
+///
+/// [`Batcher`]: base_action_harness::Batcher
+#[tokio::test]
+async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig {
+            max_frame_size: 80,
+            da_type: DaType::Calldata,
+            ..EncoderConfig::default()
+        },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_hardforks(HardForkConfig {
+            canyon_time: Some(0),
+            delta_time: Some(0),
+            ecotone_time: Some(0),
+            fjord_time: Some(0),
+            granite_time: Some(0),
+            holocene_time: Some(0),
+            ..Default::default()
+        })
+        .with_channel_timeout(10)
+        .build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let block = sequencer.build_next_block().expect("build L2 block 1");
+
+    // Encode the block into frames without mining.
+    let mut source = ActionL2Source::new();
+    source.push(block.clone());
+    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    batcher.encode_only().await.expect("encode multi-frame channel");
+    let frame_count = batcher.pending_count();
+    assert!(frame_count >= 3, "need ≥3 frames to skip frame 1; got {frame_count}");
+
+    let (mut verifier, chain) = h.create_verifier_from_sequencer(
+        &sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
+    // Submit frame 0 and frame 2 in the same L1 block — skipping frame 1.
+    batcher.stage_n_frames(&mut h.l1, 1); // frame 0
+    batcher.drop_n_frames(1); // drop frame 1
+    batcher.stage_n_frames(&mut h.l1, 1); // frame 2 (non-sequential)
+    let block_1_num = h.l1.mine_block().number();
+    batcher.confirm_staged(block_1_num).await;
+    chain.push(h.l1.tip().clone());
+
+    verifier.initialize().await.expect("initialize");
+    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
+    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.act_l2_pipeline_full().await.expect("pipeline block 1");
+
+    // Channel is broken — safe head stays at genesis.
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        0,
+        "channel with missing frame 1 must never complete under Holocene"
+    );
+
+    // Mine empty L1 blocks to confirm the broken channel never completes.
+    // Under Holocene, FrameQueue::prune drops frame 2 immediately upon arrival
+    // (non-sequential after frame 0), so the channel is permanently broken
+    // regardless of timeout. We mine fewer than channel_timeout (10) blocks:
+    // recovery does not require the broken channel to expire — it relies on
+    // ChannelAssembler unconditionally replacing its active channel when a new
+    // channel's frame 0 arrives (regardless of timeout state).
+    for _ in 0..5 {
+        h.mine_and_push(&chain);
+    }
+    for i in 2..=h.l1.latest_number() {
+        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
+        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l2_pipeline_full().await.expect("pipeline");
+    }
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        0,
+        "safe head must remain at genesis: broken channel was pruned, no recovery submitted yet"
+    );
+
+    // -- Recovery: new Batcher (new channel ID) re-submits all frames in order.
+    // `block` was cloned into `source` above (line 372), so the original value
+    // is still valid here — same L2 block 1 with the same transactions and
+    // timestamp. The sequencer has not advanced since build_next_block().
+    let mut recovery_source = ActionL2Source::new();
+    recovery_source.push(block);
+    let mut batcher2 = Batcher::new(recovery_source, &h.rollup_config, batcher_cfg.clone());
+    batcher2.advance(&mut h.l1).await.expect("recovery batch");
+    chain.push(h.l1.tip().clone());
+
+    let recovery_block_num = h.l1.latest_number();
+    let recovery_blk =
+        block_info_from(h.l1.block_by_number(recovery_block_num).expect("recovery block"));
+    verifier.act_l1_head_signal(recovery_blk).await.expect("signal recovery block");
+    verifier.act_l2_pipeline_full().await.expect("pipeline recovery block");
+
+    assert_eq!(
+        verifier.l2_safe().block_info.number,
+        1,
+        "safe head must advance to 1 after clean recovery submission"
+    );
+}

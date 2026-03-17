@@ -48,6 +48,24 @@ pub enum RpcError {
 }
 
 impl RpcError {
+    /// Maximum length for error messages stored in [`RpcError`] variants.
+    ///
+    /// RPC error payloads (e.g. from `debug_executionWitness`) can contain multi-MB
+    /// JSON responses. Truncating at the conversion boundary prevents large strings
+    /// from propagating through retry loops, log lines, and error chains.
+    pub const MAX_ERROR_MSG_LEN: usize = 500;
+
+    /// Truncates a string to [`Self::MAX_ERROR_MSG_LEN`], appending a `(truncated)`
+    /// suffix if it exceeds the limit.
+    pub fn truncate_msg(mut msg: String) -> String {
+        if msg.len() > Self::MAX_ERROR_MSG_LEN {
+            let end = msg.floor_char_boundary(Self::MAX_ERROR_MSG_LEN);
+            msg.truncate(end);
+            msg.push_str("... (truncated)");
+        }
+        msg
+    }
+
     /// Returns true if this error is transient and the operation should be retried.
     ///
     /// Only transport-level errors (network issues, timeouts, connection failures)
@@ -64,7 +82,9 @@ impl From<TransportError> for RpcError {
             AlloyRpcError::SerError(e) => Self::Serialization(e.to_string()),
             AlloyRpcError::DeserError { err, .. } => Self::InvalidResponse(err.to_string()),
             AlloyRpcError::NullResp => Self::InvalidResponse("null response".into()),
-            AlloyRpcError::ErrorResp(payload) => Self::InvalidResponse(payload.to_string()),
+            AlloyRpcError::ErrorResp(payload) => {
+                Self::InvalidResponse(Self::truncate_msg(payload.to_string()))
+            }
             err @ (AlloyRpcError::Transport(_)
             | AlloyRpcError::UnsupportedFeature(_)
             | AlloyRpcError::LocalUsageError(_)) => Self::Transport(err.to_string()),

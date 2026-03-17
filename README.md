@@ -2,144 +2,22 @@
 
 # Base
 
-> [!WARNING]
-> This repository is for development purposes. For production deployments, please use the releases referenced in [base/node](https://github.com/base/node/releases).
+Base is a rollup built on Ethereum. 
 
-This repository (`base/base`, previously `base/node-reth`) contains **Base Reth Node**: a Reth-based Ethereum node implementation tailored for the Base L2 network. It integrates Flashblocks capabilities and leverages Optimism components from Reth (see the version pinned in [Cargo.toml](Cargo.toml)). This node is designed to provide a robust and efficient solution for interacting with the Base network.
+## Why Base
+- **Cheap, fast, and open platform:** Base is a globally available platform that provides 1-second and <1-cent transactions to anyone in the world.
+- **Reach more users:** Base is committed to helping developers grow their user base by distributing their apps through official Base channels.
+- **A place to earn:** Base has delivered grants to more than 1,000 builders, with plans to continue supporting more.
+- **Access to high-quality tooling:** Builders have access to tools to build incredible onchain experiences for AI, social, media, and entertainment.
 
-<!-- Badge row 1 - status -->
+## Learn More
 
-[![GitHub contributors](https://img.shields.io/github/contributors/base/base)](https://github.com/base/base/graphs/contributors)
-[![GitHub commit activity](https://img.shields.io/github/commit-activity/w/base/base)](https://github.com/base/base/graphs/contributors)
-[![GitHub Stars](https://img.shields.io/github/stars/base/base.svg)](https://github.com/base/base/stargazers)
-![GitHub repo size](https://img.shields.io/github/repo-size/base/base)
-[![GitHub](https://img.shields.io/github/license/base/base?color=blue)](https://github.com/base/base/blob/master/LICENSE)
-
-<!-- Badge row 2 - links and profiles -->
-
-[![Website base.org](https://img.shields.io/website-up-down-green-red/https/base.org.svg)](https://base.org)
-[![Blog](https://img.shields.io/badge/blog-up-green)](https://base.mirror.xyz/)
-[![Docs](https://img.shields.io/badge/docs-up-green)](https://docs.base.org/)
-[![Discord](https://img.shields.io/discord/1067165013397213286?label=discord)](https://base.org/discord)
-[![Twitter Base](https://img.shields.io/twitter/follow/Base?style=social)](https://twitter.com/Base)
-
-<!-- Badge row 3 - detailed status -->
-
-[![GitHub pull requests by-label](https://img.shields.io/github/issues-pr-raw/base/base)](https://github.com/base/base/pulls)
-[![GitHub Issues](https://img.shields.io/github/issues-raw/base/base.svg)](https://github.com/base/base/issues)
-
-## Features
-
-- **Base L2 Support:** Optimized for the Base Layer 2 network.
-- **Flashblocks RPC:** Includes a `flashblocks-rpc` crate for Flashblocks.
-- **Metering RPC:** RPC endpoints and utilities to facilitate resource metering based on transaction simulations.
-- **Reth Based:** Built upon Reth. See the version pinned in [Cargo.toml](Cargo.toml).
-- **Dockerized:** Comes with a `Dockerfile` for easy containerization and deployment.
-- **Development Toolkit:** Includes a `justfile` for streamlined build, test, and linting workflows.
-
-## Node Operators
-
-> [!IMPORTANT]
-> This repository is for development of the client. For docker images and configurations, see the [node repository](https://github.com/base/node) and the
-> [base image](https://github.com/base/node/pkgs/container/node-reth). This image bundles vanilla Reth and Base Reth and can be toggled with
-> `NODE_TYPE=base` or `NODE_TYPE=vanilla`
-
-## Prerequisites
-
-- **Rust:** Version 1.93 or later (matches the `rust-version` in `Cargo.toml`). You can install Rust using [rustup](https://rustup.rs/).
-- **Just:** A command runner. Installation instructions can be found [here](https://github.com/casey/just#installation).
-- **Foundry:** Required for compiling Solidity test contracts (`just build-contracts`). Install via [foundry.sh](https://getfoundry.sh/).
-- **Docker:** (Optional) For building and running the node in a container. See [Docker installation guide](https://docs.docker.com/get-docker/).
-- **Build Essentials:** `git`, `libclang-dev`, `pkg-config`, `curl`, `build-essential` (these are installed in the Docker build process and may be needed for local builds on some systems).
-
-## Getting Started
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/base/base.git
-cd base
-```
-
-### 2. Build
-
-You can build the project using the `justfile` for a release build:
-
-```bash
-just build
-```
-
-*For first-time setup (to ensure all dependencies are installed), you can optionally run **just setup** as a precursor:*
-
-  ```bash
-  just setup
-  ```
-
-Alternatively, if performance is critical, you can build with all optimizations enabled + jemalloc:
-
-```bash
-just build-maxperf
-```
-
-Otherwise, you can use Cargo directly:
-
-```bash
-cargo build --release --bin base-reth-node
-```
-
-The main binary will be located at `target/release/base-reth-node`.
-
-### 3. Run Checks and Tests
-
-To ensure everything is set up correctly, run the checks and tests:
-
-```bash
-just check  # Runs cargo fmt --check and cargo clippy
-just test   # Runs cargo test
-```
-
-To automatically fix formatting and clippy warnings:
-
-```bash
-just fix
-```
-
-## Running the Node
-
-To run the compiled node:
-
-```bash
-./target/release/base-reth-node [OPTIONS]
-```
-
-To see available command-line options and subcommands, run:
-
-```bash
-./target/release/base-reth-node --help
-```
-
-_(Note: Replace `[OPTIONS]` with the necessary configuration flags for your setup. Refer to the `--help` output for details.)_
-
-## Docker
-
-### 1. Build the Docker Image
-
-```bash
-./etc/docker/build-rust-images.sh client release
-```
-
-### 2. Run the Docker Container
-
-```bash
-docker run -it --rm base-reth-node [OPTIONS]
-```
-
-_(Note: You might need to map ports (`-p`), mount volumes (`-v`) for data persistence, or pass environment variables (`-e`) depending on your node's configuration needs.)_
-
-## Configuration
-
-_(Details about specific configuration files, environment variables, or command-line arguments required for typical operation will be added here as the project evolves. For now, please refer to the `--help` output of the binary.)_
+- Visit the [docs](https://docs.base.org) for information on how to:
+    - [Connect your wallet](https://docs.base.org/base-chain/quickstart/connecting-to-base)
+    - [Run a node](https://docs.base.org/base-chain/node-operators/run-a-base-node) 
+    - [Deploy an app](https://docs.base.org/base-chain/quickstart/deploy-on-base)
+- The [specs](https://specs.base.org) site, has an overview of the protocol, including past and upcoming upgrades.
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+Licensed under [MIT](LICENSE).

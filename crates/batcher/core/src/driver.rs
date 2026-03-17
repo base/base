@@ -8,13 +8,11 @@ use base_batcher_source::{
     L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
 };
 use base_protocol::L2BlockInfo;
+use base_runtime::Runtime;
 use base_tx_manager::TxManager;
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    BatchDriverError, DaThrottle, SubmissionQueue, ThrottleClient, ThrottleController, TxOutcome,
-};
+use crate::{BatchDriverError, DaThrottle, SubmissionQueue, ThrottleClient, TxOutcome};
 
 /// Configuration for a [`BatchDriver`] instance.
 #[derive(Debug, Clone)]
@@ -38,14 +36,17 @@ pub struct BatchDriverConfig {
 /// Uses [`SubmissionQueue`] for concurrent receipt tracking and semaphore backpressure,
 /// and [`DaThrottle`] for DA backlog throttle management.
 #[derive(Debug)]
-pub struct BatchDriver<P, S, TM, TC, L>
+pub struct BatchDriver<R, P, S, TM, TC, L>
 where
+    R: Runtime,
     P: BatchPipeline,
     S: UnsafeBlockSource,
     TM: TxManager,
     TC: ThrottleClient,
     L: L1HeadSource,
 {
+    /// Runtime providing cancellation (and future clock/spawn use).
+    runtime: R,
     /// The encoding pipeline.
     pipeline: P,
     /// The L2 block source.
@@ -91,8 +92,9 @@ enum DriverEvent {
     L1SourceClosed,
 }
 
-impl<P, S, TM, TC, L> BatchDriver<P, S, TM, TC, L>
+impl<R, P, S, TM, TC, L> BatchDriver<R, P, S, TM, TC, L>
 where
+    R: Runtime,
     P: BatchPipeline,
     S: UnsafeBlockSource,
     TM: TxManager,
@@ -101,15 +103,16 @@ where
 {
     /// Create a new [`BatchDriver`].
     pub fn new(
+        runtime: R,
         pipeline: P,
         source: S,
         tx_manager: TM,
         config: BatchDriverConfig,
-        throttle: ThrottleController,
-        throttle_client: TC,
+        throttle: DaThrottle<TC>,
         l1_head_source: L,
     ) -> Self {
         Self {
+            runtime,
             pipeline,
             source,
             submissions: SubmissionQueue::new(
@@ -117,7 +120,7 @@ where
                 config.inbox,
                 config.max_pending_transactions,
             ),
-            throttle: DaThrottle::new(throttle, throttle_client),
+            throttle,
             l1_head_source: Some(l1_head_source),
             safe_head_rx: None,
             drain_timeout: config.drain_timeout,
@@ -142,7 +145,7 @@ where
     ///
     /// When draining (after cancellation or source exhaustion), the I/O phase is
     /// replaced by a bounded drain of all in-flight receipts.
-    pub async fn run(mut self, token: CancellationToken) -> Result<(), BatchDriverError> {
+    pub async fn run(mut self) -> Result<(), BatchDriverError> {
         let mut draining = false;
         loop {
             self.drain_encoding()?;
@@ -151,11 +154,13 @@ where
             self.submissions.submit_pending(&mut self.pipeline).await;
 
             if draining {
-                self.submissions.drain(&mut self.pipeline, self.drain_timeout).await;
+                self.submissions
+                    .drain(&mut self.pipeline, self.runtime.sleep(self.drain_timeout))
+                    .await;
                 return Ok(());
             }
 
-            match self.next_event(&token).await? {
+            match self.next_event().await? {
                 DriverEvent::Shutdown => {
                     info!(
                         in_flight = %self.submissions.in_flight_count(),
@@ -255,15 +260,12 @@ where
     ///
     /// Non-fatal L1 head source errors loop internally to avoid polluting the
     /// return type with a no-op variant.
-    async fn next_event(
-        &mut self,
-        token: &CancellationToken,
-    ) -> Result<DriverEvent, BatchDriverError> {
+    async fn next_event(&mut self) -> Result<DriverEvent, BatchDriverError> {
         loop {
             let event = tokio::select! {
                 biased;
 
-                _ = token.cancelled() => DriverEvent::Shutdown,
+                _ = self.runtime.cancelled() => DriverEvent::Shutdown,
 
                 event = self.source.next() => match event {
                     Ok(L2BlockEvent::Block(block)) => DriverEvent::Block(block),
@@ -336,17 +338,20 @@ mod tests {
         BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId,
     };
     use base_batcher_source::{
-        ChannelL1HeadSource, L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError,
-        UnsafeBlockSource,
+        ChannelBlockSource, ChannelL1HeadSource, L1HeadEvent, L1HeadSource, L2BlockEvent,
+        SourceError, UnsafeBlockSource, test_utils::InMemoryBlockSource,
     };
-    use base_protocol::{ChannelId, Frame};
+    use base_protocol::{BlockInfo, ChannelId, Frame, L2BlockInfo};
+    use base_runtime::{
+        Cancellation, Clock, Runtime, Spawner,
+        deterministic::{Config, Runner},
+    };
     use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
     use tokio::sync::{mpsc, oneshot};
-    use tokio_util::sync::CancellationToken;
 
     use super::{BatchDriver, BatchDriverConfig};
     use crate::{
-        NoopThrottleClient, ThrottleConfig, ThrottleController, ThrottleStrategy,
+        DaThrottle, NoopThrottleClient, ThrottleConfig, ThrottleController, ThrottleStrategy,
         test_utils::TrackingThrottleClient,
     };
 
@@ -362,6 +367,8 @@ mod tests {
         resets: usize,
         /// Safe L2 block numbers passed to `prune_safe`.
         safe_numbers: Vec<u64>,
+        /// Number of times `force_close_channel()` was called.
+        force_close_count: usize,
     }
 
     // ---- Pipeline that records advance_l1_head calls via shared state ----
@@ -401,7 +408,9 @@ mod tests {
         fn requeue(&mut self, id: SubmissionId) {
             self.recorded.lock().unwrap().requeued.push(id);
         }
-        fn force_close_channel(&mut self) {}
+        fn force_close_channel(&mut self) {
+            self.recorded.lock().unwrap().force_close_count += 1;
+        }
         fn advance_l1_head(&mut self, l1_block: u64) {
             self.recorded.lock().unwrap().l1_heads.push(l1_block);
         }
@@ -602,13 +611,8 @@ mod tests {
             _: TxCandidate,
         ) -> impl std::future::Future<Output = SendHandle> + Send {
             let (tx, rx) = oneshot::channel();
-            // Spawn a task that parks forever, keeping `tx` alive so `rx`
-            // never resolves. The task is cancelled when the test runtime
-            // drops at the end of the test.
-            tokio::spawn(async move {
-                std::future::pending::<()>().await;
-                drop(tx);
-            });
+            // Keep tx alive by forgetting it — rx parks forever without a tokio runtime.
+            std::mem::forget(tx);
             std::future::ready(SendHandle::new(rx))
         }
 
@@ -638,10 +642,12 @@ mod tests {
         )
     }
 
-    fn make_driver<TM: TxManager>(
+    fn make_driver<R: Runtime, TM: TxManager>(
+        runtime: R,
         pipeline: TrackingPipeline,
         tx_manager: TM,
     ) -> BatchDriver<
+        R,
         TrackingPipeline,
         PendingSource,
         TM,
@@ -649,6 +655,7 @@ mod tests {
         PendingL1HeadSource,
     > {
         BatchDriver::new(
+            runtime,
             pipeline,
             PendingSource,
             tx_manager,
@@ -657,17 +664,18 @@ mod tests {
                 max_pending_transactions: 1,
                 drain_timeout: Duration::from_millis(10),
             },
-            noop_throttle(),
-            Arc::new(NoopThrottleClient),
+            DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
             PendingL1HeadSource,
         )
     }
 
-    fn make_driver_with_max_pending<TM: TxManager>(
+    fn make_driver_with_max_pending<R: Runtime, TM: TxManager>(
+        runtime: R,
         pipeline: TrackingPipeline,
         tx_manager: TM,
         max_pending: usize,
     ) -> BatchDriver<
+        R,
         TrackingPipeline,
         PendingSource,
         TM,
@@ -675,6 +683,7 @@ mod tests {
         PendingL1HeadSource,
     > {
         BatchDriver::new(
+            runtime,
             pipeline,
             PendingSource,
             tx_manager,
@@ -683,183 +692,196 @@ mod tests {
                 max_pending_transactions: max_pending,
                 drain_timeout: Duration::from_millis(10),
             },
-            noop_throttle(),
-            Arc::new(NoopThrottleClient),
+            DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
             PendingL1HeadSource,
         )
     }
 
     /// `advance_l1_head` must be called with the confirmed L1 block on every
     /// confirmation so the encoder can detect channel timeouts.
-    #[tokio::test]
-    async fn test_advance_l1_head_called_on_confirmation() {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        pipeline.submissions.push_back(make_submission());
+    #[test]
+    fn test_advance_l1_head_called_on_confirmation() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            pipeline.submissions.push_back(make_submission());
 
-        let cancellation = CancellationToken::new();
-        let handle = tokio::spawn(
-            make_driver(pipeline, ImmediateConfirmTxManager { l1_block: 42 })
-                .run(cancellation.clone()),
-        );
+            let handle = ctx.spawn(
+                make_driver(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 42 })
+                    .run(),
+            );
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancellation.cancel();
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
 
-        assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-        assert_eq!(
-            recorded.lock().unwrap().l1_heads,
-            vec![42],
-            "advance_l1_head must be called with the confirmed L1 block"
-        );
+            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+            assert_eq!(
+                recorded.lock().unwrap().l1_heads,
+                vec![42],
+                "advance_l1_head must be called with the confirmed L1 block"
+            );
+        });
     }
 
     /// `advance_l1_head` must NOT be called when a submission fails — we have no
     /// confirmed L1 block to report.
-    #[tokio::test]
-    async fn test_advance_l1_head_not_called_on_failure() {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        pipeline.submissions.push_back(make_submission());
+    #[test]
+    fn test_advance_l1_head_not_called_on_failure() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            pipeline.submissions.push_back(make_submission());
 
-        let cancellation = CancellationToken::new();
-        let handle =
-            tokio::spawn(make_driver(pipeline, ImmediateFailTxManager).run(cancellation.clone()));
+            let handle =
+                ctx.spawn(make_driver(ctx.clone(), pipeline, ImmediateFailTxManager).run());
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancellation.cancel();
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
 
-        assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-        assert!(
-            recorded.lock().unwrap().l1_heads.is_empty(),
-            "advance_l1_head must NOT be called on submission failure"
-        );
+            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+            assert!(
+                recorded.lock().unwrap().l1_heads.is_empty(),
+                "advance_l1_head must NOT be called on submission failure"
+            );
+        });
     }
 
     /// When blob encoding fails the submission has already been dequeued from the pipeline
     /// (cursor advanced, `pending_confirmations` incremented). Without a requeue the channel
     /// is permanently stuck — `pending_confirmations` never returns to zero and blocks are
     /// never pruned. The driver must call requeue so the encoder can unwind that state.
-    #[tokio::test]
-    async fn test_blob_encoding_failure_requeues_submission() {
+    #[test]
+    fn test_blob_encoding_failure_requeues_submission() {
         // encode_frames feeds: DERIVATION_VERSION_0 (1) + frame.encode() (23 + data.len())
         // = 24 + data.len() bytes into BlobEncoder::encode. It fails when > BLOB_MAX_DATA_SIZE
         // (130_044), so data.len() >= 130_021 guarantees DataTooLarge.
         const OVERSIZED: usize = 130_021;
 
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        pipeline.submissions.push_back(BatchSubmission {
-            id: SubmissionId(0),
-            channel_id: ChannelId::default(),
-            da_type: base_batcher_encoder::DaType::Blob,
-            frames: vec![Arc::new(Frame { data: vec![0u8; OVERSIZED], ..Frame::default() })],
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            pipeline.submissions.push_back(BatchSubmission {
+                id: SubmissionId(0),
+                channel_id: ChannelId::default(),
+                da_type: base_batcher_encoder::DaType::Blob,
+                frames: vec![Arc::new(Frame { data: vec![0u8; OVERSIZED], ..Frame::default() })],
+            });
+
+            let handle = ctx.spawn(
+                make_driver(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 }).run(),
+            );
+
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
+
+            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+
+            let recorded = recorded.lock().unwrap();
+            assert_eq!(
+                recorded.requeued,
+                vec![SubmissionId(0)],
+                "requeue must be called when blob encoding fails so the channel is not stuck"
+            );
+            assert!(
+                recorded.l1_heads.is_empty(),
+                "advance_l1_head must not be called when blob encoding fails"
+            );
         });
-
-        let cancellation = CancellationToken::new();
-        let handle = tokio::spawn(
-            make_driver(pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .run(cancellation.clone()),
-        );
-
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancellation.cancel();
-
-        assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-
-        let recorded = recorded.lock().unwrap();
-        assert_eq!(
-            recorded.requeued,
-            vec![SubmissionId(0)],
-            "requeue must be called when blob encoding fails so the channel is not stuck"
-        );
-        assert!(
-            recorded.l1_heads.is_empty(),
-            "advance_l1_head must not be called when blob encoding fails"
-        );
     }
 
     /// The submission loop must drain all ready frames in a single pass when
     /// permits allow. With `max_pending_transactions`=2 and two frames ready,
     /// both must be submitted and confirmed without waiting for an I/O event
     /// between them.
-    #[tokio::test]
-    async fn test_submission_loop_drains_multiple_frames_concurrently() {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        pipeline.submissions.push_back(make_submission_with_id(0));
-        pipeline.submissions.push_back(make_submission_with_id(1));
+    #[test]
+    fn test_submission_loop_drains_multiple_frames_concurrently() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            pipeline.submissions.push_back(make_submission_with_id(0));
+            pipeline.submissions.push_back(make_submission_with_id(1));
 
-        let cancellation = CancellationToken::new();
-        let handle = tokio::spawn(
-            make_driver_with_max_pending(pipeline, ImmediateConfirmTxManager { l1_block: 10 }, 2)
-                .run(cancellation.clone()),
-        );
+            let handle = ctx.spawn(
+                make_driver_with_max_pending(
+                    ctx.clone(),
+                    pipeline,
+                    ImmediateConfirmTxManager { l1_block: 10 },
+                    2,
+                )
+                .run(),
+            );
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancellation.cancel();
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
 
-        assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-        let recorded = recorded.lock().unwrap();
-        assert_eq!(recorded.dequeued.len(), 2, "both submissions must be dequeued");
-        assert_eq!(recorded.l1_heads.len(), 2, "both submissions must be confirmed");
+            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+            let recorded = recorded.lock().unwrap();
+            assert_eq!(recorded.dequeued.len(), 2, "both submissions must be dequeued");
+            assert_eq!(recorded.l1_heads.len(), 2, "both submissions must be confirmed");
+        });
     }
 
     /// The semaphore must prevent more concurrent in-flight submissions than
     /// `max_pending_transactions`. With max=1 and a tx manager that never
     /// confirms, exactly one submission must be dequeued; the second must not
     /// be dequeued because `try_acquire_owned` fails when the slot is occupied.
-    #[tokio::test]
-    async fn test_semaphore_prevents_excess_concurrent_submissions() {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        pipeline.submissions.push_back(make_submission_with_id(0));
-        pipeline.submissions.push_back(make_submission_with_id(1));
+    #[test]
+    fn test_semaphore_prevents_excess_concurrent_submissions() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            pipeline.submissions.push_back(make_submission_with_id(0));
+            pipeline.submissions.push_back(make_submission_with_id(1));
 
-        let cancellation = CancellationToken::new();
-        let handle = tokio::spawn(
-            make_driver_with_max_pending(pipeline, NeverConfirmTxManager, 1)
-                .run(cancellation.clone()),
-        );
+            let handle = ctx.spawn(
+                make_driver_with_max_pending(ctx.clone(), pipeline, NeverConfirmTxManager, 1).run(),
+            );
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancellation.cancel();
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
 
-        assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-        assert_eq!(
-            recorded.lock().unwrap().dequeued,
-            vec![SubmissionId(0)],
-            "only the first submission must be dequeued when the semaphore slot is occupied"
-        );
+            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+            assert_eq!(
+                recorded.lock().unwrap().dequeued,
+                vec![SubmissionId(0)],
+                "only the first submission must be dequeued when the semaphore slot is occupied"
+            );
+        });
     }
 
     /// With `max_pending_transactions`=1, the second submission must only be
     /// dequeued and confirmed after the first is confirmed (freeing the permit).
     /// Both must ultimately be confirmed.
-    #[tokio::test]
-    async fn test_second_submission_sent_after_permit_freed() {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        pipeline.submissions.push_back(make_submission_with_id(0));
-        pipeline.submissions.push_back(make_submission_with_id(1));
+    #[test]
+    fn test_second_submission_sent_after_permit_freed() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            pipeline.submissions.push_back(make_submission_with_id(0));
+            pipeline.submissions.push_back(make_submission_with_id(1));
 
-        let cancellation = CancellationToken::new();
-        let handle = tokio::spawn(
-            make_driver_with_max_pending(pipeline, ImmediateConfirmTxManager { l1_block: 7 }, 1)
-                .run(cancellation.clone()),
-        );
+            let handle = ctx.spawn(
+                make_driver_with_max_pending(
+                    ctx.clone(),
+                    pipeline,
+                    ImmediateConfirmTxManager { l1_block: 7 },
+                    1,
+                )
+                .run(),
+            );
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancellation.cancel();
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
 
-        assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-        let recorded = recorded.lock().unwrap();
-        assert_eq!(recorded.dequeued.len(), 2, "both submissions must eventually be dequeued");
-        assert_eq!(
-            recorded.l1_heads,
-            vec![7, 7],
-            "both submissions must be confirmed once the permit is freed between them"
-        );
+            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+            let recorded = recorded.lock().unwrap();
+            assert_eq!(recorded.dequeued.len(), 2, "both submissions must eventually be dequeued");
+            assert_eq!(
+                recorded.l1_heads,
+                vec![7, 7],
+                "both submissions must be confirmed once the permit is freed between them"
+            );
+        });
     }
 
     // ---- Pipeline that fails once then succeeds ----
@@ -921,258 +943,267 @@ mod tests {
     /// then re-add the triggering block so it is not permanently lost. The block
     /// queue in the encoder is empty after reset, so the parent-hash check is
     /// skipped and the re-add always succeeds.
-    #[tokio::test]
-    async fn test_reorg_block_is_readded_after_reset() {
-        let blocks_accepted = Arc::new(Mutex::new(0usize));
-        let resets = Arc::new(Mutex::new(0usize));
-        let pipeline = OneReorgPipeline::new(Arc::clone(&blocks_accepted), Arc::clone(&resets));
+    #[test]
+    fn test_reorg_block_is_readded_after_reset() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let blocks_accepted = Arc::new(Mutex::new(0usize));
+            let resets = Arc::new(Mutex::new(0usize));
+            let pipeline = OneReorgPipeline::new(Arc::clone(&blocks_accepted), Arc::clone(&resets));
 
-        let cancellation = CancellationToken::new();
-        let driver = BatchDriver::new(
-            pipeline,
-            OneBlockSource::new(),
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-            },
-            noop_throttle(),
-            Arc::new(NoopThrottleClient),
-            PendingL1HeadSource,
-        );
-        let handle = tokio::spawn(driver.run(cancellation.clone()));
+            let driver = BatchDriver::new(
+                ctx.clone(),
+                pipeline,
+                OneBlockSource::new(),
+                ImmediateConfirmTxManager { l1_block: 1 },
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                },
+                DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
+                PendingL1HeadSource,
+            );
+            let handle = ctx.spawn(driver.run());
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancellation.cancel();
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
 
-        assert!(handle.await.unwrap().is_ok());
-        assert_eq!(*resets.lock().unwrap(), 1, "pipeline must be reset on reorg");
-        assert_eq!(
-            *blocks_accepted.lock().unwrap(),
-            1,
-            "the triggering block must be re-added after reset"
-        );
+            assert!(handle.await.unwrap().is_ok());
+            assert_eq!(*resets.lock().unwrap(), 1, "pipeline must be reset on reorg");
+            assert_eq!(
+                *blocks_accepted.lock().unwrap(),
+                1,
+                "the triggering block must be re-added after reset"
+            );
+        });
     }
 
     /// When `add_block` returns a `ReorgError`, the driver must reset the pipeline
     /// and discard in-flight futures instead of propagating a fatal error. This
     /// mirrors the `L2BlockEvent::Reorg` handling path.
-    #[tokio::test]
-    async fn test_add_block_reorg_resets_pipeline_instead_of_fatal_error() {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = ReorgPipeline::new(Arc::clone(&recorded));
+    #[test]
+    fn test_add_block_reorg_resets_pipeline_instead_of_fatal_error() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let pipeline = ReorgPipeline::new(Arc::clone(&recorded));
 
-        let cancellation = CancellationToken::new();
-        let driver = BatchDriver::new(
-            pipeline,
-            OneBlockSource::new(),
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-            },
-            noop_throttle(),
-            Arc::new(NoopThrottleClient),
-            PendingL1HeadSource,
-        );
-        let handle = tokio::spawn(driver.run(cancellation.clone()));
+            let driver = BatchDriver::new(
+                ctx.clone(),
+                pipeline,
+                OneBlockSource::new(),
+                ImmediateConfirmTxManager { l1_block: 1 },
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                },
+                DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
+                PendingL1HeadSource,
+            );
+            let handle = ctx.spawn(driver.run());
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancellation.cancel();
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
 
-        let result = handle.await.unwrap();
-        assert!(result.is_ok(), "driver must not return a fatal error on add_block reorg");
-        assert_eq!(
-            recorded.lock().unwrap().resets,
-            1,
-            "pipeline.reset() must be called when add_block returns ReorgError"
-        );
+            let result = handle.await.unwrap();
+            assert!(result.is_ok(), "driver must not return a fatal error on add_block reorg");
+            assert_eq!(
+                recorded.lock().unwrap().resets,
+                1,
+                "pipeline.reset() must be called when add_block returns ReorgError"
+            );
+        });
     }
 
     // ---- Throttle integration tests ----
 
     /// When the DA backlog exceeds the threshold, the driver must call
     /// `set_max_da_size` on the throttle client with reduced limits.
-    #[tokio::test]
-    async fn test_throttle_client_called_on_high_backlog() {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        // 2 MB backlog — above the default 1 MB threshold.
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(2_000_000);
+    #[test]
+    fn test_throttle_client_called_on_high_backlog() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            // 2 MB backlog — above the default 1 MB threshold.
+            let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(2_000_000);
 
-        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+            let throttle =
+                ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
+            let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let cancellation = CancellationToken::new();
-        let driver = BatchDriver::new(
-            pipeline,
-            PendingSource,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-            },
-            throttle,
-            Arc::new(throttle_client),
-            PendingL1HeadSource,
-        );
-        let handle = tokio::spawn(driver.run(cancellation.clone()));
+            let driver = BatchDriver::new(
+                ctx.clone(),
+                pipeline,
+                PendingSource,
+                ImmediateConfirmTxManager { l1_block: 1 },
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                },
+                DaThrottle::new(throttle, Arc::new(throttle_client)),
+                PendingL1HeadSource,
+            );
+            let handle = ctx.spawn(driver.run());
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancellation.cancel();
-        assert!(handle.await.unwrap().is_ok());
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
 
-        let calls = throttle_recorded.lock().unwrap();
-        assert!(!calls.is_empty(), "throttle client must be called when backlog is high");
-        let (max_tx_size, max_block_size) = calls[0];
-        assert!(
-            max_block_size < 130_000,
-            "max_block_size should be below upper limit when throttled, got {max_block_size}"
-        );
-        assert!(
-            max_tx_size < 20_000,
-            "max_tx_size should be below upper limit when throttled, got {max_tx_size}"
-        );
+            let calls = throttle_recorded.lock().unwrap();
+            assert!(!calls.is_empty(), "throttle client must be called when backlog is high");
+            let (max_tx_size, max_block_size) = calls[0];
+            assert!(
+                max_block_size < 130_000,
+                "max_block_size should be below upper limit when throttled, got {max_block_size}"
+            );
+            assert!(
+                max_tx_size < 20_000,
+                "max_tx_size should be below upper limit when throttled, got {max_tx_size}"
+            );
+        });
     }
 
     /// When the DA backlog is zero (below threshold), the driver must call
     /// `set_max_da_size` with the upper limits to reset any previous throttle.
-    #[tokio::test]
-    async fn test_throttle_client_called_with_upper_limits_on_zero_backlog() {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(0);
+    #[test]
+    fn test_throttle_client_called_with_upper_limits_on_zero_backlog() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(0);
 
-        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+            let throttle =
+                ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
+            let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let cancellation = CancellationToken::new();
-        let driver = BatchDriver::new(
-            pipeline,
-            PendingSource,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-            },
-            throttle,
-            Arc::new(throttle_client),
-            PendingL1HeadSource,
-        );
-        let handle = tokio::spawn(driver.run(cancellation.clone()));
+            let driver = BatchDriver::new(
+                ctx.clone(),
+                pipeline,
+                PendingSource,
+                ImmediateConfirmTxManager { l1_block: 1 },
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                },
+                DaThrottle::new(throttle, Arc::new(throttle_client)),
+                PendingL1HeadSource,
+            );
+            let handle = ctx.spawn(driver.run());
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancellation.cancel();
-        assert!(handle.await.unwrap().is_ok());
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
 
-        let calls = throttle_recorded.lock().unwrap();
-        assert!(!calls.is_empty(), "throttle client must be called even with zero backlog");
-        let (max_tx_size, max_block_size) = calls[0];
-        assert_eq!(
-            max_block_size, 130_000,
-            "max_block_size should be the upper limit when not throttling"
-        );
-        assert_eq!(
-            max_tx_size, 20_000,
-            "max_tx_size should be the upper limit when not throttling"
-        );
+            let calls = throttle_recorded.lock().unwrap();
+            assert!(!calls.is_empty(), "throttle client must be called even with zero backlog");
+            let (max_tx_size, max_block_size) = calls[0];
+            assert_eq!(
+                max_block_size, 130_000,
+                "max_block_size should be the upper limit when not throttling"
+            );
+            assert_eq!(
+                max_tx_size, 20_000,
+                "max_tx_size should be the upper limit when not throttling"
+            );
+        });
     }
 
     /// When the DA limits do not change between iterations, the driver must not
     /// call `set_max_da_size` redundantly. The deduplication check via
     /// `last_applied_da_limits` ensures the RPC is called at most once for
     /// identical limits.
-    #[tokio::test]
-    async fn test_throttle_not_called_redundantly() {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(0);
+    #[test]
+    fn test_throttle_not_called_redundantly() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(0);
 
-        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+            let throttle =
+                ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
+            let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let cancellation = CancellationToken::new();
-        let driver = BatchDriver::new(
-            pipeline,
-            PendingSource,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-            },
-            throttle,
-            Arc::new(throttle_client),
-            PendingL1HeadSource,
-        );
-        let handle = tokio::spawn(driver.run(cancellation.clone()));
+            let driver = BatchDriver::new(
+                ctx.clone(),
+                pipeline,
+                PendingSource,
+                ImmediateConfirmTxManager { l1_block: 1 },
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                },
+                DaThrottle::new(throttle, Arc::new(throttle_client)),
+                PendingL1HeadSource,
+            );
+            let handle = ctx.spawn(driver.run());
 
-        // Run for 100ms to allow multiple loop iterations.
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        cancellation.cancel();
-        assert!(handle.await.unwrap().is_ok());
+            // Run for 100ms to allow multiple loop iterations.
+            ctx.sleep(Duration::from_millis(100)).await;
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
 
-        let calls = throttle_recorded.lock().unwrap();
-        assert_eq!(
-            calls.len(),
-            1,
-            "set_max_da_size must be called exactly once when limits do not change, got {}",
-            calls.len()
-        );
+            let calls = throttle_recorded.lock().unwrap();
+            assert_eq!(
+                calls.len(),
+                1,
+                "set_max_da_size must be called exactly once when limits do not change, got {}",
+                calls.len()
+            );
+        });
     }
 
     /// With the Step strategy and full intensity, when backlog is above the
     /// threshold, the driver must apply the lower DA limits.
-    #[tokio::test]
-    async fn test_step_strategy_full_intensity_applies_lower_limits() {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        // Backlog of 100 — above threshold of 1.
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(100);
+    #[test]
+    fn test_step_strategy_full_intensity_applies_lower_limits() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            // Backlog of 100 — above threshold of 1.
+            let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(100);
 
-        let config =
-            ThrottleConfig { threshold_bytes: 1, max_intensity: 1.0, ..Default::default() };
-        let throttle = ThrottleController::new(config, ThrottleStrategy::Step);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+            let config =
+                ThrottleConfig { threshold_bytes: 1, max_intensity: 1.0, ..Default::default() };
+            let throttle = ThrottleController::new(config, ThrottleStrategy::Step);
+            let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let cancellation = CancellationToken::new();
-        let driver = BatchDriver::new(
-            pipeline,
-            PendingSource,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-            },
-            throttle,
-            Arc::new(throttle_client),
-            PendingL1HeadSource,
-        );
-        let handle = tokio::spawn(driver.run(cancellation.clone()));
+            let driver = BatchDriver::new(
+                ctx.clone(),
+                pipeline,
+                PendingSource,
+                ImmediateConfirmTxManager { l1_block: 1 },
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                },
+                DaThrottle::new(throttle, Arc::new(throttle_client)),
+                PendingL1HeadSource,
+            );
+            let handle = ctx.spawn(driver.run());
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancellation.cancel();
-        assert!(handle.await.unwrap().is_ok());
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
 
-        let calls = throttle_recorded.lock().unwrap();
-        assert!(!calls.is_empty(), "throttle client must be called with Step strategy");
-        let (max_tx_size, max_block_size) = calls[0];
-        assert_eq!(
-            max_block_size, 2_000,
-            "Step strategy at full intensity must apply block_size_lower_limit"
-        );
-        assert_eq!(
-            max_tx_size, 150,
-            "Step strategy at full intensity must apply tx_size_lower_limit"
-        );
+            let calls = throttle_recorded.lock().unwrap();
+            assert!(!calls.is_empty(), "throttle client must be called with Step strategy");
+            let (max_tx_size, max_block_size) = calls[0];
+            assert_eq!(
+                max_block_size, 2_000,
+                "Step strategy at full intensity must apply block_size_lower_limit"
+            );
+            assert_eq!(
+                max_tx_size, 150,
+                "Step strategy at full intensity must apply tx_size_lower_limit"
+            );
+        });
     }
 
     /// Verifies that when the DA backlog transitions from above the threshold
     /// (throttle active) to zero (throttle inactive), the driver makes exactly
     /// two RPC calls: one with reduced limits and one resetting to upper limits.
-    #[tokio::test]
-    async fn test_throttle_transitions_from_active_to_inactive() {
+    #[test]
+    fn test_throttle_transitions_from_active_to_inactive() {
         // Pipeline whose DA backlog is controlled from the test via a shared lock.
         struct DynamicPipeline {
             backlog: Arc<Mutex<u64>>,
@@ -1225,195 +1256,396 @@ mod tests {
             }
         }
 
-        let (source_tx, source_rx) = mpsc::unbounded_channel();
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (source_tx, source_rx) = mpsc::unbounded_channel();
 
-        // Start with 2 MB backlog — above the default 1 MB threshold.
-        let backlog = Arc::new(Mutex::new(2_000_000u64));
-        let pipeline = DynamicPipeline { backlog: Arc::clone(&backlog) };
+            // Start with 2 MB backlog — above the default 1 MB threshold.
+            let backlog = Arc::new(Mutex::new(2_000_000u64));
+            let pipeline = DynamicPipeline { backlog: Arc::clone(&backlog) };
 
-        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+            let throttle =
+                ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
+            let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let cancellation = CancellationToken::new();
-        let driver = BatchDriver::new(
-            pipeline,
-            ChannelSource { rx: source_rx },
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-            },
-            throttle,
-            Arc::new(throttle_client),
-            PendingL1HeadSource,
-        );
-        let handle = tokio::spawn(driver.run(cancellation.clone()));
+            let driver = BatchDriver::new(
+                ctx.clone(),
+                pipeline,
+                ChannelSource { rx: source_rx },
+                ImmediateConfirmTxManager { l1_block: 1 },
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                },
+                DaThrottle::new(throttle, Arc::new(throttle_client)),
+                PendingL1HeadSource,
+            );
+            let handle = ctx.spawn(driver.run());
 
-        // First iteration fires immediately on startup; give it time to complete.
-        tokio::time::sleep(Duration::from_millis(30)).await;
+            // First iteration fires immediately on startup; give it time to complete.
+            ctx.sleep(Duration::from_millis(30)).await;
 
-        // Drop the backlog to zero, then wake the driver by delivering a dummy
-        // block so the select! arm fires and the loop re-runs the throttle check.
-        *backlog.lock().unwrap() = 0;
-        source_tx.send(L2BlockEvent::Block(Box::default())).unwrap();
+            // Drop the backlog to zero, then wake the driver by delivering a dummy
+            // block so the select! arm fires and the loop re-runs the throttle check.
+            *backlog.lock().unwrap() = 0;
+            source_tx.send(L2BlockEvent::Block(Box::default())).unwrap();
 
-        tokio::time::sleep(Duration::from_millis(30)).await;
-        cancellation.cancel();
-        assert!(handle.await.unwrap().is_ok());
+            ctx.sleep(Duration::from_millis(30)).await;
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
 
-        let calls = throttle_recorded.lock().unwrap();
-        assert!(
-            calls.len() >= 2,
-            "expected at least 2 throttle calls (activate + deactivate), got {}",
-            calls.len()
-        );
+            let calls = throttle_recorded.lock().unwrap();
+            assert!(
+                calls.len() >= 2,
+                "expected at least 2 throttle calls (activate + deactivate), got {}",
+                calls.len()
+            );
 
-        // First call must have reduced limits (throttle active, backlog was high).
-        let (first_tx, first_block) = calls[0];
-        assert!(
-            first_block < 130_000,
-            "first call should apply throttled block limit, got {first_block}"
-        );
-        assert!(first_tx < 20_000, "first call should apply throttled tx limit, got {first_tx}");
+            // First call must have reduced limits (throttle active, backlog was high).
+            let (first_tx, first_block) = calls[0];
+            assert!(
+                first_block < 130_000,
+                "first call should apply throttled block limit, got {first_block}"
+            );
+            assert!(
+                first_tx < 20_000,
+                "first call should apply throttled tx limit, got {first_tx}"
+            );
 
-        // Last call must reset to upper limits (throttle deactivated).
-        let (last_tx, last_block) = *calls.last().unwrap();
-        assert_eq!(last_block, 130_000, "last call should reset block limit to upper bound");
-        assert_eq!(last_tx, 20_000, "last call should reset tx limit to upper bound");
+            // Last call must reset to upper limits (throttle deactivated).
+            let (last_tx, last_block) = *calls.last().unwrap();
+            assert_eq!(last_block, 130_000, "last call should reset block limit to upper bound");
+            assert_eq!(last_tx, 20_000, "last call should reset tx limit to upper bound");
+        }); // Runner::start
     }
 
     // ---- L1 head source + safe head watch receiver tests ----
 
     /// When the L1 head source delivers a new head, the driver must call
     /// `advance_l1_head` on the pipeline with the new value.
-    #[tokio::test]
-    async fn test_l1_head_source_advances_pipeline() {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+    #[test]
+    fn test_l1_head_source_advances_pipeline() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
 
-        let (l1_source, l1_tx) = ChannelL1HeadSource::new();
+            let (l1_source, l1_tx) = ChannelL1HeadSource::new();
 
-        let cancellation = CancellationToken::new();
-        let driver = BatchDriver::new(
-            pipeline,
-            PendingSource,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-            },
-            noop_throttle(),
-            Arc::new(NoopThrottleClient),
-            l1_source,
-        );
-        let handle = tokio::spawn(driver.run(cancellation.clone()));
+            let driver = BatchDriver::new(
+                ctx.clone(),
+                pipeline,
+                PendingSource,
+                ImmediateConfirmTxManager { l1_block: 1 },
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                },
+                DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
+                l1_source,
+            );
+            let handle = ctx.spawn(driver.run());
 
-        // Send a new L1 head via the channel.
-        l1_tx.send(L1HeadEvent::NewHead(42)).unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancellation.cancel();
+            // Send a new L1 head via the channel.
+            l1_tx.send(L1HeadEvent::NewHead(42)).unwrap();
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
 
-        assert!(handle.await.unwrap().is_ok());
-        let r = recorded.lock().unwrap();
-        assert!(
-            r.l1_heads.contains(&42),
-            "advance_l1_head must be called with the source value, got {:?}",
-            r.l1_heads
-        );
+            assert!(handle.await.unwrap().is_ok());
+            let r = recorded.lock().unwrap();
+            assert!(
+                r.l1_heads.contains(&42),
+                "advance_l1_head must be called with the source value, got {:?}",
+                r.l1_heads
+            );
+        });
     }
 
     /// When a safe head watch receiver fires, the driver must call
     /// `prune_safe` on the pipeline with the new value.
-    #[tokio::test]
-    async fn test_safe_head_watch_prunes_pipeline() {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+    #[test]
+    fn test_safe_head_watch_prunes_pipeline() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
 
-        let (safe_tx, safe_rx) = tokio::sync::watch::channel(0u64);
+            let (safe_tx, safe_rx) = tokio::sync::watch::channel(0u64);
 
-        let cancellation = CancellationToken::new();
-        let driver = make_driver(pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-            .with_safe_head_rx(safe_rx);
-        let handle = tokio::spawn(driver.run(cancellation.clone()));
+            let driver =
+                make_driver(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                    .with_safe_head_rx(safe_rx);
+            let handle = ctx.spawn(driver.run());
 
-        // Send a new safe head.
-        safe_tx.send(100).unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancellation.cancel();
+            // Send a new safe head.
+            safe_tx.send(100).unwrap();
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
 
-        assert!(handle.await.unwrap().is_ok());
-        let r = recorded.lock().unwrap();
-        assert!(
-            r.safe_numbers.contains(&100),
-            "prune_safe must be called with the watch value, got {:?}",
-            r.safe_numbers
-        );
+            assert!(handle.await.unwrap().is_ok());
+            let r = recorded.lock().unwrap();
+            assert!(
+                r.safe_numbers.contains(&100),
+                "prune_safe must be called with the watch value, got {:?}",
+                r.safe_numbers
+            );
+        });
     }
 
     /// When the safe head sender is dropped while the driver is running, the watch
     /// arm must disable itself rather than spinning. The driver continues running
     /// and remains cancellable after the sender disappears.
-    #[tokio::test]
-    async fn test_safe_head_sender_drop_does_not_busyloop() {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+    #[test]
+    fn test_safe_head_sender_drop_does_not_busyloop() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
 
-        let (safe_tx, safe_rx) = tokio::sync::watch::channel(0u64);
+            let (safe_tx, safe_rx) = tokio::sync::watch::channel(0u64);
 
-        let cancellation = CancellationToken::new();
-        let driver = make_driver(pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-            .with_safe_head_rx(safe_rx);
-        let handle = tokio::spawn(driver.run(cancellation.clone()));
+            let driver =
+                make_driver(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                    .with_safe_head_rx(safe_rx);
+            let handle = ctx.spawn(driver.run());
 
-        // Send one value, then drop the sender while the driver is still running.
-        safe_tx.send(50).unwrap();
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        drop(safe_tx);
+            // Send one value, then drop the sender while the driver is still running.
+            safe_tx.send(50).unwrap();
+            ctx.sleep(Duration::from_millis(20)).await;
+            drop(safe_tx);
 
-        // Give the driver time to process the drop. If the arm busy-loops,
-        // prune_safe would be called many additional times here.
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        let prune_count_after_drop = recorded.lock().unwrap().safe_numbers.len();
+            // Give the driver time to process the drop. If the arm busy-loops,
+            // prune_safe would be called many additional times here.
+            ctx.sleep(Duration::from_millis(50)).await;
+            let prune_count_after_drop = recorded.lock().unwrap().safe_numbers.len();
 
-        // Cancel and wait — driver must exit cleanly, not hang.
-        cancellation.cancel();
-        assert!(handle.await.unwrap().is_ok(), "driver must exit cleanly after sender drop");
+            // Cancel and wait — driver must exit cleanly, not hang.
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok(), "driver must exit cleanly after sender drop");
 
-        let r = recorded.lock().unwrap();
-        assert!(
-            r.safe_numbers.contains(&50),
-            "prune_safe must have been called with the sent value"
-        );
-        // After the sender drops, prune_safe must not be called again.
-        assert_eq!(
-            r.safe_numbers.len(),
-            prune_count_after_drop,
-            "prune_safe must not be called after sender drop (arm must be disabled)"
-        );
+            let r = recorded.lock().unwrap();
+            assert!(
+                r.safe_numbers.contains(&50),
+                "prune_safe must have been called with the sent value"
+            );
+            // After the sender drops, prune_safe must not be called again.
+            assert_eq!(
+                r.safe_numbers.len(),
+                prune_count_after_drop,
+                "prune_safe must not be called after sender drop (arm must be disabled)"
+            );
+        });
     }
 
     /// Without a safe head receiver, confirmation-based L1 head advancement must
     /// still work normally. The driver uses `PendingL1HeadSource` (parks forever)
     /// so only submission confirmations drive `advance_l1_head`.
-    #[tokio::test]
-    async fn test_no_safe_head_receiver_driver_runs_normally() {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        pipeline.submissions.push_back(make_submission());
+    #[test]
+    fn test_no_safe_head_receiver_driver_runs_normally() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            pipeline.submissions.push_back(make_submission());
 
-        let cancellation = CancellationToken::new();
-        // No .with_safe_head_rx() — safe_head remains None.
-        let driver = make_driver(pipeline, ImmediateConfirmTxManager { l1_block: 7 });
-        let handle = tokio::spawn(driver.run(cancellation.clone()));
+            // No .with_safe_head_rx() — safe_head remains None.
+            let driver =
+                make_driver(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 7 });
+            let handle = ctx.spawn(driver.run());
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        cancellation.cancel();
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
 
-        assert!(handle.await.unwrap().is_ok());
-        let r = recorded.lock().unwrap();
-        assert_eq!(r.l1_heads, vec![7], "confirmation-based advance_l1_head must still work");
-        assert!(r.safe_numbers.is_empty(), "prune_safe must not be called without a receiver");
+            assert!(handle.await.unwrap().is_ok());
+            let r = recorded.lock().unwrap();
+            assert_eq!(r.l1_heads, vec![7], "confirmation-based advance_l1_head must still work");
+            assert!(r.safe_numbers.is_empty(), "prune_safe must not be called without a receiver");
+        });
+    }
+
+    /// When the block source returns `SourceError::Exhausted`, the driver must
+    /// treat it as a graceful shutdown signal: close the current channel,
+    /// drain in-flight submissions within the timeout, then exit cleanly.
+    #[test]
+    fn test_source_exhaustion_shuts_down_driver_gracefully() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+
+            let driver = BatchDriver::new(
+                ctx.clone(),
+                pipeline,
+                InMemoryBlockSource::new(), // empty → Exhausted immediately
+                ImmediateConfirmTxManager { l1_block: 1 },
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                },
+                DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
+                PendingL1HeadSource,
+            );
+
+            let handle = ctx.spawn(driver.run());
+            ctx.sleep(Duration::from_millis(50)).await;
+
+            let result = handle.await.unwrap();
+            assert!(result.is_ok(), "driver must exit cleanly when source exhausts");
+            assert_eq!(
+                recorded.lock().unwrap().force_close_count,
+                1,
+                "force_close_channel must be called once on source exhaustion shutdown"
+            );
+        });
+    }
+
+    /// When the source delivers `L2BlockEvent::Flush`, the driver must call
+    /// `force_close_channel` immediately. On subsequent shutdown it is called once
+    /// more, giving a total of two calls.
+    #[test]
+    fn test_flush_event_calls_force_close_channel() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            let (source, source_tx) = ChannelBlockSource::new();
+
+            let driver = BatchDriver::new(
+                ctx.clone(),
+                pipeline,
+                source,
+                ImmediateConfirmTxManager { l1_block: 1 },
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                },
+                DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
+                PendingL1HeadSource,
+            );
+            let handle = ctx.spawn(driver.run());
+
+            source_tx.send(L2BlockEvent::Flush).unwrap();
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
+
+            assert!(handle.await.unwrap().is_ok());
+            // Flush arm: +1; Shutdown arm: +1 → total 2
+            assert_eq!(
+                recorded.lock().unwrap().force_close_count,
+                2,
+                "force_close_channel must be called for Flush and again on shutdown"
+            );
+        });
+    }
+
+    /// When the source delivers `L2BlockEvent::Reorg`, the driver must reset the
+    /// pipeline and discard in-flight submissions. This is distinct from the
+    /// `add_block`-triggered reorg path tested in
+    /// `test_reorg_block_is_readded_after_reset`.
+    #[test]
+    fn test_l2_reorg_event_resets_pipeline() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            let (source, source_tx) = ChannelBlockSource::new();
+
+            let driver = BatchDriver::new(
+                ctx.clone(),
+                pipeline,
+                source,
+                ImmediateConfirmTxManager { l1_block: 1 },
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                },
+                DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
+                PendingL1HeadSource,
+            );
+            let handle = ctx.spawn(driver.run());
+
+            let reorg_head = L2BlockInfo::new(
+                BlockInfo::new(B256::ZERO, 5, B256::ZERO, 0),
+                Default::default(),
+                0,
+            );
+            source_tx.send(L2BlockEvent::Reorg { new_safe_head: reorg_head }).unwrap();
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
+
+            assert!(handle.await.unwrap().is_ok());
+            assert_eq!(
+                recorded.lock().unwrap().resets,
+                1,
+                "pipeline must be reset when source delivers a Reorg event"
+            );
+        });
+    }
+
+    /// When the L1 head source is exhausted, the driver must disable that arm and
+    /// continue running — it must not shut down. The L1 head delivered before
+    /// exhaustion must be processed normally.
+    #[test]
+    fn test_l1_source_exhausted_disables_arm_driver_continues() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            let (l1_source, l1_tx) = ChannelL1HeadSource::new();
+
+            let driver = BatchDriver::new(
+                ctx.clone(),
+                pipeline,
+                PendingSource,
+                ImmediateConfirmTxManager { l1_block: 1 },
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                },
+                DaThrottle::new(noop_throttle(), Arc::new(NoopThrottleClient)),
+                l1_source,
+            );
+            let handle = ctx.spawn(driver.run());
+
+            l1_tx.send(L1HeadEvent::NewHead(77)).unwrap();
+            ctx.sleep(Duration::from_millis(20)).await;
+            drop(l1_tx); // triggers Exhausted → L1SourceClosed
+
+            // Driver must still be running after L1 source closes.
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
+
+            assert!(handle.await.unwrap().is_ok(), "driver must continue after L1 source closes");
+            let r = recorded.lock().unwrap();
+            assert!(
+                r.l1_heads.contains(&77),
+                "L1 head delivered before close must be processed, got {:?}",
+                r.l1_heads
+            );
+        });
+    }
+
+    /// When cancellation fires while a submission is in-flight with a
+    /// `NeverConfirmTxManager`, the drain timeout must fire and the driver must
+    /// exit cleanly. This verifies the `runtime.sleep(drain_timeout)` fix.
+    #[test]
+    fn test_drain_timeout_exits_with_in_flight_submissions() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            pipeline.submissions.push_back(make_submission());
+
+            let driver = make_driver(ctx.clone(), pipeline, NeverConfirmTxManager);
+            let handle = ctx.spawn(driver.run());
+
+            ctx.sleep(Duration::from_millis(20)).await;
+            ctx.cancel();
+
+            let result = handle.await.unwrap();
+            assert!(
+                result.is_ok(),
+                "driver must exit after drain timeout even with in-flight submissions"
+            );
+            let r = recorded.lock().unwrap();
+            assert_eq!(r.dequeued, vec![SubmissionId(0)], "submission must have been dequeued");
+            assert_eq!(r.force_close_count, 1, "force_close_channel must be called on shutdown");
+        });
     }
 }

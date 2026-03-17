@@ -1,8 +1,5 @@
 //! L2 (Base) infrastructure containers.
 
-pub mod batcher;
-pub use batcher::{BatcherConfig, BatcherContainer};
-
 pub mod config;
 pub use config::L2ContainerConfig;
 
