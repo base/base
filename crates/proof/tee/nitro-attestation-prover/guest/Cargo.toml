@@ -1,7 +1,7 @@
 [workspace]
 
 [package]
-name = "base-nitro-verifier-guest"
+name = "base-proof-tee-nitro-verifier-guest"
 version = "0.0.0"
 edition = "2024"
 

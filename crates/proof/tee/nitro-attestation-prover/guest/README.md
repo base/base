@@ -19,7 +19,7 @@ rzup install
 cargo +risc0 build --release --target riscv32im-risc0-zkvm-elf
 
 # The ELF is at:
-# target/riscv32im-risc0-zkvm-elf/release/base-nitro-verifier-guest
+# target/riscv32im-risc0-zkvm-elf/release/base-proof-tee-nitro-verifier-guest
 ```
 
 The resulting ELF is loaded at runtime by `DirectProver` or `BoundlessProver`
