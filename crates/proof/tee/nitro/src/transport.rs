@@ -1,6 +1,6 @@
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::info;
+use tracing::debug;
 
 /// Result type for proof transport operations.
 pub type TransportResult<T> = Result<T, TransportError>;
@@ -40,19 +40,6 @@ const MAX_WRITE_SIZE: usize = 32 * 1024;
 #[derive(Debug, Clone, Copy)]
 pub struct Frame;
 
-async fn write_throttled(
-    writer: &mut (impl AsyncWriteExt + Unpin),
-    data: &[u8],
-) -> TransportResult<()> {
-    let mut offset = 0;
-    while offset < data.len() {
-        let end = (offset + MAX_WRITE_SIZE).min(data.len());
-        writer.write_all(&data[offset..end]).await?;
-        offset = end;
-    }
-    Ok(())
-}
-
 impl Frame {
     /// Write a value as a length-prefixed bincode frame.
     pub async fn write<T: serde::Serialize>(
@@ -65,23 +52,27 @@ impl Frame {
         let len = u32::try_from(payload.len())
             .map_err(|_| TransportError::Codec("payload exceeds u32::MAX".into()))?;
 
-        info!(payload_bytes = payload.len(), "frame write start");
+        debug!(payload_bytes = payload.len(), "frame write start");
 
         writer.write_u32(len).await?;
-        write_throttled(writer, &payload).await?;
+        Self::write_throttled(writer, &payload).await?;
         writer.flush().await?;
 
-        info!(payload_bytes = payload.len(), "frame write complete");
+        debug!(payload_bytes = payload.len(), "frame write complete");
         Ok(())
     }
 
     /// Read a value from a length-prefixed bincode frame.
+    ///
+    /// The peer-supplied length can be up to `u32::MAX` (~4 GiB). This is safe
+    /// because all transport peers are local (enclave ↔ host over vsock) and
+    /// witness bundles can legitimately be very large.
     pub async fn read<T: serde::de::DeserializeOwned>(
         reader: &mut (impl AsyncReadExt + Unpin),
     ) -> TransportResult<T> {
         let len = reader.read_u32().await? as usize;
 
-        info!(payload_bytes = len, "frame read start");
+        debug!(payload_bytes = len, "frame read start");
 
         let mut payload = vec![0u8; len];
         reader.read_exact(&mut payload).await?;
@@ -89,7 +80,20 @@ impl Frame {
         let (value, _) = bincode::serde::decode_from_slice(&payload, bincode::config::standard())
             .map_err(|e| TransportError::Codec(e.to_string()))?;
 
-        info!(payload_bytes = len, "frame read complete");
+        debug!(payload_bytes = len, "frame read complete");
         Ok(value)
+    }
+
+    async fn write_throttled(
+        writer: &mut (impl AsyncWriteExt + Unpin),
+        data: &[u8],
+    ) -> TransportResult<()> {
+        let mut offset = 0;
+        while offset < data.len() {
+            let end = (offset + MAX_WRITE_SIZE).min(data.len());
+            writer.write_all(&data[offset..end]).await?;
+            offset = end;
+        }
+        Ok(())
     }
 }
