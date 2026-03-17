@@ -36,7 +36,10 @@ impl BaseNodeExtension for BundleExtension {
             let pool = ctx.pool().clone();
             let events = BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
 
-            tokio::spawn(maintain_bundle_transactions(pool, events, current_block_number));
+            ctx.task_executor.spawn_critical_task(
+                "bundle-maintenance",
+                maintain_bundle_transactions(pool, events, current_block_number),
+            );
             info!("Bundle maintenance task spawned");
             Ok(())
         })

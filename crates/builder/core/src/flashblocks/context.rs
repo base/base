@@ -480,10 +480,10 @@ impl OpPayloadBuilderCtx {
             execution_metering_mode = ?self.builder_config.execution_metering_mode,
         );
 
+        let block_number = as_u64_saturated!(self.evm_env.block_env.number);
+        let block_timestamp = self.attributes().timestamp();
+
         while let Some(tx) = best_txs.next(()) {
-            // Skip bundle transactions that are not valid for this block.
-            let block_number = as_u64_saturated!(self.evm_env.block_env.number);
-            let block_timestamp = self.attributes().timestamp();
 
             if let Some(target) = tx.target_block_number()
                 && target != block_number
