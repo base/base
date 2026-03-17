@@ -4,9 +4,9 @@
 //! invalid dispute games, validating output roots, requesting ZK proofs, and
 //! submitting nullification transactions — into a single polling loop.
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use alloy_primitives::Bytes;
+use alloy_primitives::{Address, B256, Bytes};
 use base_proof_contracts::AggregateVerifierClient;
 use base_proof_rpc::L2Provider;
 use base_tx_manager::TxManager;
@@ -25,11 +25,20 @@ use crate::{
 /// Proof type discriminator byte prepended to ZK proof receipts.
 const ZK_PROOF_TYPE_BYTE: u8 = 0x01;
 
+/// State for an in-flight proof session.
+#[derive(Debug, Clone)]
+pub struct PendingProof {
+    /// The session ID returned by the ZK proof service.
+    pub session_id: String,
+    /// The index of the invalid intermediate root.
+    pub invalid_index: usize,
+    /// The expected correct root at that index.
+    pub expected_root: B256,
+}
+
 /// Configuration for the challenger [`Driver`].
 #[derive(Debug)]
 pub struct DriverConfig {
-    /// The block interval between intermediate output root checkpoints.
-    pub intermediate_block_interval: u64,
     /// How often the driver polls for new games.
     pub poll_interval: Duration,
     /// Cancellation token for graceful shutdown.
@@ -48,7 +57,8 @@ where
     zk_prover: Arc<P>,
     submitter: ChallengeSubmitter<T>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
-    intermediate_block_interval: u64,
+    /// In-flight proof sessions keyed by game address.
+    pending_proofs: HashMap<Address, PendingProof>,
     poll_interval: Duration,
     cancel: CancellationToken,
     last_scanned: Option<u64>,
@@ -57,7 +67,7 @@ where
 impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> std::fmt::Debug for Driver<L2, P, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Driver")
-            .field("intermediate_block_interval", &self.intermediate_block_interval)
+            .field("pending_proofs", &self.pending_proofs.len())
             .field("poll_interval", &self.poll_interval)
             .field("last_scanned", &self.last_scanned)
             .finish_non_exhaustive()
@@ -80,7 +90,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             zk_prover,
             submitter,
             verifier_client,
-            intermediate_block_interval: config.intermediate_block_interval,
+            pending_proofs: HashMap::new(),
             poll_interval: config.poll_interval,
             cancel: config.cancel,
             last_scanned: None,
@@ -112,7 +122,13 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     }
 
     /// Executes a single scan-validate-prove-submit cycle.
+    ///
+    /// First polls any in-flight proof sessions that are not in the current
+    /// scan batch, then scans for new candidates and processes them.
     async fn step(&mut self) -> eyre::Result<()> {
+        // Poll in-flight proof sessions before scanning for new candidates.
+        self.poll_pending_proofs().await;
+
         let (candidates, new_last_scanned) = self.scanner.scan(self.last_scanned).await?;
         self.last_scanned = new_last_scanned;
 
@@ -126,9 +142,32 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         Ok(())
     }
 
+    /// Polls all in-flight proof sessions for completion.
+    async fn poll_pending_proofs(&mut self) {
+        let pending: Vec<(Address, PendingProof)> =
+            self.pending_proofs.iter().map(|(k, v)| (*k, v.clone())).collect();
+
+        for (game_address, pending_proof) in pending {
+            if let Err(e) = self.poll_proof(game_address, pending_proof).await {
+                warn!(
+                    error = %e,
+                    game = %game_address,
+                    "failed to poll pending proof"
+                );
+            }
+        }
+    }
+
     /// Processes a single candidate game: validate, prove if invalid, submit.
-    async fn process_candidate(&self, candidate: CandidateGame) -> eyre::Result<()> {
+    async fn process_candidate(&mut self, candidate: CandidateGame) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
+
+        // If this game already has an in-flight proof session, skip it.
+        // Pending proofs are polled separately in `poll_pending_proofs`.
+        if self.pending_proofs.contains_key(&game_address) {
+            debug!(game = %game_address, "skipping game with pending proof session");
+            return Ok(());
+        }
 
         let intermediate_roots =
             self.verifier_client.intermediate_output_roots(game_address).await?;
@@ -137,7 +176,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             game_address,
             starting_block_number: candidate.starting_block_number,
             l2_block_number: candidate.info.l2_block_number,
-            intermediate_block_interval: self.intermediate_block_interval,
+            intermediate_block_interval: candidate.intermediate_block_interval,
             claimed_root: candidate.info.root_claim,
             intermediate_roots,
         };
@@ -181,20 +220,20 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             "invalid intermediate root detected, requesting proof"
         );
 
-        self.prove_and_submit(candidate, invalid_index, expected_root).await
+        self.initiate_proof(candidate, invalid_index, expected_root).await
     }
 
-    /// Requests a ZK proof and submits the nullification transaction.
-    async fn prove_and_submit(
-        &self,
+    /// Requests a ZK proof, stores the session, and polls for the result.
+    async fn initiate_proof(
+        &mut self,
         candidate: CandidateGame,
         invalid_index: usize,
-        expected_root: alloy_primitives::B256,
+        expected_root: B256,
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
         let number_of_blocks_to_prove =
-            (invalid_index as u64 + 1) * self.intermediate_block_interval;
+            (invalid_index as u64 + 1) * candidate.intermediate_block_interval;
 
         let request = ProveBlockRequest {
             start_block_number: candidate.starting_block_number,
@@ -212,8 +251,27 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             "proof job initiated"
         );
 
+        let pending = PendingProof { session_id, invalid_index, expected_root };
+        self.pending_proofs.insert(game_address, pending.clone());
+
+        self.poll_proof(game_address, pending).await
+    }
+
+    /// Polls the ZK proof service for a session's status and acts on the result.
+    ///
+    /// - `Succeeded` → removes the session from `pending_proofs` and submits
+    ///   the nullification transaction.
+    /// - `Failed` → removes the session so a fresh `prove_block` is issued
+    ///   next cycle.
+    /// - Intermediate (`Created`/`Pending`/`Running`) → keeps the session in
+    ///   `pending_proofs` and returns early.
+    async fn poll_proof(
+        &mut self,
+        game_address: Address,
+        pending: PendingProof,
+    ) -> eyre::Result<()> {
         let get_proof_request = GetProofRequest {
-            session_id: session_id.clone(),
+            session_id: pending.session_id.clone(),
             receipt_type: Some(ReceiptType::Snark as i32),
         };
 
@@ -223,13 +281,15 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
 
         match status {
             ProofJobStatus::Succeeded => {
+                self.pending_proofs.remove(&game_address);
+
                 let mut proof_bytes = Vec::with_capacity(1 + proof_response.receipt.len());
                 proof_bytes.push(ZK_PROOF_TYPE_BYTE);
                 proof_bytes.extend_from_slice(&proof_response.receipt);
 
                 info!(
                     game = %game_address,
-                    session_id = %session_id,
+                    session_id = %pending.session_id,
                     proof_len = proof_bytes.len(),
                     "proof succeeded, submitting nullification"
                 );
@@ -238,22 +298,23 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                     .submit_nullification(
                         game_address,
                         Bytes::from(proof_bytes),
-                        invalid_index as u64,
-                        expected_root,
+                        pending.invalid_index as u64,
+                        pending.expected_root,
                     )
                     .await?;
             }
             ProofJobStatus::Failed => {
+                self.pending_proofs.remove(&game_address);
                 warn!(
                     game = %game_address,
-                    session_id = %session_id,
+                    session_id = %pending.session_id,
                     "proof job failed, will retry next tick"
                 );
             }
             other => {
                 debug!(
                     game = %game_address,
-                    session_id = %session_id,
+                    session_id = %pending.session_id,
                     status = ?other,
                     "proof not ready, will retry next tick"
                 );
@@ -301,7 +362,6 @@ mod tests {
         let submitter = ChallengeSubmitter::new(tx_manager);
 
         let config = DriverConfig {
-            intermediate_block_interval: 5,
             poll_interval: Duration::from_millis(10),
             cancel: CancellationToken::new(),
         };
@@ -616,7 +676,6 @@ mod tests {
         let submitter = ChallengeSubmitter::new(default_tx_manager());
 
         let config = DriverConfig {
-            intermediate_block_interval: 5,
             poll_interval: Duration::from_millis(10),
             cancel: CancellationToken::new(),
         };
@@ -635,6 +694,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_step_pending_proof_skips_prove_block() {
+        // First step: invalid game → proof initiated (status=Created, not ready).
+        // Second step: same game re-discovered → should poll existing session
+        // without calling prove_block again. This time proof succeeds.
+        use base_enclave::output_root_v0;
+
+        let storage_hash = B256::repeat_byte(0xBB);
+        let (header_15, account_15) = build_test_header_and_account(15, storage_hash);
+        let root_15 = output_root_v0(&header_15, storage_hash);
+        let (header_20, account_20) = build_test_header_and_account(20, storage_hash);
+
+        let mut l2 = MockL2Provider::new();
+        l2.insert_block(15, header_15, account_15);
+        l2.insert_block(20, header_20, account_20);
+        let l2 = Arc::new(l2);
+
+        let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+        let mut verifier_games = HashMap::new();
+        verifier_games.insert(
+            addr(0),
+            MockGameState {
+                status: 0,
+                zk_prover: Address::ZERO,
+                tee_prover: Address::ZERO,
+                game_info: base_proof_contracts::GameInfo {
+                    root_claim: B256::repeat_byte(0x01),
+                    l2_block_number: 20,
+                    parent_index: 0,
+                },
+                starting_block_number: 10,
+                intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
+            },
+        );
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+        // First call: Created (not ready). Second call: Succeeded.
+        let zk = Arc::new(MockZkProofProvider {
+            session_id: "pending-session".to_string(),
+            proof_status: Mutex::new(ProofJobStatus::Created as i32),
+            receipt: Mutex::new(vec![0xBE, 0xEF]),
+        });
+
+        let tx_hash = B256::repeat_byte(0xDD);
+        let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
+
+        let mut driver = test_driver(factory, verifier, l2, Arc::clone(&zk), tx_manager);
+
+        // Step 1: proof is initiated but not ready (Created) → session stored.
+        driver.step().await.unwrap();
+        assert!(
+            driver.pending_proofs.contains_key(&addr(0)),
+            "session should be stored in pending_proofs"
+        );
+
+        // Simulate the proof completing before the next poll.
+        *zk.proof_status.lock().unwrap() = ProofJobStatus::Succeeded as i32;
+
+        // Step 2: same game re-discovered → polls existing session, proof succeeds,
+        // nullification submitted, session removed from pending_proofs.
+        driver.step().await.unwrap();
+        assert!(
+            !driver.pending_proofs.contains_key(&addr(0)),
+            "session should be removed after proof succeeded"
+        );
+    }
+
+    #[tokio::test]
     async fn test_run_cancellation() {
         let factory = Arc::new(MockDisputeGameFactory { games: vec![] });
         let verifier = Arc::new(MockAggregateVerifier { games: HashMap::new() });
@@ -650,7 +776,6 @@ mod tests {
         let cancel = CancellationToken::new();
 
         let config = DriverConfig {
-            intermediate_block_interval: 5,
             poll_interval: Duration::from_secs(60), // long poll so it blocks
             cancel: cancel.clone(),
         };

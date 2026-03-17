@@ -70,7 +70,7 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
     }
 
     async fn game_impls(&self, _game_type: u32) -> Result<Address, ContractError> {
-        Ok(Address::ZERO)
+        Ok(Address::repeat_byte(0x11))
     }
 }
 

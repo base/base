@@ -56,17 +56,9 @@ pub struct ChallengerArgs {
     #[arg(long = "l2-eth-rpc", env = "BASE_CHALLENGER_L2_ETH_RPC")]
     pub l2_eth_rpc: Url,
 
-    /// URL of the rollup RPC endpoint.
-    #[arg(long = "rollup-rpc", env = "BASE_CHALLENGER_ROLLUP_RPC")]
-    pub rollup_rpc: Url,
-
     /// Address of the `DisputeGameFactory` contract on L1.
     #[arg(long = "dispute-game-factory-addr", env = "BASE_CHALLENGER_DISPUTE_GAME_FACTORY_ADDR")]
     pub dispute_game_factory_addr: Address,
-
-    /// Address of the `AnchorStateRegistry` contract on L1.
-    #[arg(long = "anchor-state-registry-addr", env = "BASE_CHALLENGER_ANCHOR_STATE_REGISTRY_ADDR")]
-    pub anchor_state_registry_addr: Address,
 
     /// Polling interval for new dispute games (e.g., "12s", "1m").
     #[arg(
@@ -123,9 +115,7 @@ impl std::fmt::Debug for ChallengerArgs {
         f.debug_struct("ChallengerArgs")
             .field("l1_eth_rpc", &self.l1_eth_rpc)
             .field("l2_eth_rpc", &self.l2_eth_rpc)
-            .field("rollup_rpc", &self.rollup_rpc)
             .field("dispute_game_factory_addr", &self.dispute_game_factory_addr)
-            .field("anchor_state_registry_addr", &self.anchor_state_registry_addr)
             .field("poll_interval", &self.poll_interval)
             .field("zk_proof_service_endpoint", &self.zk_proof_service_endpoint)
             .field("zk_connect_timeout", &self.zk_connect_timeout)

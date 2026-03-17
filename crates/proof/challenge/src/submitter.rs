@@ -78,64 +78,11 @@ impl<T: TxManager> ChallengeSubmitter<T> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use alloy_primitives::{Address, Bloom};
-    use alloy_rpc_types_eth::TransactionReceipt;
-    use base_tx_manager::{SendHandle, SendResponse, TxManagerError};
+    use alloy_primitives::Address;
+    use base_tx_manager::TxManagerError;
 
     use super::*;
-
-    /// Builds a minimal [`TransactionReceipt`] with the given status and hash.
-    fn receipt_with_status(success: bool, tx_hash: B256) -> TransactionReceipt {
-        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
-            receipt: Receipt {
-                status: Eip658Value::Eip658(success),
-                cumulative_gas_used: 21_000,
-                logs: vec![],
-            },
-            logs_bloom: Bloom::ZERO,
-        });
-        TransactionReceipt {
-            inner,
-            transaction_hash: tx_hash,
-            transaction_index: Some(0),
-            block_hash: Some(B256::ZERO),
-            block_number: Some(1),
-            gas_used: 21_000,
-            effective_gas_price: 1_000_000_000,
-            blob_gas_used: None,
-            blob_gas_price: None,
-            from: Address::ZERO,
-            to: Some(Address::ZERO),
-            contract_address: None,
-        }
-    }
-
-    /// Mock transaction manager for testing.
-    #[derive(Debug)]
-    struct MockTxManager {
-        response: std::sync::Mutex<Option<SendResponse>>,
-    }
-
-    impl MockTxManager {
-        fn new(response: SendResponse) -> Self {
-            Self { response: std::sync::Mutex::new(Some(response)) }
-        }
-    }
-
-    impl TxManager for MockTxManager {
-        async fn send(&self, _candidate: TxCandidate) -> SendResponse {
-            self.response.lock().unwrap().take().expect("MockTxManager response already consumed")
-        }
-
-        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
-            unimplemented!("not needed for these tests")
-        }
-
-        fn sender_address(&self) -> Address {
-            Address::ZERO
-        }
-    }
+    use crate::test_utils::{MockTxManager, receipt_with_status};
 
     #[tokio::test]
     async fn submit_nullification_success_returns_tx_hash() {

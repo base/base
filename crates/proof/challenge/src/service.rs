@@ -5,12 +5,10 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};
 use base_cli_utils::RuntimeManager;
 use base_proof_contracts::{
-    AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryClient,
-    DisputeGameFactoryContractClient,
+    AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryContractClient,
 };
 use base_proof_rpc::{L2Client, L2ClientConfig};
 use base_tx_manager::{NoopTxMetrics, SimpleTxManager, TxManagerConfig};
@@ -99,21 +97,6 @@ impl ChallengerService {
         let verifier_client =
             AggregateVerifierContractClient::new(config.l1_eth_rpc.as_ref().clone())?;
 
-        // Read INTERMEDIATE_BLOCK_INTERVAL from the implementation contract.
-        let impl_address = factory_client.game_impls(0).await?;
-        if impl_address == Address::ZERO {
-            return Err(eyre::eyre!(
-                "no AggregateVerifier implementation registered for game type 0"
-            ));
-        }
-        let intermediate_block_interval =
-            verifier_client.read_intermediate_block_interval(impl_address).await?;
-        info!(
-            intermediate_block_interval,
-            impl_address = %impl_address,
-            "Read INTERMEDIATE_BLOCK_INTERVAL from AggregateVerifier"
-        );
-
         let factory_client = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
 
@@ -138,11 +121,8 @@ impl ChallengerService {
 
         let validator = OutputValidator::new(l2_client);
 
-        let driver_config = DriverConfig {
-            intermediate_block_interval,
-            poll_interval: config.poll_interval,
-            cancel: cancel.child_token(),
-        };
+        let driver_config =
+            DriverConfig { poll_interval: config.poll_interval, cancel: cancel.child_token() };
         let driver =
             Driver::new(driver_config, scanner, validator, zk_client, submitter, verifier_client);
 
@@ -158,7 +138,6 @@ impl ChallengerService {
         ready.store(true, Ordering::SeqCst);
         info!(
             poll_interval = ?config.poll_interval,
-            intermediate_block_interval,
             "Service is ready"
         );
 
