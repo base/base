@@ -1317,7 +1317,7 @@ impl SimpleTxManager {
                 let err = self.rpc_error("send_raw_transaction timed out");
                 send_state.process_send_error(&err);
                 self.metrics.record_publish_error();
-                warn!("publish timed out");
+                warn!(error = %err, "publish timed out");
                 Err(err)
             }
         }
