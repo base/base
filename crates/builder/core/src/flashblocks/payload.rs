@@ -41,6 +41,7 @@ use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database as _;
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
@@ -845,12 +846,16 @@ where
     }
 }
 
-// TODO: unify with `base_primitives::Metadata` once receipts and balances are added to the shared type
+#[skip_serializing_none]
 #[derive(Debug, Serialize, Deserialize)]
 struct FlashblocksMetadata {
-    receipts: HashMap<B256, OpReceipt>,
-    new_account_balances: HashMap<Address, U256>,
+    /// Receipts for transactions in this flashblock (removed in Base 1.0)
+    receipts: Option<HashMap<B256, OpReceipt>>,
+    /// Changed account balances (removed in Base 1.0)
+    new_account_balances: Option<HashMap<Address, U256>>,
+    /// The block number this flashblock belongs to
     block_number: u64,
+    /// The flashblock access list
     access_list: Option<FlashblockAccessList>,
 }
 
@@ -1072,14 +1077,24 @@ where
 
     // finalize and build the FAL
     let fal_builder = std::mem::take(&mut info.extra.access_list_builder);
-    let _access_list = fal_builder.build(min_tx_index, max_tx_index);
+    let access_list = fal_builder.build(min_tx_index, max_tx_index);
 
-    let metadata: FlashblocksMetadata = FlashblocksMetadata {
-        receipts: receipts_with_hash,
-        new_account_balances,
-        block_number: ctx.parent().number + 1,
-        access_list: None,
-    };
+    let metadata: FlashblocksMetadata =
+        if ctx.chain_spec.is_base_v1_active_at_timestamp(ctx.attributes().timestamp()) {
+            FlashblocksMetadata {
+                block_number: ctx.parent().number + 1,
+                access_list: Some(access_list),
+                receipts: None,
+                new_account_balances: None,
+            }
+        } else {
+            FlashblocksMetadata {
+                block_number: ctx.parent().number + 1,
+                access_list: None,
+                new_account_balances: Some(new_account_balances),
+                receipts: Some(receipts_with_hash),
+            }
+        };
 
     // Prepare the flashblocks message
     let fb_payload = FlashblocksPayloadV1 {
@@ -1160,8 +1175,8 @@ mod tests {
         balances.insert(address, U256::from(1_000_000_000_000_000_000u128));
 
         let metadata = FlashblocksMetadata {
-            receipts,
-            new_account_balances: balances,
+            receipts: Some(receipts),
+            new_account_balances: Some(balances),
             block_number: 42,
             access_list: None,
         };
@@ -1174,7 +1189,7 @@ mod tests {
         keys.sort();
         assert_eq!(
             keys,
-            vec!["access_list", "block_number", "new_account_balances", "receipts"],
+            vec!["block_number", "new_account_balances", "receipts"],
             "metadata field names changed"
         );
 
@@ -1194,9 +1209,6 @@ mod tests {
         let balances_obj = obj["new_account_balances"].as_object().unwrap();
         let addr_key = format!("{address:#x}");
         assert!(balances_obj.contains_key(&addr_key), "balance should be keyed by address");
-
-        // access_list is null when None
-        assert!(obj["access_list"].is_null());
     }
 
     /// The client-side [`Metadata`] type must be able to deserialize from
@@ -1204,8 +1216,8 @@ mod tests {
     #[test]
     fn client_metadata_deserializes_from_builder_metadata() {
         let metadata = FlashblocksMetadata {
-            receipts: HashMap::default(),
-            new_account_balances: HashMap::default(),
+            receipts: Some(HashMap::default()),
+            new_account_balances: Some(HashMap::default()),
             block_number: 99,
             access_list: None,
         };

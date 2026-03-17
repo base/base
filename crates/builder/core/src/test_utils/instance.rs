@@ -235,12 +235,45 @@ impl Future for LocalInstance {
 }
 
 pub fn default_node_config() -> NodeConfig<OpChainSpec> {
+    node_config_with_chain_spec(chain_spec())
+}
+
+fn chain_spec() -> Arc<OpChainSpec> {
+    static CHAIN_SPEC: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
+        let genesis = include_str!("./artifacts/genesis.json.tmpl");
+        let genesis = serde_json::from_str(genesis).expect("invalid genesis JSON");
+        let chain_spec = OpChainSpec::from_genesis(genesis);
+        Arc::new(chain_spec)
+    });
+
+    CHAIN_SPEC.clone()
+}
+
+/// Returns a chain spec identical to the default test chain spec but with
+/// `BaseUpgrade::V1` activated at genesis (timestamp 0).
+pub fn chain_spec_with_base_v1() -> Arc<OpChainSpec> {
+    use base_execution_forks::BaseUpgrade;
+    use reth_chainspec::ForkCondition;
+
+    let genesis = include_str!("./artifacts/genesis.json.tmpl");
+    let genesis = serde_json::from_str(genesis).expect("invalid genesis JSON");
+    let mut spec = OpChainSpec::from_genesis(genesis);
+    spec.inner.hardforks.insert(BaseUpgrade::V1, ForkCondition::Timestamp(0));
+    Arc::new(spec)
+}
+
+/// Returns a node config using a chain spec with `BaseUpgrade::V1` activated
+/// at genesis.
+pub fn default_node_config_with_base_v1() -> NodeConfig<OpChainSpec> {
+    node_config_with_chain_spec(chain_spec_with_base_v1())
+}
+
+fn node_config_with_chain_spec(spec: Arc<OpChainSpec>) -> NodeConfig<OpChainSpec> {
     let tempdir = std::env::temp_dir();
     let random_id = nanoid!();
 
     let data_path = tempdir.join(format!("rbuilder.{random_id}.datadir"));
     let rocksdb_path = tempdir.join(format!("rbuilder.{random_id}.rocksdb"));
-
     let pprof_dumps_path = tempdir.join(format!("rbuilder.{random_id}.pprof-dumps"));
 
     std::fs::create_dir_all(&data_path).expect("Failed to create temporary data directory");
@@ -249,7 +282,6 @@ pub fn default_node_config() -> NodeConfig<OpChainSpec> {
         .expect("Failed to create temporary pprof dumps directory");
 
     let rpc_ipc_path = tempdir.join(format!("rbuilder.{random_id}.rpc-ipc"));
-
     let auth_ipc_path = tempdir.join(format!("rbuilder.{random_id}.auth-ipc"));
 
     let mut rpc = RpcServerArgs::default().with_auth_ipc();
@@ -269,21 +301,10 @@ pub fn default_node_config() -> NodeConfig<OpChainSpec> {
         pprof_dumps_path: Some(pprof_dumps_path),
     };
 
-    NodeConfig::<OpChainSpec>::new(chain_spec())
+    NodeConfig::<OpChainSpec>::new(spec)
         .with_datadir_args(datadir)
         .with_rpc(rpc)
         .with_network(network)
-}
-
-fn chain_spec() -> Arc<OpChainSpec> {
-    static CHAIN_SPEC: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
-        let genesis = include_str!("./artifacts/genesis.json.tmpl");
-        let genesis = serde_json::from_str(genesis).expect("invalid genesis JSON");
-        let chain_spec = OpChainSpec::from_genesis(genesis);
-        Arc::new(chain_spec)
-    });
-
-    CHAIN_SPEC.clone()
 }
 
 fn pool_component() -> OpPoolBuilder<BasePooledTransaction> {
