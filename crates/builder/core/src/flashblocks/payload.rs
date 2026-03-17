@@ -295,12 +295,15 @@ where
                 target: "payload_builder",
                 "No transaction pool, skipping transaction pool processing",
             );
+            ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
+            ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
         }
 
         if flashblocks_per_block == 0 {
             error!(
                 target: "payload_builder",
-                message = "FCU arrived too late or system clock are unsynced, building 0 flashblocks"
+                message = "FCU arrived too late or system clock are unsynced, building 0 flashblocks",
+                timestamp,
             );
             ctx.metrics
                 .first_flashblock_time_offset
@@ -324,8 +327,6 @@ where
             let total_block_building_time = block_build_start_time.elapsed();
             ctx.metrics.total_block_built_duration.record(total_block_building_time);
             ctx.metrics.total_block_built_gauge.set(total_block_building_time);
-            ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
-            ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
 
             return Ok(());
         }
