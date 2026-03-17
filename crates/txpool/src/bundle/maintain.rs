@@ -8,7 +8,6 @@ use futures::StreamExt;
 use reth_provider::CanonStateNotification;
 use reth_transaction_pool::TransactionPool;
 use tokio_stream::wrappers::BroadcastStream;
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
 use crate::transaction::BundleTransaction;
@@ -25,7 +24,6 @@ use crate::transaction::BundleTransaction;
 pub async fn maintain_bundle_transactions<P, N>(
     pool: P,
     mut events: BroadcastStream<CanonStateNotification<N>>,
-    cancel: CancellationToken,
     current_block_number: Arc<AtomicU64>,
 ) where
     P: TransactionPool + 'static,
@@ -33,18 +31,16 @@ pub async fn maintain_bundle_transactions<P, N>(
     N: reth_node_api::NodePrimitives,
 {
     loop {
-        let notification = tokio::select! {
-            _ = cancel.cancelled() => break,
-            maybe = events.next() => {
-                match maybe {
-                    Some(Ok(notification)) => notification,
-                    Some(Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n))) => {
-                        warn!(missed = n, "canon state stream lagged, some blocks were not checked for bundle expiry");
-                        continue;
-                    }
-                    None => break,
-                }
+        let notification = match events.next().await {
+            Some(Ok(notification)) => notification,
+            Some(Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n))) => {
+                warn!(
+                    missed = n,
+                    "canon state stream lagged, some blocks were not checked for bundle expiry"
+                );
+                continue;
             }
+            None => break,
         };
 
         let tip = notification.tip();

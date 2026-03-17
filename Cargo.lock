@@ -3038,7 +3038,6 @@ dependencies = [
  "reth-chain-state",
  "tokio",
  "tokio-stream",
- "tokio-util",
  "tracing",
 ]
 

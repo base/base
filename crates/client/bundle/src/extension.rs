@@ -6,7 +6,6 @@ use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, N
 use base_txpool::{SendBundleApiImpl, SendBundleApiServer, maintain_bundle_transactions};
 use reth_chain_state::CanonStateSubscriptions;
 use tokio_stream::wrappers::BroadcastStream;
-use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 /// Extension that enables `eth_sendBundle` RPC support and bundle lifecycle management.
@@ -35,10 +34,9 @@ impl BaseNodeExtension for BundleExtension {
 
         hooks.add_node_started_hook(move |ctx| {
             let pool = ctx.pool().clone();
-            let cancel = CancellationToken::new();
             let events = BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
 
-            tokio::spawn(maintain_bundle_transactions(pool, events, cancel, current_block_number));
+            tokio::spawn(maintain_bundle_transactions(pool, events, current_block_number));
             info!("Bundle maintenance task spawned");
             Ok(())
         })
