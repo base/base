@@ -88,11 +88,8 @@ impl Frame {
         writer: &mut (impl AsyncWriteExt + Unpin),
         data: &[u8],
     ) -> TransportResult<()> {
-        let mut offset = 0;
-        while offset < data.len() {
-            let end = (offset + MAX_WRITE_SIZE).min(data.len());
-            writer.write_all(&data[offset..end]).await?;
-            offset = end;
+        for chunk in data.chunks(MAX_WRITE_SIZE) {
+            writer.write_all(chunk).await?;
         }
         Ok(())
     }
