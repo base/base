@@ -139,6 +139,7 @@ jobs:
           filters: |
             docker:
               - 'etc/docker/Dockerfile.*'
+              - 'etc/docker/docker-bake.hcl'
               - '.dockerignore'
 
   docker:
@@ -170,12 +171,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Docker image
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
-        with:
-          context: .
-          file: etc/docker/Dockerfile.client
-          push: false
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/node-reth-dev:cache-linux-amd64
+        run: |
+          docker buildx bake -f etc/docker/docker-bake.hcl client-ci --load
 
   bench:
     name: Benchmarks

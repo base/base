@@ -125,7 +125,7 @@ _(Note: Replace `[OPTIONS]` with the necessary configuration flags for your setu
 ### 1. Build the Docker Image
 
 ```bash
-docker build -t base-reth-node -f etc/docker/Dockerfile.client .
+docker build -t base-reth-node -f etc/docker/Dockerfile.rust-services --target client .
 ```
 
 ### 2. Run the Docker Container

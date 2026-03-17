@@ -51,29 +51,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5.9.0
-        with:
-          images: ${{ env.REGISTRY_IMAGE }}
-
       - name: Build and push Docker image
-        id: build
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
-        with:
-          context: .
-          file: etc/docker/Dockerfile.client
-          tags: ${{ env.REGISTRY_IMAGE }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ matrix.settings.arch }}
-          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/node-reth-dev:cache-${{ env.PLATFORM_PAIR }}
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/node-reth-dev:cache-${{ env.PLATFORM_PAIR }},mode=max
+        run: |
+          docker buildx bake -f etc/docker/docker-bake.hcl client-publish \
+            --set client-publish.platforms=${{ matrix.settings.arch }} \
+            --set client-publish.output=type=image,push-by-digest=true,name-canonical=true,push=true \
+            --metadata-file ${{ runner.temp }}/client-metadata.json
 
       - name: Export digest
         run: |
           mkdir -p ${{ runner.temp }}/digests
-          digest="${{ steps.build.outputs.digest }}"
+          digest="$(jq -r '."containerimage.digest"' ${{ runner.temp }}/client-metadata.json)"
           touch "${{ runner.temp }}/digests/${digest#sha256:}"
 
       - name: Upload digest

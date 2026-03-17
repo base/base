@@ -4,11 +4,11 @@ This directory contains the Dockerfiles and Compose configuration for the Base n
 
 ## Dockerfiles
 
-`Dockerfile.client` builds the `base-reth-node` binary, the production Base execution client. This is the primary image used for running Base nodes and is what gets published to the container registry on releases.
-
-`Dockerfile.builder` builds the `base-builder` binary, an extended execution client with block building capabilities including flashblocks support. This is used by sequencers and block builders in the network.
+`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services. It provides `client`, `builder`, `consensus`, `proposer`, `websocket-proxy`, `ingress-rpc`, and `audit-archiver` targets.
 
 `Dockerfile.devnet` builds a utility image containing genesis generation tools (`eth-genesis-state-generator`, `eth2-val-tools`, `op-deployer`) and setup scripts. This image bootstraps L1 and L2 chain configurations for local development.
+
+`Dockerfile.enclave` and `Dockerfile.proxyd` remain separate because they have different toolchains and runtime requirements.
 
 ## Docker Compose
 
@@ -35,7 +35,13 @@ just devnet status # Check block numbers and sync status
 To build the client image directly:
 
 ```bash
-docker build -t base-reth-node -f etc/docker/Dockerfile.client .
+docker buildx bake -f etc/docker/docker-bake.hcl client --load
+```
+
+Plain `docker build` still works if you prefer it:
+
+```bash
+docker build -t base-reth-node -f etc/docker/Dockerfile.rust-services --target client .
 ```
 
 To run the compose stack manually:
