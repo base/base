@@ -10,7 +10,7 @@ mod balance;
 pub use balance::{BALANCE_POLL_INTERVAL, balance_monitor};
 
 mod cli;
-pub use cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, RpcServerArgs};
+pub use cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, RpcServerArgs, SignerCli, TxManagerCli};
 
 mod config;
 pub use config::{ConfigError, ProposerConfig, RpcServerConfig};
