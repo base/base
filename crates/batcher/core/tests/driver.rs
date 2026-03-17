@@ -523,7 +523,7 @@ fn test_no_safe_head_receiver_driver_runs_normally() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        pipeline.submissions.push_back(SubmissionStub::new());
+        pipeline.submissions.push_back(SubmissionStub::stub());
 
         // No .with_safe_head_rx() — safe_head remains None.
         let driver =
@@ -709,7 +709,7 @@ fn test_drain_timeout_exits_with_in_flight_submissions() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        pipeline.submissions.push_back(SubmissionStub::new());
+        pipeline.submissions.push_back(SubmissionStub::stub());
 
         let driver = DriverFixture::build(ctx.clone(), pipeline, NeverConfirmTxManager);
         let handle = ctx.spawn(driver.run());

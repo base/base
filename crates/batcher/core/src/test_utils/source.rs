@@ -36,6 +36,12 @@ impl OneBlockSource {
     }
 }
 
+impl Default for OneBlockSource {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl UnsafeBlockSource for OneBlockSource {
     async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {

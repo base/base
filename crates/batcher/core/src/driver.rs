@@ -316,7 +316,7 @@ mod tests {
         Runner::start(Config::seeded(0), |ctx| async move {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(SubmissionStub::new());
+            pipeline.submissions.push_back(SubmissionStub::stub());
 
             let handle = ctx.spawn(
                 DriverFixture::build(
@@ -346,7 +346,7 @@ mod tests {
         Runner::start(Config::seeded(0), |ctx| async move {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(SubmissionStub::new());
+            pipeline.submissions.push_back(SubmissionStub::stub());
 
             let handle = ctx
                 .spawn(DriverFixture::build(ctx.clone(), pipeline, ImmediateFailTxManager).run());

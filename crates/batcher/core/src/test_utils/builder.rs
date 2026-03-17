@@ -19,7 +19,7 @@ pub struct SubmissionStub;
 
 impl SubmissionStub {
     /// Returns a stub submission with id `0`.
-    pub fn new() -> BatchSubmission {
+    pub fn stub() -> BatchSubmission {
         Self::with_id(0)
     }
 
