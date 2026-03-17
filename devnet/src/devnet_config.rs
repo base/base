@@ -51,9 +51,6 @@ pub struct DevnetPorts {
     pub l2_client_cl_p2p: u16,
     /// L2 Client CL Metrics port
     pub l2_client_cl_metrics: u16,
-
-    /// Batcher Metrics port
-    pub batcher_metrics: u16,
 }
 
 impl DevnetPorts {
@@ -85,8 +82,6 @@ impl DevnetPorts {
             l2_client_cl_rpc: 8549,
             l2_client_cl_p2p: 8003,
             l2_client_cl_metrics: 8300,
-
-            batcher_metrics: 6060,
         }
     }
 }
