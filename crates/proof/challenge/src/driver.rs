@@ -250,16 +250,22 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
-        let multiplier =
-            invalid_index.checked_add(1).ok_or_else(|| eyre::eyre!("invalid_index overflow"))?;
-        let number_of_blocks_to_prove = candidate
+        // The prior intermediate root (or the game's starting root when
+        // invalid_index == 0) is a trusted anchor, so the ZK proof only
+        // needs to cover the single interval that contains the invalid
+        // checkpoint: [prior_checkpoint .. invalid_checkpoint].
+        let start_offset = candidate
             .intermediate_block_interval
-            .checked_mul(multiplier)
-            .ok_or_else(|| eyre::eyre!("number_of_blocks_to_prove overflow"))?;
+            .checked_mul(invalid_index)
+            .ok_or_else(|| eyre::eyre!("start_block_number offset overflow"))?;
+        let start_block_number = candidate
+            .starting_block_number
+            .checked_add(start_offset)
+            .ok_or_else(|| eyre::eyre!("start_block_number overflow"))?;
 
         let request = ProveBlockRequest {
-            start_block_number: candidate.starting_block_number,
-            number_of_blocks_to_prove,
+            start_block_number,
+            number_of_blocks_to_prove: candidate.intermediate_block_interval,
             sequence_window: None,
             proof_type: ProofType::GenericZkvmClusterCompressed as i32,
         };
@@ -291,8 +297,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     ///   - On success → removes the entry.
     ///   - On failure → leaves the entry so it is retried next tick.
     async fn poll_or_submit(&mut self, game_address: Address) -> eyre::Result<()> {
-        let pending = match self.pending_proofs.get(&game_address) {
-            Some(p) => p.clone(),
+        let (invalid_index, expected_root) = match self.pending_proofs.get(&game_address) {
+            Some(p) => (p.invalid_index, p.expected_root),
             None => return Ok(()),
         };
 
@@ -337,12 +343,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         // ── Submit nullification ─────────────────────────────────────────
         match self
             .submitter
-            .submit_nullification(
-                game_address,
-                proof_bytes,
-                pending.invalid_index,
-                pending.expected_root,
-            )
+            .submit_nullification(game_address, proof_bytes, invalid_index, expected_root)
             .await
         {
             Ok(_) => {

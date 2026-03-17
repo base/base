@@ -141,10 +141,10 @@ impl ChallengerService {
         let driver =
             Driver::new(driver_config, scanner, validator, zk_client, submitter, verifier_client);
 
-        // The driver runs until its cancellation token (child of `cancel`) fires.
-        // The ready flag is set by the driver after the first successful step.
+        // Drop guard ensures child tasks are cancelled even if the driver panics.
+        let cancel_guard = cancel.clone().drop_guard();
         driver.run().await;
-        cancel.cancel(); // ensure all child tasks shut down
+        drop(cancel_guard);
 
         // ── 10. Graceful shutdown ────────────────────────────────────────────
         info!("Driver stopped, shutting down...");
