@@ -3,7 +3,7 @@
 use std::sync::{Arc, atomic::AtomicBool};
 
 use alloy_provider::{Provider, RootProvider};
-use base_tx_manager::{NoopTxMetrics, SimpleTxManager, TxManagerConfig};
+use base_tx_manager::{NoopTxMetrics, SimpleTxManager};
 use eyre::Result;
 use tracing::info;
 
@@ -60,7 +60,7 @@ impl ChallengerService {
         let tx_manager = SimpleTxManager::new(
             l1_provider,
             signer_config,
-            TxManagerConfig::default(),
+            config.tx_manager,
             chain_id,
             Arc::new(NoopTxMetrics),
         )

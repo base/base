@@ -14,6 +14,7 @@ use url::Url;
 base_cli_utils::define_log_args!("BASE_CHALLENGER");
 base_cli_utils::define_metrics_args!("BASE_CHALLENGER", 7310);
 base_tx_manager::define_signer_cli!("BASE_CHALLENGER");
+base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER");
 
 /// Challenger - ZK-proof dispute game challenger for Base.
 #[derive(Parser)]
@@ -105,6 +106,10 @@ pub struct ChallengerArgs {
     #[command(flatten)]
     pub signer: SignerCli,
 
+    /// Transaction manager configuration (fee limits, confirmations, timeouts).
+    #[command(flatten)]
+    pub tx_manager: TxManagerCli,
+
     /// Number of past games to scan on startup.
     #[arg(long = "lookback-games", env = "BASE_CHALLENGER_LOOKBACK_GAMES", default_value = "1000")]
     pub lookback_games: u64,
@@ -131,6 +136,7 @@ impl std::fmt::Debug for ChallengerArgs {
             .field("zk_connect_timeout", &self.zk_connect_timeout)
             .field("zk_request_timeout", &self.zk_request_timeout)
             .field("signer", &self.signer)
+            .field("tx_manager", &self.tx_manager)
             .field("lookback_games", &self.lookback_games)
             .field("health_addr", &self.health_addr)
             .field("health_port", &self.health_port)
