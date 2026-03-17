@@ -121,11 +121,6 @@ impl ChallengerService {
 
         let validator = OutputValidator::new(l2_client);
 
-        let driver_config =
-            DriverConfig { poll_interval: config.poll_interval, cancel: cancel.child_token() };
-        let driver =
-            Driver::new(driver_config, scanner, validator, zk_client, submitter, verifier_client);
-
         // ── 8. Start health HTTP server ──────────────────────────────────────
         let ready = Arc::new(AtomicBool::new(false));
         let health_handle = {
@@ -138,13 +133,16 @@ impl ChallengerService {
         };
 
         // ── 9. Run driver ────────────────────────────────────────────────────
-        ready.store(true, Ordering::SeqCst);
-        info!(
-            poll_interval = ?config.poll_interval,
-            "Service is ready"
-        );
+        let driver_config = DriverConfig {
+            poll_interval: config.poll_interval,
+            cancel: cancel.child_token(),
+            ready: Arc::clone(&ready),
+        };
+        let driver =
+            Driver::new(driver_config, scanner, validator, zk_client, submitter, verifier_client);
 
         // The driver runs until its cancellation token (child of `cancel`) fires.
+        // The ready flag is set by the driver after the first successful step.
         driver.run().await;
         cancel.cancel(); // ensure all child tasks shut down
 

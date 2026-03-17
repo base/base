@@ -4,7 +4,14 @@
 //! invalid dispute games, validating output roots, requesting ZK proofs, and
 //! submitting nullification transactions — into a single polling loop.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_contracts::AggregateVerifierClient;
@@ -47,7 +54,7 @@ pub struct PendingProof {
     /// Current phase of this proof lifecycle.
     pub phase: ProofPhase,
     /// The index of the invalid intermediate root.
-    pub invalid_index: usize,
+    pub invalid_index: u64,
     /// The expected correct root at that index.
     pub expected_root: B256,
 }
@@ -59,6 +66,8 @@ pub struct DriverConfig {
     pub poll_interval: Duration,
     /// Cancellation token for graceful shutdown.
     pub cancel: CancellationToken,
+    /// Shared flag flipped to `true` after the first successful driver step.
+    pub ready: Arc<AtomicBool>,
 }
 
 /// Orchestrates the challenger pipeline: scan, validate, prove, submit.
@@ -77,6 +86,7 @@ where
     pending_proofs: HashMap<Address, PendingProof>,
     poll_interval: Duration,
     cancel: CancellationToken,
+    ready: Arc<AtomicBool>,
     last_scanned: Option<u64>,
 }
 
@@ -109,6 +119,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             pending_proofs: HashMap::new(),
             poll_interval: config.poll_interval,
             cancel: config.cancel,
+            ready: config.ready,
             last_scanned: None,
         }
     }
@@ -116,14 +127,24 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     /// Runs the main driver loop until the cancellation token is fired.
     pub async fn run(mut self) {
         info!("challenger driver starting");
+        let mut signalled_ready = false;
         loop {
             if self.cancel.is_cancelled() {
                 info!("challenger driver shutting down");
                 break;
             }
 
-            if let Err(e) = self.step().await {
-                warn!(error = %e, "driver step failed");
+            match self.step().await {
+                Ok(()) => {
+                    if !signalled_ready {
+                        signalled_ready = true;
+                        self.ready.store(true, Ordering::SeqCst);
+                        info!("service is ready");
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "driver step failed");
+                }
             }
 
             metrics::gauge!(ChallengerMetrics::PENDING_PROOFS)
@@ -227,9 +248,10 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             return Ok(());
         }
 
-        let invalid_index = result
-            .invalid_intermediate_index
-            .ok_or_else(|| eyre::eyre!("invalid result missing invalid_intermediate_index"))?;
+        let invalid_index =
+            u64::try_from(result.invalid_intermediate_index.ok_or_else(|| {
+                eyre::eyre!("invalid result missing invalid_intermediate_index")
+            })?)?;
         let expected_root = result.expected_root;
 
         info!(
@@ -246,15 +268,13 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     async fn initiate_proof(
         &mut self,
         candidate: CandidateGame,
-        invalid_index: usize,
+        invalid_index: u64,
         expected_root: B256,
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
-        let multiplier = u64::try_from(invalid_index)
-            .ok()
-            .and_then(|i| i.checked_add(1))
-            .ok_or_else(|| eyre::eyre!("invalid_index overflow"))?;
+        let multiplier =
+            invalid_index.checked_add(1).ok_or_else(|| eyre::eyre!("invalid_index overflow"))?;
         let number_of_blocks_to_prove = candidate
             .intermediate_block_interval
             .checked_mul(multiplier)
@@ -389,8 +409,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             .submit_nullification(
                 game_address,
                 proof_bytes,
-                u64::try_from(pending.invalid_index)
-                    .map_err(|_| eyre::eyre!("invalid_index overflow"))?,
+                pending.invalid_index,
                 pending.expected_root,
             )
             .await
@@ -416,7 +435,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
 mod tests {
     use std::{
         collections::HashMap,
-        sync::{Arc, Mutex},
+        sync::{Arc, Mutex, atomic::AtomicBool},
     };
 
     use alloy_primitives::{Address, B256};
@@ -452,6 +471,7 @@ mod tests {
         let config = DriverConfig {
             poll_interval: Duration::from_millis(10),
             cancel: CancellationToken::new(),
+            ready: Arc::new(AtomicBool::new(false)),
         };
 
         Driver::new(
@@ -737,6 +757,7 @@ mod tests {
         let config = DriverConfig {
             poll_interval: Duration::from_millis(10),
             cancel: CancellationToken::new(),
+            ready: Arc::new(AtomicBool::new(false)),
         };
 
         let mut driver = Driver::new(
@@ -897,6 +918,7 @@ mod tests {
         let config = DriverConfig {
             poll_interval: Duration::from_secs(60), // long poll so it blocks
             cancel: cancel.clone(),
+            ready: Arc::new(AtomicBool::new(false)),
         };
 
         let driver = Driver::new(
