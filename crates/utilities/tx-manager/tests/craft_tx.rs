@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_consensus::{SignableTransaction, TxEip1559, TxEip4844Variant, TxEnvelope};
-use alloy_eips::{Decodable2718, eip4844::Blob};
+use alloy_eips::{Decodable2718, eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
 use alloy_network::{EthereumWallet, TxSigner};
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
@@ -214,10 +214,8 @@ async fn craft_tx_produces_valid_signed_blob_transaction() {
 }
 
 #[tokio::test]
-async fn craft_tx_produces_cell_proof_sidecar_when_enabled() {
-    let config =
-        TxManagerConfig { cell_proofs_activation_timestamp: 0, ..TxManagerConfig::default() };
-    let (manager, anvil) = setup_with_config(config).await;
+async fn craft_tx_produces_cell_proof_sidecar_by_default() {
+    let (manager, anvil) = setup().await;
 
     let to = Address::with_last_byte(0x42);
     let candidate =
@@ -226,9 +224,9 @@ async fn craft_tx_produces_cell_proof_sidecar_when_enabled() {
     let prepared =
         manager.craft_tx(&candidate, None).await.expect("should craft cell-proof blob tx");
 
-    // The cached sidecar must use the EIP-7594 (cell proofs) variant.
+    // The cached sidecar must use Osaka-era cell proofs.
     let sidecar = prepared.sidecar.as_ref().expect("sidecar should be Some for blob tx");
-    assert!(sidecar.is_eip7594(), "expected EIP-7594 cell-proof sidecar");
+    assert_eq!(sidecar.cell_proofs.len(), CELLS_PER_EXT_BLOB);
 
     // On the wire it is still EIP-4844 type — cell proofs are sidecar-internal.
     let envelope =

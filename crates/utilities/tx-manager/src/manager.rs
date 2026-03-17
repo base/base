@@ -41,7 +41,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7594::BlobTransactionSidecarVariant};
+use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7594::BlobTransactionSidecarEip7594};
 use alloy_network::{Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
@@ -91,7 +91,7 @@ pub struct PreparedTx {
     /// copy rather than a deep clone (~800 KB per blob). One deep clone per
     /// `craft_tx` call is unavoidable because alloy's
     /// `TransactionRequest::sidecar` requires an owned value.
-    pub sidecar: Option<Arc<BlobTransactionSidecarVariant>>,
+    pub sidecar: Option<Arc<BlobTransactionSidecarEip7594>>,
 }
 
 /// Mutable fee-bump state tracked across iterations in the send loop.
@@ -115,7 +115,7 @@ struct BumpState {
     nonce: u64,
     /// Cached blob sidecar. See [`PreparedTx::sidecar`] for rationale on
     /// the `Arc` wrapper.
-    sidecar: Option<Arc<BlobTransactionSidecarVariant>>,
+    sidecar: Option<Arc<BlobTransactionSidecarEip7594>>,
 }
 
 impl BumpState {
@@ -229,7 +229,7 @@ impl SimpleTxManager {
 
         let address = <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(&wallet);
         let nonce_manager = NonceManager::new(provider.clone(), address, config.network_timeout);
-        let blob_builder = BlobTxBuilder::new(config.cell_proofs_activation_timestamp);
+        let blob_builder = BlobTxBuilder::new();
         Ok(Self {
             provider,
             wallet,
@@ -384,7 +384,7 @@ impl SimpleTxManager {
         fee_overrides: Option<FeeOverride>,
         mut initial_caps: Option<GasPriceCaps>,
         nonce_override: Option<u64>,
-        cached_sidecar: Option<Arc<BlobTransactionSidecarVariant>>,
+        cached_sidecar: Option<Arc<BlobTransactionSidecarEip7594>>,
     ) -> TxManagerResult<PreparedTx> {
         (|| {
             let caps = initial_caps.take();
@@ -514,15 +514,12 @@ impl SimpleTxManager {
             None => (None, None),
         };
 
-        let block_timestamp = latest_block.header.timestamp;
-
         Ok(GasPriceCaps {
             gas_tip_cap: tip_cap,
             gas_fee_cap,
             raw_gas_fee_cap,
             blob_fee_cap,
             raw_blob_fee_cap,
-            block_timestamp,
         })
     }
 
@@ -665,7 +662,7 @@ impl SimpleTxManager {
         fee_overrides: Option<FeeOverride>,
         caps: Option<GasPriceCaps>,
         nonce_override: Option<u64>,
-        cached_sidecar: Option<Arc<BlobTransactionSidecarVariant>>,
+        cached_sidecar: Option<Arc<BlobTransactionSidecarEip7594>>,
     ) -> TxManagerResult<PreparedTx> {
         let is_blob = !candidate.blobs.is_empty();
 
@@ -749,33 +746,13 @@ impl SimpleTxManager {
         // Step 4b: Attach blob sidecar and blob-specific fields.
         //
         // Reuse a cached sidecar when available (fee bump iterations) to
-        // avoid recomputing KZG proofs from the same blob data. If the
-        // cached sidecar's proof variant no longer matches the current
-        // block timestamp (e.g. fork activation crossed mid-send-loop),
-        // discard it and rebuild.
+        // avoid recomputing KZG proofs from the same blob data.
         let built_sidecar = if is_blob {
-            let sidecar =
-                match cached_sidecar {
-                    Some(cached)
-                        if self.blob_builder.is_sidecar_valid(&cached, caps.block_timestamp) =>
-                    {
-                        cached
-                    }
-                    cached => {
-                        if let Some(ref stale) = cached {
-                            info!(
-                                block_timestamp = caps.block_timestamp,
-                                cached_is_eip7594 = stale.is_eip7594(),
-                                "cached sidecar proof type stale, rebuilding"
-                            );
-                        }
-                        Arc::new(self.blob_builder.make_sidecar_auto(
-                            Arc::clone(&candidate.blobs),
-                            caps.block_timestamp,
-                        )?)
-                    }
-                };
-            tx_request.sidecar = Some((*sidecar).clone());
+            let sidecar = match cached_sidecar {
+                Some(cached) => cached,
+                None => Arc::new(self.blob_builder.build_sidecar(Arc::clone(&candidate.blobs))?),
+            };
+            tx_request.sidecar = Some((*sidecar).clone().into());
             tx_request.populate_blob_hashes();
             tx_request.max_fee_per_blob_gas = blob_fee_cap;
             Some(sidecar)
@@ -1718,7 +1695,6 @@ mod tests {
             raw_gas_fee_cap: 15_000_000_000_000,
             blob_fee_cap: None,
             raw_blob_fee_cap: None,
-            block_timestamp: 0,
         };
 
         let prepared = manager

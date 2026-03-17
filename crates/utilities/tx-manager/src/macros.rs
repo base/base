@@ -8,8 +8,8 @@
 /// base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER_TX_MANAGER");
 /// ```
 ///
-/// The generated struct has twelve fields covering confirmations, fee limits,
-/// timeouts, and polling intervals. Each env-backed field uses
+/// The generated struct exposes confirmations, fee limits, timeouts, polling
+/// intervals, and blob fee controls. Each env-backed field uses
 /// `concat!($prefix, "_", "FIELD_NAME")` — e.g., with prefix
 /// `"BASE_CHALLENGER_TX_MANAGER"` the num-confirmations field reads from
 /// `BASE_CHALLENGER_TX_MANAGER_NUM_CONFIRMATIONS`.
@@ -162,15 +162,6 @@ macro_rules! define_tx_manager_cli {
             )]
             pub min_blob_fee_gwei: String,
 
-            /// Unix timestamp at or after which EIP-7594 cell proofs (128
-            /// proofs/blob) are used instead of legacy KZG proofs (1 proof/blob).
-            /// Set to the maximum u64 value to disable.
-            #[arg(
-                long = "tx-manager.cell-proofs-activation-timestamp",
-                env = concat!($prefix, "_", "CELL_PROOFS_ACTIVATION_TIMESTAMP"),
-                default_value_t = u64::MAX
-            )]
-            pub cell_proofs_activation_timestamp: u64,
         }
 
         impl Default for TxManagerCli {
@@ -206,7 +197,6 @@ macro_rules! define_tx_manager_cli {
                     tx_not_in_mempool_timeout: cli.tx_not_in_mempool_timeout,
                     confirmation_timeout: cli.confirmation_timeout,
                     min_blob_fee,
-                    cell_proofs_activation_timestamp: cli.cell_proofs_activation_timestamp,
                 };
                 config.validate()?;
                 Ok(config)
