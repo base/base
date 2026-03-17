@@ -290,6 +290,13 @@ where
             let flashblock_byte_size =
                 self.ws_pub.publish(&fb_payload).map_err(PayloadBuilderError::other)?;
             ctx.metrics.flashblock_byte_size_histogram.record(flashblock_byte_size as f64);
+            ctx.metrics
+                .first_flashblock_time_offset
+                .record(first_flashblock_offset.as_millis() as f64);
+            ctx.metrics
+                .reduced_flashblocks_number
+                .record(self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block)
+                    as f64);
         } else {
             info!(
                 target: "payload_builder",
@@ -315,11 +322,6 @@ where
                 "FCU arrived too late or system clock are unsynced, building 0 flashblocks",
             );
         }
-
-        ctx.metrics.first_flashblock_time_offset.record(first_flashblock_offset.as_millis() as f64);
-        ctx.metrics.reduced_flashblocks_number.record(
-            self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block) as f64,
-        );
 
         if skip_flashblocks_building {
             finalized_cell.set(payload);
