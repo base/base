@@ -23,7 +23,7 @@ pub enum TransportError {
 /// can be corrupted by the vsock transport layer. Splitting into 1 MiB chunks
 /// with per-chunk CRC32 checksums lets us detect corruption early and gives
 /// the underlying ring buffer time to drain between writes.
-const CHUNK_SIZE: usize = 1024 * 1024;
+const CHUNK_SIZE: usize = 256 * 1024;
 
 /// Length-prefixed, chunked bincode codec with per-chunk CRC32 integrity.
 ///
