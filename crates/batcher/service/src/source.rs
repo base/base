@@ -85,4 +85,8 @@ impl PollingSource for RpcPollingSource {
             .map_transactions(|t| t.inner.into_inner());
         Ok(block)
     }
+
+    fn reset_catchup(&self, start_from: u64) {
+        *self.next_sequential.lock().unwrap() = Some(start_from);
+    }
 }

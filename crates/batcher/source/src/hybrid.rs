@@ -126,6 +126,15 @@ where
     S: BlockSubscription,
     P: PollingSource,
 {
+    /// Reset the source for sequential catchup from `start_from`.
+    ///
+    /// Clears the dedup cache so historical blocks are not filtered as
+    /// duplicates, then delegates to the poller to begin sequential delivery.
+    fn reset_catchup(&mut self, start_from: u64) {
+        self.seen.clear();
+        self.poller.reset_catchup(start_from);
+    }
+
     async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
         loop {
             tokio::select! {

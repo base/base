@@ -245,9 +245,15 @@ where
     /// Block on the next external event using a biased `tokio::select!`.
     ///
     /// Admin commands are handled inline in the loop — only non-admin events
-    /// are returned to the caller. When paused via [`AdminCommand::Pause`],
-    /// the source arm still fires but `Block`, `Flush`, and `Reorg` events are
-    /// silently discarded; source errors and exhaustion are still propagated.
+    /// are returned to the caller. Admin commands are placed before the source
+    /// arm so control-plane operations (pause, resume, flush) are never starved
+    /// by sustained block throughput.
+    ///
+    /// [`AdminCommand::Pause`] immediately discards in-flight submissions and
+    /// resets the pipeline, then drops `Block` and `Flush` source events until
+    /// [`AdminCommand::Resume`] is received. Reorg events propagate regardless
+    /// of pause state. On resume the source is reset to catch up sequentially
+    /// from the last known safe L2 head.
     ///
     /// Non-fatal L1 head source errors loop internally to avoid polluting the
     /// return type with a no-op variant.
@@ -258,29 +264,29 @@ where
 
                 _ = self.runtime.cancelled() => DriverEvent::Shutdown,
 
-                event = self.source.next() => match event {
-                    Ok(L2BlockEvent::Block(_) | L2BlockEvent::Flush | L2BlockEvent::Reorg { .. })
-                        if self.paused =>
-                    {
-                        continue;
-                    }
-                    Ok(L2BlockEvent::Block(block)) => DriverEvent::Block(block),
-                    Ok(L2BlockEvent::Flush) => DriverEvent::Flush,
-                    Ok(L2BlockEvent::Reorg { new_safe_head }) => DriverEvent::Reorg(new_safe_head),
-                    Err(SourceError::Exhausted) => DriverEvent::Shutdown,
-                    Err(e) => return Err(e.into()),
-                },
-
                 cmd = Self::next_admin_cmd(&mut self.admin_rx) => {
                     match cmd {
                         AdminCommand::Flush => return Ok(DriverEvent::Flush),
                         AdminCommand::Pause => {
+                            self.submissions.discard();
+                            self.pipeline.reset();
                             self.paused = true;
                             info!(paused = true, "batcher paused via admin");
                         }
                         AdminCommand::Resume => {
+                            let safe_head =
+                                self.safe_head_rx.as_ref().map(|rx| *rx.borrow());
+                            if let Some(n) = safe_head {
+                                self.source.reset_catchup(n + 1);
+                                info!(
+                                    paused = false,
+                                    catchup_from = %(n + 1),
+                                    "batcher resumed via admin, catching up from safe head"
+                                );
+                            } else {
+                                info!(paused = false, "batcher resumed via admin");
+                            }
                             self.paused = false;
-                            info!(paused = false, "batcher resumed via admin");
                         }
                         AdminCommand::SetThrottle { strategy, config } => {
                             self.throttle.set_controller(
@@ -308,6 +314,17 @@ where
                     // All commands except Flush loop to await the next real event.
                     continue;
                 }
+
+                event = self.source.next() => match event {
+                    Ok(L2BlockEvent::Block(_) | L2BlockEvent::Flush) if self.paused => {
+                        continue;
+                    }
+                    Ok(L2BlockEvent::Block(block)) => DriverEvent::Block(block),
+                    Ok(L2BlockEvent::Flush) => DriverEvent::Flush,
+                    Ok(L2BlockEvent::Reorg { new_safe_head }) => DriverEvent::Reorg(new_safe_head),
+                    Err(SourceError::Exhausted) => DriverEvent::Shutdown,
+                    Err(e) => return Err(e.into()),
+                },
 
                 Some((id, outcome)) = self.submissions.next_settled() => {
                     DriverEvent::Receipt(id, outcome)
