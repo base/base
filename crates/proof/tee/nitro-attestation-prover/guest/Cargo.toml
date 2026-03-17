@@ -1,0 +1,10 @@
+[workspace]
+
+[package]
+name = "base-nitro-verifier-guest"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+risc0-zkvm = { version = "^3.0", default-features = false, features = ["std"] }
+base-proof-tee-nitro-verifier = { path = "../../nitro-verifier" }
