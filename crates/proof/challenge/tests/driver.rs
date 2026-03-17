@@ -9,7 +9,7 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
     ChallengeSubmitter, Driver, DriverConfig, GameScanner, OutputValidator, PendingProof,
-    ScannerConfig,
+    ProofPhase, ScannerConfig,
     test_utils::{
         MockAggregateVerifier, MockDisputeGameFactory, MockGameState, MockL2Provider,
         MockTxManager, MockZkProofProvider, addr, build_test_header_and_account, factory_game,
@@ -19,7 +19,7 @@ use base_challenger::{
 use base_enclave::output_root_v0;
 use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex};
 use base_tx_manager::TxManagerError;
-use base_zk_client::ProofJobStatus;
+use base_zk_client::{ProofJobStatus, ProofType, ProveBlockRequest};
 use tokio_util::sync::CancellationToken;
 
 /// Builds a test driver with the given mocks.
@@ -64,6 +64,15 @@ fn default_zk_prover() -> Arc<MockZkProofProvider> {
 
 fn default_tx_manager() -> MockTxManager {
     MockTxManager::new(Ok(receipt_with_status(true, B256::repeat_byte(0xAA))))
+}
+
+const fn default_prove_request() -> ProveBlockRequest {
+    ProveBlockRequest {
+        start_block_number: 15,
+        number_of_blocks_to_prove: 5,
+        sequence_window: None,
+        proof_type: ProofType::GenericZkvmClusterCompressed as i32,
+    }
 }
 
 /// Builds the common L2, factory, and verifier mocks for an invalid-game
@@ -114,7 +123,12 @@ fn driver_with_ready_proof(
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
     driver.pending_proofs.insert(
         addr(0),
-        PendingProof::ready(Bytes::from_static(&[0x01, 0xDE, 0xAD]), 1, B256::repeat_byte(0xEE)),
+        PendingProof::ready(
+            Bytes::from_static(&[0x01, 0xDE, 0xAD]),
+            1,
+            B256::repeat_byte(0xEE),
+            default_prove_request(),
+        ),
     );
     driver
 }
@@ -235,7 +249,7 @@ async fn test_step_invalid_game_proof_succeeded() {
 
 #[tokio::test]
 async fn test_step_invalid_game_proof_failed() {
-    // ZK prover returns Failed → no nullification submitted.
+    // ZK prover returns Failed → entry retained and re-initiated with retry_count == 1.
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let zk = Arc::new(MockZkProofProvider {
@@ -249,8 +263,17 @@ async fn test_step_invalid_game_proof_failed() {
 
     let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
 
-    // step succeeds — proof failure is logged but not an error
+    // step succeeds — proof failure triggers re-initiation via handle_proof_retry
     driver.step().await.unwrap();
+
+    // Entry should be retained in AwaitingProof phase (re-initiated) with retry_count == 1.
+    let entry =
+        driver.pending_proofs.get(&addr(0)).expect("entry should be retained after failure");
+    assert!(
+        matches!(entry.phase, ProofPhase::AwaitingProof { .. }),
+        "phase should be AwaitingProof after re-initiation"
+    );
+    assert_eq!(entry.retry_count, 1);
 }
 
 #[tokio::test]
@@ -485,4 +508,77 @@ async fn test_run_cancellation() {
     tokio::time::timeout(Duration::from_secs(2), driver.run())
         .await
         .expect("driver.run() should exit promptly after cancellation");
+}
+
+#[tokio::test]
+async fn test_step_proof_retry_succeeds() {
+    // Proof fails on first tick (NeedsRetry), then re-initiated prove_block
+    // returns a new session. On the next tick the proof succeeds and
+    // nullification is submitted.
+    let (l2, factory, verifier) = invalid_game_mocks();
+
+    let zk = Arc::new(MockZkProofProvider {
+        session_id: "retry-session".to_string(),
+        proof_status: Mutex::new(ProofJobStatus::Failed as i32),
+        receipt: Mutex::new(vec![0xBE, 0xEF]),
+    });
+
+    let tx_hash = B256::repeat_byte(0xDD);
+    let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
+
+    let mut driver = test_driver(factory, verifier, l2, Arc::clone(&zk), tx_manager);
+
+    // Step 1: proof initiated then immediately fails → NeedsRetry.
+    // Then handle_proof_retry re-initiates prove_block → AwaitingProof.
+    driver.step().await.unwrap();
+    let entry = driver.pending_proofs.get(&addr(0)).expect("entry should exist");
+    assert!(
+        matches!(entry.phase, ProofPhase::AwaitingProof { .. }),
+        "phase should be AwaitingProof after retry re-initiation"
+    );
+    assert_eq!(entry.retry_count, 1);
+
+    // Simulate proof succeeding on the retry session.
+    *zk.proof_status.lock().unwrap() = ProofJobStatus::Succeeded as i32;
+
+    // Step 2: proof succeeds, nullification submitted, entry removed.
+    driver.step().await.unwrap();
+    assert!(
+        !driver.pending_proofs.contains_key(&addr(0)),
+        "entry should be removed after successful nullification"
+    );
+}
+
+#[tokio::test]
+async fn test_step_proof_exceeds_max_retries() {
+    // Proof keeps failing → entry dropped after MAX_PROOF_RETRIES + 1 failures.
+    let (l2, factory, verifier) = invalid_game_mocks();
+
+    let zk = Arc::new(MockZkProofProvider {
+        session_id: "fail-forever".to_string(),
+        proof_status: Mutex::new(ProofJobStatus::Failed as i32),
+        receipt: Mutex::new(vec![]),
+    });
+
+    let tx_manager = default_tx_manager();
+    let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
+
+    // Each step: poll returns Failed → NeedsRetry (retry_count increments),
+    // then handle_proof_retry re-initiates → AwaitingProof.
+    // After MAX_PROOF_RETRIES + 1 total failures the entry is dropped.
+    let max_retries =
+        Driver::<MockL2Provider, MockZkProofProvider, MockTxManager>::MAX_PROOF_RETRIES;
+    for i in 0..max_retries {
+        driver.step().await.unwrap();
+        let entry = driver.pending_proofs.get(&addr(0)).expect("entry should exist during retries");
+        assert_eq!(entry.retry_count, i + 1);
+    }
+
+    // One more step: poll returns Failed → retry_count becomes max_retries + 1,
+    // handle_proof_retry sees retry_count > MAX_PROOF_RETRIES and drops the entry.
+    driver.step().await.unwrap();
+    assert!(
+        !driver.pending_proofs.contains_key(&addr(0)),
+        "entry should be dropped after exceeding max retries"
+    );
 }

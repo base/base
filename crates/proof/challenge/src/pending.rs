@@ -2,18 +2,21 @@
 //!
 //! [`PendingProofs`] tracks in-flight ZK proof sessions keyed by dispute-game
 //! address. Each entry moves through a [`ProofPhase`] lifecycle:
-//! `AwaitingProof` → `ReadyToSubmit` (on success) or removal (on failure).
+//! `AwaitingProof` → `ReadyToSubmit` (on success) or `NeedsRetry` (on failure).
 
 use std::collections::HashMap;
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_zk_client::{GetProofRequest, ProofJobStatus, ReceiptType, ZkProofProvider};
+use base_zk_client::{
+    GetProofRequest, ProofJobStatus, ProveBlockRequest, ReceiptType, ZkProofProvider,
+};
+use tracing::warn;
 
 /// Proof type byte for ZK proofs (matches `AggregateVerifier.nullify` discriminator: `0` = TEE, `1` = ZK).
 const ZK_PROOF_TYPE_BYTE: u8 = 0x01;
 
-/// Phase of a pending proof: either awaiting the ZK service or ready for
-/// on-chain submission.
+/// Phase of a pending proof: awaiting the ZK service, ready for on-chain
+/// submission, or waiting for a retry after failure.
 #[derive(Debug, Clone)]
 pub enum ProofPhase {
     /// Waiting for the ZK proof service to complete.
@@ -26,6 +29,8 @@ pub enum ProofPhase {
         /// Type-prefixed proof receipt bytes.
         proof_bytes: Bytes,
     },
+    /// Proof job failed — the driver should re-initiate `prove_block`.
+    NeedsRetry,
 }
 
 /// State for an in-flight proof session.
@@ -37,17 +42,43 @@ pub struct PendingProof {
     pub invalid_index: u64,
     /// The expected correct root at that index.
     pub expected_root: B256,
+    /// Original request parameters, stored so the driver can re-initiate on failure.
+    pub prove_request: ProveBlockRequest,
+    /// Number of times this proof has been retried after failure.
+    pub retry_count: u32,
 }
 
 impl PendingProof {
     /// Creates a new `PendingProof` in the `AwaitingProof` phase.
-    pub const fn awaiting(session_id: String, invalid_index: u64, expected_root: B256) -> Self {
-        Self { phase: ProofPhase::AwaitingProof { session_id }, invalid_index, expected_root }
+    pub const fn awaiting(
+        session_id: String,
+        invalid_index: u64,
+        expected_root: B256,
+        prove_request: ProveBlockRequest,
+    ) -> Self {
+        Self {
+            phase: ProofPhase::AwaitingProof { session_id },
+            invalid_index,
+            expected_root,
+            prove_request,
+            retry_count: 0,
+        }
     }
 
     /// Creates a new `PendingProof` in the `ReadyToSubmit` phase.
-    pub const fn ready(proof_bytes: Bytes, invalid_index: u64, expected_root: B256) -> Self {
-        Self { phase: ProofPhase::ReadyToSubmit { proof_bytes }, invalid_index, expected_root }
+    pub const fn ready(
+        proof_bytes: Bytes,
+        invalid_index: u64,
+        expected_root: B256,
+        prove_request: ProveBlockRequest,
+    ) -> Self {
+        Self {
+            phase: ProofPhase::ReadyToSubmit { proof_bytes },
+            invalid_index,
+            expected_root,
+            prove_request,
+            retry_count: 0,
+        }
     }
 
     /// Returns the session ID if the proof is in the `AwaitingProof` phase.
@@ -97,6 +128,11 @@ impl PendingProofs {
         self.0.get(game)
     }
 
+    /// Returns a mutable reference to the pending proof for the given game address.
+    pub fn get_mut(&mut self, game: &Address) -> Option<&mut PendingProof> {
+        self.0.get_mut(game)
+    }
+
     /// Returns `true` if there is a pending proof for the given game address.
     pub fn contains_key(&self, game: &Address) -> bool {
         self.0.contains_key(game)
@@ -122,6 +158,8 @@ impl PendingProofs {
     /// - **`AwaitingProof`** — sends a `GetProofRequest` to the ZK service
     ///   and transitions the entry based on the response status.
     /// - **`ReadyToSubmit`** — returns [`ProofUpdate::Ready`] immediately.
+    /// - **`NeedsRetry`** — returns [`ProofUpdate::NeedsRetry`] immediately
+    ///   so the driver can re-initiate `prove_block`.
     ///
     /// Returns `Ok(None)` when `game` has no entry in the collection.
     pub async fn poll<P: ZkProofProvider>(
@@ -139,16 +177,21 @@ impl PendingProofs {
             ProofPhase::ReadyToSubmit { proof_bytes } => {
                 return Ok(Some(ProofUpdate::Ready(proof_bytes.clone())));
             }
+            ProofPhase::NeedsRetry => {
+                return Ok(Some(ProofUpdate::NeedsRetry));
+            }
         };
 
         let request = GetProofRequest { session_id, receipt_type: Some(ReceiptType::Snark as i32) };
 
         let response = zk_prover.get_proof(request).await?;
-        let status =
-            ProofJobStatus::try_from(response.status).unwrap_or(ProofJobStatus::Unspecified);
+        let status = ProofJobStatus::try_from(response.status).unwrap_or_else(|_| {
+            warn!(raw_status = response.status, game = %game, "unrecognized proof job status");
+            ProofJobStatus::Unspecified
+        });
 
         // Re-borrow after the await point.
-        let pending = match self.0.get(&game) {
+        let pending = match self.0.get_mut(&game) {
             Some(p) => p,
             None => return Ok(None),
         };
@@ -160,18 +203,14 @@ impl PendingProofs {
                 raw.extend_from_slice(&response.receipt);
                 let proof_bytes = Bytes::from(raw);
 
-                let updated = PendingProof::ready(
-                    proof_bytes.clone(),
-                    pending.invalid_index,
-                    pending.expected_root,
-                );
-                self.0.insert(game, updated);
+                pending.phase = ProofPhase::ReadyToSubmit { proof_bytes: proof_bytes.clone() };
 
                 ProofUpdate::Ready(proof_bytes)
             }
             ProofJobStatus::Failed => {
-                self.0.remove(&game);
-                ProofUpdate::Failed
+                pending.retry_count += 1;
+                pending.phase = ProofPhase::NeedsRetry;
+                ProofUpdate::NeedsRetry
             }
             _ => ProofUpdate::Pending,
         };
@@ -185,8 +224,8 @@ impl PendingProofs {
 pub enum ProofUpdate {
     /// The proof succeeded — type-prefixed bytes are ready for submission.
     Ready(Bytes),
-    /// The proof job failed and the entry was removed.
-    Failed,
+    /// The proof job failed — the entry is retained for retry.
+    NeedsRetry,
     /// The proof is still in progress.
     Pending,
 }

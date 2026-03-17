@@ -23,8 +23,8 @@ use tracing::{debug, info, warn};
 
 use crate::{
     CandidateGame, ChallengeSubmitter, ChallengerMetrics, GameScanner,
-    IntermediateValidationParams, OutputValidator, PendingProof, PendingProofs, ProofUpdate,
-    ValidatorError,
+    IntermediateValidationParams, OutputValidator, PendingProof, PendingProofs, ProofPhase,
+    ProofUpdate, ValidatorError,
 };
 
 /// Configuration for the challenger [`Driver`].
@@ -78,6 +78,9 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> std::fmt::Debug for Drive
 }
 
 impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
+    /// Maximum number of times a failed proof job will be retried before being dropped.
+    pub const MAX_PROOF_RETRIES: u32 = 3;
+
     /// Creates a new driver with the given components.
     pub fn new(
         config: DriverConfig,
@@ -279,7 +282,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             "proof job initiated"
         );
 
-        let pending = PendingProof::awaiting(session_id, invalid_index, expected_root);
+        let pending = PendingProof::awaiting(session_id, invalid_index, expected_root, request);
         self.pending_proofs.insert(game_address, pending);
 
         if let Err(e) = self.poll_or_submit(game_address).await {
@@ -294,12 +297,15 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     /// - **`AwaitingProof`** — polls the ZK service:
     ///   - `Succeeded` → transitions to `ReadyToSubmit` and falls through to
     ///     submission.
-    ///   - `Failed` → removes the entry so a fresh `prove_block` is issued
-    ///     next cycle.
+    ///   - `Failed` → transitions to `NeedsRetry` so `prove_block` is
+    ///     re-initiated.
     ///   - Intermediate (`Created`/`Pending`/`Running`) → returns early.
     /// - **`ReadyToSubmit`** — submits the nullification tx:
     ///   - On success → removes the entry.
     ///   - On failure → leaves the entry so it is retried next tick.
+    /// - **`NeedsRetry`** — re-initiates `prove_block`:
+    ///   - If `retry_count > MAX_PROOF_RETRIES` → drops the entry.
+    ///   - Otherwise → calls `prove_block` and transitions to `AwaitingProof`.
     async fn poll_or_submit(&mut self, game_address: Address) -> eyre::Result<()> {
         let (invalid_index, expected_root) = match self.pending_proofs.get(&game_address) {
             Some(p) => (p.invalid_index, p.expected_root),
@@ -333,9 +339,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                 );
                 proof_bytes
             }
-            Some(ProofUpdate::Failed) => {
-                warn!(game = %game_address, "proof job failed, will retry next tick");
-                return Ok(());
+            Some(ProofUpdate::NeedsRetry) => {
+                return self.handle_proof_retry(game_address).await;
             }
             Some(ProofUpdate::Pending) => {
                 debug!(game = %game_address, "proof not ready, will retry next tick");
@@ -360,6 +365,58 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                     "nullification tx failed, will retry next tick"
                 );
                 // Leave entry as ReadyToSubmit for retry.
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handles a proof that needs retrying after failure.
+    ///
+    /// If retries are exhausted the entry is dropped; otherwise `prove_block`
+    /// is called and the phase transitions back to `AwaitingProof`.
+    async fn handle_proof_retry(&mut self, game_address: Address) -> eyre::Result<()> {
+        let pending = match self.pending_proofs.get(&game_address) {
+            Some(p) => p,
+            None => return Ok(()),
+        };
+
+        let retry_count = pending.retry_count;
+
+        if retry_count > Self::MAX_PROOF_RETRIES {
+            warn!(
+                game = %game_address,
+                retry_count = retry_count,
+                "proof retries exhausted, dropping entry"
+            );
+            self.pending_proofs.remove(&game_address);
+            return Ok(());
+        }
+
+        let request = pending.prove_request;
+
+        metrics::counter!(ChallengerMetrics::PROOF_RETRIES_TOTAL).increment(1);
+
+        match self.zk_prover.prove_block(request).await {
+            Ok(response) => {
+                info!(
+                    game = %game_address,
+                    session_id = %response.session_id,
+                    retry_count = retry_count,
+                    "proof job re-initiated"
+                );
+                if let Some(p) = self.pending_proofs.get_mut(&game_address) {
+                    p.phase = ProofPhase::AwaitingProof { session_id: response.session_id };
+                }
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    game = %game_address,
+                    retry_count = retry_count,
+                    "prove_block failed on retry, will retry next tick"
+                );
+                // Leave as NeedsRetry for next tick.
             }
         }
 
