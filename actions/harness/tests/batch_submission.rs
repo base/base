@@ -71,17 +71,24 @@ async fn batcher_errors_when_no_l2_blocks_async() {
 // Batcher: L1 reorg during submission
 // ---------------------------------------------------------------------------
 
-/// An L1 reorg discards a block containing batcher submissions and truncates
-/// the canonical chain. After recovery — creating a new `Batcher` and
-/// resubmitting the same L2 data on the new fork — the verifier re-derives
-/// the L2 block and advances safe head back to 1.
+/// An L1 reorg fires failure receipts for frames that were staged but not yet
+/// confirmed, causing the [`BatchDriver`] to requeue them in the encoder
+/// pipeline and resubmit on the new fork — **without creating a new
+/// [`Batcher`]**.
 ///
-/// Note: in this test the reorg is called after `confirm_staged` has already
-/// drained all staged items, so `reorg_to` fires zero failure receipts. The
-/// test covers L1 chain truncation and re-derivation on a new fork. A test that
-/// exercises the failure-receipt path (reorg called while items are still in
-/// `staged`) would require calling `reorg` between `stage_n_frames` and
-/// `confirm_staged`.
+/// Sequence:
+/// 1. Encode and stage all frames; mine L1 block 1 (original).
+/// 2. Reorg to genesis **before** calling `confirm_staged` — frames are still
+///    in `staged`, so `reorg_to` fires `Err(TxManagerError::Rpc("reorg"))` on
+///    each oneshot responder.
+/// 3. The driver processes each `Receipt(id, Failed)` → `pipeline.requeue(id)`
+///    rewinds the encoder channel cursor. On the next loop iteration, the driver
+///    calls `submit_pending()` → `send_async()` and the frames are back in the
+///    `L1MinerTxManager` pending queue.
+/// 4. The same batcher stages the requeued frames and mines a new L1 block on
+///    the new fork. The verifier re-derives L2 block 1 from this block.
+///
+/// [`BatchDriver`]: base_batcher_core::BatchDriver
 #[tokio::test]
 async fn batcher_reorg_during_submission() {
     let batcher_cfg = BatcherConfig {
@@ -96,95 +103,68 @@ async fn batcher_reorg_during_submission() {
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let block = sequencer.build_next_block().expect("build L2 block 1");
 
-    // Create a verifier sharing the sequencer's block-hash registry.
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    // Batcher: encode + stage + mine L1 block 1.
+    // Encode and stage all frames; mine L1 block 1 (original).
+    // Do NOT call confirm_staged — frames remain in `staged` so the reorg
+    // below fires failure receipts for them.
     let mut source = ActionL2Source::new();
-    source.push(block.clone());
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    source.push(block);
+    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
     batcher.encode_only().await.expect("encode");
     batcher.stage_n_frames(&mut h.l1, usize::MAX);
-    let block_1_num = h.l1.mine_block().number();
+    h.l1.mine_block(); // L1 block 1 (original, about to be reorged)
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(block_1_num).await;
 
-    // Derive through the verifier: safe head should advance to 1.
-    verifier.initialize().await.expect("initialize");
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
-    verifier.act_l2_pipeline_full().await.expect("step block 1");
-    assert_eq!(
-        verifier.l2_safe().block_info.number,
-        1,
-        "safe head should be 1 after initial submission"
-    );
-
-    // --- L1 reorg back to genesis ---
+    // --- L1 reorg back to genesis (frames still in staged) ---
+    // reorg_to fires Err(TxManagerError::Rpc("reorg")) for every staged item
+    // and sends L1HeadEvent::NewHead(0). The driver's select! loop processes
+    // each Receipt(id, Failed) → pipeline.requeue(id), rewinding the channel
+    // cursor without re-encoding.
     batcher.reorg(0, &mut h.l1);
-    // Give the driver several scheduling turns to process the L1HeadEvent::NewHead(0)
-    // that reorg() sends via the l1_head channel. The reorg fires 0 failure receipts
-    // here (pending and staged are both empty after confirm_staged), so the driver
-    // only needs to process the head event. A single yield suffices on a
-    // current_thread runtime; the extra yields guard against any scheduling races
-    // when running under other executor configurations.
-    for _ in 0..5 {
+    // Yield to let the driver work through two loop iterations:
+    //   iteration 1: next_event() picks up Receipt(id, Failed) per frame → requeue
+    //   iteration 2: submit_pending() calls send_async() for requeued frames
+    //                → frames are back in L1MinerTxManager::pending
+    for _ in 0..10 {
         tokio::task::yield_now().await;
     }
 
-    // Mine an empty replacement block on the new fork. This gives the pipeline
-    // an L1 block to advance to after reset — without it the pipeline loops
-    // infinitely between AdvancedOrigin (at genesis, resetting no_progress)
-    // and NotEnoughData (trying to fetch the now-missing old block 1).
+    // Verify the driver actually requeued the frames before we try to stage them.
+    assert!(
+        batcher.pending_count() > 0,
+        "driver must have requeued frames after reorg; pending queue is empty"
+    );
+
+    // Mine an empty replacement block on the new fork, then resubmit the
+    // requeued frames using the same Batcher (no drop/recreate required).
     h.l1.mine_block(); // block 1' (empty, on new fork)
-    let l1_block_1_prime = block_info_from(h.l1.tip());
     chain.truncate_to(0);
     chain.push(h.l1.tip().clone());
 
-    // Reset the verifier pipeline to genesis.
-    let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis"));
-    let l2_genesis = h.l2_genesis();
-    let genesis_sys_cfg = h.rollup_config.genesis.system_config.unwrap_or_default();
-    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset");
-    // Drain the reset origin (genesis has no batch data).
-    let genesis_derived = verifier.act_l2_pipeline_full().await.expect("drain genesis after reset");
-    assert_eq!(genesis_derived, 0, "genesis drain after reset must derive no L2 blocks");
+    batcher.stage_n_frames(&mut h.l1, usize::MAX);
+    let recovery_num = h.l1.mine_block().number();
+    chain.push(h.l1.tip().clone());
+    batcher.confirm_staged(recovery_num).await;
 
-    // Step over the empty block 1' — nothing derived.
-    verifier.act_l1_head_signal(l1_block_1_prime).await.expect("signal empty block 1'");
+    // Verify the verifier re-derives L2 block 1 from the new-fork submission.
+    verifier.initialize().await.expect("initialize");
+
+    let blk_1_prime = block_info_from(h.l1.block_by_number(1).expect("block 1'"));
+    verifier.act_l1_head_signal(blk_1_prime).await.expect("signal empty block 1'");
     let empty = verifier.act_l2_pipeline_full().await.expect("step empty block 1'");
     assert_eq!(empty, 0, "empty block 1' has no batch data");
-    assert_eq!(
-        verifier.l2_safe().block_info.number,
-        0,
-        "safe head should revert to genesis after reorg"
-    );
 
-    // --- Recovery: new Batcher resubmits on the new fork ---
-    // Drop the old batcher before creating batcher2. `Drop` cancels the token
-    // and calls `JoinHandle::abort()`, which *schedules* the abort but does not
-    // await it. On a current_thread runtime the old task is only actually polled
-    // to completion on the next yield inside batcher2's encode_only(). This is
-    // safe because batcher2 constructs a fresh L1MinerTxManager (new Arc), so
-    // there is no shared mutable state between the two driver tasks.
-    drop(batcher);
-    let mut source2 = ActionL2Source::new();
-    source2.push(block);
-    let mut batcher2 = Batcher::new(source2, &h.rollup_config, batcher_cfg);
-    batcher2.advance(&mut h.l1).await.expect("recovery advance");
-    chain.push(h.l1.tip().clone());
-
-    let recovery_block =
-        block_info_from(h.l1.block_by_number(h.l1.latest_number()).expect("recovery block"));
-    verifier.act_l1_head_signal(recovery_block).await.expect("signal recovery block");
+    let recovery_blk = block_info_from(h.l1.block_by_number(recovery_num).expect("recovery block"));
+    verifier.act_l1_head_signal(recovery_blk).await.expect("signal recovery block");
     let derived = verifier.act_l2_pipeline_full().await.expect("step recovery");
-    assert_eq!(derived, 1, "recovery channel should derive L2 block 1");
+    assert_eq!(derived, 1, "same-batcher resubmission must derive L2 block 1");
     assert_eq!(
         verifier.l2_safe().block_info.number,
         1,
-        "safe head should recover to 1 after resubmission on new fork"
+        "safe head must recover to 1 after same-batcher resubmission on new fork"
     );
 }
