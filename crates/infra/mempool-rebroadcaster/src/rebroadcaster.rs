@@ -112,8 +112,11 @@ impl Rebroadcaster {
                 .await;
 
             if let Err(e) = result {
-                let err_msg = e.as_error_resp().unwrap().message.to_string();
-                if !IGNORED_ERRORS.contains(&err_msg.as_str()) {
+                let err_msg = e
+                    .as_error_resp()
+                    .map(|resp| resp.message.to_ascii_lowercase())
+                    .unwrap_or_else(|| e.to_string().to_ascii_lowercase());
+                if !IGNORED_ERRORS.iter().any(|ignored| err_msg.contains(ignored)) {
                     output.unexpected_failed_geth_to_reth += 1;
                     error!(
                         tx = ?hash,
@@ -138,8 +141,11 @@ impl Rebroadcaster {
                 .await;
 
             if let Err(e) = result {
-                let err_msg = e.as_error_resp().unwrap().message.to_string();
-                if !IGNORED_ERRORS.contains(&err_msg.as_str()) {
+                let err_msg = e
+                    .as_error_resp()
+                    .map(|resp| resp.message.to_ascii_lowercase())
+                    .unwrap_or_else(|| e.to_string().to_ascii_lowercase());
+                if !IGNORED_ERRORS.iter().any(|ignored| err_msg.contains(ignored)) {
                     output.unexpected_failed_reth_to_geth += 1;
                     error!(
                         tx = ?hash,
