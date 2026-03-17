@@ -106,7 +106,10 @@ impl Bytes48 {
 
     /// Concatenates both halves into a 48-byte `Bytes` value.
     pub fn to_bytes(&self) -> Bytes {
-        [self.first.as_slice(), self.second.as_slice()].concat().into()
+        let mut buf = [0u8; 48];
+        buf[..32].copy_from_slice(self.first.as_slice());
+        buf[32..].copy_from_slice(self.second.as_slice());
+        Bytes::copy_from_slice(&buf)
     }
 }
 
@@ -116,41 +119,21 @@ impl From<&ByteArray<48>> for Bytes48 {
     }
 }
 
-impl VerifierInput {
-    /// ABI-encodes the input for use as ZK guest program input.
-    pub fn encode(&self) -> Vec<u8> {
-        SolValue::abi_encode(self)
-    }
+macro_rules! impl_abi_codec {
+    ($($ty:ty),+ $(,)?) => {$(
+        impl $ty {
+            /// ABI-encodes this value.
+            pub fn encode(&self) -> Vec<u8> {
+                SolValue::abi_encode(self)
+            }
 
-    /// ABI-decodes a `VerifierInput` from raw bytes.
-    pub fn decode(buf: &[u8]) -> crate::Result<Self> {
-        <Self as SolValue>::abi_decode(buf)
-            .map_err(|e| crate::VerifierError::AttestationFormat(e.to_string()))
-    }
+            /// ABI-decodes from raw bytes.
+            pub fn decode(buf: &[u8]) -> crate::Result<Self> {
+                <Self as SolValue>::abi_decode(buf)
+                    .map_err(|e| crate::VerifierError::AttestationFormat(e.to_string()))
+            }
+        }
+    )+};
 }
 
-impl VerifierJournal {
-    /// ABI-encodes the journal for on-chain submission.
-    pub fn encode(&self) -> Vec<u8> {
-        SolValue::abi_encode(self)
-    }
-
-    /// ABI-decodes a `VerifierJournal` from raw bytes.
-    pub fn decode(buf: &[u8]) -> crate::Result<Self> {
-        <Self as SolValue>::abi_decode(buf)
-            .map_err(|e| crate::VerifierError::AttestationFormat(e.to_string()))
-    }
-}
-
-impl BatchVerifierJournal {
-    /// ABI-encodes the batch journal for on-chain submission.
-    pub fn encode(&self) -> Vec<u8> {
-        SolValue::abi_encode(self)
-    }
-
-    /// ABI-decodes a `BatchVerifierJournal` from raw bytes.
-    pub fn decode(buf: &[u8]) -> crate::Result<Self> {
-        <Self as SolValue>::abi_decode(buf)
-            .map_err(|e| crate::VerifierError::AttestationFormat(e.to_string()))
-    }
-}
+impl_abi_codec!(VerifierInput, VerifierJournal, BatchVerifierJournal);

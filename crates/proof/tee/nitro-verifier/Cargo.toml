@@ -13,13 +13,13 @@ workspace = true
 
 [dependencies]
 # Parsing
-serde = { workspace = true, features = ["derive"] }
 ciborium.workspace = true
 serde_bytes.workspace = true
+serde = { workspace = true, features = ["derive"] }
 
 # Types
-alloy-primitives = { workspace = true, default-features = false }
 alloy-sol-types.workspace = true
+alloy-primitives = { workspace = true, default-features = false }
 
 # Error
 thiserror.workspace = true

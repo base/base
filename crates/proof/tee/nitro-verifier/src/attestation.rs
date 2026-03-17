@@ -78,7 +78,7 @@ impl CoseSign1 {
             CborValue::Bytes(self.payload.clone()),
         ]);
 
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(20 + self.protected.len() + self.payload.len());
         ciborium::ser::into_writer(&structure, &mut buf)
             .map_err(|e| VerifierError::Cbor(format!("sig_structure encode: {e}")))?;
         Ok(buf)
@@ -147,9 +147,12 @@ impl AttestationReport {
     /// Returns the certificates in chain order: root → intermediates → leaf.
     /// Used by CHAIN-3559 for x509 chain verification.
     pub fn cert_chain_der(&self) -> Vec<&[u8]> {
-        let mut certs: Vec<&[u8]> = self.doc.cabundle.iter().map(|c| c.as_ref()).collect();
-        certs.push(self.doc.certificate.as_ref());
-        certs
+        self.doc
+            .cabundle
+            .iter()
+            .map(|c| c.as_ref())
+            .chain(std::iter::once(self.doc.certificate.as_ref()))
+            .collect()
     }
 }
 
