@@ -239,7 +239,13 @@ impl InProcessConsensus {
             .build(self.rpc_url().as_str())
             .wrap_err("Failed to build RPC client")?;
 
-        client.admin_start_sequencer().await.wrap_err("Failed to start sequencer via RPC")?;
+        // Pass `B256::ZERO` because the devnet always starts from genesis, so there is no
+        // meaningful unsafe head to provide. The server currently logs the hash but does not yet
+        // use it to set forkchoice.
+        client
+            .admin_start_sequencer(B256::ZERO)
+            .await
+            .wrap_err("Failed to start sequencer via RPC")?;
         info!("sequencer started via admin RPC");
         Ok(())
     }
