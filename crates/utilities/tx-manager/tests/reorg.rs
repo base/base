@@ -175,7 +175,11 @@ async fn query_receipt_returns_receipt_after_reorg_reinclusion() {
     revert(manager.provider(), snap).await;
 
     // Re-submit the same raw tx (Anvil may not restore the mempool on revert).
-    let _ = manager.provider().send_raw_transaction(&prepared.raw_tx).await;
+    manager
+        .provider()
+        .send_raw_transaction(&prepared.raw_tx)
+        .await
+        .expect("re-submit should succeed");
 
     // Mine block again — tx re-included in a new block with different hash.
     mine_block(manager.provider()).await;
