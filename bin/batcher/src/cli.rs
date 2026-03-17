@@ -1,6 +1,9 @@
 //! CLI argument parsing for the Base Batcher binary.
 
-use std::time::Duration;
+use std::{
+    net::{IpAddr, SocketAddr},
+    time::Duration,
+};
 
 use base_batcher_core::ThrottleConfig;
 use base_batcher_service::{BatcherConfig, BatcherService, SecretKey};
@@ -135,6 +138,20 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "no-throttle", env = "BATCHER_NO_THROTTLE")]
     pub no_throttle: bool,
 
+    /// Bind address for the admin JSON-RPC API (default: 127.0.0.1).
+    ///
+    /// Only takes effect when `--admin-port` is also set.
+    #[arg(long = "admin-addr", env = "BATCHER_ADMIN_ADDR", default_value = "127.0.0.1")]
+    pub admin_addr: IpAddr,
+
+    /// Port for the admin JSON-RPC API.
+    ///
+    /// When set, exposes `admin_startBatcher`, `admin_stopBatcher`,
+    /// `admin_flushBatcher`, `admin_getThrottleController`, and related methods.
+    /// When absent (default), the admin API is disabled.
+    #[arg(long = "admin-port", env = "BATCHER_ADMIN_PORT")]
+    pub admin_port: Option<u16>,
+
     /// Logging configuration.
     #[command(flatten)]
     pub logging: LogArgs,
@@ -177,6 +194,7 @@ impl BatcherArgs {
                     ..Default::default()
                 })
             },
+            admin_addr: self.admin_port.map(|port| SocketAddr::new(self.admin_addr, port)),
         })
     }
 

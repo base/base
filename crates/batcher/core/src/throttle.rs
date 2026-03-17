@@ -4,7 +4,7 @@
 ///
 /// Defaults match the op-batcher reference implementation:
 /// 1 MB threshold, full intensity, linear strategy.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThrottleConfig {
     /// Backlog threshold in bytes at which throttling activates.
     /// Default: 1,000,000 bytes (1 MB).
@@ -59,13 +59,26 @@ impl ThrottleParams {
 }
 
 /// Strategy for calculating throttle intensity from DA backlog.
-#[derive(Debug, Clone)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    derive_more::FromStr,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
 pub enum ThrottleStrategy {
     /// No throttling.
+    #[display("off")]
     Off,
     /// Step function: either 0 or `max_intensity` when above threshold.
+    #[display("step")]
     Step,
     /// Linear interpolation between 0 and `max_intensity` based on backlog.
+    #[display("linear")]
     Linear,
 }
 
@@ -101,6 +114,11 @@ impl ThrottleController {
     /// Returns a reference to the throttle configuration.
     pub const fn config(&self) -> &ThrottleConfig {
         &self.config
+    }
+
+    /// Returns the active throttle strategy.
+    pub const fn strategy(&self) -> &ThrottleStrategy {
+        &self.strategy
     }
 
     /// Compute DA size limits from the given intensity.
@@ -156,6 +174,26 @@ impl ThrottleController {
             }
         }
     }
+}
+
+/// Point-in-time snapshot of throttle controller state.
+///
+/// Returned by [`DaThrottle::snapshot`] and serialised directly as the
+/// `admin_getThrottleController` JSON-RPC response.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ThrottleInfo {
+    /// Active throttle strategy.
+    pub strategy: ThrottleStrategy,
+    /// Backlog threshold in bytes at which throttling activates.
+    pub threshold_bytes: u64,
+    /// Maximum throttle intensity (0.0 to 1.0).
+    pub max_intensity: f64,
+    /// Current throttle intensity (0.0 when not throttling).
+    pub current_intensity: f64,
+    /// Current maximum DA bytes allowed per block.
+    pub max_block_size: u64,
+    /// Current maximum DA bytes allowed per transaction.
+    pub max_tx_size: u64,
 }
 
 /// Wraps a [`ThrottleController`] and a [`ThrottleClient`] with a dedup cache
@@ -216,6 +254,36 @@ impl<TC: crate::ThrottleClient> DaThrottle<TC> {
             self.last_applied = Some(new_limits);
         }
     }
+
+    /// Compute a point-in-time snapshot of the current throttle state.
+    ///
+    /// Params are derived from `backlog_bytes` on demand; no additional
+    /// state is stored in `DaThrottle` beyond what is already tracked.
+    pub fn snapshot(&self, backlog_bytes: u64) -> ThrottleInfo {
+        let params = self.controller.update(backlog_bytes);
+        let config = self.controller.config();
+        ThrottleInfo {
+            strategy: self.controller.strategy().clone(),
+            threshold_bytes: config.threshold_bytes,
+            max_intensity: config.max_intensity,
+            current_intensity: params.map_or(0.0, |p| p.intensity),
+            max_block_size: params.map_or(config.block_size_upper_limit, |p| p.max_block_size),
+            max_tx_size: params.map_or(config.tx_size_upper_limit, |p| p.max_tx_size),
+        }
+    }
+
+    /// Replace the controller and clear the dedup cache so new limits are
+    /// applied unconditionally on the next driver iteration.
+    pub const fn set_controller(&mut self, controller: ThrottleController) {
+        self.controller = controller;
+        self.last_applied = None;
+    }
+
+    /// Clear the dedup cache so the current limits are re-sent to the client
+    /// on the next driver iteration even if they have not changed.
+    pub const fn reset(&mut self) {
+        self.last_applied = None;
+    }
 }
 
 #[cfg(test)]
@@ -261,5 +329,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn strategy_display_parse_roundtrip() {
+        for (input, expected) in [
+            (ThrottleStrategy::Off, "off"),
+            (ThrottleStrategy::Step, "step"),
+            (ThrottleStrategy::Linear, "linear"),
+        ] {
+            assert_eq!(input.to_string(), expected);
+            assert_eq!(expected.parse::<ThrottleStrategy>().unwrap(), input);
+        }
+    }
+
+    #[test]
+    fn strategy_parse_rejects_invalid() {
+        assert!("foo".parse::<ThrottleStrategy>().is_err());
+        assert!("".parse::<ThrottleStrategy>().is_err());
     }
 }

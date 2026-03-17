@@ -254,6 +254,7 @@ base-action-harness = { path = "actions/harness" }
 # Batcher
 base-blobs = { path = "crates/batcher/blobs" }
 base-batcher-core = { path = "crates/batcher/core" }
+base-batcher-admin = { path = "crates/batcher/admin" }
 base-batcher-source = { path = "crates/batcher/source" }
 base-batcher-encoder = { path = "crates/batcher/encoder" }
 base-batcher-service = { path = "crates/batcher/service" }

@@ -6,8 +6,9 @@ use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_alloy_consensus::OpBlock;
 use base_alloy_network::Base;
+use base_batcher_admin::AdminServer;
 use base_batcher_core::{
-    BatchDriver, DaThrottle, NoopThrottleClient, ThrottleClient, ThrottleConfig,
+    AdminHandle, BatchDriver, DaThrottle, NoopThrottleClient, ThrottleClient, ThrottleConfig,
     ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::BatchEncoder;
@@ -100,6 +101,7 @@ type ServiceDriver = BatchDriver<
 /// main driver loop, or spawn it in a background task for in-process use.
 pub struct ReadyBatcher {
     driver: ServiceDriver,
+    admin_server: Option<AdminServer>,
 }
 
 impl std::fmt::Debug for ReadyBatcher {
@@ -112,7 +114,20 @@ impl ReadyBatcher {
     /// Run the batch submission loop until the runtime is cancelled.
     pub async fn run(self) -> eyre::Result<()> {
         info!("batcher driver running");
-        self.driver.run().await?;
+        match self.admin_server {
+            Some(admin) => {
+                let driver_run = self.driver.run();
+                tokio::pin!(driver_run);
+                tokio::select! {
+                    r = &mut driver_run => { r?; }
+                    () = admin.stopped() => {
+                        warn!("admin server stopped unexpectedly; batcher continues without admin API");
+                        driver_run.await?;
+                    }
+                }
+            }
+            None => self.driver.run().await?,
+        }
         info!("batcher service shutting down");
         Ok(())
     }
@@ -396,7 +411,7 @@ impl BatcherService {
             .spawn(runtime.token().clone());
 
         // Build the driver — all fallible setup is complete at this point.
-        let driver = BatchDriver::new(
+        let mut driver = BatchDriver::new(
             runtime,
             encoder,
             source,
@@ -411,7 +426,16 @@ impl BatcherService {
         )
         .with_safe_head_rx(safe_head_rx);
 
+        let admin_server = match self.config.admin_addr {
+            Some(addr) => {
+                let (admin_handle, admin_rx) = AdminHandle::channel();
+                driver = driver.with_admin_rx(admin_rx);
+                Some(AdminServer::spawn(addr, admin_handle).await?)
+            }
+            None => None,
+        };
+
         info!("batcher service components initialized");
-        Ok(ReadyBatcher { driver })
+        Ok(ReadyBatcher { driver, admin_server })
     }
 }

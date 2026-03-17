@@ -9,11 +9,12 @@ use base_batcher_source::{
 };
 use base_runtime::Runtime;
 use base_tx_manager::TxManager;
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    BatchDriverConfig, BatchDriverError, DaThrottle, SubmissionQueue, ThrottleClient,
-    event::DriverEvent,
+    AdminCommand, BatchDriverConfig, BatchDriverError, BatcherStatus, DaThrottle, SubmissionQueue,
+    ThrottleClient, ThrottleController, event::DriverEvent,
 };
 
 /// Async orchestration loop for the batcher.
@@ -54,6 +55,10 @@ where
     /// Maximum wall-clock time to wait for in-flight submissions to settle
     /// when draining on cancellation or source exhaustion.
     drain_timeout: Duration,
+    /// Whether block ingestion is currently paused via the admin API.
+    paused: bool,
+    /// Admin command channel, wired in via [`Self::with_admin_rx`].
+    admin_rx: Option<mpsc::Receiver<AdminCommand>>,
 }
 
 impl<R, P, S, TM, TC, L> BatchDriver<R, P, S, TM, TC, L>
@@ -93,6 +98,8 @@ where
             l1_head_source: Some(l1_head_source),
             safe_head_rx: None,
             drain_timeout: config.drain_timeout,
+            paused: false,
+            admin_rx: None,
         }
     }
 
@@ -103,6 +110,16 @@ where
     /// free blocks that are confirmed safe on L2.
     pub fn with_safe_head_rx(mut self, rx: tokio::sync::watch::Receiver<u64>) -> Self {
         self.safe_head_rx = Some(rx);
+        self
+    }
+
+    /// Wire an admin command channel into the driver.
+    ///
+    /// When set, the driver processes admin commands as part of its main
+    /// `select!` loop. When absent, the admin arm is permanently pending and
+    /// the driver behaves as if no admin server is configured.
+    pub fn with_admin_rx(mut self, rx: mpsc::Receiver<AdminCommand>) -> Self {
+        self.admin_rx = Some(rx);
         self
     }
 
@@ -227,6 +244,11 @@ where
 
     /// Block on the next external event using a biased `tokio::select!`.
     ///
+    /// Admin commands are handled inline in the loop — only non-admin events
+    /// are returned to the caller. When paused via [`AdminCommand::Pause`],
+    /// the source arm still fires but `Block`, `Flush`, and `Reorg` events are
+    /// silently discarded; source errors and exhaustion are still propagated.
+    ///
     /// Non-fatal L1 head source errors loop internally to avoid polluting the
     /// return type with a no-op variant.
     async fn next_event(&mut self) -> Result<DriverEvent, BatchDriverError> {
@@ -237,12 +259,55 @@ where
                 _ = self.runtime.cancelled() => DriverEvent::Shutdown,
 
                 event = self.source.next() => match event {
+                    Ok(L2BlockEvent::Block(_) | L2BlockEvent::Flush | L2BlockEvent::Reorg { .. })
+                        if self.paused =>
+                    {
+                        continue;
+                    }
                     Ok(L2BlockEvent::Block(block)) => DriverEvent::Block(block),
                     Ok(L2BlockEvent::Flush) => DriverEvent::Flush,
                     Ok(L2BlockEvent::Reorg { new_safe_head }) => DriverEvent::Reorg(new_safe_head),
                     Err(SourceError::Exhausted) => DriverEvent::Shutdown,
                     Err(e) => return Err(e.into()),
                 },
+
+                cmd = Self::next_admin_cmd(&mut self.admin_rx) => {
+                    match cmd {
+                        AdminCommand::Flush => return Ok(DriverEvent::Flush),
+                        AdminCommand::Pause => {
+                            self.paused = true;
+                            info!(paused = true, "batcher paused via admin");
+                        }
+                        AdminCommand::Resume => {
+                            self.paused = false;
+                            info!(paused = false, "batcher resumed via admin");
+                        }
+                        AdminCommand::SetThrottle { strategy, config } => {
+                            self.throttle.set_controller(
+                                ThrottleController::new(config, strategy)
+                            );
+                            info!("throttle controller replaced via admin");
+                        }
+                        AdminCommand::ResetThrottle => {
+                            self.throttle.reset();
+                            info!("throttle controller reset via admin");
+                        }
+                        AdminCommand::GetThrottleInfo { reply } => {
+                            let _ = reply.send(
+                                self.throttle.snapshot(self.pipeline.da_backlog_bytes())
+                            );
+                        }
+                        AdminCommand::GetStatus { reply } => {
+                            let _ = reply.send(BatcherStatus {
+                                paused: self.paused,
+                                in_flight: self.submissions.in_flight_count(),
+                                da_backlog_bytes: self.pipeline.da_backlog_bytes(),
+                            });
+                        }
+                    }
+                    // All commands except Flush loop to await the next real event.
+                    continue;
+                }
 
                 Some((id, outcome)) = self.submissions.next_settled() => {
                     DriverEvent::Receipt(id, outcome)
@@ -286,6 +351,20 @@ where
                 }
             };
             return Ok(event);
+        }
+    }
+
+    /// Returns the next admin command, or parks forever if no channel is wired.
+    ///
+    /// Takes only the `Option<Receiver>` to avoid a full `&mut self` borrow
+    /// conflicting with the other `select!` arms.
+    async fn next_admin_cmd(rx: &mut Option<mpsc::Receiver<AdminCommand>>) -> AdminCommand {
+        match rx {
+            Some(rx) => match rx.recv().await {
+                Some(cmd) => cmd,
+                None => std::future::pending().await,
+            },
+            None => std::future::pending().await,
         }
     }
 }

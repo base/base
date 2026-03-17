@@ -2583,6 +2583,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-batcher-admin"
+version = "0.0.0"
+dependencies = [
+ "base-batcher-core",
+ "eyre",
+ "jsonrpsee",
+ "tracing",
+]
+
+[[package]]
 name = "base-batcher-bin"
 version = "0.0.0"
 dependencies = [
@@ -2614,9 +2624,11 @@ dependencies = [
  "base-protocol",
  "base-runtime",
  "base-tx-manager",
+ "derive_more",
  "futures",
  "metrics",
  "rstest",
+ "serde",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -2651,6 +2663,7 @@ dependencies = [
  "base-alloy-consensus",
  "base-alloy-network",
  "base-alloy-rpc-jsonrpsee",
+ "base-batcher-admin",
  "base-batcher-core",
  "base-batcher-encoder",
  "base-batcher-source",

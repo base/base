@@ -1,6 +1,6 @@
 //! Full batcher runtime configuration.
 
-use std::{fmt, str::FromStr, time::Duration};
+use std::{fmt, net::SocketAddr, str::FromStr, time::Duration};
 
 use alloy_primitives::B256;
 use base_batcher_core::ThrottleConfig;
@@ -66,6 +66,11 @@ pub struct BatcherConfig {
     pub resubmission_timeout: Duration,
     /// Throttle configuration (optional).
     pub throttle: Option<ThrottleConfig>,
+    /// Socket address for the admin JSON-RPC API.
+    ///
+    /// When set, the batcher exposes the `admin_*` RPC namespace on this address.
+    /// When `None` (the default), the admin server is disabled.
+    pub admin_addr: Option<SocketAddr>,
 }
 
 impl Default for BatcherConfig {
@@ -83,6 +88,7 @@ impl Default for BatcherConfig {
             num_confirmations: 1,
             resubmission_timeout: Duration::from_secs(48),
             throttle: Some(ThrottleConfig::default()),
+            admin_addr: None,
         }
     }
 }

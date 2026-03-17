@@ -19,6 +19,7 @@ tokio-util.workspace = true
 async-trait.workspace = true
 base-tx-manager.workspace = true
 base-batcher-core.workspace = true
+base-batcher-admin.workspace = true
 base-alloy-network.workspace = true
 base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
