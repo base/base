@@ -30,6 +30,14 @@ group "rust-services" {
   ]
 }
 
+group "devnet" {
+  targets = ["builder", "consensus", "client"]
+}
+
+group "ingress" {
+  targets = ["builder", "consensus", "client", "ingress-rpc", "audit-archiver"]
+}
+
 target "_rust-service-common" {
   context = "."
   dockerfile = "etc/docker/Dockerfile.rust-services"
@@ -37,6 +45,7 @@ target "_rust-service-common" {
     PROFILE = "${PROFILE}"
     RUST_VERSION = "${RUST_VERSION}"
   }
+  cache-from = ["type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}"]
 }
 
 target "client" {
@@ -89,6 +98,5 @@ target "client-ci" {
 target "client-publish" {
   inherits = ["client"]
   tags = ["${REGISTRY_IMAGE}"]
-  cache-from = ["type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}"]
   cache-to = ["type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR},mode=max"]
 }

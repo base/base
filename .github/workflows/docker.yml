@@ -61,7 +61,7 @@ jobs:
       - name: Export digest
         run: |
           mkdir -p ${{ runner.temp }}/digests
-          digest="$(jq -r '."containerimage.digest"' ${{ runner.temp }}/client-metadata.json)"
+          digest="$(jq -er '."client-publish"."containerimage.digest"' ${{ runner.temp }}/client-metadata.json)"
           touch "${{ runner.temp }}/digests/${digest#sha256:}"
 
       - name: Upload digest

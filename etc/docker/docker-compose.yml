@@ -161,6 +161,7 @@ services:
     entrypoint: ["/usr/local/bin/setup-l2.sh"]
 
   base-builder:
+    image: base-builder:local
     build:
       <<: *rust-service-build
       target: builder
@@ -224,6 +225,7 @@ services:
     restart: unless-stopped
 
   base-builder-cl:
+    image: base-consensus:local
     build:
       <<: *rust-service-build
       target: consensus
@@ -328,6 +330,7 @@ services:
     restart: unless-stopped
 
   base-client:
+    image: base-reth-node:local
     build:
       <<: *rust-service-build
       target: client
@@ -395,6 +398,7 @@ services:
     restart: unless-stopped
 
   base-client-cl:
+    image: base-consensus:local
     build:
       <<: *rust-service-build
       target: consensus
