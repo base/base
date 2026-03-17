@@ -25,11 +25,12 @@ pub enum TransportError {
 /// hypervisor-side virtio handler may not correctly reassemble these
 /// multi-descriptor TX packets, causing silent data corruption.
 ///
-/// By capping each `write()` to 32 `KiB` we force the kernel to use simple,
+/// By capping each `write()` to 28 `KiB` we force the kernel to use simple,
 /// linear (single-page) SKB allocations, sidestepping the bug entirely.
 ///
 /// See: <https://github.com/cloud-hypervisor/cloud-hypervisor/issues/7672>
-const MAX_WRITE_SIZE: usize = 32 * 1024;
+/// 28 KiB — comfortably below the ~32384-byte linear SKB threshold
+const MAX_WRITE_SIZE: usize = 28 * 1024;
 
 /// Length-prefixed bincode codec over `AsyncRead`/`AsyncWrite`.
 ///
