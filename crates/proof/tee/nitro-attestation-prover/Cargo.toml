@@ -30,6 +30,7 @@ alloy-signer-local.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
+tokio = { workspace = true, features = ["rt"] }
 
 [dev-dependencies]
 rstest.workspace = true

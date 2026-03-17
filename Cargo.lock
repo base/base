@@ -4590,6 +4590,7 @@ dependencies = [
  "risc0-zkvm",
  "rstest",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
  "url",
 ]

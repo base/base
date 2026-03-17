@@ -21,9 +21,8 @@ use crate::{AttestationProof, AttestationProofProvider, ProverError, Result};
 /// on environment variable configuration. Always requests Groth16 receipts
 /// for on-chain verifiability.
 ///
-/// **Note:** the proving call is synchronous and may block the async
-/// executor. In production (Bonsai), the underlying HTTP client manages
-/// this; in dev-mode the mock prover is near-instant.
+/// Proving is offloaded to a blocking task via [`tokio::task::spawn_blocking`]
+/// to avoid stalling the async executor.
 #[derive(Debug)]
 pub struct DirectProver {
     elf: Vec<u8>,
@@ -54,27 +53,40 @@ impl DirectProver {
 #[async_trait::async_trait]
 impl AttestationProofProvider for DirectProver {
     async fn generate_proof(&self, attestation_bytes: &[u8]) -> Result<AttestationProof> {
-        let input = VerifierInput {
-            trustedCertsPrefixLen: self.trusted_certs_prefix_len,
-            attestationReport: Bytes::copy_from_slice(attestation_bytes),
-        };
-        let input_bytes = SolValue::abi_encode(&input);
+        let elf = self.elf.clone();
+        let trusted_certs_prefix_len = self.trusted_certs_prefix_len;
+        let attestation_owned = attestation_bytes.to_vec();
 
-        let env = ExecutorEnv::builder()
-            .write_slice(&input_bytes)
-            .build()
-            .map_err(|e| ProverError::Risc0(format!("failed to build executor env: {e}")))?;
+        // Proving is synchronous and potentially long-running (Bonsai HTTP
+        // polling or local CPU). Offload to a blocking thread so we don't
+        // stall the async executor.
+        let (journal_bytes, seal) = tokio::task::spawn_blocking(move || {
+            let input = VerifierInput {
+                trustedCertsPrefixLen: trusted_certs_prefix_len,
+                attestationReport: Bytes::copy_from_slice(&attestation_owned),
+            };
+            let input_bytes = SolValue::abi_encode(&input);
 
-        let prover = default_prover();
-        let prove_info = prover
-            .prove_with_opts(env, &self.elf, &ProverOpts::groth16())
-            .map_err(|e| ProverError::Risc0(format!("proving failed: {e}")))?;
+            let env = ExecutorEnv::builder()
+                .write_slice(&input_bytes)
+                .build()
+                .map_err(|e| ProverError::Risc0(format!("failed to build executor env: {e}")))?;
 
-        let journal = Bytes::copy_from_slice(&prove_info.receipt.journal.bytes);
-        let seal = risc0_ethereum_contracts::encode_seal(&prove_info.receipt)
-            .map_err(|e| ProverError::Risc0(format!("failed to encode seal: {e}")))?;
+            let prover = default_prover();
+            let prove_info = prover
+                .prove_with_opts(env, &elf, &ProverOpts::groth16())
+                .map_err(|e| ProverError::Risc0(format!("proving failed: {e}")))?;
 
-        Ok(AttestationProof { output: journal, proof_bytes: Bytes::from(seal) })
+            let journal = prove_info.receipt.journal.bytes.clone();
+            let seal = risc0_ethereum_contracts::encode_seal(&prove_info.receipt)
+                .map_err(|e| ProverError::Risc0(format!("failed to encode seal: {e}")))?;
+
+            Ok::<_, ProverError>((journal, seal))
+        })
+        .await
+        .map_err(|e| ProverError::Risc0(format!("proving task panicked: {e}")))??;
+
+        Ok(AttestationProof { output: Bytes::from(journal_bytes), proof_bytes: Bytes::from(seal) })
     }
 }
 

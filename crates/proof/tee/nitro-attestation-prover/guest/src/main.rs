@@ -15,10 +15,10 @@ use risc0_zkvm::guest::env;
 
 fn main() {
     let mut input_bytes = Vec::new();
-    env::stdin().read_to_end(&mut input_bytes).unwrap();
+    env::stdin().read_to_end(&mut input_bytes).expect("failed to read guest stdin");
 
-    let input = VerifierInput::decode(&input_bytes).unwrap();
-    let journal = AttestationVerifier::verify(&input).unwrap();
+    let input = VerifierInput::decode(&input_bytes).expect("failed to decode VerifierInput");
+    let journal = AttestationVerifier::verify(&input).expect("attestation verification failed");
 
     env::commit_slice(&journal.encode());
 }
