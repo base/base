@@ -157,7 +157,9 @@ where
             self.submissions.submit_pending(&mut self.pipeline).await;
 
             if draining {
-                self.submissions.drain(&mut self.pipeline, self.runtime.sleep(self.drain_timeout)).await;
+                self.submissions
+                    .drain(&mut self.pipeline, self.runtime.sleep(self.drain_timeout))
+                    .await;
                 return Ok(());
             }
 
@@ -340,13 +342,14 @@ mod tests {
     };
     use base_batcher_source::{
         ChannelBlockSource, ChannelL1HeadSource, L1HeadEvent, L1HeadSource, L2BlockEvent,
-        SourceError, UnsafeBlockSource,
-        test_utils::InMemoryBlockSource,
+        SourceError, UnsafeBlockSource, test_utils::InMemoryBlockSource,
     };
     use base_protocol::{BlockInfo, ChannelId, Frame, L2BlockInfo};
+    use base_runtime::{
+        Cancellation, Clock, Runtime, Spawner,
+        deterministic::{Config, Runner},
+    };
     use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
-    use base_runtime::deterministic::{Config, Runner};
-    use base_runtime::{Cancellation, Clock, Runtime, Spawner};
     use tokio::sync::{mpsc, oneshot};
 
     use super::{BatchDriver, BatchDriverConfig};
@@ -770,8 +773,7 @@ mod tests {
             });
 
             let handle = ctx.spawn(
-                make_driver(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                    .run(),
+                make_driver(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 }).run(),
             );
 
             ctx.sleep(Duration::from_millis(50)).await;
@@ -837,8 +839,7 @@ mod tests {
             pipeline.submissions.push_back(make_submission_with_id(1));
 
             let handle = ctx.spawn(
-                make_driver_with_max_pending(ctx.clone(), pipeline, NeverConfirmTxManager, 1)
-                    .run(),
+                make_driver_with_max_pending(ctx.clone(), pipeline, NeverConfirmTxManager, 1).run(),
             );
 
             ctx.sleep(Duration::from_millis(50)).await;
@@ -952,8 +953,7 @@ mod tests {
         Runner::start(Config::seeded(0), |ctx| async move {
             let blocks_accepted = Arc::new(Mutex::new(0usize));
             let resets = Arc::new(Mutex::new(0usize));
-            let pipeline =
-                OneReorgPipeline::new(Arc::clone(&blocks_accepted), Arc::clone(&resets));
+            let pipeline = OneReorgPipeline::new(Arc::clone(&blocks_accepted), Arc::clone(&resets));
 
             let driver = BatchDriver::new(
                 ctx.clone(),
@@ -1031,8 +1031,7 @@ mod tests {
         Runner::start(Config::seeded(0), |ctx| async move {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             // 2 MB backlog — above the default 1 MB threshold.
-            let pipeline =
-                TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(2_000_000);
+            let pipeline = TrackingPipeline::new(Arc::clone(&recorded)).with_da_backlog(2_000_000);
 
             let throttle =
                 ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
@@ -1269,62 +1268,66 @@ mod tests {
         }
 
         Runner::start(Config::seeded(0), |ctx| async move {
-        let (source_tx, source_rx) = mpsc::unbounded_channel();
+            let (source_tx, source_rx) = mpsc::unbounded_channel();
 
-        // Start with 2 MB backlog — above the default 1 MB threshold.
-        let backlog = Arc::new(Mutex::new(2_000_000u64));
-        let pipeline = DynamicPipeline { backlog: Arc::clone(&backlog) };
+            // Start with 2 MB backlog — above the default 1 MB threshold.
+            let backlog = Arc::new(Mutex::new(2_000_000u64));
+            let pipeline = DynamicPipeline { backlog: Arc::clone(&backlog) };
 
-        let throttle = ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
-        let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
+            let throttle =
+                ThrottleController::new(ThrottleConfig::default(), ThrottleStrategy::Linear);
+            let (throttle_client, throttle_recorded) = TrackingThrottleClient::new();
 
-        let driver = BatchDriver::new(
-            ctx.clone(),
-            pipeline,
-            ChannelSource { rx: source_rx },
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-            },
-            throttle,
-            Arc::new(throttle_client),
-            PendingL1HeadSource,
-        );
-        let handle = ctx.spawn(driver.run());
+            let driver = BatchDriver::new(
+                ctx.clone(),
+                pipeline,
+                ChannelSource { rx: source_rx },
+                ImmediateConfirmTxManager { l1_block: 1 },
+                BatchDriverConfig {
+                    inbox: Address::ZERO,
+                    max_pending_transactions: 1,
+                    drain_timeout: Duration::from_millis(10),
+                },
+                throttle,
+                Arc::new(throttle_client),
+                PendingL1HeadSource,
+            );
+            let handle = ctx.spawn(driver.run());
 
-        // First iteration fires immediately on startup; give it time to complete.
-        ctx.sleep(Duration::from_millis(30)).await;
+            // First iteration fires immediately on startup; give it time to complete.
+            ctx.sleep(Duration::from_millis(30)).await;
 
-        // Drop the backlog to zero, then wake the driver by delivering a dummy
-        // block so the select! arm fires and the loop re-runs the throttle check.
-        *backlog.lock().unwrap() = 0;
-        source_tx.send(L2BlockEvent::Block(Box::default())).unwrap();
+            // Drop the backlog to zero, then wake the driver by delivering a dummy
+            // block so the select! arm fires and the loop re-runs the throttle check.
+            *backlog.lock().unwrap() = 0;
+            source_tx.send(L2BlockEvent::Block(Box::default())).unwrap();
 
-        ctx.sleep(Duration::from_millis(30)).await;
-        ctx.cancel();
-        assert!(handle.await.unwrap().is_ok());
+            ctx.sleep(Duration::from_millis(30)).await;
+            ctx.cancel();
+            assert!(handle.await.unwrap().is_ok());
 
-        let calls = throttle_recorded.lock().unwrap();
-        assert!(
-            calls.len() >= 2,
-            "expected at least 2 throttle calls (activate + deactivate), got {}",
-            calls.len()
-        );
+            let calls = throttle_recorded.lock().unwrap();
+            assert!(
+                calls.len() >= 2,
+                "expected at least 2 throttle calls (activate + deactivate), got {}",
+                calls.len()
+            );
 
-        // First call must have reduced limits (throttle active, backlog was high).
-        let (first_tx, first_block) = calls[0];
-        assert!(
-            first_block < 130_000,
-            "first call should apply throttled block limit, got {first_block}"
-        );
-        assert!(first_tx < 20_000, "first call should apply throttled tx limit, got {first_tx}");
+            // First call must have reduced limits (throttle active, backlog was high).
+            let (first_tx, first_block) = calls[0];
+            assert!(
+                first_block < 130_000,
+                "first call should apply throttled block limit, got {first_block}"
+            );
+            assert!(
+                first_tx < 20_000,
+                "first call should apply throttled tx limit, got {first_tx}"
+            );
 
-        // Last call must reset to upper limits (throttle deactivated).
-        let (last_tx, last_block) = *calls.last().unwrap();
-        assert_eq!(last_block, 130_000, "last call should reset block limit to upper bound");
-        assert_eq!(last_tx, 20_000, "last call should reset tx limit to upper bound");
+            // Last call must reset to upper limits (throttle deactivated).
+            let (last_tx, last_block) = *calls.last().unwrap();
+            assert_eq!(last_block, 130_000, "last call should reset block limit to upper bound");
+            assert_eq!(last_tx, 20_000, "last call should reset tx limit to upper bound");
         }); // Runner::start
     }
 
@@ -1381,8 +1384,9 @@ mod tests {
 
             let (safe_tx, safe_rx) = tokio::sync::watch::channel(0u64);
 
-            let driver = make_driver(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .with_safe_head_rx(safe_rx);
+            let driver =
+                make_driver(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                    .with_safe_head_rx(safe_rx);
             let handle = ctx.spawn(driver.run());
 
             // Send a new safe head.

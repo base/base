@@ -15,13 +15,13 @@ workspace = true
 futures.workspace = true
 metrics.workspace = true
 base-blobs.workspace = true
-tokio-util.workspace = true
 base-tx-manager.workspace = true
 base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }
+base-runtime = { workspace = true, features = ["tokio"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 base-alloy-consensus = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "macros", "rt"] }
@@ -31,5 +31,6 @@ async-trait.workspace = true
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-alloy-consensus = { workspace = true, features = ["std"] }
+base-runtime = { workspace = true, features = ["test-utils"] }
 base-protocol = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt", "time"] }

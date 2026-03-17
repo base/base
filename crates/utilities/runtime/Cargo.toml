@@ -12,13 +12,13 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-futures.workspace = true
 thiserror.workspace = true
+futures.workspace   = true
 
-rand = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
-tokio-util = { workspace = true, optional = true }
 tokio-stream = { workspace = true, optional = true }
+tokio-util   = { workspace = true, optional = true }
+tokio        = { workspace = true, optional = true }
+rand         = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros", "time", "sync"] }
