@@ -2,6 +2,8 @@
 use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
+use tokio::io::{BufReader, BufWriter};
+#[cfg(target_os = "linux")]
 use tokio::time::{Duration, timeout};
 #[cfg(target_os = "linux")]
 use tokio_vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener};
@@ -81,9 +83,13 @@ impl NitroEnclave {
     }
 
     /// Handle a single vsock connection: read request, dispatch, write response.
-    async fn handle_connection(&self, mut stream: tokio_vsock::VsockStream) -> eyre::Result<()> {
+    async fn handle_connection(&self, stream: tokio_vsock::VsockStream) -> eyre::Result<()> {
+        let (reader, writer) = tokio::io::split(stream);
+        let mut reader = BufReader::new(reader);
+        let mut writer = BufWriter::new(writer);
+
         let request: EnclaveRequest =
-            timeout(REQUEST_READ_TIMEOUT, Frame::read(&mut stream)).await??;
+            timeout(REQUEST_READ_TIMEOUT, Frame::read(&mut reader)).await??;
 
         match request {
             EnclaveRequest::Prove(preimages) => {
@@ -91,11 +97,11 @@ impl NitroEnclave {
                     Ok(result) => EnclaveResponse::Prove(Box::new(result)),
                     Err(e) => EnclaveResponse::Error(e.to_string()),
                 };
-                Frame::write(&mut stream, &response).await?;
+                Frame::write(&mut writer, &response).await?;
             }
             EnclaveRequest::SignerPublicKey => {
                 let key = self.server.signer_public_key();
-                Frame::write(&mut stream, &EnclaveResponse::SignerPublicKey(key)).await?;
+                Frame::write(&mut writer, &EnclaveResponse::SignerPublicKey(key)).await?;
             }
             EnclaveRequest::SignerAttestation => {
                 // nsm_init() and nsm_process_request() are blocking FFI calls; use
@@ -105,7 +111,7 @@ impl NitroEnclave {
                     Ok(doc) => EnclaveResponse::SignerAttestation(doc),
                     Err(e) => EnclaveResponse::Error(e.to_string()),
                 };
-                Frame::write(&mut stream, &response).await?;
+                Frame::write(&mut writer, &response).await?;
             }
         }
 
