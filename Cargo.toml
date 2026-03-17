@@ -425,8 +425,8 @@ aws-sdk-elasticloadbalancingv2 = { version = "1.109.0", default-features = false
 
 # risc0 / boundless
 boundless-market = "1.1"
-risc0-zkvm = { version = "^3.0", default-features = false }
 risc0-ethereum-contracts = "3.0.1"
+risc0-zkvm = { version = "^3.0", default-features = false }
 
 # crypto
 sha3 = "0.10"
