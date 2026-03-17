@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 # workspace
+base-health.workspace = true
 base-macros.workspace = true
 base-protocol.workspace = true
 base-consensus-disc.workspace = true
@@ -69,7 +70,7 @@ jsonrpsee = { workspace = true, features = ["server", "http-client"] }
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
-http = "1"
+http.workspace = true
 rand.workspace = true
 rstest.workspace = true
 backon.workspace = true
