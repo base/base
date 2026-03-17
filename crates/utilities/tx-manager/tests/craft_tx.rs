@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_consensus::{SignableTransaction, TxEip1559, TxEip4844Variant, TxEnvelope};
-use alloy_eips::{Decodable2718, eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
+use alloy_eips::{eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
 use alloy_network::{EthereumWallet, TxSigner};
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
@@ -11,8 +11,8 @@ use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
 use base_tx_manager::{
-    FeeCalculator, FeeOverride, GasPriceCaps, NoopTxMetrics, SignerConfig, SimpleTxManager,
-    TxCandidate, TxManager, TxManagerConfig, TxManagerError,
+    FeeCalculator, FeeOverride, GasPriceCaps, NoopTxMetrics, PreparedTx, SignerConfig,
+    SimpleTxManager, TxCandidate, TxManager, TxManagerConfig, TxManagerError,
 };
 
 /// Helper: spawns an Anvil instance and returns a [`SimpleTxManager`]
@@ -39,14 +39,12 @@ async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
     setup_with_config(TxManagerConfig::default()).await
 }
 
-/// Decodes raw RLP-encoded transaction bytes into the inner [`TxEip1559`].
+/// Decodes a [`PreparedTx`] into the inner [`TxEip1559`].
 ///
 /// Panics if the bytes are not a valid EIP-2718 envelope or the
 /// transaction type is not EIP-1559.
-fn decode_eip1559(raw: &Bytes) -> TxEip1559 {
-    let envelope =
-        TxEnvelope::decode_2718(&mut raw.as_ref()).expect("should decode as valid TxEnvelope");
-    match envelope {
+fn decode_eip1559(prepared: &PreparedTx) -> TxEip1559 {
+    match prepared.to_envelope().expect("should decode as valid TxEnvelope") {
         TxEnvelope::Eip1559(signed) => signed.strip_signature(),
         other => panic!("expected EIP-1559, got {other:?}"),
     }
@@ -66,7 +64,7 @@ async fn craft_tx_produces_valid_signed_eip1559_transaction() {
     };
 
     let prepared = manager.craft_tx(&candidate, None).await.expect("should craft tx");
-    let tx = decode_eip1559(&prepared.raw_tx);
+    let tx = decode_eip1559(&prepared);
 
     assert_eq!(tx.to, TxKind::Call(to));
     assert_eq!(tx.value, value);
@@ -108,7 +106,7 @@ async fn craft_tx_with_explicit_gas_limit_above_estimate() {
 
     let prepared =
         manager.craft_tx(&candidate, None).await.expect("should craft tx with explicit gas");
-    let tx = decode_eip1559(&prepared.raw_tx);
+    let tx = decode_eip1559(&prepared);
 
     // The decoded gas_limit must equal the caller's explicit value,
     // proving it was used as a floor above the provider estimate.
@@ -173,8 +171,7 @@ async fn craft_tx_produces_valid_signed_blob_transaction() {
     let prepared = manager.craft_tx(&candidate, None).await.expect("should craft blob tx");
 
     // Decode the raw transaction bytes.
-    let envelope =
-        TxEnvelope::decode_2718(&mut prepared.raw_tx.as_ref()).expect("should decode TxEnvelope");
+    let envelope = prepared.to_envelope().expect("should decode TxEnvelope");
 
     // Must be EIP-4844 type.
     assert!(envelope.is_eip4844(), "expected EIP-4844 transaction, got {envelope:?}");
@@ -225,12 +222,13 @@ async fn craft_tx_produces_cell_proof_sidecar_by_default() {
         manager.craft_tx(&candidate, None).await.expect("should craft cell-proof blob tx");
 
     // The cached sidecar must use Osaka-era cell proofs.
-    let sidecar = prepared.sidecar.as_ref().expect("sidecar should be Some for blob tx");
-    assert_eq!(sidecar.cell_proofs.len(), CELLS_PER_EXT_BLOB);
+    assert_eq!(
+        prepared.sidecar.as_ref().expect("sidecar should be Some for blob tx").cell_proofs.len(),
+        CELLS_PER_EXT_BLOB,
+    );
 
     // On the wire it is still EIP-4844 type — cell proofs are sidecar-internal.
-    let envelope =
-        TxEnvelope::decode_2718(&mut prepared.raw_tx.as_ref()).expect("should decode TxEnvelope");
+    let envelope = prepared.to_envelope().expect("should decode TxEnvelope");
     assert!(envelope.is_eip4844(), "expected EIP-4844 transaction type");
 
     let signed = envelope.as_eip4844().expect("should be EIP-4844");
@@ -254,7 +252,7 @@ async fn craft_tx_contract_creation() {
 
     let prepared =
         manager.craft_tx(&candidate, None).await.expect("should craft contract creation tx");
-    let tx = decode_eip1559(&prepared.raw_tx);
+    let tx = decode_eip1559(&prepared);
 
     assert_eq!(tx.to, TxKind::Create);
 }
@@ -294,7 +292,7 @@ async fn prepare_produces_valid_signed_transaction() {
     };
 
     let prepared = manager.prepare(&candidate, None).await.expect("should prepare tx");
-    let tx = decode_eip1559(&prepared.raw_tx);
+    let tx = decode_eip1559(&prepared);
 
     // Confirm the candidate's fields survive the retry wrapper.
     assert_eq!(tx.to, TxKind::Call(to));
@@ -349,8 +347,8 @@ async fn sequential_craft_tx_increments_nonce() {
     let prepared1 = manager.craft_tx(&candidate, None).await.expect("first tx");
     let prepared2 = manager.craft_tx(&candidate, None).await.expect("second tx");
 
-    assert_eq!(decode_eip1559(&prepared1.raw_tx).nonce, 0);
-    assert_eq!(decode_eip1559(&prepared2.raw_tx).nonce, 1);
+    assert_eq!(decode_eip1559(&prepared1).nonce, 0);
+    assert_eq!(decode_eip1559(&prepared2).nonce, 1);
 }
 
 /// Verifies that [`SimpleTxManager::new`] with a [`SignerConfig::Local`]
@@ -421,7 +419,7 @@ async fn craft_tx_preserves_calldata() {
     };
 
     let prepared = manager.craft_tx(&candidate, None).await.expect("should craft tx with calldata");
-    let tx = decode_eip1559(&prepared.raw_tx);
+    let tx = decode_eip1559(&prepared);
 
     assert_eq!(tx.input, calldata, "calldata should be preserved in the decoded transaction");
 }
@@ -677,7 +675,7 @@ async fn craft_tx_with_fee_overrides_uses_overrides_when_above_network() {
     );
 
     // The signed transaction must also carry the override fees.
-    let tx = decode_eip1559(&prepared.raw_tx);
+    let tx = decode_eip1559(&prepared);
     assert_eq!(tx.max_priority_fee_per_gas, override_tip);
     assert_eq!(tx.max_fee_per_gas, override_fee_cap);
 }
@@ -739,7 +737,7 @@ async fn prepared_tx_fees_match_decoded_transaction_with_overrides() {
 
     let overrides = FeeOverride::new(override_tip, override_fee_cap);
     let prepared = manager.craft_tx(&candidate, Some(overrides)).await.expect("should craft tx");
-    let tx = decode_eip1559(&prepared.raw_tx);
+    let tx = decode_eip1559(&prepared);
 
     assert_eq!(
         prepared.gas_tip_cap, tx.max_priority_fee_per_gas,
@@ -976,8 +974,7 @@ async fn blob_fee_bump_round_trip() {
     );
 
     // Decode and verify the replacement is still a valid EIP-4844 tx with sidecar.
-    let envelope = TxEnvelope::decode_2718(&mut replacement.raw_tx.as_ref())
-        .expect("should decode replacement TxEnvelope");
+    let envelope = replacement.to_envelope().expect("should decode replacement TxEnvelope");
     assert!(envelope.is_eip4844(), "replacement should be EIP-4844");
 
     let signed = envelope.as_eip4844().expect("should be EIP-4844");
