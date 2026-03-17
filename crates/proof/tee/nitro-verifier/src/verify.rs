@@ -6,14 +6,15 @@
 //! side effects.
 
 use alloy_primitives::Bytes;
-use p384::ecdsa::signature::Verifier;
-use p384::ecdsa::{Signature, VerifyingKey};
+use p384::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use serde_bytes::ByteBuf;
 
-use crate::attestation::{AttestationDocument, AttestationReport};
-use crate::types::{Bytes48, Pcr, VerificationResult, VerifierJournal};
-use crate::x509::CertChain;
-use crate::{Result, VerifierError, VerifierInput};
+use crate::{
+    Result, VerifierError, VerifierInput,
+    attestation::{AttestationDocument, AttestationReport},
+    types::{Bytes48, Pcr, VerificationResult, VerifierJournal},
+    x509::CertChain,
+};
 
 /// Attestation report verifier.
 ///
@@ -319,6 +320,14 @@ mod tests {
         let mut doc = valid_doc();
         doc.pcrs.insert(31, ByteArray::new([0u8; 48]));
         assert!(AttestationVerifier::validate_attestation_content(&doc).is_ok());
+    }
+
+    #[rstest]
+    fn m02_public_key_empty_rejected() {
+        let mut doc = valid_doc();
+        doc.public_key = Some(ByteBuf::from(vec![]));
+        let err = AttestationVerifier::validate_attestation_content(&doc).unwrap_err();
+        assert!(err.to_string().contains("public_key"));
     }
 
     #[rstest]

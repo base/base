@@ -9,14 +9,13 @@
 //! constraints, subject/issuer chain consistency, and validity period checks.
 
 use alloy_primitives::B256;
-use p384::ecdsa::signature::Verifier;
-use p384::ecdsa::{Signature, VerifyingKey};
+use p384::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use sha2::{Digest, Sha256};
-use x509_parser::certificate::X509Certificate;
-use x509_parser::oid_registry::{
-    OID_KEY_TYPE_EC_PUBLIC_KEY, OID_NIST_EC_P384, OID_SIG_ECDSA_WITH_SHA384,
+use x509_parser::{
+    certificate::X509Certificate,
+    oid_registry::{OID_KEY_TYPE_EC_PUBLIC_KEY, OID_NIST_EC_P384, OID_SIG_ECDSA_WITH_SHA384},
+    prelude::FromDer,
 };
-use x509_parser::prelude::FromDer;
 
 use crate::{Result, VerifierError};
 
