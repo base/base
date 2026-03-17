@@ -183,6 +183,12 @@ skip = [
     # base-enclave-server upstream dep mismatches (aws-nitro-enclaves, vsock, ciborium)
     "half",
     "memoffset",
+
+    # UEFI/platform crate version mismatch from upstream deps
+    "r-efi",
+
+    # toml parser version mismatch: upstream deps use both 0.7.x and 1.x
+    "winnow",
 ]
 
 [sources]
