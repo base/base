@@ -316,7 +316,7 @@ macro_rules! define_signer_cli {
                                     reason: e.to_string(),
                                 }
                             })?;
-                        Ok($crate::SignerConfig::Local { private_key: key })
+                        Ok($crate::SignerConfig::local(key))
                     }
                     (None, Some(endpoint), Some(address)) => {
                         if endpoint.host().is_none() {
