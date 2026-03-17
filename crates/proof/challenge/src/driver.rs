@@ -18,8 +18,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
-    CandidateGame, ChallengeSubmitter, GameScanner, IntermediateValidationParams, OutputValidator,
-    ValidatorError,
+    CandidateGame, ChallengeSubmitter, ChallengerMetrics, GameScanner,
+    IntermediateValidationParams, OutputValidator, ValidatorError,
 };
 
 /// Proof type discriminator byte prepended to ZK proof receipts.
@@ -126,6 +126,9 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                 warn!(error = %e, "driver step failed");
             }
 
+            metrics::gauge!(ChallengerMetrics::PENDING_PROOFS)
+                .set(self.pending_proofs.len() as f64);
+
             select! {
                 biased;
                 () = self.cancel.cancelled() => {
@@ -224,8 +227,9 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             return Ok(());
         }
 
-        let invalid_index =
-            result.invalid_intermediate_index.expect("invalid result must have an invalid index");
+        let invalid_index = result
+            .invalid_intermediate_index
+            .ok_or_else(|| eyre::eyre!("invalid result missing invalid_intermediate_index"))?;
         let expected_root = result.expected_root;
 
         info!(

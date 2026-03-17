@@ -35,6 +35,9 @@ impl ChallengerMetrics {
     /// Histogram: latency in seconds for nullify transaction confirmation.
     pub const NULLIFY_TX_LATENCY_SECONDS: &str = "base_challenger_nullify_tx_latency_seconds";
 
+    /// Gauge: number of in-flight proof sessions.
+    pub const PENDING_PROOFS: &str = "base_challenger_pending_proofs";
+
     /// Label key for status.
     pub const LABEL_STATUS: &str = "status";
 
