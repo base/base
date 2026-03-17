@@ -29,7 +29,7 @@ pub enum TransportError {
 /// linear (single-page) SKB allocations, sidestepping the bug entirely.
 ///
 /// See: <https://github.com/cloud-hypervisor/cloud-hypervisor/issues/7672>
-/// 28 KiB — comfortably below the ~32384-byte linear SKB threshold
+/// 28 `KiB` — comfortably below the ~32384-byte linear SKB threshold
 const MAX_WRITE_SIZE: usize = 28 * 1024;
 
 /// Length-prefixed bincode codec over `AsyncRead`/`AsyncWrite`.
