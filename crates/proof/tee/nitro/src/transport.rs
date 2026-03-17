@@ -101,7 +101,7 @@ impl Frame {
 
             writer.write_u32(chunk.len() as u32).await?;
             writer.write_u32(crc).await?;
-            write_throttled(&mut writer, chunk).await?;
+            write_throttled(writer, chunk).await?;
             writer.flush().await?;
 
             if i % 10 == 0 || i == chunks.len() - 1 {
