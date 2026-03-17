@@ -2616,6 +2616,7 @@ dependencies = [
  "base-tx-manager",
  "futures",
  "metrics",
+ "rstest",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

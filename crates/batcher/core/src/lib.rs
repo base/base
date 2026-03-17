@@ -24,8 +24,13 @@ pub use throttle_client::{NoopThrottleClient, ThrottleClient};
 mod submissions;
 pub use submissions::SubmissionQueue;
 
+mod config;
+pub use config::BatchDriverConfig;
+
+mod event;
+pub use event::DriverEvent;
+
 mod driver;
-pub use base_batcher_encoder::BatcherMetrics;
-pub use driver::{BatchDriver, BatchDriverConfig};
+pub use driver::BatchDriver;
 
 pub mod test_utils;

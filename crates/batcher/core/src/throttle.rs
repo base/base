@@ -88,6 +88,16 @@ impl ThrottleController {
         Self { config, strategy }
     }
 
+    /// Returns a [`ThrottleController`] with [`ThrottleStrategy::Off`] that never throttles.
+    ///
+    /// Useful in tests and configurations where DA backlog throttling should be disabled.
+    pub fn noop() -> Self {
+        Self::new(
+            ThrottleConfig { threshold_bytes: 0, max_intensity: 0.0, ..Default::default() },
+            ThrottleStrategy::Off,
+        )
+    }
+
     /// Returns a reference to the throttle configuration.
     pub const fn config(&self) -> &ThrottleConfig {
         &self.config
@@ -210,56 +220,46 @@ impl<TC: crate::ThrottleClient> DaThrottle<TC> {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
     fn test_config() -> ThrottleConfig {
         ThrottleConfig { threshold_bytes: 1000, max_intensity: 0.8, ..Default::default() }
     }
 
-    #[test]
-    fn off_strategy_returns_none() {
-        let ctrl = ThrottleController::new(test_config(), ThrottleStrategy::Off);
-        assert!(ctrl.update(5000).is_none());
-    }
-
-    #[test]
-    fn step_below_threshold() {
-        let ctrl = ThrottleController::new(test_config(), ThrottleStrategy::Step);
-        assert!(ctrl.update(999).is_none());
-    }
-
-    #[test]
-    fn step_at_threshold() {
-        let ctrl = ThrottleController::new(test_config(), ThrottleStrategy::Step);
-        let params = ctrl.update(1000).unwrap();
-        assert!((params.intensity - 0.8).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn linear_below_threshold() {
-        let ctrl = ThrottleController::new(test_config(), ThrottleStrategy::Linear);
-        assert!(ctrl.update(500).is_none());
-    }
-
-    #[test]
-    fn linear_at_threshold_returns_none() {
-        // At exactly the threshold, excess = 0 → intensity = 0.0 → must return None,
-        // not Some with zero intensity (which would trigger a spurious log on startup).
-        let ctrl = ThrottleController::new(test_config(), ThrottleStrategy::Linear);
-        assert!(ctrl.update(1000).is_none());
-    }
-
-    #[test]
-    fn linear_at_max() {
-        let ctrl = ThrottleController::new(test_config(), ThrottleStrategy::Linear);
-        let params = ctrl.update(2000).unwrap();
-        assert!((params.intensity - 0.8).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn linear_midpoint() {
-        let ctrl = ThrottleController::new(test_config(), ThrottleStrategy::Linear);
-        let params = ctrl.update(1500).unwrap();
-        assert!((params.intensity - 0.4).abs() < 0.01);
+    /// Verifies `ThrottleController::update` returns the correct result for each
+    /// strategy and backlog combination.
+    ///
+    /// `expected_intensity` is `None` when no throttling should be applied, or
+    /// `Some(intensity)` when throttling must be active with that intensity value.
+    #[rstest]
+    #[case::off_always_none(ThrottleStrategy::Off, 5000, None)]
+    #[case::step_below_threshold(ThrottleStrategy::Step, 999, None)]
+    #[case::step_at_threshold(ThrottleStrategy::Step, 1000, Some(0.8))]
+    #[case::linear_below_threshold(ThrottleStrategy::Linear, 500, None)]
+    // At exactly the threshold, excess = 0 → intensity = 0.0 → must return None,
+    // not Some with zero intensity (which would trigger a spurious log on startup).
+    #[case::linear_at_threshold(ThrottleStrategy::Linear, 1000, None)]
+    #[case::linear_at_max(ThrottleStrategy::Linear, 2000, Some(0.8))]
+    #[case::linear_midpoint(ThrottleStrategy::Linear, 1500, Some(0.4))]
+    fn test_update(
+        #[case] strategy: ThrottleStrategy,
+        #[case] da_backlog_bytes: u64,
+        #[case] expected_intensity: Option<f64>,
+    ) {
+        let ctrl = ThrottleController::new(test_config(), strategy);
+        let result = ctrl.update(da_backlog_bytes);
+        match expected_intensity {
+            None => assert!(result.is_none()),
+            Some(expected) => {
+                let params = result.expect("expected Some result");
+                assert!(
+                    (params.intensity - expected).abs() < 0.01,
+                    "expected intensity {expected}, got {}",
+                    params.intensity
+                );
+            }
+        }
     }
 }

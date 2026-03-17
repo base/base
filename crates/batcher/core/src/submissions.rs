@@ -11,7 +11,9 @@ use metrics::{counter, gauge};
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
-use crate::{BatcherMetrics, TxOutcome};
+use base_batcher_encoder::BatcherMetrics;
+
+use crate::TxOutcome;
 
 /// Type alias for the in-flight receipt future collection.
 type InFlight = FuturesUnordered<Pin<Box<dyn Future<Output = (SubmissionId, TxOutcome)> + Send>>>;
