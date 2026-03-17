@@ -4419,6 +4419,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode 2.0.1",
  "ciborium",
+ "crc32fast",
  "eyre",
  "jsonrpsee",
  "k256",

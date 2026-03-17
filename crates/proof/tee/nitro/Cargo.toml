@@ -39,6 +39,7 @@ aws-nitro-enclaves-nsm-api.workspace = true
 # Encoding
 base64.workspace = true
 ciborium.workspace = true
+crc32fast.workspace = true
 serde_bytes.workspace = true
 zip = { workspace = true, features = ["deflate"] }
 serde = { workspace = true, features = ["derive"] }
