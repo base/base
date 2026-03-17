@@ -299,15 +299,13 @@ where
             ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
         }
 
-        if flashblocks_per_block == 0 {
+        // fcu just arrived late, not syncing
+        if flashblocks_per_block == 0 && !ctx.attributes().no_tx_pool {
             error!(
                 target: "payload_builder",
                 message = "FCU arrived too late or system clock are unsynced, building 0 flashblocks",
                 timestamp,
             );
-            ctx.metrics
-                .first_flashblock_time_offset
-                .record(first_flashblock_offset.as_millis() as f64);
 
             self.record_flashblocks_metrics(
                 &ctx,
@@ -318,6 +316,7 @@ where
             );
         }
 
+        ctx.metrics.first_flashblock_time_offset.record(first_flashblock_offset.as_millis() as f64);
         ctx.metrics.reduced_flashblocks_number.record(
             self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block) as f64,
         );
