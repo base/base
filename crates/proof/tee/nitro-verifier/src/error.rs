@@ -17,13 +17,21 @@ pub enum VerifierError {
     #[error("attestation format error: {0}")]
     AttestationFormat(String),
 
-    /// Certificate chain verification failed.
+    /// x509 certificate parsing failed.
+    #[error("x509 parse error: {0}")]
+    X509Parse(String),
+
+    /// Certificate chain verification failed (M-01 checks).
     #[error("certificate verification error: {0}")]
     CertificateVerification(String),
 
     /// COSE signature verification failed.
     #[error("signature verification error: {0}")]
     SignatureVerification(String),
+
+    /// Attestation content validation failed (M-02 checks).
+    #[error("content validation error: {0}")]
+    ContentValidation(String),
 }
 
 /// Convenience result alias for verifier operations.

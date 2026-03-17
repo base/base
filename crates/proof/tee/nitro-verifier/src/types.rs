@@ -8,6 +8,8 @@ use alloy_sol_types::{SolValue, sol};
 use serde_bytes::ByteArray;
 
 sol! {
+    #![sol(all_derives)]
+
     /// Supported zero-knowledge proof coprocessor types.
     ///
     /// All variants must be present to match the on-chain `INitroEnclaveVerifier.sol`

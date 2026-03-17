@@ -12,3 +12,9 @@ pub use types::{
     BatchVerifierJournal, Bytes48, Pcr, VerificationResult, VerifierInput, VerifierJournal,
     ZkCoProcessorConfig, ZkCoProcessorType,
 };
+
+mod verify;
+pub use verify::AttestationVerifier;
+
+mod x509;
+pub use x509::CertChain;
