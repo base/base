@@ -484,7 +484,6 @@ impl OpPayloadBuilderCtx {
         let block_timestamp = self.attributes().timestamp();
 
         while let Some(tx) = best_txs.next(()) {
-
             if let Some(target) = tx.target_block_number()
                 && target != block_number
             {
