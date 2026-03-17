@@ -305,8 +305,6 @@ services:
         condition: service_healthy
     ports:
       - "${BATCHER_METRICS_PORT}:${BATCHER_METRICS_PORT}"   # Metrics
-    volumes:
-      - ../../.devnet/l1/configs:/genesis:ro
     command:
       - --l1-rpc-url
       - http://l1-el:${L1_HTTP_PORT}
