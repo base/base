@@ -8,6 +8,8 @@
 //! Groth16 compression requires the Bonsai service or Docker with ceremony
 //! files.
 
+use std::sync::Arc;
+
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolValue;
 use base_proof_tee_nitro_verifier::VerifierInput;
@@ -25,7 +27,7 @@ use crate::{AttestationProof, AttestationProofProvider, ProverError, Result};
 /// to avoid stalling the async executor.
 #[derive(Debug)]
 pub struct DirectProver {
-    elf: Vec<u8>,
+    elf: Arc<[u8]>,
     image_id: [u32; 8],
     trusted_certs_prefix_len: u8,
 }
@@ -41,7 +43,7 @@ impl DirectProver {
             .map_err(|e| ProverError::ImageId(format!("failed to compute image ID: {e}")))?;
         let image_id: [u32; 8] = digest.into();
 
-        Ok(Self { elf, image_id, trusted_certs_prefix_len })
+        Ok(Self { elf: Arc::from(elf), image_id, trusted_certs_prefix_len })
     }
 
     /// Returns the computed image ID for this guest ELF.
@@ -53,7 +55,7 @@ impl DirectProver {
 #[async_trait::async_trait]
 impl AttestationProofProvider for DirectProver {
     async fn generate_proof(&self, attestation_bytes: &[u8]) -> Result<AttestationProof> {
-        let elf = self.elf.clone();
+        let elf = Arc::clone(&self.elf);
         let trusted_certs_prefix_len = self.trusted_certs_prefix_len;
         let attestation_owned = attestation_bytes.to_vec();
 
