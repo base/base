@@ -24,19 +24,28 @@ example spammer is provided in `examples/spam.rs`.
 
 ## Usage
 
+Load configuration from a YAML file:
+
 ```rust,ignore
-use base_load_tests_core::{LoadConfig, LoadRunner};
+use base_load_tests_core::{LoadRunner, RpcClient, TestConfig};
 
-let config = LoadConfig::new()
-    .rpc_url("http://localhost:8545".parse().unwrap())
-    .chain_id(1337)
-    .tps(10)
-    .duration(std::time::Duration::from_secs(30));
+// Load config from YAML
+let test_config = TestConfig::load("config.yaml")?;
 
-let mut runner = LoadRunner::new(config).unwrap();
-let summary = runner.run().await.unwrap();
-println!("Submitted: {}, Confirmed: {}", summary.throughput.submitted, summary.throughput.confirmed);
+// Fetch chain ID from RPC if not specified in config
+let client = RpcClient::new(test_config.rpc.parse()?);
+let chain_id = test_config.chain_id.or(Some(client.chain_id().await?));
+
+// Convert to runtime config
+let load_config = test_config.to_load_config(chain_id)?;
+
+// Run the load test
+let mut runner = LoadRunner::new(load_config)?;
+let summary = runner.run().await?;
+println!("Submitted: {}, Confirmed: {}", summary.throughput.total_submitted, summary.throughput.total_confirmed);
 ```
+
+See `examples/config.yaml` for all available configuration options.
 
 ## License
 

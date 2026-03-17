@@ -30,6 +30,8 @@ duration: "30s"
 target_gps: 2100000
 
 # Seed for deterministic account generation when mnemonic not provided (default: random)
+# IMPORTANT: Without a fixed seed, different accounts are generated each run.
+# This means previously-funded accounts won't be reused. Set a seed for reproducibility.
 # seed: 12345
 
 # Chain ID - if not provided, fetched from RPC

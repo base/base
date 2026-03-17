@@ -1,23 +1,22 @@
 use std::sync::Arc;
 
-use tracing::{debug, instrument};
+use tracing::instrument;
 
-use super::{AccountPool, Payload, SeededRng};
+use super::{Payload, SeededRng};
 use crate::{BaselineError, config::WorkloadConfig, rpc::TransactionRequest, utils::Result};
 
 /// Generates transaction workloads from configured payloads.
 pub struct WorkloadGenerator {
     config: WorkloadConfig,
     rng: SeededRng,
-    accounts: AccountPool,
     payloads: Vec<(Arc<dyn Payload>, f64)>,
 }
 
 impl WorkloadGenerator {
     /// Creates a new workload generator.
-    pub fn new(config: WorkloadConfig, accounts: AccountPool) -> Self {
+    pub fn new(config: WorkloadConfig) -> Self {
         let seed = config.seed.unwrap_or(0);
-        Self { config, rng: SeededRng::new(seed), accounts, payloads: Vec::new() }
+        Self { config, rng: SeededRng::new(seed), payloads: Vec::new() }
     }
 
     /// Adds a payload type to the generator.
@@ -31,31 +30,8 @@ impl WorkloadGenerator {
         &self.config
     }
 
-    /// Returns the account pool.
-    pub const fn accounts(&self) -> &AccountPool {
-        &self.accounts
-    }
-
-    /// Returns a mutable reference to the account pool.
-    pub const fn accounts_mut(&mut self) -> &mut AccountPool {
-        &mut self.accounts
-    }
-
-    /// Generates a batch of transactions.
-    #[instrument(skip(self), fields(count = count))]
-    pub fn generate_batch(&mut self, count: usize) -> Result<Vec<TransactionRequest>> {
-        let mut requests = Vec::with_capacity(count);
-
-        for _ in 0..count {
-            let request = self.generate_single()?;
-            requests.push(request);
-        }
-
-        debug!(generated = requests.len(), "generated transaction batch");
-        Ok(requests)
-    }
-
-    /// Generates a single transaction payload with caller-provided addresses.
+    /// Generates a transaction payload with caller-provided addresses.
+    #[instrument(skip(self))]
     pub fn generate_payload(
         &mut self,
         from: alloy_primitives::Address,
@@ -63,19 +39,6 @@ impl WorkloadGenerator {
     ) -> Result<TransactionRequest> {
         let payload = self.select_payload()?;
         Ok(payload.generate(&mut self.rng, from, to))
-    }
-
-    fn generate_single(&mut self) -> Result<TransactionRequest> {
-        let payload = self.select_payload()?;
-        let from_account = self.accounts.random_account();
-        let from = from_account.address;
-
-        let to_index = self.rng.gen_range(0..self.accounts.len());
-        let to = self.accounts.accounts()[to_index].address;
-
-        let request = payload.generate(&mut self.rng, from, to);
-
-        Ok(request)
     }
 
     fn select_payload(&mut self) -> Result<Arc<dyn Payload>> {
@@ -93,7 +56,7 @@ impl WorkloadGenerator {
             }
         }
 
-        Ok(Arc::clone(&self.payloads.last().unwrap().0))
+        Ok(Arc::clone(&self.payloads.last().expect("non-empty checked above").0))
     }
 
     /// Resets the generator to its initial state.
@@ -107,7 +70,6 @@ impl std::fmt::Debug for WorkloadGenerator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WorkloadGenerator")
             .field("config", &self.config)
-            .field("accounts_count", &self.accounts.len())
             .field("payloads_count", &self.payloads.len())
             .finish()
     }

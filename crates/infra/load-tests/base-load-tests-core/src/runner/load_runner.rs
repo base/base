@@ -7,12 +7,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::TransactionRequest as AlloyTxRequest;
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::NonceManager;
+
+type HttpProvider = RootProvider<Ethereum>;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -46,7 +48,7 @@ pub struct LoadRunner {
     generator: WorkloadGenerator,
     collector: MetricsCollector,
     stop_flag: Arc<AtomicBool>,
-    nonce_managers: HashMap<Address, NonceManager>,
+    nonce_managers: HashMap<Address, NonceManager<HttpProvider>>,
     providers: HashMap<Address, WalletProvider>,
     gas_price: u128,
 }
@@ -79,7 +81,7 @@ impl LoadRunner {
         let providers = Self::build_providers(&config.rpc_url, &accounts);
 
         let workload_config = WorkloadConfig::new("load-test").with_seed(config.seed);
-        let generator = Self::create_generator(workload_config, &config, accounts.clone())?;
+        let generator = Self::create_generator(workload_config, &config)?;
 
         info!(
             account_count = config.account_count,
@@ -118,9 +120,8 @@ impl LoadRunner {
     fn create_generator(
         workload_config: WorkloadConfig,
         config: &LoadConfig,
-        accounts: AccountPool,
     ) -> Result<WorkloadGenerator> {
-        let mut generator = WorkloadGenerator::new(workload_config, accounts);
+        let mut generator = WorkloadGenerator::new(workload_config);
 
         let total_weight: u32 = config.transactions.iter().map(|t| t.weight).sum();
         if total_weight == 0 {
@@ -215,6 +216,10 @@ impl LoadRunner {
             "funding accounts"
         );
 
+        let gas_price = self.client.get_gas_price().await?;
+        let max_fee = gas_price.saturating_mul(2).min(self.config.max_gas_price);
+        let max_priority_fee = (gas_price / 10).max(1);
+
         let mut pending_txs = Vec::new();
         for address in &accounts_to_fund {
             let tx = AlloyTxRequest::default()
@@ -222,7 +227,9 @@ impl LoadRunner {
                 .with_value(amount_per_account)
                 .with_nonce(nonce)
                 .with_chain_id(self.config.chain_id)
-                .with_gas_limit(21_000);
+                .with_gas_limit(21_000)
+                .with_max_fee_per_gas(max_fee)
+                .with_max_priority_fee_per_gas(max_priority_fee);
 
             match funder_provider.send_transaction(tx).await {
                 Ok(pending) => {
@@ -277,7 +284,9 @@ impl LoadRunner {
             let balance = self.client.get_balance(account.address).await?;
             if balance < amount_per_account {
                 return Err(BaselineError::Transaction(format!(
-                    "account {} still underfunded: {} < {}",
+                    "account {} has mass {} but needs {}. \
+                     If seed is not set, accounts change each run. \
+                     Set 'seed: <number>' in config for consistent accounts.",
                     account.address, balance, amount_per_account
                 )));
             }
@@ -394,6 +403,7 @@ impl LoadRunner {
                 if consecutive_at_limit >= account_count {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                     consecutive_at_limit = 0;
+                    rate_limiter.reset_tick();
                 }
                 continue;
             }
@@ -474,6 +484,8 @@ impl LoadRunner {
                 Err(_) => continue,
             }
         }
+
+        confirmer_task.abort();
 
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");

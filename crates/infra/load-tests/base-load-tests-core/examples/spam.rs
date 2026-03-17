@@ -13,7 +13,7 @@ async fn main() -> Result<()> {
     let config_path = match std::env::args().nth(1) {
         Some(path) => PathBuf::from(path),
         None => match option_env!("CARGO_MANIFEST_DIR") {
-            Some(dir) => PathBuf::from(dir).join("examples/config.yaml"),
+            Some(dir) => PathBuf::from(dir).join("examples/devnet.yaml"),
             None => bail!("usage: spam <config.yaml>"),
         },
     };

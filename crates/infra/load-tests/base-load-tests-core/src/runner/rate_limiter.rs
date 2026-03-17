@@ -50,6 +50,11 @@ impl RateLimiter {
         }
     }
 
+    /// Resets the tick timer to now, preventing credit accumulation during pauses.
+    pub fn reset_tick(&mut self) {
+        self.last_tick = Some(Instant::now());
+    }
+
     /// Returns the interval between ticks.
     pub const fn interval(&self) -> Duration {
         self.interval

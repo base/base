@@ -27,7 +27,7 @@ const INITIAL_BLOCK_LOOKBACK: u64 = 5;
 pub struct Confirmer {
     pending: HashMap<TxHash, PendingTx>,
     metrics_tx: mpsc::Sender<TransactionMetrics>,
-    in_flight_per_sender: HashMap<Address, Arc<AtomicU64>>,
+    in_flight_per_sender: Arc<HashMap<Address, Arc<AtomicU64>>>,
     total_in_flight: Arc<AtomicU64>,
     stop_flag: Arc<AtomicBool>,
     poll_interval: Duration,
@@ -94,9 +94,9 @@ impl Confirmer {
         metrics_tx: mpsc::Sender<TransactionMetrics>,
         stop_flag: Arc<AtomicBool>,
     ) -> Self {
-        let mut in_flight_per_sender = HashMap::new();
+        let mut in_flight_map = HashMap::new();
         for addr in sender_addresses {
-            in_flight_per_sender.insert(*addr, Arc::new(AtomicU64::new(0)));
+            in_flight_map.insert(*addr, Arc::new(AtomicU64::new(0)));
         }
 
         let (pending_tx, pending_rx) = mpsc::channel(PENDING_CHANNEL_BUFFER);
@@ -104,7 +104,7 @@ impl Confirmer {
         Self {
             pending: HashMap::new(),
             metrics_tx,
-            in_flight_per_sender,
+            in_flight_per_sender: Arc::new(in_flight_map),
             total_in_flight: Arc::new(AtomicU64::new(0)),
             stop_flag,
             poll_interval: Duration::from_millis(500),
@@ -125,7 +125,7 @@ impl Confirmer {
     pub fn handle(&mut self) -> ConfirmerHandle {
         ConfirmerHandle {
             pending_tx: self.pending_tx.clone(),
-            in_flight_per_sender: Arc::new(self.in_flight_per_sender.clone()),
+            in_flight_per_sender: Arc::clone(&self.in_flight_per_sender),
             total_in_flight: Arc::clone(&self.total_in_flight),
         }
     }

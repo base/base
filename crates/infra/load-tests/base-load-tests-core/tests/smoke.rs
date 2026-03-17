@@ -48,33 +48,35 @@ fn transfer_payload_random_value() {
 }
 
 #[test]
-fn workload_batch_generation() {
+fn workload_payload_generation() {
     let config = WorkloadConfig::new("test").with_seed(42);
-    let accounts = AccountPool::new(42, 10).unwrap();
 
     let mut generator =
-        WorkloadGenerator::new(config, accounts).with_payload(TransferPayload::default(), 100.0);
+        WorkloadGenerator::new(config).with_payload(TransferPayload::default(), 100.0);
 
-    let batch = generator.generate_batch(10).unwrap();
-    assert_eq!(batch.len(), 10);
+    let from = Address::repeat_byte(1);
+    let to = Address::repeat_byte(2);
+
+    let tx = generator.generate_payload(from, to).unwrap();
+    assert_eq!(tx.to, to);
 }
 
 #[test]
 fn workload_deterministic_generation() {
     let config1 = WorkloadConfig::new("test").with_seed(42);
-    let accounts1 = AccountPool::new(42, 10).unwrap();
     let mut generator1 =
-        WorkloadGenerator::new(config1, accounts1).with_payload(TransferPayload::default(), 100.0);
+        WorkloadGenerator::new(config1).with_payload(TransferPayload::default(), 100.0);
 
     let config2 = WorkloadConfig::new("test").with_seed(42);
-    let accounts2 = AccountPool::new(42, 10).unwrap();
     let mut generator2 =
-        WorkloadGenerator::new(config2, accounts2).with_payload(TransferPayload::default(), 100.0);
+        WorkloadGenerator::new(config2).with_payload(TransferPayload::default(), 100.0);
 
-    let batch1 = generator1.generate_batch(5).unwrap();
-    let batch2 = generator2.generate_batch(5).unwrap();
+    let from = Address::repeat_byte(1);
+    let to = Address::repeat_byte(2);
 
-    for (tx1, tx2) in batch1.iter().zip(batch2.iter()) {
+    for _ in 0..5 {
+        let tx1 = generator1.generate_payload(from, to).unwrap();
+        let tx2 = generator2.generate_payload(from, to).unwrap();
         assert_eq!(tx1.to, tx2.to);
         assert_eq!(tx1.value, tx2.value);
     }

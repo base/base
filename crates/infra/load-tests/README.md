@@ -30,9 +30,23 @@ cargo build -p base-load-tests-core
 # Run tests
 cargo test -p base-load-tests-core
 
-# Run the spam example against devnet
-cargo run -p base-load-tests-core --example spam -- \
-  http://localhost:8545 \
-  0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
-  100 30 10
+# Run the spam example with a YAML config file
+cargo run -p base-load-tests-core --example spam -- path/to/config.yaml
+
+# Or use the default config (examples/config.yaml)
+cargo run -p base-load-tests-core --example spam
+```
+
+## Configuration
+
+All configuration is done via YAML files. See `base-load-tests-core/examples/config.yaml` for a fully documented example.
+
+Example minimal config (`devnet.yaml`):
+
+```yaml
+rpc: http://localhost:8545
+funder_key: "0x..."
+sender_count: 10
+target_gps: 2100000
+duration: "30s"
 ```
