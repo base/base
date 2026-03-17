@@ -8,7 +8,8 @@ use std::collections::HashMap;
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_zk_client::{GetProofRequest, ProofJobStatus, ReceiptType, ZkProofProvider};
-/// Proof type discriminator byte prepended to ZK proof receipts.
+
+/// Proof type byte for ZK proofs (matches `AggregateVerifier.nullify` discriminator: `0` = TEE, `1` = ZK).
 const ZK_PROOF_TYPE_BYTE: u8 = 0x01;
 
 /// Phase of a pending proof: either awaiting the ZK service or ready for

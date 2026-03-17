@@ -408,10 +408,8 @@ async fn test_step_nullification_failure_preserves_proof() {
     let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
 
     // Step 1: proof succeeds, but nullification tx fails.
-    // The error is swallowed by `step` (logged as a warning) because
-    // `poll_or_submit` returns Ok — only poll_pending_proofs logs it.
-    // But initiate_proof calls poll_or_submit directly, so its error
-    // propagates up through process_candidate → step logs it.
+    // initiate_proof catches the poll_or_submit error and logs a warning,
+    // so the error does not propagate up through process_candidate → step.
     driver.step().await.unwrap();
 
     // Entry must still be in pending_proofs as ReadyToSubmit.

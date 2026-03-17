@@ -282,7 +282,11 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         let pending = PendingProof::awaiting(session_id, invalid_index, expected_root);
         self.pending_proofs.insert(game_address, pending);
 
-        self.poll_or_submit(game_address).await
+        if let Err(e) = self.poll_or_submit(game_address).await {
+            warn!(error = %e, game = %game_address, "initial poll failed, will retry next tick");
+        }
+
+        Ok(())
     }
 
     /// Advances a pending proof through its lifecycle.
