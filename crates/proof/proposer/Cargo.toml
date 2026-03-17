@@ -14,8 +14,6 @@ workspace = true
 [dependencies]
 # Alloy
 alloy-eips.workspace = true
-alloy-signer.workspace = true
-alloy-network.workspace = true
 alloy-contract.workspace = true
 alloy-provider.workspace = true
 alloy-transport.workspace = true
@@ -24,7 +22,6 @@ alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-client.workspace = true
-alloy-signer-local.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-transport-http.workspace = true
 
@@ -32,6 +29,9 @@ alloy-transport-http.workspace = true
 base-alloy-network.workspace = true
 base-alloy-rpc-types.workspace = true
 base-alloy-consensus = { workspace = true, features = ["std", "serde"] }
+
+# Tx Manager
+base-tx-manager.workspace = true
 
 # Proof
 base-proof-rpc.workspace = true
@@ -80,7 +80,6 @@ url.workspace = true
 bytes.workspace = true
 backon.workspace = true
 humantime.workspace = true
-jsonrpsee.workspace = true
 moka = { workspace = true, features = ["future"] }
 axum = { workspace = true, features = ["http1", "json", "tokio"] }
 
