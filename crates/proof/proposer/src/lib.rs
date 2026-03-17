@@ -10,18 +10,17 @@ mod balance;
 pub use balance::{BALANCE_POLL_INTERVAL, balance_monitor};
 
 mod cli;
-pub use cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, RpcServerArgs};
+pub use cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, RpcServerArgs, SignerCli, TxManagerCli};
 
 mod config;
-pub use config::{ConfigError, ProposerConfig, RpcServerConfig, SigningConfig};
+pub use config::{ConfigError, ProposerConfig, RpcServerConfig};
 
 mod constants;
 pub use constants::*;
 
 mod output_proposer;
 pub use output_proposer::{
-    LocalOutputProposer, OutputProposer, RemoteOutputProposer, build_proof_data,
-    create_output_proposer, is_game_already_exists,
+    OutputProposer, ProposalSubmitter, build_proof_data, is_game_already_exists,
 };
 
 mod driver;

@@ -9,6 +9,8 @@ use url::Url;
 
 base_cli_utils::define_log_args!("BASE_PROPOSER");
 base_cli_utils::define_metrics_args!("BASE_PROPOSER", 7300);
+base_tx_manager::define_signer_cli!("BASE_PROPOSER");
+base_tx_manager::define_tx_manager_cli!("BASE_PROPOSER");
 
 /// Proposer - TEE-based output proposal generation for Base.
 #[derive(Debug, Clone, Parser)]
@@ -161,28 +163,13 @@ pub struct ProposerArgs {
     )]
     pub rpc_retry_max_delay: Duration,
 
-    /// Private key for local transaction signing (hex-encoded, for development).
-    /// Mutually exclusive with --signer-endpoint/--signer-address.
-    #[arg(long = "private-key", env = "BASE_PROPOSER_PRIVATE_KEY")]
-    pub private_key: Option<String>,
+    /// Signer configuration (local key or remote sidecar).
+    #[command(flatten)]
+    pub signer: SignerCli,
 
-    /// URL of the signer sidecar JSON-RPC endpoint (for production).
-    /// Must be used together with --signer-address.
-    #[arg(
-        long = "signer-endpoint",
-        env = "BASE_PROPOSER_SIGNER_ENDPOINT",
-        value_parser = parse_url
-    )]
-    pub signer_endpoint: Option<Url>,
-
-    /// Address of the signer account on the signer sidecar.
-    /// Must be used together with --signer-endpoint.
-    #[arg(
-        long = "signer-address",
-        env = "BASE_PROPOSER_SIGNER_ADDRESS",
-        value_parser = parse_address
-    )]
-    pub signer_address: Option<Address>,
+    /// Transaction manager configuration.
+    #[command(flatten)]
+    pub tx_manager: TxManagerCli,
 }
 
 /// RPC server configuration arguments.
@@ -326,9 +313,9 @@ mod tests {
         assert_eq!(cli.proposer.rpc_retry_max_delay, Duration::from_secs(10));
 
         // Check signing defaults (all None)
-        assert!(cli.proposer.private_key.is_none());
-        assert!(cli.proposer.signer_endpoint.is_none());
-        assert!(cli.proposer.signer_address.is_none());
+        assert!(cli.proposer.signer.private_key.is_none());
+        assert!(cli.proposer.signer.signer_endpoint.is_none());
+        assert!(cli.proposer.signer.signer_address.is_none());
     }
 
     #[test]

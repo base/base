@@ -4,7 +4,7 @@ use std::{fmt, net::SocketAddr, ops::Deref, time::Duration};
 
 use alloy_primitives::Address;
 use base_cli_utils::{LogConfig, MetricsConfig};
-use base_tx_manager::SignerConfig;
+use base_tx_manager::{SignerConfig, TxManagerConfig};
 use thiserror::Error;
 use url::Url;
 
@@ -77,6 +77,9 @@ pub enum ConfigError {
     /// Invalid signing configuration.
     #[error("invalid signing config: {0}")]
     Signer(#[from] base_tx_manager::ConfigError),
+    /// Invalid transaction manager configuration.
+    #[error("invalid tx manager config: {0}")]
+    TxManager(base_tx_manager::ConfigError),
 }
 
 /// Validated challenger configuration.
@@ -98,6 +101,8 @@ pub struct ChallengerConfig {
     pub zk_request_timeout: Duration,
     /// Signing configuration for L1 transaction submission.
     pub signing: SignerConfig,
+    /// Transaction manager configuration (fee limits, confirmations, timeouts).
+    pub tx_manager: TxManagerConfig,
     /// Number of past games to scan on startup.
     pub lookback_games: u64,
     /// Health server socket address.
@@ -181,6 +186,10 @@ impl ChallengerConfig {
         // Validate and extract signing config
         let signing = SignerConfig::try_from(cli.challenger.signer)?;
 
+        // Validate and extract tx manager config
+        let tx_manager =
+            TxManagerConfig::try_from(cli.challenger.tx_manager).map_err(ConfigError::TxManager)?;
+
         let health_addr = SocketAddr::new(cli.challenger.health_addr, cli.challenger.health_port);
 
         Ok(Self {
@@ -192,6 +201,7 @@ impl ChallengerConfig {
             zk_connect_timeout: cli.challenger.zk_connect_timeout,
             zk_request_timeout: cli.challenger.zk_request_timeout,
             signing,
+            tx_manager,
             lookback_games: cli.challenger.lookback_games,
             health_addr,
             log: LogConfig::from(cli.logging),
@@ -258,6 +268,9 @@ mod tests {
         assert_eq!(config.lookback_games, 1000);
         assert_eq!(config.health_addr, "0.0.0.0:8080".parse::<SocketAddr>().unwrap());
         assert!(matches!(config.signing, SignerConfig::Remote { .. }));
+        assert_eq!(config.tx_manager.num_confirmations, 10);
+        assert_eq!(config.tx_manager.safe_abort_nonce_too_low_count, 3);
+        assert_eq!(config.tx_manager.fee_limit_multiplier, 5);
     }
 
     #[rstest]

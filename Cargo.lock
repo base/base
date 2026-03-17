@@ -4445,9 +4445,14 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "ciborium",
+ "hex",
+ "p384",
+ "rstest",
  "serde",
  "serde_bytes",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
+ "x509-parser",
 ]
 
 [[package]]
@@ -4510,14 +4515,11 @@ dependencies = [
  "alloy-consensus",
  "alloy-contract",
  "alloy-eips",
- "alloy-network",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-client",
  "alloy-rpc-types",
  "alloy-rpc-types-eth",
- "alloy-signer",
- "alloy-signer-local",
  "alloy-sol-types",
  "alloy-transport",
  "alloy-transport-http",
@@ -4534,13 +4536,13 @@ dependencies = [
  "base-proof-primitives",
  "base-proof-rpc",
  "base-protocol",
+ "base-tx-manager",
  "bytes",
  "clap",
  "eyre",
  "futures",
  "hex",
  "humantime",
- "jsonrpsee",
  "metrics",
  "metrics-exporter-prometheus",
  "moka",
@@ -6567,7 +6569,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ab67060fc6b8ef687992d439ca0fa36e7ed17e9a0b16b25b601e8757df720de"
 dependencies = [
  "data-encoding",
- "syn 2.0.117",
+ "syn 1.0.109",
 ]
 
 [[package]]

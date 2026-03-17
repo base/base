@@ -1,3 +1,9 @@
+x-rust-service-build: &rust-service-build
+  context: ../..
+  dockerfile: etc/docker/Dockerfile.rust-services
+  args:
+    PROFILE: "${CARGO_PROFILE:-dev}"
+
 services:
   setup-l1:
     build:
@@ -155,11 +161,10 @@ services:
     entrypoint: ["/usr/local/bin/setup-l2.sh"]
 
   base-builder:
+    image: base-builder:local
     build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.builder
-      args:
-        - PROFILE=${CARGO_PROFILE:-dev}
+      <<: *rust-service-build
+      target: builder
     container_name: base-builder
     depends_on:
       setup-l2:
@@ -220,11 +225,10 @@ services:
     restart: unless-stopped
 
   base-builder-cl:
+    image: base-consensus:local
     build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.consensus
-      args:
-        - PROFILE=${CARGO_PROFILE:-dev}
+      <<: *rust-service-build
+      target: consensus
     container_name: base-builder-cl
     depends_on:
       base-builder:
@@ -326,11 +330,10 @@ services:
     restart: unless-stopped
 
   base-client:
+    image: base-reth-node:local
     build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.client
-      args:
-        - PROFILE=${CARGO_PROFILE:-dev}
+      <<: *rust-service-build
+      target: client
     container_name: base-client
     depends_on:
       setup-l2:
@@ -395,11 +398,10 @@ services:
     restart: unless-stopped
 
   base-client-cl:
+    image: base-consensus:local
     build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.consensus
-      args:
-        - PROFILE=${CARGO_PROFILE:-dev}
+      <<: *rust-service-build
+      target: consensus
     container_name: base-client-cl
     depends_on:
       base-client:

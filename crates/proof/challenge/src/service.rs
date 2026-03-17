@@ -76,7 +76,7 @@ impl ChallengerService {
         let tx_manager = SimpleTxManager::new(
             l1_provider,
             signer_config,
-            TxManagerConfig::default(),
+            config.tx_manager,
             chain_id,
             Arc::new(NoopTxMetrics),
         )

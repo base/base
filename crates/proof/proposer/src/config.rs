@@ -3,8 +3,6 @@
 use std::{net::IpAddr, time::Duration};
 
 use alloy_primitives::{Address, B256};
-use alloy_signer::k256::ecdsa::SigningKey;
-use alloy_signer_local::PrivateKeySigner;
 use base_cli_utils::{LogConfig, MetricsConfig};
 use base_proof_rpc::RetryConfig;
 use thiserror::Error;
@@ -42,42 +40,13 @@ pub enum ConfigError {
     /// Invalid signing configuration.
     #[error("invalid signing config: {0}")]
     Signing(String),
-}
-
-/// Signing configuration for L1 transaction submission.
-#[derive(Clone)]
-pub enum SigningConfig {
-    /// Local signing with an in-process private key (development).
-    Local {
-        /// The private key signer.
-        signer: PrivateKeySigner,
-    },
-    /// Remote signing via a signer sidecar JSON-RPC endpoint (production).
-    Remote {
-        /// URL of the signer sidecar.
-        endpoint: Url,
-        /// Address of the signer account.
-        address: Address,
-    },
-}
-
-impl std::fmt::Debug for SigningConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Local { signer } => {
-                f.debug_struct("Local").field("address", &signer.address()).finish()
-            }
-            Self::Remote { endpoint, address } => f
-                .debug_struct("Remote")
-                .field("endpoint", endpoint)
-                .field("address", address)
-                .finish(),
-        }
-    }
+    /// Invalid transaction manager configuration.
+    #[error("invalid tx manager config: {0}")]
+    TxManager(String),
 }
 
 /// Validated proposer configuration.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ProposerConfig {
     /// Allow proposals based on non-finalized L1 data.
     pub allow_non_finalized: bool,
@@ -116,7 +85,9 @@ pub struct ProposerConfig {
     /// RPC retry configuration.
     pub retry: RetryConfig,
     /// Signing configuration for L1 transaction submission.
-    pub signing: SigningConfig,
+    pub signing: base_tx_manager::SignerConfig,
+    /// Transaction manager configuration.
+    pub tx_manager: base_tx_manager::TxManagerConfig,
 }
 
 impl ProposerConfig {
@@ -152,15 +123,16 @@ impl ProposerConfig {
             ));
         }
 
-        // Validate and extract signing config
-        let signing = build_signing_config(
-            cli.proposer.private_key.as_deref(),
-            cli.proposer.signer_endpoint.as_ref(),
-            cli.proposer.signer_address.as_ref(),
-        )?;
-
-        // Extract retry config before moving other proposer fields
+        // Extract retry config before moving signer out of proposer
         let retry = RetryConfig::from(&cli.proposer);
+
+        // Validate and extract signing config
+        let signing = base_tx_manager::SignerConfig::try_from(cli.proposer.signer)
+            .map_err(|e| ConfigError::Signing(e.to_string()))?;
+
+        // Validate and extract tx manager config
+        let tx_manager = base_tx_manager::TxManagerConfig::try_from(cli.proposer.tx_manager)
+            .map_err(|e| ConfigError::TxManager(e.to_string()))?;
 
         Ok(Self {
             allow_non_finalized: cli.proposer.allow_non_finalized,
@@ -176,6 +148,7 @@ impl ProposerConfig {
             rpc_timeout: cli.proposer.rpc_timeout,
             retry,
             signing,
+            tx_manager,
             rollup_rpc: cli.proposer.rollup_rpc,
             skip_tls_verify: cli.proposer.skip_tls_verify,
             wait_node_sync: cli.proposer.wait_node_sync,
@@ -197,45 +170,6 @@ fn validate_url(url: &Url, field: &'static str) -> Result<(), ConfigError> {
     }
 
     Ok(())
-}
-
-/// Validate and build [`SigningConfig`] from CLI arguments.
-///
-/// Exactly one of `private_key` or (`signer_endpoint` + `signer_address`) must be provided.
-fn build_signing_config(
-    private_key: Option<&str>,
-    signer_endpoint: Option<&Url>,
-    signer_address: Option<&Address>,
-) -> Result<SigningConfig, ConfigError> {
-    match (private_key, signer_endpoint, signer_address) {
-        (Some(pk), None, None) => {
-            let hex_str = pk.strip_prefix("0x").unwrap_or(pk);
-            let key_bytes = hex::decode(hex_str)
-                .map_err(|e| ConfigError::Signing(format!("invalid private key hex: {e}")))?;
-            let signing_key = SigningKey::from_slice(&key_bytes)
-                .map_err(|e| ConfigError::Signing(format!("invalid private key: {e}")))?;
-            let signer = PrivateKeySigner::from_signing_key(signing_key);
-            Ok(SigningConfig::Local { signer })
-        }
-        (None, Some(endpoint), Some(address)) => {
-            validate_url(endpoint, "signer-endpoint")?;
-            Ok(SigningConfig::Remote { endpoint: endpoint.clone(), address: *address })
-        }
-        (None, None, None) => Err(ConfigError::Signing(
-            "one of --private-key or (--signer-endpoint + --signer-address) must be provided"
-                .to_string(),
-        )),
-        (Some(_), Some(_), _) | (Some(_), _, Some(_)) => Err(ConfigError::Signing(
-            "--private-key is mutually exclusive with --signer-endpoint/--signer-address"
-                .to_string(),
-        )),
-        (None, Some(_), None) => {
-            Err(ConfigError::Signing("--signer-endpoint requires --signer-address".to_string()))
-        }
-        (None, None, Some(_)) => {
-            Err(ConfigError::Signing("--signer-address requires --signer-endpoint".to_string()))
-        }
-    }
 }
 
 /// Validated RPC server configuration.
@@ -276,7 +210,7 @@ mod tests {
     use base_cli_utils::LogFormat;
 
     use super::*;
-    use crate::cli::{Cli, LogArgs, MetricsArgs, ProposerArgs};
+    use crate::cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, SignerCli, TxManagerCli};
 
     fn minimal_cli() -> Cli {
         Cli {
@@ -302,12 +236,15 @@ mod tests {
                 rpc_max_retries: 5,
                 rpc_retry_initial_delay: Duration::from_millis(100),
                 rpc_retry_max_delay: Duration::from_secs(10),
-                private_key: Some(
-                    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-                        .to_string(),
-                ),
-                signer_endpoint: None,
-                signer_address: None,
+                signer: SignerCli {
+                    private_key: Some(
+                        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+                            .to_string(),
+                    ),
+                    signer_endpoint: None,
+                    signer_address: None,
+                },
+                tx_manager: TxManagerCli::default(),
             },
             logging: LogArgs {
                 level: 3,
@@ -469,42 +406,26 @@ mod tests {
     fn test_signing_config_local() {
         let cli = minimal_cli();
         let config = ProposerConfig::from_cli(cli).unwrap();
-        assert!(matches!(config.signing, SigningConfig::Local { .. }));
+        assert!(matches!(config.signing, base_tx_manager::SignerConfig::Local { .. }));
     }
 
     #[test]
     fn test_signing_config_remote() {
         let mut cli = minimal_cli();
-        cli.proposer.private_key = None;
-        cli.proposer.signer_endpoint = Some(Url::parse("http://localhost:8546").unwrap());
-        cli.proposer.signer_address =
-            Some("0x1234567890123456789012345678901234567890".parse().unwrap());
+        cli.proposer.signer = SignerCli {
+            private_key: None,
+            signer_endpoint: Some(Url::parse("http://localhost:8546").unwrap()),
+            signer_address: Some("0x1234567890123456789012345678901234567890".parse().unwrap()),
+        };
         let config = ProposerConfig::from_cli(cli).unwrap();
-        assert!(matches!(config.signing, SigningConfig::Remote { .. }));
+        assert!(matches!(config.signing, base_tx_manager::SignerConfig::Remote { .. }));
     }
 
     #[test]
     fn test_signing_config_none_provided() {
         let mut cli = minimal_cli();
-        cli.proposer.private_key = None;
-        let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(result, Err(ConfigError::Signing(_))));
-    }
-
-    #[test]
-    fn test_signing_config_both_provided() {
-        let mut cli = minimal_cli();
-        // private_key is already set in minimal_cli
-        cli.proposer.signer_endpoint = Some(Url::parse("http://localhost:8546").unwrap());
-        let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(result, Err(ConfigError::Signing(_))));
-    }
-
-    #[test]
-    fn test_signing_config_endpoint_without_address() {
-        let mut cli = minimal_cli();
-        cli.proposer.private_key = None;
-        cli.proposer.signer_endpoint = Some(Url::parse("http://localhost:8546").unwrap());
+        cli.proposer.signer =
+            SignerCli { private_key: None, signer_endpoint: None, signer_address: None };
         let result = ProposerConfig::from_cli(cli);
         assert!(matches!(result, Err(ConfigError::Signing(_))));
     }

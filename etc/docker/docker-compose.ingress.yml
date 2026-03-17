@@ -1,3 +1,9 @@
+x-rust-service-build: &rust-service-build
+  context: ../..
+  dockerfile: etc/docker/Dockerfile.rust-services
+  args:
+    PROFILE: "${CARGO_PROFILE:-dev}"
+
 services:
   kafka:
     image: apache/kafka:3.9.0
@@ -71,11 +77,10 @@ services:
       "
 
   ingress-rpc:
+    image: ingress-rpc:local
     build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.ingress-rpc
-      args:
-        - PROFILE=dev
+      <<: *rust-service-build
+      target: ingress-rpc
     container_name: ingress-rpc
     depends_on:
       base-builder:
@@ -144,11 +149,10 @@ services:
     restart: unless-stopped
 
   audit-archiver:
+    image: audit-archiver:local
     build:
-      context: ../..
-      dockerfile: etc/docker/Dockerfile.audit-archiver
-      args:
-        - PROFILE=dev
+      <<: *rust-service-build
+      target: audit-archiver
     container_name: audit-archiver
     depends_on:
       kafka-init:

@@ -1,0 +1,119 @@
+ARG RUST_VERSION=1.93
+FROM public.ecr.aws/docker/library/rust:${RUST_VERSION}-trixie AS rust-builder-base
+WORKDIR /app
+ARG MOLD_VERSION=2.40.4
+ARG MOLD_SHA256_AARCH64=c799b9ccae8728793da2186718fbe53b76400a9da396184fac0c64aa3298ec37
+ARG MOLD_SHA256_ARM=d82792748a81202423ddd2496fc8719404fe694493abdef691cc080392ee44bf
+ARG MOLD_SHA256_X86_64=4c999e19ffa31afa5aa429c679b665d5e2ca5a6b6832ad4b79668e8dcf3d8ec1
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      git libclang-dev pkg-config curl build-essential cmake && \
+    rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    case "$(uname -m)" in \
+      x86_64) MOLD_ARCH=x86_64; MOLD_SHA256="${MOLD_SHA256_X86_64}" ;; \
+      aarch64|arm64) MOLD_ARCH=aarch64; MOLD_SHA256="${MOLD_SHA256_AARCH64}" ;; \
+      armv7l|armv6l) MOLD_ARCH=arm; MOLD_SHA256="${MOLD_SHA256_ARM}" ;; \
+      *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/rui314/mold/releases/download/v${MOLD_VERSION}/mold-${MOLD_VERSION}-${MOLD_ARCH}-linux.tar.gz" -o /tmp/mold.tar.gz; \
+    echo "${MOLD_SHA256}  /tmp/mold.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/mold.tar.gz -C /tmp; \
+    cp /tmp/mold-${MOLD_VERSION}-${MOLD_ARCH}-linux/bin/* /usr/local/bin/; \
+    rm -rf /tmp/mold*
+
+FROM rust-builder-base AS source
+COPY . .
+
+FROM source AS client-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=client-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-reth-node --bin base-reth-node && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-reth-node /app/base-client
+
+FROM source AS builder-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=builder-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-builder-bin --bin base-builder && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-builder /app/base-builder
+
+FROM source AS consensus-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=consensus-target,sharing=locked \
+    cargo build --profile $PROFILE --bin base-consensus && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-consensus /app/base-consensus
+
+FROM source AS proposer-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=proposer-target,sharing=locked \
+    cargo build --profile $PROFILE --package base-proposer-bin --bin base-proposer && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-proposer /app/base-proposer
+
+FROM source AS websocket-proxy-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=websocket-proxy-target,sharing=locked \
+    cargo build --profile $PROFILE --package websocket-proxy-bin --bin websocket-proxy && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/websocket-proxy /app/websocket-proxy
+
+FROM source AS ingress-rpc-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=ingress-rpc-target,sharing=locked \
+    cargo build --profile $PROFILE --package ingress-rpc --bin ingress-rpc && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/ingress-rpc /app/ingress-rpc
+
+FROM source AS audit-archiver-builder
+ARG PROFILE=release
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=audit-archiver-target,sharing=locked \
+    cargo build --profile $PROFILE --package audit-archiver --bin audit-archiver && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/audit-archiver /app/audit-archiver
+
+FROM public.ecr.aws/docker/library/debian:trixie-slim AS runtime-base
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd -r -m -s /sbin/nologin base
+WORKDIR /app
+USER base
+
+FROM runtime-base AS client
+COPY --from=client-builder --chown=base:base /app/base-client ./base-client
+ENTRYPOINT ["./base-client"]
+
+FROM runtime-base AS builder
+COPY --from=builder-builder --chown=base:base /app/base-builder ./base-builder
+ENTRYPOINT ["./base-builder"]
+
+FROM runtime-base AS consensus
+COPY --from=consensus-builder --chown=base:base /app/base-consensus ./base-consensus
+ENTRYPOINT ["./base-consensus"]
+
+FROM runtime-base AS proposer
+COPY --from=proposer-builder --chown=base:base /app/base-proposer ./base-proposer
+EXPOSE 9090
+ENTRYPOINT ["./base-proposer"]
+
+FROM runtime-base AS websocket-proxy
+COPY --from=websocket-proxy-builder --chown=base:base /app/websocket-proxy ./websocket-proxy
+ENTRYPOINT ["./websocket-proxy"]
+
+FROM runtime-base AS ingress-rpc
+COPY --from=ingress-rpc-builder --chown=base:base /app/ingress-rpc ./ingress-rpc
+ENTRYPOINT ["./ingress-rpc"]
+
+FROM runtime-base AS audit-archiver
+COPY --from=audit-archiver-builder --chown=base:base /app/audit-archiver ./audit-archiver
+ENTRYPOINT ["./audit-archiver"]

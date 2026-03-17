@@ -7,7 +7,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 mod cli;
-pub use cli::{ChallengerArgs, Cli, LogArgs, MetricsArgs, SignerCli};
+pub use cli::{ChallengerArgs, Cli, LogArgs, MetricsArgs, SignerCli, TxManagerCli};
 
 mod config;
 pub use config::{ChallengerConfig, ConfigError, UrlValidationError, Validated};

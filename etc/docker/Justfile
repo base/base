@@ -6,12 +6,12 @@ default:
     @just devnet --list
 
 # Stops devnet, deletes data, and starts fresh
-up: down
-    docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml up -d --build --scale contender=0
+up: down (_build-rust-images "devnet" "dev")
+    docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml up -d --no-build --scale contender=0
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
-profiling: down
-    CARGO_PROFILE=profiling docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml --profile profiling up -d --build --scale contender=0
+profiling: down (_build-rust-images "devnet" "profiling")
+    docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml --profile profiling up -d --no-build --scale contender=0
 
 # Stops devnet and deletes all data
 down:
@@ -51,8 +51,8 @@ logs *containers:
     docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml logs -f {{ containers }}
 
 # Stops devnet+ingress, deletes data, and starts fresh with full ingress stack
-ingress: ingress-down
-    docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ingress.yml up -d --build --scale contender=0
+ingress: ingress-down (_build-rust-images "ingress" "dev")
+    docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ingress.yml up -d --no-build --scale contender=0
 
 # Stops devnet+ingress and deletes all data
 ingress-down:
@@ -62,6 +62,10 @@ ingress-down:
 # Stream logs from devnet+ingress containers (optionally specify container names)
 ingress-logs *containers:
     docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ingress.yml logs -f {{ containers }}
+
+# Builds one of the shared Rust service images (default: client)
+build-image target='client' profile='release':
+    ./etc/docker/build-rust-images.sh {{ target }} {{ profile }}
 
 # Pre-pulls Docker images needed for devnet tests
 pull-images:
@@ -81,6 +85,10 @@ tests-ci: _install-nextest _build-contracts
 [private]
 _install-nextest:
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
+
+[private]
+_build-rust-images group profile='release':
+    ./etc/docker/build-rust-images.sh {{ group }} {{ profile }}
 
 [private]
 _build-contracts:

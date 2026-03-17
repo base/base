@@ -56,7 +56,7 @@ impl<T: TxManager> ChallengeSubmitter<T> {
             Err(_) => ChallengerMetrics::STATUS_ERROR,
         };
         metrics::counter!(
-            ChallengerMetrics::NULLIFY_TX_CONFIRMED_TOTAL,
+            ChallengerMetrics::NULLIFY_TX_OUTCOME_TOTAL,
             ChallengerMetrics::LABEL_STATUS => status_label,
         )
         .increment(1);

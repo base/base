@@ -1,61 +1,37 @@
-//! `OutputProposer` trait and implementations for L1 transaction submission.
+//! `OutputProposer` trait and `ProposalSubmitter` implementation for L1 transaction submission.
 //!
 //! Submits output proposals by creating new dispute games via `DisputeGameFactory.create()`.
-//!
-//! Supports two signing modes:
-//! - **Local**: Signs with an in-process private key via [`EthereumWallet`].
-//! - **Remote**: Calls a signer sidecar's `eth_signTransaction` JSON-RPC method.
+//! Delegates all transaction lifecycle management (nonce, fees, signing, resubmission)
+//! to the shared [`TxManager`].
 
-use std::{
-    future::Future,
-    sync::{Arc, LazyLock},
-};
+use std::sync::LazyLock;
 
-use alloy_eips::Encodable2718;
-use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types_eth::{TransactionInput, TransactionRequest};
-use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
-use backon::Retryable;
 use base_enclave::ProofEncoder;
 use base_proof_contracts::{
     encode_create_calldata, encode_extra_data, game_already_exists_selector,
 };
-use base_proof_rpc::RetryConfig;
-use jsonrpsee::core::{client::ClientT, params::ArrayParams};
-use tokio::sync::OnceCell;
+use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tracing::info;
-use url::Url;
 
-use crate::{
-    config::SigningConfig,
-    constants::{GAS_LIMIT_MULTIPLIER_DENOMINATOR, GAS_LIMIT_MULTIPLIER_NUMERATOR},
-    error::ProposerError,
-    prover::ProverProposal,
-};
-
-/// Applies a 120% safety margin to a gas estimate using integer arithmetic.
-const fn apply_gas_margin(estimated: u64) -> u64 {
-    estimated.saturating_mul(GAS_LIMIT_MULTIPLIER_NUMERATOR) / GAS_LIMIT_MULTIPLIER_DENOMINATOR
-}
+use crate::{error::ProposerError, prover::ProverProposal};
 
 /// Hex-encoded `GameAlreadyExists` selector, computed once.
 static GAME_ALREADY_EXISTS_HEX: LazyLock<String> =
     LazyLock::new(|| alloy_primitives::hex::encode(game_already_exists_selector()));
 
-/// Classifies a contract-interaction error into a structured [`ProposerError`] variant.
+/// Classifies a [`TxManagerError`] into a [`ProposerError`].
 ///
 /// Checks whether the error string contains the `GameAlreadyExists` selector,
-/// returning [`ProposerError::GameAlreadyExists`] if so, otherwise
-/// [`ProposerError::Contract`] with the provided context.
-fn classify_contract_error(context: &str, err: impl std::fmt::Display) -> ProposerError {
+/// returning [`ProposerError::GameAlreadyExists`] if so, otherwise wrapping
+/// it as [`ProposerError::TxManager`].
+fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
     let msg = err.to_string();
     if msg.contains(GAME_ALREADY_EXISTS_HEX.as_str()) || msg.contains("GameAlreadyExists") {
         return ProposerError::GameAlreadyExists;
     }
-    ProposerError::Contract(format!("{context}: {msg}"))
+    ProposerError::TxManager(err)
 }
 
 /// Builds the proof data for `AggregateVerifier.initialize()`.
@@ -70,92 +46,6 @@ pub fn build_proof_data(proposal: &ProverProposal) -> Result<Bytes, ProposerErro
         U256::from(proposal.to.l1origin.number),
     )
     .map_err(|e| ProposerError::Internal(e.to_string()))
-}
-
-/// Shared logic for building, signing, broadcasting, and confirming a proposal transaction.
-///
-/// The `sign_tx` closure parameterizes the signing step so that both local and
-/// remote signing modes can reuse the same transaction-building code.
-#[allow(clippy::too_many_arguments)]
-async fn submit_proposal<F, Fut>(
-    provider: &RootProvider,
-    from_address: Address,
-    factory_address: Address,
-    calldata: Bytes,
-    init_bond: U256,
-    l2_block_number: u64,
-    chain_id_cell: &OnceCell<u64>,
-    sign_tx: F,
-) -> Result<(), ProposerError>
-where
-    F: FnOnce(TransactionRequest) -> Fut,
-    Fut: Future<Output = Result<Bytes, ProposerError>>,
-{
-    let nonce = provider
-        .get_transaction_count(from_address)
-        .await
-        .map_err(|e| ProposerError::Contract(format!("get_transaction_count failed: {e}")))?;
-
-    let chain_id = *chain_id_cell
-        .get_or_try_init(|| async {
-            provider
-                .get_chain_id()
-                .await
-                .map_err(|e| ProposerError::Contract(format!("get_chain_id failed: {e}")))
-        })
-        .await?;
-
-    let fees = provider
-        .estimate_eip1559_fees()
-        .await
-        .map_err(|e| ProposerError::Contract(format!("estimate_eip1559_fees failed: {e}")))?;
-
-    let mut tx = TransactionRequest::default()
-        .from(from_address)
-        .to(factory_address)
-        .input(TransactionInput::new(calldata))
-        .nonce(nonce)
-        .value(init_bond)
-        .max_fee_per_gas(fees.max_fee_per_gas)
-        .max_priority_fee_per_gas(fees.max_priority_fee_per_gas);
-    tx.set_chain_id(chain_id);
-
-    let gas_estimate = provider
-        .estimate_gas(tx.clone())
-        .await
-        .map_err(|e| classify_contract_error("estimate_gas failed", e))?;
-
-    tx.set_gas_limit(apply_gas_margin(gas_estimate));
-
-    let signed_bytes = sign_tx(tx).await?;
-    let pending = provider
-        .send_raw_transaction(&signed_bytes)
-        .await
-        .map_err(|e| classify_contract_error("send_raw_transaction failed", e))?;
-
-    let tx_hash = *pending.tx_hash();
-    info!(%tx_hash, l2_block_number, "Transaction sent, waiting for receipt");
-
-    let receipt = pending
-        .get_receipt()
-        .await
-        .map_err(|e| ProposerError::Contract(format!("get_receipt failed: {e}")))?;
-
-    if !receipt.status() {
-        return Err(ProposerError::TxReverted(format!("transaction {tx_hash} reverted")));
-    }
-
-    info!(
-        %tx_hash,
-        l2_block_number,
-        block_number = receipt.block_number,
-        "Proposal transaction confirmed"
-    );
-    Ok(())
-}
-
-const fn is_retryable(e: &ProposerError) -> bool {
-    !matches!(e, ProposerError::TxReverted(_) | ProposerError::GameAlreadyExists)
 }
 
 /// Returns true if the error indicates the game already exists.
@@ -178,53 +68,29 @@ pub trait OutputProposer: Send + Sync {
     ) -> Result<(), ProposerError>;
 }
 
-/// Output proposer that signs transactions locally with a private key.
-pub struct LocalOutputProposer {
-    provider: RootProvider,
-    wallet: EthereumWallet,
+/// Submits output proposals to L1 via the [`TxManager`].
+#[derive(Debug)]
+pub struct ProposalSubmitter<T> {
+    tx_manager: T,
     factory_address: Address,
     game_type: u32,
     init_bond: U256,
-    retry_config: RetryConfig,
-    chain_id: OnceCell<u64>,
 }
 
-impl std::fmt::Debug for LocalOutputProposer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LocalOutputProposer")
-            .field("factory_address", &self.factory_address)
-            .field("game_type", &self.game_type)
-            .finish_non_exhaustive()
-    }
-}
-
-impl LocalOutputProposer {
-    /// Creates a new local output proposer with the given signer.
-    pub fn new(
-        l1_rpc_url: Url,
+impl<T: TxManager> ProposalSubmitter<T> {
+    /// Creates a new [`ProposalSubmitter`] backed by the given transaction manager.
+    pub const fn new(
+        tx_manager: T,
         factory_address: Address,
         game_type: u32,
         init_bond: U256,
-        signer: PrivateKeySigner,
-        retry_config: RetryConfig,
     ) -> Self {
-        let provider = RootProvider::new_http(l1_rpc_url);
-        let wallet = EthereumWallet::from(signer);
-
-        Self {
-            provider,
-            wallet,
-            factory_address,
-            game_type,
-            init_bond,
-            retry_config,
-            chain_id: OnceCell::new(),
-        }
+        Self { tx_manager, factory_address, game_type, init_bond }
     }
 }
 
 #[async_trait]
-impl OutputProposer for LocalOutputProposer {
+impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
     async fn propose_output(
         &self,
         proposal: &ProverProposal,
@@ -240,223 +106,101 @@ impl OutputProposer for LocalOutputProposer {
             proof_data,
         );
         let l2_block_number = proposal.to.number;
-        let factory_address = self.factory_address;
-        let from = alloy_network::NetworkWallet::<alloy_network::Ethereum>::default_signer_address(
-            &self.wallet,
-        );
 
         info!(
             l2_block_number,
-            factory = %factory_address,
+            factory = %self.factory_address,
             game_type = self.game_type,
             parent_index,
-            "Creating dispute game via local signer"
+            "Creating dispute game"
         );
 
-        (|| async {
-            submit_proposal(
-                &self.provider,
-                from,
-                factory_address,
-                calldata.clone(),
-                self.init_bond,
-                l2_block_number,
-                &self.chain_id,
-                |tx| async {
-                    let envelope = <TransactionRequest as TransactionBuilder<
-                        alloy_network::Ethereum,
-                    >>::build(tx, &self.wallet)
-                    .await
-                    .map_err(|e| {
-                        ProposerError::Contract(format!("sign_transaction failed: {e}"))
-                    })?;
-                    Ok(Bytes::from(Encodable2718::encoded_2718(&envelope)))
-                },
-            )
-            .await
-        })
-        // Retries use replace-by-fee: submit_proposal re-reads the nonce and
-        // re-estimates fees on each attempt, effectively replacing any pending
-        // transaction with the same nonce.
-        .retry(self.retry_config.to_backoff_builder())
-        .when(is_retryable)
-        .await
-    }
-}
+        let candidate = TxCandidate {
+            tx_data: calldata,
+            to: Some(self.factory_address),
+            value: self.init_bond,
+            ..Default::default()
+        };
 
-/// Output proposer that signs transactions via a remote signer sidecar.
-pub struct RemoteOutputProposer {
-    provider: RootProvider,
-    signer_client: jsonrpsee::http_client::HttpClient,
-    signer_address: Address,
-    factory_address: Address,
-    game_type: u32,
-    init_bond: U256,
-    retry_config: RetryConfig,
-    chain_id: OnceCell<u64>,
-}
+        let receipt = self.tx_manager.send(candidate).await.map_err(classify_tx_manager_error)?;
 
-impl std::fmt::Debug for RemoteOutputProposer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RemoteOutputProposer")
-            .field("signer_address", &self.signer_address)
-            .field("factory_address", &self.factory_address)
-            .field("game_type", &self.game_type)
-            .finish_non_exhaustive()
-    }
-}
+        let tx_hash = receipt.transaction_hash;
 
-impl RemoteOutputProposer {
-    /// Creates a new remote output proposer.
-    pub fn new(
-        l1_rpc_url: Url,
-        factory_address: Address,
-        game_type: u32,
-        init_bond: U256,
-        signer_endpoint: Url,
-        signer_address: Address,
-        retry_config: RetryConfig,
-    ) -> Result<Self, ProposerError> {
-        let provider = RootProvider::new_http(l1_rpc_url);
-        let signer_client = jsonrpsee::http_client::HttpClientBuilder::default()
-            .build(signer_endpoint.as_str())
-            .map_err(|e| ProposerError::Config(format!("failed to build signer client: {e}")))?;
-
-        Ok(Self {
-            provider,
-            signer_client,
-            signer_address,
-            factory_address,
-            game_type,
-            init_bond,
-            retry_config,
-            chain_id: OnceCell::new(),
-        })
-    }
-}
-
-#[async_trait]
-impl OutputProposer for RemoteOutputProposer {
-    async fn propose_output(
-        &self,
-        proposal: &ProverProposal,
-        parent_index: u32,
-        intermediate_roots: &[B256],
-    ) -> Result<(), ProposerError> {
-        let proof_data = build_proof_data(proposal)?;
-        let extra_data = encode_extra_data(proposal.to.number, parent_index, intermediate_roots);
-        let calldata = encode_create_calldata(
-            self.game_type,
-            proposal.output.output_root,
-            extra_data,
-            proof_data,
-        );
-        let l2_block_number = proposal.to.number;
-        let factory_address = self.factory_address;
+        if !receipt.inner.status() {
+            return Err(ProposerError::TxReverted(format!("transaction {tx_hash} reverted")));
+        }
 
         info!(
+            %tx_hash,
             l2_block_number,
-            factory = %factory_address,
-            game_type = self.game_type,
-            parent_index,
-            signer = %self.signer_address,
-            "Creating dispute game via remote signer"
+            block_number = receipt.block_number,
+            "Proposal transaction confirmed"
         );
-
-        (|| async {
-            submit_proposal(
-                &self.provider,
-                self.signer_address,
-                factory_address,
-                calldata.clone(),
-                self.init_bond,
-                l2_block_number,
-                &self.chain_id,
-                |tx| async move {
-                    let mut params = ArrayParams::new();
-                    params.insert(&tx).map_err(|e| {
-                        ProposerError::Contract(format!("failed to serialize tx: {e}"))
-                    })?;
-
-                    let signed: Bytes =
-                        self.signer_client.request("eth_signTransaction", params).await.map_err(
-                            |e| ProposerError::Contract(format!("eth_signTransaction failed: {e}")),
-                        )?;
-                    Ok(signed)
-                },
-            )
-            .await
-        })
-        // Retries use replace-by-fee: submit_proposal re-reads the nonce and
-        // re-estimates fees on each attempt, effectively replacing any pending
-        // transaction with the same nonce.
-        .retry(self.retry_config.to_backoff_builder())
-        .when(is_retryable)
-        .await
-    }
-}
-
-/// Creates an [`OutputProposer`] based on the signing configuration.
-pub fn create_output_proposer(
-    l1_rpc_url: Url,
-    factory_address: Address,
-    game_type: u32,
-    init_bond: U256,
-    signing_config: SigningConfig,
-    retry_config: RetryConfig,
-) -> Result<Arc<dyn OutputProposer>, ProposerError> {
-    match signing_config {
-        SigningConfig::Local { signer } => {
-            let proposer = LocalOutputProposer::new(
-                l1_rpc_url,
-                factory_address,
-                game_type,
-                init_bond,
-                signer,
-                retry_config,
-            );
-            Ok(Arc::new(proposer))
-        }
-        SigningConfig::Remote { endpoint, address } => {
-            let proposer = RemoteOutputProposer::new(
-                l1_rpc_url,
-                factory_address,
-                game_type,
-                init_bond,
-                endpoint,
-                address,
-                retry_config,
-            )?;
-            Ok(Arc::new(proposer))
-        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+    use alloy_primitives::{Address, Bloom};
+    use alloy_rpc_types_eth::TransactionReceipt;
     use base_enclave::PROOF_TYPE_TEE;
+    use base_tx_manager::{SendHandle, SendResponse, TxManagerError};
 
     use super::*;
     use crate::prover::test_helpers::test_proposal;
 
-    // ========================================================================
-    // Gas margin tests
-    // ========================================================================
-
-    #[test]
-    fn test_apply_gas_margin_typical() {
-        assert_eq!(apply_gas_margin(100_000), 120_000);
+    /// Builds a minimal [`TransactionReceipt`] with the given status and hash.
+    fn receipt_with_status(success: bool, tx_hash: B256) -> TransactionReceipt {
+        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
+            receipt: Receipt {
+                status: Eip658Value::Eip658(success),
+                cumulative_gas_used: 21_000,
+                logs: vec![],
+            },
+            logs_bloom: Bloom::ZERO,
+        });
+        TransactionReceipt {
+            inner,
+            transaction_hash: tx_hash,
+            transaction_index: Some(0),
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1),
+            gas_used: 21_000,
+            effective_gas_price: 1_000_000_000,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: Some(Address::ZERO),
+            contract_address: None,
+        }
     }
 
-    #[test]
-    fn test_apply_gas_margin_zero() {
-        assert_eq!(apply_gas_margin(0), 0);
+    /// Mock transaction manager for testing.
+    #[derive(Debug)]
+    struct MockTxManager {
+        response: std::sync::Mutex<Option<SendResponse>>,
     }
 
-    #[test]
-    fn test_apply_gas_margin_overflow_saturates() {
-        let result = apply_gas_margin(u64::MAX);
-        assert_eq!(result, u64::MAX / GAS_LIMIT_MULTIPLIER_DENOMINATOR);
+    impl MockTxManager {
+        fn new(response: SendResponse) -> Self {
+            Self { response: std::sync::Mutex::new(Some(response)) }
+        }
+    }
+
+    impl TxManager for MockTxManager {
+        async fn send(&self, _candidate: TxCandidate) -> SendResponse {
+            self.response.lock().unwrap().take().expect("MockTxManager response already consumed")
+        }
+
+        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
+            unimplemented!("not needed for these tests")
+        }
+
+        fn sender_address(&self) -> Address {
+            Address::ZERO
+        }
     }
 
     // ========================================================================
@@ -517,25 +261,67 @@ mod tests {
     }
 
     // ========================================================================
-    // Retry predicate tests
+    // ProposalSubmitter tests
     // ========================================================================
 
-    #[test]
-    fn test_retry_predicate_retries_transient_errors() {
-        let e = ProposerError::Contract("get_transaction_count failed: timeout".into());
-        assert!(is_retryable(&e));
+    #[tokio::test]
+    async fn propose_output_success() {
+        let tx_hash = B256::repeat_byte(0xAA);
+        let mock = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
+        let submitter =
+            ProposalSubmitter::new(mock, Address::repeat_byte(0x01), 1, U256::from(100));
+
+        let proposal = test_proposal(101, 200, false);
+        let result = submitter.propose_output(&proposal, 0, &[]).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn propose_output_reverted() {
+        let tx_hash = B256::repeat_byte(0xBB);
+        let mock = MockTxManager::new(Ok(receipt_with_status(false, tx_hash)));
+        let submitter =
+            ProposalSubmitter::new(mock, Address::repeat_byte(0x01), 1, U256::from(100));
+
+        let proposal = test_proposal(101, 200, false);
+        let err = submitter.propose_output(&proposal, 0, &[]).await.unwrap_err();
+        assert!(matches!(err, ProposerError::TxReverted(_)));
+    }
+
+    #[tokio::test]
+    async fn propose_output_tx_manager_error() {
+        let mock = MockTxManager::new(Err(TxManagerError::NonceTooLow));
+        let submitter =
+            ProposalSubmitter::new(mock, Address::repeat_byte(0x01), 1, U256::from(100));
+
+        let proposal = test_proposal(101, 200, false);
+        let err = submitter.propose_output(&proposal, 0, &[]).await.unwrap_err();
+        assert!(
+            matches!(err, ProposerError::TxManager(TxManagerError::NonceTooLow)),
+            "expected TxManager(NonceTooLow), got {err:?}",
+        );
     }
 
     #[test]
-    fn test_retry_predicate_skips_reverts() {
-        let e = ProposerError::TxReverted("transaction 0x123 reverted".into());
-        assert!(!is_retryable(&e));
+    fn classify_game_already_exists_by_selector() {
+        let hex = GAME_ALREADY_EXISTS_HEX.as_str();
+        let err = TxManagerError::Rpc(format!("execution reverted: 0x{hex}"));
+        let result = classify_tx_manager_error(err);
+        assert!(matches!(result, ProposerError::GameAlreadyExists));
     }
 
     #[test]
-    fn test_retry_predicate_skips_game_already_exists() {
-        let e = ProposerError::GameAlreadyExists;
-        assert!(!is_retryable(&e));
+    fn classify_game_already_exists_by_name() {
+        let err = TxManagerError::Rpc("GameAlreadyExists()".to_string());
+        let result = classify_tx_manager_error(err);
+        assert!(matches!(result, ProposerError::GameAlreadyExists));
+    }
+
+    #[test]
+    fn classify_other_error() {
+        let err = TxManagerError::NonceTooLow;
+        let result = classify_tx_manager_error(err);
+        assert!(matches!(result, ProposerError::TxManager(TxManagerError::NonceTooLow)));
     }
 
     #[test]
@@ -545,46 +331,5 @@ mod tests {
 
         let e = ProposerError::Contract("some other error".into());
         assert!(!is_game_already_exists(&e));
-    }
-
-    // ========================================================================
-    // Factory function tests
-    // ========================================================================
-
-    #[test]
-    fn test_create_output_proposer_local() {
-        use alloy_signer::k256::ecdsa::SigningKey;
-
-        let key_bytes =
-            hex::decode("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
-                .unwrap();
-        let signing_key = SigningKey::from_slice(&key_bytes).unwrap();
-        let signer = PrivateKeySigner::from_signing_key(signing_key);
-
-        let result = create_output_proposer(
-            Url::parse("http://localhost:8545").unwrap(),
-            Address::ZERO,
-            1,
-            U256::ZERO,
-            SigningConfig::Local { signer },
-            RetryConfig::default(),
-        );
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_create_output_proposer_remote() {
-        let result = create_output_proposer(
-            Url::parse("http://localhost:8545").unwrap(),
-            Address::ZERO,
-            1,
-            U256::ZERO,
-            SigningConfig::Remote {
-                endpoint: Url::parse("http://localhost:8546").unwrap(),
-                address: Address::ZERO,
-            },
-            RetryConfig::default(),
-        );
-        assert!(result.is_ok());
     }
 }
