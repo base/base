@@ -247,8 +247,14 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
-        let number_of_blocks_to_prove =
-            (invalid_index as u64 + 1) * candidate.intermediate_block_interval;
+        let multiplier = u64::try_from(invalid_index)
+            .ok()
+            .and_then(|i| i.checked_add(1))
+            .ok_or_else(|| eyre::eyre!("invalid_index overflow"))?;
+        let number_of_blocks_to_prove = candidate
+            .intermediate_block_interval
+            .checked_mul(multiplier)
+            .ok_or_else(|| eyre::eyre!("number_of_blocks_to_prove overflow"))?;
 
         let request = ProveBlockRequest {
             start_block_number: candidate.starting_block_number,
@@ -379,7 +385,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             .submit_nullification(
                 game_address,
                 proof_bytes,
-                pending.invalid_index as u64,
+                u64::try_from(pending.invalid_index)
+                    .map_err(|_| eyre::eyre!("invalid_index overflow"))?,
                 pending.expected_root,
             )
             .await
