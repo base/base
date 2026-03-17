@@ -28,4 +28,7 @@ pub use channel::{OpenChannel, PendingRef, ReadyChannel};
 mod encoder;
 pub use encoder::BatchEncoder;
 
+mod metrics;
+pub use metrics::BatcherMetrics;
+
 pub mod test_utils;

@@ -25,6 +25,7 @@ mod submissions;
 pub use submissions::SubmissionQueue;
 
 mod driver;
+pub use base_batcher_encoder::BatcherMetrics;
 pub use driver::{BatchDriver, BatchDriverConfig};
 
 pub mod test_utils;

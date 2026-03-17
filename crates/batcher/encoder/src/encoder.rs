@@ -23,12 +23,13 @@ use base_comp::{
 };
 use base_consensus_genesis::RollupConfig;
 use base_protocol::{Batch, ChannelId, Frame, SingleBatch, SpanBatch};
+use metrics::{counter, gauge, histogram};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, warn};
 
 use crate::{
-    BatchPipeline, BatchSubmission, BatchType, EncoderConfig, ReorgError, StepError, StepResult,
-    SubmissionId,
+    BatchPipeline, BatchSubmission, BatchType, BatcherMetrics, EncoderConfig, ReorgError,
+    StepError, StepResult, SubmissionId,
     channel::{OpenChannel, PendingRef, ReadyChannel},
 };
 
@@ -146,7 +147,10 @@ impl BatchEncoder {
     /// In [`BatchType::Span`] mode the span accumulator is flushed as a single
     /// [`SpanBatch`] into a freshly-opened channel before draining frames.
     /// If both the channel and the accumulator are empty the call is a no-op.
-    fn close_current_channel(&mut self) {
+    ///
+    /// `close_reason` is recorded as the `reason` label on the
+    /// `batcher_channel_closed_total` counter.
+    fn close_current_channel(&mut self, close_reason: &'static str) {
         // In Span mode: build a SpanBatch from the accumulator, then open a channel
         // and write it. The accumulator is only consumed if all appends succeed, so
         // blocks are never silently lost on error — they remain in the accumulator for
@@ -203,6 +207,8 @@ impl BatchEncoder {
                     // Without this, the empty channel (0 frames) would be pushed to
                     // `ready_channels`, where it can never be confirmed and never removed,
                     // leaking memory and growing the O(N) scan in `next_submission`.
+                    // Emit a closed counter to keep opened/closed balanced.
+                    counter!(BatcherMetrics::CHANNEL_CLOSED_TOTAL, "reason" => BatcherMetrics::REASON_DISCARD).increment(1);
                     self.current_channel = None;
                 }
             }
@@ -213,6 +219,10 @@ impl BatchEncoder {
         let Some(mut open) = self.current_channel.take() else {
             return;
         };
+
+        // Capture stats before flushing so we can record metrics after draining.
+        let input_bytes = open.out.input_bytes();
+        let opened_at_l1 = open.opened_at_l1;
 
         // Flush and close the compressor.
         let _ = open.out.flush();
@@ -240,14 +250,31 @@ impl BatchEncoder {
         // subsequent confirmations find their .end adjusted to 0 and are no-ops.
         // This correctly handles out-of-order confirmations without double-pruning.
         let block_range = 0..self.block_cursor;
+        let frame_count = frames.len();
+        let duration_blocks = self.l1_head.saturating_sub(opened_at_l1);
+        let compressed_bytes: usize = frames.iter().map(|f| f.data.len()).sum();
 
         debug!(
             channel_id = ?channel_id,
-            frame_count = %frames.len(),
+            frame_count = %frame_count,
             block_range_start = %block_range.start,
             block_range_end = %block_range.end,
+            close_reason = %close_reason,
+            duration_blocks = %duration_blocks,
+            input_bytes = %input_bytes,
+            compressed_bytes = %compressed_bytes,
             "closed channel"
         );
+
+        // Emit close counter and channel lifetime / compression ratio histograms.
+        counter!(BatcherMetrics::CHANNEL_CLOSED_TOTAL, "reason" => close_reason).increment(1);
+        histogram!(BatcherMetrics::CHANNEL_DURATION_BLOCKS).record(duration_blocks as f64);
+        if input_bytes > 0 {
+            let ratio = compressed_bytes as f64 / input_bytes as f64;
+            histogram!(BatcherMetrics::CHANNEL_COMPRESSION_RATIO).record(ratio);
+        }
+        // All frames from this channel are now pending submission.
+        gauge!(BatcherMetrics::PENDING_FRAMES).increment(frame_count as f64);
 
         self.ready_channels.push_back(ReadyChannel {
             id: channel_id,
@@ -273,6 +300,9 @@ impl BatchEncoder {
         let compressor = ShadowCompressor::from(compressor_config);
 
         let channel_out = ChannelOut::new(id, Arc::clone(&self.rollup_config), compressor);
+
+        debug!(channel_id = ?id, l1_head = %self.l1_head, "opened new channel");
+        counter!(BatcherMetrics::CHANNEL_OPENED_TOTAL).increment(1);
 
         self.current_channel = Some(OpenChannel { out: channel_out, opened_at_l1: self.l1_head });
     }
@@ -303,7 +333,7 @@ impl BatchEncoder {
 
         if should_close {
             debug!(l1_head = %self.l1_head, "channel timed out, closing");
-            self.close_current_channel();
+            self.close_current_channel("timeout");
         }
 
         should_close
@@ -319,9 +349,13 @@ impl BatchPipeline for BatchEncoder {
             ));
         }
 
+        let number = block.header.number;
         let hash = block.header.hash_slow();
         self.tip = hash;
         self.blocks.push_back(block);
+        gauge!(BatcherMetrics::PENDING_BLOCKS).increment(1.0);
+
+        debug!(block = %number, pending_blocks = %self.blocks.len(), "block added to encoder queue");
 
         Ok(())
     }
@@ -393,7 +427,7 @@ impl BatchPipeline for BatchEncoder {
                         span_len = self.span_accumulator.len(),
                         compressed_estimate, size_target, "span accumulator full, closing channel"
                     );
-                    self.close_current_channel();
+                    self.close_current_channel("size_full");
                     return Ok(StepResult::ChannelClosed);
                 }
 
@@ -424,7 +458,7 @@ impl BatchPipeline for BatchEncoder {
                         // Channel is full (ExceedsMaxRlpBytesPerChannel or compression full).
                         // Close the current channel and the caller will retry on the next step.
                         debug!(error = %e, "channel rejected batch, closing");
-                        self.close_current_channel();
+                        self.close_current_channel("size_full");
                         StepResult::ChannelClosed
                     }
                 })
@@ -452,6 +486,15 @@ impl BatchPipeline for BatchEncoder {
 
                 self.pending
                     .insert(id, PendingRef { channel_idx: chan_idx, frame_start, frame_count });
+
+                // Frames move from pending → in-flight; decrement the pending gauge.
+                gauge!(BatcherMetrics::PENDING_FRAMES).decrement(frame_count as f64);
+                debug!(
+                    id = %id.0,
+                    frame_count = %frame_count,
+                    frame_start = %frame_start,
+                    "dequeued frames for submission"
+                );
 
                 return Some(BatchSubmission {
                     id,
@@ -507,6 +550,9 @@ impl BatchPipeline for BatchEncoder {
             if prune_count > 0 {
                 self.blocks.drain(..prune_count);
                 self.block_cursor = self.block_cursor.saturating_sub(prune_count);
+                gauge!(BatcherMetrics::PENDING_BLOCKS).decrement(prune_count as f64);
+
+                debug!(prune_count = %prune_count, "pruned confirmed blocks from encoder queue");
 
                 // Adjust the high-water mark for all remaining channels.
                 // block_range.start is always 0 and unused in prune logic.
@@ -543,17 +589,20 @@ impl BatchPipeline for BatchEncoder {
         if pending_ref.frame_start < channel.cursor {
             channel.cursor = pending_ref.frame_start;
         }
+        // Frames are back in pending state; re-increment the gauge.
+        gauge!(BatcherMetrics::PENDING_FRAMES).increment(pending_ref.frame_count as f64);
 
         debug!(
             id = ?id,
             frame_start = %pending_ref.frame_start,
             frame_count = %pending_ref.frame_count,
-            "requeued submission"
+            "requeued submission frames back to pending"
         );
     }
 
     fn force_close_channel(&mut self) {
-        self.close_current_channel();
+        debug!("force-closing current channel");
+        self.close_current_channel("force");
     }
 
     fn advance_l1_head(&mut self, l1_block: u64) {
@@ -565,6 +614,12 @@ impl BatchPipeline for BatchEncoder {
     }
 
     fn reset(&mut self) {
+        warn!(
+            pending_blocks = %self.blocks.len(),
+            ready_channels = %self.ready_channels.len(),
+            in_pending = %self.pending.len(),
+            "resetting encoder pipeline (reorg or explicit reset)"
+        );
         self.blocks.clear();
         self.block_cursor = 0;
         self.tip = B256::ZERO;
@@ -579,6 +634,10 @@ impl BatchPipeline for BatchEncoder {
         // share an ID with any pre-reset in-flight submission, eliminating
         // stale-confirm silent corruption.
         self.rng = SmallRng::from_os_rng();
+
+        // Zero out state gauges — all buffered data has been discarded.
+        gauge!(BatcherMetrics::PENDING_BLOCKS).set(0.0);
+        gauge!(BatcherMetrics::PENDING_FRAMES).set(0.0);
     }
 
     fn prune_safe(&mut self, safe_l2_number: u64) {
@@ -600,6 +659,7 @@ impl BatchPipeline for BatchEncoder {
 
         self.blocks.drain(..prune_count);
         self.block_cursor -= prune_count;
+        gauge!(BatcherMetrics::PENDING_BLOCKS).decrement(prune_count as f64);
 
         // Adjust block_range high-water marks in ready channels so that confirm()
         // does not over-prune later. This mirrors the adjustment in confirm().

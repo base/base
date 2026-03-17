@@ -12,6 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+metrics.workspace = true
 tracing = { workspace = true, features = ["std"] }
 base-comp = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }

@@ -198,12 +198,15 @@ where
     /// Returns `Err` on a fatal [`StepError`](base_batcher_encoder::StepError).
     fn drain_encoding(&mut self) -> Result<(), BatchDriverError> {
         let mut budget = STEP_BUDGET;
+        let mut steps = 0usize;
         loop {
             match self.pipeline.step() {
                 Ok(StepResult::Idle) => break,
                 Ok(StepResult::BlockEncoded | StepResult::ChannelClosed) => {
+                    steps += 1;
                     budget -= 1;
                     if budget == 0 {
+                        debug!(steps = %steps, "encoding step budget exhausted, yielding");
                         break;
                     }
                 }
@@ -212,6 +215,9 @@ where
                     return Err(e.into());
                 }
             }
+        }
+        if steps > 0 {
+            debug!(steps = %steps, "completed encoding drain");
         }
         Ok(())
     }
@@ -295,7 +301,9 @@ where
                 } => {
                     if let Some(rx) = &mut self.safe_head_rx {
                         if rx.has_changed().is_err() {
-                            // Sender dropped; disable this arm permanently.
+                            // Sender dropped; safe-head poller has exited. Disable this
+                            // arm permanently and warn so operators know pruning stopped.
+                            warn!("safe-head watch sender dropped; safe-head pruning disabled");
                             self.safe_head_rx = None;
                             continue;
                         }

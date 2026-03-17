@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 futures.workspace = true
+metrics.workspace = true
 base-blobs.workspace = true
 tokio-util.workspace = true
 base-tx-manager.workspace = true
