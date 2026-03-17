@@ -52,7 +52,8 @@ where
             .channel
             .as_ref()
             .map(|c| {
-                c.open_block_number() + self.cfg.channel_timeout(origin.timestamp) < origin.number
+                c.open_block_number().saturating_add(self.cfg.channel_timeout(origin.timestamp))
+                    < origin.number
             })
             .unwrap_or_default();
 
@@ -106,8 +107,9 @@ where
             // Track the number of blocks until the channel times out.
             #[cfg(feature = "metrics")]
             {
-                let timeout =
-                    channel.open_block_number() + self.cfg.channel_timeout(origin.timestamp);
+                let timeout = channel
+                    .open_block_number()
+                    .saturating_add(self.cfg.channel_timeout(origin.timestamp));
                 let margin = timeout.saturating_sub(origin.number) as f64;
                 base_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_CHANNEL_TIMEOUT, margin);
             }
@@ -330,6 +332,28 @@ mod test {
         assert_eq!(error_logs.len(), 1);
         let error_str = "Failed to add frame to channel";
         assert!(error_logs[0].contains(error_str));
+    }
+
+    #[tokio::test]
+    async fn test_assembler_timeout_overflow_does_not_panic() {
+        let frames = [crate::frame!(0xFF, 0, vec![0xDD; 50], false)];
+        let mock = TestNextFrameProvider::new(frames.into_iter().rev().map(Ok).collect());
+
+        let cfg = Arc::new(RollupConfig {
+            channel_timeout: 10,
+            ..RollupConfig::default()
+        });
+        let mut assembler = ChannelAssembler::new(cfg, mock);
+
+        assembler.channel = Some(base_protocol::Channel::new([0xAB; 16], BlockInfo::default()));
+        assembler.prev.block_info = Some(BlockInfo {
+            number: u64::MAX,
+            timestamp: 0,
+            ..Default::default()
+        });
+
+        let timed_out = assembler.is_timed_out().unwrap();
+        assert!(!timed_out);
     }
 
     #[tokio::test]
