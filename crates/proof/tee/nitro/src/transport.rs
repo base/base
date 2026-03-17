@@ -21,11 +21,11 @@ pub enum TransportError {
 ///
 /// Linux kernel commit `6693731487a8` (Aug 2025) changed `virtio_vsock` to
 /// allocate nonlinear SKBs (scattered across multiple pages) for packets
-/// larger than `PAGE_ALLOC_COSTLY_ORDER` (typically 32 KiB on x86). The
+/// larger than `PAGE_ALLOC_COSTLY_ORDER` (typically 32 `KiB` on x86). The
 /// hypervisor-side virtio handler may not correctly reassemble these
 /// multi-descriptor TX packets, causing silent data corruption.
 ///
-/// By capping each `write()` to 32 KiB we force the kernel to use simple,
+/// By capping each `write()` to 32 `KiB` we force the kernel to use simple,
 /// linear (single-page) SKB allocations, sidestepping the bug entirely.
 ///
 /// See: <https://github.com/cloud-hypervisor/cloud-hypervisor/issues/7672>

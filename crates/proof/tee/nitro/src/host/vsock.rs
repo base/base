@@ -2,7 +2,6 @@ use std::{io, time::Duration};
 
 use base_proof_preimage::PreimageKey;
 use base_proof_primitives::ProofResult;
-use tokio::io::{BufReader, BufWriter};
 use tokio_vsock::{VsockAddr, VsockStream};
 use tracing::info;
 
@@ -61,17 +60,14 @@ impl VsockTransport {
             "sending prove request to enclave"
         );
 
-        let stream = self.connect().await?;
-        let (reader, writer) = tokio::io::split(stream);
-        let mut reader = BufReader::new(reader);
-        let mut writer = BufWriter::new(writer);
+        let mut stream = self.connect().await?;
 
-        Frame::write(&mut writer, &EnclaveRequest::Prove(preimages))
+        Frame::write(&mut stream, &EnclaveRequest::Prove(preimages))
             .await
             .map_err(|e| NitroError::Transport(e.to_string()))?;
 
         let response: EnclaveResponse =
-            tokio::time::timeout(PROVE_TIMEOUT, Frame::read(&mut reader))
+            tokio::time::timeout(PROVE_TIMEOUT, Frame::read(&mut stream))
                 .await
                 .map_err(|_| {
                     NitroError::Transport(
@@ -91,17 +87,14 @@ impl VsockTransport {
 
     /// Return the 65-byte uncompressed ECDSA public key of the enclave signer.
     pub async fn signer_public_key(&self) -> Result<Vec<u8>, NitroError> {
-        let stream = self.connect().await?;
-        let (reader, writer) = tokio::io::split(stream);
-        let mut reader = BufReader::new(reader);
-        let mut writer = BufWriter::new(writer);
+        let mut stream = self.connect().await?;
 
-        Frame::write(&mut writer, &EnclaveRequest::SignerPublicKey)
+        Frame::write(&mut stream, &EnclaveRequest::SignerPublicKey)
             .await
             .map_err(|e| NitroError::Transport(e.to_string()))?;
 
         let response: EnclaveResponse =
-            tokio::time::timeout(SIGNER_TIMEOUT, Frame::read(&mut reader))
+            tokio::time::timeout(SIGNER_TIMEOUT, Frame::read(&mut stream))
                 .await
                 .map_err(|_| {
                     NitroError::Transport(
@@ -129,17 +122,14 @@ impl VsockTransport {
 
     /// Return the raw Nitro attestation document (`COSE_Sign1` bytes) for the enclave signer.
     pub async fn signer_attestation(&self) -> Result<Vec<u8>, NitroError> {
-        let stream = self.connect().await?;
-        let (reader, writer) = tokio::io::split(stream);
-        let mut reader = BufReader::new(reader);
-        let mut writer = BufWriter::new(writer);
+        let mut stream = self.connect().await?;
 
-        Frame::write(&mut writer, &EnclaveRequest::SignerAttestation)
+        Frame::write(&mut stream, &EnclaveRequest::SignerAttestation)
             .await
             .map_err(|e| NitroError::Transport(e.to_string()))?;
 
         let response: EnclaveResponse =
-            tokio::time::timeout(SIGNER_TIMEOUT, Frame::read(&mut reader))
+            tokio::time::timeout(SIGNER_TIMEOUT, Frame::read(&mut stream))
                 .await
                 .map_err(|_| {
                     NitroError::Transport(
