@@ -12,10 +12,11 @@ use base_enclave::ProofEncoder;
 use base_proof_contracts::{
     encode_create_calldata, encode_extra_data, game_already_exists_selector,
 };
+use base_proof_primitives::Proposal;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tracing::info;
 
-use crate::{error::ProposerError, prover::ProverProposal};
+use crate::error::ProposerError;
 
 /// Hex-encoded `GameAlreadyExists` selector, computed once.
 static GAME_ALREADY_EXISTS_HEX: LazyLock<String> =
@@ -39,11 +40,11 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
 /// Format: `proofType(1) + l1OriginHash(32) + l1OriginNumber(32) + signature(65)` = 130 bytes.
 ///
 /// Matches Go's `buildProofData()` in `driver.go`.
-pub fn build_proof_data(proposal: &ProverProposal) -> Result<Bytes, ProposerError> {
+pub fn build_proof_data(proposal: &Proposal) -> Result<Bytes, ProposerError> {
     ProofEncoder::encode_proof_bytes(
-        &proposal.output.signature,
-        proposal.to.l1origin.hash,
-        U256::from(proposal.to.l1origin.number),
+        &proposal.signature,
+        proposal.l1_origin_hash,
+        proposal.l1_origin_number,
     )
     .map_err(|e| ProposerError::Internal(e.to_string()))
 }
@@ -57,12 +58,10 @@ pub const fn is_game_already_exists(e: &ProposerError) -> bool {
 #[async_trait]
 pub trait OutputProposer: Send + Sync {
     /// Creates a new dispute game for the given proposal.
-    ///
-    /// Returns the result of the transaction. The caller should query
-    /// factory `gameCount()` afterwards to get the new game's factory index.
     async fn propose_output(
         &self,
-        proposal: &ProverProposal,
+        proposal: &Proposal,
+        l2_block_number: u64,
         parent_index: u32,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError>;
@@ -93,19 +92,15 @@ impl<T: TxManager> ProposalSubmitter<T> {
 impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
     async fn propose_output(
         &self,
-        proposal: &ProverProposal,
+        proposal: &Proposal,
+        l2_block_number: u64,
         parent_index: u32,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
         let proof_data = build_proof_data(proposal)?;
-        let extra_data = encode_extra_data(proposal.to.number, parent_index, intermediate_roots);
-        let calldata = encode_create_calldata(
-            self.game_type,
-            proposal.output.output_root,
-            extra_data,
-            proof_data,
-        );
-        let l2_block_number = proposal.to.number;
+        let extra_data = encode_extra_data(l2_block_number, parent_index, intermediate_roots);
+        let calldata =
+            encode_create_calldata(self.game_type, proposal.output_root, extra_data, proof_data);
 
         info!(
             l2_block_number,
@@ -149,7 +144,22 @@ mod tests {
     use base_tx_manager::{SendHandle, SendResponse, TxManagerError};
 
     use super::*;
-    use crate::prover::test_helpers::test_proposal;
+
+    fn test_proposal() -> Proposal {
+        Proposal {
+            output_root: B256::repeat_byte(0x01),
+            signature: {
+                let mut sig = vec![0xab; 65];
+                sig[64] = 1;
+                Bytes::from(sig)
+            },
+            l1_origin_hash: B256::repeat_byte(0x02),
+            l1_origin_number: U256::from(300),
+            l2_block_number: U256::from(200),
+            prev_output_root: B256::repeat_byte(0x03),
+            config_hash: B256::repeat_byte(0x04),
+        }
+    }
 
     /// Builds a minimal [`TransactionReceipt`] with the given status and hash.
     fn receipt_with_status(success: bool, tx_hash: B256) -> TransactionReceipt {
@@ -209,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_build_proof_data_length() {
-        let proposal = test_proposal(101, 200, false);
+        let proposal = test_proposal();
         let proof = build_proof_data(&proposal).unwrap();
         // 1 (type) + 32 (l1OriginHash) + 32 (l1OriginNumber) + 65 (sig) = 130
         assert_eq!(proof.len(), 130);
@@ -217,43 +227,39 @@ mod tests {
 
     #[test]
     fn test_build_proof_data_type_byte() {
-        let proposal = test_proposal(101, 200, false);
+        let proposal = test_proposal();
         let proof = build_proof_data(&proposal).unwrap();
         assert_eq!(proof[0], PROOF_TYPE_TEE);
     }
 
     #[test]
     fn test_build_proof_data_v_value_adjustment() {
-        let mut proposal = test_proposal(101, 200, false);
-        // Set v=0 in signature (last byte)
-        let mut sig = proposal.output.signature.to_vec();
+        let mut proposal = test_proposal();
+        let mut sig = proposal.signature.to_vec();
         sig[64] = 0;
-        proposal.output.signature = Bytes::from(sig);
+        proposal.signature = Bytes::from(sig);
 
         let proof = build_proof_data(&proposal).unwrap();
-        // v should be adjusted to 27
         assert_eq!(proof[129], 27);
     }
 
     #[test]
     fn test_build_proof_data_v_value_already_adjusted() {
-        let mut proposal = test_proposal(101, 200, false);
-        // Set v=28 in signature (already adjusted)
-        let mut sig = proposal.output.signature.to_vec();
+        let mut proposal = test_proposal();
+        let mut sig = proposal.signature.to_vec();
         sig[64] = 28;
-        proposal.output.signature = Bytes::from(sig);
+        proposal.signature = Bytes::from(sig);
 
         let proof = build_proof_data(&proposal).unwrap();
-        // v should remain 28
         assert_eq!(proof[129], 28);
     }
 
     #[test]
     fn test_build_proof_data_v_value_rejects_invalid() {
-        let mut proposal = test_proposal(101, 200, false);
-        let mut sig = proposal.output.signature.to_vec();
+        let mut proposal = test_proposal();
+        let mut sig = proposal.signature.to_vec();
         sig[64] = 5;
-        proposal.output.signature = Bytes::from(sig);
+        proposal.signature = Bytes::from(sig);
 
         let result = build_proof_data(&proposal);
         assert!(result.is_err());
@@ -271,8 +277,8 @@ mod tests {
         let submitter =
             ProposalSubmitter::new(mock, Address::repeat_byte(0x01), 1, U256::from(100));
 
-        let proposal = test_proposal(101, 200, false);
-        let result = submitter.propose_output(&proposal, 0, &[]).await;
+        let proposal = test_proposal();
+        let result = submitter.propose_output(&proposal, 200, 0, &[]).await;
         assert!(result.is_ok());
     }
 
@@ -283,8 +289,8 @@ mod tests {
         let submitter =
             ProposalSubmitter::new(mock, Address::repeat_byte(0x01), 1, U256::from(100));
 
-        let proposal = test_proposal(101, 200, false);
-        let err = submitter.propose_output(&proposal, 0, &[]).await.unwrap_err();
+        let proposal = test_proposal();
+        let err = submitter.propose_output(&proposal, 200, 0, &[]).await.unwrap_err();
         assert!(matches!(err, ProposerError::TxReverted(_)));
     }
 
@@ -294,8 +300,8 @@ mod tests {
         let submitter =
             ProposalSubmitter::new(mock, Address::repeat_byte(0x01), 1, U256::from(100));
 
-        let proposal = test_proposal(101, 200, false);
-        let err = submitter.propose_output(&proposal, 0, &[]).await.unwrap_err();
+        let proposal = test_proposal();
+        let err = submitter.propose_output(&proposal, 200, 0, &[]).await.unwrap_err();
         assert!(
             matches!(err, ProposerError::TxManager(TxManagerError::NonceTooLow)),
             "expected TxManager(NonceTooLow), got {err:?}",

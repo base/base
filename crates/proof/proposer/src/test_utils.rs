@@ -9,12 +9,13 @@ use base_proof_contracts::{
     AggregateVerifierClient, AnchorRoot, AnchorStateRegistryClient, ContractError,
     DisputeGameFactoryClient, GameAtIndex, GameInfo,
 };
+use base_proof_primitives::Proposal;
 use base_proof_rpc::{
     L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OpBlock, OutputAtBlock,
     RollupProvider, RpcError, RpcResult, SyncStatus,
 };
 
-use crate::{error::ProposerError, output_proposer::OutputProposer, prover::ProverProposal};
+use crate::{error::ProposerError, output_proposer::OutputProposer};
 
 /// Mock L1 client with configurable `block_number()` return.
 pub(crate) struct MockL1 {
@@ -27,7 +28,7 @@ impl L1Provider for MockL1 {
         Ok(self.latest_block_number)
     }
     async fn header_by_number(&self, _: Option<u64>) -> RpcResult<alloy_rpc_types_eth::Header> {
-        unimplemented!()
+        Ok(alloy_rpc_types_eth::Header { hash: B256::repeat_byte(0x11), ..Default::default() })
     }
     async fn header_by_hash(&self, _: B256) -> RpcResult<alloy_rpc_types_eth::Header> {
         unimplemented!()
@@ -229,7 +230,8 @@ pub(crate) struct MockOutputProposer;
 impl OutputProposer for MockOutputProposer {
     async fn propose_output(
         &self,
-        _proposal: &ProverProposal,
+        _proposal: &Proposal,
+        _l2_block_number: u64,
         _parent_index: u32,
         _intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {

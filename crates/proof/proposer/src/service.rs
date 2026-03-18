@@ -104,6 +104,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
 
     let prover_client = RpcProverClient::new(
         HttpClientBuilder::default()
+            .request_timeout(crate::constants::PROVER_TIMEOUT)
             .build(config.prover_rpc.as_str())
             .map_err(|e| eyre::eyre!("failed to create prover RPC client: {e}"))?,
     );

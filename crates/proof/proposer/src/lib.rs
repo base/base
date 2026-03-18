@@ -45,7 +45,7 @@ pub use metrics::{
 };
 
 mod prover;
-pub use prover::{Prover, ProverProposal};
+pub use prover::Prover;
 
 mod rpc;
 pub use rpc::{L2ClientKind, RethL2Client};

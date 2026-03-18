@@ -1,6 +1,6 @@
 //! Driver loop for the proposer.
 //!
-//! The driver coordinates between RPC clients, the enclave, and contract
+//! The driver coordinates between RPC clients, the prover server, and contract
 //! interactions to generate and submit output proposals as dispute games.
 //!
 //! # Lifecycle control
@@ -11,7 +11,6 @@
 //! by the admin JSON-RPC server.
 
 use std::{
-    collections::VecDeque,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -24,22 +23,19 @@ use async_trait::async_trait;
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient,
 };
-use base_proof_primitives::ProofRequest;
-use base_proof_rpc::{L1Provider, L2BlockRef, L2Provider, RollupProvider, RpcError};
+use base_proof_primitives::{ProofRequest, ProofResult, Proposal};
+use base_proof_rpc::{L1Provider, L2BlockRef, L2Provider, RollupProvider};
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
-    constants::{
-        BLOCKHASH_SAFETY_MARGIN, BLOCKHASH_WINDOW, MAX_GAME_RECOVERY_LOOKBACK, NO_PARENT_INDEX,
-        PROPOSAL_TIMEOUT,
-    },
+    constants::{MAX_GAME_RECOVERY_LOOKBACK, NO_PARENT_INDEX, PROPOSAL_TIMEOUT},
     error::ProposerError,
     metrics as proposer_metrics,
     output_proposer::{OutputProposer, is_game_already_exists},
-    prover::{Prover, ProverProposal, check_withdrawals},
+    prover::Prover,
 };
 
 /// Driver configuration.
@@ -103,10 +99,6 @@ where
     verifier_client: Arc<dyn AggregateVerifierClient>,
     output_proposer: Arc<dyn OutputProposer>,
     cancel: CancellationToken,
-    /// Pending single-block proposals awaiting aggregation and submission.
-    pending: VecDeque<ProverProposal>,
-    /// Cached intermediate roots for the current proposal (survives retry after failed submission).
-    cached_intermediate_roots: Vec<B256>,
 }
 
 impl<L1, L2, R, ASR, F> std::fmt::Debug for Driver<L1, L2, R, ASR, F>
@@ -118,10 +110,7 @@ where
     F: DisputeGameFactoryClient,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Driver")
-            .field("config", &self.config)
-            .field("pending_count", &self.pending.len())
-            .finish_non_exhaustive()
+        f.debug_struct("Driver").field("config", &self.config).finish_non_exhaustive()
     }
 }
 
@@ -158,8 +147,6 @@ where
             verifier_client,
             output_proposer,
             cancel,
-            pending: VecDeque::new(),
-            cached_intermediate_roots: Vec::new(),
         }
     }
 
@@ -240,7 +227,7 @@ where
     }
 
     /// Starts the driver loop.
-    pub async fn run(&mut self) -> Result<()> {
+    pub async fn run(&self) -> Result<()> {
         info!("Starting driver loop");
 
         loop {
@@ -262,9 +249,9 @@ where
     }
 
     /// Performs a single driver step (one tick of the loop).
-    async fn step(&mut self) -> Result<(), ProposerError> {
-        // Always load parent state from chain to stay in sync with other proposers.
-        let (starting_block_number, starting_root, parent_index) =
+    async fn step(&self) -> Result<(), ProposerError> {
+        // Load parent state from chain to stay in sync with other proposers.
+        let (starting_block_number, agreed_l2_output_root, parent_index) =
             match self.recover_latest_game().await? {
                 Some(g) => (g.l2_block_number, g.output_root, g.game_index),
                 None => {
@@ -278,44 +265,102 @@ where
                 }
             };
 
-        // Fetch the safe head once per tick and reuse it throughout.
+        // Compute the target block for this interval.
+        let target_block = starting_block_number
+            .checked_add(self.config.block_interval)
+            .ok_or_else(|| ProposerError::Internal("overflow computing target block".into()))?;
+
+        // Fetch the safe head and ensure the target is safe before proving.
         let latest_safe = self.latest_safe_block().await?;
-
-        // Generate proofs for blocks in the range.
-        if let Err(e) = self.generate_outputs(starting_block_number, &latest_safe).await {
-            warn!(error = %e, "Error generating outputs");
-            return Err(e);
+        if target_block > latest_safe.number {
+            debug!(
+                target_block,
+                safe_head = latest_safe.number,
+                "Target block not yet safe, skipping"
+            );
+            return Ok(());
         }
 
-        // Extract intermediate roots from the per-block pending queue. Once aggregation
-        // drains the queue, we rely on the cached copy for retries.
-        let fresh_roots = self.extract_intermediate_roots(starting_block_number)?;
-        if !fresh_roots.is_empty() {
-            self.cached_intermediate_roots = fresh_roots;
-        }
+        // Gather the data needed to build a ProofRequest.
+        let agreed_l2_head = self
+            .l2_client
+            .header_by_number(Some(starting_block_number))
+            .await
+            .map_err(ProposerError::Rpc)?;
 
-        // Check if we have enough proofs to aggregate and propose.
-        match self.next_output(starting_block_number, starting_root, &latest_safe).await {
-            Ok(Some((proposal, intermediate_roots))) => {
-                self.propose_output(&proposal, parent_index, &intermediate_roots).await;
+        let claimed_output =
+            self.rollup_client.output_at_block(target_block).await.map_err(ProposerError::Rpc)?;
+
+        let l1_head = self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc)?;
+
+        let request = ProofRequest {
+            l1_head: l1_head.hash,
+            agreed_l2_head_hash: agreed_l2_head.hash,
+            agreed_l2_output_root,
+            claimed_l2_output_root: claimed_output.output_root,
+            claimed_l2_block_number: target_block,
+        };
+
+        info!(
+            starting_block = starting_block_number,
+            target_block,
+            l1_head = ?l1_head.hash,
+            "Sending proof request to prover"
+        );
+
+        let proof_result = self.prover.prove(request).await?;
+
+        let (aggregate_proposal, proposals) = match proof_result {
+            ProofResult::Tee { aggregate_proposal, proposals } => (aggregate_proposal, proposals),
+            ProofResult::Zk { .. } => {
+                return Err(ProposerError::Prover(
+                    "unexpected ZK proof result from TEE prover".into(),
+                ));
             }
-            Ok(None) => {}
-            Err(e) => {
-                warn!(error = %e, "Error getting next output");
-                return Err(e);
-            }
+        };
+
+        // Reorg detection: verify the claimed output root matches the canonical chain.
+        let canonical_output =
+            self.rollup_client.output_at_block(target_block).await.map_err(ProposerError::Rpc)?;
+
+        if aggregate_proposal.output_root != canonical_output.output_root {
+            warn!(
+                proposal_root = ?aggregate_proposal.output_root,
+                canonical_root = ?canonical_output.output_root,
+                target_block,
+                "Proposal output root does not match canonical chain, possible reorg"
+            );
+            return Ok(());
         }
+
+        // Extract intermediate roots from per-block proposals.
+        let intermediate_roots =
+            self.extract_intermediate_roots(starting_block_number, &proposals)?;
+
+        info!(
+            target_block,
+            output_root = ?aggregate_proposal.output_root,
+            parent_index,
+            intermediate_roots_count = intermediate_roots.len(),
+            proposals_count = proposals.len(),
+            "Proposing output (creating dispute game)"
+        );
+
+        self.propose_output(&aggregate_proposal, target_block, parent_index, &intermediate_roots)
+            .await;
 
         Ok(())
     }
 
-    /// Extracts intermediate output roots from the pending queue.
+    /// Extracts intermediate output roots from the per-block proposals returned
+    /// by the prover server.
     ///
     /// The intermediate roots are the output roots at every `intermediate_block_interval`
-    /// within the current proposal range. Must be called before aggregation drains the queue.
+    /// within the proposal range.
     fn extract_intermediate_roots(
         &self,
         starting_block_number: u64,
+        proposals: &[Proposal],
     ) -> Result<Vec<B256>, ProposerError> {
         let interval = self.config.intermediate_block_interval;
         if interval == 0 {
@@ -333,208 +378,22 @@ where
                 .ok_or_else(|| {
                     ProposerError::Internal("overflow computing intermediate root target".into())
                 })?;
-            if let Some(p) = self.pending.iter().find(|p| p.to.number == target_block) {
-                roots.push(p.output.output_root);
+
+            // Proposals are indexed from block starting_block_number+1,
+            // so proposal index = target_block - starting_block_number - 1.
+            let idx = target_block.saturating_sub(starting_block_number).saturating_sub(1);
+            if let Some(p) = proposals.get(idx as usize) {
+                roots.push(p.output_root);
             } else {
-                debug!(target_block, "Intermediate root block not yet in pending queue");
+                debug!(
+                    target_block,
+                    idx,
+                    proposals_len = proposals.len(),
+                    "Intermediate root block not found in proposals"
+                );
             }
         }
         Ok(roots)
-    }
-
-    /// Generates single-block proofs, filling the pending queue.
-    async fn generate_outputs(
-        &mut self,
-        starting_block_number: u64,
-        latest_safe: &L2BlockRef,
-    ) -> Result<(), ProposerError> {
-        // Clear pending if not contiguous with starting point.
-        if let Some(front) = self.pending.front()
-            && front.from.number.saturating_sub(1) != starting_block_number
-        {
-            warn!(
-                starting = starting_block_number,
-                pending_from = front.from.number.saturating_sub(1),
-                "Pending outputs not contiguous with starting point, clearing"
-            );
-            self.pending.clear();
-        }
-
-        // Determine what block to generate next.
-        let next_number = self.pending.back().map_or(starting_block_number, |back| back.to.number);
-
-        // Generate proofs up to the target block for this interval.
-        let target_block = starting_block_number
-            .checked_add(self.config.block_interval)
-            .ok_or_else(|| ProposerError::Internal("overflow computing target block".into()))?;
-
-        for i in 0..self.config.block_interval {
-            if self.cancel.is_cancelled() {
-                info!("Shutting down proof generation");
-                break;
-            }
-
-            let number =
-                next_number.checked_add(1).and_then(|n| n.checked_add(i)).ok_or_else(|| {
-                    ProposerError::Internal("overflow computing next block number".into())
-                })?;
-
-            // Stop once we've reached the target block for this interval.
-            if number > target_block {
-                break;
-            }
-
-            let block = match self.l2_client.block_by_number(Some(number)).await {
-                Ok(block) => block,
-                Err(RpcError::BlockNotFound(_)) => {
-                    break;
-                }
-                Err(e) => {
-                    return Err(ProposerError::Rpc(e));
-                }
-            };
-
-            let header = &block.header.inner;
-            let has_withdrawals = check_withdrawals(header);
-
-            let prev_number = number.saturating_sub(1);
-
-            let agreed_output = self
-                .rollup_client
-                .output_at_block(prev_number)
-                .await
-                .map_err(ProposerError::Rpc)?;
-            let claimed_output =
-                self.rollup_client.output_at_block(number).await.map_err(ProposerError::Rpc)?;
-
-            let l1_head =
-                self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc)?;
-
-            let request = ProofRequest {
-                l1_head: l1_head.hash,
-                agreed_l2_head_hash: agreed_output.block_ref.hash,
-                agreed_l2_output_root: agreed_output.output_root,
-                claimed_l2_output_root: claimed_output.output_root,
-                claimed_l2_block_number: number,
-            };
-
-            let from = agreed_output.block_ref;
-            let to = claimed_output.block_ref;
-
-            let proposal = self.prover.prove(request, from, to, has_withdrawals).await?;
-
-            let blocks_behind = latest_safe.number.saturating_sub(proposal.to.number);
-
-            info!(
-                block_number = proposal.to.number,
-                l1_origin_number = proposal.to.l1origin.number,
-                l1_origin_hash = ?proposal.to.l1origin.hash,
-                has_withdrawals = proposal.has_withdrawals,
-                output_root = ?proposal.output.output_root,
-                blocks_behind,
-                "Generated proof for block"
-            );
-            self.pending.push_back(proposal);
-        }
-
-        debug!(queue_depth = self.pending.len(), "Proof queue depth");
-        metrics::gauge!(proposer_metrics::PROOF_QUEUE_DEPTH).set(self.pending.len() as f64);
-        Ok(())
-    }
-
-    /// Determines the next output to propose, aggregating if needed.
-    ///
-    /// On success, returns the proposal along with the intermediate roots to use
-    /// for submission. The intermediate roots are cloned only when a proposal is
-    /// actually ready, avoiding unnecessary allocations on ticks where no
-    /// proposal is produced.
-    async fn next_output(
-        &mut self,
-        starting_block_number: u64,
-        _starting_root: B256,
-        latest_safe: &L2BlockRef,
-    ) -> Result<Option<(ProverProposal, Vec<B256>)>, ProposerError> {
-        let latest_safe_number = latest_safe.number;
-
-        // We need exactly block_interval proofs to propose.
-        let target = starting_block_number
-            .checked_add(self.config.block_interval)
-            .ok_or_else(|| ProposerError::Internal("overflow computing target block".into()))?;
-
-        // Count pending proposals up to the target block and safe head.
-        let count = self
-            .pending
-            .iter()
-            .take_while(|p| p.to.number <= target && p.to.number <= latest_safe_number)
-            .count();
-
-        if count == 0 {
-            return Ok(None);
-        }
-
-        // Check that the last eligible proof actually reaches the target block.
-        // An aggregated proof may count as 1 but already covers the full interval.
-        let last_proof_to = self.pending[count - 1].to.number;
-        if last_proof_to < target {
-            return Ok(None);
-        }
-
-        // Target must be safe before we submit.
-        if target > latest_safe_number {
-            return Ok(None);
-        }
-
-        let proposal = &self.pending[0];
-
-        // Verify the aggregated proposal reaches the target block.
-        if proposal.to.number < target {
-            return Ok(None);
-        }
-
-        // Reorg detection: verify the proposal's block hash matches the canonical chain.
-        match self.l2_client.header_by_number(Some(proposal.to.number)).await {
-            Ok(canonical_header) => {
-                if proposal.to.hash != canonical_header.hash {
-                    warn!(
-                        proposal_hash = ?proposal.to.hash,
-                        canonical_hash = ?canonical_header.hash,
-                        block_number = proposal.to.number,
-                        "Proposal block hash does not match canonical chain, possible reorg"
-                    );
-                    self.pending.clear();
-                    return Ok(None);
-                }
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to fetch canonical header for reorg check");
-                return Ok(None);
-            }
-        }
-
-        // Check BLOCKHASH window: L1 origin must be recent enough.
-        let l1_latest = match self.l1_client.block_number().await {
-            Ok(n) => n,
-            Err(e) => {
-                warn!(error = %e, "Failed to get latest L1 block number");
-                return Ok(None);
-            }
-        };
-
-        let l1_origin_number = proposal.to.l1origin.number;
-        if l1_origin_number <= l1_latest.saturating_sub(BLOCKHASH_WINDOW - BLOCKHASH_SAFETY_MARGIN)
-        {
-            warn!(
-                l1_origin = l1_origin_number,
-                l1_latest, "Not submitting proposal, L1 origin block is too old"
-            );
-            return Ok(None);
-        }
-
-        // Clone the intermediate roots only when we're actually going to propose.
-        let roots = self.cached_intermediate_roots.clone();
-        // Pop instead of clone: the pending queue is cleared after submission anyway.
-        let proposal = self.pending.pop_front().unwrap();
-        Ok(Some((proposal, roots)))
     }
 
     /// Returns the latest safe L2 block reference.
@@ -548,64 +407,50 @@ where
     }
 
     /// Submits a proposal by creating a dispute game via the factory.
-    ///
-    /// Always clears pending state afterward so the next tick starts fresh
-    /// from on-chain state — this prevents stale aggregated proposals with
-    /// mismatched intermediate roots from leaking across ticks.
     async fn propose_output(
-        &mut self,
-        proposal: &ProverProposal,
+        &self,
+        proposal: &Proposal,
+        l2_block_number: u64,
         parent_index: u32,
         intermediate_roots: &[B256],
     ) {
-        info!(
-            l2_block_number = proposal.to.number,
-            l1_origin_number = proposal.to.l1origin.number,
-            l1_origin_hash = ?proposal.to.l1origin.hash,
-            output_root = ?proposal.output.output_root,
-            has_withdrawals = proposal.has_withdrawals,
-            from = proposal.from.number,
-            to = proposal.to.number,
-            parent_index,
-            intermediate_roots_count = intermediate_roots.len(),
-            "Proposing output (creating dispute game)"
-        );
-
         match tokio::time::timeout(
             PROPOSAL_TIMEOUT,
-            self.output_proposer.propose_output(proposal, parent_index, intermediate_roots),
+            self.output_proposer.propose_output(
+                proposal,
+                l2_block_number,
+                parent_index,
+                intermediate_roots,
+            ),
         )
         .await
         {
             Ok(Ok(())) => {
-                info!(l2_block_number = proposal.to.number, "Dispute game created successfully");
+                info!(l2_block_number, "Dispute game created successfully");
                 metrics::counter!(proposer_metrics::L2_OUTPUT_PROPOSALS_TOTAL).increment(1);
             }
             Ok(Err(e)) => {
                 if is_game_already_exists(&e) {
                     info!(
-                        l2_block_number = proposal.to.number,
+                        l2_block_number,
                         "Game already exists, next tick will load fresh state from chain"
                     );
                 } else {
                     warn!(
                         error = %e,
-                        l2_block_number = proposal.to.number,
+                        l2_block_number,
                         "Failed to create dispute game"
                     );
                 }
             }
             Err(_) => {
                 warn!(
-                    l2_block_number = proposal.to.number,
+                    l2_block_number,
                     timeout_secs = PROPOSAL_TIMEOUT.as_secs(),
                     "Dispute game creation timed out"
                 );
             }
         }
-
-        self.pending.clear();
-        self.cached_intermediate_roots.clear();
     }
 }
 
@@ -719,7 +564,7 @@ where
         running.store(true, Ordering::SeqCst);
 
         let handle = tokio::spawn(async move {
-            let mut guard = driver.lock().await;
+            let guard = driver.lock().await;
             let result = guard.run().await;
             running.store(false, Ordering::SeqCst);
             result
@@ -758,15 +603,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering},
-        },
-        time::Duration,
-    };
+    use std::{sync::Arc, time::Duration};
 
-    use alloy_primitives::{Address, B256};
+    use alloy_primitives::{Address, B256, Bytes, U256};
     use async_trait::async_trait;
     use base_proof_contracts::GameAtIndex;
     use base_proof_rpc::SyncStatus;
@@ -775,16 +614,14 @@ mod tests {
 
     use super::*;
     use crate::{
-        prover::{Prover, test_helpers::test_proposal},
+        prover::Prover,
         prover_client::RpcProverClient,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-            MockOutputProposer, MockRollupClient, test_anchor_root, test_l2_block_ref,
-            test_per_chain_config, test_sync_status,
+            MockOutputProposer, MockRollupClient, test_anchor_root, test_per_chain_config,
+            test_sync_status,
         },
     };
-
-    // ---- Helpers ----
 
     fn test_prover() -> Prover {
         let client =
@@ -793,17 +630,28 @@ mod tests {
         Prover::new(test_per_chain_config(), Arc::new(prover_client))
     }
 
+    fn test_proposal(block_number: u64) -> Proposal {
+        Proposal {
+            output_root: B256::repeat_byte(block_number as u8),
+            signature: Bytes::from(vec![0xab; 65]),
+            l1_origin_hash: B256::repeat_byte(0x02),
+            l1_origin_number: U256::from(100 + block_number),
+            l2_block_number: U256::from(block_number),
+            prev_output_root: B256::repeat_byte(0x03),
+            config_hash: B256::repeat_byte(0x04),
+        }
+    }
+
     fn test_driver_custom(
         driver_config: DriverConfig,
         l1_block_number: u64,
         sync_status: SyncStatus,
-        canonical_hash: Option<B256>,
         output_proposer: Arc<dyn OutputProposer>,
         cancel: CancellationToken,
     ) -> Driver<MockL1, MockL2, MockRollupClient, MockAnchorStateRegistry, MockDisputeGameFactory>
     {
         let l1 = Arc::new(MockL1 { latest_block_number: l1_block_number });
-        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
         let prover = Arc::new(test_prover());
         let rollup = Arc::new(MockRollupClient { sync_status });
         let anchor_registry =
@@ -824,331 +672,119 @@ mod tests {
         )
     }
 
-    fn test_driver(
-        l1_block_number: u64,
-        sync_status: SyncStatus,
-        canonical_hash: Option<B256>,
-    ) -> Driver<MockL1, MockL2, MockRollupClient, MockAnchorStateRegistry, MockDisputeGameFactory>
-    {
-        test_driver_custom(
-            DriverConfig { block_interval: 10, ..Default::default() },
-            l1_block_number,
-            sync_status,
-            canonical_hash,
+    #[test]
+    fn test_extract_intermediate_roots_full() {
+        let driver = test_driver_custom(
+            DriverConfig {
+                block_interval: 10,
+                intermediate_block_interval: 5,
+                ..Default::default()
+            },
+            1000,
+            test_sync_status(200, B256::ZERO),
             Arc::new(MockOutputProposer),
             CancellationToken::new(),
-        )
+        );
+
+        let root_a = B256::repeat_byte(0xAA);
+        let root_b = B256::repeat_byte(0xBB);
+
+        let mut proposals: Vec<Proposal> = (101..=110).map(test_proposal).collect();
+        proposals[4].output_root = root_a;
+        proposals[9].output_root = root_b;
+
+        let roots = driver.extract_intermediate_roots(100, &proposals).unwrap();
+        assert_eq!(roots.len(), 2);
+        assert_eq!(roots[0], root_a);
+        assert_eq!(roots[1], root_b);
     }
 
-    // ---- Tests ----
-
-    #[tokio::test]
-    async fn test_generate_outputs_clears_on_gap() {
-        let sync_status = test_sync_status(200, B256::ZERO);
-        let mut driver = test_driver(1000, sync_status, None);
-
-        // Pre-populate with blocks 15..=17 (gap: starting=10 -> front.from=15)
-        for n in 15..=17 {
-            driver.pending.push_back(test_proposal(n, n, false));
-        }
-        assert_eq!(driver.pending.len(), 3);
-
-        // generate_outputs(10): front.from(15) - 1 = 14 != 10, so queue is cleared
-        let safe = test_l2_block_ref(200, B256::ZERO);
-        let result = driver.generate_outputs(10, &safe).await;
-        assert!(result.is_ok());
-        assert_eq!(driver.pending.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_generate_outputs_preserves_contiguous() {
-        let sync_status = test_sync_status(200, B256::ZERO);
-        let mut driver = test_driver(1000, sync_status, None);
-
-        // Pre-populate: starting=10, front.from=11 => 11-1=10 == starting, contiguous
-        driver.pending.push_back(test_proposal(11, 11, false));
-        driver.pending.push_back(test_proposal(12, 12, false));
-        assert_eq!(driver.pending.len(), 2);
-
-        let safe = test_l2_block_ref(200, B256::ZERO);
-        let result = driver.generate_outputs(10, &safe).await;
-        assert!(result.is_ok());
-        // Queue preserved (contiguous), no new blocks generated (MockL2 returns BlockNotFound)
-        assert_eq!(driver.pending.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_next_output_returns_none_when_empty() {
-        let mut driver = test_driver(1000, test_sync_status(200, B256::ZERO), None);
-        let safe = test_l2_block_ref(200, B256::ZERO);
-
-        // Empty pending queue
-        let result = driver.next_output(100, B256::ZERO, &safe).await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn test_next_output_returns_none_when_target_not_reached() {
-        // target = 100 + 10 = 110, safe=200, but pending only goes up to 105
-        let canonical_hash = B256::repeat_byte(0x30);
-        let safe = test_l2_block_ref(200, canonical_hash);
-        let mut driver =
-            test_driver(1000, test_sync_status(200, canonical_hash), Some(canonical_hash));
-
-        driver.pending.push_back(test_proposal(101, 105, false));
-
-        let result = driver.next_output(100, B256::ZERO, &safe).await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn test_next_output_returns_none_when_target_not_safe() {
-        // target = 100 + 10 = 110, but safe_number = 105 (not safe yet)
-        let canonical_hash = B256::repeat_byte(0x30);
-        let safe = test_l2_block_ref(105, canonical_hash);
-        let mut driver =
-            test_driver(1000, test_sync_status(105, canonical_hash), Some(canonical_hash));
-
-        driver.pending.push_back(test_proposal(101, 110, false));
-
-        let result = driver.next_output(100, B256::ZERO, &safe).await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn test_next_output_reorg_detection() {
-        // Proposal has to.hash = 0x30, but canonical hash is 0xBB => mismatch
-        let canonical_hash = B256::repeat_byte(0xBB);
-        let safe = test_l2_block_ref(200, B256::ZERO);
-        let mut driver = test_driver(1000, test_sync_status(200, B256::ZERO), Some(canonical_hash));
-
-        // test_proposal sets to.hash = B256::repeat_byte(0x30) which != 0xBB
-        driver.pending.push_back(test_proposal(101, 110, false));
-        assert_eq!(driver.pending.len(), 1);
-
-        let result = driver.next_output(100, B256::ZERO, &safe).await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-        // Queue should be cleared due to reorg detection
-        assert_eq!(driver.pending.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_next_output_blockhash_window() {
-        // l1_latest=10000, proposal l1origin.number = 1000
-        // Threshold = 10000 - (8191-100) = 10000 - 8091 = 1909
-        // 1000 <= 1909 → rejected (L1 origin too old)
-        let canonical_hash = B256::repeat_byte(0x30);
-        let safe = test_l2_block_ref(200, canonical_hash);
-        let mut driver =
-            test_driver(10000, test_sync_status(200, canonical_hash), Some(canonical_hash));
-
-        let mut proposal = test_proposal(101, 110, false);
-        proposal.to.l1origin.number = 1000;
-        driver.pending.push_back(proposal);
-
-        let result = driver.next_output(100, B256::ZERO, &safe).await;
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-        // Queue NOT cleared — blockhash window gating doesn't clear the queue
-        assert_eq!(driver.pending.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_next_output_happy_path() {
-        // target = 100 + 10 = 110, safe = 200, l1_latest = 1000
-        // test_proposal sets l1origin.number = 100 + to_number = 210, well within BLOCKHASH window
-        let canonical_hash = B256::repeat_byte(0x30);
-        let safe = test_l2_block_ref(200, canonical_hash);
-        let mut driver =
-            test_driver(1000, test_sync_status(200, canonical_hash), Some(canonical_hash));
-
-        driver.pending.push_back(test_proposal(101, 110, false));
-        assert_eq!(driver.pending.len(), 1);
-
-        let result = driver.next_output(100, B256::ZERO, &safe).await;
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(output.is_some(), "expected Some(proposal)");
-        let (proposal, _roots) = output.unwrap();
-        assert_eq!(proposal.from.number, 101);
-        assert_eq!(proposal.to.number, 110);
-        // Pending is now empty (next_output pops the proposal)
-        assert_eq!(driver.pending.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_step_calls_output_proposer() {
-        struct TrackingOutputProposer {
-            called: AtomicBool,
-        }
-
-        #[async_trait]
-        impl OutputProposer for TrackingOutputProposer {
-            async fn propose_output(
-                &self,
-                _proposal: &ProverProposal,
-                _parent_index: u32,
-                _intermediate_roots: &[B256],
-            ) -> Result<(), ProposerError> {
-                self.called.store(true, Ordering::SeqCst);
-                Ok(())
-            }
-        }
-
-        let canonical_hash = B256::repeat_byte(0x30);
-        let sync_status = test_sync_status(200, canonical_hash);
-        let tracking = Arc::new(TrackingOutputProposer { called: AtomicBool::new(false) });
-
-        let mut driver = test_driver_custom(
-            DriverConfig { block_interval: 10, ..Default::default() },
+    #[test]
+    fn test_extract_intermediate_roots_partial() {
+        let driver = test_driver_custom(
+            DriverConfig {
+                block_interval: 10,
+                intermediate_block_interval: 5,
+                ..Default::default()
+            },
             1000,
-            sync_status,
-            Some(canonical_hash),
-            Arc::clone(&tracking) as Arc<dyn OutputProposer>,
+            test_sync_status(200, B256::ZERO),
+            Arc::new(MockOutputProposer),
             CancellationToken::new(),
         );
 
-        // The mock factory returns game_type=u32::MAX which doesn't match DriverConfig's
-        // game_type=0, so recover_latest_game() finds no games and falls back to the
-        // anchor registry (block 0). Pre-populate pending starting from block 1.
-        driver.pending.push_back(test_proposal(1, 10, false));
+        let root_a = B256::repeat_byte(0xAA);
+        let mut proposals: Vec<Proposal> = (101..=105).map(test_proposal).collect();
+        proposals[4].output_root = root_a;
 
-        let result = driver.step().await;
-        assert!(result.is_ok(), "step() should succeed, got: {result:?}");
-        assert!(
-            tracking.called.load(Ordering::SeqCst),
-            "OutputProposer::propose_output should have been called"
-        );
+        let roots = driver.extract_intermediate_roots(100, &proposals).unwrap();
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0], root_a);
     }
 
-    #[tokio::test]
-    async fn test_step_falls_back_to_anchor_when_no_games() {
-        struct TrackingOutputProposer {
-            parent_index: std::sync::Mutex<Option<u32>>,
-        }
-
-        #[async_trait]
-        impl OutputProposer for TrackingOutputProposer {
-            async fn propose_output(
-                &self,
-                _proposal: &ProverProposal,
-                parent_index: u32,
-                _intermediate_roots: &[B256],
-            ) -> Result<(), ProposerError> {
-                *self.parent_index.lock().unwrap() = Some(parent_index);
-                Ok(())
-            }
-        }
-
-        let canonical_hash = B256::repeat_byte(0x30);
-        let sync_status = test_sync_status(200, canonical_hash);
-        let tracking =
-            Arc::new(TrackingOutputProposer { parent_index: std::sync::Mutex::new(None) });
-
-        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
-        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: Some(canonical_hash) });
-        let prover = Arc::new(test_prover());
-        let factory = Arc::new(MockDisputeGameFactory { game_count: 0 });
-
-        let mut driver = Driver::new(
-            DriverConfig { block_interval: 10, ..Default::default() },
-            prover,
-            l1,
-            l2,
-            Arc::new(MockRollupClient { sync_status }),
-            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) }),
-            factory,
-            Arc::new(MockAggregateVerifier),
-            Arc::clone(&tracking) as Arc<dyn OutputProposer>,
-            CancellationToken::new(),
-        );
-
-        // Pre-populate pending so step() has a proposal ready to submit.
-        driver.pending.push_back(test_proposal(1, 10, false));
-
-        let result = driver.step().await;
-        assert!(result.is_ok(), "step() should succeed via anchor fallback, got: {result:?}");
-
-        // The anchor fallback should use NO_PARENT_INDEX.
-        let idx = tracking.parent_index.lock().unwrap();
-        assert_eq!(*idx, Some(NO_PARENT_INDEX), "should use NO_PARENT_INDEX when no games exist");
-    }
-
-    #[tokio::test]
-    async fn test_propose_output_clears_pending_on_error() {
-        struct FailingOutputProposer;
-
-        #[async_trait]
-        impl OutputProposer for FailingOutputProposer {
-            async fn propose_output(
-                &self,
-                _proposal: &ProverProposal,
-                _parent_index: u32,
-                _intermediate_roots: &[B256],
-            ) -> Result<(), ProposerError> {
-                Err(ProposerError::Contract("simulated failure".into()))
-            }
-        }
-
-        let canonical_hash = B256::repeat_byte(0x30);
-        let sync_status = test_sync_status(200, canonical_hash);
-
-        let mut driver = test_driver_custom(
-            DriverConfig { block_interval: 10, ..Default::default() },
+    #[test]
+    fn test_extract_intermediate_roots_interval_equals_block_interval() {
+        let driver = test_driver_custom(
+            DriverConfig {
+                block_interval: 10,
+                intermediate_block_interval: 10,
+                ..Default::default()
+            },
             1000,
-            sync_status,
-            Some(canonical_hash),
-            Arc::new(FailingOutputProposer),
+            test_sync_status(200, B256::ZERO),
+            Arc::new(MockOutputProposer),
             CancellationToken::new(),
         );
 
-        // Pre-populate pending and cached intermediate roots.
-        driver.pending.push_back(test_proposal(1, 10, false));
-        driver.cached_intermediate_roots = vec![B256::repeat_byte(0xAA)];
+        let final_root = B256::repeat_byte(0xFF);
+        let mut proposals: Vec<Proposal> = (101..=110).map(test_proposal).collect();
+        proposals[9].output_root = final_root;
 
-        let proposal = test_proposal(1, 10, false);
-        driver.propose_output(&proposal, 0, &[B256::repeat_byte(0xAA)]).await;
+        let roots = driver.extract_intermediate_roots(100, &proposals).unwrap();
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0], final_root);
+    }
 
-        // Both should be cleared even though the proposer returned an error.
-        assert!(driver.pending.is_empty(), "pending should be cleared after error");
-        assert!(
-            driver.cached_intermediate_roots.is_empty(),
-            "cached_intermediate_roots should be cleared after error"
+    #[test]
+    fn test_extract_intermediate_roots_zero_interval_errors() {
+        let driver = test_driver_custom(
+            DriverConfig {
+                block_interval: 10,
+                intermediate_block_interval: 0,
+                ..Default::default()
+            },
+            1000,
+            test_sync_status(200, B256::ZERO),
+            Arc::new(MockOutputProposer),
+            CancellationToken::new(),
         );
+
+        let proposals: Vec<Proposal> = (101..=110).map(test_proposal).collect();
+        let result = driver.extract_intermediate_roots(100, &proposals);
+        assert!(result.is_err());
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_run_cancellation() {
-        let sync_status = test_sync_status(200, B256::ZERO);
         let cancel = CancellationToken::new();
-
-        let mut driver = test_driver_custom(
+        let driver = test_driver_custom(
             DriverConfig {
                 poll_interval: Duration::from_secs(3600),
                 block_interval: 10,
                 ..Default::default()
             },
             1000,
-            sync_status,
-            None,
+            test_sync_status(200, B256::ZERO),
             Arc::new(MockOutputProposer),
             cancel.clone(),
         );
 
         let handle = tokio::spawn(async move { driver.run().await });
-
-        // Cancel immediately — with start_paused, tokio time is virtual
         cancel.cancel();
 
         let result = handle.await.expect("task should not panic");
         assert!(result.is_ok(), "run() should return Ok on cancellation");
     }
-
-    // ---- DriverHandle tests ----
 
     fn test_driver_handle(
         global_cancel: CancellationToken,
@@ -1159,7 +795,6 @@ mod tests {
         MockAnchorStateRegistry,
         MockDisputeGameFactory,
     > {
-        let sync_status = test_sync_status(200, B256::ZERO);
         let driver = test_driver_custom(
             DriverConfig {
                 poll_interval: Duration::from_secs(3600),
@@ -1167,8 +802,7 @@ mod tests {
                 ..Default::default()
             },
             1000,
-            sync_status,
-            None,
+            test_sync_status(200, B256::ZERO),
             Arc::new(MockOutputProposer),
             global_cancel.child_token(),
         );
@@ -1181,15 +815,9 @@ mod tests {
         let handle = test_driver_handle(cancel);
 
         assert!(!handle.is_running());
-
-        // Start
-        let result = handle.start_proposer().await;
-        assert!(result.is_ok());
+        handle.start_proposer().await.unwrap();
         assert!(handle.is_running());
-
-        // Stop
-        let result = handle.stop_proposer().await;
-        assert!(result.is_ok());
+        handle.stop_proposer().await.unwrap();
         assert!(!handle.is_running());
     }
 
@@ -1199,13 +827,9 @@ mod tests {
         let handle = test_driver_handle(cancel);
 
         handle.start_proposer().await.unwrap();
-        assert!(handle.is_running());
-
-        // Second start should fail
         let result = handle.start_proposer().await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("already running"));
-
         handle.stop_proposer().await.unwrap();
     }
 
@@ -1224,17 +848,10 @@ mod tests {
         let cancel = CancellationToken::new();
         let handle = test_driver_handle(cancel);
 
-        // Start, stop, start again
         handle.start_proposer().await.unwrap();
-        assert!(handle.is_running());
-
         handle.stop_proposer().await.unwrap();
-        assert!(!handle.is_running());
-
-        // Should be able to restart
         handle.start_proposer().await.unwrap();
         assert!(handle.is_running());
-
         handle.stop_proposer().await.unwrap();
         assert!(!handle.is_running());
     }
@@ -1247,13 +864,9 @@ mod tests {
         handle.start_proposer().await.unwrap();
         assert!(handle.is_running());
 
-        // Global cancel (simulating SIGTERM) should stop the driver
         cancel.cancel();
-
-        // Give the spawned task a moment to observe the cancellation
         tokio::time::sleep(Duration::from_millis(50)).await;
-
-        assert!(!handle.is_running(), "driver should stop on global cancel");
+        assert!(!handle.is_running());
     }
 
     #[tokio::test]
@@ -1266,82 +879,6 @@ mod tests {
         assert!(debug.contains("running"));
     }
 
-    // ---- extract_intermediate_roots tests ----
-
-    #[tokio::test]
-    async fn test_extract_intermediate_roots_full_queue() {
-        let sync_status = test_sync_status(200, B256::ZERO);
-        let mut driver = test_driver_custom(
-            DriverConfig {
-                block_interval: 10,
-                intermediate_block_interval: 5,
-                ..Default::default()
-            },
-            1000,
-            sync_status,
-            None,
-            Arc::new(MockOutputProposer),
-            CancellationToken::new(),
-        );
-
-        let root_a = B256::repeat_byte(0xAA);
-        let root_b = B256::repeat_byte(0xBB);
-
-        let mut p5 = test_proposal(101, 105, false);
-        p5.output.output_root = root_a;
-        let mut p10 = test_proposal(106, 110, false);
-        p10.output.output_root = root_b;
-
-        for n in 101..=104 {
-            driver.pending.push_back(test_proposal(n, n, false));
-        }
-        driver.pending.push_back(p5);
-        for n in 106..=109 {
-            driver.pending.push_back(test_proposal(n, n, false));
-        }
-        driver.pending.push_back(p10);
-
-        let roots = driver.extract_intermediate_roots(100).unwrap();
-        assert_eq!(roots.len(), 2);
-        assert_eq!(roots[0], root_a);
-        assert_eq!(roots[1], root_b);
-    }
-
-    #[tokio::test]
-    async fn test_extract_intermediate_roots_partial_queue() {
-        let sync_status = test_sync_status(200, B256::ZERO);
-        let mut driver = test_driver_custom(
-            DriverConfig {
-                block_interval: 10,
-                intermediate_block_interval: 5,
-                ..Default::default()
-            },
-            1000,
-            sync_status,
-            None,
-            Arc::new(MockOutputProposer),
-            CancellationToken::new(),
-        );
-
-        let root_a = B256::repeat_byte(0xAA);
-
-        let mut p5 = test_proposal(101, 105, false);
-        p5.output.output_root = root_a;
-
-        for n in 101..=104 {
-            driver.pending.push_back(test_proposal(n, n, false));
-        }
-        driver.pending.push_back(p5);
-        // Block 110 not yet generated -- only partial queue
-
-        let roots = driver.extract_intermediate_roots(100).unwrap();
-        assert_eq!(roots.len(), 1, "only the first checkpoint should be found");
-        assert_eq!(roots[0], root_a);
-    }
-
-    // ---- recover_latest_game tests ----
-
-    /// Configurable mock factory for recovery tests.
     struct RecoveryMockFactory {
         games: Vec<(u32, Address)>,
         error_indices: Vec<u64>,
@@ -1372,11 +909,9 @@ mod tests {
         }
     }
 
-    /// Configurable mock verifier for recovery tests.
     struct RecoveryMockVerifier {
         l2_block_number: u64,
         root_claim: B256,
-        /// Proxy addresses for which `game_info` should return an error.
         error_proxies: Vec<Address>,
     }
 
@@ -1521,10 +1056,7 @@ mod tests {
         let root = B256::repeat_byte(0xBB);
         let driver = recovery_driver(
             RecoveryMockFactory {
-                games: vec![
-                    (42, Address::ZERO), // index 0: match
-                    (99, Address::ZERO), // index 1: wrong type (scanned first, backwards)
-                ],
+                games: vec![(42, Address::ZERO), (99, Address::ZERO)],
                 error_indices: vec![],
             },
             RecoveryMockVerifier { l2_block_number: 200, root_claim: root, error_proxies: vec![] },
@@ -1545,10 +1077,7 @@ mod tests {
         let root = B256::repeat_byte(0xCC);
         let driver = recovery_driver(
             RecoveryMockFactory {
-                games: vec![
-                    (42, Address::ZERO), // index 0: match (reached after error on index 1)
-                    (42, Address::ZERO), // index 1: will error
-                ],
+                games: vec![(42, Address::ZERO), (42, Address::ZERO)],
                 error_indices: vec![1],
             },
             RecoveryMockVerifier { l2_block_number: 300, root_claim: root, error_proxies: vec![] },
@@ -1559,7 +1088,7 @@ mod tests {
             .recover_latest_game()
             .await
             .expect("should not error")
-            .expect("should continue past errored index and find earlier game");
+            .expect("should continue past errored index");
         assert_eq!(state.game_index, 0);
         assert_eq!(state.l2_block_number, 300);
     }
@@ -1571,10 +1100,7 @@ mod tests {
         let healthy_proxy = Address::repeat_byte(0xFF);
         let driver = recovery_driver(
             RecoveryMockFactory {
-                games: vec![
-                    (42, healthy_proxy), // index 0: match, game_info succeeds
-                    (42, error_proxy),   // index 1: match, but game_info will error
-                ],
+                games: vec![(42, healthy_proxy), (42, error_proxy)],
                 error_indices: vec![],
             },
             RecoveryMockVerifier {
@@ -1589,35 +1115,9 @@ mod tests {
             .recover_latest_game()
             .await
             .expect("should not error")
-            .expect("should continue past game_info error and find earlier game");
+            .expect("should continue past game_info error");
         assert_eq!(state.game_index, 0);
         assert_eq!(state.l2_block_number, 400);
         assert_eq!(state.output_root, root);
-    }
-
-    #[tokio::test]
-    async fn test_extract_intermediate_roots_interval_equals_block_interval() {
-        let sync_status = test_sync_status(200, B256::ZERO);
-        let mut driver = test_driver_custom(
-            DriverConfig {
-                block_interval: 10,
-                intermediate_block_interval: 10,
-                ..Default::default()
-            },
-            1000,
-            sync_status,
-            None,
-            Arc::new(MockOutputProposer),
-            CancellationToken::new(),
-        );
-
-        let final_root = B256::repeat_byte(0xFF);
-        let mut p10 = test_proposal(101, 110, false);
-        p10.output.output_root = final_root;
-        driver.pending.push_back(p10);
-
-        let roots = driver.extract_intermediate_roots(100).unwrap();
-        assert_eq!(roots.len(), 1, "should have exactly one root when intervals match");
-        assert_eq!(roots[0], final_root);
     }
 }

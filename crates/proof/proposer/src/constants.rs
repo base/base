@@ -2,23 +2,11 @@
 
 use std::time::Duration;
 
-/// Number of proofs to aggregate in a single batch.
-pub const AGGREGATE_BATCH_SIZE: usize = 512;
-
-/// Number of blocks the EVM can look back for blockhashes via EIP-2935.
-///
-/// EIP-2935 (introduced in Pectra) stores the last 8191 block hashes in a system
-/// contract, significantly extending the verification window from the BLOCKHASH
-/// opcode's 256 blocks.
-pub const BLOCKHASH_WINDOW: u64 = 8191;
-
-/// Safety margin to ensure the L1 origin blockhash is still accessible when the
-/// proof is verified on-chain. With ~12 second blocks, 100 blocks is about
-/// 20 minutes of buffer.
-pub const BLOCKHASH_SAFETY_MARGIN: u64 = 100;
-
 /// Maximum time to wait for a proposal to be included on-chain.
 pub const PROPOSAL_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Timeout for prover server RPC calls.
+pub const PROVER_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Sentinel value for the parent game index when creating the first game from
 /// the anchor state registry (i.e., no parent game exists).
