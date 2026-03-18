@@ -72,7 +72,7 @@ build-image target='client' profile='release':
     ./etc/docker/build-rust-images.sh {{ target }} {{ profile }}
 
 # Prepares Docker images needed for devnet tests
-pull-images: (_build-rust-images "devnet" "dev")
+pull-images:
     docker build -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
     docker pull ghcr.io/paradigmxyz/reth:v1.11.3
     docker pull sigp/lighthouse:v8.0.1
