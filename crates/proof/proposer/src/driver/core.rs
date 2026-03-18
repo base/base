@@ -253,8 +253,9 @@ where
     async fn step(&self) -> Result<(), ProposerError> {
         // Load parent state from chain to stay in sync with other proposers.
         let state = self.recover_latest_state().await?;
-        let (starting_block_number, agreed_l2_output_root, parent_index) =
-            (state.l2_block_number, state.output_root, state.game_index);
+        let starting_block_number = state.l2_block_number;
+        let agreed_l2_output_root = state.output_root;
+        let parent_index = state.game_index;
 
         // Compute the target block for this interval.
         let target_block = starting_block_number
