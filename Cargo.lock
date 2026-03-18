@@ -4712,6 +4712,7 @@ dependencies = [
  "clap",
  "eyre",
  "hex",
+ "humantime",
  "rstest",
  "tokio",
  "tokio-util",

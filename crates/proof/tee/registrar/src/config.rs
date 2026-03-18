@@ -2,49 +2,8 @@ use std::{path::PathBuf, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
+use base_tx_manager::{SignerConfig, TxManagerConfig};
 use url::Url;
-
-/// HTTP signer sidecar configuration (production).
-#[derive(Clone)]
-pub struct RemoteSignerConfig {
-    /// Signer sidecar JSON-RPC endpoint URL.
-    pub endpoint: Url,
-    /// Manager address for signing registration transactions.
-    pub address: Address,
-}
-
-impl std::fmt::Debug for RemoteSignerConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RemoteSignerConfig")
-            .field("endpoint", &url_origin(&self.endpoint))
-            .field("address", &self.address)
-            .finish()
-    }
-}
-
-/// Resolved signing configuration for L1 transaction submission.
-#[derive(Clone)]
-pub enum SigningConfig {
-    /// HTTP signer sidecar (production).
-    Remote(RemoteSignerConfig),
-    /// Direct in-process private key. **Development / testing only.**
-    Local(PrivateKeySigner),
-}
-
-impl std::fmt::Debug for SigningConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Remote(config) => f
-                .debug_struct("Remote")
-                .field("endpoint", &url_origin(&config.endpoint))
-                .field("address", &config.address)
-                .finish(),
-            Self::Local(signer) => {
-                f.debug_struct("Local").field("address", &signer.address()).finish()
-            }
-        }
-    }
-}
 
 /// AWS ALB target group discovery configuration.
 ///
@@ -114,7 +73,7 @@ pub enum ProvingConfig {
 ///
 /// Constructed by the CLI layer (`bin/prover-registrar`), which handles argument
 /// parsing, validation, and signing config resolution before building this type.
-#[derive(Clone)]
+#[derive(Debug)]
 pub struct RegistrarConfig {
     // ── L1 ────────────────────────────────────────────────────────────────────
     /// L1 Ethereum RPC endpoint.
@@ -126,9 +85,11 @@ pub struct RegistrarConfig {
     // ── Discovery ─────────────────────────────────────────────────────────────
     /// AWS ALB target group discovery configuration.
     pub discovery: AwsDiscoveryConfig,
-    // ── Signing ───────────────────────────────────────────────────────────────
-    /// Resolved signing configuration.
-    pub signing: SigningConfig,
+    // ── Signing / Tx Manager ──────────────────────────────────────────────────
+    /// Signing configuration (local private key or remote sidecar).
+    pub signing: SignerConfig,
+    /// Transaction manager configuration (fee limits, confirmations, timeouts).
+    pub tx_manager: TxManagerConfig,
     // ── Proving ───────────────────────────────────────────────────────────────
     /// ZK proving backend configuration.
     pub proving: ProvingConfig,
@@ -149,20 +110,4 @@ pub(crate) fn url_origin(url: &Url) -> String {
         s.push_str(&format!(":{port}"));
     }
     s
-}
-
-impl std::fmt::Debug for RegistrarConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RegistrarConfig")
-            .field("l1_rpc_url", &url_origin(&self.l1_rpc_url))
-            .field("tee_prover_registry_address", &self.tee_prover_registry_address)
-            .field("l1_chain_id", &self.l1_chain_id)
-            .field("discovery", &self.discovery)
-            .field("signing", &self.signing)
-            .field("proving", &self.proving)
-            .field("poll_interval", &self.poll_interval)
-            .field("prover_timeout", &self.prover_timeout)
-            .field("health_port", &self.health_port)
-            .finish()
-    }
 }

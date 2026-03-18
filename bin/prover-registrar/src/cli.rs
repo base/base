@@ -2,7 +2,7 @@
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
 use base_proof_tee_nitro_attestation_prover::{
@@ -10,85 +10,72 @@ use base_proof_tee_nitro_attestation_prover::{
 };
 use base_proof_tee_registrar::{
     AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, ProvingConfig, RegistrarConfig,
-    RegistrarError, RegistrationDriver, RegistryContractClient, RemoteSignerConfig, SigningConfig,
+    RegistrarError, RegistrationDriver, RegistryContractClient,
 };
 use base_tx_manager::{NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
-use clap::{ArgGroup, Args, Parser, ValueEnum};
+use clap::{Args, Parser, ValueEnum};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use url::Url;
+
+// Generate `SignerCli` and `TxManagerCli` structs with env-var-backed CLI args.
+base_tx_manager::define_signer_cli!("BASE_REGISTRAR");
+base_tx_manager::define_tx_manager_cli!("BASE_REGISTRAR");
 
 /// Default trusted certificate prefix length (root cert only).
 const DEFAULT_TRUSTED_CERTS_PREFIX: u8 = 1;
 
 /// Prover Registrar — automated TEE signer registration service.
 #[derive(Parser)]
-#[command(
-    name = "prover-registrar",
-    version,
-    about,
-    group(
-        ArgGroup::new("signing_method")
-            .required(true)
-            .args(["private_key", "signer_endpoint"])
-    )
-)]
+#[command(name = "prover-registrar", version, about)]
 pub(crate) struct Cli {
     // ── L1 ────────────────────────────────────────────────────────────────────
     /// L1 Ethereum RPC endpoint.
-    #[arg(long, env = "REGISTRAR_L1_RPC_URL")]
+    #[arg(long, env = "BASE_REGISTRAR_L1_RPC_URL")]
     l1_rpc_url: Url,
 
     /// `TEEProverRegistry` contract address on L1.
-    #[arg(long, env = "REGISTRAR_TEE_PROVER_REGISTRY_ADDRESS")]
+    #[arg(long, env = "BASE_REGISTRAR_TEE_PROVER_REGISTRY_ADDRESS")]
     tee_prover_registry_address: Address,
 
     /// L1 chain ID (used to validate the RPC connection).
-    #[arg(long, env = "REGISTRAR_L1_CHAIN_ID")]
+    #[arg(long, env = "BASE_REGISTRAR_L1_CHAIN_ID")]
     l1_chain_id: u64,
 
     // ── Discovery ─────────────────────────────────────────────────────────────
     /// AWS ALB target group ARN for prover instance discovery.
-    #[arg(long, env = "REGISTRAR_TARGET_GROUP_ARN")]
+    #[arg(long, env = "BASE_REGISTRAR_TARGET_GROUP_ARN")]
     target_group_arn: String,
 
     /// AWS region (e.g. `us-east-1`).
-    #[arg(long, env = "REGISTRAR_AWS_REGION")]
+    #[arg(long, env = "BASE_REGISTRAR_AWS_REGION")]
     aws_region: String,
 
     /// JSON-RPC port to poll on each prover instance.
-    #[arg(long, env = "REGISTRAR_PROVER_PORT", default_value_t = 8000)]
+    #[arg(long, env = "BASE_REGISTRAR_PROVER_PORT", default_value_t = 8000)]
     prover_port: u16,
 
     // ── Signing ───────────────────────────────────────────────────────────────
-    /// HTTP signer sidecar URL (production). Mutually exclusive with `--private-key`.
-    #[arg(
-        long,
-        env = "REGISTRAR_SIGNER_ENDPOINT",
-        conflicts_with = "private_key",
-        requires = "signer_address"
-    )]
-    signer_endpoint: Option<Url>,
+    /// Signer configuration (local private key or remote sidecar).
+    #[command(flatten)]
+    signer: SignerCli,
 
-    /// Manager address for signing txs (required with `--signer-endpoint`).
-    #[arg(long, env = "REGISTRAR_SIGNER_ADDRESS", requires = "signer_endpoint")]
-    signer_address: Option<Address>,
-
-    /// Hex-encoded private key. **Local development only** — use signer sidecar in production.
-    #[arg(long, env = "REGISTRAR_PRIVATE_KEY", conflicts_with = "signer_endpoint")]
-    private_key: Option<String>,
+    // ── Transaction Manager ───────────────────────────────────────────────────
+    /// Transaction manager configuration (fee limits, confirmations, timeouts).
+    #[command(flatten)]
+    tx_manager: TxManagerCli,
 
     // ── Proving ───────────────────────────────────────────────────────────────
     /// ZK proving backend.
-    #[arg(long, env = "REGISTRAR_PROVING_MODE")]
+    #[arg(long, env = "BASE_REGISTRAR_PROVING_MODE")]
     proving_mode: ProvingMode,
 
     /// Hex-encoded guest program image ID (required for Boundless mode).
-    #[arg(long, env = "REGISTRAR_IMAGE_ID", required_if_eq("proving_mode", "boundless"))]
+    #[arg(long, env = "BASE_REGISTRAR_IMAGE_ID", required_if_eq("proving_mode", "boundless"))]
     image_id: Option<String>,
 
     /// Path to the guest ELF binary on disk (required for Direct mode).
-    #[arg(long, env = "REGISTRAR_ELF_PATH", required_if_eq("proving_mode", "direct"))]
+    #[arg(long, env = "BASE_REGISTRAR_ELF_PATH", required_if_eq("proving_mode", "direct"))]
     elf_path: Option<PathBuf>,
 
     // ── Boundless ─────────────────────────────────────────────────────────────
@@ -97,15 +84,15 @@ pub(crate) struct Cli {
 
     // ── Polling / Server ──────────────────────────────────────────────────────
     /// Interval between discovery and registration poll cycles, in seconds.
-    #[arg(long, env = "REGISTRAR_POLL_INTERVAL_SECS", default_value_t = 30)]
+    #[arg(long, env = "BASE_REGISTRAR_POLL_INTERVAL_SECS", default_value_t = 30)]
     poll_interval_secs: u64,
 
     /// Timeout for JSON-RPC calls to prover instances, in seconds.
-    #[arg(long, env = "REGISTRAR_PROVER_TIMEOUT_SECS", default_value_t = 30)]
+    #[arg(long, env = "BASE_REGISTRAR_PROVER_TIMEOUT_SECS", default_value_t = 30)]
     prover_timeout_secs: u64,
 
     /// Port for the health check and Prometheus metrics HTTP server.
-    #[arg(long, env = "REGISTRAR_HEALTH_PORT", default_value_t = 7300)]
+    #[arg(long, env = "BASE_REGISTRAR_HEALTH_PORT", default_value_t = 7300)]
     health_port: u16,
 }
 
@@ -122,13 +109,17 @@ pub(crate) enum ProvingMode {
 #[derive(Args)]
 struct BoundlessArgs {
     /// Boundless Network RPC URL.
-    #[arg(long, env = "REGISTRAR_BOUNDLESS_RPC_URL", required_if_eq("proving_mode", "boundless"))]
+    #[arg(
+        long,
+        env = "BASE_REGISTRAR_BOUNDLESS_RPC_URL",
+        required_if_eq("proving_mode", "boundless")
+    )]
     boundless_rpc_url: Option<Url>,
 
     /// Hex-encoded private key for Boundless Network proving fees.
     #[arg(
         long,
-        env = "REGISTRAR_BOUNDLESS_PRIVATE_KEY",
+        env = "BASE_REGISTRAR_BOUNDLESS_PRIVATE_KEY",
         required_if_eq("proving_mode", "boundless")
     )]
     boundless_private_key: Option<String>,
@@ -136,25 +127,25 @@ struct BoundlessArgs {
     /// IPFS URL of the Nitro attestation verifier ELF uploaded via `nitro-attest-cli`.
     #[arg(
         long,
-        env = "REGISTRAR_BOUNDLESS_VERIFIER_PROGRAM_URL",
+        env = "BASE_REGISTRAR_BOUNDLESS_VERIFIER_PROGRAM_URL",
         required_if_eq("proving_mode", "boundless")
     )]
     boundless_verifier_program_url: Option<Url>,
 
     /// Maximum price in wei per cycle for Boundless proof requests.
-    #[arg(long, env = "REGISTRAR_BOUNDLESS_MAX_PRICE", default_value_t = 1_000_000)]
+    #[arg(long, env = "BASE_REGISTRAR_BOUNDLESS_MAX_PRICE", default_value_t = 1_000_000)]
     boundless_max_price: u64,
 
     /// Interval between Boundless fulfillment status checks, in seconds.
-    #[arg(long, env = "REGISTRAR_BOUNDLESS_POLL_INTERVAL_SECS", default_value_t = 5)]
+    #[arg(long, env = "BASE_REGISTRAR_BOUNDLESS_POLL_INTERVAL_SECS", default_value_t = 5)]
     boundless_poll_interval_secs: u64,
 
     /// Proof generation timeout in seconds.
-    #[arg(long, env = "REGISTRAR_BOUNDLESS_TIMEOUT_SECS", default_value_t = 600)]
+    #[arg(long, env = "BASE_REGISTRAR_BOUNDLESS_TIMEOUT_SECS", default_value_t = 600)]
     boundless_timeout_secs: u64,
 
     /// `NitroEnclaveVerifier` contract address for certificate caching (optional).
-    #[arg(long, env = "REGISTRAR_NITRO_VERIFIER_ADDRESS")]
+    #[arg(long, env = "BASE_REGISTRAR_NITRO_VERIFIER_ADDRESS")]
     nitro_verifier_address: Option<Address>,
 }
 
@@ -189,27 +180,17 @@ fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], RegistrarError> {
 impl Cli {
     /// Validate the CLI arguments for logical conflicts and parse into a [`RegistrarConfig`].
     pub(crate) fn into_config(self) -> std::result::Result<RegistrarConfig, RegistrarError> {
-        // Validate signing config and resolve to SigningConfig.
-        let signing = match (&self.private_key, &self.signer_endpoint, &self.signer_address) {
-            (Some(pk), None, None) => SigningConfig::Local(parse_private_key("--private-key", pk)?),
-            (None, Some(endpoint), Some(address)) => SigningConfig::Remote(RemoteSignerConfig {
-                endpoint: endpoint.clone(),
-                address: *address,
-            }),
-            _ => {
-                return Err(RegistrarError::Config(
-                    "provide either --private-key or both --signer-endpoint and \
-                     --signer-address"
-                        .into(),
-                ));
-            }
-        };
-
         let discovery = AwsDiscoveryConfig {
             target_group_arn: self.target_group_arn,
             aws_region: self.aws_region,
             port: self.prover_port,
         };
+
+        // Convert signing and tx manager config via the macro-generated TryFrom impls.
+        let signing = SignerConfig::try_from(self.signer)
+            .map_err(|e| RegistrarError::Config(format!("signer: {e}")))?;
+        let tx_manager = TxManagerConfig::try_from(self.tx_manager)
+            .map_err(|e| RegistrarError::Config(format!("tx-manager: {e}")))?;
 
         // Build proving config based on mode.
         let proving = match self.proving_mode {
@@ -275,6 +256,7 @@ impl Cli {
             l1_chain_id: self.l1_chain_id,
             discovery,
             signing,
+            tx_manager,
             proving,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             prover_timeout: Duration::from_secs(self.prover_timeout_secs),
@@ -291,18 +273,10 @@ impl Cli {
         // Build L1 provider.
         let provider = RootProvider::new_http(config.l1_rpc_url.clone());
 
-        // Build signing config for SimpleTxManager.
-        let signer_config = match &config.signing {
-            SigningConfig::Local(pk) => SignerConfig::local(B256::new(pk.to_bytes().0)),
-            SigningConfig::Remote(cfg) => {
-                SignerConfig::Remote { endpoint: cfg.endpoint.clone(), address: cfg.address }
-            }
-        };
-
         let tx_manager = SimpleTxManager::new(
             provider,
-            signer_config,
-            TxManagerConfig::default(),
+            config.signing,
+            config.tx_manager,
             config.l1_chain_id,
             Arc::new(NoopTxMetrics),
         )
@@ -519,22 +493,26 @@ mod tests {
     #[rstest]
     fn local_key_returns_local_signing() {
         let config = Cli::parse_from(boundless_args()).into_config().unwrap();
-        assert!(matches!(config.signing, SigningConfig::Local(_)));
+        assert!(matches!(config.signing, SignerConfig::Local { .. }));
     }
 
     #[rstest]
     fn remote_signer_returns_remote_signing() {
         let config = Cli::parse_from(remote_signer_args()).into_config().unwrap();
-        assert!(matches!(config.signing, SigningConfig::Remote(_)));
+        assert!(matches!(config.signing, SignerConfig::Remote { .. }));
     }
 
     // ── Clap-level validation failures ──────────────────────────────────
 
     #[rstest]
-    fn no_signing_method_fails_clap_parse() {
+    fn no_signing_method_succeeds_clap_parse_but_fails_config() {
         let mut args = direct_args();
         args.retain(|a| *a != "--private-key" && *a != TEST_PRIVATE_KEY);
-        assert!(Cli::try_parse_from(args).is_err());
+        // The signer macro doesn't require signing args at clap level;
+        // the TryFrom conversion catches it.
+        if let Ok(cli) = Cli::try_parse_from(args) {
+            assert!(cli.into_config().is_err());
+        }
     }
 
     #[rstest]
@@ -582,6 +560,13 @@ mod tests {
             panic!("expected Boundless proving config");
         };
         assert_eq!(b.image_id, [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[rstest]
+    fn tx_manager_config_has_defaults() {
+        let config = Cli::parse_from(boundless_args()).into_config().unwrap();
+        assert_eq!(config.tx_manager.num_confirmations, 10);
+        assert_eq!(config.tx_manager.fee_limit_multiplier, 5);
     }
 
     // ── parse_image_id unit tests ───────────────────────────────────────
