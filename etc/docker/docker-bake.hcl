@@ -59,12 +59,20 @@ target "builder" {
   inherits = ["_rust-service-common"]
   target = "builder"
   tags = ["base-builder:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-builder-${PLATFORM_PAIR}",
+  ]
 }
 
 target "consensus" {
   inherits = ["_rust-service-common"]
   target = "consensus"
   tags = ["base-consensus:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-consensus-${PLATFORM_PAIR}",
+  ]
 }
 
 target "proposer" {
@@ -95,4 +103,8 @@ target "batcher" {
   inherits = ["_rust-service-common"]
   target = "batcher"
   tags = ["base-batcher:local"]
+  cache-from = [
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-${PLATFORM_PAIR}",
+    "type=registry,ref=${REGISTRY_IMAGE}:cache-batcher-${PLATFORM_PAIR}",
+  ]
 }
