@@ -53,8 +53,7 @@ use crate::{
 pub async fn run(config: ProposerConfig) -> Result<()> {
     config.log.init_tracing_subscriber()?;
 
-    // Install the default rustls CryptoProvider before any TLS connections are created.
-    // Required by rustls 0.23+ when custom TLS configs are used (e.g. skip_tls_verify).
+    // Install the default rustls CryptoProvider for insecure-tls custom TLS configs.
     #[cfg(feature = "insecure-tls")]
     let _ = rustls::crypto::ring::default_provider().install_default();
 

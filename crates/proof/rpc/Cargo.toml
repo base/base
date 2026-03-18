@@ -54,4 +54,4 @@ moka = { workspace = true, features = ["future"] }
 tokio = { workspace = true, features = ["test-util"] }
 
 [features]
-insecure-tls = []
+insecure-tls = [] # cfg-only flag; no additional deps needed
