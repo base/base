@@ -11,4 +11,4 @@ mod decoder;
 pub use decoder::{BlobDecodeError, BlobDecoder};
 
 mod encoder;
-pub use encoder::{BLOB_MAX_DATA_SIZE, BlobEncodeError, BlobEncoder};
+pub use encoder::{BlobEncodeError, BlobEncoder};

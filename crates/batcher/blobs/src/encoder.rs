@@ -5,25 +5,11 @@ use std::sync::Arc;
 use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
 use base_protocol::{DERIVATION_VERSION_0, Frame};
 
-/// Blob encoding version used by the Base blob codec.
-const BLOB_ENCODING_VERSION: u8 = 0;
-
-/// Maximum number of data bytes that fit in a single blob.
-///
-/// Each encoding round packs 4 field elements (128 blob bytes) into 127 data
-/// bytes (4 x 31 payload bytes + 3 reassembled bytes). With 1024 rounds that
-/// gives `127 * 1024 = 130_048` bytes, minus 4 bytes for the version +
-/// 3-byte length header in field element 0.
-pub const BLOB_MAX_DATA_SIZE: usize = (4 * 31 + 3) * 1024 - 4; // 130_044
-
-/// Number of encoding rounds (one per group of 4 field elements).
-const BLOB_ENCODING_ROUNDS: usize = 1024;
-
 /// Errors returned by [`BlobEncoder::encode`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum BlobEncodeError {
     /// The input data exceeds the maximum blob payload size.
-    #[error("data too large: {size} bytes exceeds maximum {max}", max = BLOB_MAX_DATA_SIZE)]
+    #[error("data too large: {size} bytes exceeds maximum {max}", max = BlobEncoder::BLOB_MAX_DATA_SIZE)]
     DataTooLarge {
         /// The size of the input data.
         size: usize,
@@ -38,6 +24,20 @@ pub enum BlobEncodeError {
 pub struct BlobEncoder;
 
 impl BlobEncoder {
+    /// Blob encoding version used by the Base blob codec.
+    pub const BLOB_ENCODING_VERSION: u8 = 0;
+
+    /// Maximum number of data bytes that fit in a single blob.
+    ///
+    /// Each encoding round packs 4 field elements (128 blob bytes) into 127 data
+    /// bytes (4 x 31 payload bytes + 3 reassembled bytes). With 1024 rounds that
+    /// gives `127 * 1024 = 130_048` bytes, minus 4 bytes for the version +
+    /// 3-byte length header in field element 0.
+    pub const BLOB_MAX_DATA_SIZE: usize = (4 * 31 + 3) * 1024 - 4; // 130_044
+
+    /// Number of encoding rounds (one per group of 4 field elements).
+    pub const BLOB_ENCODING_ROUNDS: usize = 1024;
+
     /// Encode each [`Frame`] into its own EIP-4844 [`Blob`].
     ///
     /// Each frame is prefixed with [`DERIVATION_VERSION_0`] before encoding.
@@ -59,12 +59,12 @@ impl BlobEncoder {
     /// Returns a [`BlobEncodeError::DataTooLarge`] if the input exceeds
     /// [`BLOB_MAX_DATA_SIZE`] bytes.
     pub fn encode(data: &[u8]) -> Result<Box<Blob>, BlobEncodeError> {
-        if data.len() > BLOB_MAX_DATA_SIZE {
+        if data.len() > Self::BLOB_MAX_DATA_SIZE {
             return Err(BlobEncodeError::DataTooLarge { size: data.len() });
         }
 
         // Pad the input so the encoder always has enough data to read from.
-        let mut input = vec![0u8; BLOB_MAX_DATA_SIZE];
+        let mut input = vec![0u8; Self::BLOB_MAX_DATA_SIZE];
         input[..data.len()].copy_from_slice(data);
 
         let mut blob = Box::new(Blob::ZERO);
@@ -85,7 +85,7 @@ impl BlobEncoder {
 
         // Write version and 3-byte big-endian length into FE0.
         let len_be = (data.len() as u32).to_be_bytes();
-        out[VERSIONED_HASH_VERSION_KZG as usize] = BLOB_ENCODING_VERSION;
+        out[VERSIONED_HASH_VERSION_KZG as usize] = Self::BLOB_ENCODING_VERSION;
         out[2] = len_be[1];
         out[3] = len_be[2];
         out[4] = len_be[3];
@@ -119,7 +119,7 @@ impl BlobEncoder {
 
         // --- Rounds 1..1024 ---
         let mut blob_pos = 128usize;
-        for _ in 1..BLOB_ENCODING_ROUNDS {
+        for _ in 1..Self::BLOB_ENCODING_ROUNDS {
             if ipos >= data.len() {
                 break;
             }
@@ -164,7 +164,7 @@ mod tests {
     use alloy_eips::eip4844::BYTES_PER_BLOB;
     use rstest::rstest;
 
-    use super::{BLOB_MAX_DATA_SIZE, BlobEncodeError, BlobEncoder};
+    use super::{BlobEncodeError, BlobEncoder};
     use crate::BlobDecoder;
 
     #[rstest]
@@ -173,8 +173,8 @@ mod tests {
     #[case::zeros(&[0u8; 128])]
     #[case::ones(&[1u8; 1024])]
     #[case::mixed_4k(&(0..=255).cycle().take(4096).collect::<Vec<_>>())]
-    #[case::near_max(&[0xAB; BLOB_MAX_DATA_SIZE - 1])]
-    #[case::exact_max(&[0xCD; BLOB_MAX_DATA_SIZE])]
+    #[case::near_max(&[0xAB; BlobEncoder::BLOB_MAX_DATA_SIZE - 1])]
+    #[case::exact_max(&[0xCD; BlobEncoder::BLOB_MAX_DATA_SIZE])]
     fn round_trip(#[case] payload: &[u8]) {
         let blob = BlobEncoder::encode(payload).expect("encode should succeed");
         let decoded = BlobDecoder::decode(&blob).expect("decode should succeed");
@@ -183,9 +183,12 @@ mod tests {
 
     #[test]
     fn data_too_large() {
-        let data = vec![0u8; BLOB_MAX_DATA_SIZE + 1];
+        let data = vec![0u8; BlobEncoder::BLOB_MAX_DATA_SIZE + 1];
         let err = BlobEncoder::encode(&data).unwrap_err();
-        assert_eq!(err, BlobEncodeError::DataTooLarge { size: BLOB_MAX_DATA_SIZE + 1 });
+        assert_eq!(
+            err,
+            BlobEncodeError::DataTooLarge { size: BlobEncoder::BLOB_MAX_DATA_SIZE + 1 }
+        );
     }
 
     #[test]
