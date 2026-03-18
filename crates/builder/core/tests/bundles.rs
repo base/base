@@ -190,14 +190,15 @@ async fn two_valid_bundles_from_same_sender_are_both_included() -> eyre::Result<
 }
 
 #[tokio::test]
-async fn valid_and_invalid_bundle_from_same_sender() -> eyre::Result<()> {
+async fn expired_bundle_excluded_while_valid_bundle_included_for_same_sender() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
     let signer = driver.fund_accounts(1, ONE_ETH).await?.remove(0);
     let latest = driver.latest().await?;
     let target_block = latest.header.number + 1;
-    let wrong_target = target_block + 5;
     let pool = rbuilder.pool_handle();
+
+    let expired_timestamp = 1u64;
 
     let valid_tx_hash = insert_bundle_transaction_with_nonce(
         &pool,
@@ -210,14 +211,14 @@ async fn valid_and_invalid_bundle_from_same_sender() -> eyre::Result<()> {
     )
     .await?;
 
-    let invalid_tx_hash = insert_bundle_transaction_with_nonce(
+    let expired_tx_hash = insert_bundle_transaction_with_nonce(
         &pool,
         &driver,
         &signer,
         Some(1),
-        Some(wrong_target),
+        Some(target_block),
         None,
-        None,
+        Some(expired_timestamp),
     )
     .await?;
 
@@ -229,8 +230,8 @@ async fn valid_and_invalid_bundle_from_same_sender() -> eyre::Result<()> {
         "valid bundle tx should be included"
     );
     assert!(
-        block.transactions.hashes().all(|hash| hash != invalid_tx_hash),
-        "wrong-target bundle tx should be excluded"
+        block.transactions.hashes().all(|hash| hash != expired_tx_hash),
+        "expired bundle tx should be excluded"
     );
 
     Ok(())
