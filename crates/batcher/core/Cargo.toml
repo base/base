@@ -47,7 +47,23 @@ base-alloy-consensus = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
 
 [[test]]
-name = "driver"
+name = "reorg"
+required-features = ["test-utils"]
+
+[[test]]
+name = "throttle"
+required-features = ["test-utils"]
+
+[[test]]
+name = "heads"
+required-features = ["test-utils"]
+
+[[test]]
+name = "lifecycle"
+required-features = ["test-utils"]
+
+[[test]]
+name = "pause_resume"
 required-features = ["test-utils"]
 
 [features]
