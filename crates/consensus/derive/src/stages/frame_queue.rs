@@ -60,7 +60,7 @@ where
 
     /// Prunes frames if Holocene is active.
     pub fn prune(&mut self, origin: BlockInfo) {
-        if !self.is_holocene_active(origin) {
+        if !self.is_holocene_active(origin) || self.queue.len() < 2 {
             return;
         }
 
@@ -340,6 +340,21 @@ pub(crate) mod tests {
             .build();
         assert.holocene_active(true);
         assert.next_frames().await;
+    }
+
+    #[tokio::test]
+    async fn test_holocene_prune_empty_queue_no_panic() {
+        let cfg = Arc::new(RollupConfig {
+            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            ..Default::default()
+        });
+        let mut mock = TestFrameQueueProvider::new(vec![]);
+        mock.set_origin(BlockInfo::default());
+        let mut frame_queue = FrameQueue::new(mock, cfg);
+
+        frame_queue.prune(BlockInfo::default());
+
+        assert!(frame_queue.queue.is_empty());
     }
 
     #[tokio::test]
