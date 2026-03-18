@@ -4684,12 +4684,14 @@ dependencies = [
  "aws-sdk-elasticloadbalancingv2",
  "base-proof-primitives",
  "base-proof-tee-nitro-attestation-prover",
+ "base-tx-manager",
  "hex-literal 1.1.0",
  "jsonrpsee",
  "k256",
  "rstest",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
 ]
@@ -4699,11 +4701,21 @@ name = "base-proof-tee-registrar-bin"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-provider",
  "alloy-signer-local",
+ "aws-config",
+ "aws-sdk-ec2",
+ "aws-sdk-elasticloadbalancingv2",
+ "base-proof-tee-nitro-attestation-prover",
  "base-proof-tee-registrar",
+ "base-tx-manager",
  "clap",
  "eyre",
+ "hex",
+ "rstest",
  "tokio",
+ "tokio-util",
+ "tracing",
  "url",
 ]
 

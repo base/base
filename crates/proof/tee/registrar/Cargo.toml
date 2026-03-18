@@ -28,12 +28,17 @@ k256.workspace = true
 # Proving
 base-proof-tee-nitro-attestation-prover.workspace = true
 
+# Transaction management
+base-tx-manager.workspace = true
+
 # RPC
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
 # Async
 async-trait.workspace = true
+tokio-util.workspace = true
+tokio = { workspace = true, features = ["time", "macros"] }
 
 # Error
 thiserror.workspace = true

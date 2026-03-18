@@ -1,4 +1,5 @@
 use base_proof_tee_nitro_attestation_prover::ProverError;
+use base_tx_manager::TxManagerError;
 use thiserror::Error;
 
 /// Errors that can occur in the prover registrar.
@@ -52,6 +53,12 @@ pub enum RegistrarError {
 impl From<ProverError> for RegistrarError {
     fn from(e: ProverError) -> Self {
         Self::ProofGeneration(Box::new(e))
+    }
+}
+
+impl From<TxManagerError> for RegistrarError {
+    fn from(e: TxManagerError) -> Self {
+        Self::Signing(Box::new(e))
     }
 }
 

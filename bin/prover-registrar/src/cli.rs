@@ -1,15 +1,23 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
-use std::time::Duration;
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
+use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
+use base_proof_tee_nitro_attestation_prover::{BoundlessProver, DirectProver};
 use base_proof_tee_registrar::{
-    AwsDiscoveryConfig, BoundlessConfig, RegistrarConfig, RegistrarError, RemoteSignerConfig,
-    SigningConfig,
+    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, ProvingConfig, RegistrarConfig,
+    RegistrarError, RegistrationDriver, RegistryContractClient, RemoteSignerConfig, SigningConfig,
 };
-use clap::{ArgGroup, Args, Parser};
+use base_tx_manager::{NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
+use clap::{ArgGroup, Args, Parser, ValueEnum};
+use tokio_util::sync::CancellationToken;
+use tracing::info;
 use url::Url;
+
+/// Default trusted certificate prefix length (root cert only).
+const DEFAULT_TRUSTED_CERTS_PREFIX: u8 = 1;
 
 /// Prover Registrar — automated TEE signer registration service.
 #[derive(Parser)]
@@ -32,6 +40,10 @@ pub(crate) struct Cli {
     /// `TEEProverRegistry` contract address on L1.
     #[arg(long, env = "REGISTRAR_TEE_PROVER_REGISTRY_ADDRESS")]
     tee_prover_registry_address: Address,
+
+    /// L1 chain ID (used to validate the RPC connection).
+    #[arg(long, env = "REGISTRAR_L1_CHAIN_ID")]
+    l1_chain_id: u64,
 
     // ── Discovery ─────────────────────────────────────────────────────────────
     /// AWS ALB target group ARN for prover instance discovery.
@@ -64,6 +76,19 @@ pub(crate) struct Cli {
     #[arg(long, env = "REGISTRAR_PRIVATE_KEY", conflicts_with = "signer_endpoint")]
     private_key: Option<String>,
 
+    // ── Proving ───────────────────────────────────────────────────────────────
+    /// ZK proving backend.
+    #[arg(long, env = "REGISTRAR_PROVING_MODE")]
+    proving_mode: ProvingMode,
+
+    /// Hex-encoded guest program image ID (required for Boundless mode).
+    #[arg(long, env = "REGISTRAR_IMAGE_ID", required_if_eq("proving_mode", "boundless"))]
+    image_id: Option<String>,
+
+    /// Path to the guest ELF binary on disk (required for Direct mode).
+    #[arg(long, env = "REGISTRAR_ELF_PATH", required_if_eq("proving_mode", "direct"))]
+    elf_path: Option<PathBuf>,
+
     // ── Boundless ─────────────────────────────────────────────────────────────
     #[command(flatten)]
     boundless: BoundlessArgs,
@@ -73,25 +98,46 @@ pub(crate) struct Cli {
     #[arg(long, env = "REGISTRAR_POLL_INTERVAL_SECS", default_value_t = 30)]
     poll_interval_secs: u64,
 
+    /// Timeout for JSON-RPC calls to prover instances, in seconds.
+    #[arg(long, env = "REGISTRAR_PROVER_TIMEOUT_SECS", default_value_t = 30)]
+    prover_timeout_secs: u64,
+
     /// Port for the health check and Prometheus metrics HTTP server.
     #[arg(long, env = "REGISTRAR_HEALTH_PORT", default_value_t = 7300)]
     health_port: u16,
+}
+
+/// ZK proving backend selector.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(crate) enum ProvingMode {
+    /// Boundless marketplace proving.
+    Boundless,
+    /// Direct proving via risc0 `default_prover()` (Bonsai remote or dev-mode).
+    Direct,
 }
 
 /// Boundless Network CLI arguments.
 #[derive(Args)]
 struct BoundlessArgs {
     /// Boundless Network RPC URL.
-    #[arg(long, env = "REGISTRAR_BOUNDLESS_RPC_URL")]
-    boundless_rpc_url: Url,
+    #[arg(long, env = "REGISTRAR_BOUNDLESS_RPC_URL", required_if_eq("proving_mode", "boundless"))]
+    boundless_rpc_url: Option<Url>,
 
     /// Hex-encoded private key for Boundless Network proving fees.
-    #[arg(long, env = "REGISTRAR_BOUNDLESS_PRIVATE_KEY")]
-    boundless_private_key: String,
+    #[arg(
+        long,
+        env = "REGISTRAR_BOUNDLESS_PRIVATE_KEY",
+        required_if_eq("proving_mode", "boundless")
+    )]
+    boundless_private_key: Option<String>,
 
     /// IPFS URL of the Nitro attestation verifier ELF uploaded via `nitro-attest-cli`.
-    #[arg(long, env = "REGISTRAR_BOUNDLESS_VERIFIER_PROGRAM_URL")]
-    boundless_verifier_program_url: Url,
+    #[arg(
+        long,
+        env = "REGISTRAR_BOUNDLESS_VERIFIER_PROGRAM_URL",
+        required_if_eq("proving_mode", "boundless")
+    )]
+    boundless_verifier_program_url: Option<Url>,
 
     /// Minimum price in wei per cycle for Boundless proof requests.
     #[arg(long, env = "REGISTRAR_BOUNDLESS_MIN_PRICE", default_value_t = 100_000)]
@@ -100,6 +146,10 @@ struct BoundlessArgs {
     /// Maximum price in wei per cycle for Boundless proof requests.
     #[arg(long, env = "REGISTRAR_BOUNDLESS_MAX_PRICE", default_value_t = 1_000_000)]
     boundless_max_price: u64,
+
+    /// Interval between Boundless fulfillment status checks, in seconds.
+    #[arg(long, env = "REGISTRAR_BOUNDLESS_POLL_INTERVAL_SECS", default_value_t = 5)]
+    boundless_poll_interval_secs: u64,
 
     /// Proof generation timeout in seconds.
     #[arg(long, env = "REGISTRAR_BOUNDLESS_TIMEOUT_SECS", default_value_t = 600)]
@@ -111,16 +161,36 @@ struct BoundlessArgs {
 }
 
 /// Parse a hex-encoded secp256k1 private key string into a [`PrivateKeySigner`].
-fn parse_private_key(field: &str, s: &str) -> Result<PrivateKeySigner, RegistrarError> {
+fn parse_private_key(
+    field: &str,
+    s: &str,
+) -> std::result::Result<PrivateKeySigner, RegistrarError> {
     s.strip_prefix("0x")
         .unwrap_or(s)
         .parse::<PrivateKeySigner>()
         .map_err(|e| RegistrarError::Config(format!("{field}: {e}")))
 }
 
+/// Parse a hex-encoded image ID string into `[u32; 8]`.
+fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], RegistrarError> {
+    let hex = s.strip_prefix("0x").unwrap_or(s);
+    let bytes: [u8; 32] = hex::decode(hex)
+        .map_err(|e| RegistrarError::Config(format!("--image-id: {e}")))?
+        .try_into()
+        .map_err(|v: Vec<u8>| {
+            RegistrarError::Config(format!("--image-id: expected 32 bytes, got {}", v.len()))
+        })?;
+
+    let mut id = [0u32; 8];
+    for (i, chunk) in bytes.chunks_exact(4).enumerate() {
+        id[i] = u32::from_be_bytes(chunk.try_into().unwrap());
+    }
+    Ok(id)
+}
+
 impl Cli {
     /// Validate the CLI arguments for logical conflicts and parse into a [`RegistrarConfig`].
-    pub(crate) fn into_config(self) -> Result<RegistrarConfig, RegistrarError> {
+    pub(crate) fn into_config(self) -> std::result::Result<RegistrarConfig, RegistrarError> {
         // Validate signing config and resolve to SigningConfig.
         let signing = match (&self.private_key, &self.signer_endpoint, &self.signer_address) {
             (Some(pk), None, None) => SigningConfig::Local(parse_private_key("--private-key", pk)?),
@@ -143,17 +213,51 @@ impl Cli {
             port: self.prover_port,
         };
 
-        if self.boundless.boundless_min_price > self.boundless.boundless_max_price {
-            return Err(RegistrarError::Config(
-                "--boundless-min-price must not exceed --boundless-max-price".into(),
-            ));
-        }
+        // Build proving config based on mode.
+        let proving = match self.proving_mode {
+            ProvingMode::Boundless => {
+                if self.boundless.boundless_min_price > self.boundless.boundless_max_price {
+                    return Err(RegistrarError::Config(
+                        "--boundless-min-price must not exceed --boundless-max-price".into(),
+                    ));
+                }
+                if self.boundless.boundless_timeout_secs == 0 {
+                    return Err(RegistrarError::Config(
+                        "--boundless-timeout-secs must be greater than 0".into(),
+                    ));
+                }
 
-        if self.boundless.boundless_timeout_secs == 0 {
-            return Err(RegistrarError::Config(
-                "--boundless-timeout-secs must be greater than 0".into(),
-            ));
-        }
+                ProvingConfig::Boundless(Box::new(BoundlessConfig {
+                    rpc_url: self.boundless.boundless_rpc_url.ok_or_else(|| {
+                        RegistrarError::Config("--boundless-rpc-url is required".into())
+                    })?,
+                    signer: parse_private_key(
+                        "--boundless-private-key",
+                        self.boundless.boundless_private_key.as_deref().unwrap_or(""),
+                    )?,
+                    verifier_program_url: self
+                        .boundless
+                        .boundless_verifier_program_url
+                        .ok_or_else(|| {
+                            RegistrarError::Config(
+                                "--boundless-verifier-program-url is required".into(),
+                            )
+                        })?,
+                    image_id: parse_image_id(self.image_id.as_deref().unwrap_or(""))?,
+                    min_price: self.boundless.boundless_min_price,
+                    max_price: self.boundless.boundless_max_price,
+                    poll_interval: Duration::from_secs(self.boundless.boundless_poll_interval_secs),
+                    timeout: Duration::from_secs(self.boundless.boundless_timeout_secs),
+                    nitro_verifier_address: self.boundless.nitro_verifier_address,
+                }))
+            }
+            ProvingMode::Direct => {
+                let elf_path = self.elf_path.ok_or_else(|| {
+                    RegistrarError::Config("--elf-path is required for direct mode".into())
+                })?;
+                ProvingConfig::Direct { elf_path }
+            }
+        };
 
         if self.poll_interval_secs == 0 {
             return Err(RegistrarError::Config(
@@ -161,35 +265,137 @@ impl Cli {
             ));
         }
 
+        if self.prover_timeout_secs == 0 {
+            return Err(RegistrarError::Config(
+                "--prover-timeout-secs must be greater than 0".into(),
+            ));
+        }
+
         Ok(RegistrarConfig {
             l1_rpc_url: self.l1_rpc_url,
             tee_prover_registry_address: self.tee_prover_registry_address,
+            l1_chain_id: self.l1_chain_id,
             discovery,
             signing,
-            boundless: BoundlessConfig {
-                rpc_url: self.boundless.boundless_rpc_url,
-                signer: parse_private_key(
-                    "--boundless-private-key",
-                    &self.boundless.boundless_private_key,
-                )?,
-                verifier_program_url: self.boundless.boundless_verifier_program_url,
-                min_price: self.boundless.boundless_min_price,
-                max_price: self.boundless.boundless_max_price,
-                timeout: Duration::from_secs(self.boundless.boundless_timeout_secs),
-                nitro_verifier_address: self.boundless.nitro_verifier_address,
-            },
+            proving,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
+            prover_timeout: Duration::from_secs(self.prover_timeout_secs),
             health_port: self.health_port,
         })
     }
 
     /// Run the registrar service.
     pub(crate) async fn run(self) -> eyre::Result<()> {
-        let _config = self.into_config()?;
-        // TODO(CHAIN-3455): start RegistrationDriver. When wiring up the driver,
-        // this binary crate will need `aws-config` with features
-        // `["default-https-client", "rt-tokio"]` to construct real AWS SDK clients
-        // for AwsTargetGroupDiscovery.
+        let config = self.into_config()?;
+
+        info!(config = ?config, "starting prover registrar");
+
+        // Build L1 provider.
+        let provider = RootProvider::new_http(config.l1_rpc_url.clone());
+
+        // Build signing config for SimpleTxManager.
+        let signer_config = match &config.signing {
+            SigningConfig::Local(pk) => SignerConfig::local(B256::new(pk.to_bytes().0)),
+            SigningConfig::Remote(cfg) => {
+                SignerConfig::Remote { endpoint: cfg.endpoint.clone(), address: cfg.address }
+            }
+        };
+
+        let tx_manager = SimpleTxManager::new(
+            provider,
+            signer_config,
+            TxManagerConfig::default(),
+            config.l1_chain_id,
+            Arc::new(NoopTxMetrics),
+        )
+        .await?;
+
+        // Build AWS SDK clients for discovery.
+        let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+            .region(aws_config::Region::new(config.discovery.aws_region.clone()))
+            .load()
+            .await;
+        let elb_client = aws_sdk_elasticloadbalancingv2::Client::new(&aws_config);
+        let ec2_client = aws_sdk_ec2::Client::new(&aws_config);
+
+        let discovery = AwsTargetGroupDiscovery::new(
+            elb_client,
+            ec2_client,
+            config.discovery.target_group_arn.clone(),
+            config.discovery.port,
+        );
+
+        // Build registry client.
+        let registry = RegistryContractClient::new(
+            config.tee_prover_registry_address,
+            config.l1_rpc_url.clone(),
+        );
+
+        // Build proof provider based on proving mode.
+        let cancel = CancellationToken::new();
+
+        match config.proving {
+            ProvingConfig::Boundless(ref boundless) => {
+                let proof_provider = BoundlessProver {
+                    rpc_url: boundless.rpc_url.clone(),
+                    signer: boundless.signer.clone(),
+                    verifier_program_url: boundless.verifier_program_url.clone(),
+                    image_id: boundless.image_id,
+                    max_price: boundless.max_price,
+                    poll_interval: boundless.poll_interval,
+                    timeout: boundless.timeout,
+                    trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX,
+                };
+
+                let driver = RegistrationDriver::new(
+                    discovery,
+                    proof_provider,
+                    registry,
+                    tx_manager,
+                    config.tee_prover_registry_address,
+                    config.poll_interval,
+                    config.prover_timeout,
+                    cancel.clone(),
+                );
+
+                tokio::select! {
+                    result = driver.run() => result?,
+                    _ = tokio::signal::ctrl_c() => {
+                        info!("received ctrl-c, shutting down");
+                        cancel.cancel();
+                    }
+                }
+            }
+            ProvingConfig::Direct { ref elf_path } => {
+                let elf = std::fs::read(elf_path).map_err(|e| {
+                    RegistrarError::Config(format!(
+                        "failed to read ELF at {}: {e}",
+                        elf_path.display()
+                    ))
+                })?;
+                let proof_provider = DirectProver::new(elf, DEFAULT_TRUSTED_CERTS_PREFIX)?;
+
+                let driver = RegistrationDriver::new(
+                    discovery,
+                    proof_provider,
+                    registry,
+                    tx_manager,
+                    config.tee_prover_registry_address,
+                    config.poll_interval,
+                    config.prover_timeout,
+                    cancel.clone(),
+                );
+
+                tokio::select! {
+                    result = driver.run() => result?,
+                    _ = tokio::signal::ctrl_c() => {
+                        info!("received ctrl-c, shutting down");
+                        cancel.cancel();
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -198,163 +404,228 @@ impl Cli {
 mod tests {
     use std::time::Duration;
 
+    use rstest::rstest;
+
     use super::*;
 
-    fn base_args() -> Vec<&'static str> {
+    // ── Shared test constants ───────────────────────────────────────────
+
+    const TEST_L1_RPC: &str = "http://localhost:8545";
+    const TEST_L1_CHAIN_ID: &str = "1";
+    const TEST_REGISTRY_ADDR: &str = "0x0000000000000000000000000000000000000001";
+    const TEST_TARGET_GROUP_ARN: &str =
+        "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123";
+    const TEST_AWS_REGION: &str = "us-east-1";
+    const TEST_PRIVATE_KEY: &str =
+        "0x0101010101010101010101010101010101010101010101010101010101010101";
+    const TEST_BOUNDLESS_RPC: &str = "http://localhost:9545";
+    const TEST_BOUNDLESS_KEY: &str =
+        "0202020202020202020202020202020202020202020202020202020202020202";
+    const TEST_VERIFIER_URL: &str =
+        "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+    const TEST_IMAGE_ID: &str =
+        "0x0000000100000002000000030000000400000005000000060000000700000008";
+    const TEST_ELF_PATH: &str = "/tmp/guest.elf";
+    const TEST_SIGNER_ENDPOINT: &str = "http://localhost:8546";
+    const TEST_SIGNER_ADDR: &str = "0x0000000000000000000000000000000000000002";
+
+    const DEFAULT_POLL_INTERVAL_SECS: u64 = 30;
+    const DEFAULT_PROVER_TIMEOUT_SECS: u64 = 30;
+    const DEFAULT_PROVER_PORT: u16 = 8000;
+
+    // ── Arg builders ────────────────────────────────────────────────────
+
+    /// Common args shared by all modes (L1, discovery, signing via local key).
+    fn common_args() -> Vec<&'static str> {
         vec![
             "prover-registrar",
             "--l1-rpc-url",
-            "http://localhost:8545",
+            TEST_L1_RPC,
+            "--l1-chain-id",
+            TEST_L1_CHAIN_ID,
             "--tee-prover-registry-address",
-            "0x0000000000000000000000000000000000000001",
+            TEST_REGISTRY_ADDR,
             "--target-group-arn",
-            "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123",
+            TEST_TARGET_GROUP_ARN,
             "--aws-region",
-            "us-east-1",
+            TEST_AWS_REGION,
             "--private-key",
-            "0x0101010101010101010101010101010101010101010101010101010101010101",
-            "--boundless-rpc-url",
-            "http://localhost:9545",
-            "--boundless-private-key",
-            "0202020202020202020202020202020202020202020202020202020202020202",
-            "--boundless-verifier-program-url",
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            TEST_PRIVATE_KEY,
         ]
     }
 
-    fn remote_args() -> Vec<&'static str> {
+    /// Boundless-mode args: common + boundless proving.
+    fn boundless_args() -> Vec<&'static str> {
+        let mut args = common_args();
+        args.extend([
+            "--proving-mode",
+            "boundless",
+            "--image-id",
+            TEST_IMAGE_ID,
+            "--boundless-rpc-url",
+            TEST_BOUNDLESS_RPC,
+            "--boundless-private-key",
+            TEST_BOUNDLESS_KEY,
+            "--boundless-verifier-program-url",
+            TEST_VERIFIER_URL,
+        ]);
+        args
+    }
+
+    /// Direct-mode args: common + direct proving.
+    fn direct_args() -> Vec<&'static str> {
+        let mut args = common_args();
+        args.extend(["--proving-mode", "direct", "--elf-path", TEST_ELF_PATH]);
+        args
+    }
+
+    /// Remote signer + boundless proving.
+    fn remote_signer_args() -> Vec<&'static str> {
         vec![
             "prover-registrar",
             "--l1-rpc-url",
-            "http://localhost:8545",
+            TEST_L1_RPC,
+            "--l1-chain-id",
+            TEST_L1_CHAIN_ID,
             "--tee-prover-registry-address",
-            "0x0000000000000000000000000000000000000001",
+            TEST_REGISTRY_ADDR,
             "--target-group-arn",
-            "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123",
+            TEST_TARGET_GROUP_ARN,
             "--aws-region",
-            "us-east-1",
+            TEST_AWS_REGION,
             "--signer-endpoint",
-            "http://localhost:8546",
+            TEST_SIGNER_ENDPOINT,
             "--signer-address",
-            "0x0000000000000000000000000000000000000002",
+            TEST_SIGNER_ADDR,
+            "--proving-mode",
+            "boundless",
+            "--image-id",
+            TEST_IMAGE_ID,
             "--boundless-rpc-url",
-            "http://localhost:9545",
+            TEST_BOUNDLESS_RPC,
             "--boundless-private-key",
-            "0202020202020202020202020202020202020202020202020202020202020202",
+            TEST_BOUNDLESS_KEY,
             "--boundless-verifier-program-url",
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            TEST_VERIFIER_URL,
         ]
     }
 
-    #[test]
-    fn valid_local_key_config() {
-        assert!(Cli::parse_from(base_args()).into_config().is_ok());
+    // ── Happy-path parsing ──────────────────────────────────────────────
+
+    #[rstest]
+    #[case::boundless(boundless_args())]
+    #[case::direct(direct_args())]
+    #[case::remote_signer(remote_signer_args())]
+    fn valid_config_parses(#[case] args: Vec<&str>) {
+        assert!(Cli::parse_from(args).into_config().is_ok());
     }
 
-    #[test]
-    fn valid_remote_signer_config() {
-        assert!(Cli::parse_from(remote_args()).into_config().is_ok());
+    // ── Proving mode variants ───────────────────────────────────────────
+
+    #[rstest]
+    fn boundless_mode_returns_boundless_proving() {
+        let config = Cli::parse_from(boundless_args()).into_config().unwrap();
+        assert!(matches!(config.proving, ProvingConfig::Boundless(_)));
     }
 
-    #[test]
-    fn into_config_local_returns_local_signing() {
-        let config = Cli::parse_from(base_args()).into_config().unwrap();
+    #[rstest]
+    fn direct_mode_returns_direct_proving() {
+        let config = Cli::parse_from(direct_args()).into_config().unwrap();
+        assert!(matches!(config.proving, ProvingConfig::Direct { .. }));
+    }
+
+    // ── Signing mode variants ───────────────────────────────────────────
+
+    #[rstest]
+    fn local_key_returns_local_signing() {
+        let config = Cli::parse_from(boundless_args()).into_config().unwrap();
         assert!(matches!(config.signing, SigningConfig::Local(_)));
     }
 
-    #[test]
-    fn into_config_remote_returns_remote_signing() {
-        let config = Cli::parse_from(remote_args()).into_config().unwrap();
+    #[rstest]
+    fn remote_signer_returns_remote_signing() {
+        let config = Cli::parse_from(remote_signer_args()).into_config().unwrap();
         assert!(matches!(config.signing, SigningConfig::Remote(_)));
     }
 
-    #[test]
+    // ── Clap-level validation failures ──────────────────────────────────
+
+    #[rstest]
     fn no_signing_method_fails_clap_parse() {
-        let args = vec![
-            "prover-registrar",
-            "--l1-rpc-url",
-            "http://localhost:8545",
-            "--tee-prover-registry-address",
-            "0x0000000000000000000000000000000000000001",
-            "--target-group-arn",
-            "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123",
-            "--aws-region",
-            "us-east-1",
-            "--boundless-rpc-url",
-            "http://localhost:9545",
-            "--boundless-private-key",
-            "0202020202020202020202020202020202020202020202020202020202020202",
-            "--boundless-verifier-program-url",
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ];
+        let mut args = direct_args();
+        args.retain(|a| *a != "--private-key" && *a != TEST_PRIVATE_KEY);
         assert!(Cli::try_parse_from(args).is_err());
     }
 
-    #[test]
+    #[rstest]
     fn signer_endpoint_without_address_fails_clap_parse() {
-        let args = vec![
-            "prover-registrar",
-            "--l1-rpc-url",
-            "http://localhost:8545",
-            "--tee-prover-registry-address",
-            "0x0000000000000000000000000000000000000001",
-            "--target-group-arn",
-            "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123",
-            "--aws-region",
-            "us-east-1",
-            "--signer-endpoint",
-            "http://localhost:8546",
-            "--boundless-rpc-url",
-            "http://localhost:9545",
-            "--boundless-private-key",
-            "0202020202020202020202020202020202020202020202020202020202020202",
-            "--boundless-verifier-program-url",
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ];
+        let mut args = direct_args();
+        args.retain(|a| *a != "--private-key" && *a != TEST_PRIVATE_KEY);
+        args.extend(["--signer-endpoint", TEST_SIGNER_ENDPOINT]);
         assert!(Cli::try_parse_from(args).is_err());
     }
 
-    #[test]
-    fn zero_poll_interval_fails_into_config() {
-        let mut args = base_args();
-        args.extend(["--poll-interval-secs", "0"]);
-        assert!(
-            Cli::try_parse_from(args).expect("clap should parse these args").into_config().is_err()
-        );
+    // ── into_config validation failures (parametrized) ──────────────────
+
+    #[rstest]
+    #[case::zero_poll_interval("--poll-interval-secs", "0")]
+    #[case::zero_prover_timeout("--prover-timeout-secs", "0")]
+    #[case::zero_boundless_timeout("--boundless-timeout-secs", "0")]
+    fn zero_duration_fails_into_config(#[case] flag: &str, #[case] value: &str) {
+        let mut args = boundless_args();
+        args.extend([flag, value]);
+        let result = Cli::try_parse_from(args).expect("clap should parse these args").into_config();
+        assert!(result.is_err());
     }
 
-    #[test]
-    fn zero_boundless_timeout_fails_into_config() {
-        let mut args = base_args();
-        args.extend(["--boundless-timeout-secs", "0"]);
-        assert!(
-            Cli::try_parse_from(args).expect("clap should parse these args").into_config().is_err()
-        );
-    }
-
-    #[test]
+    #[rstest]
     fn inverted_price_bounds_fail_into_config() {
-        let mut args = base_args();
+        let mut args = boundless_args();
         args.extend(["--boundless-min-price", "9999", "--boundless-max-price", "1"]);
-        assert!(
-            Cli::try_parse_from(args).expect("clap should parse these args").into_config().is_err()
-        );
+        let result = Cli::try_parse_from(args).expect("clap should parse these args").into_config();
+        assert!(result.is_err());
     }
 
-    #[test]
-    fn poll_interval_returns_duration() {
-        let config = Cli::parse_from(base_args()).into_config().unwrap();
-        assert_eq!(config.poll_interval, Duration::from_secs(30));
+    // ── Field value checks ──────────────────────────────────────────────
+
+    #[rstest]
+    fn default_durations() {
+        let config = Cli::parse_from(boundless_args()).into_config().unwrap();
+        assert_eq!(config.poll_interval, Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS));
+        assert_eq!(config.prover_timeout, Duration::from_secs(DEFAULT_PROVER_TIMEOUT_SECS));
     }
 
-    #[test]
+    #[rstest]
     fn discovery_config_fields() {
-        let config = Cli::parse_from(base_args()).into_config().unwrap();
-        assert_eq!(
-            config.discovery.target_group_arn,
-            "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/prover/abc123"
-        );
-        assert_eq!(config.discovery.aws_region, "us-east-1");
-        assert_eq!(config.discovery.port, 8000);
+        let config = Cli::parse_from(boundless_args()).into_config().unwrap();
+        assert_eq!(config.discovery.target_group_arn, TEST_TARGET_GROUP_ARN);
+        assert_eq!(config.discovery.aws_region, TEST_AWS_REGION);
+        assert_eq!(config.discovery.port, DEFAULT_PROVER_PORT);
+    }
+
+    #[rstest]
+    fn image_id_parsed_correctly() {
+        let config = Cli::parse_from(boundless_args()).into_config().unwrap();
+        let ProvingConfig::Boundless(b) = &config.proving else {
+            panic!("expected Boundless proving config");
+        };
+        assert_eq!(b.image_id, [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    // ── parse_image_id unit tests ───────────────────────────────────────
+
+    #[rstest]
+    #[case::with_prefix("0x0000000100000002000000030000000400000005000000060000000700000008", [1,2,3,4,5,6,7,8])]
+    #[case::without_prefix("0000000100000002000000030000000400000005000000060000000700000008", [1,2,3,4,5,6,7,8])]
+    fn parse_image_id_valid(#[case] input: &str, #[case] expected: [u32; 8]) {
+        assert_eq!(parse_image_id(input).unwrap(), expected);
+    }
+
+    #[rstest]
+    #[case::too_short("00000001")]
+    #[case::invalid_hex("zzzz")]
+    #[case::empty("")]
+    fn parse_image_id_invalid(#[case] input: &str) {
+        assert!(parse_image_id(input).is_err());
     }
 }

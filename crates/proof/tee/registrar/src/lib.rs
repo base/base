@@ -3,11 +3,15 @@
 
 mod config;
 pub use config::{
-    AwsDiscoveryConfig, BoundlessConfig, RegistrarConfig, RemoteSignerConfig, SigningConfig,
+    AwsDiscoveryConfig, BoundlessConfig, ProvingConfig, RegistrarConfig, RemoteSignerConfig,
+    SigningConfig,
 };
 
 mod discovery;
 pub use discovery::AwsTargetGroupDiscovery;
+
+mod driver;
+pub use driver::RegistrationDriver;
 
 mod error;
 pub use error::{RegistrarError, Result};

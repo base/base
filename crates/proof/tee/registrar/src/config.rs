@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
@@ -71,10 +71,14 @@ pub struct BoundlessConfig {
     pub signer: PrivateKeySigner,
     /// IPFS URL of the Nitro attestation verifier ELF uploaded via `nitro-attest-cli`.
     pub verifier_program_url: Url,
+    /// Expected image ID of the guest program (hex-encoded `[u32; 8]`).
+    pub image_id: [u32; 8],
     /// Minimum price in wei per cycle for Boundless proof requests.
     pub min_price: u64,
     /// Maximum price in wei per cycle for Boundless proof requests.
     pub max_price: u64,
+    /// Interval between fulfillment status checks.
+    pub poll_interval: Duration,
     /// Proof generation timeout.
     pub timeout: Duration,
     /// `NitroEnclaveVerifier` contract address for certificate caching (optional).
@@ -87,12 +91,26 @@ impl std::fmt::Debug for BoundlessConfig {
             .field("rpc_url", &url_origin(&self.rpc_url))
             .field("signer", &self.signer.address())
             .field("verifier_program_url", &self.verifier_program_url)
+            .field("image_id", &self.image_id)
             .field("min_price", &self.min_price)
             .field("max_price", &self.max_price)
+            .field("poll_interval", &self.poll_interval)
             .field("timeout", &self.timeout)
             .field("nitro_verifier_address", &self.nitro_verifier_address)
             .finish()
     }
+}
+
+/// ZK proving backend configuration.
+#[derive(Clone, Debug)]
+pub enum ProvingConfig {
+    /// Boundless marketplace proving (production).
+    Boundless(Box<BoundlessConfig>),
+    /// Direct proving via `risc0_zkvm::default_prover()` (Bonsai remote or dev-mode).
+    Direct {
+        /// Path to the guest ELF binary on disk.
+        elf_path: PathBuf,
+    },
 }
 
 /// Runtime configuration for the prover registrar.
@@ -106,18 +124,22 @@ pub struct RegistrarConfig {
     pub l1_rpc_url: Url,
     /// `TEEProverRegistry` contract address on L1.
     pub tee_prover_registry_address: Address,
+    /// L1 chain ID (validated against the RPC provider at startup).
+    pub l1_chain_id: u64,
     // ── Discovery ─────────────────────────────────────────────────────────────
     /// AWS ALB target group discovery configuration.
     pub discovery: AwsDiscoveryConfig,
     // ── Signing ───────────────────────────────────────────────────────────────
     /// Resolved signing configuration.
     pub signing: SigningConfig,
-    // ── Boundless ─────────────────────────────────────────────────────────────
-    /// Boundless Network configuration.
-    pub boundless: BoundlessConfig,
+    // ── Proving ───────────────────────────────────────────────────────────────
+    /// ZK proving backend configuration.
+    pub proving: ProvingConfig,
     // ── Polling / Server ──────────────────────────────────────────────────────
     /// Interval between discovery and registration poll cycles.
     pub poll_interval: Duration,
+    /// Timeout for JSON-RPC calls to prover instances.
+    pub prover_timeout: Duration,
     /// Port for the health check and Prometheus metrics HTTP server.
     pub health_port: u16,
 }
@@ -137,10 +159,12 @@ impl std::fmt::Debug for RegistrarConfig {
         f.debug_struct("RegistrarConfig")
             .field("l1_rpc_url", &url_origin(&self.l1_rpc_url))
             .field("tee_prover_registry_address", &self.tee_prover_registry_address)
+            .field("l1_chain_id", &self.l1_chain_id)
             .field("discovery", &self.discovery)
             .field("signing", &self.signing)
-            .field("boundless", &self.boundless)
+            .field("proving", &self.proving)
             .field("poll_interval", &self.poll_interval)
+            .field("prover_timeout", &self.prover_timeout)
             .field("health_port", &self.health_port)
             .finish()
     }

@@ -16,10 +16,29 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-url.workspace = true
-eyre.workspace = true
+# Internal
+base-tx-manager.workspace = true
+base-proof-tee-registrar.workspace = true
+base-proof-tee-nitro-attestation-prover.workspace = true
+
+# Alloy
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
-base-proof-tee-registrar.workspace = true
+alloy-provider.workspace = true
+
+# AWS
+aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-ec2.workspace = true
+aws-sdk-elasticloadbalancingv2.workspace = true
+
+# CLI / runtime
+hex.workspace = true
+url.workspace = true
+eyre.workspace = true
+tracing.workspace = true
+tokio-util.workspace = true
 tokio = { workspace = true, features = ["full"] }
 clap = { workspace = true, features = ["derive", "env"] }
+
+[dev-dependencies]
+rstest.workspace = true
