@@ -516,8 +516,9 @@ impl OpPayloadBuilderCtx {
                     tx_hash = ?tx.hash(),
                     block = block_number,
                     timestamp = block_timestamp,
-                    "deferring bundle tx: not yet valid"
+                    "skipping bundle tx: not yet valid"
                 );
+                best_txs.mark_invalid(tx.sender(), tx.nonce());
                 continue;
             }
 
