@@ -76,16 +76,16 @@ where
     ASR: AnchorStateRegistryClient,
     F: DisputeGameFactoryClient,
 {
-    pub(super) config: DriverConfig,
-    pub(super) prover: Arc<Prover>,
-    pub(super) l1_client: Arc<L1>,
-    pub(super) l2_client: Arc<L2>,
-    pub(super) rollup_client: Arc<R>,
-    pub(super) anchor_registry: Arc<ASR>,
-    pub(super) factory_client: Arc<F>,
-    pub(super) verifier_client: Arc<dyn AggregateVerifierClient>,
-    pub(super) output_proposer: Arc<dyn OutputProposer>,
-    pub(super) cancel: CancellationToken,
+    config: DriverConfig,
+    prover: Arc<Prover>,
+    l1_client: Arc<L1>,
+    l2_client: Arc<L2>,
+    rollup_client: Arc<R>,
+    anchor_registry: Arc<ASR>,
+    factory_client: Arc<F>,
+    verifier_client: Arc<dyn AggregateVerifierClient>,
+    output_proposer: Arc<dyn OutputProposer>,
+    cancel: CancellationToken,
 }
 
 impl<L1, L2, R, ASR, F> std::fmt::Debug for Driver<L1, L2, R, ASR, F>
@@ -151,7 +151,7 @@ where
     /// Called at the top of every tick to determine the parent game.
     /// Returns `Ok(None)` when no matching game exists (use anchor instead),
     /// or `Err` on RPC failure (skip this tick).
-    pub(super) async fn recover_latest_game(&self) -> Result<Option<RecoveredGame>, ProposerError> {
+    async fn recover_latest_game(&self) -> Result<Option<RecoveredGame>, ProposerError> {
         let count = self
             .factory_client
             .game_count()
