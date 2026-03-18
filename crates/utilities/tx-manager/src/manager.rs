@@ -1498,16 +1498,16 @@ impl SimpleTxManager {
             }
         };
 
-        let canonical_header = tokio::time::timeout(
+        let canonical_block = tokio::time::timeout(
             network_timeout,
-            provider.get_header_by_number(BlockNumberOrTag::Number(tx_block)),
+            provider.get_block_by_number(BlockNumberOrTag::Number(tx_block)),
         )
         .await
-        .map_err(|_| TxManagerError::Rpc("get_header_by_number timed out".into()))?
+        .map_err(|_| TxManagerError::Rpc("get_block_by_number timed out".into()))?
         .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
 
         let is_canonical =
-            canonical_header.as_ref().is_some_and(|header| header.hash == receipt_block_hash);
+            canonical_block.as_ref().is_some_and(|block| block.header.hash == receipt_block_hash);
 
         if !is_canonical {
             send_state.tx_not_mined(tx_hash);
