@@ -544,10 +544,7 @@ mod tests {
         let proposals: Vec<Proposal> = (101..=105).map(test_proposal).collect();
 
         let err = driver.extract_intermediate_roots(100, &proposals).unwrap_err();
-        assert!(
-            matches!(err, ProposerError::Internal(_)),
-            "expected Internal error, got: {err:?}"
-        );
+        assert!(matches!(err, ProposerError::Internal(_)), "expected Internal error, got: {err:?}");
     }
 
     #[test]
