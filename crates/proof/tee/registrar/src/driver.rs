@@ -163,7 +163,7 @@ where
 
         // Only fetch the full NSM attestation document when registration is needed.
         let attestation_bytes = client.signer_attestation().await?;
-        let proof = self.proof_provider.generate_proof(&Bytes::from(attestation_bytes)).await?;
+        let proof = self.proof_provider.generate_proof(&attestation_bytes).await?;
 
         // Check cancellation before submitting the transaction — avoid starting
         // new on-chain work if shutdown is in progress.

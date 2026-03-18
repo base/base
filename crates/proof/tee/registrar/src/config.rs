@@ -73,7 +73,6 @@ pub enum ProvingConfig {
 ///
 /// Constructed by the CLI layer (`bin/prover-registrar`), which handles argument
 /// parsing, validation, and signing config resolution before building this type.
-#[derive(Debug)]
 pub struct RegistrarConfig {
     // ── L1 ────────────────────────────────────────────────────────────────────
     /// L1 Ethereum RPC endpoint.
@@ -100,6 +99,23 @@ pub struct RegistrarConfig {
     pub prover_timeout: Duration,
     /// Port for the health check and Prometheus metrics HTTP server.
     pub health_port: u16,
+}
+
+impl std::fmt::Debug for RegistrarConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegistrarConfig")
+            .field("l1_rpc_url", &url_origin(&self.l1_rpc_url))
+            .field("tee_prover_registry_address", &self.tee_prover_registry_address)
+            .field("l1_chain_id", &self.l1_chain_id)
+            .field("discovery", &self.discovery)
+            .field("signing", &self.signing)
+            .field("tx_manager", &self.tx_manager)
+            .field("proving", &self.proving)
+            .field("poll_interval", &self.poll_interval)
+            .field("prover_timeout", &self.prover_timeout)
+            .field("health_port", &self.health_port)
+            .finish()
+    }
 }
 
 /// Format only the `scheme://host:port` of a URL, dropping the path and query
