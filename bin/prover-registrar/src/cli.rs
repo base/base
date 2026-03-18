@@ -9,8 +9,8 @@ use base_proof_tee_nitro_attestation_prover::{
     AttestationProofProvider, BoundlessProver, DirectProver,
 };
 use base_proof_tee_registrar::{
-    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, ProvingConfig, RegistrarConfig,
-    RegistrarError, RegistrationDriver, RegistryContractClient,
+    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, DriverConfig, ProvingConfig,
+    RegistrarConfig, RegistrarError, RegistrationDriver, RegistryContractClient,
 };
 use base_tx_manager::{NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use clap::{Args, Parser, ValueEnum};
@@ -337,18 +337,16 @@ impl Cli {
             }
         };
 
-        RegistrationDriver::new(
-            discovery,
-            proof_provider,
-            registry,
-            tx_manager,
-            config.tee_prover_registry_address,
-            config.poll_interval,
-            config.prover_timeout,
+        let driver_config = DriverConfig {
+            registry_address: config.tee_prover_registry_address,
+            poll_interval: config.poll_interval,
+            prover_timeout: config.prover_timeout,
             cancel,
-        )
-        .run()
-        .await?;
+        };
+
+        RegistrationDriver::new(discovery, proof_provider, registry, tx_manager, driver_config)
+            .run()
+            .await?;
 
         Ok(())
     }
