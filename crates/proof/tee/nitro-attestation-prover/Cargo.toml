@@ -35,11 +35,11 @@ rstest.workspace = true
 
 [features]
 prove = [
-    "dep:boundless-market",
-    "dep:risc0-ethereum-contracts",
-    "dep:risc0-zkvm",
-    "dep:url",
-    "dep:alloy-signer-local",
-    "dep:tracing",
-    "dep:tokio",
+	"dep:alloy-signer-local",
+	"dep:boundless-market",
+	"dep:risc0-ethereum-contracts",
+	"dep:risc0-zkvm",
+	"dep:tokio",
+	"dep:tracing",
+	"dep:url",
 ]
