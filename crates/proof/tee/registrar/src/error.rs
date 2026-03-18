@@ -1,3 +1,4 @@
+use base_proof_tee_nitro_attestation_prover::ProverError;
 use thiserror::Error;
 
 /// Errors that can occur in the prover registrar.
@@ -46,6 +47,12 @@ pub enum RegistrarError {
     /// Configuration is invalid.
     #[error("config error: {0}")]
     Config(String),
+}
+
+impl From<ProverError> for RegistrarError {
+    fn from(e: ProverError) -> Self {
+        Self::ProofGeneration(Box::new(e))
+    }
 }
 
 /// Convenience result alias for registrar operations.

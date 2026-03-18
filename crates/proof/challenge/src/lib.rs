@@ -12,6 +12,12 @@ pub use cli::{ChallengerArgs, Cli, LogArgs, MetricsArgs, SignerCli, TxManagerCli
 mod config;
 pub use config::{ChallengerConfig, ConfigError, UrlValidationError, Validated};
 
+mod driver;
+pub use driver::{Driver, DriverConfig};
+
+mod pending;
+pub use pending::{PendingProof, PendingProofs, ProofPhase, ProofUpdate};
+
 mod error;
 pub use error::ChallengeSubmitError;
 
@@ -35,5 +41,5 @@ pub use validator::{
     IntermediateValidationParams, OutputValidator, ValidationResult, ValidatorError,
 };
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

@@ -3,7 +3,7 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use alloy_primitives::{Address, Bytes, U256};
-use base_batcher_encoder::{BatchPipeline, DaType, FrameEncoder, SubmissionId};
+use base_batcher_encoder::{BatchPipeline, BatcherMetrics, DaType, FrameEncoder, SubmissionId};
 use base_blobs::BlobEncoder;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -11,7 +11,7 @@ use metrics::{counter, gauge};
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
-use crate::{BatcherMetrics, TxOutcome};
+use crate::TxOutcome;
 
 /// Type alias for the in-flight receipt future collection.
 type InFlight = FuturesUnordered<Pin<Box<dyn Future<Output = (SubmissionId, TxOutcome)> + Send>>>;

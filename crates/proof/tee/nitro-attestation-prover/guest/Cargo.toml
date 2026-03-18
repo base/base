@@ -1,0 +1,18 @@
+[workspace]
+
+[package]
+name = "base-proof-tee-nitro-verifier-guest"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+risc0-zkvm = { version = "^3.0", default-features = false, features = ["std"] }
+base-proof-tee-nitro-verifier = { path = "../../nitro-verifier" }
+
+[lints.rust]
+missing-docs = "warn"
+unused-must-use = "deny"
+rust-2018-idioms = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

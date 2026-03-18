@@ -12,25 +12,63 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-futures.workspace = true
-metrics.workspace = true
+# local
 base-blobs.workspace = true
 base-tx-manager.workspace = true
 base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
-tracing = { workspace = true, features = ["std"] }
-thiserror = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["tokio"] }
-alloy-primitives = { workspace = true, features = ["std"] }
 base-alloy-consensus = { workspace = true, features = ["std"] }
+
+# external
+futures.workspace = true
+metrics.workspace = true
+tracing = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive", "std"] }
+alloy-primitives = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "macros", "rt"] }
+derive_more = { workspace = true, features = ["display", "from_str"] }
+
+# optional — activated by the `test-utils` feature
+async-trait = { workspace = true, optional = true }
+alloy-consensus = { workspace = true, features = ["std"], optional = true }
+alloy-rpc-types-eth = { workspace = true, features = ["std"], optional = true }
 
 [dev-dependencies]
+rstest.workspace = true
 async-trait.workspace = true
+base-protocol = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
+base-runtime = { workspace = true, features = ["test-utils"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-alloy-consensus = { workspace = true, features = ["std"] }
-base-runtime = { workspace = true, features = ["test-utils"] }
-base-protocol = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
+
+[[test]]
+name = "reorg"
+required-features = ["test-utils"]
+
+[[test]]
+name = "throttle"
+required-features = ["test-utils"]
+
+[[test]]
+name = "heads"
+required-features = ["test-utils"]
+
+[[test]]
+name = "lifecycle"
+required-features = ["test-utils"]
+
+[[test]]
+name = "pause_resume"
+required-features = ["test-utils"]
+
+[features]
+test-utils = [
+	"dep:alloy-consensus",
+	"dep:alloy-rpc-types-eth",
+	"dep:async-trait",
+]

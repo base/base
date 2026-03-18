@@ -9,7 +9,10 @@
 //!
 //! Games passing both filters are returned as [`CandidateGame`] structs.
 
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use alloy_primitives::Address;
 use base_proof_contracts::{
@@ -39,6 +42,8 @@ pub struct CandidateGame {
     pub info: GameInfo,
     /// The starting block number for this game.
     pub starting_block_number: u64,
+    /// The intermediate block interval for this game's type.
+    pub intermediate_block_interval: u64,
 }
 
 /// Scans the `DisputeGameFactory` for new dispute games that need validation.
@@ -49,6 +54,8 @@ pub struct GameScanner {
     factory_client: Arc<dyn DisputeGameFactoryClient>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
     config: ScannerConfig,
+    /// Cache of `game_type → intermediate_block_interval` to avoid repeated RPC calls.
+    interval_cache: Mutex<HashMap<u32, u64>>,
 }
 
 impl std::fmt::Debug for GameScanner {
@@ -70,7 +77,7 @@ impl GameScanner {
         verifier_client: Arc<dyn AggregateVerifierClient>,
         config: ScannerConfig,
     ) -> Self {
-        Self { factory_client, verifier_client, config }
+        Self { factory_client, verifier_client, config, interval_cache: Mutex::new(HashMap::new()) }
     }
 
     /// Scans for new candidate games since `last_scanned`.
@@ -186,6 +193,47 @@ impl GameScanner {
             self.verifier_client.starting_block_number(factory.proxy),
         )?;
 
-        Ok(Some(CandidateGame { index, factory, info, starting_block_number }))
+        let intermediate_block_interval =
+            self.resolve_intermediate_block_interval(factory.game_type).await?;
+
+        Ok(Some(CandidateGame {
+            index,
+            factory,
+            info,
+            starting_block_number,
+            intermediate_block_interval,
+        }))
+    }
+
+    /// Resolves the intermediate block interval for a game type, using a cache
+    /// to avoid repeated RPC calls for the same type.
+    async fn resolve_intermediate_block_interval(&self, game_type: u32) -> Result<u64> {
+        {
+            let cache = self.interval_cache.lock().expect("interval_cache lock poisoned");
+            if let Some(&interval) = cache.get(&game_type) {
+                return Ok(interval);
+            }
+        }
+
+        let impl_address = self.factory_client.game_impls(game_type).await?;
+        if impl_address == Address::ZERO {
+            return Err(eyre::eyre!(
+                "no game implementation registered in DisputeGameFactory for game type {game_type}"
+            ));
+        }
+
+        let interval = self.verifier_client.read_intermediate_block_interval(impl_address).await?;
+
+        debug!(
+            game_type = game_type,
+            interval = interval,
+            impl_address = %impl_address,
+            "resolved intermediate block interval"
+        );
+
+        let mut cache = self.interval_cache.lock().expect("interval_cache lock poisoned");
+        cache.insert(game_type, interval);
+
+        Ok(interval)
     }
 }

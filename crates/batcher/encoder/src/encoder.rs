@@ -684,7 +684,9 @@ mod tests {
     use alloy_consensus::{BlockBody, Header, SignableTransaction, TxLegacy};
     use alloy_primitives::{Bytes, Sealed, Signature};
     use base_alloy_consensus::{OpTxEnvelope, TxDeposit};
+    use base_comp::BatchComposeError;
     use base_protocol::{L1BlockInfoBedrock, L1BlockInfoTx};
+    use rstest::rstest;
 
     use super::*;
 
@@ -996,53 +998,34 @@ mod tests {
 
     // --- sub_safety_margin tests ---
 
-    /// With `sub_safety_margin > 0` the effective timeout is shortened by the margin.
-    /// A channel opened at L1 block 0 with `max_channel_duration=10, sub_safety_margin=4`
-    /// must close when `l1_head` reaches 6 (effective = 10 - 4 = 6), not 10.
-    #[test]
-    fn test_sub_safety_margin_shortens_effective_timeout() {
-        let config = EncoderConfig {
-            max_channel_duration: 10,
-            sub_safety_margin: 4,
-            ..EncoderConfig::default()
-        };
+    /// The effective timeout is `max_channel_duration - sub_safety_margin`. A channel
+    /// opened at L1=0 must stay open until `l1_head` reaches `at_threshold` exactly.
+    #[rstest]
+    #[case(10, 4, 5, 6)] // effective = 10-4 = 6
+    #[case(5, 0, 4, 5)] // margin=0: effective = full duration
+    fn test_sub_safety_margin(
+        #[case] max_channel_duration: u64,
+        #[case] sub_safety_margin: u64,
+        #[case] below: u64,
+        #[case] at_threshold: u64,
+    ) {
+        let config =
+            EncoderConfig { max_channel_duration, sub_safety_margin, ..EncoderConfig::default() };
         let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
 
         encoder.add_block(make_block(B256::ZERO)).unwrap();
         encoder.step().unwrap();
         assert!(encoder.current_channel.is_some());
 
-        // One block before the effective threshold — channel stays open.
-        encoder.advance_l1_head(5);
+        encoder.advance_l1_head(below);
         assert!(
             encoder.current_channel.is_some(),
             "channel must stay open before effective timeout"
         );
 
-        // At the effective threshold — channel closes.
-        encoder.advance_l1_head(6);
+        encoder.advance_l1_head(at_threshold);
         assert!(encoder.current_channel.is_none(), "channel must close at effective timeout");
         assert!(!encoder.ready_channels.is_empty());
-    }
-
-    /// When `sub_safety_margin == 0` the effective timeout equals `max_channel_duration`.
-    #[test]
-    fn test_sub_safety_margin_zero_uses_full_duration() {
-        let config = EncoderConfig {
-            max_channel_duration: 5,
-            sub_safety_margin: 0,
-            ..EncoderConfig::default()
-        };
-        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
-
-        encoder.add_block(make_block(B256::ZERO)).unwrap();
-        encoder.step().unwrap();
-
-        encoder.advance_l1_head(4);
-        assert!(encoder.current_channel.is_some(), "channel must stay open before full duration");
-
-        encoder.advance_l1_head(5);
-        assert!(encoder.current_channel.is_none(), "channel must close at full duration");
     }
 
     // --- target_num_frames tests ---
@@ -1158,55 +1141,19 @@ mod tests {
         }
     }
 
-    /// An empty block (no transactions) cannot be composed into a `SingleBatch`.
-    /// `step()` must return Err rather than skip the block.
-    #[test]
-    fn test_step_fatal_on_empty_block() {
+    /// `step()` must return a fatal `CompositionFailed` error — not silently skip —
+    /// for any block that cannot be encoded into a `SingleBatch`.
+    #[rstest]
+    #[case::empty_block(make_empty_block(B256::ZERO), BatchComposeError::EmptyBlock)]
+    #[case::not_deposit(make_non_deposit_block(B256::ZERO), BatchComposeError::NotDepositTx)]
+    #[case::bad_calldata(make_bad_calldata_block(B256::ZERO), BatchComposeError::L1InfoDecode)]
+    fn test_step_fatal(#[case] block: OpBlock, #[case] expected_source: BatchComposeError) {
         let mut encoder = default_encoder();
-        encoder.add_block(make_empty_block(B256::ZERO)).unwrap();
-
+        encoder.add_block(block).unwrap();
         let err = encoder.step().unwrap_err();
-        assert!(matches!(
-            err,
-            StepError::CompositionFailed {
-                cursor: 0,
-                source: base_comp::BatchComposeError::EmptyBlock
-            }
-        ));
-    }
-
-    /// A block whose first transaction is not a deposit cannot be composed.
-    /// `step()` must return Err rather than skip the block.
-    #[test]
-    fn test_step_fatal_on_no_deposit_tx() {
-        let mut encoder = default_encoder();
-        encoder.add_block(make_non_deposit_block(B256::ZERO)).unwrap();
-
-        let err = encoder.step().unwrap_err();
-        assert!(matches!(
-            err,
-            StepError::CompositionFailed {
-                cursor: 0,
-                source: base_comp::BatchComposeError::NotDepositTx
-            }
-        ));
-    }
-
-    /// A deposit with undecodable L1 info calldata cannot be composed.
-    /// `step()` must return Err rather than skip the block.
-    #[test]
-    fn test_step_fatal_on_bad_l1_info_calldata() {
-        let mut encoder = default_encoder();
-        encoder.add_block(make_bad_calldata_block(B256::ZERO)).unwrap();
-
-        let err = encoder.step().unwrap_err();
-        assert!(matches!(
-            err,
-            StepError::CompositionFailed {
-                cursor: 0,
-                source: base_comp::BatchComposeError::L1InfoDecode
-            }
-        ));
+        assert!(
+            matches!(err, StepError::CompositionFailed { cursor: 0, source } if source == expected_source)
+        );
     }
 
     /// On composition failure the block cursor must not advance: the block stays
@@ -1302,76 +1249,46 @@ mod tests {
         assert!(sub.is_some(), "span batch should produce a submission after size-based close");
     }
 
-    /// In Span mode, `advance_l1_head` triggers `check_channel_timeout()` which closes
-    /// and flushes the span accumulator when the effective duration has elapsed, even
-    /// though `current_channel` is `None`.
-    #[test]
-    fn test_span_batch_timeout_triggers_close() {
+    /// In Span mode, `advance_l1_head` flushes the accumulator when the effective
+    /// duration (`max_channel_duration - sub_safety_margin`) has elapsed. The accumulator
+    /// must be preserved one step before the threshold and empty exactly at it.
+    #[rstest]
+    #[case(5, 0, 4, 5)] // no margin; full duration=5
+    #[case(10, 4, 5, 6)] // effective = 10-4 = 6
+    fn test_span_batch_timeout(
+        #[case] max_channel_duration: u64,
+        #[case] sub_safety_margin: u64,
+        #[case] below: u64,
+        #[case] at_threshold: u64,
+    ) {
         let config = EncoderConfig {
             batch_type: BatchType::Span,
             target_frame_size: 130_044, // large: size won't trigger
             max_frame_size: 130_044,
-            max_channel_duration: 5,
-            sub_safety_margin: 0,
+            max_channel_duration,
+            sub_safety_margin,
             ..EncoderConfig::default()
         };
         let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
 
-        let block = make_block(B256::ZERO);
-        encoder.add_block(block).unwrap();
+        encoder.add_block(make_block(B256::ZERO)).unwrap();
         assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-
-        // One block accumulated; no channel open.
         assert!(encoder.current_channel.is_none());
         assert_eq!(encoder.span_accumulator.len(), 1);
         assert_eq!(encoder.span_opened_at_l1, Some(0));
 
-        // Advance L1 head just below the timeout — accumulator must be preserved.
-        encoder.advance_l1_head(4);
+        encoder.advance_l1_head(below);
         assert_eq!(encoder.span_accumulator.len(), 1, "accumulator must survive before timeout");
         assert!(encoder.ready_channels.is_empty());
 
-        // At exactly the timeout threshold — accumulator must be flushed.
-        encoder.advance_l1_head(5);
+        encoder.advance_l1_head(at_threshold);
         assert!(encoder.span_accumulator.is_empty(), "accumulator must be flushed at timeout");
         assert!(encoder.span_opened_at_l1.is_none());
         assert!(!encoder.ready_channels.is_empty(), "a ready channel must exist after flush");
-
-        let sub = encoder.next_submission();
-        assert!(sub.is_some(), "should have a submission after timeout flush");
-    }
-
-    /// `sub_safety_margin` shortens the effective timeout in Span mode just as it does
-    /// in Single mode: a span opened at L1 block 0 with `max_channel_duration=10,
-    /// sub_safety_margin=4` must flush when `l1_head` reaches 6.
-    #[test]
-    fn test_span_batch_sub_safety_margin_shortens_timeout() {
-        let config = EncoderConfig {
-            batch_type: BatchType::Span,
-            target_frame_size: 130_044,
-            max_frame_size: 130_044,
-            max_channel_duration: 10,
-            sub_safety_margin: 4,
-            ..EncoderConfig::default()
-        };
-        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
-
-        let block = make_block(B256::ZERO);
-        encoder.add_block(block).unwrap();
-        assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-
-        // One block before effective threshold (10 - 4 = 6) — must survive.
-        encoder.advance_l1_head(5);
-        assert_eq!(
-            encoder.span_accumulator.len(),
-            1,
-            "accumulator must survive before effective timeout"
+        assert!(
+            encoder.next_submission().is_some(),
+            "should have a submission after timeout flush"
         );
-
-        // At exactly the effective threshold — must flush.
-        encoder.advance_l1_head(6);
-        assert!(encoder.span_accumulator.is_empty(), "must flush at effective timeout");
-        assert!(!encoder.ready_channels.is_empty());
     }
 
     /// End-to-end span batch path: add a block, trigger size-based close,

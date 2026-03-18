@@ -15,7 +15,7 @@ pub use outcome::TxOutcome;
 
 mod throttle;
 pub use throttle::{
-    DaThrottle, ThrottleConfig, ThrottleController, ThrottleParams, ThrottleStrategy,
+    DaThrottle, ThrottleConfig, ThrottleController, ThrottleInfo, ThrottleParams, ThrottleStrategy,
 };
 
 mod throttle_client;
@@ -24,8 +24,19 @@ pub use throttle_client::{NoopThrottleClient, ThrottleClient};
 mod submissions;
 pub use submissions::SubmissionQueue;
 
+mod config;
+pub use config::BatchDriverConfig;
+
+mod event;
+pub use event::DriverEvent;
+
+mod admin;
+pub use admin::{
+    ADMIN_CHANNEL_CAPACITY, AdminCommand, AdminError, AdminHandle, AdminResult, BatcherStatus,
+};
+
 mod driver;
 pub use base_batcher_encoder::BatcherMetrics;
-pub use driver::{BatchDriver, BatchDriverConfig};
+pub use driver::BatchDriver;
 
 pub mod test_utils;

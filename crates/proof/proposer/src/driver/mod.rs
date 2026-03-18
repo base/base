@@ -1562,6 +1562,13 @@ mod tests {
         ) -> Result<u64, base_proof_contracts::ContractError> {
             Ok(512)
         }
+        async fn intermediate_output_roots(
+            &self,
+            _: Address,
+        ) -> Result<Vec<alloy_primitives::FixedBytes<32>>, base_proof_contracts::ContractError>
+        {
+            Ok(vec![])
+        }
     }
 
     fn recovery_driver(

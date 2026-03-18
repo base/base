@@ -7,5 +7,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+mod middleware;
+pub use middleware::{EthHealthCheckLayer, EthHealthCheckService};
+
 mod rpc;
 pub use rpc::{HealthzApiServer, HealthzResponse, HealthzRpc};

@@ -25,6 +25,9 @@ aws-sdk-elasticloadbalancingv2.workspace = true
 # Crypto
 k256.workspace = true
 
+# Proving
+base-proof-tee-nitro-attestation-prover.workspace = true
+
 # RPC
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }

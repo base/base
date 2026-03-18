@@ -22,6 +22,7 @@ alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-client.workspace = true
+alloy-signer-local.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-transport-http.workspace = true
 

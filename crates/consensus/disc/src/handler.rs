@@ -93,7 +93,7 @@ impl Discv5Handler {
 
     /// Blocking request for the ENRs of the discovery service.
     ///
-    /// Returns `None` if the request could not be sent or received.
+    /// The returned receiver yields `Err` if the request could not be sent or received.
     pub fn table_enrs(&self) -> tokio::sync::oneshot::Receiver<Vec<Enr>> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let sender = self.sender.clone();
@@ -120,7 +120,7 @@ impl Discv5Handler {
 
     /// Blocking request for the local ENR of the node.
     ///
-    /// Returns `None` if the request could not be sent or received.
+    /// The returned receiver yields `Err` if the request could not be sent or received.
     pub fn local_enr(&self) -> tokio::sync::oneshot::Receiver<Enr> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let sender = self.sender.clone();
@@ -151,7 +151,7 @@ impl Discv5Handler {
 
     /// Blocking request for the metrics of the discovery service.
     ///
-    /// Returns `None` if the request could not be sent or received.
+    /// The returned receiver yields `Err` if the request could not be sent or received.
     pub fn metrics(&self) -> tokio::sync::oneshot::Receiver<Metrics> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let sender = self.sender.clone();
@@ -165,7 +165,7 @@ impl Discv5Handler {
 
     /// Blocking request for the discovery service peer count.
     ///
-    /// Returns `None` if the request could not be sent or received.
+    /// The returned receiver yields `Err` if the request could not be sent or received.
     pub fn peer_count(&self) -> tokio::sync::oneshot::Receiver<usize> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let sender = self.sender.clone();

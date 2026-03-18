@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 # workspace
+base-health.workspace = true
 base-macros.workspace = true
 base-protocol.workspace = true
 base-consensus-disc.workspace = true
@@ -48,8 +49,11 @@ base-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 serde.workspace = true
 url.workspace = true
 futures.workspace = true
+http.workspace = true
 tower.workspace = true
+bytes.workspace = true
 discv5.workspace = true
+http-body.workspace = true
 backon.workspace = true
 libp2p.workspace = true
 tokio-util.workspace = true
@@ -69,7 +73,7 @@ jsonrpsee = { workspace = true, features = ["server", "http-client"] }
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
-http = "1"
+http.workspace = true
 rand.workspace = true
 rstest.workspace = true
 backon.workspace = true

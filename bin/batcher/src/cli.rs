@@ -1,9 +1,13 @@
 //! CLI argument parsing for the Base Batcher binary.
 
-use std::time::Duration;
+use std::{
+    net::{IpAddr, SocketAddr},
+    time::Duration,
+};
 
+use alloy_signer_local::PrivateKeySigner;
 use base_batcher_core::ThrottleConfig;
-use base_batcher_service::{BatcherConfig, BatcherService, SecretKey};
+use base_batcher_service::{BatcherConfig, BatcherService};
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_runtime::TokioRuntime;
 use clap::{Args, Parser};
@@ -70,7 +74,7 @@ pub(crate) struct BatcherArgs {
 
     /// Batcher private key (hex-encoded 32-byte secret).
     #[arg(long = "private-key", env = "BATCHER_PRIVATE_KEY")]
-    pub private_key: SecretKey,
+    pub private_key: PrivateKeySigner,
 
     /// L2 block polling interval in seconds.
     #[arg(long = "poll-interval", default_value = "1", env = "BATCHER_POLL_INTERVAL")]
@@ -135,6 +139,20 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "no-throttle", env = "BATCHER_NO_THROTTLE")]
     pub no_throttle: bool,
 
+    /// Bind address for the admin JSON-RPC API (default: 127.0.0.1).
+    ///
+    /// Only takes effect when `--admin-port` is also set.
+    #[arg(long = "admin-addr", env = "BATCHER_ADMIN_ADDR", default_value = "127.0.0.1")]
+    pub admin_addr: IpAddr,
+
+    /// Port for the admin JSON-RPC API.
+    ///
+    /// When set, exposes `admin_startBatcher`, `admin_stopBatcher`,
+    /// `admin_flushBatcher`, `admin_getThrottleController`, and related methods.
+    /// When absent (default), the admin API is disabled.
+    #[arg(long = "admin-port", env = "BATCHER_ADMIN_PORT")]
+    pub admin_port: Option<u16>,
+
     /// Logging configuration.
     #[command(flatten)]
     pub logging: LogArgs,
@@ -162,7 +180,7 @@ impl BatcherArgs {
             l2_rpc_url: self.l2_rpc_url,
             l2_ws_url: self.l2_ws_url,
             rollup_rpc_url: self.rollup_rpc_url,
-            batcher_private_key: self.private_key,
+            batcher_private_key: Some(self.private_key),
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             encoder_config,
             max_pending_transactions: self.max_pending_transactions,
@@ -177,6 +195,7 @@ impl BatcherArgs {
                     ..Default::default()
                 })
             },
+            admin_addr: self.admin_port.map(|port| SocketAddr::new(self.admin_addr, port)),
         })
     }
 

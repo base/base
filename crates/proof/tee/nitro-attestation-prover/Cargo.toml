@@ -1,0 +1,35 @@
+[package]
+name = "base-proof-tee-nitro-attestation-prover"
+description = "ZK attestation prover for AWS Nitro Enclave attestation documents"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Proving
+boundless-market.workspace = true
+risc0-ethereum-contracts.workspace = true
+risc0-zkvm = { workspace = true, features = ["prove"] }
+
+# Verification types
+base-proof-tee-nitro-verifier.workspace = true
+
+# Types
+url.workspace = true
+alloy-primitives.workspace = true
+alloy-signer-local.workspace = true
+
+# Async / error / tracing
+tracing.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+
+[dev-dependencies]
+rstest.workspace = true

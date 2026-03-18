@@ -1,18 +1,30 @@
-//! Test utilities: mock stubs for contract clients and scanner tests.
+//! Test utilities: mock stubs for contract clients, ZK proof provider, tx manager, and scanner
+//! tests.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Mutex,
+};
 
-use alloy_consensus::Header as ConsensusHeader;
-use alloy_primitives::{Address, B256, U256};
-use alloy_rpc_types_eth::Header as RpcHeader;
+use alloy_consensus::{
+    Eip658Value, Header as ConsensusHeader, Receipt, ReceiptEnvelope, ReceiptWithBloom,
+};
+use alloy_primitives::{Address, B256, Bloom, Bytes, U256, keccak256};
+use alloy_rlp::Encodable;
+use alloy_rpc_types_eth::{Header as RpcHeader, TransactionReceipt};
+use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use async_trait::async_trait;
 use base_enclave::AccountResult;
 use base_proof_contracts::{
     AggregateVerifierClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
 };
 use base_proof_rpc::{L2Provider, RpcError, RpcResult};
-
-use crate::scanner::{GameScanner, ScannerConfig};
+use base_protocol::Predeploys;
+use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
+use base_zk_client::{
+    GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse, ZkProofError,
+    ZkProofProvider,
+};
 
 /// Per-game state for the mock verifier.
 #[derive(Debug, Clone)]
@@ -27,6 +39,8 @@ pub struct MockGameState {
     pub game_info: GameInfo,
     /// Starting block number for this game.
     pub starting_block_number: u64,
+    /// Intermediate output roots for this game.
+    pub intermediate_output_roots: Vec<B256>,
 }
 
 /// Mock dispute game factory with configurable per-index game data.
@@ -54,7 +68,7 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
     }
 
     async fn game_impls(&self, _game_type: u32) -> Result<Address, ContractError> {
-        Ok(Address::ZERO)
+        Ok(Address::repeat_byte(0x11))
     }
 }
 
@@ -112,27 +126,37 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     ) -> Result<u64, ContractError> {
         Ok(5)
     }
+
+    async fn intermediate_output_roots(
+        &self,
+        game_address: Address,
+    ) -> Result<Vec<B256>, ContractError> {
+        self.games
+            .get(&game_address)
+            .map(|s| s.intermediate_output_roots.clone())
+            .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
+    }
 }
 
 /// Helper to create an address from a `u64` index.
-fn addr(index: u64) -> Address {
+pub fn addr(index: u64) -> Address {
     let mut bytes = [0u8; 20];
     bytes[12..20].copy_from_slice(&index.to_be_bytes());
     Address::from(bytes)
 }
 
 /// Helper to build a factory game entry.
-fn factory_game(index: u64, game_type: u32) -> GameAtIndex {
+pub fn factory_game(index: u64, game_type: u32) -> GameAtIndex {
     GameAtIndex { game_type, timestamp: 1_000_000 + index, proxy: addr(index) }
 }
 
 /// Helper to build mock game state for the verifier.
-fn mock_state(status: u8, zk_prover: Address, block_number: u64) -> MockGameState {
+pub const fn mock_state(status: u8, zk_prover: Address, block_number: u64) -> MockGameState {
     mock_state_with_tee(status, zk_prover, Address::ZERO, block_number)
 }
 
 /// Helper to build mock game state with an explicit TEE prover address.
-fn mock_state_with_tee(
+pub const fn mock_state_with_tee(
     status: u8,
     zk_prover: Address,
     tee_prover: Address,
@@ -148,6 +172,7 @@ fn mock_state_with_tee(
             parent_index: 0,
         },
         starting_block_number: block_number.saturating_sub(10),
+        intermediate_output_roots: vec![],
     }
 }
 
@@ -260,9 +285,175 @@ impl L2Provider for MockL2Provider {
     }
 }
 
+/// Mock ZK proof provider for testing the driver.
+#[derive(Debug)]
+pub struct MockZkProofProvider {
+    /// Session ID returned by [`prove_block`](ZkProofProvider::prove_block).
+    pub session_id: String,
+    /// Proof job status returned by [`get_proof`](ZkProofProvider::get_proof).
+    pub proof_status: Mutex<i32>,
+    /// Proof receipt bytes returned when status is `Succeeded`.
+    pub receipt: Mutex<Vec<u8>>,
+}
+
+#[async_trait]
+impl ZkProofProvider for MockZkProofProvider {
+    async fn prove_block(
+        &self,
+        _request: ProveBlockRequest,
+    ) -> Result<ProveBlockResponse, ZkProofError> {
+        Ok(ProveBlockResponse { session_id: self.session_id.clone() })
+    }
+
+    async fn get_proof(&self, _request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
+        let status = *self.proof_status.lock().unwrap();
+        let receipt = self.receipt.lock().unwrap().clone();
+        Ok(GetProofResponse { status, receipt })
+    }
+}
+
+/// Mock transaction manager for testing the driver and submitter.
+#[derive(Debug)]
+pub struct MockTxManager {
+    /// Queue of responses returned by [`send`](TxManager::send).
+    pub responses: Mutex<VecDeque<SendResponse>>,
+}
+
+impl MockTxManager {
+    /// Creates a new mock with a single pre-configured response.
+    pub fn new(response: SendResponse) -> Self {
+        let mut q = VecDeque::new();
+        q.push_back(response);
+        Self { responses: Mutex::new(q) }
+    }
+
+    /// Creates a new mock with multiple responses returned in order.
+    pub fn with_responses(responses: Vec<SendResponse>) -> Self {
+        Self { responses: Mutex::new(VecDeque::from(responses)) }
+    }
+}
+
+impl TxManager for MockTxManager {
+    async fn send(&self, _candidate: TxCandidate) -> SendResponse {
+        self.responses.lock().unwrap().pop_front().expect("MockTxManager has no more responses")
+    }
+
+    async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
+        unimplemented!("not needed for these tests")
+    }
+
+    fn sender_address(&self) -> Address {
+        Address::ZERO
+    }
+}
+
+/// Builds a minimal [`TransactionReceipt`] with the given status and hash.
+pub const fn receipt_with_status(success: bool, tx_hash: B256) -> TransactionReceipt {
+    let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
+        receipt: Receipt {
+            status: Eip658Value::Eip658(success),
+            cumulative_gas_used: 21_000,
+            logs: vec![],
+        },
+        logs_bloom: Bloom::ZERO,
+    });
+    TransactionReceipt {
+        inner,
+        transaction_hash: tx_hash,
+        transaction_index: Some(0),
+        block_hash: Some(B256::ZERO),
+        block_number: Some(1),
+        gas_used: 21_000,
+        effective_gas_price: 1_000_000_000,
+        blob_gas_used: None,
+        blob_gas_price: None,
+        from: Address::ZERO,
+        to: Some(Address::ZERO),
+        contract_address: None,
+    }
+}
+
+/// Account structure for RLP encoding in tests.
+#[derive(Debug)]
+pub struct TrieAccount {
+    /// Account nonce.
+    pub nonce: u64,
+    /// Account balance.
+    pub balance: U256,
+    /// Storage root hash.
+    pub storage_root: B256,
+    /// Code hash.
+    pub code_hash: B256,
+}
+
+impl Encodable for TrieAccount {
+    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
+        let header = alloy_rlp::Header {
+            list: true,
+            payload_length: self.nonce.length()
+                + self.balance.length()
+                + self.storage_root.length()
+                + self.code_hash.length(),
+        };
+        header.encode(out);
+        self.nonce.encode(out);
+        self.balance.encode(out);
+        self.storage_root.encode(out);
+        self.code_hash.encode(out);
+    }
+
+    fn length(&self) -> usize {
+        let payload_length = self.nonce.length()
+            + self.balance.length()
+            + self.storage_root.length()
+            + self.code_hash.length();
+        alloy_rlp::length_of_length(payload_length) + payload_length
+    }
+}
+
+/// Builds a consensus header and account result pair with a valid Merkle
+/// proof. The returned header's `state_root` is the trie root that the
+/// account proof verifies against.
+pub fn build_test_header_and_account(
+    block_number: u64,
+    storage_hash: B256,
+) -> (ConsensusHeader, AccountResult) {
+    let account = TrieAccount {
+        nonce: 0,
+        balance: U256::ZERO,
+        storage_root: storage_hash,
+        code_hash: B256::ZERO,
+    };
+    let mut encoded = Vec::with_capacity(account.length());
+    account.encode(&mut encoded);
+
+    let account_key = Nibbles::unpack(keccak256(Predeploys::L2_TO_L1_MESSAGE_PASSER));
+    let mut hb = HashBuilder::default().with_proof_retainer(ProofRetainer::new(vec![account_key]));
+    hb.add_leaf(account_key, &encoded);
+    let state_root = hb.root();
+    let proof_nodes = hb.take_proof_nodes();
+    let account_proof: Vec<Bytes> =
+        proof_nodes.into_nodes_sorted().into_iter().map(|(_, v)| v).collect();
+
+    let header = ConsensusHeader { number: block_number, state_root, ..Default::default() };
+    let account_result = AccountResult {
+        address: Predeploys::L2_TO_L1_MESSAGE_PASSER,
+        account_proof,
+        balance: U256::ZERO,
+        code_hash: B256::ZERO,
+        nonce: U256::ZERO,
+        storage_hash,
+        storage_proof: vec![],
+    };
+    (header, account_result)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::scanner::{GameScanner, ScannerConfig};
 
     /// Happy path: mixed games, only `IN_PROGRESS` / unchallenged returned.
     #[tokio::test]

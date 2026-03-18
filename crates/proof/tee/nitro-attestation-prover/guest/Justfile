@@ -1,0 +1,13 @@
+# Default recipe to display help information
+default:
+    @just --list
+
+# Build the guest ELF with the risc0 toolchain
+build:
+    cargo +risc0 build --release --target riscv32im-risc0-zkvm-elf
+    @echo "ELF built at: target/riscv32im-risc0-zkvm-elf/release/base-proof-tee-nitro-verifier-guest"
+    @ls -lh target/riscv32im-risc0-zkvm-elf/release/base-proof-tee-nitro-verifier-guest
+
+# Install the risc0 toolchain via rzup
+install-toolchain:
+    rzup install

@@ -227,15 +227,16 @@ macro_rules! define_tx_manager_cli {
 /// # Required downstream dependencies
 ///
 /// The macro expands to code that references `::clap::Parser`, `::url::Url`,
-/// and `::alloy_primitives::{Address, B256}` via absolute paths. Consumer
-/// crates that invoke `define_signer_cli!` must add these dependencies to
-/// their own `Cargo.toml`:
+/// `::alloy_primitives::Address`, and `::alloy_signer_local::PrivateKeySigner`
+/// via absolute paths. Consumer crates that invoke `define_signer_cli!` must
+/// add these dependencies to their own `Cargo.toml`:
 ///
 /// ```toml
 /// [dependencies]
 /// clap = { version = "...", features = ["derive", "env"] }
 /// url = "..."
 /// alloy-primitives = "..."
+/// alloy-signer-local = "..."
 /// ```
 #[rustfmt::skip]
 #[macro_export]
@@ -299,14 +300,13 @@ macro_rules! define_signer_cli {
             fn try_from(cli: SignerCli) -> Result<Self, Self::Error> {
                 match (cli.private_key, cli.signer_endpoint, cli.signer_address) {
                     (Some(pk), None, None) => {
-                        let key: ::alloy_primitives::B256 =
-                            pk.parse().map_err(|e: ::alloy_primitives::hex::FromHexError| {
-                                $crate::ConfigError::InvalidValue {
-                                    field: "private-key",
-                                    reason: e.to_string(),
-                                }
+                        let signer = pk
+                            .parse::<::alloy_signer_local::PrivateKeySigner>()
+                            .map_err(|e| $crate::ConfigError::InvalidValue {
+                                field: "private-key",
+                                reason: e.to_string(),
                             })?;
-                        Ok($crate::SignerConfig::local(key))
+                        Ok($crate::SignerConfig::local(signer))
                     }
                     (None, Some(endpoint), Some(address)) => {
                         if endpoint.host().is_none() {

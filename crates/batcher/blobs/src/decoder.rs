@@ -3,10 +3,7 @@
 use alloy_eips::eip4844::{BYTES_PER_BLOB, Blob, VERSIONED_HASH_VERSION_KZG};
 use alloy_primitives::Bytes;
 
-use crate::encoder::BLOB_MAX_DATA_SIZE;
-
-/// Number of encoding rounds (one per group of 4 field elements).
-const BLOB_ENCODING_ROUNDS: usize = 1024;
+use crate::encoder::BlobEncoder;
 
 /// Errors returned by [`BlobDecoder::decode`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -25,7 +22,7 @@ pub enum BlobDecodeError {
         version: u8,
     },
     /// The declared payload length exceeds the maximum allowed size.
-    #[error("invalid length: {length} exceeds maximum {max}", max = BLOB_MAX_DATA_SIZE)]
+    #[error("invalid length: {length} exceeds maximum {max}", max = BlobEncoder::BLOB_MAX_DATA_SIZE)]
     InvalidLength {
         /// The declared length.
         length: usize,
@@ -48,6 +45,9 @@ pub enum BlobDecodeError {
 pub struct BlobDecoder;
 
 impl BlobDecoder {
+    /// Number of encoding rounds (one per group of 4 field elements).
+    const BLOB_ENCODING_ROUNDS: usize = 1024;
+
     /// Decode a [`Blob`] back to the raw payload bytes.
     ///
     /// Returns a [`BlobDecodeError`] if the blob has an invalid encoding
@@ -63,11 +63,11 @@ impl BlobDecoder {
 
         // Decode 3-byte big-endian length.
         let length = u32::from_be_bytes([0, data[2], data[3], data[4]]) as usize;
-        if length > BLOB_MAX_DATA_SIZE {
+        if length > BlobEncoder::BLOB_MAX_DATA_SIZE {
             return Err(BlobDecodeError::InvalidLength { length });
         }
 
-        let mut output = vec![0u8; BLOB_MAX_DATA_SIZE];
+        let mut output = vec![0u8; BlobEncoder::BLOB_MAX_DATA_SIZE];
 
         // --- Round 0 ---
         // FE0 payload: 27 bytes from data[5..32].
@@ -91,7 +91,7 @@ impl BlobDecoder {
         output_pos = Self::reassemble_bytes(output_pos, &encoded_byte, &mut output);
 
         // --- Rounds 1..1024 ---
-        for _ in 1..BLOB_ENCODING_ROUNDS {
+        for _ in 1..Self::BLOB_ENCODING_ROUNDS {
             if output_pos >= length {
                 break;
             }

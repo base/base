@@ -49,27 +49,15 @@ pub struct ProposerArgs {
     pub allow_non_finalized: bool,
 
     /// URL of the enclave RPC endpoint.
-    #[arg(
-        long = "enclave-rpc",
-        env = cli_env!("ENCLAVE_RPC"),
-        value_parser = parse_url
-    )]
+    #[arg(long = "enclave-rpc", env = cli_env!("ENCLAVE_RPC"))]
     pub enclave_rpc: Url,
 
     /// URL of the L1 Ethereum RPC endpoint.
-    #[arg(
-        long = "l1-eth-rpc",
-        env = cli_env!("L1_ETH_RPC"),
-        value_parser = parse_url
-    )]
+    #[arg(long = "l1-eth-rpc", env = cli_env!("L1_ETH_RPC"))]
     pub l1_eth_rpc: Url,
 
     /// URL of the L2 Ethereum RPC endpoint.
-    #[arg(
-        long = "l2-eth-rpc",
-        env = cli_env!("L2_ETH_RPC"),
-        value_parser = parse_url
-    )]
+    #[arg(long = "l2-eth-rpc", env = cli_env!("L2_ETH_RPC"))]
     pub l2_eth_rpc: Url,
 
     /// Use reth-specific RPC calls for L2.
@@ -77,19 +65,11 @@ pub struct ProposerArgs {
     pub l2_reth: bool,
 
     /// Address of the `AnchorStateRegistry` contract on L1.
-    #[arg(
-        long = "anchor-state-registry-addr",
-        env = cli_env!("ANCHOR_STATE_REGISTRY_ADDR"),
-        value_parser = parse_address
-    )]
+    #[arg(long = "anchor-state-registry-addr", env = cli_env!("ANCHOR_STATE_REGISTRY_ADDR"))]
     pub anchor_state_registry_addr: Address,
 
     /// Address of the `DisputeGameFactory` contract on L1.
-    #[arg(
-        long = "dispute-game-factory-addr",
-        env = cli_env!("DISPUTE_GAME_FACTORY_ADDR"),
-        value_parser = parse_address
-    )]
+    #[arg(long = "dispute-game-factory-addr", env = cli_env!("DISPUTE_GAME_FACTORY_ADDR"))]
     pub dispute_game_factory_addr: Address,
 
     /// Game type ID for `AggregateVerifier` dispute games.
@@ -97,11 +77,7 @@ pub struct ProposerArgs {
     pub game_type: u32,
 
     /// Keccak256 hash of the TEE image PCR0 (0x-prefixed hex).
-    #[arg(
-        long = "tee-image-hash",
-        env = cli_env!("TEE_IMAGE_HASH"),
-        value_parser = parse_b256
-    )]
+    #[arg(long = "tee-image-hash", env = cli_env!("TEE_IMAGE_HASH"))]
     pub tee_image_hash: B256,
 
     /// Polling interval for new blocks (e.g., "12s", "1m").
@@ -109,7 +85,7 @@ pub struct ProposerArgs {
         long = "poll-interval",
         env = cli_env!("POLL_INTERVAL"),
         default_value = "12s",
-        value_parser = parse_duration
+        value_parser = humantime::parse_duration
     )]
     pub poll_interval: Duration,
 
@@ -118,16 +94,12 @@ pub struct ProposerArgs {
         long = "rpc-timeout",
         env = cli_env!("RPC_TIMEOUT"),
         default_value = "30s",
-        value_parser = parse_duration
+        value_parser = humantime::parse_duration
     )]
     pub rpc_timeout: Duration,
 
     /// URL of the rollup RPC endpoint.
-    #[arg(
-        long = "rollup-rpc",
-        env = cli_env!("ROLLUP_RPC"),
-        value_parser = parse_url
-    )]
+    #[arg(long = "rollup-rpc", env = cli_env!("ROLLUP_RPC"))]
     pub rollup_rpc: Url,
 
     /// Skip TLS certificate verification.
@@ -151,7 +123,7 @@ pub struct ProposerArgs {
         long = "rpc-retry-initial-delay",
         env = cli_env!("RPC_RETRY_INITIAL_DELAY"),
         default_value = "100ms",
-        value_parser = parse_duration
+        value_parser = humantime::parse_duration
     )]
     pub rpc_retry_initial_delay: Duration,
 
@@ -160,7 +132,7 @@ pub struct ProposerArgs {
         long = "rpc-retry-max-delay",
         env = cli_env!("RPC_RETRY_MAX_DELAY"),
         default_value = "10s",
-        value_parser = parse_duration
+        value_parser = humantime::parse_duration
     )]
     pub rpc_retry_max_delay: Duration,
 
@@ -205,62 +177,11 @@ pub struct RpcServerArgs {
     pub port: u16,
 }
 
-/// Parse a duration string like "12s", "5m", "1h".
-fn parse_duration(s: &str) -> Result<Duration, humantime::DurationError> {
-    humantime::parse_duration(s)
-}
-
-/// Parse a URL string.
-fn parse_url(s: &str) -> Result<Url, url::ParseError> {
-    Url::parse(s)
-}
-
-/// Parse an Ethereum address from hex string.
-fn parse_address(s: &str) -> Result<Address, alloy_primitives::hex::FromHexError> {
-    s.parse()
-}
-
-/// Parse a 32-byte hash from hex string (0x-prefixed).
-fn parse_b256(s: &str) -> Result<B256, alloy_primitives::hex::FromHexError> {
-    s.parse()
-}
-
 #[cfg(test)]
 mod tests {
     use base_cli_utils::LogFormat;
 
     use super::*;
-
-    #[test]
-    fn test_parse_duration_valid() {
-        assert_eq!(parse_duration("12s").unwrap(), Duration::from_secs(12));
-        assert_eq!(parse_duration("5m").unwrap(), Duration::from_secs(300));
-        assert_eq!(parse_duration("1h").unwrap(), Duration::from_secs(3600));
-    }
-
-    #[test]
-    fn test_parse_url_valid() {
-        let url = parse_url("https://example.com").unwrap();
-        assert_eq!(url.scheme(), "https");
-        assert_eq!(url.host_str(), Some("example.com"));
-    }
-
-    #[test]
-    fn test_parse_url_invalid() {
-        assert!(parse_url("not-a-url").is_err());
-    }
-
-    #[test]
-    fn test_parse_address_valid() {
-        let addr = parse_address("0x1234567890123456789012345678901234567890").unwrap();
-        assert_eq!(addr.to_string(), "0x1234567890123456789012345678901234567890");
-    }
-
-    #[test]
-    fn test_parse_address_invalid() {
-        assert!(parse_address("0xnotanaddress").is_err());
-        assert!(parse_address("invalid").is_err());
-    }
 
     #[test]
     fn test_cli_defaults() {

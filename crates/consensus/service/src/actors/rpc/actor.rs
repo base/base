@@ -9,6 +9,7 @@ use base_consensus_rpc::{
     HealthzRpc, L1WatcherQueries, NetworkAdminQuery, OpP2PApiServer, P2pRpc, RollupNodeApiServer,
     RollupRpc, RpcBuilder, SequencerAdminAPIClient, WsRPC, WsServer,
 };
+use base_health::EthHealthCheckLayer;
 use derive_more::Constructor;
 use jsonrpsee::{
     RpcModule,
@@ -64,6 +65,7 @@ async fn launch(
     module: RpcModule<()>,
 ) -> Result<ServerHandle, std::io::Error> {
     let middleware = tower::ServiceBuilder::new()
+        .layer(EthHealthCheckLayer)
         .layer(
             ProxyGetRequestLayer::new([("/healthz", "healthz")])
                 .expect("Critical: Failed to build GET method proxy"),

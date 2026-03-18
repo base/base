@@ -89,12 +89,8 @@ pub struct ChallengerConfig {
     pub l1_eth_rpc: Validated<Url>,
     /// URL of the L2 Ethereum RPC endpoint.
     pub l2_eth_rpc: Validated<Url>,
-    /// URL of the rollup RPC endpoint.
-    pub rollup_rpc: Validated<Url>,
     /// Address of the `DisputeGameFactory` contract on L1.
     pub dispute_game_factory_addr: Address,
-    /// Address of the `AnchorStateRegistry` contract on L1.
-    pub anchor_state_registry_addr: Address,
     /// Polling interval for new dispute games.
     pub poll_interval: Duration,
     /// URL of the ZK proof service endpoint.
@@ -141,7 +137,6 @@ impl ChallengerConfig {
         // Validate URLs have scheme and host
         let l1_eth_rpc = validate(cli.challenger.l1_eth_rpc, "l1-eth-rpc")?;
         let l2_eth_rpc = validate(cli.challenger.l2_eth_rpc, "l2-eth-rpc")?;
-        let rollup_rpc = validate(cli.challenger.rollup_rpc, "rollup-rpc")?;
         let zk_proof_service_endpoint =
             validate(cli.challenger.zk_proof_service_endpoint, "zk-proof-service-endpoint")?;
 
@@ -200,9 +195,7 @@ impl ChallengerConfig {
         Ok(Self {
             l1_eth_rpc,
             l2_eth_rpc,
-            rollup_rpc,
             dispute_game_factory_addr: cli.challenger.dispute_game_factory_addr,
-            anchor_state_registry_addr: cli.challenger.anchor_state_registry_addr,
             poll_interval: cli.challenger.poll_interval,
             zk_proof_service_endpoint,
             zk_connect_timeout: cli.challenger.zk_connect_timeout,
@@ -238,9 +231,7 @@ mod tests {
         let base: &[(&str, &str)] = &[
             ("--l1-eth-rpc", "http://localhost:8545"),
             ("--l2-eth-rpc", "http://localhost:9545"),
-            ("--rollup-rpc", "http://localhost:7545"),
             ("--dispute-game-factory-addr", "0x1234567890123456789012345678901234567890"),
-            ("--anchor-state-registry-addr", "0x2234567890123456789012345678901234567890"),
             ("--zk-proof-service-endpoint", "http://localhost:5000"),
         ];
 
@@ -401,12 +392,8 @@ mod tests {
             "http://localhost:8545",
             "--l2-eth-rpc",
             "http://localhost:9545",
-            "--rollup-rpc",
-            "http://localhost:7545",
             "--dispute-game-factory-addr",
             "0x1234567890123456789012345678901234567890",
-            "--anchor-state-registry-addr",
-            "0x2234567890123456789012345678901234567890",
             "--zk-proof-service-endpoint",
             "http://localhost:5000",
             "--private-key",
@@ -427,12 +414,8 @@ mod tests {
             "http://localhost:8545",
             "--l2-eth-rpc",
             "http://localhost:9545",
-            "--rollup-rpc",
-            "http://localhost:7545",
             "--dispute-game-factory-addr",
             "0x1234567890123456789012345678901234567890",
-            "--anchor-state-registry-addr",
-            "0x2234567890123456789012345678901234567890",
             "--zk-proof-service-endpoint",
             "http://localhost:5000",
             "--signer-endpoint",

@@ -49,6 +49,9 @@ sol! {
         /// Returns the starting block number.
         function startingBlockNumber() external view returns (uint256);
 
+        /// Returns the intermediate output roots submitted with this game.
+        function intermediateOutputRoots() external view returns (bytes memory);
+
         /// Nullifies an intermediate root checkpoint for the given game.
         ///
         /// The first byte of `proofBytes` is the proof type discriminator:
@@ -99,6 +102,14 @@ pub trait AggregateVerifierClient: Send + Sync {
         &self,
         impl_address: Address,
     ) -> Result<u64, ContractError>;
+
+    /// Returns the intermediate output roots for the given game.
+    ///
+    /// The raw bytes are expected to be a concatenation of 32-byte hashes.
+    async fn intermediate_output_roots(
+        &self,
+        game_address: Address,
+    ) -> Result<Vec<B256>, ContractError>;
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -237,6 +248,29 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         }
 
         Ok(interval)
+    }
+
+    async fn intermediate_output_roots(
+        &self,
+        game_address: Address,
+    ) -> Result<Vec<B256>, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        let raw: Bytes = contract.intermediateOutputRoots().call().await.map_err(|e| {
+            ContractError::Call { context: "intermediateOutputRoots failed".into(), source: e }
+        })?;
+
+        if !raw.len().is_multiple_of(32) {
+            return Err(ContractError::Validation(format!(
+                "intermediateOutputRoots length {} is not a multiple of 32",
+                raw.len()
+            )));
+        }
+
+        let roots = raw.chunks_exact(32).map(|chunk| B256::from_slice(chunk)).collect();
+
+        Ok(roots)
     }
 }
 

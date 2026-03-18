@@ -186,6 +186,23 @@ skip = [
 
     "half",
     "memoffset",
+
+    # risc0/boundless transitive dependency mismatches
+    "alloy-hardforks",
+    "cargo-platform",
+    "cargo_metadata",
+    "foreign-types",
+    "foreign-types-shared",
+    "num-bigint",
+    "pastey",
+    "ringbuffer",
+    "tracing-subscriber",
+    "wasm-streams",
+    "zip",
+    "addr2line",
+    "embedded-io",
+    "gimli",
+    "object",
 ]
 
 [sources]

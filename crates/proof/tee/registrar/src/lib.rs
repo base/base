@@ -19,9 +19,7 @@ mod registry;
 pub use registry::{RegistryClient, RegistryContractClient};
 
 mod traits;
-pub use traits::{AttestationProofProvider, InstanceDiscovery};
+pub use traits::InstanceDiscovery;
 
 mod types;
-pub use types::{
-    AttestationProof, AttestationResponse, InstanceHealthStatus, ProverInstance, RegisteredSigner,
-};
+pub use types::{AttestationResponse, InstanceHealthStatus, ProverInstance, RegisteredSigner};
