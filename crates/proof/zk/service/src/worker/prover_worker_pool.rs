@@ -41,6 +41,7 @@ impl ProveBlockRequestParams {
             number_of_blocks_to_prove: self.number_of_blocks_to_prove,
             sequence_window: self.sequence_window,
             proof_type,
+            session_id: None,
         })
     }
 }

@@ -86,6 +86,7 @@ const fn default_prove_request() -> ProveBlockRequest {
         number_of_blocks_to_prove: 5,
         sequence_window: None,
         proof_type: ProofType::GenericZkvmClusterCompressed as i32,
+        session_id: None,
     }
 }
 

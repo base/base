@@ -21,6 +21,9 @@ message ProveBlockRequest {
   optional uint64 sequence_window = 3;
   // The type of proof to generate
   ProofType proof_type = 4;
+  // Optional client-supplied idempotency key. When set, the server
+  // may use it to deduplicate concurrent or retried proof requests.
+  optional string session_id = 5;
 }
 
 message ProveBlockResponse {
