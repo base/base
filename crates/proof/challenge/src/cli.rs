@@ -95,6 +95,10 @@ pub struct ChallengerArgs {
     )]
     pub zk_request_timeout: Duration,
 
+    /// URL of the TEE enclave RPC endpoint (optional; enables TEE-first proof sourcing).
+    #[arg(long = "enclave-rpc-url", env = cli_env!("ENCLAVE_RPC_URL"))]
+    pub enclave_rpc_url: Option<Url>,
+
     /// Signer configuration (local private key or remote sidecar).
     #[command(flatten)]
     pub signer: SignerCli,
@@ -126,6 +130,7 @@ impl std::fmt::Debug for ChallengerArgs {
             .field("zk_proof_service_endpoint", &self.zk_proof_service_endpoint)
             .field("zk_connect_timeout", &self.zk_connect_timeout)
             .field("zk_request_timeout", &self.zk_request_timeout)
+            .field("enclave_rpc_url", &self.enclave_rpc_url)
             .field("signer", &self.signer)
             .field("tx_manager", &self.tx_manager)
             .field("lookback_games", &self.lookback_games)

@@ -172,7 +172,16 @@ impl<L2: L2Provider> OutputValidator<L2> {
     /// passes them to [`output_root_v0`]. Verifies that the RPC-provided header
     /// hash matches the hash computed from the consensus header as a
     /// defense-in-depth check against compromised or buggy RPC nodes.
-    async fn compute_output_root(&self, block_number: u64) -> Result<B256, ValidatorError> {
+    pub async fn compute_output_root(&self, block_number: u64) -> Result<B256, ValidatorError> {
+        let (_, output_root) = self.compute_output_root_with_hash(block_number).await?;
+        Ok(output_root)
+    }
+
+    /// Computes the output root and block hash for a given L2 block number.
+    pub async fn compute_output_root_with_hash(
+        &self,
+        block_number: u64,
+    ) -> Result<(B256, B256), ValidatorError> {
         let rpc_header =
             self.l2_provider.header_by_number(Some(block_number)).await.map_err(|e| match &e {
                 RpcError::HeaderNotFound(_) | RpcError::BlockNotFound(_) => {
@@ -184,9 +193,6 @@ impl<L2: L2Provider> OutputValidator<L2> {
         let rpc_hash = rpc_header.hash;
         let consensus_header = rpc_header.inner;
 
-        // Verify that the RPC-provided hash matches the actual consensus header
-        // hash. This guards against a compromised or buggy RPC node returning a
-        // header whose hash does not match the inner consensus data.
         let computed_hash = consensus_header.hash_slow();
         if rpc_hash != computed_hash {
             return Err(ValidatorError::HeaderHashMismatch {
@@ -204,8 +210,9 @@ impl<L2: L2Provider> OutputValidator<L2> {
         })?;
 
         let storage_root = account_result.storage_hash;
+        let output_root = output_root_v0_with_hash(&consensus_header, storage_root, computed_hash);
 
-        Ok(output_root_v0_with_hash(&consensus_header, storage_root, computed_hash))
+        Ok((computed_hash, output_root))
     }
 
     /// Validates output roots at the given checkpoints.

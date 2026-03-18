@@ -99,6 +99,8 @@ pub struct ChallengerConfig {
     pub zk_connect_timeout: Duration,
     /// Timeout for individual gRPC requests to the ZK proof service.
     pub zk_request_timeout: Duration,
+    /// URL of the TEE enclave RPC endpoint (optional).
+    pub enclave_rpc_url: Option<Validated<Url>>,
     /// Signing configuration for L1 transaction submission.
     pub signing: SignerConfig,
     /// Transaction manager configuration (fee limits, confirmations, timeouts).
@@ -139,6 +141,11 @@ impl ChallengerConfig {
         let l2_eth_rpc = validate(cli.challenger.l2_eth_rpc, "l2-eth-rpc")?;
         let zk_proof_service_endpoint =
             validate(cli.challenger.zk_proof_service_endpoint, "zk-proof-service-endpoint")?;
+        let enclave_rpc_url = cli
+            .challenger
+            .enclave_rpc_url
+            .map(|url| validate(url, "enclave-rpc-url"))
+            .transpose()?;
 
         // Validate poll_interval > 0
         if cli.challenger.poll_interval.is_zero() {
@@ -200,6 +207,7 @@ impl ChallengerConfig {
             zk_proof_service_endpoint,
             zk_connect_timeout: cli.challenger.zk_connect_timeout,
             zk_request_timeout: cli.challenger.zk_request_timeout,
+            enclave_rpc_url,
             signing,
             tx_manager,
             lookback_games: cli.challenger.lookback_games,

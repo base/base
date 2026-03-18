@@ -12,8 +12,11 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, Bytes};
+use alloy_provider::{Provider, RootProvider};
+use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_proof_contracts::AggregateVerifierClient;
+use base_proof_primitives::ProofRequest as TeeProofRequest;
 use base_proof_rpc::L2Provider;
 use base_tx_manager::TxManager;
 use base_zk_client::{ProofType, ProveBlockRequest, ZkProofProvider};
@@ -24,7 +27,7 @@ use tracing::{debug, info, warn};
 use crate::{
     CandidateGame, ChallengeSubmitter, ChallengerMetrics, GameScanner,
     IntermediateValidationParams, OutputValidator, PendingProof, PendingProofs, ProofPhase,
-    ProofUpdate, ValidatorError,
+    ProofUpdate, TeeProofProvider, ValidatorError, encode_tee_proof,
 };
 
 /// Configuration for the challenger [`Driver`].
@@ -36,6 +39,20 @@ pub struct DriverConfig {
     pub cancel: CancellationToken,
     /// Shared flag flipped to `true` after the first successful driver step.
     pub ready: Arc<AtomicBool>,
+}
+
+/// TEE proof configuration, bundling the provider and L1 RPC client.
+pub struct TeeConfig {
+    /// TEE proof provider.
+    pub provider: Arc<dyn TeeProofProvider>,
+    /// L1 RPC provider for fetching the finalized head hash.
+    pub l1_provider: RootProvider,
+}
+
+impl std::fmt::Debug for TeeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TeeConfig").field("provider", &self.provider).finish_non_exhaustive()
+    }
 }
 
 /// Orchestrates the challenger pipeline: scan, validate, prove, submit.
@@ -53,6 +70,8 @@ where
     pub zk_prover: Arc<P>,
     /// Submits challenge transactions to L1.
     pub submitter: ChallengeSubmitter<T>,
+    /// Optional TEE proof configuration (provider + L1 RPC client).
+    pub tee: Option<TeeConfig>,
     /// Client for the aggregate verifier contract.
     pub verifier_client: Arc<dyn AggregateVerifierClient>,
     /// In-flight proof sessions keyed by game address.
@@ -88,6 +107,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         validator: OutputValidator<L2>,
         zk_prover: Arc<P>,
         submitter: ChallengeSubmitter<T>,
+        tee: Option<TeeConfig>,
         verifier_client: Arc<dyn AggregateVerifierClient>,
     ) -> Self {
         Self {
@@ -95,6 +115,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             validator,
             zk_prover,
             submitter,
+            tee,
             verifier_client,
             pending_proofs: PendingProofs::new(),
             poll_interval: config.poll_interval,
@@ -197,7 +218,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             l2_block_number: candidate.info.l2_block_number,
             intermediate_block_interval: candidate.intermediate_block_interval,
             claimed_root: candidate.info.root_claim,
-            intermediate_roots,
+            intermediate_roots: intermediate_roots.clone(),
         };
 
         let result = match self.validator.validate_intermediate_roots(params).await {
@@ -241,11 +262,134 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             "invalid intermediate root detected, requesting proof"
         );
 
-        self.initiate_proof(candidate, invalid_index, expected_root).await
+        self.initiate_proof(candidate, invalid_index, expected_root, &intermediate_roots).await
+    }
+
+    /// Attempts TEE-first proof sourcing with ZK fallback.
+    async fn initiate_proof(
+        &mut self,
+        candidate: CandidateGame,
+        invalid_index: u64,
+        expected_root: B256,
+        intermediate_roots: &[B256],
+    ) -> eyre::Result<()> {
+        let game_address = candidate.factory.proxy;
+
+        // TEE-first: try if game has a TEE prover and we have a TEE config.
+        if candidate.tee_prover != Address::ZERO
+            && let Some(tee) = &self.tee
+        {
+            metrics::counter!(ChallengerMetrics::TEE_PROOF_ATTEMPTS_TOTAL).increment(1);
+            match self
+                .attempt_tee_proof(
+                    &candidate,
+                    invalid_index,
+                    expected_root,
+                    intermediate_roots,
+                    tee,
+                )
+                .await
+            {
+                Ok(proof_bytes) => {
+                    info!(game = %game_address, path = "tee", "TEE proof obtained, submitting");
+                    match self
+                        .submitter
+                        .submit_nullification(
+                            game_address,
+                            proof_bytes,
+                            invalid_index,
+                            expected_root,
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            metrics::counter!(ChallengerMetrics::TEE_PROOF_SUCCESS_TOTAL)
+                                .increment(1);
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                game = %game_address,
+                                "TEE nullification failed, falling back to ZK"
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        game = %game_address,
+                        "TEE proof failed, falling back to ZK"
+                    );
+                }
+            }
+            metrics::counter!(ChallengerMetrics::TEE_PROOF_FALLBACK_TOTAL).increment(1);
+        }
+
+        // ZK fallback (or direct ZK if no TEE prover).
+        self.initiate_zk_proof(candidate, invalid_index, expected_root).await
+    }
+
+    /// Attempts to obtain a TEE proof for the given candidate game.
+    async fn attempt_tee_proof(
+        &self,
+        candidate: &CandidateGame,
+        invalid_index: u64,
+        expected_root: B256,
+        intermediate_roots: &[B256],
+        tee: &TeeConfig,
+    ) -> eyre::Result<Bytes> {
+        let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
+
+        let claimed_l2_block_number = start_block_number
+            .checked_add(candidate.intermediate_block_interval)
+            .ok_or_else(|| eyre::eyre!("claimed_l2_block_number overflow"))?;
+
+        // Fetch L1 finalized head and compute agreed L2 state concurrently.
+        let (l1_block_result, output_root_result) = tokio::join!(
+            tee.l1_provider.get_block_by_number(BlockNumberOrTag::Finalized),
+            self.validator.compute_output_root_with_hash(start_block_number),
+        );
+        let l1_head = l1_block_result?
+            .ok_or_else(|| eyre::eyre!("L1 finalized block not found"))?
+            .header
+            .hash;
+        let (agreed_l2_head_hash, agreed_l2_output_root) = output_root_result?;
+
+        // The claimed root is the (wrong) on-chain root at the invalid index.
+        let claimed_l2_output_root = intermediate_roots[invalid_index as usize];
+
+        let request = TeeProofRequest {
+            l1_head,
+            agreed_l2_head_hash,
+            agreed_l2_output_root,
+            claimed_l2_output_root,
+            claimed_l2_block_number,
+        };
+
+        let result = tee.provider.prove(request).await?;
+
+        // Validate that the TEE computed the expected output root.
+        match &result {
+            base_proof_primitives::ProofResult::Tee { aggregate_proposal, .. } => {
+                if aggregate_proposal.output_root != expected_root {
+                    return Err(eyre::eyre!(
+                        "TEE computed unexpected output root: expected {expected_root}, got {}",
+                        aggregate_proposal.output_root
+                    ));
+                }
+            }
+            base_proof_primitives::ProofResult::Zk { .. } => {
+                return Err(eyre::eyre!("TEE provider returned ZK result"));
+            }
+        }
+
+        encode_tee_proof(&result)
     }
 
     /// Requests a ZK proof, stores the session, and polls for the result.
-    async fn initiate_proof(
+    async fn initiate_zk_proof(
         &mut self,
         candidate: CandidateGame,
         invalid_index: u64,
@@ -257,14 +401,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         // invalid_index == 0) is a trusted anchor, so the ZK proof only
         // needs to cover the single interval that contains the invalid
         // checkpoint: [prior_checkpoint .. invalid_checkpoint].
-        let start_offset = candidate
-            .intermediate_block_interval
-            .checked_mul(invalid_index)
-            .ok_or_else(|| eyre::eyre!("start_block_number offset overflow"))?;
-        let start_block_number = candidate
-            .starting_block_number
-            .checked_add(start_offset)
-            .ok_or_else(|| eyre::eyre!("start_block_number overflow"))?;
+        let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
 
         let request = ProveBlockRequest {
             start_block_number,

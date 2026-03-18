@@ -114,6 +114,21 @@ impl ChallengerService {
         let zk_client = Arc::new(ZkProofClient::new(&zk_config)?);
         info!(endpoint = %config.zk_proof_service_endpoint, "ZK proof client initialized");
 
+        // ── 6b. TEE enclave client (optional) ────────────────────────────────
+        let tee: Option<crate::TeeConfig> = if let Some(ref enclave_url) = config.enclave_rpc_url {
+            let client = base_enclave_client::EnclaveClient::new(enclave_url.as_str())
+                .map_err(|e| eyre::eyre!("failed to create enclave client: {e}"))?;
+            info!(endpoint = %enclave_url, "TEE enclave client initialized");
+            let tee_l1_provider = RootProvider::new_http(config.l1_eth_rpc.as_ref().clone());
+            Some(crate::TeeConfig {
+                provider: Arc::new(crate::EnclaveTeeProvider::new(client)),
+                l1_provider: tee_l1_provider,
+            })
+        } else {
+            info!("TEE proof sourcing disabled (no --enclave-rpc-url)");
+            None
+        };
+
         // ── 7. Assemble scanner, validator, and driver ───────────────────────
         let scanner_config = ScannerConfig { lookback_games: config.lookback_games };
         let scanner =
@@ -138,8 +153,15 @@ impl ChallengerService {
             cancel: cancel.child_token(),
             ready: Arc::clone(&ready),
         };
-        let driver =
-            Driver::new(driver_config, scanner, validator, zk_client, submitter, verifier_client);
+        let driver = Driver::new(
+            driver_config,
+            scanner,
+            validator,
+            zk_client,
+            submitter,
+            tee,
+            verifier_client,
+        );
 
         // Drop guard ensures child tasks are cancelled even if the driver panics.
         let cancel_guard = cancel.clone().drop_guard();

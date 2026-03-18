@@ -21,6 +21,7 @@ alloy-rpc-types-eth.workspace = true
 # Async
 tokio.workspace = true
 futures.workspace = true
+async-trait.workspace = true
 
 # Tracing
 tracing.workspace = true
@@ -53,6 +54,8 @@ base-protocol.workspace = true
 
 # Enclave
 base-enclave.workspace = true
+base-enclave-client.workspace = true
+base-proof-primitives = { workspace = true, features = ["serde", "std"] }
 
 # Metrics
 metrics.workspace = true
@@ -72,7 +75,6 @@ axum = { workspace = true, features = ["http1", "tokio"] }
 alloy-rlp = { workspace = true, optional = true }
 alloy-trie = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-async-trait = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
@@ -81,4 +83,4 @@ tokio = { workspace = true, features = ["test-util"] }
 base-challenger = { path = ".", features = ["test-utils"] }
 
 [features]
-test-utils = [ "alloy-rlp", "alloy-trie", "async-trait", "serde_json" ]
+test-utils = [ "alloy-rlp", "alloy-trie", "serde_json" ]

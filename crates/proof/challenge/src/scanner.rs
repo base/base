@@ -44,6 +44,21 @@ pub struct CandidateGame {
     pub starting_block_number: u64,
     /// The intermediate block interval for this game's type.
     pub intermediate_block_interval: u64,
+    /// Address of the TEE prover for this game (`Address::ZERO` if none registered).
+    pub tee_prover: Address,
+}
+
+impl CandidateGame {
+    /// Computes the starting block number for the given intermediate root index.
+    pub fn checkpoint_start_block(&self, index: u64) -> eyre::Result<u64> {
+        let offset = self
+            .intermediate_block_interval
+            .checked_mul(index)
+            .ok_or_else(|| eyre::eyre!("checkpoint offset overflow"))?;
+        self.starting_block_number
+            .checked_add(offset)
+            .ok_or_else(|| eyre::eyre!("checkpoint start block overflow"))
+    }
 }
 
 /// Scans the `DisputeGameFactory` for new dispute games that need validation.
@@ -188,9 +203,10 @@ impl GameScanner {
             return Ok(None);
         }
 
-        let (info, starting_block_number) = tokio::try_join!(
+        let (info, starting_block_number, tee_prover) = tokio::try_join!(
             self.verifier_client.game_info(factory.proxy),
             self.verifier_client.starting_block_number(factory.proxy),
+            self.verifier_client.tee_prover(factory.proxy),
         )?;
 
         let intermediate_block_interval =
@@ -202,6 +218,7 @@ impl GameScanner {
             info,
             starting_block_number,
             intermediate_block_interval,
+            tee_prover,
         }))
     }
 

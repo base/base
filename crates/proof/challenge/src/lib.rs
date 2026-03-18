@@ -13,7 +13,7 @@ mod config;
 pub use config::{ChallengerConfig, ConfigError, UrlValidationError, Validated};
 
 mod driver;
-pub use driver::{Driver, DriverConfig};
+pub use driver::{Driver, DriverConfig, TeeConfig};
 
 mod pending;
 pub use pending::{PendingProof, PendingProofs, ProofPhase, ProofUpdate};
@@ -35,6 +35,9 @@ pub use service::ChallengerService;
 
 mod submitter;
 pub use submitter::ChallengeSubmitter;
+
+mod tee;
+pub use tee::{EnclaveTeeProvider, TeeProofProvider, encode_tee_proof};
 
 mod validator;
 pub use validator::{
