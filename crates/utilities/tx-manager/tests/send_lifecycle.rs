@@ -254,8 +254,8 @@ async fn query_receipt_returns_confirmed_receipt() {
         manager.publish_tx(&send_state, &prepared.raw_tx, None).await.expect("should publish tx");
 
     // Mine an extra block so tip_height is strictly ahead of the tx block.
-    // query_receipt fetches tip_height before the receipt (for reorg safety),
-    // so under CI load the tip may be stale on a single-call test.
+    // query_receipt fetches tip_height and receipt in parallel, so under CI
+    // load the tip may be stale on a single-call test.
     mine_block(&manager).await;
 
     // With num_confirmations = 1 and the extra block mined above,

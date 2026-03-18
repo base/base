@@ -137,8 +137,8 @@ async fn query_receipt_returns_none_after_reorg_removes_tx() {
     );
 }
 
-/// Tx is reorged into a different block. Documents current behavior:
-/// `query_receipt` performs no block hash validation.
+/// Tx is reorged into a different block. The receipt is accepted because the
+/// re-included tx's block hash matches the canonical chain after the reorg.
 #[tokio::test]
 async fn query_receipt_returns_receipt_after_reorg_reinclusion() {
     let config = TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() };
@@ -200,7 +200,8 @@ async fn query_receipt_returns_receipt_after_reorg_reinclusion() {
         "block hash should change after reorg reinclusion",
     );
 
-    // query_receipt should still return Some (no block hash validation).
+    // query_receipt validates the receipt's block hash against the canonical
+    // chain. The re-included tx is on the canonical chain, so it should pass.
     let result = query(&send_state, &manager, tx_hash, 1).await;
     assert!(result.is_some(), "receipt should exist after reinclusion");
 }
