@@ -178,6 +178,10 @@ impl<L2: L2Provider> OutputValidator<L2> {
     }
 
     /// Computes the output root and block hash for a given L2 block number.
+    ///
+    /// Also verifies that the RPC-provided header hash matches the hash
+    /// computed from the consensus header, guarding against a compromised or
+    /// buggy RPC node.
     pub async fn compute_output_root_with_hash(
         &self,
         block_number: u64,
@@ -193,6 +197,9 @@ impl<L2: L2Provider> OutputValidator<L2> {
         let rpc_hash = rpc_header.hash;
         let consensus_header = rpc_header.inner;
 
+        // Verify that the RPC-provided hash matches the actual consensus header
+        // hash. This guards against a compromised or buggy RPC node returning a
+        // header whose hash does not match the inner consensus data.
         let computed_hash = consensus_header.hash_slow();
         if rpc_hash != computed_hash {
             return Err(ValidatorError::HeaderHashMismatch {

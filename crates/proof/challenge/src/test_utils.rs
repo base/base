@@ -27,7 +27,7 @@ use base_zk_client::{
     ZkProofProvider,
 };
 
-use crate::TeeProofProvider;
+use crate::{L1HeadProvider, TeeProofProvider};
 
 /// Per-game state for the mock verifier.
 #[derive(Debug, Clone)]
@@ -342,6 +342,36 @@ impl MockTeeProofProvider {
 impl TeeProofProvider for MockTeeProofProvider {
     async fn prove(&self, _request: ProofRequest) -> eyre::Result<ProofResult> {
         self.results.lock().unwrap().pop_front().expect("MockTeeProofProvider has no more results")
+    }
+}
+
+/// Mock L1 head provider for testing the driver.
+#[derive(Debug)]
+pub struct MockL1HeadProvider {
+    /// Queue of results returned by [`finalized_head_hash`](L1HeadProvider::finalized_head_hash).
+    pub results: Mutex<VecDeque<eyre::Result<B256>>>,
+}
+
+impl MockL1HeadProvider {
+    /// Creates a mock that returns a single successful hash.
+    pub fn success(hash: B256) -> Self {
+        let mut q = VecDeque::new();
+        q.push_back(Ok(hash));
+        Self { results: Mutex::new(q) }
+    }
+
+    /// Creates a mock that returns a single error.
+    pub fn failure(msg: &str) -> Self {
+        let mut q = VecDeque::new();
+        q.push_back(Err(eyre::eyre!("{msg}")));
+        Self { results: Mutex::new(q) }
+    }
+}
+
+#[async_trait]
+impl L1HeadProvider for MockL1HeadProvider {
+    async fn finalized_head_hash(&self) -> eyre::Result<B256> {
+        self.results.lock().unwrap().pop_front().expect("MockL1HeadProvider has no more results")
     }
 }
 

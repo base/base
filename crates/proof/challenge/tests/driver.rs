@@ -6,28 +6,22 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{Address, B256, Bytes};
-use alloy_provider::RootProvider;
+use alloy_primitives::{Address, B256, Bytes, U256};
 use base_challenger::{
-    ChallengeSubmitter, Driver, DriverConfig, GameScanner, OutputValidator, PendingProof,
-    ProofPhase, ScannerConfig, TeeConfig, TeeProofProvider,
+    ChallengeSubmitter, Driver, DriverConfig, GameScanner, L1HeadProvider, OutputValidator,
+    PendingProof, ProofPhase, ScannerConfig, TeeConfig, TeeProofProvider,
     test_utils::{
-        MockAggregateVerifier, MockDisputeGameFactory, MockGameState, MockL2Provider,
-        MockTeeProofProvider, MockTxManager, MockZkProofProvider, addr,
+        MockAggregateVerifier, MockDisputeGameFactory, MockGameState, MockL1HeadProvider,
+        MockL2Provider, MockTeeProofProvider, MockTxManager, MockZkProofProvider, addr,
         build_test_header_and_account, factory_game, mock_state, receipt_with_status,
     },
 };
 use base_enclave::output_root_v0;
 use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex};
+use base_proof_primitives::{ProofResult, Proposal};
 use base_tx_manager::TxManagerError;
 use base_zk_client::{ProofJobStatus, ProofType, ProveBlockRequest};
 use tokio_util::sync::CancellationToken;
-
-/// Creates a dummy L1 `RootProvider` for tests (no real RPC required since
-/// TEE-disabled tests never call the L1 provider).
-fn dummy_l1_provider() -> RootProvider {
-    RootProvider::new_http("http://localhost:1".parse().unwrap())
-}
 
 /// Builds a test driver with the given mocks.
 fn test_driver(
@@ -669,7 +663,7 @@ async fn test_step_invalid_game_tee_fails_zk_fallback() {
         tx_manager,
         Some(TeeConfig {
             provider: tee as Arc<dyn TeeProofProvider>,
-            l1_provider: dummy_l1_provider(),
+            l1_head_provider: Arc::new(MockL1HeadProvider::failure("dummy")),
         }),
     );
 
@@ -707,7 +701,7 @@ async fn test_step_invalid_game_no_tee_prover_zk_only() {
         tx_manager,
         Some(TeeConfig {
             provider: tee as Arc<dyn TeeProofProvider>,
-            l1_provider: dummy_l1_provider(),
+            l1_head_provider: Arc::new(MockL1HeadProvider::failure("dummy")),
         }),
     );
 
@@ -748,15 +742,9 @@ async fn test_step_invalid_game_no_tee_provider_zk_only() {
 }
 
 #[tokio::test]
-async fn test_step_invalid_game_tee_proof_succeeds() {
-    // Game has a TEE prover, TEE provider returns a valid proof. The driver
-    // should submit the TEE proof without initiating a ZK session.
-    //
-    // To avoid needing a real L1 RPC endpoint for the finalized block fetch
-    // inside `attempt_tee_proof`, we verify that the TEE proof path is tried
-    // and that the fallback to ZK is triggered when the inner L1 call fails.
-    // The TEE path's L1 provider call will fail with the dummy provider,
-    // so this test verifies the full fallback path end-to-end.
+async fn test_step_invalid_game_tee_fails_zk_succeeds() {
+    // Game has a TEE prover, TEE proof attempt fails, driver falls back to
+    // ZK, ZK proof succeeds immediately, nullification submitted.
     let (l2, factory, verifier) = invalid_game_mocks_with_tee();
 
     let tee = Arc::new(MockTeeProofProvider::failure("L1 unreachable"));
@@ -777,11 +765,11 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
         tx_manager,
         Some(TeeConfig {
             provider: tee as Arc<dyn TeeProofProvider>,
-            l1_provider: dummy_l1_provider(),
+            l1_head_provider: Arc::new(MockL1HeadProvider::failure("dummy")),
         }),
     );
 
-    // Step: TEE path is attempted (fails due to L1 provider), falls back to
+    // Step: TEE path is attempted (fails due to provider error), falls back to
     // ZK, proof succeeds immediately, nullification submitted.
     driver.step().await.unwrap();
 
@@ -789,5 +777,90 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
         "entry should be removed after successful ZK fallback submission"
+    );
+}
+
+#[tokio::test]
+async fn test_step_invalid_game_tee_proof_succeeds() {
+    // Game has a TEE prover, L1 head provider returns a valid hash, TEE proof
+    // provider returns a valid proof with the correct output root. The driver
+    // should submit the TEE proof directly without initiating a ZK session.
+    let storage_hash = B256::repeat_byte(0xBB);
+    let (header_15, account_15) = build_test_header_and_account(15, storage_hash);
+    let root_15 = output_root_v0(&header_15, storage_hash);
+    let (header_20, account_20) = build_test_header_and_account(20, storage_hash);
+    let root_20 = output_root_v0(&header_20, storage_hash);
+
+    let mut l2 = MockL2Provider::new();
+    l2.insert_block(15, header_15, account_15);
+    l2.insert_block(20, header_20, account_20);
+    let l2 = Arc::new(l2);
+
+    let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+    let tee_addr = Address::repeat_byte(0xEE);
+    let mut verifier_games = HashMap::new();
+    verifier_games.insert(
+        addr(0),
+        MockGameState {
+            status: 0,
+            zk_prover: Address::ZERO,
+            tee_prover: tee_addr,
+            game_info: base_proof_contracts::GameInfo {
+                root_claim: B256::repeat_byte(0x01),
+                l2_block_number: 20,
+                parent_index: 0,
+            },
+            starting_block_number: 10,
+            // root_15 is correct, index 1 is bogus — invalid_index == 1
+            intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
+        },
+    );
+    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+    let l1_hash = B256::repeat_byte(0xAA);
+    let l1_head = Arc::new(MockL1HeadProvider::success(l1_hash));
+
+    let aggregate_proposal = Proposal {
+        output_root: root_20,
+        signature: Bytes::from(vec![0u8; 65]),
+        l1_origin_hash: l1_hash,
+        l1_origin_number: U256::from(1000),
+        l2_block_number: U256::from(20),
+        prev_output_root: root_15,
+        config_hash: B256::ZERO,
+    };
+    let tee_provider = Arc::new(MockTeeProofProvider::success(ProofResult::Tee {
+        aggregate_proposal,
+        proposals: vec![],
+    }));
+
+    let tx_hash = B256::repeat_byte(0xDD);
+    let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
+
+    // ZK prover should NOT be called since TEE proof succeeds.
+    let zk = Arc::new(MockZkProofProvider {
+        session_id: "should-not-be-called".to_string(),
+        proof_status: Mutex::new(ProofJobStatus::Created as i32),
+        receipt: Mutex::new(vec![]),
+    });
+
+    let mut driver = test_driver_with_tee(
+        factory,
+        verifier,
+        l2,
+        zk,
+        tx_manager,
+        Some(TeeConfig {
+            provider: tee_provider as Arc<dyn TeeProofProvider>,
+            l1_head_provider: l1_head as Arc<dyn L1HeadProvider>,
+        }),
+    );
+
+    driver.step().await.unwrap();
+
+    // TEE proof was submitted directly — no pending ZK proof.
+    assert!(
+        !driver.pending_proofs.contains_key(&addr(0)),
+        "no pending ZK proof should exist after successful TEE submission"
     );
 }

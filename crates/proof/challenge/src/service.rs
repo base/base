@@ -122,7 +122,7 @@ impl ChallengerService {
             let tee_l1_provider = RootProvider::new_http(config.l1_eth_rpc.as_ref().clone());
             Some(crate::TeeConfig {
                 provider: Arc::new(crate::EnclaveTeeProvider::new(client)),
-                l1_provider: tee_l1_provider,
+                l1_head_provider: Arc::new(crate::RpcL1HeadProvider::new(tee_l1_provider)),
             })
         } else {
             info!("TEE proof sourcing disabled (no --enclave-rpc-url)");

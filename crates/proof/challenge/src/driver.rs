@@ -13,8 +13,6 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, Bytes};
-use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_proof_contracts::AggregateVerifierClient;
 use base_proof_primitives::ProofRequest as TeeProofRequest;
 use base_proof_rpc::L2Provider;
@@ -26,8 +24,8 @@ use tracing::{debug, info, warn};
 
 use crate::{
     CandidateGame, ChallengeSubmitter, ChallengerMetrics, GameScanner,
-    IntermediateValidationParams, OutputValidator, PendingProof, PendingProofs, ProofPhase,
-    ProofUpdate, TeeProofProvider, ValidatorError, encode_tee_proof,
+    IntermediateValidationParams, L1HeadProvider, OutputValidator, PendingProof, PendingProofs,
+    ProofPhase, ProofUpdate, TeeProofProvider, ValidatorError, encode_tee_proof,
 };
 
 /// Configuration for the challenger [`Driver`].
@@ -41,18 +39,13 @@ pub struct DriverConfig {
     pub ready: Arc<AtomicBool>,
 }
 
-/// TEE proof configuration, bundling the provider and L1 RPC client.
+/// TEE proof configuration, bundling the provider and L1 head provider.
+#[derive(Debug)]
 pub struct TeeConfig {
     /// TEE proof provider.
     pub provider: Arc<dyn TeeProofProvider>,
-    /// L1 RPC provider for fetching the finalized head hash.
-    pub l1_provider: RootProvider,
-}
-
-impl std::fmt::Debug for TeeConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TeeConfig").field("provider", &self.provider).finish_non_exhaustive()
-    }
+    /// L1 head provider for fetching the finalized head hash.
+    pub l1_head_provider: Arc<dyn L1HeadProvider>,
 }
 
 /// Orchestrates the challenger pipeline: scan, validate, prove, submit.
@@ -347,18 +340,21 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             .ok_or_else(|| eyre::eyre!("claimed_l2_block_number overflow"))?;
 
         // Fetch L1 finalized head and compute agreed L2 state concurrently.
-        let (l1_block_result, output_root_result) = tokio::join!(
-            tee.l1_provider.get_block_by_number(BlockNumberOrTag::Finalized),
+        let (l1_head_result, output_root_result) = tokio::join!(
+            tee.l1_head_provider.finalized_head_hash(),
             self.validator.compute_output_root_with_hash(start_block_number),
         );
-        let l1_head = l1_block_result?
-            .ok_or_else(|| eyre::eyre!("L1 finalized block not found"))?
-            .header
-            .hash;
+        let l1_head = l1_head_result?;
         let (agreed_l2_head_hash, agreed_l2_output_root) = output_root_result?;
 
         // The claimed root is the (wrong) on-chain root at the invalid index.
-        let claimed_l2_output_root = intermediate_roots[invalid_index as usize];
+        let claimed_l2_output_root =
+            *intermediate_roots.get(invalid_index as usize).ok_or_else(|| {
+                eyre::eyre!(
+                    "invalid_index {invalid_index} out of bounds for intermediate_roots (len={})",
+                    intermediate_roots.len()
+                )
+            })?;
 
         let request = TeeProofRequest {
             l1_head,
