@@ -11,7 +11,7 @@
 //! by the admin JSON-RPC server.
 
 mod core;
-pub use self::core::{Driver, DriverConfig, RecoveredGame};
+pub use self::core::{Driver, DriverConfig, RecoveredState};
 
 mod handle;
 pub use handle::{DriverHandle, ProposerDriverControl};

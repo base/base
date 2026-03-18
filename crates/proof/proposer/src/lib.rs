@@ -24,7 +24,7 @@ pub use output_proposer::{
 };
 
 mod driver;
-pub use driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl, RecoveredGame};
+pub use driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl, RecoveredState};
 
 mod enclave;
 pub use enclave::rollup_config_to_per_chain_config;

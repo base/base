@@ -56,14 +56,17 @@ impl Default for DriverConfig {
     }
 }
 
-/// A dispute game discovered on-chain via `recover_latest_game()`.
+/// On-chain state recovered by [`Driver::recover_latest_state`].
+///
+/// This is either a game found in the `DisputeGameFactory` or the
+/// anchor root from the `AnchorStateRegistry` when no games exist.
 #[derive(Debug, Clone)]
-pub struct RecoveredGame {
-    /// Factory index of the game.
+pub struct RecoveredState {
+    /// Factory index of the game, or [`NO_PARENT_INDEX`] for anchor state.
     pub game_index: u32,
-    /// Output root claimed by the game.
+    /// Output root claimed by the game or anchor state.
     pub output_root: B256,
-    /// L2 block number of the game's claim.
+    /// L2 block number of the claim.
     pub l2_block_number: u64,
 }
 
@@ -148,22 +151,18 @@ where
     /// Scans the `DisputeGameFactory` on-chain to find the most recent game
     /// of our `game_type`.
     ///
-    /// Called at the top of every tick to determine the parent game.
-    /// Returns `Ok(None)` when no matching game exists (use anchor instead),
-    /// or `Err` on RPC failure (skip this tick).
-    async fn recover_latest_game(&self) -> Result<Option<RecoveredGame>, ProposerError> {
+    /// Recovers the latest on-chain state to use as the parent for the next proposal.
+    ///
+    /// Walks the `DisputeGameFactory` backwards for a matching game, falling
+    /// back to the `AnchorStateRegistry` when none is found.
+    async fn recover_latest_state(&self) -> Result<RecoveredState, ProposerError> {
         let count = self
             .factory_client
             .game_count()
             .await
             .map_err(|e| ProposerError::Contract(format!("recovery game_count failed: {e}")))?;
 
-        if count == 0 {
-            return Ok(None);
-        }
-
         let search_count = count.min(MAX_GAME_RECOVERY_LOOKBACK);
-
         for i in 0..search_count {
             let game_index = count - 1 - i;
             let game = match self.factory_client.game_at_index(game_index).await {
@@ -198,19 +197,34 @@ where
                 "Recovered parent game state from on-chain"
             );
 
-            return Ok(Some(RecoveredGame {
+            return Ok(RecoveredState {
                 game_index: idx,
                 output_root: game_info.root_claim,
                 l2_block_number: game_info.l2_block_number,
-            }));
+            });
         }
 
         debug!(
             game_type = self.config.game_type,
             searched = search_count,
-            "No games found for our game type during recovery"
+            "No games found for our game type, falling back to anchor state registry"
         );
-        Ok(None)
+        self.recover_from_anchor_registry().await
+    }
+
+    /// Builds a [`RecoveredState`] from the anchor state registry.
+    async fn recover_from_anchor_registry(&self) -> Result<RecoveredState, ProposerError> {
+        let anchor = self.anchor_registry.get_anchor_root().await?;
+        debug!(
+            l2_block_number = anchor.l2_block_number,
+            root = ?anchor.root,
+            "Recovered state from anchor state registry"
+        );
+        Ok(RecoveredState {
+            game_index: NO_PARENT_INDEX,
+            output_root: anchor.root,
+            l2_block_number: anchor.l2_block_number,
+        })
     }
 
     /// Starts the driver loop.
@@ -238,19 +252,9 @@ where
     /// Performs a single driver step (one tick of the loop).
     async fn step(&self) -> Result<(), ProposerError> {
         // Load parent state from chain to stay in sync with other proposers.
+        let state = self.recover_latest_state().await?;
         let (starting_block_number, agreed_l2_output_root, parent_index) =
-            match self.recover_latest_game().await? {
-                Some(g) => (g.l2_block_number, g.output_root, g.game_index),
-                None => {
-                    let anchor = self.anchor_registry.get_anchor_root().await?;
-                    debug!(
-                        l2_block_number = anchor.l2_block_number,
-                        root = ?anchor.root,
-                        "No on-chain games found, using anchor state registry"
-                    );
-                    (anchor.l2_block_number, anchor.root, NO_PARENT_INDEX)
-                }
-            };
+            (state.l2_block_number, state.output_root, state.game_index);
 
         // Compute the target block for this interval.
         let target_block = starting_block_number
@@ -736,7 +740,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_recover_latest_game_no_games() {
+    async fn test_recover_latest_state_no_games_falls_back_to_anchor() {
         let driver = recovery_driver(
             RecoveryMockFactory { games: vec![], error_indices: vec![] },
             RecoveryMockVerifier {
@@ -746,12 +750,14 @@ mod tests {
             },
             0,
         );
-        let result = driver.recover_latest_game().await.expect("should not error");
-        assert!(result.is_none());
+        let state = driver.recover_latest_state().await.expect("should not error");
+        assert_eq!(state.game_index, NO_PARENT_INDEX);
+        assert_eq!(state.l2_block_number, 0);
+        assert_eq!(state.output_root, B256::ZERO);
     }
 
     #[tokio::test]
-    async fn test_recover_latest_game_finds_matching_type() {
+    async fn test_recover_latest_state_finds_matching_type() {
         let root = B256::repeat_byte(0xAA);
         let driver = recovery_driver(
             RecoveryMockFactory { games: vec![(42, Address::ZERO)], error_indices: vec![] },
@@ -759,18 +765,14 @@ mod tests {
             42,
         );
 
-        let state = driver
-            .recover_latest_game()
-            .await
-            .expect("should not error")
-            .expect("should find game");
+        let state = driver.recover_latest_state().await.expect("should not error");
         assert_eq!(state.game_index, 0);
         assert_eq!(state.l2_block_number, 500);
         assert_eq!(state.output_root, root);
     }
 
     #[tokio::test]
-    async fn test_recover_latest_game_no_matching_type() {
+    async fn test_recover_latest_state_no_matching_type_falls_back_to_anchor() {
         let driver = recovery_driver(
             RecoveryMockFactory {
                 games: vec![(99, Address::ZERO), (88, Address::ZERO)],
@@ -783,12 +785,14 @@ mod tests {
             },
             42,
         );
-        let result = driver.recover_latest_game().await.expect("should not error");
-        assert!(result.is_none());
+        let state = driver.recover_latest_state().await.expect("should not error");
+        assert_eq!(state.game_index, NO_PARENT_INDEX);
+        assert_eq!(state.l2_block_number, 0);
+        assert_eq!(state.output_root, B256::ZERO);
     }
 
     #[tokio::test]
-    async fn test_recover_latest_game_skips_wrong_type() {
+    async fn test_recover_latest_state_skips_wrong_type() {
         let root = B256::repeat_byte(0xBB);
         let driver = recovery_driver(
             RecoveryMockFactory {
@@ -799,17 +803,13 @@ mod tests {
             42,
         );
 
-        let state = driver
-            .recover_latest_game()
-            .await
-            .expect("should not error")
-            .expect("should skip wrong type and find match");
+        let state = driver.recover_latest_state().await.expect("should not error");
         assert_eq!(state.game_index, 0);
         assert_eq!(state.l2_block_number, 200);
     }
 
     #[tokio::test]
-    async fn test_recover_latest_game_continues_on_game_at_index_error() {
+    async fn test_recover_latest_state_continues_on_game_at_index_error() {
         let root = B256::repeat_byte(0xCC);
         let driver = recovery_driver(
             RecoveryMockFactory {
@@ -820,17 +820,13 @@ mod tests {
             42,
         );
 
-        let state = driver
-            .recover_latest_game()
-            .await
-            .expect("should not error")
-            .expect("should continue past errored index");
+        let state = driver.recover_latest_state().await.expect("should not error");
         assert_eq!(state.game_index, 0);
         assert_eq!(state.l2_block_number, 300);
     }
 
     #[tokio::test]
-    async fn test_recover_latest_game_continues_on_game_info_error() {
+    async fn test_recover_latest_state_continues_on_game_info_error() {
         let root = B256::repeat_byte(0xDD);
         let error_proxy = Address::repeat_byte(0xEE);
         let healthy_proxy = Address::repeat_byte(0xFF);
@@ -847,11 +843,7 @@ mod tests {
             42,
         );
 
-        let state = driver
-            .recover_latest_game()
-            .await
-            .expect("should not error")
-            .expect("should continue past game_info error");
+        let state = driver.recover_latest_state().await.expect("should not error");
         assert_eq!(state.game_index, 0);
         assert_eq!(state.l2_block_number, 400);
         assert_eq!(state.output_root, root);
