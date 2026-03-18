@@ -15,19 +15,16 @@ use base_batcher_source::{PollingSource, SourceError};
 /// When created with `new_from`, it first catches up sequentially from the
 /// given block number before switching to `Latest` polling. This avoids
 /// missing blocks between `safe_head + 1` and `latest` on batcher restart.
+#[derive(derive_more::Debug)]
 pub struct RpcPollingSource {
     /// The L2 RPC provider.
+    #[debug(skip)]
     provider: Arc<dyn Provider<Base> + Send + Sync>,
     /// When `Some(n)`, the next `unsafe_head` call fetches block `n`
     /// sequentially (for startup catchup). Cleared when `n` is strictly
     /// greater than the current latest (i.e. block `n` hasn't been produced yet).
+    #[debug(skip)]
     next_sequential: Mutex<Option<u64>>,
-}
-
-impl std::fmt::Debug for RpcPollingSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RpcPollingSource").finish_non_exhaustive()
-    }
 }
 
 impl RpcPollingSource {

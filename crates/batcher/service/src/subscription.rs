@@ -18,8 +18,11 @@ use futures::{StreamExt, stream::BoxStream};
 ///
 /// [`HybridBlockSource`]: base_batcher_source::HybridBlockSource
 /// [`take_stream`]: BlockSubscription::take_stream
+#[derive(derive_more::Debug)]
 pub struct WsBlockSubscription {
+    #[debug(skip)]
     _provider: Arc<dyn std::any::Any + Send + Sync>,
+    #[debug("{:?}", stream.as_ref().map(|_| "<stream>"))]
     stream: Option<BoxStream<'static, Result<OpBlock, SourceError>>>,
 }
 
@@ -33,14 +36,6 @@ impl WsBlockSubscription {
         stream: BoxStream<'static, Result<OpBlock, SourceError>>,
     ) -> Self {
         Self { _provider: provider, stream: Some(stream) }
-    }
-}
-
-impl std::fmt::Debug for WsBlockSubscription {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WsBlockSubscription")
-            .field("stream", &self.stream.as_ref().map(|_| "<stream>"))
-            .finish_non_exhaustive()
     }
 }
 

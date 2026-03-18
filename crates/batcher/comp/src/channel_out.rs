@@ -1,6 +1,6 @@
 //! Contains the `ChannelOut` primitive for Base.
 
-use alloc::{fmt, sync::Arc, vec, vec::Vec};
+use alloc::{sync::Arc, vec, vec::Vec};
 
 use alloy_rlp::Encodable;
 use base_consensus_genesis::RollupConfig;
@@ -36,6 +36,7 @@ pub enum ChannelOutError {
 }
 
 /// [`ChannelOut`] constructs a channel from compressed, encoded batch data.
+#[derive(derive_more::Debug)]
 pub struct ChannelOut<C>
 where
     C: ChannelCompressor,
@@ -44,6 +45,7 @@ where
     pub id: ChannelId,
     /// The [`RollupConfig`] used to check the max RLP bytes per channel when
     /// encoding and accepting batches.
+    #[debug(skip)]
     pub config: Arc<RollupConfig>,
     /// The rlp length of the channel.
     pub rlp_length: u64,
@@ -52,18 +54,8 @@ where
     /// The frame number.
     pub frame_number: u16,
     /// The compressor.
+    #[debug(skip)]
     pub compressor: C,
-}
-
-impl<C: ChannelCompressor> fmt::Debug for ChannelOut<C> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ChannelOut")
-            .field("id", &self.id)
-            .field("rlp_length", &self.rlp_length)
-            .field("frame_number", &self.frame_number)
-            .field("closed", &self.closed)
-            .finish_non_exhaustive()
-    }
 }
 
 impl<C> ChannelOut<C>

@@ -2727,6 +2727,7 @@ name = "base-batcher-admin"
 version = "0.0.0"
 dependencies = [
  "base-batcher-core",
+ "derive_more",
  "eyre",
  "jsonrpsee",
  "tracing",
@@ -2812,6 +2813,7 @@ dependencies = [
  "base-consensus-rpc",
  "base-runtime",
  "base-tx-manager",
+ "derive_more",
  "eyre",
  "futures",
  "httpmock",
@@ -2832,6 +2834,7 @@ dependencies = [
  "base-alloy-consensus",
  "base-protocol",
  "base-runtime",
+ "derive_more",
  "futures",
  "thiserror 2.0.18",
  "tokio",
@@ -3163,6 +3166,7 @@ dependencies = [
  "base-consensus-genesis",
  "base-protocol",
  "brotli",
+ "derive_more",
  "miniz_oxide 0.9.1",
  "proptest",
  "rand 0.9.2",

@@ -38,6 +38,7 @@ pub enum AdminError {
 pub type AdminResult<T> = Result<T, AdminError>;
 
 /// Commands the admin HTTP server can send to the running driver task.
+#[derive(derive_more::Debug)]
 pub enum AdminCommand {
     /// Resume block ingestion after a [`Pause`](Self::Pause).
     Resume,
@@ -50,6 +51,7 @@ pub enum AdminCommand {
         /// The new throttle strategy to apply.
         strategy: ThrottleStrategy,
         /// The new throttle configuration to apply.
+        #[debug(skip)]
         config: ThrottleConfig,
     },
     /// Clear the throttle dedup cache so limits are re-applied unconditionally.
@@ -57,29 +59,15 @@ pub enum AdminCommand {
     /// Read current throttle state; reply sent via the embedded oneshot sender.
     GetThrottleInfo {
         /// Channel to send the throttle info snapshot back on.
+        #[debug(skip)]
         reply: oneshot::Sender<ThrottleInfo>,
     },
     /// Read current driver runtime state; reply sent via the embedded oneshot sender.
     GetStatus {
         /// Channel to send the batcher status back on.
+        #[debug(skip)]
         reply: oneshot::Sender<BatcherStatus>,
     },
-}
-
-impl std::fmt::Debug for AdminCommand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Resume => write!(f, "Resume"),
-            Self::Pause => write!(f, "Pause"),
-            Self::Flush => write!(f, "Flush"),
-            Self::SetThrottle { strategy, .. } => {
-                f.debug_struct("SetThrottle").field("strategy", strategy).finish()
-            }
-            Self::ResetThrottle => write!(f, "ResetThrottle"),
-            Self::GetThrottleInfo { .. } => f.debug_struct("GetThrottleInfo").finish(),
-            Self::GetStatus { .. } => f.debug_struct("GetStatus").finish(),
-        }
-    }
 }
 
 /// Cloneable handle to the driver's admin command channel.

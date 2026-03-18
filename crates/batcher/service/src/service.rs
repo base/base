@@ -99,15 +99,12 @@ type ServiceDriver = BatchDriver<
 /// Created by [`BatcherService::setup`]. All connections are live and the
 /// rollup config has been fetched. Call [`run`](Self::run) to enter the
 /// main driver loop, or spawn it in a background task for in-process use.
+#[derive(derive_more::Debug)]
 pub struct ReadyBatcher {
+    #[debug(skip)]
     driver: ServiceDriver,
+    #[debug(skip)]
     admin_server: Option<AdminServer>,
-}
-
-impl std::fmt::Debug for ReadyBatcher {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ReadyBatcher").finish_non_exhaustive()
-    }
 }
 
 impl ReadyBatcher {

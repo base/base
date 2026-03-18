@@ -29,7 +29,7 @@ thiserror = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "macros", "rt"] }
-derive_more = { workspace = true, features = ["display", "from_str"] }
+derive_more = { workspace = true, features = ["debug", "display", "from_str"] }
 
 # optional — activated by the `test-utils` feature
 async-trait = { workspace = true, optional = true }

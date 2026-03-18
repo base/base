@@ -10,28 +10,25 @@ use crate::{L1HeadEvent, L1HeadPolling, L1HeadSource, L1HeadSubscription, Source
 ///
 /// Deduplicates head numbers so that the same block number is only reported once.
 /// Stale reads (same or lower block number than last reported) are also silently dropped.
+#[derive(derive_more::Debug)]
 pub struct HybridL1HeadSource<S, P> {
     /// The head number stream returned by `S::take_stream`.
     ///
     /// Declared before `_subscription` so it is dropped first, ensuring the
     /// stream's underlying transport is released before the provider is torn down.
+    #[debug(skip)]
     sub: BoxStream<'static, Result<u64, SourceError>>,
     /// The original subscription, kept alive so its resources remain open.
+    #[debug(skip)]
     _subscription: S,
     /// Polling source for fetching the latest L1 head block number.
+    #[debug(skip)]
     poller: P,
     /// Polling interval timer.
+    #[debug(skip)]
     interval: Interval,
     /// Last reported head number for deduplication.
     last_head: Option<u64>,
-}
-
-impl<S, P> std::fmt::Debug for HybridL1HeadSource<S, P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HybridL1HeadSource")
-            .field("last_head", &self.last_head)
-            .finish_non_exhaustive()
-    }
 }
 
 impl<S, P> HybridL1HeadSource<S, P>

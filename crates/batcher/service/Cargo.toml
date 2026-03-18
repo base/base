@@ -23,6 +23,7 @@ base-batcher-admin.workspace = true
 base-alloy-network.workspace = true
 base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
+derive_more = { workspace = true, features = ["debug"] }
 tracing = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["tokio"] }
 alloy-signer-local.workspace = true

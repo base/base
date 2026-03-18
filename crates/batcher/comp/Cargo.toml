@@ -20,6 +20,7 @@ base-protocol.workspace = true
 base-alloy-consensus.workspace = true
 base-consensus-genesis.workspace = true
 rand = { workspace = true, features = ["small_rng"] }
+derive_more = { workspace = true, features = ["debug"] }
 
 brotli = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }

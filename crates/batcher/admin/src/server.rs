@@ -1,6 +1,6 @@
 //! Admin JSON-RPC HTTP server lifecycle.
 
-use std::{fmt, net::SocketAddr};
+use std::net::SocketAddr;
 
 use base_batcher_core::AdminHandle;
 use eyre::Context;
@@ -13,14 +13,10 @@ use crate::{BatcherAdminApiServer, BatcherAdminApiServerImpl};
 ///
 /// Holds the jsonrpsee [`ServerHandle`] for the server's lifetime.
 /// Dropping this value stops the server from accepting new connections.
+#[derive(derive_more::Debug)]
 pub struct AdminServer {
+    #[debug(skip)]
     handle: ServerHandle,
-}
-
-impl fmt::Debug for AdminServer {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AdminServer").finish_non_exhaustive()
-    }
 }
 
 impl AdminServer {

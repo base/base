@@ -8,14 +8,10 @@ use base_batcher_source::{L1HeadPolling, L1HeadSubscription, SourceError};
 use futures::{StreamExt, stream::BoxStream};
 
 /// Polling source that fetches the latest L1 head block number from an L1 RPC endpoint.
+#[derive(derive_more::Debug)]
 pub struct RpcL1HeadPollingSource {
+    #[debug(skip)]
     provider: Arc<dyn Provider + Send + Sync>,
-}
-
-impl std::fmt::Debug for RpcL1HeadPollingSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RpcL1HeadPollingSource").finish_non_exhaustive()
-    }
 }
 
 impl RpcL1HeadPollingSource {
@@ -40,8 +36,11 @@ impl L1HeadPolling for RpcL1HeadPollingSource {
 ///
 /// [`HybridL1HeadSource`]: base_batcher_source::HybridL1HeadSource
 /// [`take_stream`]: L1HeadSubscription::take_stream
+#[derive(derive_more::Debug)]
 pub struct WsL1HeadSubscription {
+    #[debug(skip)]
     _provider: Arc<dyn std::any::Any + Send + Sync>,
+    #[debug("{:?}", stream.as_ref().map(|_| "<stream>"))]
     stream: Option<BoxStream<'static, Result<u64, SourceError>>>,
 }
 
@@ -52,14 +51,6 @@ impl WsL1HeadSubscription {
         stream: BoxStream<'static, Result<u64, SourceError>>,
     ) -> Self {
         Self { _provider: provider, stream: Some(stream) }
-    }
-}
-
-impl std::fmt::Debug for WsL1HeadSubscription {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WsL1HeadSubscription")
-            .field("stream", &self.stream.as_ref().map(|_| "<stream>"))
-            .finish_non_exhaustive()
     }
 }
 

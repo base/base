@@ -15,27 +15,26 @@ use crate::{BlockSubscription, L2BlockEvent, PollingSource, SourceError, UnsafeB
 ///
 /// Deduplicates blocks by hash and detects reorgs when the same block number
 /// yields different hashes from different sources.
+#[derive(derive_more::Debug)]
 pub struct HybridBlockSource<S, P> {
     /// The block stream returned by `S::take_stream`.
     ///
     /// Declared before `_subscription` so it is dropped first, ensuring the
     /// stream's underlying transport is released before the provider is torn down.
+    #[debug(skip)]
     sub: BoxStream<'static, Result<OpBlock, SourceError>>,
     /// The original subscription, kept alive so its resources remain open.
+    #[debug(skip)]
     _subscription: S,
     /// Polling source for fetching the unsafe head.
+    #[debug(skip)]
     poller: P,
     /// Polling interval stream, yielding `()` every `poll_interval`.
+    #[debug(skip)]
     interval: BoxStream<'static, ()>,
     /// Block number to hash mapping for deduplication and reorg detection.
     /// Bounded to a sliding window of recent blocks; old entries are pruned.
     seen: HashMap<u64, B256>,
-}
-
-impl<S, P> std::fmt::Debug for HybridBlockSource<S, P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HybridBlockSource").field("seen", &self.seen).finish_non_exhaustive()
-    }
 }
 
 impl<S, P> HybridBlockSource<S, P>
