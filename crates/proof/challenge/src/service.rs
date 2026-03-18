@@ -123,6 +123,11 @@ impl ChallengerService {
             Some(crate::TeeConfig {
                 provider: Arc::new(crate::EnclaveTeeProvider::new(client)),
                 l1_head_provider: Arc::new(crate::RpcL1HeadProvider::new(tee_l1_provider)),
+                request_timeout: config.tee_request_timeout.ok_or_else(|| {
+                    eyre::eyre!(
+                        "tee_request_timeout must be set when enclave_rpc_url is configured"
+                    )
+                })?,
             })
         } else {
             info!("TEE proof sourcing disabled (no --enclave-rpc-url)");

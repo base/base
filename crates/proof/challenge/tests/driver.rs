@@ -664,6 +664,7 @@ async fn test_step_invalid_game_tee_fails_zk_fallback() {
         Some(TeeConfig {
             provider: tee as Arc<dyn TeeProofProvider>,
             l1_head_provider: Arc::new(MockL1HeadProvider::failure("dummy")),
+            request_timeout: Duration::from_secs(30),
         }),
     );
 
@@ -702,6 +703,7 @@ async fn test_step_invalid_game_no_tee_prover_zk_only() {
         Some(TeeConfig {
             provider: tee as Arc<dyn TeeProofProvider>,
             l1_head_provider: Arc::new(MockL1HeadProvider::failure("dummy")),
+            request_timeout: Duration::from_secs(30),
         }),
     );
 
@@ -766,6 +768,7 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
         Some(TeeConfig {
             provider: tee as Arc<dyn TeeProofProvider>,
             l1_head_provider: Arc::new(MockL1HeadProvider::failure("dummy")),
+            request_timeout: Duration::from_secs(30),
         }),
     );
 
@@ -853,6 +856,7 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
         Some(TeeConfig {
             provider: tee_provider as Arc<dyn TeeProofProvider>,
             l1_head_provider: l1_head as Arc<dyn L1HeadProvider>,
+            request_timeout: Duration::from_secs(30),
         }),
     );
 

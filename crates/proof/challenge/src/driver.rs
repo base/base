@@ -23,9 +23,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
-    CandidateGame, ChallengeSubmitter, ChallengerMetrics, GameScanner,
+    CandidateGame, ChallengeSubmitter, ChallengerMetrics, EnclaveTeeProvider, GameScanner,
     IntermediateValidationParams, L1HeadProvider, OutputValidator, PendingProof, PendingProofs,
-    ProofPhase, ProofUpdate, TeeProofProvider, ValidatorError, encode_tee_proof,
+    ProofPhase, ProofUpdate, TeeProofProvider, ValidatorError,
 };
 
 /// Configuration for the challenger [`Driver`].
@@ -46,6 +46,8 @@ pub struct TeeConfig {
     pub provider: Arc<dyn TeeProofProvider>,
     /// L1 head provider for fetching the finalized head hash.
     pub l1_head_provider: Arc<dyn L1HeadProvider>,
+    /// Timeout for individual TEE proof requests.
+    pub request_timeout: Duration,
 }
 
 /// Orchestrates the challenger pipeline: scan, validate, prove, submit.
@@ -273,17 +275,22 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             && let Some(tee) = &self.tee
         {
             metrics::counter!(ChallengerMetrics::TEE_PROOF_ATTEMPTS_TOTAL).increment(1);
-            match self
-                .attempt_tee_proof(
-                    &candidate,
-                    invalid_index,
-                    expected_root,
-                    intermediate_roots,
-                    tee,
-                )
-                .await
-            {
-                Ok(proof_bytes) => {
+            let tee_fut = self.attempt_tee_proof(
+                &candidate,
+                invalid_index,
+                expected_root,
+                intermediate_roots,
+                tee,
+            );
+            match tokio::time::timeout(tee.request_timeout, tee_fut).await {
+                Err(_elapsed) => {
+                    warn!(
+                        game = %game_address,
+                        timeout = ?tee.request_timeout,
+                        "TEE proof request timed out, falling back to ZK"
+                    );
+                }
+                Ok(Ok(proof_bytes)) => {
                     info!(game = %game_address, path = "tee", "TEE proof obtained, submitting");
                     match self
                         .submitter
@@ -309,7 +316,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                         }
                     }
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     warn!(
                         error = %e,
                         game = %game_address,
@@ -381,7 +388,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             }
         }
 
-        encode_tee_proof(&result)
+        EnclaveTeeProvider::encode_proof(&result)
     }
 
     /// Requests a ZK proof, stores the session, and polls for the result.

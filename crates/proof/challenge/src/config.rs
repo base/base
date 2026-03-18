@@ -101,6 +101,8 @@ pub struct ChallengerConfig {
     pub zk_request_timeout: Duration,
     /// URL of the TEE enclave RPC endpoint (optional).
     pub enclave_rpc_url: Option<Validated<Url>>,
+    /// Timeout for individual TEE proof requests (only `Some` when TEE is enabled).
+    pub tee_request_timeout: Option<Duration>,
     /// Signing configuration for L1 transaction submission.
     pub signing: SignerConfig,
     /// Transaction manager configuration (fee limits, confirmations, timeouts).
@@ -199,6 +201,9 @@ impl ChallengerConfig {
 
         let health_addr = SocketAddr::new(cli.challenger.health_addr, cli.challenger.health_port);
 
+        let tee_request_timeout =
+            enclave_rpc_url.as_ref().map(|_| cli.challenger.tee_request_timeout);
+
         Ok(Self {
             l1_eth_rpc,
             l2_eth_rpc,
@@ -208,6 +213,7 @@ impl ChallengerConfig {
             zk_connect_timeout: cli.challenger.zk_connect_timeout,
             zk_request_timeout: cli.challenger.zk_request_timeout,
             enclave_rpc_url,
+            tee_request_timeout,
             signing,
             tx_manager,
             lookback_games: cli.challenger.lookback_games,
