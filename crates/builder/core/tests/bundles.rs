@@ -18,8 +18,32 @@ async fn insert_bundle_transaction<P: Protocol>(
     min_timestamp: Option<u64>,
     max_timestamp: Option<u64>,
 ) -> eyre::Result<TxHash> {
-    let recovered =
-        driver.create_transaction().with_signer(signer).random_valid_transfer().build().await;
+    insert_bundle_transaction_with_nonce(
+        pool,
+        driver,
+        signer,
+        None,
+        target_block_number,
+        min_timestamp,
+        max_timestamp,
+    )
+    .await
+}
+
+async fn insert_bundle_transaction_with_nonce<P: Protocol>(
+    pool: &Arc<dyn ExternalTransactionPool>,
+    driver: &ChainDriver<P>,
+    signer: &PrivateKeySigner,
+    nonce: Option<u64>,
+    target_block_number: Option<u64>,
+    min_timestamp: Option<u64>,
+    max_timestamp: Option<u64>,
+) -> eyre::Result<TxHash> {
+    let mut builder = driver.create_transaction().with_signer(signer).random_valid_transfer();
+    if let Some(n) = nonce {
+        builder = builder.with_nonce(n);
+    }
+    let recovered = builder.build().await;
     let tx_hash = TxHash::from(*recovered.tx_hash());
     let encoded_len = recovered.encode_2718_len();
     let pool_tx = BasePooledTransaction::new(recovered, encoded_len).with_bundle_metadata(
@@ -122,5 +146,92 @@ async fn normal_transaction_is_unaffected_by_bundle_checks() -> eyre::Result<()>
     let tx_hash = *tx.tx_hash();
 
     assert!(block.transactions.hashes().any(|hash| hash == tx_hash));
+    Ok(())
+}
+
+#[tokio::test]
+async fn two_valid_bundles_from_same_sender_are_both_included() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
+    let driver = rbuilder.driver().await?;
+    let signer = driver.fund_accounts(1, ONE_ETH).await?.remove(0);
+    let latest = driver.latest().await?;
+    let target_block = latest.header.number + 1;
+    let pool = rbuilder.pool_handle();
+
+    let tx_hash_0 = insert_bundle_transaction_with_nonce(
+        &pool,
+        &driver,
+        &signer,
+        Some(0),
+        Some(target_block),
+        None,
+        None,
+    )
+    .await?;
+
+    let tx_hash_1 = insert_bundle_transaction_with_nonce(
+        &pool,
+        &driver,
+        &signer,
+        Some(1),
+        Some(target_block),
+        None,
+        None,
+    )
+    .await?;
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    assert_eq!(block.header.number, target_block);
+    assert!(block.transactions.hashes().any(|hash| hash == tx_hash_0));
+    assert!(block.transactions.hashes().any(|hash| hash == tx_hash_1));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn valid_and_invalid_bundle_from_same_sender() -> eyre::Result<()> {
+    let rbuilder = setup_test_instance().await?;
+    let driver = rbuilder.driver().await?;
+    let signer = driver.fund_accounts(1, ONE_ETH).await?.remove(0);
+    let latest = driver.latest().await?;
+    let target_block = latest.header.number + 1;
+    let wrong_target = target_block + 5;
+    let pool = rbuilder.pool_handle();
+
+    let valid_tx_hash = insert_bundle_transaction_with_nonce(
+        &pool,
+        &driver,
+        &signer,
+        Some(0),
+        Some(target_block),
+        None,
+        None,
+    )
+    .await?;
+
+    let invalid_tx_hash = insert_bundle_transaction_with_nonce(
+        &pool,
+        &driver,
+        &signer,
+        Some(1),
+        Some(wrong_target),
+        None,
+        None,
+    )
+    .await?;
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    assert_eq!(block.header.number, target_block);
+    assert!(
+        block.transactions.hashes().any(|hash| hash == valid_tx_hash),
+        "valid bundle tx should be included"
+    );
+    assert!(
+        block.transactions.hashes().all(|hash| hash != invalid_tx_hash),
+        "wrong-target bundle tx should be excluded"
+    );
+
     Ok(())
 }
