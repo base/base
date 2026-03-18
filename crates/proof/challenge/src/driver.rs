@@ -296,7 +296,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                         .submitter
                         .submit_nullification(
                             game_address,
-                            proof_bytes,
+                            proof_bytes.clone(),
                             invalid_index,
                             expected_root,
                         )
@@ -311,8 +311,13 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                             warn!(
                                 error = %e,
                                 game = %game_address,
-                                "TEE nullification failed, falling back to ZK"
+                                "TEE nullification submission failed, caching proof for retry"
                             );
+                            self.pending_proofs.insert(
+                                game_address,
+                                PendingProof::ready_tee(proof_bytes, invalid_index, expected_root),
+                            );
+                            return Ok(());
                         }
                     }
                 }
@@ -533,7 +538,15 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             return Ok(());
         }
 
-        let request = pending.prove_request;
+        let request = match pending.prove_request {
+            Some(req) => req,
+            None => {
+                // TEE proofs have no ZK session to re-initiate — drop the entry.
+                debug!(game = %game_address, "TEE proof has no ZK request, dropping entry");
+                self.pending_proofs.remove(&game_address);
+                return Ok(());
+            }
+        };
 
         metrics::counter!(ChallengerMetrics::PROOF_RETRIES_TOTAL).increment(1);
 

@@ -176,6 +176,15 @@ impl ChallengerConfig {
             });
         }
 
+        // Validate tee_request_timeout > 0 when TEE is enabled
+        if enclave_rpc_url.is_some() && cli.challenger.tee_request_timeout.is_zero() {
+            return Err(ConfigError::OutOfRange {
+                field: "tee-request-timeout",
+                constraint: "greater than 0",
+                value: "0".to_string(),
+            });
+        }
+
         // Validate lookback_games > 0
         if cli.challenger.lookback_games == 0 {
             return Err(ConfigError::OutOfRange {
@@ -450,6 +459,21 @@ mod tests {
         assert!(matches!(
             result,
             Err(ConfigError::InvalidUrl { field: "zk-proof-service-endpoint", .. })
+        ));
+    }
+
+    #[test]
+    fn test_zero_tee_request_timeout_rejected_when_tee_enabled() {
+        let all_args = [
+            &LOCAL_SIGNER_ARGS[..],
+            &["--enclave-rpc-url", "http://localhost:9999", "--tee-request-timeout", "0s"],
+        ]
+        .concat();
+        let cli = cli_from_args(&all_args);
+        let result = ChallengerConfig::from_cli(cli);
+        assert!(matches!(
+            result,
+            Err(ConfigError::OutOfRange { field: "tee-request-timeout", .. })
         ));
     }
 

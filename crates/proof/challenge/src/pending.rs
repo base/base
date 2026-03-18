@@ -43,7 +43,8 @@ pub struct PendingProof {
     /// The expected correct root at that index.
     pub expected_root: B256,
     /// Original request parameters, stored so the driver can re-initiate on failure.
-    pub prove_request: ProveBlockRequest,
+    /// `None` for TEE proofs that don't have a ZK session to fall back to.
+    pub prove_request: Option<ProveBlockRequest>,
     /// Number of times this proof has been retried after failure.
     pub retry_count: u32,
 }
@@ -60,7 +61,7 @@ impl PendingProof {
             phase: ProofPhase::AwaitingProof { session_id },
             invalid_index,
             expected_root,
-            prove_request,
+            prove_request: Some(prove_request),
             retry_count: 0,
         }
     }
@@ -76,7 +77,21 @@ impl PendingProof {
             phase: ProofPhase::ReadyToSubmit { proof_bytes },
             invalid_index,
             expected_root,
-            prove_request,
+            prove_request: Some(prove_request),
+            retry_count: 0,
+        }
+    }
+
+    /// Creates a new `PendingProof` in the `ReadyToSubmit` phase for a TEE proof.
+    ///
+    /// Unlike [`ready`](Self::ready), this sets `prove_request` to `None` since
+    /// TEE proofs don't have a ZK session to fall back to on retry failure.
+    pub const fn ready_tee(proof_bytes: Bytes, invalid_index: u64, expected_root: B256) -> Self {
+        Self {
+            phase: ProofPhase::ReadyToSubmit { proof_bytes },
+            invalid_index,
+            expected_root,
+            prove_request: None,
             retry_count: 0,
         }
     }
