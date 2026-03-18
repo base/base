@@ -2,7 +2,7 @@
 
 use alloy_primitives::Address;
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig, ForkMatrix,
     L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
 use base_protocol::L1BlockInfoTx;
@@ -26,79 +26,93 @@ use base_protocol::L1BlockInfoTx;
 /// `operator_fee_constant` fields are absent from the calldata; the accessors
 /// on [`L1BlockInfoTx`] return zero for pre-Isthmus variants.
 ///
-/// All forks through Holocene are activated at genesis so that only Isthmus
-/// (and later) are absent. This ensures the Ecotone-format assertion reflects
-/// the intended pre-Isthmus state and not an accidentally inactive earlier fork.
+/// This assertion holds for every post-Granite pre-Isthmus fork. Running the
+/// same test across Granite, Holocene, and the pectra-blob-schedule patch keeps
+/// the invariant covered as later forks are added to the harness matrix.
 #[test]
 fn operator_fee_not_encoded_before_isthmus() {
     let batcher_cfg = BatcherConfig::default();
-    // Holocene is the latest active fork; Isthmus and Jovian remain None so their
-    // mainnet timestamps are unreachable (L1 miner starts at ts=0).
-    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).through_holocene().build();
-    let h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
-    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut builder = h.create_l2_sequencer(l1_chain);
+    ForkMatrix::pre_isthmus().run(|fork_name, hardforks| {
+        let rollup_cfg =
+            TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+        let h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+        let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+        let mut builder = h.create_l2_sequencer(l1_chain);
 
-    // Build one block and verify it uses the Ecotone format with zero operator fees.
-    let block = builder.build_next_block();
-    let l1_info = ActionTestHarness::l1_info_from_block(&block);
+        // Build one block and verify it uses the Ecotone format with zero operator fees.
+        let block = builder.build_next_block();
+        let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
-    assert!(
-        matches!(l1_info, L1BlockInfoTx::Ecotone(_)),
-        "pre-Isthmus L1 info must use Ecotone format, got {l1_info:?}"
-    );
-    assert_eq!(l1_info.operator_fee_scalar(), 0, "operator_fee_scalar must be zero before Isthmus");
-    assert_eq!(
-        l1_info.operator_fee_constant(),
-        0,
-        "operator_fee_constant must be zero before Isthmus"
-    );
+        assert!(
+            matches!(l1_info, L1BlockInfoTx::Ecotone(_)),
+            "{fork_name}: pre-Isthmus L1 info must use Ecotone format, got {l1_info:?}"
+        );
+        assert_eq!(
+            l1_info.operator_fee_scalar(),
+            0,
+            "{fork_name}: operator_fee_scalar must be zero before Isthmus"
+        );
+        assert_eq!(
+            l1_info.operator_fee_constant(),
+            0,
+            "{fork_name}: operator_fee_constant must be zero before Isthmus"
+        );
+    });
 }
 
-/// Post-Isthmus L2 blocks carry an `Isthmus`-format L1 info deposit that
-/// encodes `operator_fee_scalar` and `operator_fee_constant` from the genesis
-/// [`SystemConfig`].
+/// From Isthmus onward, L2 blocks carry the active hardfork's L1 info format
+/// with `operator_fee_scalar` and `operator_fee_constant` encoded from the
+/// genesis [`SystemConfig`].
 ///
-/// Setting `isthmus_time = Some(0)` makes Isthmus active at genesis. Because
-/// `is_first_isthmus_block(ts)` checks
-/// `is_isthmus_active(ts) && !is_isthmus_active(ts − block_time)`, and with
-/// `isthmus_time = 0` the result is `true && !true = false` for every positive
-/// timestamp, no built block is treated as the transition block. Every
-/// sequencer-built block (ts ≥ 2) uses the full Isthmus calldata format.
+/// Setting fork activation times to `Some(0)` makes all forks active at genesis.
+/// Because `is_first_<fork>_block(ts)` checks `is_active(ts) && !is_active(ts −
+/// block_time)`, with activation at 0 the condition is `true && !true = false`
+/// for every positive timestamp — no sequencer-built block is treated as the
+/// transition block. Every block (ts ≥ 2) uses the full active hardfork format.
+///
+/// The matrix keeps the same invariant covered across both reachable post-Isthmus
+/// forks: Isthmus itself and Jovian.
 #[test]
-fn operator_fee_encoded_in_l1_info_post_isthmus() {
+fn operator_fee_encoded_in_l1_info_from_isthmus_onward() {
     const OPERATOR_FEE_SCALAR: u32 = 2_000;
     const OPERATOR_FEE_CONSTANT: u64 = 500;
 
     let batcher_cfg = BatcherConfig::default();
-    let mut rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).through_isthmus().build();
-    let sys_cfg = rollup_cfg.genesis.system_config.as_mut().unwrap();
-    sys_cfg.operator_fee_scalar = Some(OPERATOR_FEE_SCALAR);
-    sys_cfg.operator_fee_constant = Some(OPERATOR_FEE_CONSTANT);
+    ForkMatrix::from_isthmus().run(|fork_name, hardforks| {
+        let mut rollup_cfg =
+            TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+        let sys_cfg = rollup_cfg.genesis.system_config.as_mut().unwrap();
+        sys_cfg.operator_fee_scalar = Some(OPERATOR_FEE_SCALAR);
+        sys_cfg.operator_fee_constant = Some(OPERATOR_FEE_CONSTANT);
 
-    let h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
-    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut builder = h.create_l2_sequencer(l1_chain);
+        let h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+        let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+        let mut builder = h.create_l2_sequencer(l1_chain);
 
-    // Build one block and verify it uses the Isthmus format with the configured fee params.
-    let block = builder.build_next_block();
-    let l1_info = ActionTestHarness::l1_info_from_block(&block);
+        // Build one block and verify it uses the active post-Isthmus format with
+        // the configured operator fee params.
+        let block = builder.build_next_block();
+        let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
-    assert!(
-        matches!(l1_info, L1BlockInfoTx::Isthmus(_)),
-        "post-Isthmus L1 info must use Isthmus format, got {l1_info:?}"
-    );
-    assert_eq!(
-        l1_info.operator_fee_scalar(),
-        OPERATOR_FEE_SCALAR,
-        "operator_fee_scalar must match the system config"
-    );
-    assert_eq!(
-        l1_info.operator_fee_constant(),
-        OPERATOR_FEE_CONSTANT,
-        "operator_fee_constant must match the system config"
-    );
+        let expected_format = matches!(
+            (fork_name, &l1_info),
+            ("isthmus", L1BlockInfoTx::Isthmus(_)) | ("jovian", L1BlockInfoTx::Jovian(_))
+        );
+        assert!(
+            expected_format,
+            "{fork_name}: post-Isthmus L1 info must use the active hardfork format, got {l1_info:?}"
+        );
+        assert_eq!(
+            l1_info.operator_fee_scalar(),
+            OPERATOR_FEE_SCALAR,
+            "{fork_name}: operator_fee_scalar must match the system config"
+        );
+        assert_eq!(
+            l1_info.operator_fee_constant(),
+            OPERATOR_FEE_CONSTANT,
+            "{fork_name}: operator_fee_constant must match the system config"
+        );
+    });
 }
 
 /// The L1 info format transitions from `Ecotone` to `Isthmus` across three

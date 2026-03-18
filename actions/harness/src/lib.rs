@@ -24,6 +24,9 @@ mod batcher;
 pub use base_batcher_encoder::{BatchType, DaType, EncoderConfig};
 pub use batcher::{Batcher, BatcherConfig, BatcherError, L1MinerTxManager};
 
+mod matrix;
+pub use matrix::ForkMatrix;
+
 mod test_rollup_config;
 pub use test_rollup_config::TestRollupConfigBuilder;
 
