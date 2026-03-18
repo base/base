@@ -62,7 +62,7 @@ mod tests {
 
     #[tokio::test]
     async fn backend_create_oracle_returns_empty() {
-        let server = Arc::new(Server::new().unwrap());
+        let server = Arc::new(Server::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(server));
         let backend = NitroBackend::new(transport);
 

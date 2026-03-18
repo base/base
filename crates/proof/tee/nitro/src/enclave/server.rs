@@ -5,7 +5,7 @@ use base_alloy_evm::OpEvmFactory;
 use base_proof_client::{BootInfo, Prologue};
 use base_proof_preimage::PreimageKey;
 use base_proof_primitives::{ProofJournal, ProofResult, Proposal};
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::{
     Oracle,
@@ -65,23 +65,19 @@ pub struct Server {
 }
 
 impl Server {
-    /// Create a new server instance.
+    /// Create a new server instance that requires NSM.
     ///
-    /// In enclave mode (NSM available): reads PCR0, keccak256-hashes it to derive
-    /// `tee_image_hash`, and uses the hardware RNG for key generation.
-    ///
-    /// In local mode (no NSM): uses the OS RNG and sets `tee_image_hash` to zero.
+    /// Reads PCR0, keccak256-hashes it to derive `tee_image_hash`, and uses the
+    /// hardware RNG for key generation. Returns an error if NSM is unavailable.
     pub fn new() -> Result<Self> {
-        NsmSession::open()?.map_or_else(
-            || {
-                warn!("running in local mode without NSM");
-                Self::new_local()
-            },
-            |session| Self::new_enclave(&session),
-        )
+        let session = NsmSession::open()?.ok_or_else(|| {
+            NsmError::SessionOpen("NSM device unavailable; cannot run in enclave mode".into())
+        })?;
+        Self::new_enclave(&session)
     }
 
-    fn new_enclave(session: &NsmSession) -> Result<Self> {
+    /// Create a new server from an existing NSM session.
+    pub fn new_enclave(session: &NsmSession) -> Result<Self> {
         let pcr0 = session.describe_pcr0()?;
         if pcr0.len() != PCR0_LENGTH {
             return Err(NsmError::DescribePcr(format!(
@@ -100,7 +96,11 @@ impl Server {
         Ok(Self { pcr0, signer_key, tee_image_hash })
     }
 
-    fn new_local() -> Result<Self> {
+    /// Create a new server instance in local mode for development.
+    ///
+    /// Uses the OS RNG and sets `tee_image_hash` to zero. Optionally reads a
+    /// signer key from the `OP_ENCLAVE_SIGNER_KEY` environment variable.
+    pub fn new_local() -> Result<Self> {
         let signer_key = match std::env::var(SIGNER_KEY_ENV_VAR) {
             Ok(hex_key) => {
                 info!("using signer key from environment variable");
@@ -254,9 +254,7 @@ mod tests {
 
     #[test]
     fn test_server_new_local_mode() {
-        let server = Server::new().expect("failed to create server");
-
-        #[cfg(not(target_os = "linux"))]
+        let server = Server::new_local().expect("failed to create server");
         assert!(server.is_local_mode());
 
         let public_key = server.signer_public_key();
@@ -265,8 +263,15 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn test_server_new_requires_nsm() {
+        let result = Server::new();
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_signer_address_consistency() {
-        let server = Server::new().expect("failed to create server");
+        let server = Server::new_local().expect("failed to create server");
 
         let addr1 = server.signer_address();
         let addr2 = server.signer_address();

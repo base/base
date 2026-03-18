@@ -95,7 +95,7 @@ mod tests {
 
     #[tokio::test]
     async fn signer_public_key_routed_to_transport() {
-        let server = Arc::new(EnclaveServer::new().unwrap());
+        let server = Arc::new(EnclaveServer::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(Arc::clone(&server)));
         let expected = server.signer_public_key();
 
@@ -115,7 +115,7 @@ mod tests {
 
     #[tokio::test]
     async fn signer_attestation_routed_to_transport() {
-        let server = Arc::new(EnclaveServer::new().unwrap());
+        let server = Arc::new(EnclaveServer::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(Arc::clone(&server)));
 
         let rpc = NitroSignerRpc { transport };

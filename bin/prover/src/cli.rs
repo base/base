@@ -192,7 +192,7 @@ impl NitroLocalArgs {
             enable_experimental_witness_endpoint: self.server.enable_experimental_witness_endpoint,
         };
 
-        let enclave_server = Arc::new(Server::new()?);
+        let enclave_server = Arc::new(Server::new_local()?);
         let transport = Arc::new(NitroTransport::local(enclave_server));
         let server = NitroProverServer::new(prover_config, transport);
 
