@@ -76,9 +76,9 @@ where
 
     /// Runs the registration loop until cancelled.
     ///
-    /// Each tick discovers instances, filters by health status, and attempts
-    /// registration for any unregistered signers. Individual instance failures
-    /// are logged and skipped — the loop continues with the next instance.
+    /// Runs `step()` immediately on startup, then waits `poll_interval` between
+    /// subsequent ticks. Individual instance failures are logged and skipped —
+    /// the loop continues with the next instance.
     pub async fn run(&self) -> Result<()> {
         info!(
             poll_interval = ?self.poll_interval,
@@ -87,16 +87,16 @@ where
         );
 
         loop {
+            if let Err(e) = self.step().await {
+                warn!(error = %e, "registration step failed");
+            }
+
             tokio::select! {
                 () = self.cancel.cancelled() => {
                     info!("registration driver received shutdown signal");
                     break;
                 }
-                () = tokio::time::sleep(self.poll_interval) => {
-                    if let Err(e) = self.step().await {
-                        warn!(error = %e, "registration step failed");
-                    }
-                }
+                () = tokio::time::sleep(self.poll_interval) => {}
             }
         }
 
@@ -121,6 +121,10 @@ where
         );
 
         for instance in registerable {
+            if self.cancel.is_cancelled() {
+                break;
+            }
+
             if let Err(e) = self.process_instance(instance).await {
                 warn!(
                     error = %e,
@@ -145,6 +149,13 @@ where
             return Ok(());
         }
 
+        // Check cancellation before the most expensive operation (proof generation
+        // can take minutes via Boundless).
+        if self.cancel.is_cancelled() {
+            debug!("shutdown requested, skipping proof generation");
+            return Ok(());
+        }
+
         info!(
             signer = %response.signer_address,
             instance = %instance.instance_id,
@@ -152,6 +163,13 @@ where
         );
 
         let proof = self.proof_provider.generate_proof(&response.attestation_bytes).await?;
+
+        // Check cancellation before submitting the transaction — avoid starting
+        // new on-chain work if shutdown is in progress.
+        if self.cancel.is_cancelled() {
+            debug!("shutdown requested, skipping transaction submission");
+            return Ok(());
+        }
 
         let calldata = ITEEProverRegistry::registerSignerCall {
             output: proof.output,

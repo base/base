@@ -139,10 +139,6 @@ struct BoundlessArgs {
     )]
     boundless_verifier_program_url: Option<Url>,
 
-    /// Minimum price in wei per cycle for Boundless proof requests.
-    #[arg(long, env = "REGISTRAR_BOUNDLESS_MIN_PRICE", default_value_t = 100_000)]
-    boundless_min_price: u64,
-
     /// Maximum price in wei per cycle for Boundless proof requests.
     #[arg(long, env = "REGISTRAR_BOUNDLESS_MAX_PRICE", default_value_t = 1_000_000)]
     boundless_max_price: u64,
@@ -216,25 +212,26 @@ impl Cli {
         // Build proving config based on mode.
         let proving = match self.proving_mode {
             ProvingMode::Boundless => {
-                if self.boundless.boundless_min_price > self.boundless.boundless_max_price {
-                    return Err(RegistrarError::Config(
-                        "--boundless-min-price must not exceed --boundless-max-price".into(),
-                    ));
-                }
                 if self.boundless.boundless_timeout_secs == 0 {
                     return Err(RegistrarError::Config(
                         "--boundless-timeout-secs must be greater than 0".into(),
                     ));
                 }
 
+                let boundless_key =
+                    self.boundless.boundless_private_key.as_deref().ok_or_else(|| {
+                        RegistrarError::Config("--boundless-private-key is required".into())
+                    })?;
+                let image_id_hex = self
+                    .image_id
+                    .as_deref()
+                    .ok_or_else(|| RegistrarError::Config("--image-id is required".into()))?;
+
                 ProvingConfig::Boundless(Box::new(BoundlessConfig {
                     rpc_url: self.boundless.boundless_rpc_url.ok_or_else(|| {
                         RegistrarError::Config("--boundless-rpc-url is required".into())
                     })?,
-                    signer: parse_private_key(
-                        "--boundless-private-key",
-                        self.boundless.boundless_private_key.as_deref().unwrap_or(""),
-                    )?,
+                    signer: parse_private_key("--boundless-private-key", boundless_key)?,
                     verifier_program_url: self
                         .boundless
                         .boundless_verifier_program_url
@@ -243,8 +240,7 @@ impl Cli {
                                 "--boundless-verifier-program-url is required".into(),
                             )
                         })?,
-                    image_id: parse_image_id(self.image_id.as_deref().unwrap_or(""))?,
-                    min_price: self.boundless.boundless_min_price,
+                    image_id: parse_image_id(image_id_hex)?,
                     max_price: self.boundless.boundless_max_price,
                     poll_interval: Duration::from_secs(self.boundless.boundless_poll_interval_secs),
                     timeout: Duration::from_secs(self.boundless.boundless_timeout_secs),
@@ -331,9 +327,17 @@ impl Cli {
             config.l1_rpc_url.clone(),
         );
 
-        // Build proof provider based on proving mode.
+        // Cancel the driver's token on ctrl-c so the inner loop observes
+        // shutdown and in-flight operations can complete gracefully.
         let cancel = CancellationToken::new();
+        let cancel_on_signal = cancel.clone();
+        tokio::spawn(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            info!("received ctrl-c, shutting down");
+            cancel_on_signal.cancel();
+        });
 
+        // Build proof provider and run the driver.
         match config.proving {
             ProvingConfig::Boundless(ref boundless) => {
                 let proof_provider = BoundlessProver {
@@ -347,7 +351,7 @@ impl Cli {
                     trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX,
                 };
 
-                let driver = RegistrationDriver::new(
+                RegistrationDriver::new(
                     discovery,
                     proof_provider,
                     registry,
@@ -355,16 +359,10 @@ impl Cli {
                     config.tee_prover_registry_address,
                     config.poll_interval,
                     config.prover_timeout,
-                    cancel.clone(),
-                );
-
-                tokio::select! {
-                    result = driver.run() => result?,
-                    _ = tokio::signal::ctrl_c() => {
-                        info!("received ctrl-c, shutting down");
-                        cancel.cancel();
-                    }
-                }
+                    cancel,
+                )
+                .run()
+                .await?;
             }
             ProvingConfig::Direct { ref elf_path } => {
                 let elf = std::fs::read(elf_path).map_err(|e| {
@@ -375,7 +373,7 @@ impl Cli {
                 })?;
                 let proof_provider = DirectProver::new(elf, DEFAULT_TRUSTED_CERTS_PREFIX)?;
 
-                let driver = RegistrationDriver::new(
+                RegistrationDriver::new(
                     discovery,
                     proof_provider,
                     registry,
@@ -383,16 +381,10 @@ impl Cli {
                     config.tee_prover_registry_address,
                     config.poll_interval,
                     config.prover_timeout,
-                    cancel.clone(),
-                );
-
-                tokio::select! {
-                    result = driver.run() => result?,
-                    _ = tokio::signal::ctrl_c() => {
-                        info!("received ctrl-c, shutting down");
-                        cancel.cancel();
-                    }
-                }
+                    cancel,
+                )
+                .run()
+                .await?;
             }
         }
 
@@ -574,14 +566,6 @@ mod tests {
     fn zero_duration_fails_into_config(#[case] flag: &str, #[case] value: &str) {
         let mut args = boundless_args();
         args.extend([flag, value]);
-        let result = Cli::try_parse_from(args).expect("clap should parse these args").into_config();
-        assert!(result.is_err());
-    }
-
-    #[rstest]
-    fn inverted_price_bounds_fail_into_config() {
-        let mut args = boundless_args();
-        args.extend(["--boundless-min-price", "9999", "--boundless-max-price", "1"]);
         let result = Cli::try_parse_from(args).expect("clap should parse these args").into_config();
         assert!(result.is_err());
     }
