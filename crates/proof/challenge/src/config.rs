@@ -100,7 +100,7 @@ pub struct ChallengerConfig {
     /// Timeout for individual gRPC requests to the ZK proof service.
     pub zk_request_timeout: Duration,
     /// URL of the TEE enclave RPC endpoint (optional).
-    pub enclave_rpc_url: Option<Validated<Url>>,
+    pub tee_rpc_url: Option<Validated<Url>>,
     /// Timeout for individual TEE proof requests (only `Some` when TEE is enabled).
     pub tee_request_timeout: Option<Duration>,
     /// Signing configuration for L1 transaction submission.
@@ -143,11 +143,8 @@ impl ChallengerConfig {
         let l2_eth_rpc = validate(cli.challenger.l2_eth_rpc, "l2-eth-rpc")?;
         let zk_proof_service_endpoint =
             validate(cli.challenger.zk_proof_service_endpoint, "zk-proof-service-endpoint")?;
-        let enclave_rpc_url = cli
-            .challenger
-            .enclave_rpc_url
-            .map(|url| validate(url, "enclave-rpc-url"))
-            .transpose()?;
+        let tee_rpc_url =
+            cli.challenger.tee_rpc_url.map(|url| validate(url, "tee-rpc-url")).transpose()?;
 
         // Validate poll_interval > 0
         if cli.challenger.poll_interval.is_zero() {
@@ -177,7 +174,7 @@ impl ChallengerConfig {
         }
 
         // Validate tee_request_timeout > 0 when TEE is enabled
-        if enclave_rpc_url.is_some() && cli.challenger.tee_request_timeout.is_zero() {
+        if tee_rpc_url.is_some() && cli.challenger.tee_request_timeout.is_zero() {
             return Err(ConfigError::OutOfRange {
                 field: "tee-request-timeout",
                 constraint: "greater than 0",
@@ -210,8 +207,7 @@ impl ChallengerConfig {
 
         let health_addr = SocketAddr::new(cli.challenger.health_addr, cli.challenger.health_port);
 
-        let tee_request_timeout =
-            enclave_rpc_url.as_ref().map(|_| cli.challenger.tee_request_timeout);
+        let tee_request_timeout = tee_rpc_url.as_ref().map(|_| cli.challenger.tee_request_timeout);
 
         Ok(Self {
             l1_eth_rpc,
@@ -221,7 +217,7 @@ impl ChallengerConfig {
             zk_proof_service_endpoint,
             zk_connect_timeout: cli.challenger.zk_connect_timeout,
             zk_request_timeout: cli.challenger.zk_request_timeout,
-            enclave_rpc_url,
+            tee_rpc_url,
             tee_request_timeout,
             signing,
             tx_manager,
@@ -466,7 +462,7 @@ mod tests {
     fn test_zero_tee_request_timeout_rejected_when_tee_enabled() {
         let all_args = [
             &LOCAL_SIGNER_ARGS[..],
-            &["--enclave-rpc-url", "http://localhost:9999", "--tee-request-timeout", "0s"],
+            &["--tee-rpc-url", "http://localhost:9999", "--tee-request-timeout", "0s"],
         ]
         .concat();
         let cli = cli_from_args(&all_args);

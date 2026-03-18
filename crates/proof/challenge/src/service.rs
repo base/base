@@ -115,22 +115,20 @@ impl ChallengerService {
         info!(endpoint = %config.zk_proof_service_endpoint, "ZK proof client initialized");
 
         // ── 6b. TEE enclave client (optional) ────────────────────────────────
-        let tee: Option<crate::TeeConfig> = if let Some(ref enclave_url) = config.enclave_rpc_url {
-            let client = base_enclave_client::EnclaveClient::new(enclave_url.as_str())
+        let tee: Option<crate::TeeConfig> = if let Some(ref tee_url) = config.tee_rpc_url {
+            let client = base_enclave_client::EnclaveClient::new(tee_url.as_str())
                 .map_err(|e| eyre::eyre!("failed to create enclave client: {e}"))?;
-            info!(endpoint = %enclave_url, "TEE enclave client initialized");
+            info!(endpoint = %tee_url, "TEE enclave client initialized");
             let tee_l1_provider = RootProvider::new_http(config.l1_eth_rpc.as_ref().clone());
             Some(crate::TeeConfig {
                 provider: Arc::new(crate::EnclaveTeeProvider::new(client)),
                 l1_head_provider: Arc::new(crate::RpcL1HeadProvider::new(tee_l1_provider)),
                 request_timeout: config.tee_request_timeout.ok_or_else(|| {
-                    eyre::eyre!(
-                        "tee_request_timeout must be set when enclave_rpc_url is configured"
-                    )
+                    eyre::eyre!("tee_request_timeout must be set when tee_rpc_url is configured")
                 })?,
             })
         } else {
-            info!("TEE proof sourcing disabled (no --enclave-rpc-url)");
+            info!("TEE proof sourcing disabled (no --tee-rpc-url)");
             None
         };
 

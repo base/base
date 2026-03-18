@@ -721,7 +721,7 @@ async fn test_step_invalid_game_no_tee_prover_zk_only() {
 #[tokio::test]
 async fn test_step_invalid_game_no_tee_provider_zk_only() {
     // Game has a TEE prover, but the driver has no TEE provider configured
-    // (enclave-rpc-url was not set). Should go straight to ZK.
+    // (tee-rpc-url was not set). Should go straight to ZK.
     let (l2, factory, verifier) = invalid_game_mocks_with_tee();
 
     let zk = Arc::new(MockZkProofProvider {

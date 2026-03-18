@@ -96,14 +96,14 @@ pub struct ChallengerArgs {
     pub zk_request_timeout: Duration,
 
     /// URL of the TEE enclave RPC endpoint (optional; enables TEE-first proof sourcing).
-    #[arg(long = "enclave-rpc-url", env = cli_env!("ENCLAVE_RPC_URL"))]
-    pub enclave_rpc_url: Option<Url>,
+    #[arg(long = "tee-rpc-url", env = cli_env!("TEE_RPC_URL"))]
+    pub tee_rpc_url: Option<Url>,
 
-    /// Timeout for individual TEE proof requests (e.g., "30s", "1m").
+    /// Timeout for individual TEE proof requests (e.g., "1m", "10m").
     #[arg(
         long = "tee-request-timeout",
         env = cli_env!("TEE_REQUEST_TIMEOUT"),
-        default_value = "30s",
+        default_value = "10m",
         value_parser = humantime::parse_duration
     )]
     pub tee_request_timeout: Duration,
@@ -139,7 +139,7 @@ impl std::fmt::Debug for ChallengerArgs {
             .field("zk_proof_service_endpoint", &self.zk_proof_service_endpoint)
             .field("zk_connect_timeout", &self.zk_connect_timeout)
             .field("zk_request_timeout", &self.zk_request_timeout)
-            .field("enclave_rpc_url", &self.enclave_rpc_url)
+            .field("tee_rpc_url", &self.tee_rpc_url)
             .field("tee_request_timeout", &self.tee_request_timeout)
             .field("signer", &self.signer)
             .field("tx_manager", &self.tx_manager)
