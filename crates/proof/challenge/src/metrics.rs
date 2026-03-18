@@ -44,8 +44,8 @@ impl ChallengerMetrics {
     /// Counter: total number of TEE proof attempts.
     pub const TEE_PROOF_ATTEMPTS_TOTAL: &str = "base_challenger_tee_proof_attempts_total";
 
-    /// Counter: total number of successful TEE proof submissions.
-    pub const TEE_PROOF_SUCCESS_TOTAL: &str = "base_challenger_tee_proof_success_total";
+    /// Counter: total number of TEE proofs successfully obtained.
+    pub const TEE_PROOF_OBTAINED_TOTAL: &str = "base_challenger_tee_proof_obtained_total";
 
     /// Counter: total number of TEE proof failures that fell back to ZK.
     pub const TEE_PROOF_FALLBACK_TOTAL: &str = "base_challenger_tee_proof_fallback_total";

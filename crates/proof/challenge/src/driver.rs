@@ -300,7 +300,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                     if let Err(e) = self.poll_or_submit(game_address).await {
                         warn!(error = %e, game = %game_address, "initial TEE submission failed, will retry next tick");
                     }
-                    metrics::counter!(ChallengerMetrics::TEE_PROOF_SUCCESS_TOTAL).increment(1);
+                    metrics::counter!(ChallengerMetrics::TEE_PROOF_OBTAINED_TOTAL).increment(1);
                     return Ok(());
                 }
                 Ok(Err(e)) => {
