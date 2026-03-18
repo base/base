@@ -25,6 +25,13 @@ pub trait AttestationProofProvider: Send + Sync {
     async fn generate_proof(&self, attestation_bytes: &[u8]) -> Result<AttestationProof>;
 }
 
+#[async_trait]
+impl AttestationProofProvider for Box<dyn AttestationProofProvider> {
+    async fn generate_proof(&self, attestation_bytes: &[u8]) -> Result<AttestationProof> {
+        (**self).generate_proof(attestation_bytes).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;

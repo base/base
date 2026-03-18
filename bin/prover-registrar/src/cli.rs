@@ -5,7 +5,9 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use alloy_primitives::{Address, B256};
 use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
-use base_proof_tee_nitro_attestation_prover::{BoundlessProver, DirectProver};
+use base_proof_tee_nitro_attestation_prover::{
+    AttestationProofProvider, BoundlessProver, DirectProver,
+};
 use base_proof_tee_registrar::{
     AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, ProvingConfig, RegistrarConfig,
     RegistrarError, RegistrationDriver, RegistryContractClient, RemoteSignerConfig, SigningConfig,
@@ -337,33 +339,19 @@ impl Cli {
             cancel_on_signal.cancel();
         });
 
-        // Build proof provider and run the driver.
-        match config.proving {
-            ProvingConfig::Boundless(ref boundless) => {
-                let proof_provider = BoundlessProver {
-                    rpc_url: boundless.rpc_url.clone(),
-                    signer: boundless.signer.clone(),
-                    verifier_program_url: boundless.verifier_program_url.clone(),
-                    image_id: boundless.image_id,
-                    max_price: boundless.max_price,
-                    poll_interval: boundless.poll_interval,
-                    timeout: boundless.timeout,
-                    trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX,
-                };
-
-                RegistrationDriver::new(
-                    discovery,
-                    proof_provider,
-                    registry,
-                    tx_manager,
-                    config.tee_prover_registry_address,
-                    config.poll_interval,
-                    config.prover_timeout,
-                    cancel,
-                )
-                .run()
-                .await?;
-            }
+        // Build proof provider based on proving mode (type-erased so the
+        // driver construction is not duplicated per variant).
+        let proof_provider: Box<dyn AttestationProofProvider> = match config.proving {
+            ProvingConfig::Boundless(ref boundless) => Box::new(BoundlessProver {
+                rpc_url: boundless.rpc_url.clone(),
+                signer: boundless.signer.clone(),
+                verifier_program_url: boundless.verifier_program_url.clone(),
+                image_id: boundless.image_id,
+                max_price: boundless.max_price,
+                poll_interval: boundless.poll_interval,
+                timeout: boundless.timeout,
+                trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX,
+            }),
             ProvingConfig::Direct { ref elf_path } => {
                 let elf = std::fs::read(elf_path).map_err(|e| {
                     RegistrarError::Config(format!(
@@ -371,22 +359,22 @@ impl Cli {
                         elf_path.display()
                     ))
                 })?;
-                let proof_provider = DirectProver::new(elf, DEFAULT_TRUSTED_CERTS_PREFIX)?;
-
-                RegistrationDriver::new(
-                    discovery,
-                    proof_provider,
-                    registry,
-                    tx_manager,
-                    config.tee_prover_registry_address,
-                    config.poll_interval,
-                    config.prover_timeout,
-                    cancel,
-                )
-                .run()
-                .await?;
+                Box::new(DirectProver::new(elf, DEFAULT_TRUSTED_CERTS_PREFIX)?)
             }
-        }
+        };
+
+        RegistrationDriver::new(
+            discovery,
+            proof_provider,
+            registry,
+            tx_manager,
+            config.tee_prover_registry_address,
+            config.poll_interval,
+            config.prover_timeout,
+            cancel,
+        )
+        .run()
+        .await?;
 
         Ok(())
     }

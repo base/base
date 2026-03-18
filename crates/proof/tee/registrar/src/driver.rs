@@ -9,7 +9,7 @@ use std::{fmt, time::Duration};
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
-use base_tx_manager::{SimpleTxManager, TxCandidate, TxManager};
+use base_tx_manager::{TxCandidate, TxManager};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -23,18 +23,18 @@ use crate::{
 ///
 /// Generic over the discovery, proof generation, and registry backends so
 /// each can be mocked independently in tests.
-pub struct RegistrationDriver<D, P, R> {
+pub struct RegistrationDriver<D, P, R, T> {
     discovery: D,
     proof_provider: P,
     registry: R,
-    tx_manager: SimpleTxManager,
+    tx_manager: T,
     registry_address: Address,
     poll_interval: Duration,
     prover_timeout: Duration,
     cancel: CancellationToken,
 }
 
-impl<D, P, R> fmt::Debug for RegistrationDriver<D, P, R> {
+impl<D, P, R, T> fmt::Debug for RegistrationDriver<D, P, R, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RegistrationDriver")
             .field("registry_address", &self.registry_address)
@@ -44,11 +44,12 @@ impl<D, P, R> fmt::Debug for RegistrationDriver<D, P, R> {
     }
 }
 
-impl<D, P, R> RegistrationDriver<D, P, R>
+impl<D, P, R, T> RegistrationDriver<D, P, R, T>
 where
     D: InstanceDiscovery,
     P: AttestationProofProvider,
     R: RegistryClient,
+    T: TxManager,
 {
     /// Creates a new registration driver.
     #[allow(clippy::too_many_arguments)]
@@ -56,7 +57,7 @@ where
         discovery: D,
         proof_provider: P,
         registry: R,
-        tx_manager: SimpleTxManager,
+        tx_manager: T,
         registry_address: Address,
         poll_interval: Duration,
         prover_timeout: Duration,
