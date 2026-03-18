@@ -13,8 +13,9 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, Bytes};
+use base_enclave::ProofEncoder;
 use base_proof_contracts::AggregateVerifierClient;
-use base_proof_primitives::ProofRequest as TeeProofRequest;
+use base_proof_primitives::{ProofRequest as TeeProofRequest, ProofResult};
 use base_proof_rpc::L2Provider;
 use base_tx_manager::TxManager;
 use base_zk_client::{ProofType, ProveBlockRequest, ZkProofProvider};
@@ -23,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
-    CandidateGame, ChallengeSubmitter, ChallengerMetrics, EnclaveTeeProvider, GameScanner,
+    CandidateGame, ChallengeSubmitter, ChallengerMetrics, GameScanner,
     IntermediateValidationParams, L1HeadProvider, OutputValidator, PendingProof, PendingProofs,
     ProofPhase, ProofUpdate, TeeProofProvider, ValidatorError,
 };
@@ -378,22 +379,24 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
 
         let result = tee.provider.prove(request).await?;
 
-        // Validate that the TEE computed the expected output root.
+        // Validate that the TEE computed the expected output root and encode the proof.
         match &result {
-            base_proof_primitives::ProofResult::Tee { aggregate_proposal, .. } => {
+            ProofResult::Tee { aggregate_proposal, .. } => {
                 if aggregate_proposal.output_root != expected_root {
                     return Err(eyre::eyre!(
                         "TEE computed unexpected output root: expected {expected_root}, got {}",
                         aggregate_proposal.output_root
                     ));
                 }
+                ProofEncoder::encode_proof_bytes(
+                    &aggregate_proposal.signature,
+                    aggregate_proposal.l1_origin_hash,
+                    aggregate_proposal.l1_origin_number,
+                )
+                .map_err(|e| eyre::eyre!("TEE proof encoding failed: {e}"))
             }
-            base_proof_primitives::ProofResult::Zk { .. } => {
-                return Err(eyre::eyre!("TEE provider returned ZK result"));
-            }
+            ProofResult::Zk { .. } => Err(eyre::eyre!("TEE provider returned ZK result")),
         }
-
-        EnclaveTeeProvider::encode_proof(&result)
     }
 
     /// Requests a ZK proof, stores the session, and polls for the result.

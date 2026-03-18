@@ -1,10 +1,9 @@
-//! TEE proof provider abstraction and encoding for TEE-first proof sourcing.
+//! TEE proof provider abstraction for TEE-first proof sourcing.
 
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use async_trait::async_trait;
-use base_enclave::ProofEncoder;
 use base_enclave_client::EnclaveClient;
 use base_proof_primitives::{ProofRequest, ProofResult};
 
@@ -57,27 +56,6 @@ impl EnclaveTeeProvider {
     /// Creates a new provider wrapping the given enclave client.
     pub const fn new(client: EnclaveClient) -> Self {
         Self { client }
-    }
-
-    /// Encodes a [`ProofResult::Tee`] into the 130-byte format expected by the
-    /// `AggregateVerifier` contract.
-    ///
-    /// Format: `proofType(1) + l1OriginHash(32) + l1OriginNumber(32) + signature(65)`
-    pub fn encode_proof(result: &ProofResult) -> eyre::Result<Bytes> {
-        match result {
-            ProofResult::Tee { aggregate_proposal, .. } => {
-                let bytes = ProofEncoder::encode_proof_bytes(
-                    &aggregate_proposal.signature,
-                    aggregate_proposal.l1_origin_hash,
-                    aggregate_proposal.l1_origin_number,
-                )
-                .map_err(|e| eyre::eyre!("TEE proof encoding failed: {e}"))?;
-                Ok(bytes)
-            }
-            ProofResult::Zk { .. } => {
-                Err(eyre::eyre!("expected ProofResult::Tee, got ProofResult::Zk"))
-            }
-        }
     }
 }
 
