@@ -109,8 +109,8 @@ pub struct ValidationResult {
 }
 
 /// Parameters for validating intermediate output roots of a dispute game.
-#[derive(Debug, Clone)]
-pub struct IntermediateValidationParams {
+#[derive(Debug)]
+pub struct IntermediateValidationParams<'a> {
     /// The onchain address of the dispute game proxy contract.
     pub game_address: Address,
     /// The L2 block number at the start of this game's range.
@@ -122,7 +122,7 @@ pub struct IntermediateValidationParams {
     /// The final output root claimed by this dispute game.
     pub claimed_root: B256,
     /// The intermediate output roots to validate, one per checkpoint.
-    pub intermediate_roots: Vec<B256>,
+    pub intermediate_roots: &'a [B256],
 }
 
 /// A single output root checkpoint to validate.
@@ -316,7 +316,7 @@ impl<L2: L2Provider> OutputValidator<L2> {
     /// (possible with adversarial onchain values).
     pub async fn validate_intermediate_roots(
         &self,
-        params: IntermediateValidationParams,
+        params: IntermediateValidationParams<'_>,
     ) -> Result<ValidationResult, ValidatorError> {
         let IntermediateValidationParams {
             game_address,
@@ -466,7 +466,7 @@ mod tests {
                 l2_block_number: 100,
                 intermediate_block_interval: 5,
                 claimed_root: final_claimed,
-                intermediate_roots: roots,
+                intermediate_roots: &roots,
             })
             .await
             .unwrap();
@@ -498,7 +498,7 @@ mod tests {
                 l2_block_number: 100,
                 intermediate_block_interval: 5,
                 claimed_root: B256::ZERO,
-                intermediate_roots: roots,
+                intermediate_roots: &roots,
             })
             .await
             .unwrap();
@@ -533,7 +533,7 @@ mod tests {
                 l2_block_number: 100,
                 intermediate_block_interval: 5,
                 claimed_root: roots[1],
-                intermediate_roots,
+                intermediate_roots: &intermediate_roots,
             })
             .await
             .unwrap();
@@ -578,7 +578,7 @@ mod tests {
                 l2_block_number: 100,
                 intermediate_block_interval: 0,
                 claimed_root: B256::ZERO,
-                intermediate_roots: vec![],
+                intermediate_roots: &[],
             })
             .await;
 
@@ -609,7 +609,7 @@ mod tests {
                 l2_block_number: 100,
                 intermediate_block_interval: 5,
                 claimed_root: B256::ZERO,
-                intermediate_roots,
+                intermediate_roots: &intermediate_roots,
             })
             .await;
 
@@ -639,7 +639,7 @@ mod tests {
                 l2_block_number: u64::MAX,
                 intermediate_block_interval: u64::MAX, // Would overflow: (u64::MAX-1) + u64::MAX, but no checkpoints needed
                 claimed_root: B256::ZERO,
-                intermediate_roots: roots,
+                intermediate_roots: &roots,
             })
             .await;
 
@@ -669,7 +669,7 @@ mod tests {
                 l2_block_number: l2,
                 intermediate_block_interval: interval,
                 claimed_root: B256::ZERO,
-                intermediate_roots: roots,
+                intermediate_roots: &roots,
             })
             .await;
 
@@ -696,7 +696,7 @@ mod tests {
                 l2_block_number,
                 intermediate_block_interval: 10,
                 claimed_root: B256::ZERO,
-                intermediate_roots: vec![],
+                intermediate_roots: &[],
             })
             .await;
 
@@ -737,7 +737,7 @@ mod tests {
                 l2_block_number: 100,
                 intermediate_block_interval: 5,
                 claimed_root: B256::ZERO,
-                intermediate_roots: vec![root_95, B256::ZERO],
+                intermediate_roots: &[root_95, B256::ZERO],
             })
             .await;
 

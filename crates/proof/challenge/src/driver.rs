@@ -214,7 +214,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             l2_block_number: candidate.info.l2_block_number,
             intermediate_block_interval: candidate.intermediate_block_interval,
             claimed_root: candidate.info.root_claim,
-            intermediate_roots: intermediate_roots.clone(),
+            intermediate_roots: &intermediate_roots,
         };
 
         let result = match self.validator.validate_intermediate_roots(params).await {
