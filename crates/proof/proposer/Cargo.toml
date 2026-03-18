@@ -74,8 +74,8 @@ base-cli-utils.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 
-# TLS
-rustls = { workspace = true, features = ["ring"] }
+# TLS (insecure-tls only)
+rustls = { workspace = true, features = ["ring"], optional = true }
 
 # Misc
 hex.workspace = true
@@ -89,3 +89,6 @@ axum = { workspace = true, features = ["http1", "json", "tokio"] }
 [dev-dependencies]
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["test-util"] }
+
+[features]
+insecure-tls = [ "base-proof-rpc/insecure-tls", "dep:rustls" ]

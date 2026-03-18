@@ -71,6 +71,7 @@ pub struct ProposerConfig {
     /// URL of the rollup RPC endpoint.
     pub rollup_rpc: Url,
     /// Skip TLS certificate verification.
+    #[cfg(feature = "insecure-tls")]
     pub skip_tls_verify: bool,
     /// Wait for node sync before starting.
     pub wait_node_sync: bool,
@@ -147,6 +148,7 @@ impl ProposerConfig {
             signing,
             tx_manager,
             rollup_rpc: cli.proposer.rollup_rpc,
+            #[cfg(feature = "insecure-tls")]
             skip_tls_verify: cli.proposer.skip_tls_verify,
             wait_node_sync: cli.proposer.wait_node_sync,
             log: LogConfig::from(cli.logging),
@@ -227,6 +229,7 @@ mod tests {
                 poll_interval: Duration::from_secs(12),
                 rpc_timeout: Duration::from_secs(30),
                 rollup_rpc: Url::parse("http://localhost:7545").unwrap(),
+                #[cfg(feature = "insecure-tls")]
                 skip_tls_verify: false,
                 wait_node_sync: false,
                 rpc_max_retries: 5,

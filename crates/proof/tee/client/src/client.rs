@@ -1,5 +1,6 @@
 //! Enclave RPC client.
 
+#[cfg(feature = "insecure-tls")]
 use std::sync::Arc;
 
 use alloy_primitives::Bytes;
@@ -14,6 +15,7 @@ use jsonrpsee::{
 use crate::client_error::ClientError;
 
 /// Module for insecure TLS configuration that skips certificate verification.
+#[cfg(feature = "insecure-tls")]
 mod danger {
     use rustls::{
         DigitallySignedStruct, Error, SignatureScheme,
@@ -128,6 +130,7 @@ impl EnclaveClient {
     /// # Errors
     ///
     /// Returns an error if the HTTP client cannot be created.
+    #[cfg(feature = "insecure-tls")]
     pub fn with_tls_config(
         url: &str,
         max_request_size: u32,
@@ -136,6 +139,8 @@ impl EnclaveClient {
         let builder = HttpClientBuilder::default().max_request_size(max_request_size);
 
         let inner = if skip_tls_verify {
+            tracing::warn!("TLS certificate verification is disabled for enclave RPC connection");
+
             let tls_config = rustls::ClientConfig::builder()
                 .dangerous()
                 .with_custom_certificate_verifier(Arc::new(danger::NoCertificateVerification))

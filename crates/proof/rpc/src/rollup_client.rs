@@ -29,6 +29,7 @@ pub struct RollupClientConfig {
     /// Retry configuration.
     pub retry_config: RetryConfig,
     /// Skip TLS certificate verification.
+    #[cfg(feature = "insecure-tls")]
     pub skip_tls_verify: bool,
 }
 
@@ -39,6 +40,7 @@ impl RollupClientConfig {
             endpoint,
             timeout: Duration::from_secs(30),
             retry_config: RetryConfig::default(),
+            #[cfg(feature = "insecure-tls")]
             skip_tls_verify: false,
         }
     }
@@ -56,6 +58,7 @@ impl RollupClientConfig {
     }
 
     /// Sets whether to skip TLS certificate verification.
+    #[cfg(feature = "insecure-tls")]
     pub const fn with_skip_tls_verify(mut self, skip: bool) -> Self {
         self.skip_tls_verify = skip;
         self
@@ -80,12 +83,14 @@ impl RollupClient {
     /// Creates a new rollup client from the given configuration.
     pub fn new(config: RollupClientConfig) -> RpcResult<Self> {
         // Create reqwest Client with timeout
-        let mut builder = Client::builder().timeout(config.timeout);
-
-        if config.skip_tls_verify {
+        let builder = Client::builder().timeout(config.timeout);
+        #[cfg(feature = "insecure-tls")]
+        let builder = if config.skip_tls_verify {
             tracing::warn!("TLS certificate verification is disabled for rollup RPC connection");
-            builder = builder.danger_accept_invalid_certs(true);
-        }
+            builder.danger_accept_invalid_certs(true)
+        } else {
+            builder
+        };
 
         let client = builder
             .build()

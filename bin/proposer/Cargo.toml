@@ -20,3 +20,6 @@ eyre.workspace = true
 base-proposer.workspace = true
 tokio = { workspace = true, features = ["full"] }
 clap = { workspace = true, features = ["derive", "env"] }
+
+[features]
+insecure-tls = [ "base-proposer/insecure-tls" ]

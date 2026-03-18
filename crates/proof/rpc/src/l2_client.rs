@@ -50,6 +50,7 @@ pub struct L2ClientConfig {
     /// Retry configuration.
     pub retry_config: RetryConfig,
     /// Skip TLS certificate verification.
+    #[cfg(feature = "insecure-tls")]
     pub skip_tls_verify: bool,
     /// Optional Prometheus metrics prefix for cache counters.
     pub metrics_prefix: Option<String>,
@@ -63,6 +64,7 @@ impl L2ClientConfig {
             timeout: Duration::from_secs(30),
             cache_size: DEFAULT_CACHE_SIZE,
             retry_config: RetryConfig::default(),
+            #[cfg(feature = "insecure-tls")]
             skip_tls_verify: false,
             metrics_prefix: None,
         }
@@ -87,6 +89,7 @@ impl L2ClientConfig {
     }
 
     /// Sets whether to skip TLS certificate verification.
+    #[cfg(feature = "insecure-tls")]
     pub const fn with_skip_tls_verify(mut self, skip: bool) -> Self {
         self.skip_tls_verify = skip;
         self
@@ -127,12 +130,14 @@ impl L2Client {
     /// Creates a new L2 client from the given configuration.
     pub fn new(config: L2ClientConfig) -> RpcResult<Self> {
         // Create reqwest Client with timeout
-        let mut builder = Client::builder().timeout(config.timeout);
-
-        if config.skip_tls_verify {
+        let builder = Client::builder().timeout(config.timeout);
+        #[cfg(feature = "insecure-tls")]
+        let builder = if config.skip_tls_verify {
             tracing::warn!("TLS certificate verification is disabled for L2 RPC connection");
-            builder = builder.danger_accept_invalid_certs(true);
-        }
+            builder.danger_accept_invalid_certs(true)
+        } else {
+            builder
+        };
 
         let client = builder
             .build()

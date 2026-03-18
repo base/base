@@ -55,6 +55,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
 
     // Install the default rustls CryptoProvider before any TLS connections are created.
     // Required by rustls 0.23+ when custom TLS configs are used (e.g. skip_tls_verify).
+    #[cfg(feature = "insecure-tls")]
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     info!(version = env!("CARGO_PKG_VERSION"), "Proposer starting");
@@ -73,8 +74,9 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let l1_config = L1ClientConfig::new(config.l1_eth_rpc.clone())
         .with_timeout(config.rpc_timeout)
         .with_retry_config(config.retry.clone())
-        .with_skip_tls_verify(config.skip_tls_verify)
         .with_metrics_prefix("base_proposer");
+    #[cfg(feature = "insecure-tls")]
+    let l1_config = l1_config.with_skip_tls_verify(config.skip_tls_verify);
     let l1_client = Arc::new(L1Client::new(l1_config)?);
     info!(endpoint = %config.l1_eth_rpc, "L1 client initialized");
 
@@ -82,8 +84,9 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let l2_config = L2ClientConfig::new(config.l2_eth_rpc.clone())
         .with_timeout(config.rpc_timeout)
         .with_retry_config(config.retry.clone())
-        .with_skip_tls_verify(config.skip_tls_verify)
         .with_metrics_prefix("base_proposer");
+    #[cfg(feature = "insecure-tls")]
+    let l2_config = l2_config.with_skip_tls_verify(config.skip_tls_verify);
     let l2_client = Arc::new(L2Client::new(l2_config)?);
     info!(endpoint = %config.l2_eth_rpc, "L2 client initialized");
 
@@ -91,8 +94,9 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let rollup_rpc = config.rollup_rpc.clone();
     let rollup_config = RollupClientConfig::new(rollup_rpc.clone())
         .with_timeout(config.rpc_timeout)
-        .with_retry_config(config.retry.clone())
-        .with_skip_tls_verify(config.skip_tls_verify);
+        .with_retry_config(config.retry.clone());
+    #[cfg(feature = "insecure-tls")]
+    let rollup_config = rollup_config.with_skip_tls_verify(config.skip_tls_verify);
     let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
     info!(endpoint = %rollup_rpc, "Rollup client initialized");
 

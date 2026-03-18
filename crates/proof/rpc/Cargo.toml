@@ -52,3 +52,6 @@ moka = { workspace = true, features = ["future"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+
+[features]
+insecure-tls = []

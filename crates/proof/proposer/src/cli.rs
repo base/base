@@ -99,6 +99,7 @@ pub struct ProposerArgs {
     pub rollup_rpc: Url,
 
     /// Skip TLS certificate verification.
+    #[cfg(feature = "insecure-tls")]
     #[arg(
         long = "skip-tls-verify",
         env = cli_env!("SKIP_TLS_VERIFY"),
@@ -208,6 +209,7 @@ mod tests {
         assert_eq!(cli.proposer.poll_interval, Duration::from_secs(12));
         assert_eq!(cli.proposer.rpc_timeout, Duration::from_secs(30));
         assert_eq!(cli.proposer.rollup_rpc.as_str(), "http://localhost:7545/");
+        #[cfg(feature = "insecure-tls")]
         assert!(!cli.proposer.skip_tls_verify);
         assert!(!cli.proposer.wait_node_sync);
         assert_eq!(cli.proposer.game_type, 1);
