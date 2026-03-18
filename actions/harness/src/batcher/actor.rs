@@ -38,12 +38,20 @@ impl Default for BatcherConfig {
     }
 }
 
-/// Errors returned by [`Batcher::advance`].
+/// Errors returned by [`Batcher`] methods.
 #[derive(Debug, thiserror::Error)]
 pub enum BatcherError {
     /// The L2 source was exhausted before any blocks could be batched.
     #[error("no L2 blocks available to batch")]
     NoBlocks,
+    /// [`Batcher::wait_until_pending`] did not observe `expected` pending frames
+    /// within the polling iteration limit.
+    #[error("timed out waiting for {expected} pending frames after encoding; got {got}")]
+    EncodingTimeout { expected: usize, got: usize },
+    /// [`Batcher::wait_until_requeued`] did not observe `expected` pending frames
+    /// within the polling iteration limit after a reorg.
+    #[error("timed out waiting for {expected} requeued frames after reorg; got {got}")]
+    RequeueTimeout { expected: usize, got: usize },
 }
 
 /// Batcher actor that drives a persistent [`BatchDriver`] through [`L1Miner`].
@@ -202,8 +210,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`L1MinerTxManager::reorg_to`] for details.
     ///
     /// This method is synchronous. After returning, call
-    /// `tokio::task::yield_now().await` (or an equivalent) to give the
-    /// driver's `run()` loop a scheduling turn to process the head event.
+    /// [`wait_until_requeued`] to wait for the driver to process the failure
+    /// receipts and return frames to the pending queue.
     ///
     /// # Panics
     ///
@@ -211,8 +219,60 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// (`ReorgError::BeyondTip`).
     ///
     /// [`confirm_staged`]: Batcher::confirm_staged
+    /// [`wait_until_requeued`]: Batcher::wait_until_requeued
     pub fn reorg(&self, block_number: u64, l1: &mut L1Miner) {
         self.tx_manager.reorg_to(block_number, l1);
+    }
+
+    /// Wait until at least `min_frames` frames are in the pending queue.
+    ///
+    /// Yields to the tokio scheduler on each iteration to give the background
+    /// [`BatchDriver`] task time to encode blocks and call [`send_async`].
+    /// Intended to be called after [`encode_only`] when a test needs to inspect
+    /// or act on pending frames before mining.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BatcherError::EncodingTimeout`] if `pending_count()` does not
+    /// reach `min_frames` within the polling iteration limit.
+    ///
+    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    /// [`send_async`]: crate::L1MinerTxManager::send_async
+    /// [`encode_only`]: Batcher::encode_only
+    pub async fn wait_until_pending(&self, min_frames: usize) -> Result<(), BatcherError> {
+        for _ in 0..20 {
+            if self.pending_count() >= min_frames {
+                return Ok(());
+            }
+            tokio::task::yield_now().await;
+        }
+        Err(BatcherError::EncodingTimeout { expected: min_frames, got: self.pending_count() })
+    }
+
+    /// Wait until at least `expected` frames are back in the pending queue
+    /// after an L1 reorg.
+    ///
+    /// A reorg requires two driver loop iterations to complete: the first
+    /// processes each `Receipt(id, Failed)` event and requeues the frames in
+    /// the encoder pipeline; the second calls `submit_pending()` →
+    /// [`send_async`] to return them to the pending queue. This method polls
+    /// [`pending_count`] until the condition is satisfied.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BatcherError::RequeueTimeout`] if `pending_count()` does not
+    /// reach `expected` within the polling iteration limit.
+    ///
+    /// [`send_async`]: crate::L1MinerTxManager::send_async
+    /// [`pending_count`]: Batcher::pending_count
+    pub async fn wait_until_requeued(&self, expected: usize) -> Result<(), BatcherError> {
+        for _ in 0..20 {
+            if self.pending_count() >= expected {
+                return Ok(());
+            }
+            tokio::task::yield_now().await;
+        }
+        Err(BatcherError::RequeueTimeout { expected, got: self.pending_count() })
     }
 
     /// Run one full batch cycle through the production [`BatchDriver`] path.

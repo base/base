@@ -125,19 +125,7 @@ async fn batcher_reorg_during_submission() {
     // each Receipt(id, Failed) → pipeline.requeue(id), rewinding the channel
     // cursor without re-encoding.
     batcher.reorg(0, &mut h.l1);
-    // Yield to let the driver work through two loop iterations:
-    //   iteration 1: next_event() picks up Receipt(id, Failed) per frame → requeue
-    //   iteration 2: submit_pending() calls send_async() for requeued frames
-    //                → frames are back in L1MinerTxManager::pending
-    for _ in 0..10 {
-        tokio::task::yield_now().await;
-    }
-
-    // Verify the driver actually requeued the frames before we try to stage them.
-    assert!(
-        batcher.pending_count() > 0,
-        "driver must have requeued frames after reorg; pending queue is empty"
-    );
+    batcher.wait_until_requeued(1).await.expect("driver must requeue frames after reorg");
 
     // Mine an empty replacement block on the new fork, then resubmit the
     // requeued frames using the same Batcher (no drop/recreate required).
