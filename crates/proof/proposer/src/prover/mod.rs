@@ -10,7 +10,7 @@ use alloy_primitives::B256;
 use base_enclave::PerChainConfig;
 use base_proof_primitives::{ProofRequest, ProofResult};
 
-use crate::{constants::PROVER_TIMEOUT, error::ProposerError, prover_client::ProverClient};
+use crate::{error::ProposerError, prover_client::ProverClient};
 
 /// Prover for generating TEE-signed proposals via a remote prover server.
 pub struct Prover {
@@ -35,9 +35,7 @@ impl Prover {
 
     /// Proves a block range by sending a [`ProofRequest`] to the prover server.
     pub async fn prove(&self, request: ProofRequest) -> Result<ProofResult, ProposerError> {
-        tokio::time::timeout(PROVER_TIMEOUT, self.client.prove(request))
-            .await
-            .map_err(|_| ProposerError::Prover("prover request timed out".into()))?
+        self.client.prove(request).await
     }
 }
 

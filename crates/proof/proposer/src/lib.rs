@@ -48,7 +48,7 @@ mod prover;
 pub use prover::Prover;
 
 mod rpc;
-pub use rpc::{L2ClientKind, RethL2Client};
+pub use rpc::{L2Client, L2ClientConfig, L2Provider};
 
 mod service;
 pub use service::run;

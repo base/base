@@ -56,8 +56,6 @@ pub struct ProposerConfig {
     pub l1_eth_rpc: Url,
     /// URL of the L2 Ethereum RPC endpoint.
     pub l2_eth_rpc: Url,
-    /// Use reth-specific RPC calls for L2.
-    pub l2_reth: bool,
     /// Address of the `AnchorStateRegistry` contract on L1.
     pub anchor_state_registry_addr: Address,
     /// Address of the `DisputeGameFactory` contract on L1.
@@ -139,7 +137,6 @@ impl ProposerConfig {
             prover_rpc: cli.proposer.prover_rpc,
             l1_eth_rpc: cli.proposer.l1_eth_rpc,
             l2_eth_rpc: cli.proposer.l2_eth_rpc,
-            l2_reth: cli.proposer.l2_reth,
             anchor_state_registry_addr: cli.proposer.anchor_state_registry_addr,
             dispute_game_factory_addr: cli.proposer.dispute_game_factory_addr,
             game_type: cli.proposer.game_type,
@@ -219,7 +216,6 @@ mod tests {
                 prover_rpc: Url::parse("http://localhost:8080").unwrap(),
                 l1_eth_rpc: Url::parse("http://localhost:8545").unwrap(),
                 l2_eth_rpc: Url::parse("http://localhost:9545").unwrap(),
-                l2_reth: false,
                 anchor_state_registry_addr: "0x1234567890123456789012345678901234567890"
                     .parse()
                     .unwrap(),

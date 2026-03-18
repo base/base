@@ -60,10 +60,6 @@ pub struct ProposerArgs {
     #[arg(long = "l2-eth-rpc", env = cli_env!("L2_ETH_RPC"))]
     pub l2_eth_rpc: Url,
 
-    /// Use reth-specific RPC calls for L2.
-    #[arg(long = "l2-reth", env = cli_env!("L2_RETH"), default_value = "false")]
-    pub l2_reth: bool,
-
     /// Address of the `AnchorStateRegistry` contract on L1.
     #[arg(long = "anchor-state-registry-addr", env = cli_env!("ANCHOR_STATE_REGISTRY_ADDR"))]
     pub anchor_state_registry_addr: Address,
@@ -209,7 +205,6 @@ mod tests {
 
         // Check defaults
         assert!(!cli.proposer.allow_non_finalized);
-        assert!(!cli.proposer.l2_reth);
         assert_eq!(cli.proposer.poll_interval, Duration::from_secs(12));
         assert_eq!(cli.proposer.rpc_timeout, Duration::from_secs(30));
         assert_eq!(cli.proposer.rollup_rpc.as_str(), "http://localhost:7545/");

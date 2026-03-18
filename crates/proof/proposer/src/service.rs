@@ -35,7 +35,7 @@ use crate::{
     output_proposer::ProposalSubmitter,
     prover::Prover,
     prover_client::RpcProverClient,
-    rpc::L2ClientKind,
+    rpc::L2Client,
 };
 
 /// Runs the full proposer service lifecycle.
@@ -84,8 +84,8 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         .with_retry_config(config.retry.clone())
         .with_skip_tls_verify(config.skip_tls_verify)
         .with_metrics_prefix("base_proposer");
-    let l2_client = Arc::new(L2ClientKind::new(l2_config, config.l2_reth)?);
-    info!(endpoint = %config.l2_eth_rpc, reth = config.l2_reth, "L2 client initialized");
+    let l2_client = Arc::new(L2Client::new(l2_config)?);
+    info!(endpoint = %config.l2_eth_rpc, "L2 client initialized");
 
     // Create Rollup client
     let rollup_rpc = config.rollup_rpc.clone();
