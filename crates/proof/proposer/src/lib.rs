@@ -40,8 +40,7 @@ pub use health::serve;
 
 mod metrics;
 pub use metrics::{
-    ACCOUNT_BALANCE_WEI, CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL, INFO, L2_OUTPUT_PROPOSALS_TOTAL,
-    LABEL_CACHE_NAME, LABEL_VERSION, PROOF_QUEUE_DEPTH, UP, record_startup_metrics,
+    ACCOUNT_BALANCE_WEI, INFO, L2_OUTPUT_PROPOSALS_TOTAL, LABEL_VERSION, UP, record_startup_metrics,
 };
 
 mod prover;

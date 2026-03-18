@@ -223,6 +223,16 @@ pub(crate) fn test_anchor_root(block_number: u64) -> AnchorRoot {
     AnchorRoot { root: B256::ZERO, l2_block_number: block_number }
 }
 
+pub(crate) fn test_prover() -> crate::prover::Prover {
+    use jsonrpsee::http_client::HttpClientBuilder;
+
+    use crate::prover_client::RpcProverClient;
+
+    let client = HttpClientBuilder::default().build("http://localhost:19999").expect("valid URL");
+    let prover_client = RpcProverClient::new(client);
+    crate::prover::Prover::new(test_per_chain_config(), std::sync::Arc::new(prover_client))
+}
+
 /// Mock output proposer that does nothing (returns `Ok(())`).
 pub(crate) struct MockOutputProposer;
 

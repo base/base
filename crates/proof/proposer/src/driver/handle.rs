@@ -153,27 +153,16 @@ mod tests {
 
     use alloy_primitives::B256;
     use base_proof_rpc::SyncStatus;
-    use jsonrpsee::http_client::HttpClientBuilder;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::{
         driver::core::{Driver, DriverConfig},
-        prover::Prover,
-        prover_client::RpcProverClient,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-            MockOutputProposer, MockRollupClient, test_anchor_root, test_per_chain_config,
-            test_sync_status,
+            MockOutputProposer, MockRollupClient, test_anchor_root, test_prover, test_sync_status,
         },
     };
-
-    fn test_prover() -> Prover {
-        let client =
-            HttpClientBuilder::default().build("http://localhost:19999").expect("valid URL");
-        let prover_client = RpcProverClient::new(client);
-        Prover::new(test_per_chain_config(), Arc::new(prover_client))
-    }
 
     fn test_driver(
         sync_status: SyncStatus,

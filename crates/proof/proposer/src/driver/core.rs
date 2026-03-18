@@ -447,26 +447,13 @@ mod tests {
     use async_trait::async_trait;
     use base_proof_contracts::GameAtIndex;
     use base_proof_rpc::SyncStatus;
-    use jsonrpsee::http_client::HttpClientBuilder;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::{
-        prover::Prover,
-        prover_client::RpcProverClient,
-        test_utils::{
-            MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-            MockOutputProposer, MockRollupClient, test_anchor_root, test_per_chain_config,
-            test_sync_status,
-        },
+    use crate::test_utils::{
+        MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
+        MockOutputProposer, MockRollupClient, test_anchor_root, test_prover, test_sync_status,
     };
-
-    fn test_prover() -> Prover {
-        let client =
-            HttpClientBuilder::default().build("http://localhost:19999").expect("valid URL");
-        let prover_client = RpcProverClient::new(client);
-        Prover::new(test_per_chain_config(), Arc::new(prover_client))
-    }
 
     fn test_proposal(block_number: u64) -> Proposal {
         Proposal {
@@ -538,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_intermediate_roots_partial() {
+    fn test_extract_intermediate_roots_partial_errors() {
         let driver = test_driver_custom(
             DriverConfig {
                 block_interval: 10,
@@ -551,13 +538,16 @@ mod tests {
             CancellationToken::new(),
         );
 
-        let root_a = B256::repeat_byte(0xAA);
-        let mut proposals: Vec<Proposal> = (101..=105).map(test_proposal).collect();
-        proposals[4].output_root = root_a;
+        // Only 5 proposals (blocks 101-105) but block_interval=10 requires
+        // intermediate roots at blocks 105 and 110. Block 110 is at index 9
+        // which doesn't exist — should return an error.
+        let proposals: Vec<Proposal> = (101..=105).map(test_proposal).collect();
 
-        let roots = driver.extract_intermediate_roots(100, &proposals).unwrap();
-        assert_eq!(roots.len(), 1);
-        assert_eq!(roots[0], root_a);
+        let err = driver.extract_intermediate_roots(100, &proposals).unwrap_err();
+        assert!(
+            matches!(err, ProposerError::Internal(_)),
+            "expected Internal error, got: {err:?}"
+        );
     }
 
     #[test]
