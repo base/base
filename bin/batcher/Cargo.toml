@@ -21,6 +21,7 @@ base-batcher-service.workspace = true
 base-batcher-encoder.workspace = true
 base-cli-utils.workspace = true
 base-runtime = { workspace = true, features = ["tokio"] }
+alloy-signer-local.workspace = true
 alloy-primitives = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }

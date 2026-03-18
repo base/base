@@ -5,8 +5,9 @@ use std::{
     time::Duration,
 };
 
+use alloy_signer_local::PrivateKeySigner;
 use base_batcher_core::ThrottleConfig;
-use base_batcher_service::{BatcherConfig, BatcherService, SecretKey};
+use base_batcher_service::{BatcherConfig, BatcherService};
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_runtime::TokioRuntime;
 use clap::{Args, Parser};
@@ -73,7 +74,7 @@ pub(crate) struct BatcherArgs {
 
     /// Batcher private key (hex-encoded 32-byte secret).
     #[arg(long = "private-key", env = "BATCHER_PRIVATE_KEY")]
-    pub private_key: SecretKey,
+    pub private_key: PrivateKeySigner,
 
     /// L2 block polling interval in seconds.
     #[arg(long = "poll-interval", default_value = "1", env = "BATCHER_POLL_INTERVAL")]
@@ -179,7 +180,7 @@ impl BatcherArgs {
             l2_rpc_url: self.l2_rpc_url,
             l2_ws_url: self.l2_ws_url,
             rollup_rpc_url: self.rollup_rpc_url,
-            batcher_private_key: self.private_key,
+            batcher_private_key: Some(self.private_key),
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             encoder_config,
             max_pending_transactions: self.max_pending_transactions,

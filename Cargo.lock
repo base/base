@@ -2737,6 +2737,7 @@ name = "base-batcher-bin"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-signer-local",
  "base-batcher-core",
  "base-batcher-encoder",
  "base-batcher-service",
@@ -2799,6 +2800,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types-eth",
+ "alloy-signer-local",
  "async-trait",
  "base-alloy-consensus",
  "base-alloy-network",
@@ -3050,6 +3052,7 @@ dependencies = [
  "alloy-provider",
  "alloy-rlp",
  "alloy-rpc-types-eth",
+ "alloy-signer-local",
  "alloy-trie",
  "async-trait",
  "axum",
@@ -4705,6 +4708,7 @@ dependencies = [
  "alloy-rpc-client",
  "alloy-rpc-types",
  "alloy-rpc-types-eth",
+ "alloy-signer-local",
  "alloy-sol-types",
  "alloy-transport",
  "alloy-transport-http",
@@ -4913,7 +4917,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "zeroize",
 ]
 
 [[package]]

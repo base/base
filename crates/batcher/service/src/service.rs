@@ -377,7 +377,11 @@ impl BatcherService {
         );
 
         // Build the signer config from the configured private key.
-        let signer_config = SignerConfig::local(self.config.batcher_private_key.0);
+        let signer_config = SignerConfig::local(
+            self.config
+                .batcher_private_key
+                .ok_or_else(|| eyre::eyre!("batcher_private_key must be set before starting"))?,
+        );
 
         // Fetch L1 chain ID and construct the tx manager.
         let l1_chain_id = l1_provider

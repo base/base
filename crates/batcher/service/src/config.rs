@@ -1,30 +1,11 @@
 //! Full batcher runtime configuration.
 
-use std::{fmt, net::SocketAddr, str::FromStr, time::Duration};
+use std::{net::SocketAddr, time::Duration};
 
-use alloy_primitives::B256;
+use alloy_signer_local::PrivateKeySigner;
 use base_batcher_core::ThrottleConfig;
 use base_batcher_encoder::EncoderConfig;
 use url::Url;
-
-/// A batcher private key that redacts itself in [`fmt::Debug`] output to
-/// prevent accidental logging.
-#[derive(Clone)]
-pub struct SecretKey(pub B256);
-
-impl fmt::Debug for SecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("[REDACTED]")
-    }
-}
-
-impl FromStr for SecretKey {
-    type Err = <B256 as FromStr>::Err;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        s.parse::<B256>().map(SecretKey)
-    }
-}
 
 /// Full batcher configuration combining RPC endpoints, identity, encoding
 /// parameters, submission limits, and optional throttling.
@@ -53,7 +34,10 @@ pub struct BatcherConfig {
     /// Rollup node RPC endpoint.
     pub rollup_rpc_url: Url,
     /// Private key for signing L1 transactions.
-    pub batcher_private_key: SecretKey,
+    ///
+    /// Must be `Some` before the batcher is started; a `None` value will cause
+    /// startup to fail with a clear error rather than proceeding with a random key.
+    pub batcher_private_key: Option<PrivateKeySigner>,
     /// L2 block polling interval.
     pub poll_interval: Duration,
     /// Encoder configuration.
@@ -81,7 +65,7 @@ impl Default for BatcherConfig {
             l2_rpc_url: "http://localhost:9545".parse().expect("valid default URL"),
             l2_ws_url: None,
             rollup_rpc_url: "http://localhost:7545".parse().expect("valid default URL"),
-            batcher_private_key: SecretKey(B256::ZERO),
+            batcher_private_key: None,
             poll_interval: Duration::from_secs(1),
             encoder_config: EncoderConfig::default(),
             max_pending_transactions: 1,

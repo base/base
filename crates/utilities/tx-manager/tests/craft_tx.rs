@@ -6,7 +6,7 @@ use alloy_consensus::{SignableTransaction, TxEip1559, TxEip4844Variant, TxEnvelo
 use alloy_eips::{eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
 use alloy_network::{EthereumWallet, TxSigner};
 use alloy_node_bindings::Anvil;
-use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
+use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
 use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
 use async_trait::async_trait;
@@ -358,7 +358,8 @@ async fn new_with_signer_config_local_creates_functional_manager() {
     let anvil = Anvil::new().spawn();
     let provider = RootProvider::new_http(anvil.endpoint_url());
     let private_key = anvil.keys()[0].clone();
-    let signer_config = SignerConfig::local(B256::from_slice(&private_key.to_bytes()));
+    let signer = PrivateKeySigner::from_slice(&private_key.to_bytes()).expect("valid anvil key");
+    let signer_config = SignerConfig::local(signer);
     let manager = SimpleTxManager::new(
         provider,
         signer_config,

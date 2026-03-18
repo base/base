@@ -5,7 +5,8 @@
 //! [`InProcessConsensus`](super::InProcessConsensus).
 
 use alloy_primitives::B256;
-use base_batcher_service::{BatcherConfig, BatcherService, SecretKey};
+use alloy_signer_local::PrivateKeySigner;
+use base_batcher_service::{BatcherConfig, BatcherService};
 use base_runtime::TokioRuntime;
 use eyre::Result;
 use tokio::task::JoinHandle;
@@ -40,11 +41,13 @@ impl std::fmt::Debug for InProcessBatcher {
 impl InProcessBatcher {
     /// Starts an in-process batcher with the given configuration.
     pub async fn start(config: InProcessBatcherConfig) -> Result<Self> {
+        let signer = PrivateKeySigner::from_bytes(&config.batcher_key)
+            .map_err(|e| eyre::eyre!("invalid batcher key: {e}"))?;
         let batcher_config = BatcherConfig {
             l1_rpc_url: config.l1_rpc_url,
             l2_rpc_url: config.l2_rpc_url,
             rollup_rpc_url: config.rollup_rpc_url,
-            batcher_private_key: SecretKey(config.batcher_key),
+            batcher_private_key: Some(signer),
             // Devnet defaults come from the shared batcher config:
             // poll_interval: 1s, num_confirmations: 1, resubmission_timeout: 48s —
             // all set by BatcherConfig::default().
