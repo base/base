@@ -292,35 +292,16 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                     );
                 }
                 Ok(Ok(proof_bytes)) => {
-                    info!(game = %game_address, path = "tee", "TEE proof obtained, submitting");
-                    match self
-                        .submitter
-                        .submit_nullification(
-                            game_address,
-                            proof_bytes.clone(),
-                            invalid_index,
-                            expected_root,
-                        )
-                        .await
-                    {
-                        Ok(_) => {
-                            metrics::counter!(ChallengerMetrics::TEE_PROOF_SUCCESS_TOTAL)
-                                .increment(1);
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            warn!(
-                                error = %e,
-                                game = %game_address,
-                                "TEE nullification submission failed, caching proof for retry"
-                            );
-                            self.pending_proofs.insert(
-                                game_address,
-                                PendingProof::ready_tee(proof_bytes, invalid_index, expected_root),
-                            );
-                            return Ok(());
-                        }
+                    info!(game = %game_address, path = "tee", "TEE proof obtained");
+                    self.pending_proofs.insert(
+                        game_address,
+                        PendingProof::ready_tee(proof_bytes, invalid_index, expected_root),
+                    );
+                    if let Err(e) = self.poll_or_submit(game_address).await {
+                        warn!(error = %e, game = %game_address, "initial TEE submission failed, will retry next tick");
                     }
+                    metrics::counter!(ChallengerMetrics::TEE_PROOF_SUCCESS_TOTAL).increment(1);
+                    return Ok(());
                 }
                 Ok(Err(e)) => {
                     warn!(
@@ -361,13 +342,14 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         let (agreed_l2_head_hash, agreed_l2_output_root) = output_root_result?;
 
         // The claimed root is the (wrong) on-chain root at the invalid index.
-        let claimed_l2_output_root =
-            *intermediate_roots.get(invalid_index as usize).ok_or_else(|| {
-                eyre::eyre!(
-                    "invalid_index {invalid_index} out of bounds for intermediate_roots (len={})",
-                    intermediate_roots.len()
-                )
-            })?;
+        let invalid_idx = usize::try_from(invalid_index)
+            .map_err(|_| eyre::eyre!("invalid_index {invalid_index} overflows usize"))?;
+        let claimed_l2_output_root = *intermediate_roots.get(invalid_idx).ok_or_else(|| {
+            eyre::eyre!(
+                "invalid_index {invalid_index} out of bounds for intermediate_roots (len={})",
+                intermediate_roots.len()
+            )
+        })?;
 
         let request = TeeProofRequest {
             l1_head,
