@@ -11,6 +11,7 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_alloy_network::{Base, TransactionBuilder};
 use base_alloy_rpc_types::OpTransactionRequest;
+use base_tx_forwarding::TxForwardingConfig;
 use base_txpool::{MAX_BUNDLE_ADVANCE_BLOCKS, unix_time_millis};
 use devnet::{DevnetBuilder, config::ANVIL_ACCOUNT_1};
 use eyre::{Result, WrapErr};
@@ -101,6 +102,7 @@ async fn test_send_bundle_accepts_valid_bundle() -> Result<()> {
     let devnet = DevnetBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
+        .with_tx_forwarding(TxForwardingConfig::new(vec![]))
         .build()
         .await?;
 
@@ -122,7 +124,9 @@ async fn test_send_bundle_accepts_valid_bundle() -> Result<()> {
         create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
 
     let current_block = builder_provider.get_block_number().await?;
-    let target_block = current_block + 1;
+    // Use +3 to give enough lead time for the bundle to propagate from client
+    // to builder before the target block is built.
+    let target_block = current_block + 3;
 
     let request = BundleRequest {
         txs: vec![raw_tx],
@@ -165,6 +169,7 @@ async fn test_send_bundle_rejects_invalid_bundle() -> Result<()> {
     let devnet = DevnetBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
+        .with_tx_forwarding(TxForwardingConfig::new(vec![]))
         .build()
         .await?;
 
@@ -220,6 +225,7 @@ async fn test_send_bundle_included_only_in_target_block() -> Result<()> {
     let devnet = DevnetBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
+        .with_tx_forwarding(TxForwardingConfig::new(vec![]))
         .build()
         .await?;
 
@@ -287,6 +293,7 @@ async fn test_expired_bundle_is_not_included() -> Result<()> {
     let devnet = DevnetBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
+        .with_tx_forwarding(TxForwardingConfig::new(vec![]))
         .build()
         .await?;
 
