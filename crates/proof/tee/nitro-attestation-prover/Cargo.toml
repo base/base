@@ -12,24 +12,34 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Proving
-boundless-market.workspace = true
-risc0-ethereum-contracts.workspace = true
-risc0-zkvm = { workspace = true, features = ["prove"] }
-
-# Verification types
+# Verification types (always available)
 base-proof-tee-nitro-verifier.workspace = true
 
-# Types
-url.workspace = true
-alloy-primitives.workspace = true
-alloy-signer-local.workspace = true
-
-# Async / error / tracing
-tracing.workspace = true
+# Types / traits (always available)
 thiserror.workspace = true
 async-trait.workspace = true
-tokio = { workspace = true, features = ["rt"] }
+alloy-primitives.workspace = true
+
+# Proving backends (behind `prove` feature to avoid pulling in risc0-sys
+# and its Metal kernel build requirement on macOS)
+url = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+boundless-market = { workspace = true, optional = true }
+alloy-signer-local = { workspace = true, optional = true }
+risc0-ethereum-contracts = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["rt"], optional = true }
+risc0-zkvm = { workspace = true, features = ["prove"], optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
+
+[features]
+prove = [
+    "dep:boundless-market",
+    "dep:risc0-ethereum-contracts",
+    "dep:risc0-zkvm",
+    "dep:url",
+    "dep:alloy-signer-local",
+    "dep:tracing",
+    "dep:tokio",
+]
