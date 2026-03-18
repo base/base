@@ -6,6 +6,7 @@ use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
+use base_bundle_extension::BundleExtension;
 use base_execution_chainspec::OpChainSpec;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
@@ -250,6 +251,9 @@ impl InProcessClient {
         let txpool_rpc_config =
             TxPoolRpcConfig { sequencer_rpc: Some(config.builder_rpc_url.clone()) };
         extensions.push(Box::new(TxPoolRpcExtension::from_config(txpool_rpc_config)));
+
+        // Bundle extension (eth_sendBundle RPC + maintenance task)
+        extensions.push(Box::new(BundleExtension::from_config(())));
 
         // TxPool tracing extension (tracing disabled for client)
         let txpool_config = TxpoolConfig {

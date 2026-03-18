@@ -7136,6 +7136,7 @@ dependencies = [
  "base-alloy-rpc-types",
  "base-batcher-service",
  "base-builder-core",
+ "base-bundle-extension",
  "base-consensus-disc",
  "base-consensus-genesis",
  "base-consensus-gossip",

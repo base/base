@@ -19,6 +19,7 @@ base-txpool-rpc.workspace = true
 base-flashblocks.workspace = true
 base-tx-forwarding.workspace = true
 base-txpool-tracing.workspace = true
+base-bundle-extension.workspace = true
 base-flashblocks-node.workspace = true
 base-consensus-rpc = { workspace = true, features = ["client"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
