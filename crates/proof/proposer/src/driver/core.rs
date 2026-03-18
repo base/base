@@ -372,12 +372,10 @@ where
             if let Some(p) = proposals.get(idx as usize) {
                 roots.push(p.output_root);
             } else {
-                debug!(
-                    target_block,
-                    idx,
-                    proposals_len = proposals.len(),
-                    "Intermediate root block not found in proposals"
-                );
+                return Err(ProposerError::Internal(format!(
+                    "intermediate root at block {target_block} not found in proposals (index {idx}, len {})",
+                    proposals.len()
+                )));
             }
         }
         Ok(roots)
