@@ -2,7 +2,7 @@
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, BatchType, Batcher, BatcherConfig, DaType, EncoderConfig,
-    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
 use base_consensus_genesis::{HardForkConfig, RollupConfig};
 use base_consensus_registry::Registry;
@@ -283,12 +283,12 @@ async fn span_batch_rejected_before_delta() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
-    verifier.act_l1_head_signal(block_info_from(h.l1.tip())).await.expect("signal");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(h.l1.tip_info()).await;
     verifier.act_l2_pipeline_full().await.expect("pipeline");
 
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         0,
         "no blocks should be derived: span batch rejected pre-Delta/Fjord"
     );
@@ -327,12 +327,12 @@ async fn span_batch_derives_after_delta() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
-    verifier.act_l1_head_signal(block_info_from(h.l1.tip())).await.expect("signal");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(h.l1.tip_info()).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("pipeline");
 
     assert_eq!(derived, 2, "expected 2 L2 blocks derived from span batch");
-    assert_eq!(verifier.l2_safe().block_info.number, 2, "safe head should advance to block 2");
+    assert_eq!(verifier.l2_safe_number(), 2, "safe head should advance to block 2");
 }
 
 /// Control test: with Fjord active, `SingleBatch` (the default encoding) derives
@@ -362,16 +362,15 @@ async fn single_batch_derives_with_fjord() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     for i in 1..=2u64 {
-        let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(l1_block).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = verifier.act_l2_pipeline_full().await.expect("pipeline");
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
 
-    assert_eq!(verifier.l2_safe().block_info.number, 2, "safe head should advance to block 2");
+    assert_eq!(verifier.l2_safe_number(), 2, "safe head should advance to block 2");
 }
 
 /// Derivation must succeed across the Jovian activation boundary.
@@ -429,17 +428,16 @@ async fn jovian_derivation_crosses_activation_boundary() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     for i in 1..=4u64 {
-        let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(l1_block).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = verifier.act_l2_pipeline_full().await.expect("pipeline");
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
 
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         4,
         "safe head should advance past the Jovian activation boundary"
     );

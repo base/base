@@ -2,7 +2,7 @@
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
-    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
 use base_consensus_genesis::HardForkConfig;
 
@@ -73,17 +73,16 @@ async fn holocene_derivation_crosses_activation_boundary() {
         chain.push(h.l1.tip().clone());
     }
 
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     for i in 1..=4u64 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = verifier.act_l2_pipeline_full().await.expect("pipeline");
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block at/after Holocene");
     }
 
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         4,
         "all 4 L2 blocks must derive through the Holocene boundary"
     );
@@ -166,15 +165,14 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
     batcher.confirm_staged(block_1_num).await;
     chain.push(h.l1.tip().clone()); // L1 block 1: frames 0 and 2
 
-    verifier.initialize().await.expect("initialize");
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     verifier.act_l2_pipeline_full().await.expect("pipeline block 1");
 
     // Frame 2 is pruned by FrameQueue — channel 0 only has frame 0.
     // Channel is incomplete; safe head stays at genesis.
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         0,
         "channel with missing frame 1 must never complete under Holocene"
     );
@@ -185,13 +183,12 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
         h.mine_and_push(&chain);
     }
     for i in 2..=h.l1.latest_number() {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("pipeline");
     }
 
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         0,
         "safe head must remain at genesis: non-sequential frame was pruned, channel never completed"
     );
@@ -279,14 +276,13 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     batcher_a.confirm_staged(block_1_num).await;
     chain.push(h.l1.tip().clone()); // L1 block 1: frame 0 of channel A
 
-    verifier.initialize().await.expect("initialize");
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     verifier.act_l2_pipeline_full().await.expect("pipeline block 1");
 
     // Channel A is open but incomplete — safe head stays at genesis.
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         0,
         "channel A only has frame 0; safe head must stay at genesis"
     );
@@ -302,8 +298,7 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     batcher_b.confirm_staged(block_2_num).await;
     chain.push(h.l1.tip().clone()); // L1 block 2: all frames of channel B
 
-    let l1_block_2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
-    verifier.act_l1_head_signal(l1_block_2).await.expect("signal block 2");
+    verifier.act_l1_head_signal(h.l1.block_info_at(2)).await;
     verifier.act_l2_pipeline_full().await.expect("pipeline block 2");
 
     // Channel A was abandoned (Holocene pruning). Channel B derived block B.
@@ -316,7 +311,7 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     // block 2 is a future batch from the perspective of the batch queue
     // (expected_timestamp = genesis + block_time = 2, but block B is ts=4).
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         0,
         "channel A was abandoned; block A (L2 block 1) never derived; \
          block B (L2 block 2) is a future batch and cannot be emitted"
@@ -388,14 +383,13 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
     batcher.confirm_staged(block_1_num).await;
     chain.push(h.l1.tip().clone());
 
-    verifier.initialize().await.expect("initialize");
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     verifier.act_l2_pipeline_full().await.expect("pipeline block 1");
 
     // Channel is broken — safe head stays at genesis.
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         0,
         "channel with missing frame 1 must never complete under Holocene"
     );
@@ -411,12 +405,11 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
         h.mine_and_push(&chain);
     }
     for i in 2..=h.l1.latest_number() {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("pipeline");
     }
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         0,
         "safe head must remain at genesis: broken channel was pruned, no recovery submitted yet"
     );
@@ -432,13 +425,11 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
     chain.push(h.l1.tip().clone());
 
     let recovery_block_num = h.l1.latest_number();
-    let recovery_blk =
-        block_info_from(h.l1.block_by_number(recovery_block_num).expect("recovery block"));
-    verifier.act_l1_head_signal(recovery_blk).await.expect("signal recovery block");
+    verifier.act_l1_head_signal(h.l1.block_info_at(recovery_block_num)).await;
     verifier.act_l2_pipeline_full().await.expect("pipeline recovery block");
 
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         1,
         "safe head must advance to 1 after clean recovery submission"
     );

@@ -43,21 +43,21 @@ async fn single_l2_block_derived_from_batcher_frame() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let l1_block_1 = block_info_from(h.l1.tip());
+    let l1_block_1 = h.l1.tip_info();
 
     // Seed the genesis SystemConfig (batcher address) and drain the empty
     // genesis L1 block so IndexedTraversal is ready for new block signals.
-    verifier.initialize().await.expect("initialize should succeed");
+    verifier.initialize().await;
 
     // Signal the new L1 head. IndexedTraversal validates the parent-hash chain,
     // so this only succeeds because block 1's parent_hash equals genesis.hash().
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal should succeed");
+    verifier.act_l1_head_signal(l1_block_1).await;
 
     // Step the pipeline until it is idle.
     let derived = verifier.act_l2_pipeline_full().await.expect("pipeline step should succeed");
 
     assert_eq!(derived, 1, "expected exactly one L2 block to be derived");
-    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head should be L2 block 1");
+    assert_eq!(verifier.l2_safe_number(), 1, "safe head should be L2 block 1");
 }
 
 /// Mine several L1 blocks, each containing one batch, and verify the safe head
@@ -96,17 +96,16 @@ async fn multiple_l1_blocks_each_derive_one_l2_block() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize should succeed");
+    verifier.initialize().await;
 
     // Drive derivation one L1 block at a time.
     for i in 1..=L2_BLOCK_COUNT {
-        let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(l1_block).await.expect("signal ok");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = verifier.act_l2_pipeline_full().await.expect("pipeline ok");
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
 
-    assert_eq!(verifier.l2_safe().block_info.number, L2_BLOCK_COUNT);
+    assert_eq!(verifier.l2_safe_number(), L2_BLOCK_COUNT);
 }
 
 /// A batcher frame that lands in an L1 block which is subsequently reorged out
@@ -135,7 +134,7 @@ async fn batch_in_orphaned_l1_block_is_not_derived() {
     // Reorg L1 back to genesis; mine an empty replacement block 1'.
     h.l1.reorg_to(0).expect("reorg to genesis");
     h.l1.mine_block();
-    let l1_block_1_prime = block_info_from(h.l1.tip());
+    let l1_block_1_prime = h.l1.tip_info();
 
     // The verifier is created from the miner's current (post-reorg) state, so
     // the orphaned block 1 is not present in the SharedL1Chain snapshot.
@@ -144,12 +143,12 @@ async fn batch_in_orphaned_l1_block_is_not_derived() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    verifier.initialize().await.expect("initialize");
-    verifier.act_l1_head_signal(l1_block_1_prime).await.expect("signal block 1'");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(l1_block_1_prime).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step");
 
     assert_eq!(derived, 0, "batch was in orphaned block; nothing should be derived");
-    assert_eq!(verifier.l2_safe().block_info.number, 0, "safe head remains at genesis");
+    assert_eq!(verifier.l2_safe_number(), 0, "safe head remains at genesis");
 }
 
 /// After the verifier has derived L2 block 1 (safe head = 1), an L1 reorg
@@ -180,18 +179,18 @@ async fn reorg_reverts_derived_safe_head() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let l1_block_1 = block_info_from(h.l1.tip());
+    let l1_block_1 = h.l1.tip_info();
 
-    verifier.initialize().await.expect("initialize");
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(l1_block_1).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step");
     assert_eq!(derived, 1, "L2 block 1 derived before reorg");
-    assert_eq!(verifier.l2_safe().block_info.number, 1);
+    assert_eq!(verifier.l2_safe_number(), 1);
 
     // Reorg L1 back to genesis; mine an empty replacement block 1'.
     h.l1.reorg_to(0).expect("reorg to genesis");
     h.l1.mine_block();
-    let l1_block_1_prime = block_info_from(h.l1.tip());
+    let l1_block_1_prime = h.l1.tip_info();
 
     // Sync the SharedL1Chain that the verifier's providers read from.
     chain.truncate_to(0);
@@ -202,16 +201,16 @@ async fn reorg_reverts_derived_safe_head() {
     let l2_genesis = h.l2_genesis();
     let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
 
-    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset");
+    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
     // Drain the reset origin (genesis has no batch data).
     verifier.act_l2_pipeline_full().await.expect("drain genesis after reset");
 
     // Signal the new fork's empty block 1' and step.
-    verifier.act_l1_head_signal(l1_block_1_prime).await.expect("signal block 1'");
+    verifier.act_l1_head_signal(l1_block_1_prime).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step after reorg");
 
     assert_eq!(derived, 0, "no batch in reorged fork");
-    assert_eq!(verifier.l2_safe().block_info.number, 0, "safe head reverted to genesis");
+    assert_eq!(verifier.l2_safe_number(), 0, "safe head reverted to genesis");
 }
 
 /// After a reorg, the batcher resubmits the lost frame in a new L1 block on
@@ -244,16 +243,16 @@ async fn reorg_and_resubmit_rederives_l2_block() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
-    verifier.act_l1_head_signal(block_info_from(h.l1.tip())).await.expect("signal block 1");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(h.l1.tip_info()).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step");
     assert_eq!(derived, 1);
-    assert_eq!(verifier.l2_safe().block_info.number, 1);
+    assert_eq!(verifier.l2_safe_number(), 1);
 
     // --- Reorg: truncate L1 to genesis; mine an empty block 1'. ---
     h.l1.reorg_to(0).expect("reorg to genesis");
     h.l1.mine_block(); // block 1' (empty)
-    let l1_block_1_prime = block_info_from(h.l1.tip());
+    let l1_block_1_prime = h.l1.tip_info();
     chain.truncate_to(0);
     chain.push(h.l1.tip().clone());
 
@@ -262,14 +261,14 @@ async fn reorg_and_resubmit_rederives_l2_block() {
     let l2_genesis = h.l2_genesis();
     let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
 
-    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset");
+    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
     verifier.act_l2_pipeline_full().await.expect("drain genesis after reset");
 
     // Step over the empty block 1' — nothing derived.
-    verifier.act_l1_head_signal(l1_block_1_prime).await.expect("signal block 1'");
+    verifier.act_l1_head_signal(l1_block_1_prime).await;
     let empty = verifier.act_l2_pipeline_full().await.expect("step over block 1'");
     assert_eq!(empty, 0, "block 1' has no batch; nothing derived");
-    assert_eq!(verifier.l2_safe().block_info.number, 0);
+    assert_eq!(verifier.l2_safe_number(), 0);
 
     // --- Resubmit: re-encode block 1 in L1 block 2'. ---
     // The same block 1 (cloned) re-submitted with the same epoch info will be
@@ -285,11 +284,11 @@ async fn reorg_and_resubmit_rederives_l2_block() {
     chain.push(h.l1.tip().clone());
 
     // Derive L2 block 1 from the resubmitted batch in L1 block 2'.
-    verifier.act_l1_head_signal(block_info_from(h.l1.tip())).await.expect("signal block 2'");
+    verifier.act_l1_head_signal(h.l1.tip_info()).await;
     let rederived = verifier.act_l2_pipeline_full().await.expect("step block 2'");
 
     assert_eq!(rederived, 1, "L2 block 1 re-derived from resubmitted batch");
-    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head recovered to 1");
+    assert_eq!(verifier.l2_safe_number(), 1, "safe head recovered to 1");
 }
 
 /// The canonical chain flip-flops between two competing forks (A and B) three
@@ -333,11 +332,11 @@ async fn reorg_flip_flop() {
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
-    verifier.act_l1_head_signal(block_info_from(h.l1.tip())).await.expect("signal A1");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(h.l1.tip_info()).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step A");
     assert_eq!(derived, 1, "phase 1: L2 block 1 derived from fork A");
-    assert_eq!(verifier.l2_safe().block_info.number, 1);
+    assert_eq!(verifier.l2_safe_number(), 1);
 
     // --- Phase 2: Fork B canonical (reorg A; mine B1 with the same batch). ---
     h.l1.reorg_to(0).expect("reorg to fork B");
@@ -349,17 +348,17 @@ async fn reorg_flip_flop() {
             .await
             .expect("B1 advance");
     }
-    let fork_b1 = block_info_from(h.l1.tip());
+    let fork_b1 = h.l1.tip_info();
 
     chain.truncate_to(0);
     chain.push(h.l1.tip().clone());
 
-    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset to B");
+    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
     verifier.act_l2_pipeline_full().await.expect("drain genesis (reset to B)");
-    verifier.act_l1_head_signal(fork_b1).await.expect("signal B1");
+    verifier.act_l1_head_signal(fork_b1).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step B");
     assert_eq!(derived, 1, "phase 2: L2 block 1 re-derived from fork B");
-    assert_eq!(verifier.l2_safe().block_info.number, 1);
+    assert_eq!(verifier.l2_safe_number(), 1);
 
     // --- Phase 3: Fork A' canonical (reorg B; mine A1' — same batch, new fork). ---
     h.l1.reorg_to(0).expect("reorg to fork A'");
@@ -371,17 +370,17 @@ async fn reorg_flip_flop() {
             .await
             .expect("A1' advance");
     }
-    let fork_a_prime1 = block_info_from(h.l1.tip());
+    let fork_a_prime1 = h.l1.tip_info();
 
     chain.truncate_to(0);
     chain.push(h.l1.tip().clone());
 
-    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset to A'");
+    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
     verifier.act_l2_pipeline_full().await.expect("drain genesis (reset to A')");
-    verifier.act_l1_head_signal(fork_a_prime1).await.expect("signal A1'");
+    verifier.act_l1_head_signal(fork_a_prime1).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step A'");
     assert_eq!(derived, 1, "phase 3: L2 block 1 re-derived from fork A'");
-    assert_eq!(verifier.l2_safe().block_info.number, 1);
+    assert_eq!(verifier.l2_safe_number(), 1);
 }
 
 /// The canonical chain flip-flops through three forks, where the middle fork
@@ -434,11 +433,10 @@ async fn reorg_flip_flop_empty_middle_fork() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     for i in 1u64..=2 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("fork A block"));
-        verifier.act_l1_head_signal(blk).await.expect("fork A: signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = verifier.act_l2_pipeline_full().await.expect("fork A: step");
         assert_eq!(derived, 1, "fork A: L2 block {i} derived");
         assert_eq!(
@@ -447,7 +445,7 @@ async fn reorg_flip_flop_empty_middle_fork() {
             "fork A: L2 block {i} l1_origin = genesis"
         );
     }
-    assert_eq!(verifier.l2_safe().block_info.number, 2, "fork A: safe head = 2");
+    assert_eq!(verifier.l2_safe_number(), 2, "fork A: safe head = 2");
 
     // --- Fork B: reorg to genesis; mine two empty blocks; derive nothing. ---
     h.l1.reorg_to(0).expect("reorg to fork B");
@@ -457,27 +455,27 @@ async fn reorg_flip_flop_empty_middle_fork() {
         fork_b_blocks.push(h.mine_and_push(&chain));
     }
 
-    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset to fork B");
+    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
     // act_reset sets safe_head and finalized_head to the reset target (l2_genesis).
     // Per the OP Stack spec, unsafe_head is NOT clamped to safe_head on reset —
     // it is re-discovered by walking back from the current tip to the first block
     // with a plausible (canonical or ahead-of-L1) L1 origin.  In this verifier-only
     // context no gossip blocks were received, so unsafe_head was never advanced
     // beyond genesis and therefore remains 0 regardless.
-    assert_eq!(verifier.l2_safe().block_info.number, 0, "reset to B: safe head = 0");
-    assert_eq!(verifier.l2_finalized().block_info.number, 0, "reset to B: finalized head = 0");
-    assert_eq!(verifier.l2_unsafe().block_info.number, 0, "reset to B: unsafe head = 0");
+    assert_eq!(verifier.l2_safe_number(), 0, "reset to B: safe head = 0");
+    assert_eq!(verifier.l2_finalized_number(), 0, "reset to B: finalized head = 0");
+    assert_eq!(verifier.l2_unsafe_number(), 0, "reset to B: unsafe head = 0");
 
     let drained = verifier.act_l2_pipeline_full().await.expect("drain genesis after reset to B");
     assert_eq!(drained, 0, "reset drain must produce no L2 blocks");
 
     for (i, blk_info) in fork_b_blocks.into_iter().enumerate() {
-        verifier.act_l1_head_signal(blk_info).await.expect("fork B: signal");
+        verifier.act_l1_head_signal(blk_info).await;
         let derived = verifier.act_l2_pipeline_full().await.expect("fork B: step");
         assert_eq!(derived, 0, "fork B block {}: empty, nothing derived", i + 1);
     }
-    assert_eq!(verifier.l2_safe().block_info.number, 0, "fork B: safe head = 0");
-    assert_eq!(verifier.l2_finalized().block_info.number, 0, "fork B: finalized head = 0");
+    assert_eq!(verifier.l2_safe_number(), 0, "fork B: safe head = 0");
+    assert_eq!(verifier.l2_finalized_number(), 0, "fork B: finalized head = 0");
 
     // --- Fork C: reorg to genesis; resubmit both batches; re-derive both blocks. ---
     h.l1.reorg_to(0).expect("reorg to fork C");
@@ -490,21 +488,21 @@ async fn reorg_flip_flop_empty_middle_fork() {
             .advance(&mut h.l1)
             .await
             .expect("fork C: advance");
-        fork_c_blocks.push(block_info_from(h.l1.tip()));
+        fork_c_blocks.push(h.l1.tip_info());
         chain.push(h.l1.tip().clone());
     }
 
-    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset to fork C");
-    assert_eq!(verifier.l2_safe().block_info.number, 0, "reset to C: safe head = 0");
-    assert_eq!(verifier.l2_finalized().block_info.number, 0, "reset to C: finalized head = 0");
+    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
+    assert_eq!(verifier.l2_safe_number(), 0, "reset to C: safe head = 0");
+    assert_eq!(verifier.l2_finalized_number(), 0, "reset to C: finalized head = 0");
     // unsafe_head unchanged by act_reset (spec-compliant: re-discover, don't clamp).
-    assert_eq!(verifier.l2_unsafe().block_info.number, 0, "reset to C: unsafe head = 0");
+    assert_eq!(verifier.l2_unsafe_number(), 0, "reset to C: unsafe head = 0");
 
     let drained = verifier.act_l2_pipeline_full().await.expect("drain genesis after reset to C");
     assert_eq!(drained, 0, "reset drain must produce no L2 blocks");
 
     for (i, blk_info) in fork_c_blocks.into_iter().enumerate() {
-        verifier.act_l1_head_signal(blk_info).await.expect("fork C: signal");
+        verifier.act_l1_head_signal(blk_info).await;
         let derived = verifier.act_l2_pipeline_full().await.expect("fork C: step");
         assert_eq!(derived, 1, "fork C: L2 block {} re-derived", i + 1);
         assert_eq!(
@@ -514,9 +512,9 @@ async fn reorg_flip_flop_empty_middle_fork() {
             i + 1
         );
     }
-    assert_eq!(verifier.l2_safe().block_info.number, 2, "fork C: safe head = 2 after flip-flop");
+    assert_eq!(verifier.l2_safe_number(), 2, "fork C: safe head = 2 after flip-flop");
     // finalized_head stays at genesis because no act_l1_finalized_signal was sent.
-    assert_eq!(verifier.l2_finalized().block_info.number, 0, "fork C: finalized head = 0");
+    assert_eq!(verifier.l2_finalized_number(), 0, "fork C: finalized head = 0");
 }
 
 /// A batch submitted at the last valid L1 block within the sequence window
@@ -563,20 +561,15 @@ async fn batch_accepted_at_last_seq_window_block() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Signal blocks 1, 2, 3 and step after each.
     for i in 1..=SEQ_WINDOW - 1 {
-        let block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(block).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("step");
     }
 
-    assert_eq!(
-        verifier.l2_safe().block_info.number,
-        1,
-        "batch in last valid L1 block must be derived"
-    );
+    assert_eq!(verifier.l2_safe_number(), 1, "batch in last valid L1 block must be derived");
 }
 
 /// Build a `ConfigUpdate` log encoding a batcher-address rotation.
@@ -730,14 +723,14 @@ async fn l1_deposit_included_in_derived_l2_block() {
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let l1_block_1 = block_info_from(h.l1.tip());
+    let l1_block_1 = h.l1.tip_info();
 
-    verifier.initialize().await.expect("initialize should succeed");
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal should succeed");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(l1_block_1).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("pipeline step should succeed");
 
     assert_eq!(derived, 1, "expected exactly one L2 block to be derived");
-    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head should be L2 block 1");
+    assert_eq!(verifier.l2_safe_number(), 1, "safe head should be L2 block 1");
     // The L2 block references L1 genesis (epoch 0) because the sequencer built
     // it before L1 block 1 existed. The deposit log lives in L1 block 1, which
     // is the *inclusion* block, not the L1 origin. The pipeline processed the
@@ -814,19 +807,17 @@ async fn batcher_key_rotation_accepts_new_batcher() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Drive derivation through blocks 1-2 (batcher A frames derived).
     for i in 1u64..=2 {
-        let block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(block).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("step");
     }
-    assert_eq!(verifier.l2_safe().block_info.number, 2, "blocks 1-2 derived with batcher A");
+    assert_eq!(verifier.l2_safe_number(), 2, "blocks 1-2 derived with batcher A");
 
     // Step over the rotation block — no batch, but system config updates to B.
-    let rotation_block = block_info_from(h.l1.block_by_number(3).expect("rotation block"));
-    verifier.act_l1_head_signal(rotation_block).await.expect("signal rotation block");
+    verifier.act_l1_head_signal(h.l1.block_info_at(3)).await;
     let rotation_derived = verifier.act_l2_pipeline_full().await.expect("step rotation block");
     assert_eq!(rotation_derived, 0, "rotation block contains no batch");
 
@@ -841,10 +832,10 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     }
     chain.push(h.l1.tip().clone());
 
-    verifier.act_l1_head_signal(block_info_from(h.l1.tip())).await.expect("signal block 4");
+    verifier.act_l1_head_signal(h.l1.tip_info()).await;
     let derived_a = verifier.act_l2_pipeline_full().await.expect("step block 4");
     assert_eq!(derived_a, 0, "batcher A frame must be ignored after key rotation");
-    assert_eq!(verifier.l2_safe().block_info.number, 2, "safe head must not advance");
+    assert_eq!(verifier.l2_safe_number(), 2, "safe head must not advance");
 
     // --- L1 block 5: batcher B submits for L2 block 3 — must be derived. ---
     {
@@ -857,10 +848,10 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     }
     chain.push(h.l1.tip().clone());
 
-    verifier.act_l1_head_signal(block_info_from(h.l1.tip())).await.expect("signal block 5");
+    verifier.act_l1_head_signal(h.l1.tip_info()).await;
     let derived_b = verifier.act_l2_pipeline_full().await.expect("step block 5");
     assert_eq!(derived_b, 1, "batcher B frame must be derived after key rotation");
-    assert_eq!(verifier.l2_safe().block_info.number, 3, "safe head advances to 3");
+    assert_eq!(verifier.l2_safe_number(), 3, "safe head advances to 3");
 }
 
 /// Derive 6 L2 blocks all belonging to the same L1 epoch (genesis).
@@ -898,20 +889,15 @@ async fn multi_l2_per_l1_epoch() {
         chain.push(h.l1.tip().clone());
     }
 
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     for i in 1..=L2_COUNT {
-        let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(l1_block).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = verifier.act_l2_pipeline_full().await.expect("step");
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
 
-    assert_eq!(
-        verifier.l2_safe().block_info.number,
-        L2_COUNT,
-        "safe head should be at L2 block {L2_COUNT}"
-    );
+    assert_eq!(verifier.l2_safe_number(), L2_COUNT, "safe head should be at L2 block {L2_COUNT}");
     assert_eq!(verifier.l2_safe().l1_origin.number, 0, "all blocks in epoch 0");
 }
 
@@ -965,12 +951,11 @@ async fn batch_past_sequence_window_rejected() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     let mut total_derived = 0;
     for i in 1..=SEQ_WINDOW {
-        let block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(block).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         total_derived += verifier.act_l2_pipeline_full().await.expect("step");
     }
 
@@ -978,7 +963,7 @@ async fn batch_past_sequence_window_rejected() {
     // sequence window expires without a valid batch. The safe head advances
     // past genesis because default blocks are still derived.
     assert!(
-        verifier.l2_safe().block_info.number > 0,
+        verifier.l2_safe_number() > 0,
         "pipeline should generate deposit-only blocks when sequence window expires"
     );
     assert!(
@@ -1046,19 +1031,18 @@ async fn multi_epoch_sequence() {
         chain.push(h.l1.tip().clone());
     }
 
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Drive derivation through all L1 blocks: blocks 1-2 are epoch-providing
     // (no batches), blocks 3-14 each contain one batch.
     let mut total_derived = 0;
     for i in 1..=(2 + 12) {
-        let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(l1_block).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         total_derived += verifier.act_l2_pipeline_full().await.expect("step");
     }
 
     assert_eq!(total_derived, 12, "all 12 L2 blocks should be derived");
-    assert_eq!(verifier.l2_safe().block_info.number, 12, "safe head should reach L2 block 12");
+    assert_eq!(verifier.l2_safe_number(), 12, "safe head should reach L2 block 12");
 }
 
 /// Build 3 L2 blocks, encode all 3 into a single batcher submission (one
@@ -1096,14 +1080,13 @@ async fn same_epoch_multi_batch_one_l1_block() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal");
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step");
 
     assert_eq!(derived, 3, "all 3 L2 blocks should be derived from one L1 block");
-    assert_eq!(verifier.l2_safe().block_info.number, 3);
+    assert_eq!(verifier.l2_safe_number(), 3);
 }
 
 /// Derive 5 L2 blocks, reorg L1 all the way back to genesis, resubmit all 5
@@ -1147,14 +1130,13 @@ async fn deep_reorg_multi_block() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     for i in 1..=5u64 {
-        let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(l1_block).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("step");
     }
-    assert_eq!(verifier.l2_safe().block_info.number, 5, "pre-reorg: 5 L2 blocks derived");
+    assert_eq!(verifier.l2_safe_number(), 5, "pre-reorg: 5 L2 blocks derived");
 
     // Reorg all the way back to genesis.
     h.l1.reorg_to(0).expect("reorg to genesis");
@@ -1163,10 +1145,10 @@ async fn deep_reorg_multi_block() {
     let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis"));
     let l2_genesis = h.l2_genesis();
     let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
-    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset");
+    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
     verifier.act_l2_pipeline_full().await.expect("drain after reset");
 
-    assert_eq!(verifier.l2_safe().block_info.number, 0, "safe head reverted to genesis");
+    assert_eq!(verifier.l2_safe_number(), 0, "safe head reverted to genesis");
 
     // Re-submit all 5 batches on the new fork.
     for block in &blocks {
@@ -1181,12 +1163,11 @@ async fn deep_reorg_multi_block() {
 
     // Drive derivation on the new fork.
     for i in 1..=5u64 {
-        let new_l1_block = block_info_from(h.l1.block_by_number(i).expect("block"));
-        verifier.act_l1_head_signal(new_l1_block).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("step");
     }
 
-    assert_eq!(verifier.l2_safe().block_info.number, 5, "post-reorg: 5 L2 blocks recovered");
+    assert_eq!(verifier.l2_safe_number(), 5, "post-reorg: 5 L2 blocks recovered");
 }
 
 /// Garbage frame data (valid derivation version prefix but corrupt frame
@@ -1212,7 +1193,7 @@ async fn garbage_frame_data_ignored() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Submit a garbage batcher tx: valid derivation version prefix + random bytes.
     // The ChannelBank should reject the malformed frame and not crash.
@@ -1228,11 +1209,10 @@ async fn garbage_frame_data_ignored() {
     });
     h.mine_and_push(&chain);
 
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal garbage block");
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step over garbage");
     assert_eq!(derived, 0, "garbage frame must be silently ignored");
-    assert_eq!(verifier.l2_safe().block_info.number, 0);
+    assert_eq!(verifier.l2_safe_number(), 0);
 
     // Now submit the real batch.
     {
@@ -1245,11 +1225,10 @@ async fn garbage_frame_data_ignored() {
     }
     chain.push(h.l1.tip().clone());
 
-    let l1_block_2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
-    verifier.act_l1_head_signal(l1_block_2).await.expect("signal real block");
+    verifier.act_l1_head_signal(h.l1.block_info_at(2)).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step real block");
     assert_eq!(derived, 1, "real frame after garbage must still be derived");
-    assert_eq!(verifier.l2_safe().block_info.number, 1);
+    assert_eq!(verifier.l2_safe_number(), 1);
 }
 
 /// A channel whose compressed data exceeds `max_frame_size` is split across
@@ -1306,12 +1285,11 @@ async fn multi_frame_channel_reassembled() {
     batcher.confirm_staged(block_num).await;
     chain.push(h.l1.tip().clone());
 
-    verifier.initialize().await.expect("initialize");
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step block 1");
     assert_eq!(derived, 1, "multi-frame channel should be reassembled and derived");
-    assert_eq!(verifier.l2_safe().block_info.number, 1);
+    assert_eq!(verifier.l2_safe_number(), 1);
 }
 
 // ── Span-batch derivation variants ────────────────────────────────────────────
@@ -1345,14 +1323,13 @@ async fn single_l2_block_derived_from_span_batch() {
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
-    let l1_block_1 = block_info_from(h.l1.tip());
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal");
+    verifier.act_l1_head_signal(h.l1.tip_info()).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step");
 
     assert_eq!(derived, 1, "expected one L2 block from span batch");
-    assert_eq!(verifier.l2_safe().block_info.number, 1);
+    assert_eq!(verifier.l2_safe_number(), 1);
 }
 
 /// Derive 3 L2 blocks encoded together as a single [`SpanBatch`].
@@ -1387,14 +1364,13 @@ async fn three_l2_blocks_derived_from_span_batch() {
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
-    let l1_block_1 = block_info_from(h.l1.tip());
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal");
+    verifier.act_l1_head_signal(h.l1.tip_info()).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step");
 
     assert_eq!(derived, 3, "expected 3 L2 blocks from span batch");
-    assert_eq!(verifier.l2_safe().block_info.number, 3);
+    assert_eq!(verifier.l2_safe_number(), 3);
 }
 
 // ── System-config update tests ─────────────────────────────────────────────────
@@ -1510,19 +1486,14 @@ async fn gpo_params_change_does_not_disrupt_derivation() {
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     for i in 1u64..=3 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("step");
     }
 
-    assert_eq!(
-        verifier.l2_safe().block_info.number,
-        2,
-        "both L2 blocks derived after GPO config update"
-    );
+    assert_eq!(verifier.l2_safe_number(), 2, "both L2 blocks derived after GPO config update");
 }
 
 /// A `GasLimit` system-config update committed to L1 does not disrupt ongoing
@@ -1577,19 +1548,14 @@ async fn gas_limit_change_does_not_disrupt_derivation() {
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     for i in 1u64..=3 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("step");
     }
 
-    assert_eq!(
-        verifier.l2_safe().block_info.number,
-        2,
-        "both L2 blocks derived after gas-limit update"
-    );
+    assert_eq!(verifier.l2_safe_number(), 2, "both L2 blocks derived after gas-limit update");
 }
 
 // ── Typed garbage-frame variant tests ─────────────────────────────────────────
@@ -1636,21 +1602,19 @@ async fn garbage_payload_silently_ignored_then_valid_batch_derived(
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Block 1: garbage — must not advance the safe head.
-    let blk1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(blk1).await.expect("signal garbage block");
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let derived_garbage = verifier.act_l2_pipeline_full().await.expect("step garbage");
     assert_eq!(derived_garbage, 0, "garbage frame must be silently ignored");
-    assert_eq!(verifier.l2_safe().block_info.number, 0);
+    assert_eq!(verifier.l2_safe_number(), 0);
 
     // Block 2: valid batch — must be derived after the garbage.
-    let blk2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
-    verifier.act_l1_head_signal(blk2).await.expect("signal valid block");
+    verifier.act_l1_head_signal(h.l1.block_info_at(2)).await;
     let derived_real = verifier.act_l2_pipeline_full().await.expect("step valid");
     assert_eq!(derived_real, 1, "valid batch after garbage must still be derived");
-    assert_eq!(verifier.l2_safe().block_info.number, 1);
+    assert_eq!(verifier.l2_safe_number(), 1);
 }
 
 /// Random-looking garbage (200 bytes of 0xDE, no derivation version prefix) is
@@ -1740,25 +1704,24 @@ async fn l2_finalized_advances_via_l1_finalized_signal() {
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Finalized head starts at L2 genesis.
-    assert_eq!(verifier.l2_finalized().block_info.number, 0);
+    assert_eq!(verifier.l2_finalized_number(), 0);
 
     // Derive both L2 blocks.
     for i in 1u64..=2 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("step");
     }
-    assert_eq!(verifier.l2_safe().block_info.number, 2);
+    assert_eq!(verifier.l2_safe_number(), 2);
 
     // Signal that L1 block 1 is finalized. Both L2 blocks have l1_origin = 0 ≤ 1,
     // so L2 block 2 (the highest) should become the new finalized head.
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_finalized_signal(l1_block_1).await.expect("finalized signal");
+    let l1_block_1 = h.l1.block_info_at(1);
+    verifier.act_l1_finalized_signal(l1_block_1).await;
     assert_eq!(
-        verifier.l2_finalized().block_info.number,
+        verifier.l2_finalized_number(),
         2,
         "finalized head should advance to L2 block 2 when L1 origin (0) <= finalized L1 (1)"
     );
@@ -1785,7 +1748,7 @@ async fn sequencer_pin_l1_origin_keeps_epoch_and_empty_block() {
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
     // Pin the sequencer to epoch 0 (L1 genesis).
-    let l1_block_0 = block_info_from(h.l1.block_by_number(0).expect("genesis"));
+    let l1_block_0 = h.l1.block_info_at(0);
     sequencer.pin_l1_origin(l1_block_0);
 
     // Build 3 L2 blocks — all must reference epoch 0 even though L1 blocks 1
@@ -1910,17 +1873,16 @@ async fn derive_chain_from_near_l1_genesis() {
         l1_genesis_info,
     )
     .with_block_hash_registry(block_hashes);
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Signal L1 blocks #6 and #7, each containing one batch.
     for i in 6u64..=7 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("step");
     }
 
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         2,
         "both L2 blocks derived when genesis is anchored to L1 block #5"
     );
@@ -1951,14 +1913,14 @@ async fn single_l2_block_derived_from_blob() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let l1_block_1 = block_info_from(h.l1.tip());
+    let l1_block_1 = h.l1.tip_info();
 
-    verifier.initialize().await.expect("initialize should succeed");
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal should succeed");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(l1_block_1).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("pipeline step should succeed");
 
     assert_eq!(derived, 1, "expected exactly one L2 block to be derived");
-    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head should be L2 block 1");
+    assert_eq!(verifier.l2_safe_number(), 1, "safe head should be L2 block 1");
 }
 
 #[tokio::test]
@@ -1989,18 +1951,14 @@ async fn multiple_l2_blocks_derived_from_blob() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let l1_block_1 = block_info_from(h.l1.tip());
+    let l1_block_1 = h.l1.tip_info();
 
-    verifier.initialize().await.expect("initialize should succeed");
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal should succeed");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(l1_block_1).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("pipeline step should succeed");
 
     assert_eq!(derived, L2_BLOCK_COUNT as usize, "expected 3 L2 blocks to be derived");
-    assert_eq!(
-        verifier.l2_safe().block_info.number,
-        L2_BLOCK_COUNT,
-        "safe head should be L2 block 3"
-    );
+    assert_eq!(verifier.l2_safe_number(), L2_BLOCK_COUNT, "safe head should be L2 block 3");
 }
 
 /// A `SystemConfig` batcher-address update committed in an L1 block is
@@ -2070,19 +2028,17 @@ async fn batcher_config_update_rolled_back_on_reorg() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Drive derivation through L1 blocks 1-2.
     for i in 1u64..=2 {
-        let block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(block).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("step");
     }
-    assert_eq!(verifier.l2_safe().block_info.number, 2, "blocks 1-2 derived with batcher A");
+    assert_eq!(verifier.l2_safe_number(), 2, "blocks 1-2 derived with batcher A");
 
     // Step over the rotation block — no batch, but system config updates to B.
-    let rotation_block = block_info_from(h.l1.block_by_number(3).expect("rotation block"));
-    verifier.act_l1_head_signal(rotation_block).await.expect("signal rotation block");
+    verifier.act_l1_head_signal(h.l1.block_info_at(3)).await;
     let rotation_derived = verifier.act_l2_pipeline_full().await.expect("step rotation block");
     assert_eq!(rotation_derived, 0, "rotation block contains no batch");
 
@@ -2097,10 +2053,10 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     }
     chain.push(h.l1.tip().clone());
 
-    verifier.act_l1_head_signal(block_info_from(h.l1.tip())).await.expect("signal block 4");
+    verifier.act_l1_head_signal(h.l1.tip_info()).await;
     let derived_a = verifier.act_l2_pipeline_full().await.expect("step block 4");
     assert_eq!(derived_a, 0, "batcher A frame must be ignored after key rotation");
-    assert_eq!(verifier.l2_safe().block_info.number, 2, "safe head must not advance");
+    assert_eq!(verifier.l2_safe_number(), 2, "safe head must not advance");
 
     // --- Phase 5: Reorg L1 back to genesis (discard config update + block 4). ---
     // We must discard all post-genesis L1 blocks so the pipeline can be cleanly
@@ -2112,7 +2068,7 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis always present"));
     let l2_genesis = h.l2_genesis();
 
-    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await.expect("reset");
+    verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
     // Drain the reset origin (genesis has no batch data).
     verifier.act_l2_pipeline_full().await.expect("drain genesis after reset");
 
@@ -2133,12 +2089,11 @@ async fn batcher_config_update_rolled_back_on_reorg() {
 
     // Drive derivation through L1 blocks 1', 2', 3' on the new fork.
     for i in 1u64..=3 {
-        let block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(block).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("step");
     }
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         3,
         "safe head advances to 3 — config rollback restored batcher A"
     );
@@ -2203,13 +2158,12 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: present batch
 
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Signal L1 block 1 and step until idle.  The BatchQueue sees a future
     // batch (block 2, timestamp 4 > expected 2) and buffers it.  No attributes
     // are produced; the pipeline returns Eof.
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let (_, hit) = verifier
         .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
         .await
@@ -2219,12 +2173,11 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
         "pipeline must not derive anything from L1 block 1 alone: \
          the batch for block 2 is a future batch — block 1 has not arrived yet"
     );
-    assert_eq!(verifier.l2_safe().block_info.number, 0, "safe head must remain at genesis");
+    assert_eq!(verifier.l2_safe_number(), 0, "safe head must remain at genesis");
 
     // Signal L1 block 2.  The BatchQueue now receives the expected-next batch
     // (block 1) and derives it before popping the buffered block 2.
-    let l1_block_2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
-    verifier.act_l1_head_signal(l1_block_2).await.expect("signal block 2");
+    verifier.act_l1_head_signal(h.l1.block_info_at(2)).await;
 
     // First PreparedAttributes: must be L2 block 1 (earliest timestamp).
     let (_, hit1) = verifier
@@ -2233,7 +2186,7 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
         .expect("step for block 1 attributes");
     assert!(hit1, "pipeline must derive block 1 when its batch arrives");
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         1,
         "BatchQueue must reorder: block 1 derived before the buffered block 2"
     );
@@ -2245,7 +2198,7 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
         .await
         .expect("step for block 2 attributes");
     assert!(hit2, "pipeline must derive buffered block 2 after block 1 is safe");
-    assert_eq!(verifier.l2_safe().block_info.number, 2, "safe head must reach block 2");
+    assert_eq!(verifier.l2_safe_number(), 2, "safe head must reach block 2");
 }
 
 /// [`act_l2_pipeline_until`] returns `(steps, false)` when the pipeline is
@@ -2284,7 +2237,7 @@ async fn pipeline_idle_before_l1_signal_derives_after() {
             .expect("encode and submit");
     }
     chain.push(h.l1.tip().clone());
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Before any signal: the pipeline exhausted genesis during initialize() and
     // is now at Eof.  The condition should never fire; the call returns quickly.
@@ -2293,17 +2246,16 @@ async fn pipeline_idle_before_l1_signal_derives_after() {
         .await
         .expect("step before signal");
     assert!(!before_signal, "pipeline must be idle before receiving an L1 head signal");
-    assert_eq!(verifier.l2_safe().block_info.number, 0);
+    assert_eq!(verifier.l2_safe_number(), 0);
 
     // After signalling L1 block 1: the pipeline can now derive L2 block 1.
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let (_, after_signal) = verifier
         .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
         .await
         .expect("step after signal");
     assert!(after_signal, "pipeline must derive L2 block 1 after receiving L1 head signal");
-    assert_eq!(verifier.l2_safe().block_info.number, 1);
+    assert_eq!(verifier.l2_safe_number(), 1);
 }
 
 /// After all L2 blocks from an L1 block are derived, the pipeline emits
@@ -2357,30 +2309,28 @@ async fn pipeline_l1_origin_advance_observable_after_epoch_exhausted() {
     chain.push(h.l1.tip().clone()); // L1 block 1: carries the channel for blocks 1 & 2
     h.mine_and_push(&chain); // L1 block 2: empty — used only for origin advance
 
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Signal and derive both L2 blocks from L1 block 1.
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let (_, hit1) = verifier
         .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
         .await
         .expect("step for L2 block 1");
     assert!(hit1);
-    assert_eq!(verifier.l2_safe().block_info.number, 1);
+    assert_eq!(verifier.l2_safe_number(), 1);
 
     let (_, hit2) = verifier
         .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
         .await
         .expect("step for L2 block 2");
     assert!(hit2);
-    assert_eq!(verifier.l2_safe().block_info.number, 2);
+    assert_eq!(verifier.l2_safe_number(), 2);
 
     // L1 block 1 is now fully exhausted.  Signal the empty L1 block 2 and
     // step until AdvancedOrigin: the pipeline advances the L1 origin from
     // block 1 to block 2 without producing any new L2 attributes.
-    let l1_block_2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
-    verifier.act_l1_head_signal(l1_block_2).await.expect("signal block 2");
+    verifier.act_l1_head_signal(h.l1.block_info_at(2)).await;
     let (_, advanced) = verifier
         .act_l2_pipeline_until(|r| matches!(r, StepResult::AdvancedOrigin), 50)
         .await
@@ -2391,7 +2341,7 @@ async fn pipeline_l1_origin_advance_observable_after_epoch_exhausted() {
          exhausted L1 block to the next"
     );
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         2,
         "safe head must not change: origin advanced but empty block 2 has no batch"
     );
@@ -2449,18 +2399,16 @@ async fn span_batch_crossing_l1_epoch_boundary() {
         .expect("encode multi-epoch span batch");
     chain.push(h.l1.tip().clone()); // L1 block 2: span batch for all 6 L2 blocks
 
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // L1 block 1: epoch-providing only, no batches → nothing derived.
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     verifier.act_l2_pipeline_full().await.expect("pipeline block 1");
 
     // L1 block 2: contains the span batch. The BatchQueue has both epoch 0
     // (L1 block 0→1) and epoch 1 (L1 block 1→2) boundaries available, so
     // it emits all 6 L2 blocks in one pipeline run.
-    let l1_block_2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
-    verifier.act_l1_head_signal(l1_block_2).await.expect("signal block 2");
+    verifier.act_l1_head_signal(h.l1.block_info_at(2)).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("pipeline block 2");
 
     assert_eq!(
@@ -2468,7 +2416,7 @@ async fn span_batch_crossing_l1_epoch_boundary() {
         "all 6 L2 blocks must be derived from a single span batch crossing the epoch boundary"
     );
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         6,
         "safe head must reach block 6 after span batch crosses epoch 0 → 1"
     );
@@ -2530,22 +2478,20 @@ async fn out_of_order_span_batches_reordered_by_batch_queue() {
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: present span batch
 
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Signal L1 block 1: span batch for block 2 is a future batch (ts=4 >
     // expected ts=2). The BatchQueue buffers it; no attributes produced.
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let (_, hit) = verifier
         .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
         .await
         .expect("step block 1");
     assert!(!hit, "future span batch must be buffered; no blocks derived from L1 block 1");
-    assert_eq!(verifier.l2_safe().block_info.number, 0, "safe head must remain at genesis");
+    assert_eq!(verifier.l2_safe_number(), 0, "safe head must remain at genesis");
 
     // Signal L1 block 2: expected-next span batch (block 1) arrives.
-    let l1_block_2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
-    verifier.act_l1_head_signal(l1_block_2).await.expect("signal block 2");
+    verifier.act_l1_head_signal(h.l1.block_info_at(2)).await;
 
     // First PreparedAttributes: L2 block 1 (earliest timestamp) must derive first.
     let (_, hit1) = verifier
@@ -2554,7 +2500,7 @@ async fn out_of_order_span_batches_reordered_by_batch_queue() {
         .expect("step for block 1 attributes");
     assert!(hit1, "pipeline must derive block 1 when its span batch arrives");
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         1,
         "BatchQueue must reorder: block 1 derived before the buffered span batch for block 2"
     );
@@ -2565,7 +2511,7 @@ async fn out_of_order_span_batches_reordered_by_batch_queue() {
         .await
         .expect("step for block 2 attributes");
     assert!(hit2, "buffered span batch for block 2 must derive after block 1 is safe");
-    assert_eq!(verifier.l2_safe().block_info.number, 2, "safe head must reach block 2");
+    assert_eq!(verifier.l2_safe_number(), 2, "safe head must reach block 2");
 }
 
 // ── Large L1 gaps ──────────────────────────────────────────────────────────────
@@ -2618,18 +2564,17 @@ async fn large_l1_gaps_within_sequence_window() {
         .expect("encode batches");
     chain.push(h.l1.tip().clone()); // L1 block 16: batches for L2 blocks 1 and 2
 
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Drive derivation through all 16 L1 blocks. The pipeline traverses 15
     // empty blocks before finding the channel in block 16.
     for i in 1..=16u64 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("pipeline");
     }
 
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         2,
         "both L2 blocks must derive even after 15 empty L1 blocks before the batch"
     );
@@ -2671,22 +2616,21 @@ async fn extended_sequence_window_exhaustion_fills_with_deposit_only_blocks() {
         h.mine_and_push(&chain);
     }
 
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     let mut total_derived = 0;
     for i in 1..=20u64 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         total_derived += verifier.act_l2_pipeline_full().await.expect("pipeline");
     }
 
     // With no batches, the pipeline generates deposit-only blocks for each
     // expired sequence window. The safe head must advance past genesis.
     assert!(
-        verifier.l2_safe().block_info.number > 0,
+        verifier.l2_safe_number() > 0,
         "safe head must advance past genesis via deposit-only blocks when \
          sequence windows expire; got {}",
-        verifier.l2_safe().block_info.number
+        verifier.l2_safe_number()
     );
     assert!(
         total_derived > 0,

@@ -2,7 +2,7 @@
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, BatchType, Batcher, BatcherConfig, BatcherError, DaType,
-    EncoderConfig, L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
+    EncoderConfig, L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
 
 /// Build an [`ActionL2Source`] pre-populated with `n` real [`OpBlock`]s from
@@ -151,19 +151,17 @@ async fn batcher_reorg_during_submission() {
     batcher.confirm_staged(recovery_num).await;
 
     // Verify the verifier re-derives L2 block 1 from the new-fork submission.
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
-    let blk_1_prime = block_info_from(h.l1.block_by_number(1).expect("block 1'"));
-    verifier.act_l1_head_signal(blk_1_prime).await.expect("signal empty block 1'");
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let empty = verifier.act_l2_pipeline_full().await.expect("step empty block 1'");
     assert_eq!(empty, 0, "empty block 1' has no batch data");
 
-    let recovery_blk = block_info_from(h.l1.block_by_number(recovery_num).expect("recovery block"));
-    verifier.act_l1_head_signal(recovery_blk).await.expect("signal recovery block");
+    verifier.act_l1_head_signal(h.l1.block_info_at(recovery_num)).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step recovery");
     assert_eq!(derived, 1, "same-batcher resubmission must derive L2 block 1");
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         1,
         "safe head must recover to 1 after same-batcher resubmission on new fork"
     );

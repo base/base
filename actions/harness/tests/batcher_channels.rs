@@ -2,7 +2,7 @@
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
-    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
 
 // ---------------------------------------------------------------------------
@@ -55,16 +55,11 @@ async fn channel_timeout_triggers_channel_invalidation() {
     chain.push(h.l1.tip().clone());
     batcher.confirm_staged(block_1_num).await;
 
-    verifier.initialize().await.expect("initialize");
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     verifier.act_l2_pipeline_full().await.expect("step block 1");
 
-    assert_eq!(
-        verifier.l2_safe().block_info.number,
-        0,
-        "incomplete channel should not advance safe head"
-    );
+    assert_eq!(verifier.l2_safe_number(), 0, "incomplete channel should not advance safe head");
 
     // Mine `channel_timeout + 1 = 3` empty L1 blocks to expire the channel.
     for _ in 0..3 {
@@ -72,8 +67,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
     }
 
     for i in 2..=4 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal empty block");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("step empty block");
     }
 
@@ -83,8 +77,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
     chain.push(h.l1.tip().clone());
     batcher.confirm_staged(block_5_num).await;
 
-    let l1_block_5 = block_info_from(h.l1.block_by_number(5).expect("block 5"));
-    verifier.act_l1_head_signal(l1_block_5).await.expect("signal block 5");
+    verifier.act_l1_head_signal(h.l1.block_info_at(5)).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step block 5");
     assert_eq!(derived, 0, "late frames after channel timeout must be ignored");
 
@@ -95,12 +88,11 @@ async fn channel_timeout_triggers_channel_invalidation() {
     batcher2.advance(&mut h.l1).await.expect("recovery advance");
     chain.push(h.l1.tip().clone());
 
-    let l1_block_6 = block_info_from(h.l1.block_by_number(6).expect("block 6"));
-    verifier.act_l1_head_signal(l1_block_6).await.expect("signal block 6");
+    verifier.act_l1_head_signal(h.l1.block_info_at(6)).await;
     let recovered = verifier.act_l2_pipeline_full().await.expect("step block 6");
 
     assert_eq!(recovered, 1, "resubmitted channel should derive L2 block 1");
-    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head should recover to 1");
+    assert_eq!(verifier.l2_safe_number(), 1, "safe head should recover to 1");
 }
 
 // ---------------------------------------------------------------------------
@@ -151,7 +143,7 @@ async fn channel_timeout_recovery_resubmits_successfully() {
     chain.push(h.l1.tip().clone());
     batcher.confirm_staged(block_1_num).await;
 
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Mine channel_timeout + 1 = 3 empty blocks to expire the channel.
     for _ in 0..3 {
@@ -159,13 +151,12 @@ async fn channel_timeout_recovery_resubmits_successfully() {
     }
 
     for i in 1..=h.l1.latest_number() {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("step");
     }
 
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         0,
         "channel should have timed out; safe head must remain at genesis"
     );
@@ -177,13 +168,11 @@ async fn channel_timeout_recovery_resubmits_successfully() {
     batcher2.advance(&mut h.l1).await.expect("recovery advance");
     chain.push(h.l1.tip().clone());
 
-    let recovery_blk =
-        block_info_from(h.l1.block_by_number(h.l1.latest_number()).expect("recovery block"));
-    verifier.act_l1_head_signal(recovery_blk).await.expect("signal recovery");
+    verifier.act_l1_head_signal(h.l1.block_info_at(h.l1.latest_number())).await;
     let recovered = verifier.act_l2_pipeline_full().await.expect("step recovery");
 
     assert_eq!(recovered, 1, "recovery channel should derive L2 block 1");
-    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head should recover to 1");
+    assert_eq!(verifier.l2_safe_number(), 1, "safe head should recover to 1");
 }
 
 // ---------------------------------------------------------------------------
@@ -248,14 +237,13 @@ async fn interleaved_channels_correctly_reassembled() {
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step block 1");
 
     assert_eq!(derived, 2, "expected 2 L2 blocks derived from interleaved channels");
-    assert_eq!(verifier.l2_safe().block_info.number, 2);
+    assert_eq!(verifier.l2_safe_number(), 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -305,13 +293,12 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
     chain.push(h.l1.tip().clone());
     batcher.confirm_staged(block_1_num).await;
 
-    verifier.initialize().await.expect("initialize");
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     verifier.act_l2_pipeline_full().await.expect("step block 1");
 
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         0,
         "channel incomplete after block 1; safe head must stay at genesis"
     );
@@ -322,12 +309,11 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
     chain.push(h.l1.tip().clone());
     batcher.confirm_staged(block_2_num).await;
 
-    let l1_block_2 = block_info_from(h.l1.block_by_number(2).expect("block 2"));
-    verifier.act_l1_head_signal(l1_block_2).await.expect("signal block 2");
+    verifier.act_l1_head_signal(h.l1.block_info_at(2)).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step block 2");
 
     assert_eq!(derived, 1, "multi-block channel must yield 1 L2 block");
-    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head must advance to 1");
+    assert_eq!(verifier.l2_safe_number(), 1, "safe head must advance to 1");
 }
 
 // ---------------------------------------------------------------------------
@@ -386,13 +372,12 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
     chain.push(h.l1.tip().clone());
     batcher.confirm_staged(block_1_num).await;
 
-    verifier.initialize().await.expect("initialize");
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     verifier.act_l2_pipeline_full().await.expect("step block 1");
 
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         0,
         "incomplete channel after block 1; safe head must stay at genesis"
     );
@@ -417,14 +402,13 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
     // to confirm exactly one block was produced across the 3-block span.
     let mut total_derived = 0usize;
     for i in 2..=h.l1.latest_number() {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal block");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         total_derived += verifier.act_l2_pipeline_full().await.expect("step block");
     }
 
     assert_eq!(total_derived, 1, "exactly one L2 block must be derived across the 3-block span");
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         1,
         "frames split across 3 L1 blocks (with an empty intermediate block) must derive L2 block 1"
     );

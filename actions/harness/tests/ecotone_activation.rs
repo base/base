@@ -2,7 +2,7 @@
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
-    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
 use base_consensus_genesis::HardForkConfig;
@@ -180,12 +180,11 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Drive derivation through all 4 L1 blocks.
     for i in 1..=4u64 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("pipeline");
     }
 
@@ -193,7 +192,7 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
     // (with user txs) is accepted. All 4 blocks must derive: block 3 is NOT
     // deposit-only, unlike the Jovian transition block.
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         4,
         "safe head must reach block 4; Ecotone has no batch-level empty-block enforcement"
     );
@@ -265,17 +264,16 @@ async fn ecotone_derivation_crosses_activation_boundary() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     for i in 1..=4u64 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = verifier.act_l2_pipeline_full().await.expect("pipeline");
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
 
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         4,
         "derivation must succeed through the Ecotone activation boundary"
     );

@@ -2,7 +2,7 @@
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
-    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
 
 /// Simulates the full op-e2e gossip pattern:
@@ -48,11 +48,11 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.advance(&mut h.l1).await.expect("batcher should submit all blocks");
     chain.push(h.l1.tip().clone());
-    let l1_block_1 = block_info_from(h.l1.tip());
+    let l1_block_1 = h.l1.tip_info();
 
     // Initialize: seed the genesis SystemConfig and drain the empty genesis
     // L1 block so IndexedTraversal is ready for new block signals.
-    verifier.initialize().await.expect("initialize should succeed");
+    verifier.initialize().await;
 
     // --- Phase 2: Gossip each block into the verifier. ---
     for block in &blocks {
@@ -60,29 +60,29 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
     }
 
     assert_eq!(
-        verifier.l2_unsafe().block_info.number,
+        verifier.l2_unsafe_number(),
         L2_BLOCK_COUNT,
         "unsafe_head should have advanced to block {L2_BLOCK_COUNT} after gossip"
     );
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         0,
         "safe_head should still be at genesis before derivation"
     );
 
     // --- Phase 3+4: Signal L1 head and run derivation. ---
-    verifier.act_l1_head_signal(l1_block_1).await.expect("L1 head signal should succeed");
+    verifier.act_l1_head_signal(l1_block_1).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("pipeline full should succeed");
 
     assert_eq!(derived, L2_BLOCK_COUNT as usize, "expected {L2_BLOCK_COUNT} L2 blocks derived");
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         L2_BLOCK_COUNT,
         "safe_head should have caught up to block {L2_BLOCK_COUNT}"
     );
     assert_eq!(
-        verifier.l2_unsafe().block_info.number,
-        verifier.l2_safe().block_info.number,
+        verifier.l2_unsafe_number(),
+        verifier.l2_safe_number(),
         "unsafe_head and safe_head should be equal after safe chain caught up"
     );
 }
@@ -110,12 +110,12 @@ async fn test_out_of_order_gossip_is_dropped() {
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize should succeed");
+    verifier.initialize().await;
 
     // Inject block 3 first — gap-jump; must be dropped.
     verifier.act_l2_unsafe_gossip_receive(&block3).expect("out-of-order gossip must not error");
     assert_eq!(
-        verifier.l2_unsafe().block_info.number,
+        verifier.l2_unsafe_number(),
         0,
         "unsafe_head must not advance when block 3 arrives before blocks 1 and 2"
     );
@@ -123,7 +123,7 @@ async fn test_out_of_order_gossip_is_dropped() {
     // Inject block 1 — sequential; must advance.
     verifier.act_l2_unsafe_gossip_receive(&block1).expect("in-order gossip must succeed");
     assert_eq!(
-        verifier.l2_unsafe().block_info.number,
+        verifier.l2_unsafe_number(),
         1,
         "unsafe_head should advance to 1 after sequential gossip of block 1"
     );
@@ -131,7 +131,7 @@ async fn test_out_of_order_gossip_is_dropped() {
     // Inject block 3 again — still a gap (unsafe_head=1, next expected=2); must be dropped.
     verifier.act_l2_unsafe_gossip_receive(&block3).expect("gap gossip must not error");
     assert_eq!(
-        verifier.l2_unsafe().block_info.number,
+        verifier.l2_unsafe_number(),
         1,
         "unsafe_head must stay at 1 when block 3 arrives before block 2"
     );

@@ -347,6 +347,30 @@ impl L1Miner {
         self.latest()
     }
 
+    /// Return the current chain tip as a [`BlockInfo`].
+    ///
+    /// Shorthand for `block_info_from(miner.tip())`. Use this as the argument
+    /// to [`L2Verifier::act_l1_head_signal`] after [`mine_block`].
+    ///
+    /// [`mine_block`]: L1Miner::mine_block
+    pub fn tip_info(&self) -> BlockInfo {
+        block_info_from(self.tip())
+    }
+
+    /// Return the block at `number` as a [`BlockInfo`].
+    ///
+    /// Shorthand for `block_info_from(miner.block_by_number(number).expect(...))`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `number` is not in the chain.
+    pub fn block_info_at(&self, number: u64) -> BlockInfo {
+        block_info_from(
+            self.block_by_number(number)
+                .unwrap_or_else(|| panic!("L1 block {number} not in chain")),
+        )
+    }
+
     /// Enqueue a batcher transaction for inclusion in the next mined block.
     ///
     /// The derivation pipeline filters L1 transactions by comparing the

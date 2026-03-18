@@ -297,7 +297,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     /// [`IndexedTraversal`]: base_consensus_derive::IndexedTraversal
     /// [`act_l2_pipeline_full`]: L2Verifier::act_l2_pipeline_full
     /// [`act_l1_head_signal`]: L2Verifier::act_l1_head_signal
-    pub async fn initialize(&mut self) -> Result<(), VerifierError> {
+    pub async fn initialize(&mut self) {
         let l1_origin = self.pipeline.origin().unwrap_or_default();
         self.pipeline
             .signal(
@@ -305,16 +305,22 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                     .signal(),
             )
             .await
-            .map_err(|e| VerifierError::Signal(Box::new(e)))?;
+            .expect("initialize signal failed");
 
         // Drain the genesis L1 block (no batcher data; sets IndexedTraversal::done = true).
-        self.act_l2_pipeline_full().await?;
-        Ok(())
+        self.act_l2_pipeline_full().await.expect("initialize pipeline drain failed");
     }
 
     /// Return the current L2 safe head.
     pub const fn l2_safe(&self) -> L2BlockInfo {
         self.safe_head
+    }
+
+    /// Return the block number of the current L2 safe head.
+    ///
+    /// Shorthand for `l2_safe().block_info.number`.
+    pub const fn l2_safe_number(&self) -> u64 {
+        self.safe_head.block_info.number
     }
 
     /// Return the current L2 unsafe head.
@@ -329,9 +335,23 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         self.unsafe_head
     }
 
+    /// Return the block number of the current L2 unsafe head.
+    ///
+    /// Shorthand for `l2_unsafe().block_info.number`.
+    pub const fn l2_unsafe_number(&self) -> u64 {
+        self.unsafe_head.block_info.number
+    }
+
     /// Return the current L2 finalized head.
     pub const fn l2_finalized(&self) -> L2BlockInfo {
         self.finalized_head
+    }
+
+    /// Return the block number of the current L2 finalized head.
+    ///
+    /// Shorthand for `l2_finalized().block_info.number`.
+    pub const fn l2_finalized_number(&self) -> u64 {
+        self.finalized_head.block_info.number
     }
 
     /// Signal the pipeline that a new L1 block is available.
@@ -341,11 +361,8 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     /// (number = current + 1 and `parent_hash` matches).
     ///
     /// [`IndexedTraversal`]: base_consensus_derive::IndexedTraversal
-    pub async fn act_l1_head_signal(&mut self, head: BlockInfo) -> Result<(), VerifierError> {
-        self.pipeline
-            .signal(Signal::ProvideBlock(head))
-            .await
-            .map_err(|e| VerifierError::Signal(Box::new(e)))
+    pub async fn act_l1_head_signal(&mut self, head: BlockInfo) {
+        self.pipeline.signal(Signal::ProvideBlock(head)).await.expect("act_l1_head_signal failed");
     }
 
     /// Return the most recently signalled L1 safe head block number.
@@ -376,7 +393,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     /// L1 origin number is ≤ `head.number`, then updates `finalized_head`.
     ///
     /// [`safe_head_history`]: L2Verifier::safe_head_history
-    pub async fn act_l1_finalized_signal(&mut self, head: BlockInfo) -> Result<(), VerifierError> {
+    pub async fn act_l1_finalized_signal(&mut self, head: BlockInfo) {
         self.finalized_l1_number = head.number;
 
         // Scan history most-recent-first for highest L2 block whose L1 origin
@@ -393,7 +410,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         {
             self.finalized_head = l2;
         }
-        Ok(())
     }
 
     /// Reset the pipeline to the given L1 origin and L2 safe head.
@@ -404,14 +420,14 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         l1_origin: BlockInfo,
         l2_safe_head: L2BlockInfo,
         system_config: SystemConfig,
-    ) -> Result<(), VerifierError> {
+    ) {
         self.pipeline
             .signal(
                 ResetSignal { l1_origin, l2_safe_head, system_config: Some(system_config) }
                     .signal(),
             )
             .await
-            .map_err(|e| VerifierError::Signal(Box::new(e)))?;
+            .expect("act_reset signal failed");
         self.safe_head = l2_safe_head;
         // Clear stale finalization state so a subsequent act_l1_finalized_signal
         // cannot promote an L2 block that no longer exists on the canonical chain.
@@ -422,7 +438,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         self.finalized_head = l2_safe_head;
         self.finalized_l1_number = 0;
         self.safe_l1_number = 0;
-        Ok(())
     }
 
     /// Run the derivation pipeline until it is idle (no more L1 data to consume).

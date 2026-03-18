@@ -2,7 +2,7 @@
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
-    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
 
 // ---------------------------------------------------------------------------
@@ -33,16 +33,15 @@ async fn batcher_blob_da_end_to_end() {
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     for i in 1..=3u64 {
-        let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(l1_block).await.expect("signal L1 block");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = verifier.act_l2_pipeline_full().await.expect("derive pipeline");
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block via blob DA");
     }
 
-    assert_eq!(verifier.l2_safe().block_info.number, 3, "safe head should reach L2 block 3");
+    assert_eq!(verifier.l2_safe_number(), 3, "safe head should reach L2 block 3");
 }
 
 // ---------------------------------------------------------------------------
@@ -81,14 +80,13 @@ async fn batcher_multi_blob_packing() {
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("L1 block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal L1 block 1");
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step after L1 block 1");
 
     assert_eq!(derived, 1, "expected 1 L2 block derived from multi-blob channel");
-    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head should reach L2 block 1");
+    assert_eq!(verifier.l2_safe_number(), 1, "safe head should reach L2 block 1");
 }
 
 // ---------------------------------------------------------------------------
@@ -122,16 +120,15 @@ async fn batcher_calldata_da() {
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     for i in 1..=3u64 {
-        let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(l1_block).await.expect("signal L1 block");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = verifier.act_l2_pipeline_full().await.expect("derive pipeline");
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block via calldata DA");
     }
 
-    assert_eq!(verifier.l2_safe().block_info.number, 3, "safe head should reach L2 block 3");
+    assert_eq!(verifier.l2_safe_number(), 3, "safe head should reach L2 block 3");
 }
 
 // ---------------------------------------------------------------------------
@@ -176,17 +173,16 @@ async fn batcher_da_switching() {
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     let mut total_derived = 0;
     for i in 1..=6u64 {
-        let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(l1_block).await.expect("signal L1 block");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         total_derived += verifier.act_l2_pipeline_full().await.expect("derive pipeline");
     }
 
     assert_eq!(total_derived, 6, "expected 6 L2 blocks derived (3 calldata + 3 blob)");
-    assert_eq!(verifier.l2_safe().block_info.number, 6, "safe head should reach L2 block 6");
+    assert_eq!(verifier.l2_safe_number(), 6, "safe head should reach L2 block 6");
 }
 
 // ---------------------------------------------------------------------------
@@ -248,13 +244,12 @@ async fn blob_da_channel_timeout() {
     batcher.confirm_staged(block_1_num).await;
     chain.push(h.l1.tip().clone()); // L1 block 1: blob with frame 0 only
 
-    verifier.initialize().await.expect("initialize");
-    let l1_block_1 = block_info_from(h.l1.block_by_number(1).expect("block 1"));
-    verifier.act_l1_head_signal(l1_block_1).await.expect("signal block 1");
+    verifier.initialize().await;
+    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
     verifier.act_l2_pipeline_full().await.expect("step block 1");
 
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         0,
         "incomplete blob channel should not advance safe head"
     );
@@ -264,8 +259,7 @@ async fn blob_da_channel_timeout() {
         h.mine_and_push(&chain);
     }
     for i in 2..=4 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal empty block");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("step empty block");
     }
 
@@ -275,8 +269,7 @@ async fn blob_da_channel_timeout() {
     batcher.confirm_staged(block_5_num).await;
     chain.push(h.l1.tip().clone()); // L1 block 5: late blob frames
 
-    let l1_block_5 = block_info_from(h.l1.block_by_number(5).expect("block 5"));
-    verifier.act_l1_head_signal(l1_block_5).await.expect("signal block 5");
+    verifier.act_l1_head_signal(h.l1.block_info_at(5)).await;
     let derived = verifier.act_l2_pipeline_full().await.expect("step block 5");
     assert_eq!(derived, 0, "late blob frames after channel timeout must be silently dropped");
 
@@ -289,10 +282,9 @@ async fn blob_da_channel_timeout() {
         .expect("encode recovery channel");
     chain.push(h.l1.tip().clone()); // L1 block 6: fresh blob channel with all frames
 
-    let l1_block_6 = block_info_from(h.l1.block_by_number(6).expect("block 6"));
-    verifier.act_l1_head_signal(l1_block_6).await.expect("signal block 6");
+    verifier.act_l1_head_signal(h.l1.block_info_at(6)).await;
     let recovered = verifier.act_l2_pipeline_full().await.expect("step block 6");
 
     assert_eq!(recovered, 1, "resubmitted blob channel should derive L2 block 1");
-    assert_eq!(verifier.l2_safe().block_info.number, 1, "safe head should recover to 1");
+    assert_eq!(verifier.l2_safe_number(), 1, "safe head should recover to 1");
 }

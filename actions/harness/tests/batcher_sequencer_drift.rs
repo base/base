@@ -2,7 +2,7 @@
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
-    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
 
 // ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
     // Pin the sequencer to L1 genesis (epoch 0, ts=0).
-    let l1_genesis = block_info_from(h.l1.block_by_number(0).expect("genesis"));
+    let l1_genesis = h.l1.block_info_at(0);
     sequencer.pin_l1_origin(l1_genesis);
 
     // Build 8 L2 blocks pinned to epoch 0 (block_time=300 s, max_drift=1800 s):
@@ -95,13 +95,12 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
     h.mine_and_push(&chain);
     h.mine_and_push(&chain);
 
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Drive derivation through all L1 blocks.
     let mut total_derived = 0;
     for i in 1..=h.l1.latest_number() {
-        let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(l1_block).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         total_derived += verifier.act_l2_pipeline_full().await.expect("step");
     }
 
@@ -110,7 +109,7 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
     // default blocks because the non-empty batches are dropped for exceeding
     // max_sequencer_drift.
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         8,
         "all 8 L2 blocks must be derived (blocks 7-8 as deposit-only over-drift blocks)"
     );
@@ -157,7 +156,7 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let l1_genesis = block_info_from(h.l1.block_by_number(0).expect("genesis"));
+    let l1_genesis = h.l1.block_info_at(0);
     sequencer.pin_l1_origin(l1_genesis);
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -182,12 +181,11 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
     batcher.advance(&mut h.l1).await.expect("batcher advance");
     chain.push(h.l1.tip().clone());
 
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     let mut total_derived = 0;
     for i in 1..=h.l1.latest_number() {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block"));
-        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         total_derived += verifier.act_l2_pipeline_full().await.expect("step");
     }
 
@@ -195,7 +193,7 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
     // deposit-only blocks for the over-drift slots).
     assert!(total_derived >= 6, "at least the 6 within-drift blocks should be derived");
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         total_derived as u64,
         "safe head should match number of derived blocks"
     );

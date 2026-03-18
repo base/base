@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, B256, LogData};
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
-    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
+    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
 use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
@@ -373,17 +373,16 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     for i in 1..=4u64 {
-        let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(l1_block).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = verifier.act_l2_pipeline_full().await.expect("pipeline");
         assert_eq!(derived, 1, "L1 block {i} must derive exactly one L2 block");
     }
 
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         4,
         "safe head must reach block 4 after crossing the Isthmus operator fee boundary"
     );
@@ -455,30 +454,28 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     // Signal L1 blocks 1–3. Blocks 1–2 are derived from their valid batches.
     // Block 3's batch is dropped (NonEmptyTransitionBlock) and the pipeline
     // stalls waiting for more L1 data (the seq window has not yet closed).
     for i in 1u64..=3 {
-        let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(l1_block).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("pipeline");
     }
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        verifier.l2_safe_number(),
         2,
         "only blocks 1–2 derived from valid batches; block 3 pending (batch dropped)"
     );
 
     // Signal L1 block 4. The epoch-0 window is now closed, so the pipeline
     // force-includes L2 slot 3 as a deposit-only block.
-    let l1_block_4 = block_info_from(h.l1.block_by_number(4).expect("block 4 exists"));
-    verifier.act_l1_head_signal(l1_block_4).await.expect("signal block 4");
+    verifier.act_l1_head_signal(h.l1.block_info_at(4)).await;
     verifier.act_l2_pipeline_full().await.expect("pipeline block 4");
 
     assert!(
-        verifier.l2_safe().block_info.number >= 3,
+        verifier.l2_safe_number() >= 3,
         "safe head must advance past block 3 after force-inclusion"
     );
 
@@ -646,15 +643,14 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
         &sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     for i in 1u64..=3 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await.expect("signal");
+        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
         verifier.act_l2_pipeline_full().await.expect("step");
     }
 
-    assert_eq!(verifier.l2_safe().block_info.number, 6, "all 6 L2 blocks must be derived");
+    assert_eq!(verifier.l2_safe_number(), 6, "all 6 L2 blocks must be derived");
 
     let infos = verifier.derived_l1_info_txs();
     let find = |n: u64| infos.iter().find(|(bn, _)| *bn == n).map(|(_, tx)| tx);
