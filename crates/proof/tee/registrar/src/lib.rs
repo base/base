@@ -22,9 +22,4 @@ mod traits;
 pub use traits::InstanceDiscovery;
 
 mod types;
-// Re-exported from `base-proof-tee-nitro-attestation-prover`. Previously
-// defined in this crate; the prover crate is now the single source of truth.
-pub use base_proof_tee_nitro_attestation_prover::{
-    AttestationProof, AttestationProofProvider, BoundlessProver, DirectProver, ProverError,
-};
 pub use types::{AttestationResponse, InstanceHealthStatus, ProverInstance, RegisteredSigner};
