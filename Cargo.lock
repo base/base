@@ -4732,7 +4732,6 @@ dependencies = [
  "metrics-exporter-prometheus",
  "moka",
  "reqwest 0.13.2",
- "rstest",
  "rustls 0.23.37",
  "serde",
  "serde_json",

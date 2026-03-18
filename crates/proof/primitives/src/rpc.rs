@@ -1,3 +1,9 @@
+// This module requires at least one of the RPC features to compile correctly.
+// The `lib.rs` cfg gate normally ensures this, but we add an explicit guard for
+// safety in case the module is ever included directly.
+#[cfg(not(any(feature = "rpc-server", feature = "rpc-client")))]
+compile_error!("this module requires the `rpc-server` or `rpc-client` feature");
+
 // The jsonrpsee `rpc` proc macro rewrites the trait depending on which variant
 // is selected (`server`, `client`, or both).  We must pick exactly the right
 // combination for the enabled feature set so the generated code only references
