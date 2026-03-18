@@ -47,11 +47,21 @@ pub enum BatcherError {
     /// [`Batcher::wait_until_pending`] did not observe `expected` pending frames
     /// within the polling iteration limit.
     #[error("timed out waiting for {expected} pending frames after encoding; got {got}")]
-    EncodingTimeout { expected: usize, got: usize },
+    EncodingTimeout {
+        /// Minimum number of pending frames the caller was waiting for.
+        expected: usize,
+        /// Actual number of pending frames observed when the timeout elapsed.
+        got: usize,
+    },
     /// [`Batcher::wait_until_requeued`] did not observe `expected` pending frames
     /// within the polling iteration limit after a reorg.
     #[error("timed out waiting for {expected} requeued frames after reorg; got {got}")]
-    RequeueTimeout { expected: usize, got: usize },
+    RequeueTimeout {
+        /// Minimum number of requeued frames the caller was waiting for.
+        expected: usize,
+        /// Actual number of pending frames observed when the timeout elapsed.
+        got: usize,
+    },
 }
 
 /// Batcher actor that drives a persistent [`BatchDriver`] through [`L1Miner`].
