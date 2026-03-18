@@ -45,6 +45,10 @@ pub enum RegistrarError {
     #[error("signing error")]
     Signing(#[source] Box<dyn std::error::Error + Send + Sync>),
 
+    /// Transaction submission or confirmation failed (RPC, nonce, fee, timeout).
+    #[error("transaction error")]
+    Transaction(#[source] Box<dyn std::error::Error + Send + Sync>),
+
     /// Configuration is invalid.
     #[error("config error: {0}")]
     Config(String),
@@ -58,7 +62,7 @@ impl From<ProverError> for RegistrarError {
 
 impl From<TxManagerError> for RegistrarError {
     fn from(e: TxManagerError) -> Self {
-        Self::Signing(Box::new(e))
+        Self::Transaction(Box::new(e))
     }
 }
 

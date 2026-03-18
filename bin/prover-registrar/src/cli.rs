@@ -18,7 +18,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 use url::Url;
 
-// Generate `SignerCli` and `TxManagerCli` structs with env-var-backed CLI args.
+// Generate env-var helper and CLI structs with the `BASE_REGISTRAR_` prefix.
+base_cli_utils::define_cli_env!("BASE_REGISTRAR");
 base_tx_manager::define_signer_cli!("BASE_REGISTRAR");
 base_tx_manager::define_tx_manager_cli!("BASE_REGISTRAR");
 
@@ -31,28 +32,28 @@ const DEFAULT_TRUSTED_CERTS_PREFIX: u8 = 1;
 pub(crate) struct Cli {
     // ── L1 ────────────────────────────────────────────────────────────────────
     /// L1 Ethereum RPC endpoint.
-    #[arg(long, env = "BASE_REGISTRAR_L1_RPC_URL")]
+    #[arg(long, env = cli_env!("L1_RPC_URL"))]
     l1_rpc_url: Url,
 
     /// `TEEProverRegistry` contract address on L1.
-    #[arg(long, env = "BASE_REGISTRAR_TEE_PROVER_REGISTRY_ADDRESS")]
+    #[arg(long, env = cli_env!("TEE_PROVER_REGISTRY_ADDRESS"))]
     tee_prover_registry_address: Address,
 
     /// L1 chain ID (used to validate the RPC connection).
-    #[arg(long, env = "BASE_REGISTRAR_L1_CHAIN_ID")]
+    #[arg(long, env = cli_env!("L1_CHAIN_ID"))]
     l1_chain_id: u64,
 
     // ── Discovery ─────────────────────────────────────────────────────────────
     /// AWS ALB target group ARN for prover instance discovery.
-    #[arg(long, env = "BASE_REGISTRAR_TARGET_GROUP_ARN")]
+    #[arg(long, env = cli_env!("TARGET_GROUP_ARN"))]
     target_group_arn: String,
 
     /// AWS region (e.g. `us-east-1`).
-    #[arg(long, env = "BASE_REGISTRAR_AWS_REGION")]
+    #[arg(long, env = cli_env!("AWS_REGION"))]
     aws_region: String,
 
     /// JSON-RPC port to poll on each prover instance.
-    #[arg(long, env = "BASE_REGISTRAR_PROVER_PORT", default_value_t = 8000)]
+    #[arg(long, env = cli_env!("PROVER_PORT"), default_value_t = 8000)]
     prover_port: u16,
 
     // ── Signing ───────────────────────────────────────────────────────────────
@@ -67,15 +68,15 @@ pub(crate) struct Cli {
 
     // ── Proving ───────────────────────────────────────────────────────────────
     /// ZK proving backend.
-    #[arg(long, env = "BASE_REGISTRAR_PROVING_MODE")]
+    #[arg(long, env = cli_env!("PROVING_MODE"))]
     proving_mode: ProvingMode,
 
     /// Hex-encoded guest program image ID (required for Boundless mode).
-    #[arg(long, env = "BASE_REGISTRAR_IMAGE_ID", required_if_eq("proving_mode", "boundless"))]
+    #[arg(long, env = cli_env!("IMAGE_ID"), required_if_eq("proving_mode", "boundless"))]
     image_id: Option<String>,
 
     /// Path to the guest ELF binary on disk (required for Direct mode).
-    #[arg(long, env = "BASE_REGISTRAR_ELF_PATH", required_if_eq("proving_mode", "direct"))]
+    #[arg(long, env = cli_env!("ELF_PATH"), required_if_eq("proving_mode", "direct"))]
     elf_path: Option<PathBuf>,
 
     // ── Boundless ─────────────────────────────────────────────────────────────
@@ -84,15 +85,15 @@ pub(crate) struct Cli {
 
     // ── Polling / Server ──────────────────────────────────────────────────────
     /// Interval between discovery and registration poll cycles, in seconds.
-    #[arg(long, env = "BASE_REGISTRAR_POLL_INTERVAL_SECS", default_value_t = 30)]
+    #[arg(long, env = cli_env!("POLL_INTERVAL_SECS"), default_value_t = 30)]
     poll_interval_secs: u64,
 
     /// Timeout for JSON-RPC calls to prover instances, in seconds.
-    #[arg(long, env = "BASE_REGISTRAR_PROVER_TIMEOUT_SECS", default_value_t = 30)]
+    #[arg(long, env = cli_env!("PROVER_TIMEOUT_SECS"), default_value_t = 30)]
     prover_timeout_secs: u64,
 
     /// Port for the health check and Prometheus metrics HTTP server.
-    #[arg(long, env = "BASE_REGISTRAR_HEALTH_PORT", default_value_t = 7300)]
+    #[arg(long, env = cli_env!("HEALTH_PORT"), default_value_t = 7300)]
     health_port: u16,
 }
 
@@ -111,7 +112,7 @@ struct BoundlessArgs {
     /// Boundless Network RPC URL.
     #[arg(
         long,
-        env = "BASE_REGISTRAR_BOUNDLESS_RPC_URL",
+        env = cli_env!("BOUNDLESS_RPC_URL"),
         required_if_eq("proving_mode", "boundless")
     )]
     boundless_rpc_url: Option<Url>,
@@ -119,7 +120,7 @@ struct BoundlessArgs {
     /// Hex-encoded private key for Boundless Network proving fees.
     #[arg(
         long,
-        env = "BASE_REGISTRAR_BOUNDLESS_PRIVATE_KEY",
+        env = cli_env!("BOUNDLESS_PRIVATE_KEY"),
         required_if_eq("proving_mode", "boundless")
     )]
     boundless_private_key: Option<String>,
@@ -127,25 +128,25 @@ struct BoundlessArgs {
     /// IPFS URL of the Nitro attestation verifier ELF uploaded via `nitro-attest-cli`.
     #[arg(
         long,
-        env = "BASE_REGISTRAR_BOUNDLESS_VERIFIER_PROGRAM_URL",
+        env = cli_env!("BOUNDLESS_VERIFIER_PROGRAM_URL"),
         required_if_eq("proving_mode", "boundless")
     )]
     boundless_verifier_program_url: Option<Url>,
 
     /// Maximum price in wei per cycle for Boundless proof requests.
-    #[arg(long, env = "BASE_REGISTRAR_BOUNDLESS_MAX_PRICE", default_value_t = 1_000_000)]
+    #[arg(long, env = cli_env!("BOUNDLESS_MAX_PRICE"), default_value_t = 1_000_000)]
     boundless_max_price: u64,
 
     /// Interval between Boundless fulfillment status checks, in seconds.
-    #[arg(long, env = "BASE_REGISTRAR_BOUNDLESS_POLL_INTERVAL_SECS", default_value_t = 5)]
+    #[arg(long, env = cli_env!("BOUNDLESS_POLL_INTERVAL_SECS"), default_value_t = 5)]
     boundless_poll_interval_secs: u64,
 
     /// Proof generation timeout in seconds.
-    #[arg(long, env = "BASE_REGISTRAR_BOUNDLESS_TIMEOUT_SECS", default_value_t = 600)]
+    #[arg(long, env = cli_env!("BOUNDLESS_TIMEOUT_SECS"), default_value_t = 600)]
     boundless_timeout_secs: u64,
 
     /// `NitroEnclaveVerifier` contract address for certificate caching (optional).
-    #[arg(long, env = "BASE_REGISTRAR_NITRO_VERIFIER_ADDRESS")]
+    #[arg(long, env = cli_env!("NITRO_VERIFIER_ADDRESS"))]
     nitro_verifier_address: Option<Address>,
 }
 
