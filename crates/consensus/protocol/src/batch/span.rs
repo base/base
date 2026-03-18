@@ -319,7 +319,7 @@ impl SpanBatch {
                 .enumerate()
                 .find(|(_, origin)| origin.number == batch.epoch_num)
                 .map(|(i, origin)| {
-                    origin_index = i;
+                    origin_index += i;
                     origin.hash
                 })
                 .ok_or(SpanBatchError::MissingL1Origin)?;
@@ -945,6 +945,40 @@ mod tests {
             batch.get_singular_batches(&l1_blocks, l2_safe_head),
             Err(SpanBatchError::MissingL1Origin),
         );
+    }
+
+    #[tokio::test]
+    async fn test_singular_batches_non_monotonic_epoch_finds_earlier_origin() {
+        let l1_blocks = vec![
+            BlockInfo {
+                number: 10,
+                timestamp: 20,
+                hash: B256::left_padding_from(&10u64.to_be_bytes()),
+                ..Default::default()
+            },
+            BlockInfo {
+                number: 11,
+                timestamp: 30,
+                hash: B256::left_padding_from(&11u64.to_be_bytes()),
+                ..Default::default()
+            },
+        ];
+        let l2_safe_head = L2BlockInfo {
+            block_info: BlockInfo { timestamp: 10, ..Default::default() },
+            l1_origin: BlockNumHash { number: 9, ..Default::default() },
+            ..Default::default()
+        };
+
+        let first = SpanBatchElement { epoch_num: 11, timestamp: 40, ..Default::default() };
+        let second = SpanBatchElement { epoch_num: 10, timestamp: 50, ..Default::default() };
+        let batch = SpanBatch { batches: vec![first, second], ..Default::default() };
+
+        let singles = batch.get_singular_batches(&l1_blocks, l2_safe_head).expect("should resolve origins");
+        assert_eq!(singles.len(), 2);
+        assert_eq!(singles[0].epoch_num, 11);
+        assert_eq!(singles[0].epoch_hash, l1_blocks[1].hash);
+        assert_eq!(singles[1].epoch_num, 10);
+        assert_eq!(singles[1].epoch_hash, l1_blocks[0].hash);
     }
 
     #[tokio::test]
