@@ -11,7 +11,7 @@ use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryContractClient,
 };
 use base_proof_rpc::{L2Client, L2ClientConfig};
-use base_tx_manager::{NoopTxMetrics, SimpleTxManager};
+use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use base_zk_client::{ZkProofClient, ZkProofClientConfig};
 use eyre::Result;
 use tokio_util::sync::CancellationToken;
@@ -78,7 +78,7 @@ impl ChallengerService {
             signer_config,
             config.tx_manager,
             chain_id,
-            Arc::new(NoopTxMetrics),
+            Arc::new(BaseTxMetrics::new("challenger")),
         )
         .await
         .map_err(|e| eyre::eyre!("failed to construct tx manager: {e}"))?;
