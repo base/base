@@ -22,8 +22,8 @@ jsonrpsee = { workspace = true, features = ["http-client"] }
 thiserror.workspace = true
 
 # TLS (insecure-tls only)
-rustls = { workspace = true, features = ["std", "tls12"], optional = true }
 tracing = { workspace = true, optional = true }
+rustls = { workspace = true, features = ["std", "tls12"], optional = true }
 
 [features]
 insecure-tls = [ "dep:rustls", "dep:tracing" ]
