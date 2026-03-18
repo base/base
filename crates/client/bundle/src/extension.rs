@@ -1,10 +1,14 @@
 //! Wires the `eth_sendBundle` RPC and bundle transaction maintenance task.
 
-use std::sync::{Arc, atomic::AtomicU64};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_txpool::{SendBundleApiImpl, SendBundleApiServer, maintain_bundle_transactions};
 use reth_chain_state::CanonStateSubscriptions;
+use reth_provider::BlockNumReader;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::info;
 
@@ -33,6 +37,9 @@ impl BaseNodeExtension for BundleExtension {
         });
 
         hooks.add_node_started_hook(move |ctx| {
+            let latest = ctx.provider().best_block_number().unwrap_or(0);
+            current_block_number.store(latest, Ordering::Release);
+
             let pool = ctx.pool().clone();
             let events = BroadcastStream::new(ctx.provider().subscribe_to_canonical_state());
 

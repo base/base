@@ -3036,6 +3036,7 @@ dependencies = [
  "base-node-runner",
  "base-txpool",
  "reth-chain-state",
+ "reth-provider",
  "tokio",
  "tokio-stream",
  "tracing",
