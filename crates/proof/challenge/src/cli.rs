@@ -71,9 +71,9 @@ pub struct ChallengerArgs {
     )]
     pub poll_interval: Duration,
 
-    /// URL of the ZK proof service endpoint.
-    #[arg(long = "zk-proof-service-endpoint", env = cli_env!("ZK_PROOF_SERVICE_ENDPOINT"))]
-    pub zk_proof_service_endpoint: Url,
+    /// URL of the ZK RPC endpoint.
+    #[arg(long = "zk-rpc-url", env = cli_env!("ZK_RPC_URL"))]
+    pub zk_rpc_url: Url,
 
     /// Timeout for establishing the initial gRPC connection to the ZK proof
     /// service (e.g., "10s", "1m").
@@ -136,7 +136,7 @@ impl std::fmt::Debug for ChallengerArgs {
             .field("l2_eth_rpc", &self.l2_eth_rpc)
             .field("dispute_game_factory_addr", &self.dispute_game_factory_addr)
             .field("poll_interval", &self.poll_interval)
-            .field("zk_proof_service_endpoint", &self.zk_proof_service_endpoint)
+            .field("zk_rpc_url", &self.zk_rpc_url)
             .field("zk_connect_timeout", &self.zk_connect_timeout)
             .field("zk_request_timeout", &self.zk_request_timeout)
             .field("tee_rpc_url", &self.tee_rpc_url)
