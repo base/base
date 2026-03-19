@@ -20,9 +20,9 @@ local = []
 
 [dependencies]
 # Workspace – TEE
-base-proof-host.workspace = true
-base-consensus-registry.workspace = true
+base-proof-host = { workspace = true, features = ["metrics"] }
 base-proof-tee-nitro = { workspace = true, features = ["host"] }
+base-consensus-registry.workspace = true
 
 # Workspace – ZK
 base-zk-db.workspace = true
@@ -31,7 +31,9 @@ base-zk-service.workspace = true
 base-zk-client = { workspace = true, features = ["server"] }
 
 # CLI
+base-cli-utils.workspace = true
 eyre.workspace = true
+serde = { workspace = true, features = ["derive", "std"] }
 clap = { workspace = true, features = ["derive", "env"] }
 
 # Async
@@ -43,4 +45,3 @@ tonic.workspace = true
 
 # Tracing
 tracing.workspace = true
-tracing-subscriber.workspace = true

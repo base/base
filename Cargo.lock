@@ -4860,6 +4860,7 @@ dependencies = [
 name = "base-prover"
 version = "0.0.0"
 dependencies = [
+ "base-cli-utils",
  "base-consensus-registry",
  "base-proof-host",
  "base-proof-tee-nitro",
@@ -4870,10 +4871,10 @@ dependencies = [
  "clap",
  "eyre",
  "futures",
+ "serde",
  "tokio",
  "tonic",
  "tracing",
- "tracing-subscriber 0.3.23",
 ]
 
 [[package]]

@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_consensus_registry::Registry;
+use base_cli_utils::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_host::ProverConfig;
 #[cfg(feature = "local")]
@@ -22,12 +23,23 @@ use tracing::info;
 
 use crate::zk;
 
+base_cli_utils::define_log_args!("BASE_PROVER");
+base_cli_utils::define_metrics_args!("BASE_PROVER", 7300);
+
 /// Prover binary (TEE + ZK backends).
 #[derive(Parser)]
 #[command(author, version)]
 pub(crate) struct Cli {
     #[command(subcommand)]
     command: Command,
+
+    /// Logging arguments.
+    #[command(flatten)]
+    logging: LogArgs,
+
+    /// Metrics arguments.
+    #[command(flatten)]
+    metrics: MetricsArgs,
 }
 
 /// Proving backend.
@@ -110,12 +122,19 @@ struct NitroServerArgs {
 
 impl Cli {
     /// Run the selected subcommand.
-    pub(crate) async fn run(self) -> eyre::Result<()> {
-        tracing_subscriber::fmt::init();
-        match self.command {
-            Command::Nitro(args) => args.run().await,
-            Command::Zk(args) => (*args).run().await,
-        }
+    pub(crate) fn run(self) -> eyre::Result<()> {
+        let Self { command, logging, metrics } = self;
+        LogConfig::from(logging).init_tracing_subscriber()?;
+        base_cli_utils::MetricsConfig::from(metrics).init_with(|| {
+            base_proof_host::Metrics::init();
+            base_cli_utils::register_version_metrics!();
+        })?;
+        RuntimeManager::run_until_ctrl_c(async move {
+            match command {
+                Command::Nitro(args) => args.run().await,
+                Command::Zk(args) => (*args).run().await,
+            }
+        })
     }
 }
 

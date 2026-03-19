@@ -9,19 +9,17 @@
 #[cfg(not(any(target_os = "linux", feature = "local")))]
 use base_consensus_registry as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
-use base_proof_host as _;
-#[cfg(not(any(target_os = "linux", feature = "local")))]
 use base_proof_tee_nitro as _;
 use clap::Parser as _;
-#[cfg(not(any(target_os = "linux", feature = "local")))]
-use tracing as _;
+use serde as _;
 
 mod cli;
 mod zk;
 
-#[tokio::main]
-async fn main() {
-    if let Err(err) = cli::Cli::parse().run().await {
+fn main() {
+    base_cli_utils::init_common!();
+
+    if let Err(err) = cli::Cli::parse().run() {
         eprintln!("Error: {err:?}");
         std::process::exit(1);
     }
