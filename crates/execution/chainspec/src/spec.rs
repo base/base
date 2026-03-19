@@ -261,12 +261,15 @@ impl From<Genesis> for OpChainSpec {
             },
         ));
 
+        let base_v1_time = genesis_info.base.v1;
+
         // Time-based hardforks
         // L1 hardforks are mapped to the activation timestamps of the corresponding Base hardforks
         let time_hardfork_opts = [
             (EthereumHardfork::Shanghai.boxed(), genesis_info.canyon_time),
             (EthereumHardfork::Cancun.boxed(), genesis_info.ecotone_time),
             (EthereumHardfork::Prague.boxed(), genesis_info.isthmus_time),
+            (EthereumHardfork::Osaka.boxed(), base_v1_time),
             (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
             (BaseUpgrade::Canyon.boxed(), genesis_info.canyon_time),
             (BaseUpgrade::Ecotone.boxed(), genesis_info.ecotone_time),
@@ -275,6 +278,7 @@ impl From<Genesis> for OpChainSpec {
             (BaseUpgrade::Holocene.boxed(), genesis_info.holocene_time),
             (BaseUpgrade::Isthmus.boxed(), genesis_info.isthmus_time),
             (BaseUpgrade::Jovian.boxed(), genesis_info.jovian_time),
+            (BaseUpgrade::V1.boxed(), base_v1_time),
         ];
 
         let mut time_hardforks = time_hardfork_opts
@@ -806,6 +810,7 @@ mod tests {
                     (String::from("holoceneTime"), 0.into()),
                     (String::from("isthmusTime"), 0.into()),
                     (String::from("jovianTime"), 0.into()),
+                    (String::from("base"), serde_json::json!({ "v1": 0 })),
                 ]
                 .into_iter()
                 .collect(),
@@ -844,6 +849,8 @@ mod tests {
             EthereumHardfork::Prague.boxed(),
             BaseUpgrade::Isthmus.boxed(),
             BaseUpgrade::Jovian.boxed(),
+            EthereumHardfork::Osaka.boxed(),
+            BaseUpgrade::V1.boxed(),
         ];
 
         for (expected, actual) in expected_hardforks.iter().zip(hardforks.iter()) {
