@@ -19,6 +19,8 @@ jobs:
     name: Review PR
     # Note: This job runs on the BaseRunnerGroup to be able to access LLM Gateway
     # It will not work on other runners
+    # Skip for external contributor PRs (forks) — secrets and runner group are unavailable
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on:
       group: BaseRunnerGroup
     steps:
