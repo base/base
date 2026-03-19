@@ -60,6 +60,7 @@ pub fn build_test_genesis() -> Genesis {
             ("ecotoneTime", serde_json::json!(0)),
             ("fjordTime", serde_json::json!(0)),
             ("graniteTime", serde_json::json!(0)),
+            ("holoceneTime", serde_json::json!(0)),
             ("isthmusTime", serde_json::json!(0)),
             ("jovianTime", serde_json::json!(0)),
             (
@@ -97,4 +98,16 @@ pub fn build_test_genesis() -> Genesis {
         coinbase: Address::ZERO,
         ..Default::default()
     }
+}
+
+/// Builds a test genesis with Base V1 (Osaka) enabled at timestamp 0.
+///
+/// Extends [`build_test_genesis`] with:
+/// - `osaka_time` set to 0
+/// - Base V1 activation at timestamp 0
+pub fn build_test_genesis_v1() -> Genesis {
+    let mut genesis = build_test_genesis();
+    genesis.config.osaka_time = Some(0);
+    genesis.config.extra_fields.insert("base".to_string(), serde_json::json!({ "v1": 0 }));
+    genesis
 }

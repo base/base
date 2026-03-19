@@ -261,23 +261,22 @@ impl From<Genesis> for OpChainSpec {
             },
         ));
 
-        let base_v1_time = genesis_info.base.v1;
-
         // Time-based hardforks
         // L1 hardforks are mapped to the activation timestamps of the corresponding Base hardforks
+        let base_v1_time = genesis_info.base.v1;
         let time_hardfork_opts = [
-            (EthereumHardfork::Shanghai.boxed(), genesis_info.canyon_time),
-            (EthereumHardfork::Cancun.boxed(), genesis_info.ecotone_time),
-            (EthereumHardfork::Prague.boxed(), genesis_info.isthmus_time),
-            (EthereumHardfork::Osaka.boxed(), base_v1_time),
             (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
+            (EthereumHardfork::Shanghai.boxed(), genesis_info.canyon_time),
             (BaseUpgrade::Canyon.boxed(), genesis_info.canyon_time),
+            (EthereumHardfork::Cancun.boxed(), genesis_info.ecotone_time),
             (BaseUpgrade::Ecotone.boxed(), genesis_info.ecotone_time),
             (BaseUpgrade::Fjord.boxed(), genesis_info.fjord_time),
             (BaseUpgrade::Granite.boxed(), genesis_info.granite_time),
             (BaseUpgrade::Holocene.boxed(), genesis_info.holocene_time),
+            (EthereumHardfork::Prague.boxed(), genesis_info.isthmus_time),
             (BaseUpgrade::Isthmus.boxed(), genesis_info.isthmus_time),
             (BaseUpgrade::Jovian.boxed(), genesis_info.jovian_time),
+            (EthereumHardfork::Osaka.boxed(), base_v1_time),
             (BaseUpgrade::V1.boxed(), base_v1_time),
         ];
 
@@ -563,6 +562,10 @@ mod tests {
         "graniteTime": 51,
         "holoceneTime": 52,
         "isthmusTime": 53,
+        "jovianTime": 54,
+        "base": {
+          "v1": 55
+        },
         "optimism": {
           "eip1559Elasticity": 60,
           "eip1559Denominator": 70
@@ -571,33 +574,6 @@ mod tests {
     }
     "#;
         let genesis: Genesis = serde_json::from_str(geth_genesis).unwrap();
-
-        let actual_bedrock_block = genesis.config.extra_fields.get("bedrockBlock");
-        assert_eq!(actual_bedrock_block, Some(serde_json::Value::from(10)).as_ref());
-        let actual_regolith_timestamp = genesis.config.extra_fields.get("regolithTime");
-        assert_eq!(actual_regolith_timestamp, Some(serde_json::Value::from(20)).as_ref());
-        let actual_canyon_timestamp = genesis.config.extra_fields.get("canyonTime");
-        assert_eq!(actual_canyon_timestamp, Some(serde_json::Value::from(30)).as_ref());
-        let actual_ecotone_timestamp = genesis.config.extra_fields.get("ecotoneTime");
-        assert_eq!(actual_ecotone_timestamp, Some(serde_json::Value::from(40)).as_ref());
-        let actual_fjord_timestamp = genesis.config.extra_fields.get("fjordTime");
-        assert_eq!(actual_fjord_timestamp, Some(serde_json::Value::from(50)).as_ref());
-        let actual_granite_timestamp = genesis.config.extra_fields.get("graniteTime");
-        assert_eq!(actual_granite_timestamp, Some(serde_json::Value::from(51)).as_ref());
-        let actual_holocene_timestamp = genesis.config.extra_fields.get("holoceneTime");
-        assert_eq!(actual_holocene_timestamp, Some(serde_json::Value::from(52)).as_ref());
-        let actual_isthmus_timestamp = genesis.config.extra_fields.get("isthmusTime");
-        assert_eq!(actual_isthmus_timestamp, Some(serde_json::Value::from(53)).as_ref());
-
-        let optimism_object = genesis.config.extra_fields.get("optimism").unwrap();
-        assert_eq!(
-            optimism_object,
-            &serde_json::json!({
-                "eip1559Elasticity": 60,
-                "eip1559Denominator": 70,
-            })
-        );
-
         let chain_spec: OpChainSpec = genesis.into();
 
         assert_eq!(
@@ -620,6 +596,12 @@ mod tests {
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Fjord, 50));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Granite, 51));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Holocene, 52));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Jovian, 54));
+        assert!(!chain_spec.is_fork_active_at_timestamp(EthereumHardfork::Osaka, 54));
+        assert!(chain_spec.is_fork_active_at_timestamp(EthereumHardfork::Osaka, 55));
+        assert!(chain_spec.is_fork_active_at_timestamp(EthereumHardfork::Osaka, 98));
+        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::V1, 54));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::V1, 55));
     }
 
     #[test]
@@ -799,6 +781,7 @@ mod tests {
                 shanghai_time: Some(0),
                 cancun_time: Some(0),
                 prague_time: Some(0),
+                osaka_time: Some(0),
                 terminal_total_difficulty: Some(U256::ZERO),
                 extra_fields: [
                     (String::from("bedrockBlock"), 0.into()),

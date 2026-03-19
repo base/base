@@ -21,7 +21,9 @@ mod l1block;
 pub use l1block::L1BlockInfo;
 
 mod precompiles;
-pub use precompiles::{OpPrecompiles, bls12_381, bn254_pair, fjord, granite, isthmus, jovian};
+pub use precompiles::{
+    OpPrecompiles, base_v1, bls12_381, bn254_pair, fjord, granite, isthmus, jovian,
+};
 
 mod result;
 pub use result::OpHaltReason;

@@ -8,7 +8,7 @@ use revm::{
     interpreter::{CallInputs, InterpreterResult},
     precompile::{
         self, Precompile, PrecompileError, PrecompileId, PrecompileResult, Precompiles, bn254,
-        secp256r1,
+        modexp, secp256r1,
     },
     primitives::{Address, OnceLock, hardfork::SpecId},
 };
@@ -36,7 +36,8 @@ impl OpPrecompiles {
             OpSpecId::FJORD => fjord(),
             OpSpecId::GRANITE | OpSpecId::HOLOCENE => granite(),
             OpSpecId::ISTHMUS => isthmus(),
-            OpSpecId::JOVIAN | OpSpecId::BASE_V1 => jovian(),
+            OpSpecId::JOVIAN => jovian(),
+            OpSpecId::BASE_V1 => base_v1(),
         };
 
         Self { inner: EthPrecompiles { precompiles, spec: SpecId::default() }, spec }
@@ -111,6 +112,19 @@ pub fn jovian() -> &'static Precompiles {
             bls12_381::JOVIAN_G2_MSM,
             bls12_381::JOVIAN_PAIRING,
         ]);
+
+        precompiles
+    })
+}
+
+/// Returns precompiles for the Base V1 spec.
+pub fn base_v1() -> &'static Precompiles {
+    static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
+    INSTANCE.get_or_init(|| {
+        let mut precompiles = jovian().clone();
+
+        // Base V1 adopts Osaka pricing and bounds for MODEXP and P256VERIFY.
+        precompiles.extend([modexp::OSAKA, secp256r1::P256VERIFY_OSAKA]);
 
         precompiles
     })
@@ -307,11 +321,11 @@ pub mod bls12_381 {
 
 #[cfg(test)]
 mod tests {
-    use std::vec;
+    use std::{vec, vec::Vec};
 
     use revm::{
-        precompile::{PrecompileError, bls12_381_const},
-        primitives::{Bytes, hex},
+        precompile::{PrecompileError, bls12_381_const, modexp, secp256r1},
+        primitives::{Bytes, eip7823, hex},
     };
 
     use super::*;
@@ -321,6 +335,71 @@ mod tests {
         JOVIAN_PAIRING_MAX_INPUT_SIZE, run_g1_msm_isthmus, run_g1_msm_jovian, run_g2_msm_isthmus,
         run_g2_msm_jovian,
     };
+
+    fn encode_length(len: usize) -> [u8; 32] {
+        let mut encoded = [0u8; 32];
+        encoded[24..].copy_from_slice(&(len as u64).to_be_bytes());
+        encoded
+    }
+
+    fn oversized_modexp_input() -> Vec<u8> {
+        let mut input = Vec::with_capacity(96);
+        input.extend_from_slice(&encode_length(eip7823::INPUT_SIZE_LIMIT + 1));
+        input.extend_from_slice(&encode_length(0));
+        input.extend_from_slice(&encode_length(1));
+        input
+    }
+
+    fn modexp_input(base_len: usize, exp_len: usize, mod_len: usize) -> Vec<u8> {
+        let mut input = Vec::new();
+        input.extend_from_slice(&encode_length(base_len));
+        input.extend_from_slice(&encode_length(exp_len));
+        input.extend_from_slice(&encode_length(mod_len));
+        input.extend(vec![1u8; base_len + exp_len + mod_len]);
+        input
+    }
+
+    fn assert_jovian_input_limits(spec: OpSpecId) {
+        let precompiles = OpPrecompiles::new_with_spec(spec);
+        let bn254_pair_precompile = precompiles.precompiles().get(&bn254::pair::ADDRESS).unwrap();
+
+        let mut bad_input_len = bn254_pair::JOVIAN_MAX_INPUT_SIZE + 1;
+        assert!(bad_input_len < bn254_pair::GRANITE_MAX_INPUT_SIZE);
+        let input = vec![0u8; bad_input_len];
+
+        let res = bn254_pair_precompile.execute(&input, u64::MAX);
+        assert!(matches!(res, Err(PrecompileError::Bn254PairLength)));
+
+        let bls12_381_g1_msm_precompile =
+            precompiles.precompiles().get(&bls12_381_const::G1_MSM_ADDRESS).unwrap();
+        bad_input_len = bls12_381::JOVIAN_G1_MSM_MAX_INPUT_SIZE + 1;
+        assert!(bad_input_len < bls12_381::ISTHMUS_G1_MSM_MAX_INPUT_SIZE);
+        let input = vec![0u8; bad_input_len];
+        let res = bls12_381_g1_msm_precompile.execute(&input, u64::MAX);
+        assert!(
+            matches!(res, Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
+        );
+
+        let bls12_381_g2_msm_precompile =
+            precompiles.precompiles().get(&bls12_381_const::G2_MSM_ADDRESS).unwrap();
+        bad_input_len = bls12_381::JOVIAN_G2_MSM_MAX_INPUT_SIZE + 1;
+        assert!(bad_input_len < bls12_381::ISTHMUS_G2_MSM_MAX_INPUT_SIZE);
+        let input = vec![0u8; bad_input_len];
+        let res = bls12_381_g2_msm_precompile.execute(&input, u64::MAX);
+        assert!(
+            matches!(res, Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
+        );
+
+        let bls12_381_pairing_precompile =
+            precompiles.precompiles().get(&bls12_381_const::PAIRING_ADDRESS).unwrap();
+        bad_input_len = bls12_381::JOVIAN_PAIRING_MAX_INPUT_SIZE + 1;
+        assert!(bad_input_len < bls12_381::ISTHMUS_PAIRING_MAX_INPUT_SIZE);
+        let input = vec![0u8; bad_input_len];
+        let res = bls12_381_pairing_precompile.execute(&input, u64::MAX);
+        assert!(
+            matches!(res, Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
+        );
+    }
 
     #[test]
     fn test_bn254_pair() {
@@ -391,45 +470,40 @@ mod tests {
 
     #[test]
     fn test_get_jovian_precompile_with_bad_input_len() {
-        let precompiles = OpPrecompiles::new_with_spec(OpSpecId::JOVIAN);
-        let bn254_pair_precompile = precompiles.precompiles().get(&bn254::pair::ADDRESS).unwrap();
+        assert_jovian_input_limits(OpSpecId::JOVIAN);
+    }
 
-        let mut bad_input_len = bn254_pair::JOVIAN_MAX_INPUT_SIZE + 1;
-        assert!(bad_input_len < bn254_pair::GRANITE_MAX_INPUT_SIZE);
-        let input = vec![0u8; bad_input_len];
+    #[test]
+    fn test_get_base_v1_precompile_with_bad_input_len() {
+        assert_jovian_input_limits(OpSpecId::BASE_V1);
+    }
 
-        let res = bn254_pair_precompile.execute(&input, u64::MAX);
-        assert!(matches!(res, Err(PrecompileError::Bn254PairLength)));
+    #[test]
+    fn test_get_base_v1_precompile_with_osaka_rules() {
+        let jovian_precompiles = OpPrecompiles::new_with_spec(OpSpecId::JOVIAN);
+        let base_v1_precompiles = OpPrecompiles::new_with_spec(OpSpecId::BASE_V1);
 
-        let bls12_381_g1_msm_precompile =
-            precompiles.precompiles().get(&bls12_381_const::G1_MSM_ADDRESS).unwrap();
-        bad_input_len = bls12_381::JOVIAN_G1_MSM_MAX_INPUT_SIZE + 1;
-        assert!(bad_input_len < bls12_381::ISTHMUS_G1_MSM_MAX_INPUT_SIZE);
-        let input = vec![0u8; bad_input_len];
-        let res = bls12_381_g1_msm_precompile.execute(&input, u64::MAX);
-        assert!(
-            matches!(res, Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
-        );
+        let jovian_p256 =
+            jovian_precompiles.precompiles().get(secp256r1::P256VERIFY.address()).unwrap();
+        let base_v1_p256 =
+            base_v1_precompiles.precompiles().get(secp256r1::P256VERIFY_OSAKA.address()).unwrap();
 
-        let bls12_381_g2_msm_precompile =
-            precompiles.precompiles().get(&bls12_381_const::G2_MSM_ADDRESS).unwrap();
-        bad_input_len = bls12_381::JOVIAN_G2_MSM_MAX_INPUT_SIZE + 1;
-        assert!(bad_input_len < bls12_381::ISTHMUS_G2_MSM_MAX_INPUT_SIZE);
-        let input = vec![0u8; bad_input_len];
-        let res = bls12_381_g2_msm_precompile.execute(&input, u64::MAX);
-        assert!(
-            matches!(res, Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
-        );
+        assert!(matches!(
+            jovian_p256.execute(&[], 5_000),
+            Ok(output) if output.gas_used == secp256r1::P256VERIFY_BASE_GAS_FEE
+        ));
+        assert!(matches!(base_v1_p256.execute(&[], 5_000), Err(PrecompileError::OutOfGas)));
 
-        let bls12_381_pairing_precompile =
-            precompiles.precompiles().get(&bls12_381_const::PAIRING_ADDRESS).unwrap();
-        bad_input_len = bls12_381::JOVIAN_PAIRING_MAX_INPUT_SIZE + 1;
-        assert!(bad_input_len < bls12_381::ISTHMUS_PAIRING_MAX_INPUT_SIZE);
-        let input = vec![0u8; bad_input_len];
-        let res = bls12_381_pairing_precompile.execute(&input, u64::MAX);
-        assert!(
-            matches!(res, Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
-        );
+        let jovian_modexp = jovian_precompiles.precompiles().get(modexp::BERLIN.address()).unwrap();
+        let base_v1_modexp =
+            base_v1_precompiles.precompiles().get(modexp::OSAKA.address()).unwrap();
+        let oversized_input = oversized_modexp_input();
+
+        assert!(jovian_modexp.execute(&oversized_input, u64::MAX).is_ok());
+        assert!(matches!(
+            base_v1_modexp.execute(&oversized_input, u64::MAX),
+            Err(PrecompileError::ModexpEip7823LimitSize)
+        ));
     }
 
     #[test]
@@ -471,13 +545,13 @@ mod tests {
     }
 
     #[test]
-    fn test_default_precompiles_is_latest() {
-        let latest = OpPrecompiles::new_with_spec(OpSpecId::default()).inner.precompiles;
+    fn test_default_precompiles_matches_jovian() {
+        let jovian = OpPrecompiles::new_with_spec(OpSpecId::JOVIAN).inner.precompiles;
         let default = OpPrecompiles::default().inner.precompiles;
-        assert_eq!(latest.len(), default.len());
+        assert_eq!(jovian.len(), default.len());
 
-        let intersection = default.intersection(latest);
-        assert_eq!(intersection.len(), latest.len())
+        let intersection = default.intersection(jovian);
+        assert_eq!(intersection.len(), jovian.len())
     }
 
     #[test]
@@ -545,6 +619,90 @@ mod tests {
 
         assert!(
             matches!(res, Err(PrecompileError::Other(msg)) if msg.contains("input length too long"))
+        );
+    }
+
+    #[test]
+    fn test_modexp_eip7823_boundary() {
+        let input_ok = modexp_input(eip7823::INPUT_SIZE_LIMIT, 1, 1);
+        let result = modexp::osaka_run(&input_ok, u64::MAX);
+        assert!(
+            !matches!(result, Err(PrecompileError::ModexpEip7823LimitSize)),
+            "base_len=1024 should not hit size limit"
+        );
+
+        let input_too_large = modexp_input(eip7823::INPUT_SIZE_LIMIT + 1, 1, 1);
+        let result = modexp::osaka_run(&input_too_large, u64::MAX);
+        assert!(matches!(result, Err(PrecompileError::ModexpEip7823LimitSize)));
+    }
+
+    #[test]
+    fn test_modexp_eip7823_each_field_rejects() {
+        let over = eip7823::INPUT_SIZE_LIMIT + 1;
+
+        let input = modexp_input(over, 0, 1);
+        assert!(matches!(
+            modexp::osaka_run(&input, u64::MAX),
+            Err(PrecompileError::ModexpEip7823LimitSize)
+        ));
+
+        let input = modexp_input(0, over, 1);
+        assert!(matches!(
+            modexp::osaka_run(&input, u64::MAX),
+            Err(PrecompileError::ModexpEip7823LimitSize)
+        ));
+
+        let input = modexp_input(0, 0, over);
+        assert!(matches!(
+            modexp::osaka_run(&input, u64::MAX),
+            Err(PrecompileError::ModexpEip7823LimitSize)
+        ));
+    }
+
+    #[test]
+    fn test_modexp_eip7823_all_fields_at_limit() {
+        let limit = eip7823::INPUT_SIZE_LIMIT;
+        let input = modexp_input(limit, limit, limit);
+        let result = modexp::osaka_run(&input, u64::MAX);
+        assert!(
+            !matches!(result, Err(PrecompileError::ModexpEip7823LimitSize)),
+            "all fields at limit should not trigger size error"
+        );
+    }
+
+    #[test]
+    fn test_modexp_eip7883_min_gas_increase() {
+        let input = modexp_input(2, 3, 5);
+        let berlin = modexp::berlin_run(&input, u64::MAX).unwrap();
+        let osaka = modexp::osaka_run(&input, u64::MAX).unwrap();
+
+        assert!(berlin.gas_used >= 200, "Berlin min gas is 200");
+        assert!(osaka.gas_used >= 500, "Osaka min gas is 500");
+        assert!(osaka.gas_used > berlin.gas_used, "Osaka gas should exceed Berlin gas");
+    }
+
+    #[test]
+    fn test_modexp_eip7883_larger_input_gas_increase() {
+        let input = modexp_input(32, 32, 32);
+        let berlin = modexp::berlin_run(&input, u64::MAX).unwrap();
+        let osaka = modexp::osaka_run(&input, u64::MAX).unwrap();
+        assert!(osaka.gas_used > berlin.gas_used);
+    }
+
+    #[test]
+    fn test_p256verify_osaka_exact_gas() {
+        let result = secp256r1::p256_verify_osaka(&[], 6_900);
+        assert!(matches!(result, Ok(output) if output.gas_used == 6_900));
+
+        let result = secp256r1::p256_verify_osaka(&[], 6_899);
+        assert!(matches!(result, Err(PrecompileError::OutOfGas)));
+    }
+
+    #[test]
+    fn test_p256verify_gas_doubled() {
+        assert_eq!(
+            secp256r1::P256VERIFY_BASE_GAS_FEE_OSAKA,
+            secp256r1::P256VERIFY_BASE_GAS_FEE * 2
         );
     }
 }

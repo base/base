@@ -393,12 +393,13 @@ mod tests {
 
     use alloy_primitives::uint;
     use revm::{
+        bytecode::Bytecode,
         context::{BlockEnv, CfgEnv, Context, TxEnv},
         database::InMemoryDB,
         database_interface::EmptyDB,
-        handler::EthFrame,
+        handler::{EthFrame, Handler},
         interpreter::{CallOutcome, InstructionResult, InterpreterResult},
-        primitives::{Address, B256, Bytes, bytes},
+        primitives::{Address, B256, Bytes, TxKind, bytes, hardfork::SpecId},
         state::AccountInfo,
     };
 
@@ -651,5 +652,136 @@ mod tests {
                 da_footprint_gas_scalar: None
             }
         );
+    }
+
+    #[test]
+    fn test_base_v1_tx_gas_limit_cap_rejected() {
+        let ctx = Context::op()
+            .with_tx(
+                OpTransaction::builder()
+                    .base(TxEnv::builder().gas_limit(16_777_217))
+                    .enveloped_tx(Some(bytes!("FACADE")))
+                    .build_fill(),
+            )
+            .with_cfg(CfgEnv::new_with_spec(OpSpecId::BASE_V1));
+        let mut evm = ctx.build_op();
+        let handler =
+            OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
+        let result = handler.validate_env(&mut evm);
+        assert!(result.is_err(), "gas_limit above cap should be rejected");
+    }
+
+    #[test]
+    fn test_base_v1_tx_gas_limit_at_cap_ok() {
+        let ctx = Context::op()
+            .with_tx(
+                OpTransaction::builder()
+                    .base(TxEnv::builder().gas_limit(16_777_216))
+                    .enveloped_tx(Some(bytes!("FACADE")))
+                    .build_fill(),
+            )
+            .with_cfg(CfgEnv::new_with_spec(OpSpecId::BASE_V1));
+        let mut evm = ctx.build_op();
+        let handler =
+            OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
+        let result = handler.validate_env(&mut evm);
+        assert!(result.is_ok(), "gas_limit at cap should be accepted");
+    }
+
+    #[test]
+    fn test_jovian_no_tx_gas_limit_cap() {
+        let ctx = Context::op()
+            .with_tx(
+                OpTransaction::builder()
+                    .base(TxEnv::builder().gas_limit(16_777_217))
+                    .enveloped_tx(Some(bytes!("FACADE")))
+                    .build_fill(),
+            )
+            .with_cfg(CfgEnv::new_with_spec(OpSpecId::JOVIAN));
+        let mut evm = ctx.build_op();
+        let handler =
+            OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
+        let result = handler.validate_env(&mut evm);
+        assert!(result.is_ok(), "Jovian should not enforce gas limit cap");
+    }
+
+    #[test]
+    fn test_base_v1_deposit_skips_gas_limit_cap() {
+        let ctx = Context::op()
+            .with_tx(
+                OpTransaction::builder()
+                    .base(TxEnv::builder().gas_limit(16_777_217))
+                    .source_hash(B256::from([1u8; 32]))
+                    .build_fill(),
+            )
+            .with_cfg(CfgEnv::new_with_spec(OpSpecId::BASE_V1));
+        let mut evm = ctx.build_op();
+        let handler =
+            OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
+        let result = handler.validate_env(&mut evm);
+        assert!(result.is_ok(), "deposit txs should skip gas limit cap");
+    }
+
+    #[test]
+    fn test_osaka_opcodes_activated_base_v1() {
+        assert_eq!(OpSpecId::BASE_V1.into_eth_spec(), SpecId::OSAKA);
+    }
+
+    /// Runs CLZ bytecode (`PUSH1 0x80, CLZ, PUSH1 0x00, MSTORE, PUSH1 0x20, PUSH1 0x00, RETURN`)
+    /// against the given spec and returns the execution result.
+    fn run_clz_bytecode(
+        spec: OpSpecId,
+    ) -> revm::context_interface::result::ExecutionResult<OpHaltReason> {
+        let contract = Address::from([0x42; 20]);
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            contract,
+            AccountInfo {
+                code: Some(Bytecode::new_legacy(bytes!("60801E60005260206000F3"))),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            Address::ZERO,
+            AccountInfo { balance: U256::from(1_000_000), ..Default::default() },
+        );
+
+        let ctx = Context::op()
+            .with_db(db)
+            .with_tx(
+                OpTransaction::builder()
+                    .base(TxEnv::builder().gas_limit(100_000).kind(TxKind::Call(contract)))
+                    .enveloped_tx(Some(bytes!("FACADE")))
+                    .build_fill(),
+            )
+            .with_cfg(CfgEnv::new_with_spec(spec))
+            .with_chain(L1BlockInfo {
+                l2_block: Some(U256::ZERO),
+                operator_fee_scalar: Some(U256::ZERO),
+                operator_fee_constant: Some(U256::ZERO),
+                ..Default::default()
+            });
+        let mut evm = ctx.build_op();
+
+        let mut handler =
+            OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
+        handler.run(&mut evm).unwrap()
+    }
+
+    #[test]
+    fn test_clz_opcode_base_v1() {
+        let result = run_clz_bytecode(OpSpecId::BASE_V1);
+        assert!(result.is_success(), "CLZ opcode should execute successfully on BASE_V1");
+
+        let output = result.output().unwrap();
+        let expected = U256::from(248);
+        let actual = U256::from_be_slice(output);
+        assert_eq!(actual, expected, "CLZ of 0x80 in 256-bit should be 248");
+    }
+
+    #[test]
+    fn test_clz_opcode_not_on_jovian() {
+        let result = run_clz_bytecode(OpSpecId::JOVIAN);
+        assert!(!result.is_success(), "CLZ opcode should not be available on JOVIAN (pre-OSAKA)");
     }
 }

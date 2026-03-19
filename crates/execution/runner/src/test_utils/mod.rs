@@ -10,7 +10,7 @@
 pub use base_test_utils::{
     AccessListContract, Account, ContractFactory, DEVNET_CHAIN_ID, DoubleCounter,
     GENESIS_GAS_LIMIT, Logic, Logic2, Minimal7702Account, MockERC20, Proxy, SimpleStorage,
-    TransparentUpgradeableProxy, build_test_genesis,
+    TransparentUpgradeableProxy, build_test_genesis, build_test_genesis_v1,
 };
 
 mod constants;
