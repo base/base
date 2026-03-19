@@ -6,10 +6,12 @@ x-rust-service-build: &rust-service-build
 
 services:
   setup-l1:
+    image: devnet-setup:local
     build:
       context: ../..
       dockerfile: etc/docker/Dockerfile.devnet
     container_name: setup-l1
+    env_file: devnet-env
     volumes:
       - ../../.devnet/l1/configs:/output
       - ../../.devnet/l1/reth:/data/l1-reth
@@ -130,6 +132,7 @@ services:
     restart: unless-stopped
 
   setup-l2:
+    image: devnet-setup:local
     build:
       context: ../..
       dockerfile: etc/docker/Dockerfile.devnet

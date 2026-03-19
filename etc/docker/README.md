@@ -32,28 +32,14 @@ just devnet logs   # Stream logs from all containers
 just devnet status # Check block numbers and sync status
 ```
 
-To build the client image directly:
+To build a specific Rust service image directly:
 
 ```bash
-./etc/docker/build-rust-images.sh client release
+just devnet build-image client release
 ```
 
 Plain `docker build` still works if you prefer it:
 
 ```bash
 docker build -t base-reth-node -f etc/docker/Dockerfile.rust-services --target client .
-```
-
-To run the compose stack manually:
-
-```bash
-./etc/docker/build-rust-images.sh devnet dev
-docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml up -d --no-build
-```
-
-To run the ingress stack manually:
-
-```bash
-./etc/docker/build-rust-images.sh ingress dev
-docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ingress.yml up -d --no-build
 ```

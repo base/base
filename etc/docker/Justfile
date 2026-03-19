@@ -6,17 +6,17 @@ default:
     @just devnet --list
 
 # Stops devnet, deletes data, and starts fresh
-up: down (_build-rust-images "devnet" "dev")
+up: down _build-setup-image (_build-rust-images "devnet" "dev")
     docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml up -d --no-build --scale contender=0
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
-profiling: down (_build-rust-images "devnet" "profiling")
+profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
     docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml --profile profiling up -d --no-build --scale contender=0
 
 # Stops devnet and deletes all data
 down:
     -docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml --profile profiling down
-    rm -rf .devnet
+    -docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
 
 # Shows devnet block numbers and sync status
 status:
@@ -55,21 +55,28 @@ logs *containers:
     docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml logs -f {{ containers }}
 
 # Stops devnet+ingress, deletes data, and starts fresh with full ingress stack
-ingress: ingress-down (_build-rust-images "ingress" "dev")
+ingress: ingress-down _build-setup-image (_build-rust-images "ingress" "dev")
     docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ingress.yml up -d --no-build --scale contender=0
 
 # Stops devnet+ingress and deletes all data
 ingress-down:
     -docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ingress.yml down
-    rm -rf .devnet
+    -docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
 
 # Stream logs from devnet+ingress containers (optionally specify container names)
 ingress-logs *containers:
     docker compose --env-file etc/docker/devnet-env -f etc/docker/docker-compose.yml -f etc/docker/docker-compose.ingress.yml logs -f {{ containers }}
 
 # Builds one of the shared Rust service images (default: client)
-build-image target='client' profile='release':
-    ./etc/docker/build-rust-images.sh {{ target }} {{ profile }}
+build-image target='client' profile='dev':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -m)" in
+      x86_64)       platform_pair="linux-amd64" ;;
+      arm64|aarch64) platform_pair="linux-arm64" ;;
+      *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+    esac
+    PROFILE="{{ profile }}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ target }}" --load
 
 # Prepares Docker images needed for devnet tests
 pull-images:
@@ -90,8 +97,19 @@ _install-nextest:
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
 
 [private]
-_build-rust-images group profile='release':
-    ./etc/docker/build-rust-images.sh {{ group }} {{ profile }}
+_build-setup-image:
+    docker build -t devnet-setup:local -f etc/docker/Dockerfile.devnet .
+
+[private]
+_build-rust-images group profile='dev':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "$(uname -m)" in
+      x86_64)       platform_pair="linux-amd64" ;;
+      arm64|aarch64) platform_pair="linux-arm64" ;;
+      *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+    esac
+    PROFILE="{{ profile }}" PLATFORM_PAIR="${platform_pair}" docker buildx bake -f etc/docker/docker-bake.hcl "{{ group }}" --load
 
 [private]
 _build-contracts:

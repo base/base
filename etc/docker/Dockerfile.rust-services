@@ -92,40 +92,38 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 FROM public.ecr.aws/docker/library/debian:trixie-slim AS runtime-base
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl && \
-    rm -rf /var/lib/apt/lists/* && \
-    useradd -r -m -s /sbin/nologin base
+    rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-USER base
 
 FROM runtime-base AS client
-COPY --from=client-builder --chown=base:base /app/base-client ./base-client
+COPY --from=client-builder /app/base-client ./base-client
 ENTRYPOINT ["./base-client"]
 
 FROM runtime-base AS builder
-COPY --from=builder-builder --chown=base:base /app/base-builder ./base-builder
+COPY --from=builder-builder /app/base-builder ./base-builder
 ENTRYPOINT ["./base-builder"]
 
 FROM runtime-base AS consensus
-COPY --from=consensus-builder --chown=base:base /app/base-consensus ./base-consensus
+COPY --from=consensus-builder /app/base-consensus ./base-consensus
 ENTRYPOINT ["./base-consensus"]
 
 FROM runtime-base AS proposer
-COPY --from=proposer-builder --chown=base:base /app/base-proposer ./base-proposer
+COPY --from=proposer-builder /app/base-proposer ./base-proposer
 EXPOSE 9090
 ENTRYPOINT ["./base-proposer"]
 
 FROM runtime-base AS websocket-proxy
-COPY --from=websocket-proxy-builder --chown=base:base /app/websocket-proxy ./websocket-proxy
+COPY --from=websocket-proxy-builder /app/websocket-proxy ./websocket-proxy
 ENTRYPOINT ["./websocket-proxy"]
 
 FROM runtime-base AS ingress-rpc
-COPY --from=ingress-rpc-builder --chown=base:base /app/ingress-rpc ./ingress-rpc
+COPY --from=ingress-rpc-builder /app/ingress-rpc ./ingress-rpc
 ENTRYPOINT ["./ingress-rpc"]
 
 FROM runtime-base AS audit-archiver
-COPY --from=audit-archiver-builder --chown=base:base /app/audit-archiver ./audit-archiver
+COPY --from=audit-archiver-builder /app/audit-archiver ./audit-archiver
 ENTRYPOINT ["./audit-archiver"]
 
 FROM runtime-base AS batcher
-COPY --from=batcher-builder --chown=base:base /app/base-batcher ./base-batcher
+COPY --from=batcher-builder /app/base-batcher ./base-batcher
 ENTRYPOINT ["./base-batcher"]
