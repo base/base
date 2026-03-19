@@ -24,7 +24,7 @@ async fn finalization_advances_with_multiple_l2_blocks_per_epoch() {
 
     let mut blocks = Vec::new();
     for _ in 0..3 {
-        let block = sequencer.build_next_block().expect("build L2 block");
+        let block = sequencer.build_next_block();
         blocks.push(block);
     }
     // All blocks should reference epoch 0.
@@ -35,7 +35,7 @@ async fn finalization_advances_with_multiple_l2_blocks_per_epoch() {
         let mut source = ActionL2Source::new();
         source.push(block);
         let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-        batcher.advance(&mut h.l1).await.expect("advance");
+        batcher.advance(&mut h.l1).await;
     }
 
     // Create verifier after mining so it observes the hashes the sequencer already registered.
@@ -51,7 +51,7 @@ async fn finalization_advances_with_multiple_l2_blocks_per_epoch() {
     // Derive all 3 L2 blocks.
     for i in 1..=3u64 {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await.expect("step");
+        verifier.act_l2_pipeline_full().await;
     }
     assert_eq!(verifier.l2_safe_number(), 3, "safe head should reach L2 block 3");
 
@@ -97,7 +97,7 @@ async fn finalization_advances_incrementally_with_l1_epochs() {
     let mut blocks = Vec::new();
     let mut last_epoch_0_number = 0u64;
     for i in 1..=6u64 {
-        let block = sequencer.build_next_block().expect("build L2 block");
+        let block = sequencer.build_next_block();
         let head = sequencer.head();
         blocks.push(block);
         if head.l1_origin.number == 0 {
@@ -116,7 +116,7 @@ async fn finalization_advances_incrementally_with_l1_epochs() {
         let mut source = ActionL2Source::new();
         source.push(block);
         let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-        batcher.advance(&mut h.l1).await.expect("advance");
+        batcher.advance(&mut h.l1).await;
         chain.push(h.l1.tip().clone());
     }
 
@@ -126,7 +126,7 @@ async fn finalization_advances_incrementally_with_l1_epochs() {
     // blocks 2-7 contain batches.
     for i in 1..=(1 + 6) {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await.expect("step");
+        verifier.act_l2_pipeline_full().await;
     }
     assert_eq!(verifier.l2_safe_number(), 6, "safe head should reach L2 block 6");
 
@@ -170,15 +170,15 @@ async fn finalization_does_not_exceed_safe_head() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
-    let block1 = sequencer.build_next_block().expect("build block 1");
-    let block2 = sequencer.build_next_block().expect("build block 2");
+    let block1 = sequencer.build_next_block();
+    let block2 = sequencer.build_next_block();
 
     // Submit each block via the batcher.
     for block in [block1, block2] {
         let mut source = ActionL2Source::new();
         source.push(block);
         let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-        batcher.advance(&mut h.l1).await.expect("advance");
+        batcher.advance(&mut h.l1).await;
     }
 
     // Mine many more L1 blocks without any corresponding L2 derivation data.
@@ -193,7 +193,7 @@ async fn finalization_does_not_exceed_safe_head() {
     // Derive only 2 L2 blocks.
     for i in 1..=2u64 {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await.expect("step");
+        verifier.act_l2_pipeline_full().await;
     }
     assert_eq!(verifier.l2_safe_number(), 2, "safe head should be 2");
 
@@ -233,15 +233,15 @@ async fn finalization_reorg_clears_state() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
-    let block1 = sequencer.build_next_block().expect("build block 1");
-    let block2 = sequencer.build_next_block().expect("build block 2");
+    let block1 = sequencer.build_next_block();
+    let block2 = sequencer.build_next_block();
 
     // Submit and mine.
     for block in [block1, block2] {
         let mut source = ActionL2Source::new();
         source.push(block);
         let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-        batcher.advance(&mut h.l1).await.expect("advance");
+        batcher.advance(&mut h.l1).await;
     }
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -253,7 +253,7 @@ async fn finalization_reorg_clears_state() {
     // Derive both L2 blocks.
     for i in 1..=2u64 {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await.expect("step");
+        verifier.act_l2_pipeline_full().await;
     }
     assert_eq!(verifier.l2_safe_number(), 2);
 
@@ -268,7 +268,7 @@ async fn finalization_reorg_clears_state() {
     let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
 
     verifier.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
-    verifier.act_l2_pipeline_full().await.expect("drain genesis after reset");
+    verifier.act_l2_pipeline_full().await;
 
     // After reset, finalized head should be back to genesis (block 0).
     assert_eq!(
@@ -284,7 +284,7 @@ async fn finalization_reorg_clears_state() {
     // Build a new L2 block on the fresh fork.
     let l1_chain_fresh = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer_fresh = h.create_l2_sequencer(l1_chain_fresh);
-    let block1_fresh = sequencer_fresh.build_next_block().expect("build fresh block 1");
+    let block1_fresh = sequencer_fresh.build_next_block();
 
     // Register the block hash before mining so the verifier can validate it.
     verifier.register_block_hash(1, block1_fresh.header.hash_slow());
@@ -292,7 +292,7 @@ async fn finalization_reorg_clears_state() {
     let mut source = ActionL2Source::new();
     source.push(block1_fresh);
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.advance(&mut h.l1).await.expect("advance after reorg");
+    batcher.advance(&mut h.l1).await;
 
     // Push the new block to the shared chain.
     chain.truncate_to(0);
@@ -300,7 +300,7 @@ async fn finalization_reorg_clears_state() {
 
     let l1_block_1_new = h.l1.block_info_at(1);
     verifier.act_l1_head_signal(l1_block_1_new).await;
-    verifier.act_l2_pipeline_full().await.expect("derive after reset");
+    verifier.act_l2_pipeline_full().await;
 
     assert_eq!(verifier.l2_safe_number(), 1, "safe head re-derived to 1");
 
@@ -333,7 +333,7 @@ async fn finalization_does_not_regress() {
 
     let mut blocks = Vec::new();
     for _ in 0..6 {
-        let block = sequencer.build_next_block().expect("build L2 block");
+        let block = sequencer.build_next_block();
         blocks.push(block);
     }
 
@@ -347,7 +347,7 @@ async fn finalization_does_not_regress() {
         let mut source = ActionL2Source::new();
         source.push(block);
         let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-        batcher.advance(&mut h.l1).await.expect("advance");
+        batcher.advance(&mut h.l1).await;
         chain.push(h.l1.tip().clone());
     }
 
@@ -356,7 +356,7 @@ async fn finalization_does_not_regress() {
     // Derive all L2 blocks. L1 block 1 is epoch-providing, blocks 2-7 have batches.
     for i in 1..=(1 + 6) {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await.expect("step");
+        verifier.act_l2_pipeline_full().await;
     }
     assert_eq!(verifier.l2_safe_number(), 6, "safe head should be 6");
 

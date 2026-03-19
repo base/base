@@ -274,10 +274,10 @@ async fn span_batch_rejected_before_delta() {
 
     // Both blocks in one source, one advance produces a span batch.
     let mut source = ActionL2Source::new();
-    source.push(builder.build_next_block().expect("build L2 block 1"));
-    source.push(builder.build_next_block().expect("build L2 block 2"));
+    source.push(builder.build_next_block());
+    source.push(builder.build_next_block());
     let mut batcher = Batcher::new(source, &h.rollup_config, span_cfg);
-    batcher.advance(&mut h.l1).await.expect("advance");
+    batcher.advance(&mut h.l1).await;
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -285,7 +285,7 @@ async fn span_batch_rejected_before_delta() {
     );
     verifier.initialize().await;
     verifier.act_l1_head_signal(h.l1.tip_info()).await;
-    verifier.act_l2_pipeline_full().await.expect("pipeline");
+    verifier.act_l2_pipeline_full().await;
 
     assert_eq!(
         verifier.l2_safe_number(),
@@ -318,10 +318,10 @@ async fn span_batch_derives_after_delta() {
 
     // Both blocks in one source → one span batch in one L1 block.
     let mut source = ActionL2Source::new();
-    source.push(builder.build_next_block().expect("build L2 block 1"));
-    source.push(builder.build_next_block().expect("build L2 block 2"));
+    source.push(builder.build_next_block());
+    source.push(builder.build_next_block());
     let mut batcher = Batcher::new(source, &h.rollup_config, span_cfg);
-    batcher.advance(&mut h.l1).await.expect("advance");
+    batcher.advance(&mut h.l1).await;
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -329,7 +329,7 @@ async fn span_batch_derives_after_delta() {
     );
     verifier.initialize().await;
     verifier.act_l1_head_signal(h.l1.tip_info()).await;
-    let derived = verifier.act_l2_pipeline_full().await.expect("pipeline");
+    let derived = verifier.act_l2_pipeline_full().await;
 
     assert_eq!(derived, 2, "expected 2 L2 blocks derived from span batch");
     assert_eq!(verifier.l2_safe_number(), 2, "safe head should advance to block 2");
@@ -353,9 +353,9 @@ async fn single_batch_derives_with_fjord() {
 
     for _ in 0..2 {
         let mut source = ActionL2Source::new();
-        source.push(builder.build_next_block().expect("build L2 block"));
+        source.push(builder.build_next_block());
         let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-        batcher.advance(&mut h.l1).await.expect("advance");
+        batcher.advance(&mut h.l1).await;
     }
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -366,7 +366,7 @@ async fn single_batch_derives_with_fjord() {
 
     for i in 1..=2u64 {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = verifier.act_l2_pipeline_full().await.expect("pipeline");
+        let derived = verifier.act_l2_pipeline_full().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
 
@@ -413,15 +413,15 @@ async fn jovian_derivation_crosses_activation_boundary() {
     for i in 1..=4u64 {
         let block = if i == 3 {
             // First Jovian block: must contain no user transactions.
-            builder.build_empty_block().expect("build empty Jovian transition block")
+            builder.build_empty_block()
         } else {
-            builder.build_next_block().expect("build L2 block")
+            builder.build_next_block()
         };
 
         let mut source = ActionL2Source::new();
         source.push(block);
         let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-        batcher.advance(&mut h.l1).await.expect("advance");
+        batcher.advance(&mut h.l1).await;
     }
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -432,7 +432,7 @@ async fn jovian_derivation_crosses_activation_boundary() {
 
     for i in 1..=4u64 {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = verifier.act_l2_pipeline_full().await.expect("pipeline");
+        let derived = verifier.act_l2_pipeline_full().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
 

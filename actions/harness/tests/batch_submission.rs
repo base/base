@@ -14,7 +14,7 @@ fn make_source(h: &ActionTestHarness, n: u64) -> ActionL2Source {
     let mut sequencer = h.create_l2_sequencer(chain);
     let mut source = ActionL2Source::new();
     for _ in 0..n {
-        source.push(sequencer.build_next_block().expect("build L2 block"));
+        source.push(sequencer.build_next_block());
     }
     source
 }
@@ -30,7 +30,7 @@ async fn batcher_mines_block_with_submissions() {
 
     let source = make_source(&h, 3);
     let mut batcher = Batcher::new(source, &h.rollup_config, cfg);
-    batcher.advance(&mut h.l1).await.expect("advance should succeed");
+    batcher.advance(&mut h.l1).await;
 
     assert!(h.l1.latest_number() >= 1, "at least one L1 block should be mined");
     // Default EncoderConfig uses DaType::Blob, so submissions appear as blob sidecars.
@@ -47,7 +47,7 @@ async fn batcher_span_batch_mode() {
 
     let source = make_source(&h, 3);
     let mut batcher = Batcher::new(source, &h.rollup_config, cfg);
-    batcher.advance(&mut h.l1).await.expect("advance span should succeed");
+    batcher.advance(&mut h.l1).await;
 
     assert!(h.l1.latest_number() >= 1, "at least one L1 block should be mined");
     assert!(
@@ -63,7 +63,7 @@ async fn batcher_errors_when_no_l2_blocks_async() {
 
     let source = ActionL2Source::new(); // empty
     let mut batcher = Batcher::new(source, &h.rollup_config, cfg);
-    let err = batcher.advance(&mut h.l1).await.expect_err("should fail with no blocks");
+    let err = batcher.try_advance(&mut h.l1).await.expect_err("should fail with no blocks");
     assert!(matches!(err, BatcherError::NoBlocks));
 }
 
@@ -101,7 +101,7 @@ async fn batcher_reorg_during_submission() {
     // Build L2 block 1.
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block().expect("build L2 block 1");
+    let block = sequencer.build_next_block();
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &sequencer,
@@ -114,7 +114,7 @@ async fn batcher_reorg_during_submission() {
     let mut source = ActionL2Source::new();
     source.push(block);
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
-    batcher.encode_only().await.expect("encode");
+    batcher.encode_only().await;
     batcher.stage_n_frames(&mut h.l1, usize::MAX);
     h.l1.mine_block(); // L1 block 1 (original, about to be reorged)
     chain.push(h.l1.tip().clone());
@@ -125,7 +125,7 @@ async fn batcher_reorg_during_submission() {
     // each Receipt(id, Failed) → pipeline.requeue(id), rewinding the channel
     // cursor without re-encoding.
     batcher.reorg(0, &mut h.l1);
-    batcher.wait_until_requeued(1).await.expect("driver must requeue frames after reorg");
+    batcher.wait_until_requeued(1).await;
 
     // Mine an empty replacement block on the new fork, then resubmit the
     // requeued frames using the same Batcher (no drop/recreate required).
@@ -142,11 +142,11 @@ async fn batcher_reorg_during_submission() {
     verifier.initialize().await;
 
     verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    let empty = verifier.act_l2_pipeline_full().await.expect("step empty block 1'");
+    let empty = verifier.act_l2_pipeline_full().await;
     assert_eq!(empty, 0, "empty block 1' has no batch data");
 
     verifier.act_l1_head_signal(h.l1.block_info_at(recovery_num)).await;
-    let derived = verifier.act_l2_pipeline_full().await.expect("step recovery");
+    let derived = verifier.act_l2_pipeline_full().await;
     assert_eq!(derived, 1, "same-batcher resubmission must derive L2 block 1");
     assert_eq!(
         verifier.l2_safe_number(),

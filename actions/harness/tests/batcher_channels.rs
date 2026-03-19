@@ -29,7 +29,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block().expect("build L2 block 1");
+    let block = sequencer.build_next_block();
 
     // Create verifier before any mining so all future blocks are pushed to chain.
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -41,7 +41,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
     let mut source = ActionL2Source::new();
     source.push(block.clone());
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.encode_only().await.expect("encode");
+    batcher.encode_only().await;
 
     let frame_count = batcher.pending_count();
     assert!(
@@ -57,7 +57,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
 
     verifier.initialize().await;
     verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    verifier.act_l2_pipeline_full().await.expect("step block 1");
+    verifier.act_l2_pipeline_full().await;
 
     assert_eq!(verifier.l2_safe_number(), 0, "incomplete channel should not advance safe head");
 
@@ -68,7 +68,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
 
     for i in 2..=4 {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await.expect("step empty block");
+        verifier.act_l2_pipeline_full().await;
     }
 
     // Submit the remaining frames — they should be silently ignored (channel timed out).
@@ -78,18 +78,18 @@ async fn channel_timeout_triggers_channel_invalidation() {
     batcher.confirm_staged(block_5_num).await;
 
     verifier.act_l1_head_signal(h.l1.block_info_at(5)).await;
-    let derived = verifier.act_l2_pipeline_full().await.expect("step block 5");
+    let derived = verifier.act_l2_pipeline_full().await;
     assert_eq!(derived, 0, "late frames after channel timeout must be ignored");
 
     // Recovery: new Batcher (new BatchEncoder = new channel ID) with all frames in one L1 block.
     let mut source2 = ActionL2Source::new();
     source2.push(block);
     let mut batcher2 = Batcher::new(source2, &h.rollup_config, batcher_cfg.clone());
-    batcher2.advance(&mut h.l1).await.expect("recovery advance");
+    batcher2.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
     verifier.act_l1_head_signal(h.l1.block_info_at(6)).await;
-    let recovered = verifier.act_l2_pipeline_full().await.expect("step block 6");
+    let recovered = verifier.act_l2_pipeline_full().await;
 
     assert_eq!(recovered, 1, "resubmitted channel should derive L2 block 1");
     assert_eq!(verifier.l2_safe_number(), 1, "safe head should recover to 1");
@@ -117,7 +117,7 @@ async fn channel_timeout_recovery_resubmits_successfully() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block().expect("build block 1");
+    let block = sequencer.build_next_block();
 
     // Create verifier before any mining so all future blocks are pushed to chain.
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -129,7 +129,7 @@ async fn channel_timeout_recovery_resubmits_successfully() {
     let mut source = ActionL2Source::new();
     source.push(block.clone());
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.encode_only().await.expect("encode");
+    batcher.encode_only().await;
 
     let frame_count = batcher.pending_count();
     assert!(
@@ -152,7 +152,7 @@ async fn channel_timeout_recovery_resubmits_successfully() {
 
     for i in 1..=h.l1.latest_number() {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await.expect("step");
+        verifier.act_l2_pipeline_full().await;
     }
 
     assert_eq!(
@@ -165,11 +165,11 @@ async fn channel_timeout_recovery_resubmits_successfully() {
     let mut source2 = ActionL2Source::new();
     source2.push(block);
     let mut batcher2 = Batcher::new(source2, &h.rollup_config, batcher_cfg.clone());
-    batcher2.advance(&mut h.l1).await.expect("recovery advance");
+    batcher2.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
     verifier.act_l1_head_signal(h.l1.block_info_at(h.l1.latest_number())).await;
-    let recovered = verifier.act_l2_pipeline_full().await.expect("step recovery");
+    let recovered = verifier.act_l2_pipeline_full().await;
 
     assert_eq!(recovered, 1, "recovery channel should derive L2 block 1");
     assert_eq!(verifier.l2_safe_number(), 1, "safe head should recover to 1");
@@ -198,20 +198,20 @@ async fn interleaved_channels_correctly_reassembled() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block_a = sequencer.build_next_block().expect("build block A");
-    let block_b = sequencer.build_next_block().expect("build block B");
+    let block_a = sequencer.build_next_block();
+    let block_b = sequencer.build_next_block();
 
     // Batcher A: block 1 in its own channel (distinct random channel ID).
     let mut source_a = ActionL2Source::new();
     source_a.push(block_a);
     let mut batcher_a = Batcher::new(source_a, &h.rollup_config, batcher_cfg.clone());
-    batcher_a.encode_only().await.expect("encode A");
+    batcher_a.encode_only().await;
 
     // Batcher B: block 2 in its own channel (distinct random channel ID).
     let mut source_b = ActionL2Source::new();
     source_b.push(block_b);
     let mut batcher_b = Batcher::new(source_b, &h.rollup_config, batcher_cfg.clone());
-    batcher_b.encode_only().await.expect("encode B");
+    batcher_b.encode_only().await;
 
     let n_a = batcher_a.pending_count();
     let n_b = batcher_b.pending_count();
@@ -240,7 +240,7 @@ async fn interleaved_channels_correctly_reassembled() {
     verifier.initialize().await;
 
     verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    let derived = verifier.act_l2_pipeline_full().await.expect("step block 1");
+    let derived = verifier.act_l2_pipeline_full().await;
 
     assert_eq!(derived, 2, "expected 2 L2 blocks derived from interleaved channels");
     assert_eq!(verifier.l2_safe_number(), 2);
@@ -267,7 +267,7 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block().expect("build L2 block 1");
+    let block = sequencer.build_next_block();
 
     // Create verifier before any mining so all future blocks are pushed to chain.
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -279,7 +279,7 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
     let mut source = ActionL2Source::new();
     source.push(block);
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.encode_only().await.expect("encode");
+    batcher.encode_only().await;
 
     let frame_count = batcher.pending_count();
     assert!(
@@ -295,7 +295,7 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
 
     verifier.initialize().await;
     verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    verifier.act_l2_pipeline_full().await.expect("step block 1");
+    verifier.act_l2_pipeline_full().await;
 
     assert_eq!(
         verifier.l2_safe_number(),
@@ -310,7 +310,7 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
     batcher.confirm_staged(block_2_num).await;
 
     verifier.act_l1_head_signal(h.l1.block_info_at(2)).await;
-    let derived = verifier.act_l2_pipeline_full().await.expect("step block 2");
+    let derived = verifier.act_l2_pipeline_full().await;
 
     assert_eq!(derived, 1, "multi-block channel must yield 1 L2 block");
     assert_eq!(verifier.l2_safe_number(), 1, "safe head must advance to 1");
@@ -345,7 +345,7 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block().expect("build L2 block 1");
+    let block = sequencer.build_next_block();
 
     // Create verifier before any mining so all future blocks are pushed to chain.
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -358,7 +358,7 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
     let mut source = ActionL2Source::new();
     source.push(block);
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.encode_only().await.expect("encode");
+    batcher.encode_only().await;
 
     let frame_count = batcher.pending_count();
     assert!(
@@ -374,7 +374,7 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
 
     verifier.initialize().await;
     verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    verifier.act_l2_pipeline_full().await.expect("step block 1");
+    verifier.act_l2_pipeline_full().await;
 
     assert_eq!(
         verifier.l2_safe_number(),
@@ -403,7 +403,7 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
     let mut total_derived = 0usize;
     for i in 2..=h.l1.latest_number() {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        total_derived += verifier.act_l2_pipeline_full().await.expect("step block");
+        total_derived += verifier.act_l2_pipeline_full().await;
     }
 
     assert_eq!(total_derived, 1, "exactly one L2 block must be derived across the 3-block span");

@@ -56,7 +56,7 @@ fn operator_fee_not_encoded_before_isthmus() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     // Build one block and verify it uses the Ecotone format with zero operator fees.
-    let block = builder.build_next_block().expect("build block");
+    let block = builder.build_next_block();
     let l1_info = l1_info_from_block(&block);
 
     assert!(
@@ -98,7 +98,7 @@ fn operator_fee_encoded_in_l1_info_post_isthmus() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     // Build one block and verify it uses the Isthmus format with the configured fee params.
-    let block = builder.build_next_block().expect("build block");
+    let block = builder.build_next_block();
     let l1_info = l1_info_from_block(&block);
 
     assert!(
@@ -155,7 +155,7 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
 
     // Stage 1: Blocks 1-2 (ts=2, 4) — pre-Isthmus → Ecotone format, zero operator fees.
     for i in 1u64..=2 {
-        let block = builder.build_next_block().expect("build pre-Isthmus block");
+        let block = builder.build_next_block();
         let l1_info = l1_info_from_block(&block);
 
         assert!(
@@ -172,7 +172,7 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
     // the upgrade deposit transactions land in the same block to upgrade the
     // L1Block contract, enabling the Isthmus format from block 4 onwards.
     {
-        let block = builder.build_next_block().expect("build first Isthmus block");
+        let block = builder.build_next_block();
         let l1_info = l1_info_from_block(&block);
 
         assert!(
@@ -193,7 +193,7 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
 
     // Stage 3: Block 4 (ts=8) — second Isthmus block, Isthmus format, fees active.
     {
-        let block = builder.build_next_block().expect("build second Isthmus block");
+        let block = builder.build_next_block();
         let l1_info = l1_info_from_block(&block);
 
         assert!(
@@ -256,7 +256,7 @@ fn l1_info_format_transitions_at_jovian_boundary() {
 
     // Stage 1: Blocks 1-2 (ts=2, 4) — Isthmus active, Jovian not yet → Isthmus format.
     for i in 1u64..=2 {
-        let block = builder.build_next_block().expect("build pre-Jovian block");
+        let block = builder.build_next_block();
         let l1_info = l1_info_from_block(&block);
 
         assert!(
@@ -272,7 +272,7 @@ fn l1_info_format_transitions_at_jovian_boundary() {
     // branch and falls through to the Isthmus branch. The block must be empty
     // because the batch validator enforces `NonEmptyTransitionBlock` for Jovian.
     {
-        let block = builder.build_empty_block().expect("build empty first Jovian block");
+        let block = builder.build_empty_block();
         let l1_info = l1_info_from_block(&block);
 
         assert!(
@@ -287,7 +287,7 @@ fn l1_info_format_transitions_at_jovian_boundary() {
     // The operator fee scalar and constant are unchanged; only the EVM formula
     // differs (gas * scalar * 100 vs gas * scalar / 1_000_000 for Isthmus).
     {
-        let block = builder.build_next_block().expect("build second Jovian block");
+        let block = builder.build_next_block();
         let l1_info = l1_info_from_block(&block);
 
         assert!(
@@ -364,9 +364,9 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
     for _ in 0..4u64 {
         // All blocks carry user transactions — Isthmus allows user txs at transition.
         let mut source = ActionL2Source::new();
-        source.push(builder.build_next_block().expect("build L2 block"));
+        source.push(builder.build_next_block());
         let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-        batcher.advance(&mut h.l1).await.expect("advance");
+        batcher.advance(&mut h.l1).await;
     }
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -377,7 +377,7 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
 
     for i in 1..=4u64 {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = verifier.act_l2_pipeline_full().await.expect("pipeline");
+        let derived = verifier.act_l2_pipeline_full().await;
         assert_eq!(derived, 1, "L1 block {i} must derive exactly one L2 block");
     }
 
@@ -441,9 +441,9 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     // non-empty batch for that slot with NonEmptyTransitionBlock.
     for _ in 1u64..=3 {
         let mut source = ActionL2Source::new();
-        source.push(builder.build_next_block().expect("build L2 block"));
+        source.push(builder.build_next_block());
         let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-        batcher.advance(&mut h.l1).await.expect("advance");
+        batcher.advance(&mut h.l1).await;
     }
 
     // Mine L1 block 4 (no batch). This closes the epoch-0 sequencing window
@@ -461,7 +461,7 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     // stalls waiting for more L1 data (the seq window has not yet closed).
     for i in 1u64..=3 {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await.expect("pipeline");
+        verifier.act_l2_pipeline_full().await;
     }
     assert_eq!(
         verifier.l2_safe_number(),
@@ -472,7 +472,7 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     // Signal L1 block 4. The epoch-0 window is now closed, so the pipeline
     // force-includes L2 slot 3 as a deposit-only block.
     verifier.act_l1_head_signal(h.l1.block_info_at(4)).await;
-    verifier.act_l2_pipeline_full().await.expect("pipeline block 4");
+    verifier.act_l2_pipeline_full().await;
 
     assert!(
         verifier.l2_safe_number() >= 3,
@@ -608,12 +608,11 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
     // L2 blocks 1–5 (ts=2,4,6,8,10): epoch 0, OLD config.
     let mut epoch0_blocks: Vec<base_alloy_consensus::OpBlock> = Vec::new();
     for _ in 0..5 {
-        let block = sequencer.build_next_block().expect("build epoch-0 block");
-        epoch0_blocks.push(block);
+        epoch0_blocks.push(sequencer.build_next_block());
     }
 
     // L2 block 6 (ts=12): epoch 1, epoch change — NEW config from L1 block 1's receipts.
-    let block6 = sequencer.build_next_block().expect("build block 6");
+    let block6 = sequencer.build_next_block();
 
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..batcher_cfg.encoder.clone() },
@@ -627,7 +626,7 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
             source.push(block);
         }
         let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-        batcher.advance(&mut h.l1).await.expect("advance blocks 1–5"); // L1 block 2, ts=24
+        batcher.advance(&mut h.l1).await; // L1 block 2, ts=24
     }
 
     // Batch block 6 into L1 block 3.
@@ -635,7 +634,7 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
         let mut source = ActionL2Source::new();
         source.push(block6);
         let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-        batcher.advance(&mut h.l1).await.expect("advance block 6"); // L1 block 3, ts=36
+        batcher.advance(&mut h.l1).await; // L1 block 3, ts=36
     }
 
     // Verifier snapshot includes all L1 blocks 0–3.
@@ -647,7 +646,7 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
 
     for i in 1u64..=3 {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await.expect("step");
+        verifier.act_l2_pipeline_full().await;
     }
 
     assert_eq!(verifier.l2_safe_number(), 6, "all 6 L2 blocks must be derived");

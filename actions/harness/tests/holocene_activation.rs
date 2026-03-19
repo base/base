@@ -63,13 +63,10 @@ async fn holocene_derivation_crosses_activation_boundary() {
     // Build and submit 4 L2 blocks; no upgrade-tx constraint at Holocene,
     // so user txs are valid in all blocks including block 3.
     for _ in 1..=4u64 {
-        let block = builder.build_next_block().expect("build L2 block");
+        let block = builder.build_next_block();
         let mut source = ActionL2Source::new();
         source.push(block);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1)
-            .await
-            .expect("encode batch");
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
         chain.push(h.l1.tip().clone());
     }
 
@@ -77,7 +74,7 @@ async fn holocene_derivation_crosses_activation_boundary() {
 
     for i in 1..=4u64 {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = verifier.act_l2_pipeline_full().await.expect("pipeline");
+        let derived = verifier.act_l2_pipeline_full().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block at/after Holocene");
     }
 
@@ -137,13 +134,13 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block().expect("build L2 block 1");
+    let block = sequencer.build_next_block();
 
     // Encode the block into frames without mining.
     let mut source = ActionL2Source::new();
     source.push(block);
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.encode_only().await.expect("encode multi-frame channel");
+    batcher.encode_only().await;
     let frame_count = batcher.pending_count();
     assert!(
         frame_count >= 3,
@@ -167,7 +164,7 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
 
     verifier.initialize().await;
     verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    verifier.act_l2_pipeline_full().await.expect("pipeline block 1");
+    verifier.act_l2_pipeline_full().await;
 
     // Frame 2 is pruned by FrameQueue — channel 0 only has frame 0.
     // Channel is incomplete; safe head stays at genesis.
@@ -184,7 +181,7 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
     }
     for i in 2..=h.l1.latest_number() {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await.expect("pipeline");
+        verifier.act_l2_pipeline_full().await;
     }
 
     assert_eq!(
@@ -246,20 +243,20 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
-    let block_a = sequencer.build_next_block().expect("build L2 block A");
-    let block_b = sequencer.build_next_block().expect("build L2 block B");
+    let block_a = sequencer.build_next_block();
+    let block_b = sequencer.build_next_block();
 
     // Encode channel A (block A) and channel B (block B) separately.
     // Each Batcher instance generates a distinct random channel ID.
     let mut source_a = ActionL2Source::new();
     source_a.push(block_a);
     let mut batcher_a = Batcher::new(source_a, &h.rollup_config, batcher_cfg.clone());
-    batcher_a.encode_only().await.expect("encode channel A");
+    batcher_a.encode_only().await;
 
     let mut source_b = ActionL2Source::new();
     source_b.push(block_b);
     let mut batcher_b = Batcher::new(source_b, &h.rollup_config, batcher_cfg.clone());
-    batcher_b.encode_only().await.expect("encode channel B");
+    batcher_b.encode_only().await;
 
     let n_a = batcher_a.pending_count();
     let n_b = batcher_b.pending_count();
@@ -278,7 +275,7 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
 
     verifier.initialize().await;
     verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    verifier.act_l2_pipeline_full().await.expect("pipeline block 1");
+    verifier.act_l2_pipeline_full().await;
 
     // Channel A is open but incomplete — safe head stays at genesis.
     assert_eq!(
@@ -299,7 +296,7 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     chain.push(h.l1.tip().clone()); // L1 block 2: all frames of channel B
 
     verifier.act_l1_head_signal(h.l1.block_info_at(2)).await;
-    verifier.act_l2_pipeline_full().await.expect("pipeline block 2");
+    verifier.act_l2_pipeline_full().await;
 
     // Channel A was abandoned (Holocene pruning). Channel B derived block B.
     // Block A was never derived since channel A was discarded.
@@ -360,13 +357,13 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block().expect("build L2 block 1");
+    let block = sequencer.build_next_block();
 
     // Encode the block into frames without mining.
     let mut source = ActionL2Source::new();
     source.push(block.clone());
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.encode_only().await.expect("encode multi-frame channel");
+    batcher.encode_only().await;
     let frame_count = batcher.pending_count();
     assert!(frame_count >= 3, "need ≥3 frames to skip frame 1; got {frame_count}");
 
@@ -385,7 +382,7 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
 
     verifier.initialize().await;
     verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    verifier.act_l2_pipeline_full().await.expect("pipeline block 1");
+    verifier.act_l2_pipeline_full().await;
 
     // Channel is broken — safe head stays at genesis.
     assert_eq!(
@@ -406,7 +403,7 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
     }
     for i in 2..=h.l1.latest_number() {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await.expect("pipeline");
+        verifier.act_l2_pipeline_full().await;
     }
     assert_eq!(
         verifier.l2_safe_number(),
@@ -421,12 +418,12 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
     let mut recovery_source = ActionL2Source::new();
     recovery_source.push(block);
     let mut batcher2 = Batcher::new(recovery_source, &h.rollup_config, batcher_cfg.clone());
-    batcher2.advance(&mut h.l1).await.expect("recovery batch");
+    batcher2.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
     let recovery_block_num = h.l1.latest_number();
     verifier.act_l1_head_signal(h.l1.block_info_at(recovery_block_num)).await;
-    verifier.act_l2_pipeline_full().await.expect("pipeline recovery block");
+    verifier.act_l2_pipeline_full().await;
 
     assert_eq!(
         verifier.l2_safe_number(),

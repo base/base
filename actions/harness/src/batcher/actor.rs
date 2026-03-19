@@ -44,24 +44,6 @@ pub enum BatcherError {
     /// The L2 source was exhausted before any blocks could be batched.
     #[error("no L2 blocks available to batch")]
     NoBlocks,
-    /// [`Batcher::wait_until_pending`] did not observe `expected` pending frames
-    /// within the polling iteration limit.
-    #[error("timed out waiting for {expected} pending frames after encoding; got {got}")]
-    EncodingTimeout {
-        /// Minimum number of pending frames the caller was waiting for.
-        expected: usize,
-        /// Actual number of pending frames observed when the timeout elapsed.
-        got: usize,
-    },
-    /// [`Batcher::wait_until_requeued`] did not observe `expected` pending frames
-    /// within the polling iteration limit after a reorg.
-    #[error("timed out waiting for {expected} requeued frames after reorg; got {got}")]
-    RequeueTimeout {
-        /// Minimum number of requeued frames the caller was waiting for.
-        expected: usize,
-        /// Actual number of pending frames observed when the timeout elapsed.
-        got: usize,
-    },
 }
 
 /// Batcher actor that drives a persistent [`BatchDriver`] through [`L1Miner`].
@@ -162,14 +144,23 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// blocks and calls [`send_async`] for each submission. After this returns,
     /// [`pending_count`] reflects how many frame transactions are waiting.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Returns [`BatcherError::NoBlocks`] if the L2 source is empty.
+    /// Panics if the L2 source is empty. Use [`try_advance`] if you need to
+    /// test the empty-source error path.
     ///
     /// [`advance`]: Batcher::advance
+    /// [`try_advance`]: Batcher::try_advance
     /// [`pending_count`]: Batcher::pending_count
     /// [`send_async`]: crate::L1MinerTxManager::send_async
-    pub async fn encode_only(&mut self) -> Result<(), BatcherError> {
+    pub async fn encode_only(&mut self) {
+        self.try_encode_only().await.unwrap_or_else(|e| panic!("Batcher::encode_only failed: {e}"))
+    }
+
+    /// Fallible variant of [`encode_only`] that returns an error instead of panicking.
+    ///
+    /// [`encode_only`]: Batcher::encode_only
+    async fn try_encode_only(&mut self) -> Result<(), BatcherError> {
         let mut block_count = 0u64;
         while let Some(block) = self.l2_source.next_block() {
             self.block_tx.send(L2BlockEvent::Block(Box::new(block))).expect("driver task alive");
@@ -241,22 +232,25 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Intended to be called after [`encode_only`] when a test needs to inspect
     /// or act on pending frames before mining.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Returns [`BatcherError::EncodingTimeout`] if `pending_count()` does not
-    /// reach `min_frames` within the polling iteration limit.
+    /// Panics if `pending_count()` does not reach `min_frames` within the
+    /// polling iteration limit (20 yields).
     ///
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
     /// [`send_async`]: crate::L1MinerTxManager::send_async
     /// [`encode_only`]: Batcher::encode_only
-    pub async fn wait_until_pending(&self, min_frames: usize) -> Result<(), BatcherError> {
+    pub async fn wait_until_pending(&self, min_frames: usize) {
         for _ in 0..20 {
             if self.pending_count() >= min_frames {
-                return Ok(());
+                return;
             }
             tokio::task::yield_now().await;
         }
-        Err(BatcherError::EncodingTimeout { expected: min_frames, got: self.pending_count() })
+        panic!(
+            "timed out waiting for {min_frames} pending frames after encoding; got {}",
+            self.pending_count()
+        );
     }
 
     /// Wait until at least `expected` frames are back in the pending queue
@@ -268,32 +262,47 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`send_async`] to return them to the pending queue. This method polls
     /// [`pending_count`] until the condition is satisfied.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Returns [`BatcherError::RequeueTimeout`] if `pending_count()` does not
-    /// reach `expected` within the polling iteration limit.
+    /// Panics if `pending_count()` does not reach `expected` within the
+    /// polling iteration limit (20 yields).
     ///
     /// [`send_async`]: crate::L1MinerTxManager::send_async
     /// [`pending_count`]: Batcher::pending_count
-    pub async fn wait_until_requeued(&self, expected: usize) -> Result<(), BatcherError> {
+    pub async fn wait_until_requeued(&self, expected: usize) {
         for _ in 0..20 {
             if self.pending_count() >= expected {
-                return Ok(());
+                return;
             }
             tokio::task::yield_now().await;
         }
-        Err(BatcherError::RequeueTimeout { expected, got: self.pending_count() })
+        panic!(
+            "timed out waiting for {expected} requeued frames after reorg; got {}",
+            self.pending_count()
+        );
     }
 
     /// Run one full batch cycle through the production [`BatchDriver`] path.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Returns [`BatcherError::NoBlocks`] if the L2 source is empty.
+    /// Panics if the L2 source is empty. Use [`try_advance`] to test the
+    /// empty-source error path.
+    ///
+    /// [`try_advance`]: Batcher::try_advance
+    pub async fn advance(&mut self, l1: &mut L1Miner) {
+        self.try_advance(l1).await.unwrap_or_else(|e| panic!("Batcher::advance failed: {e}"))
+    }
+
+    /// Fallible variant of [`advance`] — returns an error instead of panicking.
+    ///
+    /// Use this when a test needs to assert that `advance` fails (e.g. to
+    /// verify that [`BatcherError::NoBlocks`] is returned for an empty source).
+    /// For the common happy-path case prefer [`advance`].
     ///
     /// [`advance`]: Batcher::advance
-    pub async fn advance(&mut self, l1: &mut L1Miner) -> Result<(), BatcherError> {
-        self.encode_only().await?;
+    pub async fn try_advance(&mut self, l1: &mut L1Miner) -> Result<(), BatcherError> {
+        self.try_encode_only().await?;
 
         // Mine one L1 block: submits all pending txs/blobs, fires receipt
         // oneshots, and publishes the block number to the L1 head watch.

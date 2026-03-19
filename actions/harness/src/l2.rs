@@ -240,8 +240,12 @@ impl L2Sequencer {
     /// then restores the original count. Useful for simulating forced-empty
     /// blocks at the sequencer drift boundary.
     ///
+    /// # Panics
+    ///
+    /// Panics if the block cannot be built (e.g. missing L1 block data).
+    ///
     /// [`build_next_block`]: L2Sequencer::build_next_block
-    pub fn build_empty_block(&mut self) -> Result<OpBlock, L2SequencerError> {
+    pub fn build_empty_block(&mut self) -> OpBlock {
         let saved = self.user_txs_per_block;
         self.user_txs_per_block = 0;
         let result = self.build_next_block();
@@ -253,7 +257,26 @@ impl L2Sequencer {
     ///
     /// Returns a fully-formed [`OpBlock`] containing the L1-info deposit and
     /// any configured user transactions, with a real state root and block hash.
-    pub fn build_next_block(&mut self) -> Result<OpBlock, L2SequencerError> {
+    ///
+    /// # Panics
+    ///
+    /// Panics if the block cannot be built (e.g. missing L1 block data or EVM
+    /// execution failure). Use [`try_build_next_block`] if you need to inspect
+    /// the error.
+    ///
+    /// [`try_build_next_block`]: L2Sequencer::try_build_next_block
+    pub fn build_next_block(&mut self) -> OpBlock {
+        self.try_build_next_block()
+            .unwrap_or_else(|e| panic!("L2Sequencer::build_next_block failed: {e}"))
+    }
+
+    /// Build the next L2 block, returning an error instead of panicking.
+    ///
+    /// Prefer [`build_next_block`] in test code; this method exists for
+    /// callers that need to inspect the failure reason.
+    ///
+    /// [`build_next_block`]: L2Sequencer::build_next_block
+    pub fn try_build_next_block(&mut self) -> Result<OpBlock, L2SequencerError> {
         let next_number = self.head.block_info.number + 1;
         let next_timestamp = self.head.block_info.timestamp + self.rollup_config.block_time;
         let parent_hash = self.head.block_info.hash;
@@ -453,9 +476,6 @@ fn compute_state_root(db: &InMemoryDB) -> B256 {
 
 impl L2BlockProvider for L2Sequencer {
     fn next_block(&mut self) -> Option<OpBlock> {
-        Some(
-            self.build_next_block()
-                .unwrap_or_else(|e| panic!("L2Sequencer::next_block failed: {e}")),
-        )
+        Some(self.build_next_block())
     }
 }

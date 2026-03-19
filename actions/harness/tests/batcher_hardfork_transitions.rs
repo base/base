@@ -62,10 +62,10 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     // Build 4 L2 blocks. build_next_block() includes a user transaction in
     // every block. Block 3 (ts=6) is the first Jovian block, which must be
     // deposit-only — including a user tx here is the deliberate error.
-    let block1 = builder.build_next_block().expect("build L2 block 1"); // ts=2
-    let block2 = builder.build_next_block().expect("build L2 block 2"); // ts=4
-    let block3_invalid = builder.build_next_block().expect("build L2 block 3 (invalid)"); // ts=6
-    let block4 = builder.build_next_block().expect("build L2 block 4"); // ts=8
+    let block1 = builder.build_next_block(); // ts=2
+    let block2 = builder.build_next_block(); // ts=4
+    let block3_invalid = builder.build_next_block(); // ts=6
+    let block4 = builder.build_next_block(); // ts=8
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -80,16 +80,13 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
         source.push(block2.clone());
         source.push(block3_invalid);
         source.push(block4.clone());
-        Batcher::new(source, &h.rollup_config, span_cfg)
-            .advance(&mut h.l1)
-            .await
-            .expect("encode span batch with invalid block 3");
+        Batcher::new(source, &h.rollup_config, span_cfg).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone()); // L1 block 1: span batch with invalid block 3
 
     verifier.initialize().await;
     verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    verifier.act_l2_pipeline_full().await.expect("pipeline after block 1");
+    verifier.act_l2_pipeline_full().await;
 
     // Under Holocene, when the pipeline reaches block 3 in the span batch and
     // detects a user tx in the upgrade block, it sends FlushChannel (via
@@ -115,24 +112,21 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     {
         let l1_chain2 = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
         let mut builder2 = h.create_l2_sequencer(l1_chain2);
-        let _rb1 = builder2.build_next_block().expect("advance recovery builder past block 1");
-        let _rb2 = builder2.build_next_block().expect("advance recovery builder past block 2");
-        let block3_empty = builder2.build_empty_block().expect("build empty block 3 for recovery");
-        let block4_recovery = builder2.build_next_block().expect("build recovery block 4");
+        let _rb1 = builder2.build_next_block();
+        let _rb2 = builder2.build_next_block();
+        let block3_empty = builder2.build_empty_block();
+        let block4_recovery = builder2.build_next_block();
 
         let span_cfg = BatcherConfig { batch_type: BatchType::Span, ..batcher_cfg };
         let mut source = ActionL2Source::new();
         source.push(block3_empty);
         source.push(block4_recovery);
-        Batcher::new(source, &h.rollup_config, span_cfg)
-            .advance(&mut h.l1)
-            .await
-            .expect("encode recovery span batch");
+        Batcher::new(source, &h.rollup_config, span_cfg).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: recovery span batch (blocks 3–4)
 
     verifier.act_l1_head_signal(h.l1.block_info_at(2)).await;
-    verifier.act_l2_pipeline_full().await.expect("pipeline after block 2");
+    verifier.act_l2_pipeline_full().await;
 
     assert_eq!(
         verifier.l2_safe_number(),
@@ -170,8 +164,8 @@ async fn mixed_singular_and_span_batches_after_delta() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    let block1 = builder.build_next_block().expect("build L2 block 1");
-    let block2 = builder.build_next_block().expect("build L2 block 2");
+    let block1 = builder.build_next_block();
+    let block2 = builder.build_next_block();
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -183,10 +177,7 @@ async fn mixed_singular_and_span_batches_after_delta() {
         let singular_cfg = BatcherConfig { batch_type: BatchType::Single, ..batcher_cfg.clone() };
         let mut source = ActionL2Source::new();
         source.push(block1);
-        Batcher::new(source, &h.rollup_config, singular_cfg)
-            .advance(&mut h.l1)
-            .await
-            .expect("encode singular batch");
+        Batcher::new(source, &h.rollup_config, singular_cfg).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone()); // L1 block 1: singular batch for L2 block 1
 
@@ -195,10 +186,7 @@ async fn mixed_singular_and_span_batches_after_delta() {
         let span_cfg = BatcherConfig { batch_type: BatchType::Span, ..batcher_cfg };
         let mut source = ActionL2Source::new();
         source.push(block2);
-        Batcher::new(source, &h.rollup_config, span_cfg)
-            .advance(&mut h.l1)
-            .await
-            .expect("encode span batch");
+        Batcher::new(source, &h.rollup_config, span_cfg).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: span batch for L2 block 2
 
@@ -208,7 +196,7 @@ async fn mixed_singular_and_span_batches_after_delta() {
     // L2 block 1; the second (span) derives L2 block 2.
     for i in 1..=2u64 {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = verifier.act_l2_pipeline_full().await.expect("pipeline");
+        let derived = verifier.act_l2_pipeline_full().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
 
@@ -281,7 +269,7 @@ async fn granite_channel_timeout_enforced() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block().expect("build L2 block 1");
+    let block = sequencer.build_next_block();
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &sequencer,
@@ -292,7 +280,7 @@ async fn granite_channel_timeout_enforced() {
     let mut source = ActionL2Source::new();
     source.push(block.clone());
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.encode_only().await.expect("encode");
+    batcher.encode_only().await;
 
     let frame_count = batcher.pending_count();
     assert!(
@@ -308,7 +296,7 @@ async fn granite_channel_timeout_enforced() {
 
     verifier.initialize().await;
     verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    verifier.act_l2_pipeline_full().await.expect("step block 1");
+    verifier.act_l2_pipeline_full().await;
 
     assert_eq!(verifier.l2_safe_number(), 0, "incomplete channel should not advance safe head");
 
@@ -322,7 +310,7 @@ async fn granite_channel_timeout_enforced() {
     // Signal all empty blocks to the verifier.
     for i in 2..=52u64 {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await.expect("step empty block");
+        verifier.act_l2_pipeline_full().await;
     }
 
     assert_eq!(
@@ -343,7 +331,7 @@ async fn granite_channel_timeout_enforced() {
     batcher.confirm_staged(late_block_num).await;
 
     verifier.act_l1_head_signal(h.l1.block_info_at(late_block_num)).await;
-    let derived = verifier.act_l2_pipeline_full().await.expect("step late block");
+    let derived = verifier.act_l2_pipeline_full().await;
     assert_eq!(
         derived, 0,
         "late non-zero frames after timeout create an incomplete channel; no L2 block derived"
@@ -357,15 +345,12 @@ async fn granite_channel_timeout_enforced() {
     // --- Recovery: new batcher, all frames in one L1 block ---
     let mut source2 = ActionL2Source::new();
     source2.push(block);
-    Batcher::new(source2, &h.rollup_config, batcher_cfg)
-        .advance(&mut h.l1)
-        .await
-        .expect("recovery advance");
+    Batcher::new(source2, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
     let recovery_num = h.l1.latest_number();
     verifier.act_l1_head_signal(h.l1.block_info_at(recovery_num)).await;
-    let recovered = verifier.act_l2_pipeline_full().await.expect("step recovery");
+    let recovered = verifier.act_l2_pipeline_full().await;
 
     assert_eq!(recovered, 1, "recovery channel should derive L2 block 1");
     assert_eq!(verifier.l2_safe_number(), 1, "safe head should recover to 1");
@@ -436,10 +421,10 @@ async fn jovian_single_batch_transition_block_deposit_only() {
     // Build 4 L2 blocks. build_next_block() includes a user transaction in
     // every block. Block 3 (ts=6) is the first Jovian block — including a
     // user tx is the deliberate error that derivation must handle.
-    let block1 = builder.build_next_block().expect("build L2 block 1"); // ts=2
-    let block2 = builder.build_next_block().expect("build L2 block 2"); // ts=4
-    let block3_invalid = builder.build_next_block().expect("build L2 block 3 (invalid)"); // ts=6
-    let block4 = builder.build_next_block().expect("build L2 block 4"); // ts=8
+    let block1 = builder.build_next_block(); // ts=2
+    let block2 = builder.build_next_block(); // ts=4
+    let block3_invalid = builder.build_next_block(); // ts=6
+    let block4 = builder.build_next_block(); // ts=8
 
     // Precondition: block 3 must contain at least one user transaction (deposits
     // don't count). If build_next_block() ever started returning empty blocks,
@@ -458,13 +443,10 @@ async fn jovian_single_batch_transition_block_deposit_only() {
 
     // Submit each block as a separate SingleBatch channel, one L1 block each.
     // L1 blocks 1–4 each contain one singular batch.
-    for (i, block) in [block1, block2, block3_invalid, block4].into_iter().enumerate() {
+    for block in [block1, block2, block3_invalid, block4] {
         let mut source = ActionL2Source::new();
         source.push(block);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1)
-            .await
-            .unwrap_or_else(|e| panic!("encode singular batch for L2 block {}: {e}", i + 1));
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
         chain.push(h.l1.tip().clone());
     }
 
@@ -485,7 +467,7 @@ async fn jovian_single_batch_transition_block_deposit_only() {
     let tip = h.l1.latest_number();
     for i in 1..=tip {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await.expect("pipeline");
+        verifier.act_l2_pipeline_full().await;
     }
 
     // With singular batches and the Holocene batch validator: the pipeline

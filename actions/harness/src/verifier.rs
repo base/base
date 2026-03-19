@@ -50,9 +50,6 @@ pub enum VerifierError {
     /// A pipeline signal failed.
     #[error("signal error: {0}")]
     Signal(Box<PipelineErrorKind>),
-    /// The gossiped block has no L1 info deposit as its first transaction.
-    #[error("gossip receive: missing or invalid L1 info deposit in block")]
-    GossipDecodeFailed,
 }
 
 /// A lightweight view of a derived L2 block's transaction counts.
@@ -308,7 +305,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
             .expect("initialize signal failed");
 
         // Drain the genesis L1 block (no batcher data; sets IndexedTraversal::done = true).
-        self.act_l2_pipeline_full().await.expect("initialize pipeline drain failed");
+        self.act_l2_pipeline_full().await;
     }
 
     /// Return the current L2 safe head.
@@ -450,12 +447,12 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     /// Returns the number of L2 attributes that were applied (i.e. how many L2
     /// blocks were derived).
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Returns [`VerifierError::Pipeline`] if the pipeline returns a
-    /// non-transient error, or if `NotEnoughData` is returned more than
-    /// 1 000 consecutive times without progress (indicating a stuck pipeline).
-    pub async fn act_l2_pipeline_full(&mut self) -> Result<usize, VerifierError> {
+    /// Panics if the pipeline returns a non-transient error, or if
+    /// `NotEnoughData` is returned more than 1 000 consecutive times without
+    /// progress (indicating a stuck pipeline).
+    pub async fn act_l2_pipeline_full(&mut self) -> usize {
         let mut derived = 0;
         let mut no_progress = 0usize;
         loop {
@@ -485,14 +482,12 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                             // no-progress loops.
                             no_progress += 1;
                             if no_progress > 1_000 {
-                                return Err(VerifierError::Pipeline(Box::new(
-                                    PipelineError::Provider(
-                                        "pipeline stuck: 1000 consecutive no-progress without derivation".into()
-                                    ).temp()
-                                )));
+                                panic!(
+                                    "pipeline stuck: 1000 consecutive no-progress without derivation"
+                                );
                             }
                         }
-                        _ => return Err(VerifierError::Pipeline(Box::new(err))),
+                        _ => panic!("act_l2_pipeline_full: pipeline error: {err}"),
                     }
                 }
                 StepResult::OriginAdvanceErr(err) => {
@@ -501,12 +496,12 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                             // Traversal exhausted — no more L1 blocks to advance to.
                             break;
                         }
-                        _ => return Err(VerifierError::Pipeline(Box::new(err))),
+                        _ => panic!("act_l2_pipeline_full: origin advance error: {err}"),
                     }
                 }
             }
         }
-        Ok(derived)
+        derived
     }
 
     /// Execute exactly one derivation step and return the raw [`StepResult`].
@@ -736,24 +731,24 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     /// Only advances `unsafe_head` if `block.header.number` is exactly
     /// `unsafe_head.number + 1` — gaps and out-of-order gossip are silently dropped.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Returns [`VerifierError::GossipDecodeFailed`] if the first transaction is
-    /// not a valid L1 info deposit (i.e. the block was not produced by a
-    /// well-formed sequencer).
+    /// Panics if the first transaction is not a valid L1 info deposit (i.e. the
+    /// block was not produced by a well-formed sequencer).
     ///
     /// [`register_block_hash`]: L2Verifier::register_block_hash
-    pub fn act_l2_unsafe_gossip_receive(&mut self, block: &OpBlock) -> Result<(), VerifierError> {
+    pub fn act_l2_unsafe_gossip_receive(&mut self, block: &OpBlock) {
         // Only accept the strictly next block; gaps and duplicates are dropped silently.
         if block.header.number != self.unsafe_head.block_info.number + 1 {
-            return Ok(());
+            return;
         }
         let hash = block.header.hash_slow();
         // Auto-register so parent_hash chaining works in later derivation.
         self.block_hashes.insert(block.header.number, hash);
 
-        let l1_origin =
-            self.l1_origin_from_block(block).ok_or(VerifierError::GossipDecodeFailed)?;
+        let l1_origin = self.l1_origin_from_block(block).unwrap_or_else(|| {
+            panic!("act_l2_unsafe_gossip_receive: missing or invalid L1 info deposit in block")
+        });
         let seq_num =
             if l1_origin == self.unsafe_head.l1_origin { self.unsafe_head.seq_num + 1 } else { 0 };
         self.unsafe_head = L2BlockInfo {
@@ -766,7 +761,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
             l1_origin,
             seq_num,
         };
-        Ok(())
     }
 
     /// Decode the L1 epoch from the first deposit transaction in an [`OpBlock`].

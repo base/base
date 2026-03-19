@@ -82,10 +82,10 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
     // Collect all 8 blocks and batch them in one L1 block.
     let mut source = ActionL2Source::new();
     for _ in 1u64..=8 {
-        source.push(sequencer.build_next_block().expect("build L2 block"));
+        source.push(sequencer.build_next_block());
     }
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.advance(&mut h.l1).await.expect("batcher advance");
+    batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
     // Mine 2 extra empty L1 blocks (seq_window_size=2, batch epoch=0, batch
@@ -101,7 +101,7 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
     let mut total_derived = 0;
     for i in 1..=h.l1.latest_number() {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        total_derived += verifier.act_l2_pipeline_full().await.expect("step");
+        total_derived += verifier.act_l2_pipeline_full().await;
     }
 
     // The pipeline should derive blocks for all L2 slots. Blocks 1-6 use the
@@ -168,17 +168,17 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
     // (over drift, ts=2100, 2400). block_time=300 s, max_drift=1800 s.
     let mut source = ActionL2Source::new();
     for _ in 1u64..=6 {
-        source.push(sequencer.build_next_block().expect("build normal block"));
+        source.push(sequencer.build_next_block());
     }
     // Build empty blocks past the drift boundary. The empty block has only
     // the deposit tx — the batcher encodes it but the pipeline drops it
     // (stale epoch) and produces a default block.
     for _ in 7u64..=8 {
-        source.push(sequencer.build_empty_block().expect("build empty block"));
+        source.push(sequencer.build_empty_block());
     }
 
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.advance(&mut h.l1).await.expect("batcher advance");
+    batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
     verifier.initialize().await;
@@ -186,7 +186,7 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
     let mut total_derived = 0;
     for i in 1..=h.l1.latest_number() {
         verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        total_derived += verifier.act_l2_pipeline_full().await.expect("step");
+        total_derived += verifier.act_l2_pipeline_full().await;
     }
 
     // All 8 blocks should be derived: 6 normal + 2 empty (pipeline-generated

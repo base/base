@@ -29,7 +29,7 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let mut blocks = Vec::with_capacity(L2_BLOCK_COUNT as usize);
     for _ in 0..L2_BLOCK_COUNT {
-        blocks.push(sequencer.build_next_block().expect("build L2 block"));
+        blocks.push(sequencer.build_next_block());
     }
 
     // Create the verifier before any mining so chain updates are visible.
@@ -46,7 +46,7 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
         source.push(block.clone());
     }
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.advance(&mut h.l1).await.expect("batcher should submit all blocks");
+    batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
     let l1_block_1 = h.l1.tip_info();
 
@@ -56,7 +56,7 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
 
     // --- Phase 2: Gossip each block into the verifier. ---
     for block in &blocks {
-        verifier.act_l2_unsafe_gossip_receive(block).expect("gossip receive should succeed");
+        verifier.act_l2_unsafe_gossip_receive(block);
     }
 
     assert_eq!(
@@ -72,7 +72,7 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
 
     // --- Phase 3+4: Signal L1 head and run derivation. ---
     verifier.act_l1_head_signal(l1_block_1).await;
-    let derived = verifier.act_l2_pipeline_full().await.expect("pipeline full should succeed");
+    let derived = verifier.act_l2_pipeline_full().await;
 
     assert_eq!(derived, L2_BLOCK_COUNT as usize, "expected {L2_BLOCK_COUNT} L2 blocks derived");
     assert_eq!(
@@ -102,9 +102,9 @@ async fn test_out_of_order_gossip_is_dropped() {
     // Build 3 sequential L2 blocks (we will inject block 3 first, skipping 1 & 2).
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block1 = sequencer.build_next_block().expect("build block 1");
-    let _block2 = sequencer.build_next_block().expect("build block 2");
-    let block3 = sequencer.build_next_block().expect("build block 3");
+    let block1 = sequencer.build_next_block();
+    let _block2 = sequencer.build_next_block();
+    let block3 = sequencer.build_next_block();
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
         &sequencer,
@@ -113,7 +113,7 @@ async fn test_out_of_order_gossip_is_dropped() {
     verifier.initialize().await;
 
     // Inject block 3 first — gap-jump; must be dropped.
-    verifier.act_l2_unsafe_gossip_receive(&block3).expect("out-of-order gossip must not error");
+    verifier.act_l2_unsafe_gossip_receive(&block3);
     assert_eq!(
         verifier.l2_unsafe_number(),
         0,
@@ -121,7 +121,7 @@ async fn test_out_of_order_gossip_is_dropped() {
     );
 
     // Inject block 1 — sequential; must advance.
-    verifier.act_l2_unsafe_gossip_receive(&block1).expect("in-order gossip must succeed");
+    verifier.act_l2_unsafe_gossip_receive(&block1);
     assert_eq!(
         verifier.l2_unsafe_number(),
         1,
@@ -129,7 +129,7 @@ async fn test_out_of_order_gossip_is_dropped() {
     );
 
     // Inject block 3 again — still a gap (unsafe_head=1, next expected=2); must be dropped.
-    verifier.act_l2_unsafe_gossip_receive(&block3).expect("gap gossip must not error");
+    verifier.act_l2_unsafe_gossip_receive(&block3);
     assert_eq!(
         verifier.l2_unsafe_number(),
         1,
