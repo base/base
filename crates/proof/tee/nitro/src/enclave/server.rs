@@ -131,11 +131,17 @@ impl Server {
     }
 
     /// Get an attestation document containing the signer's public key.
-    pub fn signer_attestation(&self) -> Result<Vec<u8>> {
+    ///
+    /// Optional `user_data` and `nonce` bind the attestation to a specific request.
+    pub fn signer_attestation(
+        &self,
+        user_data: Option<Vec<u8>>,
+        nonce: Option<Vec<u8>>,
+    ) -> Result<Vec<u8>> {
         let session = NsmSession::open()?
             .ok_or_else(|| NsmError::SessionOpen("NSM not available".to_string()))?;
         let public_key = self.signer_public_key();
-        session.get_attestation(public_key)
+        session.get_attestation(public_key, user_data, nonce)
     }
 
     /// Run the proof-client pipeline for the given preimages and return per-block proposals

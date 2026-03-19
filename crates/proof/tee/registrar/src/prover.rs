@@ -52,11 +52,16 @@ impl ProverClient {
     }
 
     /// Fetches the raw Nitro attestation document via `enclave_signerAttestation`.
-    pub async fn signer_attestation(&self) -> Result<Vec<u8>> {
+    ///
+    /// Optional `user_data` and `nonce` bind the attestation to a specific request.
+    pub async fn signer_attestation(
+        &self,
+        user_data: Option<Vec<u8>>,
+        nonce: Option<Vec<u8>>,
+    ) -> Result<Vec<u8>> {
         debug!(endpoint = %self.endpoint, "fetching signer attestation");
-        self.inner.signer_attestation().await.map_err(|e| RegistrarError::ProverClient {
-            instance: self.endpoint.clone(),
-            source: Box::new(e),
+        self.inner.signer_attestation(user_data, nonce).await.map_err(|e| {
+            RegistrarError::ProverClient { instance: self.endpoint.clone(), source: Box::new(e) }
         })
     }
 
@@ -85,7 +90,7 @@ impl ProverClient {
     pub async fn get_attestation_response(&self) -> Result<AttestationResponse> {
         let public_key = self.signer_public_key().await?;
         let signer_address = Self::derive_address(&public_key)?;
-        let attestation = self.signer_attestation().await?;
+        let attestation = self.signer_attestation(None, None).await?;
 
         debug!(
             endpoint = %self.endpoint,

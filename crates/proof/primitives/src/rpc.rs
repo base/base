@@ -58,6 +58,12 @@ pub trait EnclaveApi {
     async fn signer_public_key(&self) -> RpcResult<Vec<u8>>;
 
     /// Return the raw Nitro attestation document (`COSE_Sign1` bytes) for the enclave signer.
+    ///
+    /// Optional `user_data` and `nonce` bind the attestation to a specific request.
     #[method(name = "signerAttestation")]
-    async fn signer_attestation(&self) -> RpcResult<Vec<u8>>;
+    async fn signer_attestation(
+        &self,
+        user_data: Option<Vec<u8>>,
+        nonce: Option<Vec<u8>>,
+    ) -> RpcResult<Vec<u8>>;
 }

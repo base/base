@@ -163,11 +163,20 @@ impl EnclaveClient {
 
     /// Get an attestation document containing the signer's public key.
     ///
+    /// Optional `user_data` and `nonce` bind the attestation to a specific request.
+    ///
     /// # Errors
     ///
     /// Returns an error if the RPC call fails or if running in local mode.
-    pub async fn signer_attestation(&self) -> Result<Bytes, ClientError> {
-        self.inner.request("enclave_signerAttestation", rpc_params![]).await.map_err(Into::into)
+    pub async fn signer_attestation(
+        &self,
+        user_data: Option<Vec<u8>>,
+        nonce: Option<Vec<u8>>,
+    ) -> Result<Bytes, ClientError> {
+        self.inner
+            .request("enclave_signerAttestation", rpc_params![user_data, nonce])
+            .await
+            .map_err(Into::into)
     }
 
     /// Execute stateless block validation and create a signed proposal.

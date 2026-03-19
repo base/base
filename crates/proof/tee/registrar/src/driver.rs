@@ -6,10 +6,11 @@
 
 use std::{fmt, time::Duration};
 
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, hex};
 use alloy_sol_types::SolCall;
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::{TxCandidate, TxManager};
+use rand::random;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
@@ -162,7 +163,10 @@ where
         );
 
         // Only fetch the full NSM attestation document when registration is needed.
-        let attestation_bytes = client.signer_attestation().await?;
+        // Bind a random nonce into the attestation to prevent replay attacks.
+        let nonce: [u8; 32] = random();
+        info!(nonce = %hex::encode(nonce), signer = %signer_address, "requesting attestation with nonce");
+        let attestation_bytes = client.signer_attestation(None, Some(nonce.to_vec())).await?;
         let proof = self.proof_provider.generate_proof(&attestation_bytes).await?;
 
         // Check cancellation before submitting the transaction — avoid starting

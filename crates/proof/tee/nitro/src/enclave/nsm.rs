@@ -80,11 +80,17 @@ impl NsmSession {
     /// Get an attestation document with the given public key.
     ///
     /// The public key is included in the attestation document.
+    /// Optional `user_data` and `nonce` bind the attestation to a specific request.
     #[cfg(target_os = "linux")]
-    pub fn get_attestation(&self, public_key: Vec<u8>) -> Result<Vec<u8>> {
+    pub fn get_attestation(
+        &self,
+        public_key: Vec<u8>,
+        user_data: Option<Vec<u8>>,
+        nonce: Option<Vec<u8>>,
+    ) -> Result<Vec<u8>> {
         let request = Request::Attestation {
-            user_data: None,
-            nonce: None,
+            user_data: user_data.map(Into::into),
+            nonce: nonce.map(Into::into),
             public_key: Some(public_key.into()),
         };
         let response = nsm_process_request(self.fd, request);
@@ -98,7 +104,12 @@ impl NsmSession {
 
     /// Get attestation - stub for non-Linux platforms.
     #[cfg(not(target_os = "linux"))]
-    pub fn get_attestation(&self, _public_key: Vec<u8>) -> Result<Vec<u8>> {
+    pub fn get_attestation(
+        &self,
+        _public_key: Vec<u8>,
+        _user_data: Option<Vec<u8>>,
+        _nonce: Option<Vec<u8>>,
+    ) -> Result<Vec<u8>> {
         Err(NsmError::Attestation("NSM not available".to_string()).into())
     }
 

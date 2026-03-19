@@ -24,6 +24,7 @@ aws-sdk-elasticloadbalancingv2.workspace = true
 
 # Crypto
 k256.workspace = true
+rand.workspace = true
 
 # Proving
 base-proof-tee-nitro-attestation-prover.workspace = true

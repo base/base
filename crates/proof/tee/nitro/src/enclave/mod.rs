@@ -105,11 +105,17 @@ impl NitroEnclave {
                 let key = self.server.signer_public_key();
                 Frame::write(&mut stream, &EnclaveResponse::SignerPublicKey(key)).await?;
             }
-            EnclaveRequest::SignerAttestation => {
-                info!("received signer attestation request");
+            EnclaveRequest::SignerAttestation { user_data, nonce } => {
+                info!(
+                    has_nonce = nonce.is_some(),
+                    has_user_data = user_data.is_some(),
+                    "received signer attestation request"
+                );
                 // nsm_init() and nsm_process_request() are blocking FFI calls; use
                 // block_in_place so they do not stall the async executor.
-                let result = tokio::task::block_in_place(|| self.server.signer_attestation());
+                let result = tokio::task::block_in_place(|| {
+                    self.server.signer_attestation(user_data, nonce)
+                });
                 let response = match result {
                     Ok(doc) => EnclaveResponse::SignerAttestation(doc),
                     Err(e) => EnclaveResponse::Error(e.to_string()),

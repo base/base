@@ -79,8 +79,12 @@ impl EnclaveApiServer for NitroSignerRpc {
         })
     }
 
-    async fn signer_attestation(&self) -> RpcResult<Vec<u8>> {
-        self.transport.signer_attestation().await.map_err(|e| {
+    async fn signer_attestation(
+        &self,
+        user_data: Option<Vec<u8>>,
+        nonce: Option<Vec<u8>>,
+    ) -> RpcResult<Vec<u8>> {
+        self.transport.signer_attestation(user_data, nonce).await.map_err(|e| {
             jsonrpsee::types::ErrorObjectOwned::owned(-32001, e.to_string(), None::<()>)
         })
     }
@@ -121,7 +125,7 @@ mod tests {
         let rpc = NitroSignerRpc { transport };
         // NSM is unavailable outside a real Nitro enclave, so attestation fails.
         // Assert the error is propagated (not swallowed) through the RPC layer.
-        let result = EnclaveApiServer::signer_attestation(&rpc).await;
+        let result = EnclaveApiServer::signer_attestation(&rpc, None, None).await;
         assert!(result.is_err());
     }
 }

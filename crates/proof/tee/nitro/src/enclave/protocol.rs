@@ -10,7 +10,12 @@ pub enum EnclaveRequest {
     /// Return the enclave's 65-byte uncompressed ECDSA public key.
     SignerPublicKey,
     /// Return the raw Nitro attestation document (`COSE_Sign1` bytes).
-    SignerAttestation,
+    SignerAttestation {
+        /// Optional application-specific data to bind into the attestation.
+        user_data: Option<Vec<u8>>,
+        /// Optional nonce to bind into the attestation for replay protection.
+        nonce: Option<Vec<u8>>,
+    },
 }
 
 /// Typed response returned by the enclave over vsock.
