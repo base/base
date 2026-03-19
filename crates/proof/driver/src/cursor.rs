@@ -82,13 +82,18 @@ impl PipelineCursor {
 
     /// Advances the cursor to a new L1 origin and corresponding L2 tip.
     pub fn advance(&mut self, origin: BlockInfo, l2_tip_block: TipCursor) {
-        if self.tips.len() >= self.capacity {
+        let should_enqueue_origin = self.origins.back().copied() != Some(origin.number);
+
+        if should_enqueue_origin && self.tips.len() >= self.capacity {
             let key = self.origins.pop_front().unwrap();
             self.tips.remove(&key);
+            self.origin_infos.remove(&key);
         }
 
         self.origin = origin;
-        self.origins.push_back(origin.number);
+        if should_enqueue_origin {
+            self.origins.push_back(origin.number);
+        }
         self.origin_infos.insert(origin.number, origin);
         self.tips.insert(origin.number, l2_tip_block);
     }
@@ -117,5 +122,63 @@ impl PipelineCursor {
                 (l2_known_tip.clone(), self.origin_infos[last_l1_known_tip])
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+
+    use alloy_consensus::{Header, Sealable};
+    use alloy_primitives::B256;
+    use base_protocol::L2BlockInfo;
+
+    use super::*;
+
+    fn block_info(number: u64) -> BlockInfo {
+        BlockInfo::new(B256::from([number as u8; 32]), number, B256::ZERO, number)
+    }
+
+    fn tip_cursor(l1_origin_number: u64, l2_number: u64) -> TipCursor {
+        TipCursor::new(
+            L2BlockInfo::new(
+                BlockInfo::new(B256::from([l2_number as u8; 32]), l2_number, B256::ZERO, l2_number),
+                block_info(l1_origin_number).id(),
+                0,
+            ),
+            Header { number: l2_number, ..Default::default() }.seal_slow(),
+            B256::ZERO,
+        )
+    }
+
+    #[test]
+    fn advance_evicts_origin_info_and_keeps_cache_bounded() {
+        let origin_0 = block_info(10);
+        let mut cursor = PipelineCursor::new(0, origin_0);
+        cursor.capacity = 2;
+
+        cursor.advance(origin_0, tip_cursor(origin_0.number, 100));
+        cursor.advance(block_info(11), tip_cursor(11, 101));
+        cursor.advance(block_info(12), tip_cursor(12, 102));
+
+        assert_eq!(cursor.tips.len(), 2);
+        assert_eq!(cursor.origin_infos.len(), 2);
+        assert_eq!(cursor.origins.iter().copied().collect::<Vec<_>>(), vec![11, 12]);
+        assert!(!cursor.tips.contains_key(&10));
+        assert!(!cursor.origin_infos.contains_key(&10));
+    }
+
+    #[test]
+    fn advance_same_origin_updates_tip_without_growing_eviction_queue() {
+        let origin = block_info(42);
+        let mut cursor = PipelineCursor::new(0, origin);
+
+        cursor.advance(origin, tip_cursor(origin.number, 200));
+        cursor.advance(origin, tip_cursor(origin.number, 201));
+
+        assert_eq!(cursor.origins.iter().copied().collect::<Vec<_>>(), vec![42]);
+        assert_eq!(cursor.origin_infos.len(), 1);
+        assert_eq!(cursor.tips.len(), 1);
+        assert_eq!(cursor.tip().l2_safe_head.block_info.number, 201);
     }
 }
