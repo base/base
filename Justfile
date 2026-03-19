@@ -174,7 +174,7 @@ check-format:
 
 # Fixes any formatting issues
 format-fix:
-    cargo fix --allow-dirty --allow-staged --workspace
+    {{_skip_kernels}} cargo fix --allow-dirty --allow-staged --workspace
     cargo +nightly fmt --all
 
 # Checks clippy
@@ -220,7 +220,7 @@ clean:
 # Checks if there are any unused dependencies
 check-udeps: build-contracts
     @command -v cargo-udeps >/dev/null 2>&1 || cargo install cargo-udeps
-    cargo +nightly udeps --locked --workspace --all-features --all-targets
+    {{_skip_kernels}} cargo +nightly udeps --locked --workspace --all-features --all-targets
 
 # Checks crate dependency boundary rules
 check-crate-deps:
