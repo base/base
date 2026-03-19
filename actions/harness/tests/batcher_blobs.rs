@@ -156,8 +156,7 @@ async fn batcher_da_switching() {
     }
 
     // Blocks 4-6: submit as blobs.
-    let mut blob_batcher =
-        Batcher::new(ActionL2Source::new(), &h.rollup_config, blob_cfg.clone());
+    let mut blob_batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, blob_cfg.clone());
     for _ in 4..=6u64 {
         blob_batcher.push_block(sequencer.build_next_block());
         blob_batcher.advance(&mut h.l1).await;
@@ -270,8 +269,7 @@ async fn blob_da_channel_timeout() {
     // Recovery: resubmit all frames as blobs in a fresh channel.
     let mut source2 = ActionL2Source::new();
     source2.push(block);
-    Batcher::new(source2, &h.rollup_config, batcher_cfg)
-        .advance(&mut h.l1).await;
+    Batcher::new(source2, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone()); // L1 block 6: fresh blob channel with all frames
 
     verifier.act_l1_head_signal(h.l1.block_info_at(6)).await;

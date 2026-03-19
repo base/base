@@ -32,8 +32,7 @@ async fn single_l2_block_derived_from_batcher_frame() {
     let mut builder = h.create_l2_sequencer(l1_chain);
     let mut source = ActionL2Source::new();
     source.push(builder.build_next_block());
-    Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-        .advance(&mut h.l1).await;
+    Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
 
     // Create the verifier AFTER mining so the SharedL1Chain snapshot already
     // contains both genesis and block 1.
@@ -121,8 +120,7 @@ async fn batch_in_orphaned_l1_block_is_not_derived() {
     let mut builder = h.create_l2_sequencer(l1_chain);
     let mut source = ActionL2Source::new();
     source.push(builder.build_next_block());
-    Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-        .advance(&mut h.l1).await;
+    Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
 
     // Reorg L1 back to genesis; mine an empty replacement block 1'.
     h.l1.reorg_to(0).expect("reorg to genesis");
@@ -162,8 +160,7 @@ async fn reorg_reverts_derived_safe_head() {
     let mut builder = h.create_l2_sequencer(l1_chain);
     let mut source = ActionL2Source::new();
     source.push(builder.build_next_block());
-    Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-        .advance(&mut h.l1).await;
+    Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
 
     // Create the verifier and derive L2 block 1.
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -224,8 +221,7 @@ async fn reorg_and_resubmit_rederives_l2_block() {
     {
         let mut source = ActionL2Source::new();
         source.push(block1.clone());
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -265,8 +261,7 @@ async fn reorg_and_resubmit_rederives_l2_block() {
     {
         let mut source = ActionL2Source::new();
         source.push(block1);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone());
 
@@ -309,8 +304,7 @@ async fn reorg_flip_flop() {
     {
         let mut source = ActionL2Source::new();
         source.push(block1.clone());
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -328,8 +322,7 @@ async fn reorg_flip_flop() {
     {
         let mut source = ActionL2Source::new();
         source.push(block1.clone());
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
     let fork_b1 = h.l1.tip_info();
 
@@ -348,8 +341,7 @@ async fn reorg_flip_flop() {
     {
         let mut source = ActionL2Source::new();
         source.push(block1);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
     let fork_a_prime1 = h.l1.tip_info();
 
@@ -526,8 +518,7 @@ async fn batch_accepted_at_last_seq_window_block() {
     {
         let mut source = ActionL2Source::new();
         source.push(block1);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -685,8 +676,7 @@ async fn l1_deposit_included_in_derived_l2_block() {
     {
         let mut source = ActionL2Source::new();
         source.push(block1);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
 
     // Create verifier AFTER mining so the snapshot contains block 1.
@@ -793,8 +783,7 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     {
         let mut source = ActionL2Source::new();
         source.push(block3.clone());
-        Batcher::new(source, &h.rollup_config, batcher_a.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_a.clone()).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone());
 
@@ -807,8 +796,7 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     {
         let mut source = ActionL2Source::new();
         source.push(block3);
-        Batcher::new(source, &h.rollup_config, batcher_b.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_b.clone()).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone());
 
@@ -901,8 +889,7 @@ async fn batch_past_sequence_window_rejected() {
     {
         let mut source = ActionL2Source::new();
         source.push(block1);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -1025,8 +1012,7 @@ async fn same_epoch_multi_batch_one_l1_block() {
     }
 
     // Encode all 3 blocks into one batcher submission (single channel) and mine.
-    Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-        .advance(&mut h.l1).await;
+    Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
 
     // Create verifier after mining so the snapshot includes the inclusion block.
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -1166,8 +1152,7 @@ async fn garbage_frame_data_ignored() {
     {
         let mut source = ActionL2Source::new();
         source.push(block);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone());
 
@@ -1260,8 +1245,7 @@ async fn single_l2_block_derived_from_span_batch() {
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let mut source = ActionL2Source::new();
     source.push(sequencer.build_next_block());
-    Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-        .advance(&mut h.l1).await;
+    Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
         &sequencer,
@@ -1299,8 +1283,7 @@ async fn three_l2_blocks_derived_from_span_batch() {
         let block = sequencer.build_next_block();
         source.push(block);
     }
-    Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-        .advance(&mut h.l1).await;
+    Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
         &sequencer,
@@ -1404,8 +1387,7 @@ async fn gpo_params_change_does_not_disrupt_derivation() {
     {
         let mut source = ActionL2Source::new();
         source.push(block1);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
 
     // L1 block 2: gas-config update log only, no batch.
@@ -1416,8 +1398,7 @@ async fn gpo_params_change_does_not_disrupt_derivation() {
     {
         let mut source = ActionL2Source::new();
         source.push(block2);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -1462,8 +1443,7 @@ async fn gas_limit_change_does_not_disrupt_derivation() {
     {
         let mut source = ActionL2Source::new();
         source.push(block1);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
 
     // L1 block 2: gas-limit update log only.
@@ -1474,8 +1454,7 @@ async fn gas_limit_change_does_not_disrupt_derivation() {
     {
         let mut source = ActionL2Source::new();
         source.push(block2);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -1526,8 +1505,7 @@ async fn garbage_payload_silently_ignored_then_valid_batch_derived(
     {
         let mut source = ActionL2Source::new();
         source.push(block);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -1829,8 +1807,7 @@ async fn single_l2_block_derived_from_blob() {
     let mut builder = h.create_l2_sequencer(l1_chain);
     let mut source = ActionL2Source::new();
     source.push(builder.build_next_block());
-    Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-        .advance(&mut h.l1).await;
+    Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
 
     // Create the blob verifier AFTER mining so the snapshot contains the blob.
     let (mut verifier, _chain) = h.create_blob_verifier_from_sequencer(
@@ -1865,8 +1842,7 @@ async fn multiple_l2_blocks_derived_from_blob() {
     }
 
     // Encode all 3 blocks into a single blob channel and mine.
-    Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-        .advance(&mut h.l1).await;
+    Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
 
     // Create the blob verifier.
     let (mut verifier, _chain) = h.create_blob_verifier_from_sequencer(
@@ -1965,8 +1941,7 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     {
         let mut source = ActionL2Source::new();
         source.push(block3.clone());
-        Batcher::new(source, &h.rollup_config, batcher_a.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_a.clone()).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone());
 
@@ -2054,8 +2029,7 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
     {
         let mut source = ActionL2Source::new();
         source.push(block2);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone()); // L1 block 1: future batch
 
@@ -2063,8 +2037,7 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
     {
         let mut source = ActionL2Source::new();
         source.push(block1);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: present batch
 
@@ -2141,8 +2114,7 @@ async fn pipeline_idle_before_l1_signal_derives_after() {
     {
         let mut source = ActionL2Source::new();
         source.push(block1);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone());
     verifier.initialize().await;
@@ -2209,8 +2181,7 @@ async fn pipeline_l1_origin_advance_observable_after_epoch_exhausted() {
         let mut source = ActionL2Source::new();
         source.push(block1);
         source.push(block2);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone()); // L1 block 1: carries the channel for blocks 1 & 2
     h.mine_and_push(&chain); // L1 block 2: empty — used only for origin advance
@@ -2299,8 +2270,7 @@ async fn span_batch_crossing_l1_epoch_boundary() {
     );
 
     // Encode all 6 blocks as a single span batch and submit in L1 block 2.
-    Batcher::new(source, &h.rollup_config, batcher_cfg)
-        .advance(&mut h.l1).await;
+    Batcher::new(source, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone()); // L1 block 2: span batch for all 6 L2 blocks
 
     verifier.initialize().await;
@@ -2364,8 +2334,7 @@ async fn out_of_order_span_batches_reordered_by_batch_queue() {
     {
         let mut source = ActionL2Source::new();
         source.push(block2);
-        Batcher::new(source, &h.rollup_config, span_cfg.clone())
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, span_cfg.clone()).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone()); // L1 block 1: future span batch
 
@@ -2373,8 +2342,7 @@ async fn out_of_order_span_batches_reordered_by_batch_queue() {
     {
         let mut source = ActionL2Source::new();
         source.push(block1);
-        Batcher::new(source, &h.rollup_config, span_cfg)
-            .advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, span_cfg).advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: present span batch
 
@@ -2458,8 +2426,7 @@ async fn large_l1_gaps_within_sequence_window() {
     let mut source = ActionL2Source::new();
     source.push(block1);
     source.push(block2);
-    Batcher::new(source, &h.rollup_config, batcher_cfg)
-        .advance(&mut h.l1).await;
+    Batcher::new(source, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone()); // L1 block 16: batches for L2 blocks 1 and 2
 
     verifier.initialize().await;

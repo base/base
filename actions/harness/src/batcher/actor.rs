@@ -1,5 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
+use base_alloy_consensus::OpBlock;
 use base_batcher_core::{
     BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
     ThrottleConfig, ThrottleController, ThrottleStrategy,
@@ -9,8 +10,6 @@ use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent}
 use base_consensus_genesis::RollupConfig;
 use base_runtime::TokioRuntime;
 use tokio_util::sync::CancellationToken;
-
-use base_alloy_consensus::OpBlock;
 
 use crate::{ActionL2Source, L1Miner, L1MinerTxManager, L2BlockProvider};
 
