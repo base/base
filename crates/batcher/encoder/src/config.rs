@@ -60,6 +60,16 @@ pub struct EncoderConfig {
     ///
     /// [`target_num_frames`]: EncoderConfig::target_num_frames
     pub da_type: DaType,
+
+    /// Approximate compression ratio used when estimating span batch compressed size.
+    ///
+    /// Applied as `raw_bytes * approx_compr_ratio` to predict compressed output size
+    /// without actually compressing. Should be slightly below the typical observed ratio
+    /// to avoid creating a small leftover frame. Also passed to the `ShadowCompressor`
+    /// as the ratio hint used when operating in [`BatchType::Single`] mode.
+    ///
+    /// Default: `0.6` (matches op-batcher's `--approx-compr-ratio` default).
+    pub approx_compr_ratio: f64,
 }
 
 impl Default for EncoderConfig {
@@ -72,6 +82,7 @@ impl Default for EncoderConfig {
             target_num_frames: 1,
             batch_type: BatchType::Single,
             da_type: DaType::Blob,
+            approx_compr_ratio: 0.6,
         }
     }
 }

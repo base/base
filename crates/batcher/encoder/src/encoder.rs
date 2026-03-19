@@ -6,15 +6,6 @@ use std::{
     sync::Arc,
 };
 
-/// Approximate compression ratio used by the `ShadowCompressor` (Brotli-10).
-/// Must stay in sync with the `approx_compr_ratio` value in `BatchEncoder::open_new_channel`.
-const APPROX_COMPR_RATIO: f64 = 0.6;
-
-/// Approximate bytes of per-block overhead when encoding as part of a [`SpanBatch`].
-/// Accounts for the fixed fields carried per singular batch (parent hash, epoch number,
-/// epoch hash, timestamp) plus RLP framing. Used for span accumulator size estimation.
-const SPAN_BATCH_PER_BLOCK_OVERHEAD: usize = 50;
-
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
@@ -65,7 +56,7 @@ pub struct BatchEncoder {
     /// flushed as a single [`SpanBatch`] when `close_current_channel()` is called.
     span_accumulator: Vec<(SingleBatch, u64)>,
     /// Running sum of the estimated raw (uncompressed) byte size of all blocks currently
-    /// in `span_accumulator`. Incremented by `SPAN_BATCH_PER_BLOCK_OVERHEAD` plus raw
+    /// in `span_accumulator`. Incremented by [`Self::SPAN_BATCH_PER_BLOCK_OVERHEAD`] plus raw
     /// transaction bytes for each block pushed in `step()`, and reset to zero when the
     /// accumulator is drained. Avoids an O(N·M) re-scan of the accumulator on every step.
     span_raw_bytes: usize,
@@ -95,6 +86,11 @@ impl fmt::Debug for BatchEncoder {
 }
 
 impl BatchEncoder {
+    /// Approximate bytes of per-block overhead when encoding as part of a [`SpanBatch`].
+    /// Accounts for the fixed fields carried per singular batch (parent hash, epoch number,
+    /// epoch hash, timestamp) plus RLP framing. Used for span accumulator size estimation.
+    pub const SPAN_BATCH_PER_BLOCK_OVERHEAD: usize = 50;
+
     /// Create a new [`BatchEncoder`].
     pub fn new(rollup_config: Arc<RollupConfig>, config: EncoderConfig) -> Self {
         Self {
@@ -295,7 +291,7 @@ impl BatchEncoder {
             target_output_size: self.config.target_frame_size as u64,
             kind: CompressorType::Shadow,
             compression_algo: CompressionAlgo::Brotli10,
-            approx_compr_ratio: APPROX_COMPR_RATIO,
+            approx_compr_ratio: self.config.approx_compr_ratio,
         };
         let compressor = ShadowCompressor::from(compressor_config);
 
@@ -386,7 +382,7 @@ impl BatchPipeline for BatchEncoder {
                 let seq_num = l1_info.sequence_number();
                 // Maintain a running byte counter so the size check below is O(1) per
                 // step rather than O(N·M) over the entire accumulator.
-                let block_raw_bytes = SPAN_BATCH_PER_BLOCK_OVERHEAD
+                let block_raw_bytes = Self::SPAN_BATCH_PER_BLOCK_OVERHEAD
                     + single_batch.transactions.iter().map(|tx| tx.len()).sum::<usize>();
                 self.span_raw_bytes += block_raw_bytes;
                 self.span_accumulator.push((single_batch, seq_num));
@@ -408,7 +404,7 @@ impl BatchPipeline for BatchEncoder {
                 // The compressed estimate uses the same ratio as the ShadowCompressor so that
                 // the size trigger fires at roughly the same threshold as Single mode.
                 let compressed_estimate =
-                    (self.span_raw_bytes as f64 * APPROX_COMPR_RATIO) as usize;
+                    (self.span_raw_bytes as f64 * self.config.approx_compr_ratio) as usize;
                 let size_target =
                     self.config.target_frame_size.saturating_mul(self.config.target_num_frames);
 

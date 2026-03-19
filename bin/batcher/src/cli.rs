@@ -100,6 +100,18 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "target-num-frames", default_value = "1", env = "BATCHER_TARGET_NUM_FRAMES")]
     pub target_num_frames: usize,
 
+    /// Approximate compression ratio used for span batch size estimation.
+    ///
+    /// Only relevant when `--batch-type=span`. Should be slightly below the
+    /// typical observed ratio to avoid creating a small leftover frame.
+    /// Matches op-batcher's `--approx-compr-ratio` default.
+    #[arg(
+        long = "approx-compr-ratio",
+        default_value = "0.6",
+        env = "BATCHER_APPROX_COMPR_RATIO"
+    )]
+    pub approx_compr_ratio: f64,
+
     /// Maximum number of in-flight (unconfirmed) transactions.
     #[arg(
         long = "max-pending-transactions",
@@ -171,6 +183,7 @@ impl BatcherArgs {
             max_channel_duration: self.max_channel_duration,
             sub_safety_margin: self.sub_safety_margin,
             target_num_frames: self.target_num_frames,
+            approx_compr_ratio: self.approx_compr_ratio,
             ..base_batcher_encoder::EncoderConfig::default()
         };
         encoder_config.validate()?;
