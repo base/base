@@ -7,7 +7,9 @@ mod action;
 pub use action::{Action, L2BlockProvider};
 
 mod miner;
-pub use miner::{L1Block, L1Miner, L1MinerConfig, PendingTx, ReorgError, block_info_from};
+pub use miner::{
+    L1Block, L1Miner, L1MinerConfig, PendingTx, ReorgError, UserDeposit, block_info_from,
+};
 
 mod l2;
 pub use l2::{

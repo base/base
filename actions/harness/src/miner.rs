@@ -21,6 +21,27 @@ pub fn block_info_from(block: &L1Block) -> BlockInfo {
     }
 }
 
+/// Parameters for a user deposit transaction, passed to [`L1Miner::enqueue_user_deposit`].
+///
+/// Mirrors the fields of the on-chain `OptimismPortal.sol` `TransactionDeposited` event.
+#[derive(Debug, Clone)]
+pub struct UserDeposit {
+    /// The L1 portal contract address that emits the deposit event.
+    pub deposit_contract: Address,
+    /// The L1 sender address.
+    pub from: Address,
+    /// The L2 recipient address.
+    pub to: Address,
+    /// ETH value to mint on L2 (in wei, as u128).
+    pub mint: u128,
+    /// ETH value to transfer on L2.
+    pub value: U256,
+    /// Gas limit for the L2 deposit transaction.
+    pub gas_limit: u64,
+    /// Calldata for the L2 deposit transaction.
+    pub data: Vec<u8>,
+}
+
 /// Error returned by [`L1Miner::reorg_to`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReorgError {
@@ -313,18 +334,9 @@ impl L1Miner {
     /// Mirrors the on-chain `OptimismPortal.sol` `TransactionDeposited` event.
     /// The derivation pipeline reads this from L1 receipts to include the
     /// deposit in the corresponding L2 block's attribute set.
-    pub fn enqueue_user_deposit(
-        &mut self,
-        deposit_contract: Address,
-        from: Address,
-        to: Address,
-        mint: u128,
-        value: U256,
-        gas_limit: u64,
-        data: &[u8],
-    ) {
+    pub fn enqueue_user_deposit(&mut self, deposit: &UserDeposit) {
         // opaqueData: mint(32) + value(32) + gas_limit(8) + isCreation(1) + calldata
-        let opaque_len = 32 + 32 + 8 + 1 + data.len();
+        let opaque_len = 32 + 32 + 8 + 1 + deposit.data.len();
         let opaque_padded = opaque_len.div_ceil(32) * 32;
         let total_len = 64 + opaque_padded; // offset(32) + length(32) + padded opaqueData
 
@@ -333,19 +345,19 @@ impl L1Miner {
         log_data[56..64].copy_from_slice(&(opaque_len as u64).to_be_bytes()); // length
 
         let base = 64;
-        log_data[base + 16..base + 32].copy_from_slice(&mint.to_be_bytes());
-        log_data[base + 32..base + 64].copy_from_slice(&value.to_be_bytes::<32>());
-        log_data[base + 64..base + 72].copy_from_slice(&gas_limit.to_be_bytes());
+        log_data[base + 16..base + 32].copy_from_slice(&deposit.mint.to_be_bytes());
+        log_data[base + 32..base + 64].copy_from_slice(&deposit.value.to_be_bytes::<32>());
+        log_data[base + 64..base + 72].copy_from_slice(&deposit.gas_limit.to_be_bytes());
         log_data[base + 72] = 0; // isCreation: false
-        log_data[base + 73..base + 73 + data.len()].copy_from_slice(data);
+        log_data[base + 73..base + 73 + deposit.data.len()].copy_from_slice(&deposit.data);
 
         let mut from_topic = [0u8; 32];
-        from_topic[12..32].copy_from_slice(from.as_slice());
+        from_topic[12..32].copy_from_slice(deposit.from.as_slice());
         let mut to_topic = [0u8; 32];
-        to_topic[12..32].copy_from_slice(to.as_slice());
+        to_topic[12..32].copy_from_slice(deposit.to.as_slice());
 
         self.enqueue_log(Log {
-            address: deposit_contract,
+            address: deposit.deposit_contract,
             data: LogData::new_unchecked(
                 vec![
                     DEPOSIT_EVENT_ABI_HASH,

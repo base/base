@@ -3,17 +3,15 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumHash;
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use base_action_harness::{
     ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, ActionL2Source,
     ActionTestHarness, BatchType, Batcher, BatcherConfig, DaType, EncoderConfig, L1MinerConfig,
     L2Sequencer, L2Verifier, PendingTx, SharedL1Chain, StepResult, TestRollupConfigBuilder,
-    block_info_from,
+    UserDeposit, block_info_from,
 };
-use base_consensus_genesis::{L1ChainConfig};
-use base_protocol::{
-    BlockInfo, DERIVATION_VERSION_0, L2BlockInfo,
-};
+use base_consensus_genesis::L1ChainConfig;
+use base_protocol::{BlockInfo, DERIVATION_VERSION_0, L2BlockInfo};
 
 /// The derivation pipeline reads a single batcher frame from L1 and derives
 /// the corresponding L2 block, advancing the safe head from genesis (0) to 1.
@@ -564,15 +562,15 @@ async fn l1_deposit_included_in_derived_l2_block() {
     let block1 = sequencer.build_next_block();
 
     // Enqueue a user deposit log: from=0xAA..AA, to=0xBB..BB, value=1 ETH, gas=100k.
-    h.l1.enqueue_user_deposit(
+    h.l1.enqueue_user_deposit(&UserDeposit {
         deposit_contract,
-        Address::repeat_byte(0xAA),
-        Address::repeat_byte(0xBB),
-        0,                                         // mint
-        U256::from(1_000_000_000_000_000_000u128), // 1 ETH in wei
-        100_000,                                   // gas_limit
-        &[],                                       // empty calldata
-    );
+        from: Address::repeat_byte(0xAA),
+        to: Address::repeat_byte(0xBB),
+        mint: 0,
+        value: U256::from(1_000_000_000_000_000_000u128), // 1 ETH in wei
+        gas_limit: 100_000,
+        data: vec![],
+    });
 
     // Submit the batcher frame into the same L1 block as the deposit log.
     {
