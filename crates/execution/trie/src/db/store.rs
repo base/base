@@ -504,9 +504,14 @@ impl MdbxProofsStorage {
         for (hashed_address, nodes) in sorted_trie_updates.storage_tries_ref() {
             // Handle wiped - mark all storage trie as deleted at the current block number
             if nodes.is_deleted && append_mode {
+                // Block 0 has no prior history window, so there is nothing to tombstone.
+                if block_number == 0 {
+                    continue;
+                }
                 // Yet to have any update for the current block number - So just using up to
                 // previous block number
-                let mut ro = self.storage_trie_cursor(*hashed_address, block_number - 1)?;
+                let mut ro =
+                    self.storage_trie_cursor(*hashed_address, block_number.saturating_sub(1))?;
                 let keys =
                     self.wipe_storage(tx, block_number, *hashed_address, || Ok(ro.next()?))?;
 
@@ -533,9 +538,14 @@ impl MdbxProofsStorage {
         for (hashed_address, storage) in sorted_post_state.storages {
             // Handle wiped - mark all storage slots as deleted at the current block number
             if append_mode && storage.is_wiped() {
+                // Block 0 has no prior history window, so there is nothing to tombstone.
+                if block_number == 0 {
+                    continue;
+                }
                 // Yet to have any update for the current block number - So just using up to
                 // previous block number
-                let mut ro = self.storage_hashed_cursor(hashed_address, block_number - 1)?;
+                let mut ro =
+                    self.storage_hashed_cursor(hashed_address, block_number.saturating_sub(1))?;
                 let keys =
                     self.wipe_storage(tx, block_number, hashed_address, || Ok(ro.next()?))?;
                 hashed_storage_keys.extend(keys);
@@ -2927,6 +2937,36 @@ mod tests {
     }
 
     #[test]
+    fn store_trie_updates_wiped_storage_trie_nodes_at_block_zero_is_noop() {
+        let dir = TempDir::new().unwrap();
+        let store = MdbxProofsStorage::new(dir.path()).expect("env");
+
+        const BLOCK: BlockWithParent =
+            BlockWithParent::new(B256::ZERO, NumHash::new(0, B256::ZERO));
+
+        let addr = B256::from([0x10; 32]);
+        let mut diff_trie_updates = TrieUpdates::default();
+        let mut wiped_updates = StorageTrieUpdates::default();
+        wiped_updates.set_deleted(true);
+        diff_trie_updates.storage_tries.insert(addr, wiped_updates);
+
+        let diff = BlockStateDiff {
+            sorted_trie_updates: diff_trie_updates.into_sorted(),
+            sorted_post_state: HashedPostStateSorted::default(),
+        };
+        store.store_trie_updates(BLOCK, diff).expect("store");
+
+        let tx = store.env.tx().expect("tx");
+        let mut change_cur = tx.new_cursor::<BlockChangeSet>().expect("cursor");
+        let (_, change_set) =
+            change_cur.seek_exact(BLOCK.block.number).expect("seek").expect("exists");
+        assert!(
+            change_set.storage_trie_keys.is_empty(),
+            "block 0 wipe must not create storage trie tombstones without prior history"
+        );
+    }
+
+    #[test]
     fn store_trie_updates_wiped_storage_trie_nodes() {
         let dir = TempDir::new().unwrap();
         let store = MdbxProofsStorage::new(dir.path()).expect("env");
@@ -2995,6 +3035,34 @@ mod tests {
             assert_eq!(vv.block_number, BLOCK.block.number);
             assert!(vv.value.0.is_some(), "expected normal node for non-wiped address at BLOCK");
         }
+    }
+
+    #[test]
+    fn store_trie_updates_wiped_storage_at_block_zero_is_noop() {
+        let dir = TempDir::new().unwrap();
+        let store = MdbxProofsStorage::new(dir.path()).expect("env");
+
+        const BLOCK: BlockWithParent =
+            BlockWithParent::new(B256::ZERO, NumHash::new(0, B256::ZERO));
+
+        let addr = B256::from([0x55; 32]);
+        let mut diff_post_state = HashedPostState::default();
+        diff_post_state.storages.insert(addr, reth_trie::HashedStorage::new(true));
+
+        let diff = BlockStateDiff {
+            sorted_trie_updates: TrieUpdatesSorted::default(),
+            sorted_post_state: diff_post_state.into_sorted(),
+        };
+        store.store_trie_updates(BLOCK, diff).expect("store");
+
+        let tx = store.env.tx().expect("tx");
+        let mut change_cur = tx.new_cursor::<BlockChangeSet>().expect("cursor");
+        let (_, change_set) =
+            change_cur.seek_exact(BLOCK.block.number).expect("seek").expect("exists");
+        assert!(
+            change_set.hashed_storage_keys.is_empty(),
+            "block 0 wipe must not create storage tombstones without prior history"
+        );
     }
 
     #[test]
