@@ -26,7 +26,6 @@ use base_zk_client::{
     GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse, ZkProofError,
     ZkProofProvider,
 };
-use jsonrpsee::core::ClientError;
 
 use crate::L1HeadProvider;
 
@@ -320,7 +319,7 @@ impl ZkProofProvider for MockZkProofProvider {
 #[derive(Debug)]
 pub struct MockTeeProofProvider {
     /// Queue of results returned by [`prove`](ProverClient::prove).
-    pub results: Mutex<VecDeque<Result<ProofResult, ClientError>>>,
+    pub results: Mutex<VecDeque<Result<ProofResult, Box<dyn std::error::Error + Send + Sync>>>>,
 }
 
 impl MockTeeProofProvider {
@@ -334,14 +333,17 @@ impl MockTeeProofProvider {
     /// Creates a mock that returns a single error.
     pub fn failure(msg: &str) -> Self {
         let mut q = VecDeque::new();
-        q.push_back(Err(ClientError::Custom(msg.to_owned())));
+        q.push_back(Err(msg.into()));
         Self { results: Mutex::new(q) }
     }
 }
 
 #[async_trait]
 impl ProverClient for MockTeeProofProvider {
-    async fn prove(&self, _request: ProofRequest) -> Result<ProofResult, ClientError> {
+    async fn prove(
+        &self,
+        _request: ProofRequest,
+    ) -> Result<ProofResult, Box<dyn std::error::Error + Send + Sync>> {
         self.results.lock().unwrap().pop_front().expect("MockTeeProofProvider has no more results")
     }
 }

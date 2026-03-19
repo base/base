@@ -360,7 +360,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             claimed_l2_block_number,
         };
 
-        let result = tee.provider.prove(request).await?;
+        let result = tee.provider.prove(request).await.map_err(|e| eyre::eyre!(e))?;
 
         // Validate that the TEE computed the expected output root and encode the proof.
         match &result {
