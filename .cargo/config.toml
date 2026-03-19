@@ -1,9 +1,3 @@
-[env]
-# Skip compiling Metal GPU kernels from source (risc0-sys).
-# Pre-built kernels are still available; this only avoids requiring
-# the `xcrun metal` toolchain (full Xcode) on macOS developer machines.
-RISC0_SKIP_BUILD_KERNELS = "1"
-
 # Faster linkers: mold on Linux, lld on macOS.
 # Prerequisites:
 #   Linux:  apt install mold  (or already provided by CI setup-mold action)
