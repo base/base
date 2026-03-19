@@ -317,8 +317,28 @@ impl Node {
             .ok_or_else(|| eyre::eyre!("No unsafe block signer found for chain ID: {id}"))
     }
 
+    /// Validates that a sequencer signing key is configured when running in sequencer mode.
+    fn validate_sequencer_key(&self) -> eyre::Result<()> {
+        if self.node_mode.is_sequencer() {
+            let signer = &self.p2p_flags.signer;
+            if signer.sequencer_key.is_none()
+                && signer.sequencer_key_path.is_none()
+                && signer.endpoint.is_none()
+            {
+                eyre::bail!(
+                    "sequencer mode requires a signing key; \
+                     provide --p2p.sequencer.key, --p2p.sequencer.key.path, \
+                     or --p2p.signer.endpoint"
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Run the Node subcommand.
     pub async fn exec(&self) -> eyre::Result<()> {
+        self.validate_sequencer_key()?;
+
         let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
 
         info!(
@@ -388,5 +408,79 @@ impl Node {
         })?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use alloy_chains::Chain;
+    use alloy_primitives::B256;
+    use base_client_cli::{P2PArgs, SignerArgs};
+    use base_consensus_node::NodeMode;
+    use rstest::rstest;
+    use url::Url;
+
+    use super::*;
+
+    fn default_node() -> Node {
+        Node {
+            l2_chain_id: Chain::from(8453_u64),
+            logging: LogArgs::default(),
+            metrics: MetricsArgs::default(),
+            node_mode: NodeMode::default(),
+            l1_rpc_args: L1ClientArgs::default(),
+            l2_client_args: L2ClientArgs::default(),
+            l1_config: L1ConfigFile::default(),
+            l2_config: L2ConfigFile::default(),
+            p2p_flags: P2PArgs::default(),
+            rpc_flags: RpcArgs::default(),
+            sequencer_flags: SequencerArgs::default(),
+        }
+    }
+
+    /// Tests that clap correctly wires env vars into the signer fields and that the
+    /// validation passes when each key source is provided via environment variable.
+    #[rstest]
+    #[case::raw_key(vec![("BASE_NODE_P2P_SEQUENCER_KEY", "bcc617ea05150ff60490d3c6058630ba94ae9f12a02a87efd291349ca0e54e0a")])]
+    #[case::key_path(vec![("BASE_NODE_P2P_SEQUENCER_KEY_PATH", "/tmp/key.hex")])]
+    #[case::remote_endpoint(vec![("BASE_NODE_P2P_SIGNER_ENDPOINT", "http://localhost:8080"), ("BASE_NODE_P2P_SIGNER_ADDRESS", "0xAf6E19BE0F9cE7f8afd49a1824851023A8249e8a")])]
+    fn test_validate_sequencer_key_env_var(#[case] env_vars: Vec<(&str, &str)>) {
+        for (k, v) in &env_vars {
+            // SAFETY: each rstest case uses distinct env var names, so concurrent
+            // test threads do not read or write the same variables simultaneously.
+            unsafe { std::env::set_var(k, v) }
+        }
+        let signer = SignerArgs::parse_from(["test"]);
+        for (k, _) in &env_vars {
+            // SAFETY: see above.
+            unsafe { std::env::remove_var(k) }
+        }
+        let node = Node {
+            node_mode: NodeMode::Sequencer,
+            p2p_flags: P2PArgs { signer, ..P2PArgs::default() },
+            ..default_node()
+        };
+        assert!(node.validate_sequencer_key().is_ok());
+    }
+
+    #[rstest]
+    #[case::validator_no_key(NodeMode::Validator, SignerArgs::default(), true)]
+    #[case::sequencer_no_key(NodeMode::Sequencer, SignerArgs::default(), false)]
+    #[case::sequencer_raw_key(NodeMode::Sequencer, SignerArgs { sequencer_key: Some(B256::ZERO), ..Default::default() }, true)]
+    #[case::sequencer_key_path(NodeMode::Sequencer, SignerArgs { sequencer_key_path: Some(PathBuf::from("/tmp/key.hex")), ..Default::default() }, true)]
+    #[case::sequencer_remote_endpoint(NodeMode::Sequencer, SignerArgs { endpoint: Some(Url::parse("http://localhost:8080").unwrap()), ..Default::default() }, true)]
+    fn test_validate_sequencer_key(
+        #[case] mode: NodeMode,
+        #[case] signer: SignerArgs,
+        #[case] expected_ok: bool,
+    ) {
+        let node = Node {
+            node_mode: mode,
+            p2p_flags: P2PArgs { signer, ..P2PArgs::default() },
+            ..default_node()
+        };
+        assert_eq!(node.validate_sequencer_key().is_ok(), expected_ok);
     }
 }

@@ -3212,6 +3212,7 @@ dependencies = [
  "clap",
  "eyre",
  "metrics",
+ "rstest",
  "serde",
  "serde_json",
  "strum 0.28.0",
