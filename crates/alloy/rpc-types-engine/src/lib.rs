@@ -25,7 +25,7 @@ pub use sidecar::OpExecutionPayloadSidecar;
 mod payload;
 pub use payload::{
     OpExecutionPayload, OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4,
-    OpExecutionPayloadV4, OpPayloadError,
+    OpExecutionPayloadEnvelopeV5, OpExecutionPayloadV4, OpPayloadError,
 };
 
 mod flashblock;

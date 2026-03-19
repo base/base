@@ -32,6 +32,14 @@ impl TryFrom<&OtherFields> for OpChainInfo {
     }
 }
 
+/// Base-specific hardfork configuration in a genesis file.
+#[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpBaseHardforkInfo {
+    /// Base V1 hardfork timestamp.
+    pub v1: Option<u64>,
+}
+
 /// The Base chain-specific genesis block specification.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +62,9 @@ pub struct OpGenesisInfo {
     pub isthmus_time: Option<u64>,
     /// jovian hardfork timestamp
     pub jovian_time: Option<u64>,
+    /// Base-specific hardfork activation times.
+    #[serde(default)]
+    pub base: OpBaseHardforkInfo,
 }
 
 impl OpGenesisInfo {
@@ -114,7 +125,10 @@ mod tests {
           "bedrockBlock": 10,
           "regolithTime": 12,
           "canyonTime": 0,
-          "ecotoneTime": 0
+          "ecotoneTime": 0,
+          "base": {
+            "v1": 14
+          }
         }
         "#;
 
@@ -133,6 +147,7 @@ mod tests {
                 holocene_time: None,
                 isthmus_time: None,
                 jovian_time: None,
+                base: OpBaseHardforkInfo { v1: Some(14) },
             }
         );
     }
@@ -170,6 +185,9 @@ mod tests {
           "regolithTime": 12,
           "canyonTime": 0,
           "ecotoneTime": 0,
+          "base": {
+            "v1": 14
+          },
           "optimism": {
             "eip1559Denominator": 8,
             "eip1559DenominatorCanyon": 8
@@ -193,6 +211,7 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
+                    base: OpBaseHardforkInfo { v1: Some(14) },
                 }),
                 base_fee_info: Some(OpBaseFeeInfo {
                     eip1559_elasticity: None,
@@ -217,6 +236,7 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
+                    base: OpBaseHardforkInfo { v1: Some(14) },
                 }),
                 base_fee_info: Some(OpBaseFeeInfo {
                     eip1559_elasticity: None,
@@ -259,6 +279,7 @@ mod tests {
                     holocene_time: Some(0),
                     isthmus_time: Some(0),
                     jovian_time: Some(0),
+                    base: OpBaseHardforkInfo::default(),
                 }),
                 base_fee_info: None,
             }
