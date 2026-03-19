@@ -5,20 +5,6 @@ use base_action_harness::{
     EncoderConfig, L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
 
-/// Build an [`ActionL2Source`] pre-populated with `n` real [`OpBlock`]s from
-/// the genesis of the given harness.
-///
-/// [`OpBlock`]: base_alloy_consensus::OpBlock
-fn make_source(h: &ActionTestHarness, n: u64) -> ActionL2Source {
-    let chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-    let mut sequencer = h.create_l2_sequencer(chain);
-    let mut source = ActionL2Source::new();
-    for _ in 0..n {
-        source.push(sequencer.build_next_block());
-    }
-    source
-}
-
 // ---------------------------------------------------------------------------
 // Batcher: persistent pipeline end-to-end path
 // ---------------------------------------------------------------------------
@@ -28,7 +14,7 @@ async fn batcher_mines_block_with_submissions() {
     let mut h = ActionTestHarness::default();
     let cfg = BatcherConfig::default();
 
-    let source = make_source(&h, 3);
+    let source = h.create_l2_source(3);
     let mut batcher = Batcher::new(source, &h.rollup_config, cfg);
     batcher.advance(&mut h.l1).await;
 
@@ -45,7 +31,7 @@ async fn batcher_span_batch_mode() {
     let mut h = ActionTestHarness::default();
     let cfg = BatcherConfig { batch_type: BatchType::Span, ..Default::default() };
 
-    let source = make_source(&h, 3);
+    let source = h.create_l2_source(3);
     let mut batcher = Batcher::new(source, &h.rollup_config, cfg);
     batcher.advance(&mut h.l1).await;
 

@@ -4,23 +4,11 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
     L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
-use base_alloy_consensus::{OpBlock, OpTxEnvelope};
 use base_consensus_genesis::HardForkConfig;
 use base_protocol::L1BlockInfoTx;
 
-/// Decode the [`L1BlockInfoTx`] from the first (deposit) transaction of an [`OpBlock`].
-fn l1_info_from_block(block: &OpBlock) -> L1BlockInfoTx {
-    let OpTxEnvelope::Deposit(sealed) = &block.body.transactions[0] else {
-        panic!("first transaction must be a deposit");
-    };
-    L1BlockInfoTx::decode_calldata(sealed.inner().input.as_ref())
-        .expect("L1 info calldata must decode")
-}
-
 // ---------------------------------------------------------------------------
 // A. L1 info format transitions at Ecotone activation
-//
-// op-e2e ref: ecotone_fork_test.go
 // ---------------------------------------------------------------------------
 
 /// The L1 info deposit transaction changes format at Ecotone activation in
@@ -58,7 +46,7 @@ fn ecotone_l1_info_format_transitions_at_activation() {
 
     // Block 1: ts=2 — pre-Ecotone. Expect Bedrock format.
     let block1 = builder.build_next_block();
-    let info1 = l1_info_from_block(&block1);
+    let info1 = ActionTestHarness::l1_info_from_block(&block1);
     assert!(
         matches!(info1, L1BlockInfoTx::Bedrock(_)),
         "block 1 (pre-Ecotone ts=2) must use Bedrock format, got {info1:?}"
@@ -66,7 +54,7 @@ fn ecotone_l1_info_format_transitions_at_activation() {
 
     // Block 2: ts=4 — still pre-Ecotone. Expect Bedrock format.
     let block2 = builder.build_next_block();
-    let info2 = l1_info_from_block(&block2);
+    let info2 = ActionTestHarness::l1_info_from_block(&block2);
     assert!(
         matches!(info2, L1BlockInfoTx::Bedrock(_)),
         "block 2 (pre-Ecotone ts=4) must use Bedrock format, got {info2:?}"
@@ -77,7 +65,7 @@ fn ecotone_l1_info_format_transitions_at_activation() {
     // still on the Bedrock ABI. The sequencer sends a Bedrock-format L1 info tx.
     let block3 = builder.build_empty_block();
     assert_eq!(block3.header.timestamp, ecotone_time, "block 3 must be at ecotone_time");
-    let info3 = l1_info_from_block(&block3);
+    let info3 = ActionTestHarness::l1_info_from_block(&block3);
     assert!(
         matches!(info3, L1BlockInfoTx::Bedrock(_)),
         "block 3 (first Ecotone ts=6) must still use Bedrock format, got {info3:?}"
@@ -86,7 +74,7 @@ fn ecotone_l1_info_format_transitions_at_activation() {
     // Block 4: ts=8 — second Ecotone block. L1Block contract now upgraded.
     // Sequencer sends Ecotone-format L1 info tx.
     let block4 = builder.build_next_block();
-    let info4 = l1_info_from_block(&block4);
+    let info4 = ActionTestHarness::l1_info_from_block(&block4);
     assert!(
         matches!(info4, L1BlockInfoTx::Ecotone(_)),
         "block 4 (post-Ecotone ts=8) must use Ecotone format, got {info4:?}"
@@ -95,8 +83,6 @@ fn ecotone_l1_info_format_transitions_at_activation() {
 
 // ---------------------------------------------------------------------------
 // B. Ecotone activation block user txs are accepted at the batch layer
-//
-// op-e2e ref: ecotone_fork_test.go
 // ---------------------------------------------------------------------------
 
 /// Unlike the Jovian hardfork, Ecotone does **not** enforce an empty first block
@@ -187,8 +173,6 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
 
 // ---------------------------------------------------------------------------
 // C. Derivation through the Ecotone activation boundary
-//
-// op-e2e ref: ecotone_fork_test.go
 // ---------------------------------------------------------------------------
 
 /// Full end-to-end derivation through the Ecotone activation boundary,

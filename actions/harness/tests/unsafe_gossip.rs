@@ -5,7 +5,7 @@ use base_action_harness::{
     L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
 
-/// Simulates the full op-e2e gossip pattern:
+/// Simulates the P2P gossip pattern:
 ///
 /// 1. A sequencer builds 5 L2 blocks.
 /// 2. Each block is gossiped to the verifier, advancing `unsafe_head` to 5.

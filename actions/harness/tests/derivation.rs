@@ -3,16 +3,16 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumHash;
-use alloy_primitives::{Address, B256, Bytes, LogData, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use base_action_harness::{
     ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, ActionL2Source,
     ActionTestHarness, BatchType, Batcher, BatcherConfig, DaType, EncoderConfig, L1MinerConfig,
     L2Sequencer, L2Verifier, PendingTx, SharedL1Chain, StepResult, TestRollupConfigBuilder,
     block_info_from,
 };
-use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, L1ChainConfig};
+use base_consensus_genesis::{L1ChainConfig};
 use base_protocol::{
-    BlockInfo, DEPOSIT_EVENT_ABI_HASH, DEPOSIT_EVENT_VERSION_0, DERIVATION_VERSION_0, L2BlockInfo,
+    BlockInfo, DERIVATION_VERSION_0, L2BlockInfo,
 };
 
 /// The derivation pipeline reads a single batcher frame from L1 and derives
@@ -278,7 +278,6 @@ async fn reorg_and_resubmit_rederives_l2_block() {
 /// L2 block from whichever fork is currently canonical, without accumulating
 /// stale channel or frame data from a previous fork.
 ///
-/// This is the analogue of op-e2e's `ReorgFlipFlop` scenario.
 #[tokio::test]
 async fn reorg_flip_flop() {
     let batcher_cfg = BatcherConfig {
@@ -491,7 +490,6 @@ async fn reorg_flip_flop_empty_middle_fork() {
 /// L1 blocks 1–3 (strictly: `epoch(0) + window(4) > inclusion_block`).
 /// Submitting the batch in block 3 — the final valid slot — must succeed.
 ///
-/// This is the analogue of op-e2e's `BatchInLastPossibleBlocks` scenario.
 #[tokio::test]
 async fn batch_accepted_at_last_seq_window_block() {
     const SEQ_WINDOW: u64 = 4;
@@ -536,102 +534,6 @@ async fn batch_accepted_at_last_seq_window_block() {
     assert_eq!(verifier.l2_safe_number(), 1, "batch in last valid L1 block must be derived");
 }
 
-/// Build a `ConfigUpdate` log encoding a batcher-address rotation.
-///
-/// The log is addressed to `l1_sys_cfg_addr` so that the derivation
-/// pipeline's [`IndexedTraversal`] recognises and applies it when reading
-/// the containing block's receipts via `update_with_receipts`.
-///
-/// Log layout (mirrors the on-chain `SystemConfig.sol` event):
-/// - `topics[0]` = `CONFIG_UPDATE_TOPIC`
-/// - `topics[1]` = `CONFIG_UPDATE_EVENT_VERSION_0` (`B256::ZERO`)
-/// - `topics[2]` = `B256::ZERO` (`UpdateType::BatcherAddress = 0`)
-/// - `data`      = ABI-encoded `bytes`: pointer(0x20) ++ length(0x20) ++
-///   right-aligned 20-byte batcher address
-///
-/// [`IndexedTraversal`]: base_consensus_derive::IndexedTraversal
-fn batcher_update_log(l1_sys_cfg_addr: Address, new_batcher: Address) -> alloy_primitives::Log {
-    // 96 bytes: pointer (32) + length (32) + padded address (32).
-    let mut data = [0u8; 96];
-    data[31] = 0x20; // pointer → offset 32
-    data[63] = 0x20; // length  → 32 bytes
-    data[76..96].copy_from_slice(new_batcher.as_slice()); // address, right-aligned
-
-    alloy_primitives::Log {
-        address: l1_sys_cfg_addr,
-        data: LogData::new_unchecked(
-            vec![CONFIG_UPDATE_TOPIC, CONFIG_UPDATE_EVENT_VERSION_0, B256::ZERO],
-            data.into(),
-        ),
-    }
-}
-
-/// Build a `TransactionDeposited` log encoding a user deposit.
-///
-/// The log is addressed to the rollup config's `deposit_contract_address` so
-/// that the derivation pipeline's attributes builder picks it up and includes
-/// the deposit transaction in the derived L2 block.
-///
-/// Log layout (mirrors the on-chain `OptimismPortal.sol` event):
-/// - `topics[0]` = `DEPOSIT_EVENT_ABI_HASH`
-/// - `topics[1]` = `from` address left-padded to B256
-/// - `topics[2]` = `to` address left-padded to B256
-/// - `topics[3]` = `DEPOSIT_EVENT_VERSION_0` (`B256::ZERO`)
-/// - `data`      = ABI-encoded opaqueData:
-///   offset(32) + length(32) + tightly-packed(mint(32) + value(32) + gas(8) + isCreation(1) + calldata)
-fn user_deposit_log(
-    deposit_contract: Address,
-    from: Address,
-    to: Address,
-    mint: u128,
-    value: U256,
-    gas_limit: u64,
-    data: &[u8],
-) -> alloy_primitives::Log {
-    // opaqueData: mint(32) + value(32) + gas_limit(8) + isCreation(1) + data
-    let opaque_len = 32 + 32 + 8 + 1 + data.len();
-    let opaque_padded = opaque_len.div_ceil(32) * 32;
-    let total_len = 64 + opaque_padded; // offset(32) + length(32) + padded opaqueData
-
-    let mut log_data = vec![0u8; total_len];
-
-    // offset = 32 (right-aligned u64 in 32-byte slot)
-    log_data[24..32].copy_from_slice(&32u64.to_be_bytes());
-    // length of opaqueData
-    log_data[56..64].copy_from_slice(&(opaque_len as u64).to_be_bytes());
-
-    let base = 64;
-    // mint: u128 big-endian in bytes [16..32] of a 32-byte slot (upper 16 bytes are zero)
-    log_data[base + 16..base + 32].copy_from_slice(&mint.to_be_bytes());
-    // value: U256 big-endian in 32 bytes
-    log_data[base + 32..base + 64].copy_from_slice(&value.to_be_bytes::<32>());
-    // gas_limit: u64 big-endian in 8 bytes
-    log_data[base + 64..base + 72].copy_from_slice(&gas_limit.to_be_bytes());
-    // isCreation: 0 (call, not create)
-    log_data[base + 72] = 0;
-    // calldata
-    log_data[base + 73..base + 73 + data.len()].copy_from_slice(data);
-
-    // Build from/to topics: left-padded addresses in B256
-    let mut from_topic = [0u8; 32];
-    from_topic[12..32].copy_from_slice(from.as_slice());
-    let mut to_topic = [0u8; 32];
-    to_topic[12..32].copy_from_slice(to.as_slice());
-
-    alloy_primitives::Log {
-        address: deposit_contract,
-        data: LogData::new_unchecked(
-            vec![
-                DEPOSIT_EVENT_ABI_HASH,
-                B256::from(from_topic),
-                B256::from(to_topic),
-                DEPOSIT_EVENT_VERSION_0,
-            ],
-            log_data.into(),
-        ),
-    }
-}
-
 /// A user deposit log on L1 is processed by the derivation pipeline without
 /// errors.
 ///
@@ -662,7 +564,7 @@ async fn l1_deposit_included_in_derived_l2_block() {
     let block1 = sequencer.build_next_block();
 
     // Enqueue a user deposit log: from=0xAA..AA, to=0xBB..BB, value=1 ETH, gas=100k.
-    h.l1.enqueue_log(user_deposit_log(
+    h.l1.enqueue_user_deposit(
         deposit_contract,
         Address::repeat_byte(0xAA),
         Address::repeat_byte(0xBB),
@@ -670,7 +572,7 @@ async fn l1_deposit_included_in_derived_l2_block() {
         U256::from(1_000_000_000_000_000_000u128), // 1 ETH in wei
         100_000,                                   // gas_limit
         &[],                                       // empty calldata
-    ));
+    );
 
     // Submit the batcher frame into the same L1 block as the deposit log.
     {
@@ -716,9 +618,6 @@ async fn l1_deposit_included_in_derived_l2_block() {
 ///   L1 block 4:    batcher A submits  → IGNORED (0 derived)
 ///   L1 block 5:    batcher B submits  → DERIVED (1 derived)
 ///
-/// This is the acceptance/rejection half of op-e2e's `BatcherKeyRotation`
-/// scenario (the reorg-of-rotation reversal is left for a future test once
-/// receipt log infrastructure is complete).
 ///
 /// [`IndexedTraversal`]: base_consensus_derive::IndexedTraversal
 /// [`SystemConfig`]: base_consensus_genesis::SystemConfig
@@ -758,7 +657,7 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     // --- L1 block 3: rotation log only, no batch. ---
     // After the traversal processes this block and reads the ConfigUpdate log
     // from its receipts, the pipeline's internal batcher address switches to B.
-    h.l1.enqueue_log(batcher_update_log(l1_sys_cfg_addr, batcher_b.batcher_address));
+    h.l1.enqueue_batcher_update(l1_sys_cfg_addr, batcher_b.batcher_address);
     h.l1.mine_block(); // block 3: rotation receipt, no batcher tx
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -1300,65 +1199,6 @@ async fn three_l2_blocks_derived_from_span_batch() {
 
 // ── System-config update tests ─────────────────────────────────────────────────
 
-/// Build a `ConfigUpdate` log encoding a gas-config (overhead + scalar) change.
-///
-/// Log layout mirrors `SystemConfig.sol`:
-/// - `topics[0]` = `CONFIG_UPDATE_TOPIC`
-/// - `topics[1]` = `CONFIG_UPDATE_EVENT_VERSION_0`
-/// - `topics[2]` = `B256` encoding `UpdateType::GasConfig = 1`
-/// - `data`      = 128 bytes: pointer(32=0x20) + length(64=0x40) +
-///   overhead(U256, 32 bytes) + scalar(U256, 32 bytes)
-fn gas_config_update_log(
-    l1_sys_cfg_addr: Address,
-    overhead: u64,
-    scalar: u64,
-) -> alloy_primitives::Log {
-    let mut data = [0u8; 128];
-    data[31] = 0x20; // pointer = 32
-    data[63] = 0x40; // length  = 64
-    // overhead and scalar right-aligned as big-endian u64 in U256 slots.
-    data[88..96].copy_from_slice(&overhead.to_be_bytes());
-    data[120..128].copy_from_slice(&scalar.to_be_bytes());
-
-    let mut update_type = [0u8; 32];
-    update_type[31] = 1; // GasConfig = 1
-
-    alloy_primitives::Log {
-        address: l1_sys_cfg_addr,
-        data: LogData::new_unchecked(
-            vec![CONFIG_UPDATE_TOPIC, CONFIG_UPDATE_EVENT_VERSION_0, B256::from(update_type)],
-            data.into(),
-        ),
-    }
-}
-
-/// Build a `ConfigUpdate` log encoding a gas-limit change.
-///
-/// Log layout mirrors `SystemConfig.sol`:
-/// - `topics[0]` = `CONFIG_UPDATE_TOPIC`
-/// - `topics[1]` = `CONFIG_UPDATE_EVENT_VERSION_0`
-/// - `topics[2]` = `B256` encoding `UpdateType::GasLimit = 2`
-/// - `data`      = 96 bytes: pointer(32=0x20) + length(32=0x20) +
-///   `gas_limit` (U256, 32 bytes)
-fn gas_limit_update_log(l1_sys_cfg_addr: Address, gas_limit: u64) -> alloy_primitives::Log {
-    let mut data = [0u8; 96];
-    data[31] = 0x20; // pointer = 32
-    data[63] = 0x20; // length  = 32
-    // gas_limit right-aligned as big-endian u64 in a U256 slot.
-    data[88..96].copy_from_slice(&gas_limit.to_be_bytes());
-
-    let mut update_type = [0u8; 32];
-    update_type[31] = 2; // GasLimit = 2
-
-    alloy_primitives::Log {
-        address: l1_sys_cfg_addr,
-        data: LogData::new_unchecked(
-            vec![CONFIG_UPDATE_TOPIC, CONFIG_UPDATE_EVENT_VERSION_0, B256::from(update_type)],
-            data.into(),
-        ),
-    }
-}
-
 /// A `GasConfig` system-config update committed to L1 does not disrupt ongoing
 /// derivation.
 ///
@@ -1391,7 +1231,7 @@ async fn gpo_params_change_does_not_disrupt_derivation() {
     }
 
     // L1 block 2: gas-config update log only, no batch.
-    h.l1.enqueue_log(gas_config_update_log(l1_sys_cfg_addr, 2100, 1_000_000));
+    h.l1.enqueue_gas_config_update(l1_sys_cfg_addr, 2100, 1_000_000);
     h.l1.mine_block();
 
     // L1 block 3: batch for L2 block 2.
@@ -1447,7 +1287,7 @@ async fn gas_limit_change_does_not_disrupt_derivation() {
     }
 
     // L1 block 2: gas-limit update log only.
-    h.l1.enqueue_log(gas_limit_update_log(l1_sys_cfg_addr, 60_000_000));
+    h.l1.enqueue_gas_limit_update(l1_sys_cfg_addr, 60_000_000);
     h.l1.mine_block();
 
     // L1 block 3: batch for L2 block 2.
@@ -1878,7 +1718,6 @@ async fn multiple_l2_blocks_derived_from_blob() {
 ///      now accepts it because the config update was rolled back.  Safe head
 ///      advances to 3.
 ///
-/// This is the reorg-reversal half of op-e2e's `BatcherKeyRotation` scenario.
 #[tokio::test]
 async fn batcher_config_update_rolled_back_on_reorg() {
     // --- Phase 1: Setup ---
@@ -1915,7 +1754,7 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     }
 
     // --- Phase 3: Rotate config (L1 block 3 — config update log only). ---
-    h.l1.enqueue_log(batcher_update_log(l1_sys_cfg_addr, batcher_b.batcher_address));
+    h.l1.enqueue_batcher_update(l1_sys_cfg_addr, batcher_b.batcher_address);
     h.l1.mine_block();
 
     // Create verifier after all pre-reorg L1 blocks are mined.
@@ -2395,7 +2234,6 @@ async fn out_of_order_span_batches_reordered_by_batch_queue() {
 /// This exercises the pipeline's L1 traversal over many empty blocks — the
 /// common mainnet scenario during periods of L1 congestion.
 ///
-/// op-e2e ref: `LargeL1Gaps`
 #[tokio::test]
 async fn large_l1_gaps_within_sequence_window() {
     let batcher_cfg = BatcherConfig {
@@ -2459,7 +2297,6 @@ async fn large_l1_gaps_within_sequence_window() {
 /// Expected result: the safe head advances well past genesis as the pipeline
 /// synthesises deposit-only blocks for each expired epoch.
 ///
-/// op-e2e ref: `ExtendedTimeWithoutL1Batches`
 #[tokio::test]
 async fn extended_sequence_window_exhaustion_fills_with_deposit_only_blocks() {
     const SEQ_WINDOW: u64 = 4;

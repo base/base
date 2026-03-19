@@ -11,6 +11,11 @@ pub struct TestRollupConfigBuilder {
 }
 
 impl TestRollupConfigBuilder {
+    /// Returns the Base mainnet [`RollupConfig`] from the chain registry.
+    pub fn mainnet() -> &'static RollupConfig {
+        Registry::rollup_config(8453).expect("Base mainnet config must exist in the registry")
+    }
+
     /// Starts from the Base mainnet config and applies the common harness overrides.
     ///
     /// This preserves the existing harness-test behavior by wiring the test batcher

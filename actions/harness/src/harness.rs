@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumHash;
+use base_alloy_consensus::{OpBlock, OpTxEnvelope};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{
     ActionBlobDataSource, ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider,
-    BlobVerifierPipeline, L1Miner, L1MinerConfig, L2Sequencer, L2Verifier, SharedL1Chain,
-    VerifierPipeline, block_info_from,
+    ActionL2Source, BlobVerifierPipeline, L1Miner, L1MinerConfig, L2Sequencer, L2Verifier,
+    SharedL1Chain, VerifierPipeline, block_info_from,
 };
 
 /// Top-level test harness that owns all actors for a single action test.
@@ -109,6 +110,42 @@ impl ActionTestHarness {
         let system_config = self.rollup_config.genesis.system_config.unwrap_or_default();
 
         L2Sequencer::new(genesis_head, l1_chain, self.rollup_config.clone(), system_config)
+    }
+
+    /// Decode the [`L1BlockInfoTx`] from the first deposit transaction of an
+    /// [`OpBlock`].
+    ///
+    /// Every L2 block begins with an L1 info deposit whose calldata encodes the
+    /// active [`L1BlockInfoTx`] variant (Bedrock / Ecotone / Isthmus / Jovian).
+    /// Use this to assert that the correct format is used at hardfork boundaries.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the first transaction is not a deposit or if the calldata
+    /// cannot be decoded.
+    pub fn l1_info_from_block(block: &OpBlock) -> L1BlockInfoTx {
+        let OpTxEnvelope::Deposit(sealed) = &block.body.transactions[0] else {
+            panic!("first transaction must be a deposit");
+        };
+        L1BlockInfoTx::decode_calldata(sealed.inner().input.as_ref())
+            .expect("L1 info calldata must decode")
+    }
+
+    /// Build an [`ActionL2Source`] pre-populated with `n` real [`OpBlock`]s
+    /// starting from L2 genesis.
+    ///
+    /// Use this when a test needs a ready-made block source and does not
+    /// require direct access to the underlying [`L2Sequencer`].
+    ///
+    /// [`OpBlock`]: base_alloy_consensus::OpBlock
+    pub fn create_l2_source(&self, n: u64) -> ActionL2Source {
+        let chain = SharedL1Chain::from_blocks(self.l1.chain().to_vec());
+        let mut sequencer = self.create_l2_sequencer(chain);
+        let mut source = ActionL2Source::new();
+        for _ in 0..n {
+            source.push(sequencer.build_next_block());
+        }
+        source
     }
 
     /// Create an [`L2Verifier`] wired to the harness's L1 chain.

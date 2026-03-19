@@ -4,8 +4,7 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, BatchType, Batcher, BatcherConfig, DaType, EncoderConfig,
     L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
-use base_consensus_genesis::{HardForkConfig, RollupConfig};
-use base_consensus_registry::Registry;
+use base_consensus_genesis::HardForkConfig;
 
 // ---------------------------------------------------------------------------
 // Section 1: Base mainnet config — hardfork boundary tests
@@ -20,11 +19,6 @@ use base_consensus_registry::Registry;
 // correct activation semantics.
 // ---------------------------------------------------------------------------
 
-/// Returns the Base mainnet [`RollupConfig`] from the chain registry.
-fn mainnet() -> &'static RollupConfig {
-    Registry::rollup_config(8453).expect("Base mainnet config must exist in the registry")
-}
-
 /// Every hardfork activates at its recorded mainnet timestamp and is inactive
 /// one second before that timestamp.
 ///
@@ -33,7 +27,7 @@ fn mainnet() -> &'static RollupConfig {
 /// activation logic.
 #[test]
 fn each_hardfork_activates_at_its_mainnet_timestamp() {
-    let rc = mainnet();
+    let rc = TestRollupConfigBuilder::mainnet();
 
     let canyon_time = rc.hardforks.canyon_time.expect("canyon_time must be set on mainnet");
     let delta_time = rc.hardforks.delta_time.expect("delta_time must be set on mainnet");
@@ -95,7 +89,7 @@ fn each_hardfork_activates_at_its_mainnet_timestamp() {
 /// trips at a different second, so there is never a spurious simultaneous cascade.
 #[test]
 fn mainnet_hardfork_timestamps_are_strictly_ordered() {
-    let h = &mainnet().hardforks;
+    let h = &TestRollupConfigBuilder::mainnet().hardforks;
 
     let ordered: &[(&str, u64)] = &[
         ("canyon", h.canyon_time.expect("canyon_time")),
@@ -120,7 +114,7 @@ fn mainnet_hardfork_timestamps_are_strictly_ordered() {
 /// and all later forks are not yet active.
 #[test]
 fn cascade_implies_all_preceding_forks_and_no_later_forks() {
-    let rc = mainnet();
+    let rc = TestRollupConfigBuilder::mainnet();
 
     let delta_time = rc.hardforks.delta_time.expect("delta_time");
     let fjord_time = rc.hardforks.fjord_time.expect("fjord_time");
@@ -164,7 +158,7 @@ fn cascade_implies_all_preceding_forks_and_no_later_forks() {
 /// before Fjord the configured value applies; at Fjord the constant applies.
 #[test]
 fn fjord_changes_max_sequencer_drift_at_mainnet_timestamp() {
-    let rc = mainnet();
+    let rc = TestRollupConfigBuilder::mainnet();
     let fjord_time = rc.hardforks.fjord_time.expect("fjord_time");
 
     // One second before Fjord: the rollup config field is used.
@@ -191,7 +185,7 @@ fn fjord_changes_max_sequencer_drift_at_mainnet_timestamp() {
 /// `granite_channel_timeout`. The transition is sharp at the exact fork second.
 #[test]
 fn granite_changes_channel_timeout_at_mainnet_timestamp() {
-    let rc = mainnet();
+    let rc = TestRollupConfigBuilder::mainnet();
     let granite_time = rc.hardforks.granite_time.expect("granite_time");
 
     // One second before Granite: the base channel_timeout field is used.
@@ -218,7 +212,7 @@ fn granite_changes_channel_timeout_at_mainnet_timestamp() {
 /// cascade chain: Jovian does not imply it, and it does not imply Jovian.
 #[test]
 fn base_v1_is_standalone_from_jovian() {
-    let rc = mainnet();
+    let rc = TestRollupConfigBuilder::mainnet();
     let jovian_time = rc.hardforks.jovian_time.expect("jovian_time");
 
     // On mainnet BaseV1 is not yet scheduled, so it's inactive at all times.

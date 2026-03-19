@@ -353,8 +353,8 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
 
     /// Signal the pipeline that a new L1 block is available.
     ///
-    /// This is equivalent to op-e2e's `ActL1HeadSignal`. The [`IndexedTraversal`]
-    /// stage will accept the block only if it is the next sequential block
+    /// The [`IndexedTraversal`] stage will accept the block only if it is the
+    /// next sequential block
     /// (number = current + 1 and `parent_hash` matches).
     ///
     /// [`IndexedTraversal`]: base_consensus_derive::IndexedTraversal
@@ -548,9 +548,8 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     /// or until the pipeline reaches EOF (goes idle), or until `max_steps` is
     /// exhausted.
     ///
-    /// This is the Rust equivalent of op-e2e's `ActL2EventsUntil`. It drives
-    /// the pipeline forward step-by-step and hands each raw [`StepResult`] to
-    /// the caller's predicate. Use it when a test needs to stop at a specific
+    /// Drives the pipeline forward step-by-step and hands each raw
+    /// [`StepResult`] to the caller's predicate. Use it when a test needs to stop at a specific
     /// derivation outcome without knowing in advance how many steps it takes to
     /// get there.
     ///
@@ -723,8 +722,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
 
     /// Inject an unsafe L2 block as if received via P2P gossip.
     ///
-    /// Equivalent to op-e2e's `ActL2UnsafeGossipReceive`. The block's header is
-    /// used to advance `unsafe_head`; the block hash is also registered in
+    /// The block's header is used to advance `unsafe_head`; the block hash is also registered in
     /// `block_hashes` so that subsequent derivation can build a consistent
     /// `parent_hash` chain without a separate [`register_block_hash`] call.
     ///

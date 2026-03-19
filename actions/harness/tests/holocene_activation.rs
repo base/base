@@ -8,8 +8,6 @@ use base_consensus_genesis::HardForkConfig;
 
 // ---------------------------------------------------------------------------
 // A. Basic derivation through the Holocene activation boundary
-//
-// op-e2e ref: holocene_activation_test.go
 // ---------------------------------------------------------------------------
 
 /// Full end-to-end derivation through the Holocene activation boundary.
@@ -86,8 +84,6 @@ async fn holocene_derivation_crosses_activation_boundary() {
 
 // ---------------------------------------------------------------------------
 // B. Holocene frame pruning: non-sequential frame is dropped
-//
-// op-e2e ref: holocene_frame_test.go
 // ---------------------------------------------------------------------------
 
 /// Under Holocene, [`FrameQueue::prune`] enforces sequential frame numbers
@@ -192,8 +188,6 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
 
 // ---------------------------------------------------------------------------
 // C. Holocene: new channel (frame 0) abandons incomplete old channel
-//
-// op-e2e ref: holocene_frame_test.go
 // ---------------------------------------------------------------------------
 
 /// Under Holocene frame pruning, when a new channel (different channel ID,
@@ -316,8 +310,6 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
 
 // ---------------------------------------------------------------------------
 // D. Holocene frame pruning: non-sequential frame pruned, then recovery
-//
-// op-e2e ref: holocene_frame_test.go (extended)
 // ---------------------------------------------------------------------------
 
 /// Same scenario as [`holocene_non_sequential_frame_pruned_channel_never_completes`]:

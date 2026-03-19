@@ -1,27 +1,11 @@
 #![doc = "Action tests for operator fee encoding and hardfork activation."]
 
-use alloy_primitives::{Address, B256, LogData};
+use alloy_primitives::Address;
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
     L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
-use base_alloy_consensus::{OpBlock, OpTxEnvelope};
-use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
 use base_protocol::L1BlockInfoTx;
-
-/// Decode the [`L1BlockInfoTx`] from the first (L1 info deposit) transaction of
-/// an [`OpBlock`].
-///
-/// The first tx in every L2 block is always the L1 info deposit. Its calldata
-/// is the `setL1BlockValues*` ABI-encoded call, from which [`L1BlockInfoTx`]
-/// extracts the epoch information and hardfork-specific fee parameters.
-fn l1_info_from_block(block: &OpBlock) -> L1BlockInfoTx {
-    let OpTxEnvelope::Deposit(sealed) = &block.body.transactions[0] else {
-        panic!("first transaction must be a deposit");
-    };
-    L1BlockInfoTx::decode_calldata(sealed.inner().input.as_ref())
-        .expect("L1 info calldata must decode successfully")
-}
 
 // ---------------------------------------------------------------------------
 // Section 1: L1 info format and operator fee encoding
@@ -57,7 +41,7 @@ fn operator_fee_not_encoded_before_isthmus() {
 
     // Build one block and verify it uses the Ecotone format with zero operator fees.
     let block = builder.build_next_block();
-    let l1_info = l1_info_from_block(&block);
+    let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
     assert!(
         matches!(l1_info, L1BlockInfoTx::Ecotone(_)),
@@ -99,7 +83,7 @@ fn operator_fee_encoded_in_l1_info_post_isthmus() {
 
     // Build one block and verify it uses the Isthmus format with the configured fee params.
     let block = builder.build_next_block();
-    let l1_info = l1_info_from_block(&block);
+    let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
     assert!(
         matches!(l1_info, L1BlockInfoTx::Isthmus(_)),
@@ -156,7 +140,7 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
     // Stage 1: Blocks 1-2 (ts=2, 4) — pre-Isthmus → Ecotone format, zero operator fees.
     for i in 1u64..=2 {
         let block = builder.build_next_block();
-        let l1_info = l1_info_from_block(&block);
+        let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
             matches!(l1_info, L1BlockInfoTx::Ecotone(_)),
@@ -173,7 +157,7 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
     // L1Block contract, enabling the Isthmus format from block 4 onwards.
     {
         let block = builder.build_next_block();
-        let l1_info = l1_info_from_block(&block);
+        let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
             matches!(l1_info, L1BlockInfoTx::Ecotone(_)),
@@ -194,7 +178,7 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
     // Stage 3: Block 4 (ts=8) — second Isthmus block, Isthmus format, fees active.
     {
         let block = builder.build_next_block();
-        let l1_info = l1_info_from_block(&block);
+        let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
             matches!(l1_info, L1BlockInfoTx::Isthmus(_)),
@@ -257,7 +241,7 @@ fn l1_info_format_transitions_at_jovian_boundary() {
     // Stage 1: Blocks 1-2 (ts=2, 4) — Isthmus active, Jovian not yet → Isthmus format.
     for i in 1u64..=2 {
         let block = builder.build_next_block();
-        let l1_info = l1_info_from_block(&block);
+        let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
             matches!(l1_info, L1BlockInfoTx::Isthmus(_)),
@@ -273,7 +257,7 @@ fn l1_info_format_transitions_at_jovian_boundary() {
     // because the batch validator enforces `NonEmptyTransitionBlock` for Jovian.
     {
         let block = builder.build_empty_block();
-        let l1_info = l1_info_from_block(&block);
+        let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
             matches!(l1_info, L1BlockInfoTx::Isthmus(_)),
@@ -288,7 +272,7 @@ fn l1_info_format_transitions_at_jovian_boundary() {
     // differs (gas * scalar * 100 vs gas * scalar / 1_000_000 for Isthmus).
     {
         let block = builder.build_next_block();
-        let l1_info = l1_info_from_block(&block);
+        let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
             matches!(l1_info, L1BlockInfoTx::Jovian(_)),
@@ -503,39 +487,6 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
 
 /// Build a `ConfigUpdate` log encoding an `OperatorFee` (type 5) change.
 ///
-/// Log layout mirrors `SystemConfig.sol`:
-/// - `topics[0]` = `CONFIG_UPDATE_TOPIC`
-/// - `topics[1]` = `CONFIG_UPDATE_EVENT_VERSION_0`
-/// - `topics[2]` = `B256` encoding `UpdateType::OperatorFee = 5`
-/// - `data`      = 96 bytes: pointer(32=0x20) + length(32=0x20) +
-///   payload(32 bytes): `[0..20]` zeros | `[20..24]` scalar (u32 BE) |
-///   `[24..32]` constant (u64 BE)
-fn operator_fee_update_log(
-    l1_sys_cfg_addr: Address,
-    operator_fee_scalar: u32,
-    operator_fee_constant: u64,
-) -> alloy_primitives::Log {
-    let mut data = [0u8; 96];
-    data[31] = 0x20; // pointer = 32
-    data[63] = 0x20; // length  = 32
-    // Payload offsets within the 96-byte array:
-    //   payload[20..24] = data[84..88] = scalar (u32 BE)
-    //   payload[24..32] = data[88..96] = constant (u64 BE)
-    data[84..88].copy_from_slice(&operator_fee_scalar.to_be_bytes());
-    data[88..96].copy_from_slice(&operator_fee_constant.to_be_bytes());
-
-    let mut update_type = [0u8; 32];
-    update_type[31] = 5; // OperatorFee = 5
-
-    alloy_primitives::Log {
-        address: l1_sys_cfg_addr,
-        data: LogData::new_unchecked(
-            vec![CONFIG_UPDATE_TOPIC, CONFIG_UPDATE_EVENT_VERSION_0, B256::from(update_type)],
-            data.into(),
-        ),
-    }
-}
-
 /// An `OperatorFee` system-config update committed to L1 is reflected in the
 /// L1 info deposit transactions of derived L2 blocks once the L1 epoch advances
 /// to the block containing the update.
@@ -595,7 +546,7 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
 
     // Pre-mine L1 block 1 (ts=12) with the OperatorFee update so the sequencer
     // can reference epoch 1 when it builds L2 block 6.
-    h.l1.enqueue_log(operator_fee_update_log(l1_sys_cfg_addr, NEW_SCALAR, NEW_CONSTANT));
+    h.l1.enqueue_operator_fee_update(l1_sys_cfg_addr, NEW_SCALAR, NEW_CONSTANT);
     h.l1.mine_block(); // L1 block 1, ts=12
 
     // Snapshot the chain (blocks 0 and 1) before building L2 blocks. The sequencer

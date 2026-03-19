@@ -16,8 +16,6 @@ use base_action_harness::{
 /// boundary is dropped. Only deposit-only (default) blocks are produced for
 /// the over-drift slots.
 ///
-/// This is the Rust analogue of op-e2e's `MaxSequencerDriftFnAfterDelta` test.
-///
 /// ## Setup
 ///
 /// - Fjord active → `max_sequencer_drift = 1800 s`, `block_time = 300 s`, L1

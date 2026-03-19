@@ -8,8 +8,6 @@ use base_consensus_genesis::{GRANITE_CHANNEL_TIMEOUT, HardForkConfig};
 
 // ---------------------------------------------------------------------------
 // A. Span batch with non-empty hardfork transition block is rejected
-//
-// op-e2e ref: TestHardforkMiddleOfSpanBatch
 // ---------------------------------------------------------------------------
 
 /// A span batch covering blocks 1–4 where block 3 is the first Jovian block
@@ -137,8 +135,6 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
 
 // ---------------------------------------------------------------------------
 // B. Mixed singular and span batches in the same derivation run
-//
-// op-e2e ref: TestMixOfBatchesAfterHardfork
 // ---------------------------------------------------------------------------
 
 /// After Fjord (which cascades to activate Delta), the pipeline must accept
@@ -358,8 +354,6 @@ async fn granite_channel_timeout_enforced() {
 
 // ---------------------------------------------------------------------------
 // D. Jovian SingleBatch transition block is deposit-only
-//
-// op-e2e ref: TestHardforkMiddleOfSingularBatch
 // ---------------------------------------------------------------------------
 
 /// When a `SingleBatch` is submitted for the first Jovian upgrade block (block 3
