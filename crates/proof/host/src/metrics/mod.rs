@@ -330,11 +330,16 @@ impl Metrics {
 impl Metrics {
     /// Registers metric descriptions and initializes all counters/gauges to zero
     /// so they appear in dashboards immediately.
+    ///
+    /// No-op when the `metrics` feature is disabled.
     #[cfg(feature = "metrics")]
     pub fn init() {
         Self::describe();
         Self::zero();
     }
+
+    #[cfg(not(feature = "metrics"))]
+    pub fn init() {}
 
     #[cfg(feature = "metrics")]
     fn describe() {

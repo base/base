@@ -112,9 +112,7 @@ impl Host {
 
         let client_task = Box::pin(async {
             let mut timer = timed!(crate::Metrics::REPLAY_DURATION_SECONDS);
-            let result = Self::run_client(recording)
-                .instrument(info_span!("run_client"))
-                .await;
+            let result = Self::run_client(recording).instrument(info_span!("run_client")).await;
             timer.stop();
             result
         });
