@@ -106,6 +106,11 @@ impl EncoderConfig {
                 target_num_frames: self.target_num_frames,
             });
         }
+        if self.approx_compr_ratio <= 0.0 || self.approx_compr_ratio > 1.0 {
+            return Err(EncoderConfigError::InvalidApproxComprRatio {
+                approx_compr_ratio: self.approx_compr_ratio,
+            });
+        }
         Ok(())
     }
 }
@@ -136,6 +141,19 @@ pub enum EncoderConfigError {
     CalldataRequiresSingleFrame {
         /// The configured target number of frames.
         target_num_frames: usize,
+    },
+    /// `approx_compr_ratio <= 0.0 || approx_compr_ratio > 1.0`.
+    ///
+    /// A ratio ≤ 0.0 causes `compressed_estimate` to always be 0, so the span
+    /// accumulator never triggers a size-based channel close, growing unboundedly in
+    /// memory until timeout. A ratio > 1.0 overestimates compressed size, causing
+    /// channels to close after a single block and producing many tiny span batches.
+    ///
+    /// Use a value in the range `(0.0, 1.0]`.
+    #[error("approx_compr_ratio ({approx_compr_ratio}) must be in the range (0.0, 1.0]")]
+    InvalidApproxComprRatio {
+        /// The configured approximate compression ratio.
+        approx_compr_ratio: f64,
     },
 }
 
@@ -174,5 +192,26 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains(&sub_safety_margin.to_string()));
         assert!(msg.contains(&max_channel_duration.to_string()));
+    }
+
+    #[rstest]
+    #[case(0.1)] // low but valid
+    #[case(0.6)] // default
+    #[case(1.0)] // exactly 1.0: upper bound is inclusive
+    fn validate_approx_compr_ratio_ok(#[case] approx_compr_ratio: f64) {
+        let cfg = EncoderConfig { approx_compr_ratio, ..EncoderConfig::default() };
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[rstest]
+    #[case(0.0)] // exactly 0: compressed_estimate always 0
+    #[case(-1.0)] // negative: nonsensical ratio
+    #[case(1.1)] // above 1: overestimates compressed size
+    #[case(f64::INFINITY)]
+    fn validate_approx_compr_ratio_err(#[case] approx_compr_ratio: f64) {
+        let cfg = EncoderConfig { approx_compr_ratio, ..EncoderConfig::default() };
+        let err = cfg.validate().unwrap_err();
+        assert!(matches!(err, EncoderConfigError::InvalidApproxComprRatio { .. }));
+        assert!(err.to_string().contains("approx_compr_ratio"));
     }
 }
