@@ -9,6 +9,14 @@ of 16,777,216 (2^24) per transaction. Transactions exceeding this cap are reject
 
 Base adopts the same cap as L1 to maximize Ethereum equivalence.
 
+:::note
+Deposit transactions will be exempt from the transaction gas limit cap. They are already limited to [20,000,000 gas][gas-market] as that is the most
+gas that can be included in an L1 block.
+:::
+
+
+[gas-market]: ../../protocol/bridging/deposits.md#default-values
+
 ### Upper-Bound MODEXP
 
 [EIP-7823](https://eips.ethereum.org/EIPS/eip-7823) caps MODEXP precompile inputs to a maximum of
