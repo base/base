@@ -10,6 +10,8 @@ mod tee 'crates/proof/tee'
 mod actions 'actions'
 # Docker-based local devnet management
 mod devnet 'etc/docker'
+# Load testing for networks
+mod load-test 'crates/infra/load-tests'
 
 alias t := test
 alias f := fix
