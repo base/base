@@ -16,7 +16,7 @@ pub enum StepResult {
 /// encoded and the pipeline cannot continue.
 ///
 /// Batch composition failure is fatal: a block that cannot be serialised into a
-/// [`SingleBatch`](base_consensus_genesis::batch::SingleBatch) would be silently absent
+/// [`SingleBatch`](base_protocol::batch::SingleBatch) would be silently absent
 /// from the submitted data, breaking the contiguous L2 block sequence required by the
 /// derivation spec. The batcher must halt rather than skip such a block.
 #[derive(Debug, thiserror::Error)]

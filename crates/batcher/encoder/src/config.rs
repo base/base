@@ -21,7 +21,7 @@ pub struct EncoderConfig {
 
     /// Safety margin subtracted from `max_channel_duration` when evaluating channel
     /// timeout. The effective timeout is `max_channel_duration - sub_safety_margin`,
-    /// ensuring channels are closed this many L1 blocks before the configured
+    /// ensuring channels have closed this many L1 blocks before the configured
     /// duration expires.
     ///
     /// Set this large enough so that in-flight frames land well within the protocol's
@@ -44,7 +44,7 @@ pub struct EncoderConfig {
     pub target_num_frames: usize,
 
     /// Whether to encode blocks as individual
-    /// [`SingleBatch`](base_consensus_genesis::batch::SingleBatch)es
+    /// [`SingleBatch`](base_protocol::batch::SingleBatch)es
     /// or accumulate them into a single [`SpanBatch`](base_protocol::SpanBatch).
     ///
     /// Default: [`BatchType::Single`].
