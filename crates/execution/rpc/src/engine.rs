@@ -29,6 +29,7 @@ pub const OP_ENGINE_CAPABILITIES: &[&str] = &[
     "engine_getPayloadV2",
     "engine_getPayloadV3",
     "engine_getPayloadV4",
+    "engine_getPayloadV5",
     "engine_newPayloadV2",
     "engine_newPayloadV3",
     "engine_newPayloadV4",
@@ -177,6 +178,23 @@ pub trait OpEngineApi<Engine: EngineTypes> {
         &self,
         payload_id: PayloadId,
     ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV4>;
+
+    /// Returns the most recent version of the payload that is available in the corresponding
+    /// payload build process at the time of receiving this call.
+    ///
+    /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/osaka.md#engine_getpayloadv5>
+    ///
+    /// Note:
+    /// > Provider software MAY stop the corresponding build process after serving this call.
+    ///
+    /// Returns the [`OpExecutionPayloadEnvelopeV5`], which uses
+    /// [`OpExecutionPayloadV4`](base_alloy_rpc_types_engine::OpExecutionPayloadV4) for the
+    /// execution payload and otherwise follows the V5 envelope shape.
+    #[method(name = "getPayloadV5")]
+    async fn get_payload_v5(
+        &self,
+        payload_id: PayloadId,
+    ) -> RpcResult<Engine::ExecutionPayloadEnvelopeV5>;
 
     /// Returns the execution payload bodies by the given hash.
     ///
@@ -373,6 +391,15 @@ where
     ) -> RpcResult<EngineT::ExecutionPayloadEnvelopeV4> {
         trace!(target: "rpc::engine", "Serving engine_getPayloadV4");
         Ok(self.inner.get_payload_v4_metered(payload_id).await?)
+    }
+
+    #[instrument(level = "debug", target = "rpc::engine", skip_all, fields(id = %payload_id))]
+    async fn get_payload_v5(
+        &self,
+        payload_id: PayloadId,
+    ) -> RpcResult<EngineT::ExecutionPayloadEnvelopeV5> {
+        trace!(target: "rpc::engine", "Serving engine_getPayloadV5");
+        Ok(self.inner.get_payload_v5_metered(payload_id).await?)
     }
 
     async fn get_payload_bodies_by_hash_v1(
