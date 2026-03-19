@@ -15,7 +15,7 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes};
 use base_enclave::ProofEncoder;
 use base_proof_contracts::AggregateVerifierClient;
-use base_proof_primitives::{ProofRequest as TeeProofRequest, ProofResult};
+use base_proof_primitives::{ProofRequest as TeeProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::L2Provider;
 use base_tx_manager::TxManager;
 use base_zk_client::{ProofType, ProveBlockRequest, ZkProofProvider};
@@ -27,7 +27,7 @@ use uuid::Uuid;
 use crate::{
     CandidateGame, ChallengeSubmitter, ChallengerMetrics, GameScanner,
     IntermediateValidationParams, L1HeadProvider, OutputValidator, PendingProof, PendingProofs,
-    ProofPhase, ProofUpdate, TeeProofProvider, ValidatorError,
+    ProofPhase, ProofUpdate, ValidatorError,
 };
 
 /// Configuration for the challenger [`Driver`].
@@ -45,7 +45,7 @@ pub struct DriverConfig {
 #[derive(Debug)]
 pub struct TeeConfig {
     /// TEE proof provider.
-    pub provider: Arc<dyn TeeProofProvider>,
+    pub provider: Arc<dyn ProverClient>,
     /// L1 head provider for fetching the finalized head hash.
     pub l1_head_provider: Arc<dyn L1HeadProvider>,
     /// Timeout for individual TEE proof requests.

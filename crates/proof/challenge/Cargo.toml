@@ -55,8 +55,10 @@ base-protocol.workspace = true
 
 # Enclave
 base-enclave.workspace = true
-base-enclave-client.workspace = true
-base-proof-primitives = { workspace = true, features = ["serde", "std"] }
+base-proof-primitives = { workspace = true, features = ["serde", "std", "rpc-client"] }
+
+# JSON-RPC
+jsonrpsee.workspace = true
 
 # Metrics
 metrics.workspace = true

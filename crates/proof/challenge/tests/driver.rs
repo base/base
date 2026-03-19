@@ -9,7 +9,7 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes, U256};
 use base_challenger::{
     ChallengeSubmitter, Driver, DriverConfig, GameScanner, L1HeadProvider, OutputValidator,
-    PendingProof, ProofPhase, ScannerConfig, TeeConfig, TeeProofProvider,
+    PendingProof, ProofPhase, ScannerConfig, TeeConfig,
     test_utils::{
         MockAggregateVerifier, MockDisputeGameFactory, MockGameState, MockL1HeadProvider,
         MockL2Provider, MockTeeProofProvider, MockTxManager, MockZkProofProvider, addr,
@@ -18,7 +18,7 @@ use base_challenger::{
 };
 use base_enclave::output_root_v0;
 use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex};
-use base_proof_primitives::{ProofResult, Proposal};
+use base_proof_primitives::{ProofResult, Proposal, ProverClient};
 use base_tx_manager::TxManagerError;
 use base_zk_client::{ProofJobStatus, ProofType, ProveBlockRequest};
 use tokio_util::sync::CancellationToken;
@@ -663,7 +663,7 @@ async fn test_step_invalid_game_tee_fails_zk_fallback() {
         zk,
         tx_manager,
         Some(TeeConfig {
-            provider: tee as Arc<dyn TeeProofProvider>,
+            provider: tee as Arc<dyn ProverClient>,
             l1_head_provider: Arc::new(MockL1HeadProvider::failure("dummy")),
             request_timeout: Duration::from_secs(30),
         }),
@@ -702,7 +702,7 @@ async fn test_step_invalid_game_no_tee_prover_zk_only() {
         zk,
         tx_manager,
         Some(TeeConfig {
-            provider: tee as Arc<dyn TeeProofProvider>,
+            provider: tee as Arc<dyn ProverClient>,
             l1_head_provider: Arc::new(MockL1HeadProvider::failure("dummy")),
             request_timeout: Duration::from_secs(30),
         }),
@@ -767,7 +767,7 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
         zk,
         tx_manager,
         Some(TeeConfig {
-            provider: tee as Arc<dyn TeeProofProvider>,
+            provider: tee as Arc<dyn ProverClient>,
             l1_head_provider: Arc::new(MockL1HeadProvider::failure("dummy")),
             request_timeout: Duration::from_secs(30),
         }),
@@ -855,7 +855,7 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
         zk,
         tx_manager,
         Some(TeeConfig {
-            provider: tee_provider as Arc<dyn TeeProofProvider>,
+            provider: tee_provider as Arc<dyn ProverClient>,
             l1_head_provider: l1_head as Arc<dyn L1HeadProvider>,
             request_timeout: Duration::from_secs(30),
         }),

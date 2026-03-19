@@ -37,7 +37,7 @@ mod submitter;
 pub use submitter::ChallengeSubmitter;
 
 mod tee;
-pub use tee::{EnclaveTeeProvider, L1HeadProvider, RpcL1HeadProvider, TeeProofProvider};
+pub use tee::{L1HeadProvider, RpcL1HeadProvider};
 
 mod validator;
 pub use validator::{

@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 use base_enclave::PerChainConfig;
-use base_proof_primitives::{ProofRequest, ProofResult};
+use base_proof_primitives::{ProofRequest, ProofResult, ProverClient};
 
-use crate::{error::ProposerError, prover_client::ProverClient};
+use crate::error::ProposerError;
 
 /// Prover for generating TEE-signed proposals via a remote prover server.
 pub struct Prover {
@@ -35,7 +35,7 @@ impl Prover {
 
     /// Proves a block range by sending a [`ProofRequest`] to the prover server.
     pub async fn prove(&self, request: ProofRequest) -> Result<ProofResult, ProposerError> {
-        self.client.prove(request).await
+        self.client.prove(request).await.map_err(|e| ProposerError::Prover(e.to_string()))
     }
 }
 

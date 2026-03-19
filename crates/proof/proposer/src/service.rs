@@ -34,7 +34,6 @@ use crate::{
     metrics::record_startup_metrics,
     output_proposer::ProposalSubmitter,
     prover::Prover,
-    prover_client::RpcProverClient,
     rpc::L2Client,
 };
 
@@ -102,12 +101,10 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let per_chain_config = rollup_config_to_per_chain_config(&chain_config)?;
     info!(chain_id = %per_chain_config.chain_id, "Chain configuration loaded");
 
-    let prover_client = RpcProverClient::new(
-        HttpClientBuilder::default()
-            .request_timeout(crate::constants::PROVER_TIMEOUT)
-            .build(config.prover_rpc.as_str())
-            .map_err(|e| eyre::eyre!("failed to create prover RPC client: {e}"))?,
-    );
+    let prover_client = HttpClientBuilder::default()
+        .request_timeout(crate::constants::PROVER_TIMEOUT)
+        .build(config.prover_rpc.as_str())
+        .map_err(|e| eyre::eyre!("failed to create prover RPC client: {e}"))?;
     info!(endpoint = %config.prover_rpc, "Prover RPC client initialized");
 
     // ── 4. Create contract clients and read onchain config ──────────────

@@ -29,9 +29,6 @@ pub use driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl, Reco
 mod enclave;
 pub use enclave::rollup_config_to_per_chain_config;
 
-mod prover_client;
-pub use prover_client::{ProverClient, RpcProverClient};
-
 mod error;
 pub use error::*;
 

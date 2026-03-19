@@ -18,7 +18,7 @@ use base_enclave::AccountResult;
 use base_proof_contracts::{
     AggregateVerifierClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
 };
-use base_proof_primitives::{ProofRequest, ProofResult};
+use base_proof_primitives::{ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L2Provider, RpcError, RpcResult};
 use base_protocol::Predeploys;
 use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
@@ -26,8 +26,9 @@ use base_zk_client::{
     GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse, ZkProofError,
     ZkProofProvider,
 };
+use jsonrpsee::core::ClientError;
 
-use crate::{L1HeadProvider, TeeProofProvider};
+use crate::L1HeadProvider;
 
 /// Per-game state for the mock verifier.
 #[derive(Debug, Clone)]
@@ -318,8 +319,8 @@ impl ZkProofProvider for MockZkProofProvider {
 /// Mock TEE proof provider for testing the driver.
 #[derive(Debug)]
 pub struct MockTeeProofProvider {
-    /// Queue of results returned by [`prove`](TeeProofProvider::prove).
-    pub results: Mutex<VecDeque<eyre::Result<ProofResult>>>,
+    /// Queue of results returned by [`prove`](ProverClient::prove).
+    pub results: Mutex<VecDeque<Result<ProofResult, ClientError>>>,
 }
 
 impl MockTeeProofProvider {
@@ -333,14 +334,14 @@ impl MockTeeProofProvider {
     /// Creates a mock that returns a single error.
     pub fn failure(msg: &str) -> Self {
         let mut q = VecDeque::new();
-        q.push_back(Err(eyre::eyre!("{msg}")));
+        q.push_back(Err(ClientError::Custom(msg.to_owned())));
         Self { results: Mutex::new(q) }
     }
 }
 
 #[async_trait]
-impl TeeProofProvider for MockTeeProofProvider {
-    async fn prove(&self, _request: ProofRequest) -> eyre::Result<ProofResult> {
+impl ProverClient for MockTeeProofProvider {
+    async fn prove(&self, _request: ProofRequest) -> Result<ProofResult, ClientError> {
         self.results.lock().unwrap().pop_front().expect("MockTeeProofProvider has no more results")
     }
 }

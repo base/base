@@ -114,18 +114,20 @@ impl ChallengerService {
         let zk_client = Arc::new(ZkProofClient::new(&zk_config)?);
         info!(endpoint = %config.zk_rpc_url, "ZK proof client initialized");
 
-        // ── 6b. TEE enclave client (optional) ────────────────────────────────
+        // ── 6b. TEE proof client (optional) ─────────────────────────────────
         let tee: Option<crate::TeeConfig> = if let Some(ref tee_url) = config.tee_rpc_url {
-            let client = base_enclave_client::EnclaveClient::new(tee_url.as_str())
-                .map_err(|e| eyre::eyre!("failed to create enclave client: {e}"))?;
-            info!(endpoint = %tee_url, "TEE enclave client initialized");
+            let request_timeout = config.tee_request_timeout.ok_or_else(|| {
+                eyre::eyre!("tee_request_timeout must be set when tee_rpc_url is configured")
+            })?;
+            let client = jsonrpsee::http_client::HttpClientBuilder::default()
+                .build(tee_url.as_str())
+                .map_err(|e| eyre::eyre!("failed to create TEE RPC client: {e}"))?;
+            info!(endpoint = %tee_url, "TEE proof client initialized");
             let tee_l1_provider = RootProvider::new_http(config.l1_eth_rpc.as_ref().clone());
             Some(crate::TeeConfig {
-                provider: Arc::new(crate::EnclaveTeeProvider::new(client)),
+                provider: Arc::new(client),
                 l1_head_provider: Arc::new(crate::RpcL1HeadProvider::new(tee_l1_provider)),
-                request_timeout: config.tee_request_timeout.ok_or_else(|| {
-                    eyre::eyre!("tee_request_timeout must be set when tee_rpc_url is configured")
-                })?,
+                request_timeout,
             })
         } else {
             info!("TEE proof sourcing disabled (no --tee-rpc-url)");

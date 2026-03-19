@@ -1,11 +1,9 @@
-//! TEE proof provider abstraction for TEE-first proof sourcing.
+//! L1 head provider abstraction for fetching the finalized L1 block hash.
 
 use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use async_trait::async_trait;
-use base_enclave_client::EnclaveClient;
-use base_proof_primitives::{ProofRequest, ProofResult};
 
 /// Trait for fetching the L1 finalized head hash.
 #[async_trait]
@@ -36,32 +34,5 @@ impl L1HeadProvider for RpcL1HeadProvider {
             .await?
             .ok_or_else(|| eyre::eyre!("L1 finalized block not found"))?;
         Ok(block.header.hash)
-    }
-}
-
-/// Trait for sourcing proofs from a TEE enclave.
-#[async_trait]
-pub trait TeeProofProvider: Send + Sync + std::fmt::Debug {
-    /// Sends a proof request to the TEE backend and returns the result.
-    async fn prove(&self, request: ProofRequest) -> eyre::Result<ProofResult>;
-}
-
-/// [`TeeProofProvider`] backed by an [`EnclaveClient`] RPC connection.
-#[derive(Debug)]
-pub struct EnclaveTeeProvider {
-    client: EnclaveClient,
-}
-
-impl EnclaveTeeProvider {
-    /// Creates a new provider wrapping the given enclave client.
-    pub const fn new(client: EnclaveClient) -> Self {
-        Self { client }
-    }
-}
-
-#[async_trait]
-impl TeeProofProvider for EnclaveTeeProvider {
-    async fn prove(&self, request: ProofRequest) -> eyre::Result<ProofResult> {
-        self.client.prove(request).await.map_err(Into::into)
     }
 }

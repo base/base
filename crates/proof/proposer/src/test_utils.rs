@@ -226,11 +226,8 @@ pub(crate) fn test_anchor_root(block_number: u64) -> AnchorRoot {
 pub(crate) fn test_prover() -> crate::prover::Prover {
     use jsonrpsee::http_client::HttpClientBuilder;
 
-    use crate::prover_client::RpcProverClient;
-
     let client = HttpClientBuilder::default().build("http://localhost:19999").expect("valid URL");
-    let prover_client = RpcProverClient::new(client);
-    crate::prover::Prover::new(test_per_chain_config(), std::sync::Arc::new(prover_client))
+    crate::prover::Prover::new(test_per_chain_config(), std::sync::Arc::new(client))
 }
 
 /// Mock output proposer that does nothing (returns `Ok(())`).
