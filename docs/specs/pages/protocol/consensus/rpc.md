@@ -59,6 +59,6 @@ The input and return types here are as defined by the [engine API specs][engine-
   1. `version`: `DATA`, 32 Bytes - the output root version number, beginning with 0.
   1. `outputRoot`: `DATA`, 32 Bytes - the output root.
   1. `blockRef`: `Object` - instance of [`L2BlockRef`](#l2blockref).
-  1. `withdrawalStorageRoot`: 32 bytes - storage root of the `L2toL1MessagePasser` contract.
+  1. `withdrawalStorageRoot`: 32 bytes - storage root of the `L2ToL1MessagePasser` contract.
   1. `stateRoot`: `DATA`: 32 bytes - the state root.
   1. `syncStatus`: `Object` - instance of [`SyncStatus`](#syncstatus).
