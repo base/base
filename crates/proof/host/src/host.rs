@@ -110,9 +110,14 @@ impl Host {
             Arc::clone(&witness),
         );
 
-        let mut replay_timer = timed!(crate::Metrics::REPLAY_DURATION_SECONDS);
-        let client_task =
-            Box::pin(Self::run_client(recording).instrument(info_span!("run_client")));
+        let client_task = Box::pin(async {
+            let mut timer = timed!(crate::Metrics::REPLAY_DURATION_SECONDS);
+            let result = Self::run_client(recording)
+                .instrument(info_span!("run_client"))
+                .await;
+            timer.stop();
+            result
+        });
 
         tokio::select! {
             result = &mut server_task => {
@@ -123,7 +128,6 @@ impl Host {
                 };
             }
             result = client_task => {
-                replay_timer.stop();
                 result.map_err(|e| HostError::ProofProgram(Box::new(e)))?;
             }
         }
