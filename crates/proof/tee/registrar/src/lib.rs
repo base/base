@@ -23,4 +23,4 @@ mod traits;
 pub use traits::InstanceDiscovery;
 
 mod types;
-pub use types::{AttestationResponse, InstanceHealthStatus, ProverInstance, RegisteredSigner};
+pub use types::{InstanceHealthStatus, ProverInstance, RegisteredSigner};

@@ -12,6 +12,12 @@ use tracing::info;
 
 use super::{NitroBackend, transport::NitroTransport};
 
+/// Maximum allowed size for the `user_data` attestation field (NSM limit).
+const MAX_USER_DATA_BYTES: usize = 512;
+
+/// Maximum allowed size for the `nonce` attestation field (NSM limit).
+const MAX_NONCE_BYTES: usize = 512;
+
 /// Host-side TEE prover server exposing a JSON-RPC interface.
 ///
 /// Implements two JSON-RPC namespaces:
@@ -84,6 +90,24 @@ impl EnclaveApiServer for NitroSignerRpc {
         user_data: Option<Vec<u8>>,
         nonce: Option<Vec<u8>>,
     ) -> RpcResult<Vec<u8>> {
+        // NSM limits: user_data ≤ 1024 bytes, nonce ≤ 512 bytes.
+        // Reject oversized payloads early to avoid allocating and forwarding them
+        // through the vsock transport only to be rejected by the enclave.
+        if user_data.as_ref().is_some_and(|d| d.len() > MAX_USER_DATA_BYTES) {
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                -32602,
+                format!("user_data exceeds {MAX_USER_DATA_BYTES}-byte limit"),
+                None::<()>,
+            ));
+        }
+        if nonce.as_ref().is_some_and(|n| n.len() > MAX_NONCE_BYTES) {
+            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                -32602,
+                format!("nonce exceeds {MAX_NONCE_BYTES}-byte limit"),
+                None::<()>,
+            ));
+        }
+
         self.transport.signer_attestation(user_data, nonce).await.map_err(|e| {
             jsonrpsee::types::ErrorObjectOwned::owned(-32001, e.to_string(), None::<()>)
         })
@@ -127,5 +151,31 @@ mod tests {
         // Assert the error is propagated (not swallowed) through the RPC layer.
         let result = EnclaveApiServer::signer_attestation(&rpc, None, None).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn signer_attestation_rejects_oversized_user_data() {
+        let server = Arc::new(EnclaveServer::new().unwrap());
+        let transport = Arc::new(NitroTransport::local(Arc::clone(&server)));
+        let rpc = NitroSignerRpc { transport };
+
+        let oversized = vec![0u8; MAX_USER_DATA_BYTES + 1];
+        let result = EnclaveApiServer::signer_attestation(&rpc, Some(oversized), None).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code(), -32602);
+        assert!(err.message().contains("user_data"));
+    }
+
+    #[tokio::test]
+    async fn signer_attestation_rejects_oversized_nonce() {
+        let server = Arc::new(EnclaveServer::new().unwrap());
+        let transport = Arc::new(NitroTransport::local(Arc::clone(&server)));
+        let rpc = NitroSignerRpc { transport };
+
+        let oversized = vec![0u8; MAX_NONCE_BYTES + 1];
+        let result = EnclaveApiServer::signer_attestation(&rpc, None, Some(oversized)).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code(), -32602);
+        assert!(err.message().contains("nonce"));
     }
 }

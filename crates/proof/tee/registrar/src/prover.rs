@@ -2,13 +2,13 @@
 
 use std::time::Duration;
 
-use alloy_primitives::{Address, Bytes, keccak256};
+use alloy_primitives::{Address, keccak256};
 use base_proof_primitives::EnclaveApiClient;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use tracing::debug;
 
-use crate::{AttestationResponse, RegistrarError, Result};
+use crate::{RegistrarError, Result};
 
 /// JSON-RPC client for a single prover instance's signer endpoints.
 ///
@@ -78,27 +78,6 @@ impl ProverClient {
         let uncompressed = key.to_encoded_point(false);
         let hash = keccak256(&uncompressed.as_bytes()[1..]);
         Ok(Address::from_slice(&hash[12..]))
-    }
-
-    /// Fetches the signer public key and attestation, derives the Ethereum address,
-    /// and returns a combined [`AttestationResponse`].
-    ///
-    /// This is the primary entry point for the registration poll loop. Calls
-    /// `enclave_signerPublicKey` first to get the address (cheap), then
-    /// `enclave_signerAttestation` for the raw attestation document (involves
-    /// Nitro NSM hardware — only call when registration is needed).
-    pub async fn get_attestation_response(&self) -> Result<AttestationResponse> {
-        let public_key = self.signer_public_key().await?;
-        let signer_address = Self::derive_address(&public_key)?;
-        let attestation = self.signer_attestation(None, None).await?;
-
-        debug!(
-            endpoint = %self.endpoint,
-            signer_address = %signer_address,
-            "fetched attestation response"
-        );
-
-        Ok(AttestationResponse { attestation_bytes: Bytes::from(attestation), signer_address })
     }
 }
 

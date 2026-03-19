@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, B256};
 
 /// A prover instance discovered from the infrastructure layer.
 #[derive(Debug, Clone)]
@@ -72,15 +72,6 @@ mod tests {
     fn from_aws_state(#[case] input: &str, #[case] expected: InstanceHealthStatus) {
         assert_eq!(InstanceHealthStatus::from_aws_state(input), expected);
     }
-}
-
-/// Response from polling a prover's `enclave_signerAttestation` endpoint.
-#[derive(Debug, Clone)]
-pub struct AttestationResponse {
-    /// Raw Nitro attestation document (`COSE_Sign1` bytes).
-    pub attestation_bytes: Bytes,
-    /// Ethereum address derived from the attestation's embedded public key.
-    pub signer_address: Address,
 }
 
 /// A signer currently registered on-chain via `TEEProverRegistry`.
