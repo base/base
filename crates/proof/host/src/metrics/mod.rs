@@ -190,7 +190,6 @@ impl Drop for ProofGuard {
 /// // With labels:
 /// let _timer = timed!(Metrics::HINT_DURATION_SECONDS, Metrics::LABEL_HINT_TYPE => label);
 /// ```
-#[macro_export]
 macro_rules! timed {
     ($metric:expr $(, $label_key:expr => $label_value:expr)*$(,)?) => {{
         // Suppress unused-variable warnings for `$metric` and label arguments.
@@ -215,7 +214,6 @@ pub(crate) use timed;
 /// guard.set_outcome(Metrics::OUTCOME_SUCCESS);
 /// // gauge decremented and outcome counter incremented on drop
 /// ```
-#[macro_export]
 macro_rules! proof_guard {
     ($gauge:expr, $counter:expr) => {{
         #[cfg(not(feature = "metrics"))]
