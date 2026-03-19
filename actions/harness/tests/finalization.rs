@@ -1,4 +1,4 @@
-#![doc = "Action tests for L2 finalization via the verifier pipeline."]
+//! Action tests for L2 finalization via the verifier pipeline.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,

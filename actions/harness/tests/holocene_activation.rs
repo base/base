@@ -1,4 +1,4 @@
-#![doc = "Action tests for the Holocene hardfork activation and Holocene-specific protocol changes."]
+//! Action tests for the Holocene hardfork activation and Holocene-specific protocol changes.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,

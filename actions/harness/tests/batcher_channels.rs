@@ -1,4 +1,4 @@
-#![doc = "Action tests for channel timeout and interleaving scenarios."]
+//! Action tests for channel timeout and interleaving scenarios.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,

@@ -1,4 +1,4 @@
-#![doc = "Action tests for L1 block mining."]
+//! Action tests for L1 block mining.
 
 use alloy_primitives::{Address, Bytes};
 use base_action_harness::{Action, ActionTestHarness, L1MinerConfig, PendingTx};

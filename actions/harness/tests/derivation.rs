@@ -1,4 +1,4 @@
-#![doc = "Action tests for L2 derivation via the verifier pipeline."]
+//! Action tests for L2 derivation via the verifier pipeline.
 
 use std::sync::Arc;
 

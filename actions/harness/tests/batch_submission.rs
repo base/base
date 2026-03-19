@@ -1,4 +1,4 @@
-#![doc = "Action tests for L2 batch submission via the Batcher actor."]
+//! Action tests for L2 batch submission via the Batcher actor.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, BatchType, Batcher, BatcherConfig, BatcherError, DaType,

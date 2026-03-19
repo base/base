@@ -1,4 +1,4 @@
-#![doc = "TDD action test skeletons for sequencer drift scenarios."]
+//! TDD action test skeletons for sequencer drift scenarios.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,

@@ -1,4 +1,4 @@
-#![doc = "Action tests for Base V1 (Osaka) hardfork activation."]
+//! Action tests for Base V1 (Osaka) hardfork activation.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,

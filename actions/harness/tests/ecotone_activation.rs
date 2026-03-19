@@ -1,4 +1,4 @@
-#![doc = "Action tests for the Ecotone hardfork activation boundary."]
+//! Action tests for the Ecotone hardfork activation boundary.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,

@@ -1,4 +1,4 @@
-#![doc = "Action tests for hardfork activation gating and cascade semantics."]
+//! Action tests for hardfork activation gating and cascade semantics.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, BatchType, Batcher, BatcherConfig, DaType, EncoderConfig,

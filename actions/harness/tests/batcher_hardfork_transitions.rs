@@ -1,4 +1,4 @@
-#![doc = "Action tests for batch format transitions across hardfork boundaries."]
+//! Action tests for batch format transitions across hardfork boundaries.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, BatchType, Batcher, BatcherConfig, DaType, DerivedBlock,

@@ -1,4 +1,4 @@
-#![doc = "Action tests for blob DA submission and mixed calldata/blob derivation."]
+//! Action tests for blob DA submission and mixed calldata/blob derivation.
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
