@@ -7,7 +7,7 @@
 //! | Name | Labels | Description |
 //! |------|--------|-------------|
 //! | `base_proof_host_requests_total` | `mode` | Total proof requests received |
-//! | `base_proof_host_requests_result_total` | `outcome` | Proof request outcomes |
+//! | `base_proof_host_requests_result_total` | `outcome` | Proof request outcomes (incl. `dropped`) |
 //! | `base_proof_host_hint_requests_total` | `hint_type` | Hint requests by type |
 //! | `base_proof_host_hint_errors_total` | `hint_type` | Hint errors by type |
 //! | `base_proof_host_kv_lookups_total` | `result` | KV store lookups by hit/miss |
@@ -29,9 +29,7 @@
 //! | `base_proof_host_witness_build_duration_seconds` | | Witness build duration |
 //! | `base_proof_host_prover_duration_seconds` | | Backend prover duration |
 //! | `base_proof_host_hint_duration_seconds` | `hint_type` | Hint processing duration by type |
-//! | `base_proof_host_witness_size_bytes` | | Witness size in bytes |
 //! | `base_proof_host_replay_duration_seconds` | | Client replay (prologue+execute+validate) duration |
-//! | `base_proof_host_rpc_payload_size_bytes` | `hint_type` | RPC response payload size by hint type |
 
 /// Container for metrics.
 #[derive(Debug, Clone)]
@@ -106,6 +104,76 @@ impl Drop for DropTimer {
     }
 }
 
+/// RAII guard for in-flight proof tracking.
+///
+/// Increments a gauge on creation and decrements it on drop. Records the
+/// outcome to a counter on drop — defaulting to [`Metrics::OUTCOME_DROPPED`]
+/// so that cancelled futures are always accounted for.
+///
+/// Use [`set_outcome`](Self::set_outcome) on the success/error path to
+/// override the default before the guard drops.
+#[cfg(feature = "metrics")]
+pub struct ProofGuard {
+    gauge: &'static str,
+    counter: &'static str,
+    outcome: &'static str,
+}
+
+/// No-op guard used when the `metrics` feature is disabled.
+#[cfg(not(feature = "metrics"))]
+pub struct ProofGuard;
+
+#[cfg(feature = "metrics")]
+impl std::fmt::Debug for ProofGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProofGuard").finish_non_exhaustive()
+    }
+}
+
+#[cfg(not(feature = "metrics"))]
+impl std::fmt::Debug for ProofGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProofGuard").finish()
+    }
+}
+
+#[cfg(feature = "metrics")]
+impl ProofGuard {
+    /// Creates a new guard. Prefer the [`proof_guard!`] macro.
+    #[inline]
+    pub fn new(gauge: &'static str, counter: &'static str) -> Self {
+        metrics::gauge!(gauge).increment(1.0);
+        Self { gauge, counter, outcome: Metrics::OUTCOME_DROPPED }
+    }
+
+    /// Overrides the outcome that will be recorded when this guard drops.
+    #[inline]
+    pub const fn set_outcome(&mut self, outcome: &'static str) {
+        self.outcome = outcome;
+    }
+}
+
+#[cfg(not(feature = "metrics"))]
+impl ProofGuard {
+    /// Creates a no-op guard.
+    #[inline]
+    pub const fn new() -> Self {
+        Self
+    }
+
+    /// No-op.
+    #[inline]
+    pub fn set_outcome(&mut self, _outcome: &'static str) {}
+}
+
+#[cfg(feature = "metrics")]
+impl Drop for ProofGuard {
+    fn drop(&mut self) {
+        metrics::gauge!(self.gauge).decrement(1.0);
+        metrics::counter!(self.counter, Metrics::LABEL_OUTCOME => self.outcome).increment(1);
+    }
+}
+
 /// Creates a [`DropTimer`] that records elapsed duration to a histogram.
 ///
 /// # Examples
@@ -137,6 +205,36 @@ macro_rules! timed {
 
 pub(crate) use timed;
 
+/// Creates a [`ProofGuard`] that tracks an in-flight proof.
+///
+/// # Examples
+///
+/// ```ignore
+/// let mut guard = proof_guard!(Metrics::IN_FLIGHT_PROOFS, Metrics::REQUESTS_RESULT_TOTAL);
+/// let result = do_work().await;
+/// guard.set_outcome(Metrics::OUTCOME_SUCCESS);
+/// // gauge decremented and outcome counter incremented on drop
+/// ```
+#[macro_export]
+macro_rules! proof_guard {
+    ($gauge:expr, $counter:expr) => {{
+        #[cfg(not(feature = "metrics"))]
+        {
+            let _ = ($gauge, $counter);
+        }
+        #[cfg(feature = "metrics")]
+        {
+            $crate::ProofGuard::new($gauge, $counter)
+        }
+        #[cfg(not(feature = "metrics"))]
+        {
+            $crate::ProofGuard::new()
+        }
+    }};
+}
+
+pub(crate) use proof_guard;
+
 impl Metrics {
     // ---- Counters ----
 
@@ -144,7 +242,7 @@ impl Metrics {
     pub const REQUESTS_TOTAL: &str = "base_proof_host_requests_total";
 
     /// Proof request outcomes, labeled by `outcome`
-    /// (`success/rpc_error/witness_error/prove_error/timeout`).
+    /// (`success/witness_error/prove_error/dropped`).
     pub const REQUESTS_RESULT_TOTAL: &str = "base_proof_host_requests_result_total";
 
     /// Hint requests by type, labeled by `hint_type`.
@@ -185,14 +283,8 @@ impl Metrics {
     /// Per-hint-type processing duration in seconds, labeled by `hint_type`.
     pub const HINT_DURATION_SECONDS: &str = "base_proof_host_hint_duration_seconds";
 
-    /// Witness size in bytes.
-    pub const WITNESS_SIZE_BYTES: &str = "base_proof_host_witness_size_bytes";
-
     /// Client replay duration in seconds (prologue + execute + validate).
     pub const REPLAY_DURATION_SECONDS: &str = "base_proof_host_replay_duration_seconds";
-
-    /// RPC response payload size in bytes, labeled by `hint_type`.
-    pub const RPC_PAYLOAD_SIZE_BYTES: &str = "base_proof_host_rpc_payload_size_bytes";
 
     // ---- Label keys ----
 
@@ -219,14 +311,14 @@ impl Metrics {
     /// Successful proof outcome.
     pub const OUTCOME_SUCCESS: &str = "success";
 
-    /// RPC error outcome.
-    pub const OUTCOME_RPC_ERROR: &str = "rpc_error";
-
     /// Witness generation error outcome.
     pub const OUTCOME_WITNESS_ERROR: &str = "witness_error";
 
     /// Backend proving error outcome.
     pub const OUTCOME_PROVE_ERROR: &str = "prove_error";
+
+    /// Future was cancelled (dropped) before completion.
+    pub const OUTCOME_DROPPED: &str = "dropped";
 
     /// KV cache hit.
     pub const RESULT_HIT: &str = "hit";
@@ -286,19 +378,9 @@ impl Metrics {
             "Per-hint-type processing duration"
         );
         metrics::describe_histogram!(
-            Self::WITNESS_SIZE_BYTES,
-            metrics::Unit::Bytes,
-            "Witness size"
-        );
-        metrics::describe_histogram!(
             Self::REPLAY_DURATION_SECONDS,
             metrics::Unit::Seconds,
             "Client replay duration"
-        );
-        metrics::describe_histogram!(
-            Self::RPC_PAYLOAD_SIZE_BYTES,
-            metrics::Unit::Bytes,
-            "RPC response payload size by hint type"
         );
     }
 
@@ -321,13 +403,6 @@ impl Metrics {
             counter,
             Self::REQUESTS_RESULT_TOTAL,
             Self::LABEL_OUTCOME,
-            Self::OUTCOME_RPC_ERROR,
-            0
-        );
-        base_macros::set!(
-            counter,
-            Self::REQUESTS_RESULT_TOTAL,
-            Self::LABEL_OUTCOME,
             Self::OUTCOME_WITNESS_ERROR,
             0
         );
@@ -336,6 +411,13 @@ impl Metrics {
             Self::REQUESTS_RESULT_TOTAL,
             Self::LABEL_OUTCOME,
             Self::OUTCOME_PROVE_ERROR,
+            0
+        );
+        base_macros::set!(
+            counter,
+            Self::REQUESTS_RESULT_TOTAL,
+            Self::LABEL_OUTCOME,
+            Self::OUTCOME_DROPPED,
             0
         );
 

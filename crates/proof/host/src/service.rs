@@ -3,7 +3,7 @@ use std::fmt;
 use base_proof_primitives::{ProofRequest, ProofResult, ProverBackend};
 use tracing::{Instrument, info, info_span};
 
-use crate::{Host, HostConfig, HostError, ProverConfig, metrics::timed};
+use crate::{Host, HostConfig, HostError, ProverConfig, metrics::{proof_guard, timed}};
 
 /// Orchestrates witness generation ([`Host`]) and proving ([`ProverBackend`]).
 ///
@@ -40,7 +40,7 @@ impl<B: ProverBackend> ProverService<B> {
     /// 5. Hands the populated oracle to [`ProverBackend::prove`]
     pub async fn prove_block(&self, request: ProofRequest) -> Result<ProofResult, ProverError<B>> {
         base_macros::inc!(counter, crate::Metrics::REQUESTS_TOTAL, crate::Metrics::LABEL_MODE => crate::Metrics::MODE_ONLINE);
-        base_macros::inc!(gauge, crate::Metrics::IN_FLIGHT_PROOFS);
+        let mut guard = proof_guard!(crate::Metrics::IN_FLIGHT_PROOFS, crate::Metrics::REQUESTS_RESULT_TOTAL);
         let _proof_timer = timed!(crate::Metrics::PROOF_DURATION_SECONDS);
 
         let l2_block = request.claimed_l2_block_number;
@@ -49,14 +49,11 @@ impl<B: ProverBackend> ProverService<B> {
         )
         .await;
 
-        base_macros::dec!(gauge, crate::Metrics::IN_FLIGHT_PROOFS);
-
-        let _outcome = match &result {
+        guard.set_outcome(match &result {
             Ok(_) => crate::Metrics::OUTCOME_SUCCESS,
             Err(ProverError::Host(_)) => crate::Metrics::OUTCOME_WITNESS_ERROR,
             Err(ProverError::Backend(_)) => crate::Metrics::OUTCOME_PROVE_ERROR,
-        };
-        base_macros::inc!(counter, crate::Metrics::REQUESTS_RESULT_TOTAL, crate::Metrics::LABEL_OUTCOME => _outcome);
+        });
 
         result
     }
