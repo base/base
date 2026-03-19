@@ -122,6 +122,14 @@ impl OpChainSpecBuilder {
         self
     }
 
+    /// Enable Base V1 at genesis.
+    pub fn base_v1_activated(mut self) -> Self {
+        self = self.jovian_activated();
+        self.inner = self.inner.with_fork(EthereumHardfork::Osaka, ForkCondition::Timestamp(0));
+        self.inner = self.inner.with_fork(BaseUpgrade::V1, ForkCondition::Timestamp(0));
+        self
+    }
+
     /// Build the resulting [`OpChainSpec`].
     ///
     /// # Panics

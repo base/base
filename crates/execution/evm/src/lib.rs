@@ -347,7 +347,7 @@ mod tests {
         Address, B256, LogData, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
-    use base_execution_chainspec::{BASE_MAINNET, OpChainSpec};
+    use base_execution_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
     use base_execution_primitives::{OpBlock, OpPrimitives, OpReceipt};
     use base_revm::OpSpecId;
     use reth_chainspec::ChainSpec;
@@ -368,6 +368,21 @@ mod tests {
 
     fn test_evm_config() -> OpEvmConfig {
         OpEvmConfig::optimism(BASE_MAINNET.clone())
+    }
+
+    #[test]
+    fn test_evm_env_uses_base_v1_for_genesis_chain_spec() {
+        let chain_spec = Arc::new(
+            OpChainSpecBuilder::default()
+                .chain(0.into())
+                .genesis(Genesis::default())
+                .base_v1_activated()
+                .build(),
+        );
+        let evm_config = OpEvmConfig::optimism(chain_spec);
+        let header = Header { timestamp: 0, ..Default::default() };
+        let EvmEnv { cfg_env, .. } = evm_config.evm_env(&header).unwrap();
+        assert_eq!(cfg_env.spec, OpSpecId::BASE_V1);
     }
 
     #[test]
