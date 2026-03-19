@@ -1,8 +1,9 @@
 use std::fmt;
 
 use base_proof_primitives::{ProofRequest, ProofResult, ProverBackend};
-use tracing::info;
+use tracing::{info, info_span, Instrument};
 
+use crate::metrics::timed;
 use crate::{Host, HostConfig, HostError, ProverConfig};
 
 /// Orchestrates witness generation ([`Host`]) and proving ([`ProverBackend`]).
@@ -39,13 +40,50 @@ impl<B: ProverBackend> ProverService<B> {
     /// 4. Runs witness generation via [`Host::build_witness`]
     /// 5. Hands the populated oracle to [`ProverBackend::prove`]
     pub async fn prove_block(&self, request: ProofRequest) -> Result<ProofResult, ProverError<B>> {
-        info!(l2_block = request.claimed_l2_block_number, "starting proof generation");
+        base_macros::inc!(counter, crate::Metrics::REQUESTS_TOTAL, crate::Metrics::LABEL_MODE => crate::Metrics::MODE_ONLINE);
+        base_macros::inc!(gauge, crate::Metrics::IN_FLIGHT_PROOFS);
+        let _proof_timer = timed!(crate::Metrics::PROOF_DURATION_SECONDS);
+
+        let l2_block = request.claimed_l2_block_number;
+        let result = Box::pin(
+            self.prove_block_inner(request)
+                .instrument(info_span!("proof_request", l2_block)),
+        )
+        .await;
+
+        base_macros::dec!(gauge, crate::Metrics::IN_FLIGHT_PROOFS);
+
+        let _outcome = match &result {
+            Ok(_) => crate::Metrics::OUTCOME_SUCCESS,
+            Err(ProverError::Host(_)) => crate::Metrics::OUTCOME_WITNESS_ERROR,
+            Err(ProverError::Backend(_)) => crate::Metrics::OUTCOME_PROVE_ERROR,
+        };
+        base_macros::inc!(counter, crate::Metrics::REQUESTS_RESULT_TOTAL, crate::Metrics::LABEL_OUTCOME => _outcome);
+
+        result
+    }
+
+    async fn prove_block_inner(
+        &self,
+        request: ProofRequest,
+    ) -> Result<ProofResult, ProverError<B>> {
+        info!(
+            l2_block = request.claimed_l2_block_number,
+            "starting proof generation"
+        );
 
         let host = Host::new(HostConfig { request, prover: self.config.clone(), data_dir: None });
         let oracle = self.backend.create_oracle();
-        let oracle = host.build_witness(oracle).await.map_err(ProverError::Host)?;
 
-        self.backend.prove(oracle).await.map_err(ProverError::Backend)
+        let mut witness_timer = timed!(crate::Metrics::WITNESS_BUILD_DURATION_SECONDS);
+        let oracle = host.build_witness(oracle).await.map_err(ProverError::Host)?;
+        witness_timer.stop();
+
+        let mut prover_timer = timed!(crate::Metrics::PROVER_DURATION_SECONDS);
+        let result = self.backend.prove(oracle).await.map_err(ProverError::Backend)?;
+        prover_timer.stop();
+
+        Ok(result)
     }
 }
 

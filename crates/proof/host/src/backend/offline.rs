@@ -37,7 +37,11 @@ where
 {
     async fn get_preimage(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
         let kv_store = self.inner.read().await;
-        kv_store.get(key.into()).ok_or(PreimageOracleError::KeyNotFound)
+        let result = kv_store.get(key.into());
+        if result.is_none() {
+            base_macros::inc!(counter, crate::Metrics::OFFLINE_MISSES_TOTAL);
+        }
+        result.ok_or(PreimageOracleError::KeyNotFound)
     }
 }
 

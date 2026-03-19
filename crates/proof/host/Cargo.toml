@@ -43,10 +43,14 @@ ark-ff.workspace = true
 
 # misc
 serde.workspace = true
+base-macros.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
+
+# `metrics` feature
+metrics = { workspace = true, optional = true }
 
 # optional - precompiles
 revm = { workspace = true, optional = true, features = ["std", "c-kzg", "secp256k1", "portable", "blst"] }
@@ -59,4 +63,5 @@ proptest.workspace = true
 
 [features]
 disk = [ "dep:rocksdb" ]
+metrics = [ "dep:metrics" ]
 precompiles = [ "dep:revm" ]

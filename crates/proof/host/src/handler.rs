@@ -13,7 +13,8 @@ use base_protocol::{BlockInfo, OutputRoot, Predeploys};
 use tracing::warn;
 
 use crate::{
-    HostConfig, HostError, HostProviders, Result, SharedKeyValueStore, store_ordered_trie,
+    HostConfig, HostError, HostProviders, Result, SharedKeyValueStore, metrics::timed,
+    store_ordered_trie,
 };
 
 /// Parses a blob hint, supporting both legacy (48-byte) and new (40-byte) formats.
@@ -53,6 +54,29 @@ pub fn parse_blob_hint(hint_data: &[u8]) -> Result<(B256, u64)> {
 
 /// Fetches data in response to a hint.
 pub async fn handle_hint(
+    hint: Hint<HintType>,
+    cfg: &HostConfig,
+    providers: &HostProviders,
+    kv: SharedKeyValueStore,
+) -> Result<()> {
+    let hint_type_label: &str = hint.ty.into();
+
+    base_macros::inc!(counter, crate::Metrics::HINT_REQUESTS_TOTAL, crate::Metrics::LABEL_HINT_TYPE => hint_type_label);
+    let _timer = timed!(
+        crate::Metrics::HINT_DURATION_SECONDS,
+        crate::Metrics::LABEL_HINT_TYPE => hint_type_label,
+    );
+
+    let result = Box::pin(handle_hint_inner(hint, cfg, providers, kv)).await;
+
+    if result.is_err() {
+        base_macros::inc!(counter, crate::Metrics::HINT_ERRORS_TOTAL, crate::Metrics::LABEL_HINT_TYPE => hint_type_label);
+    }
+
+    result
+}
+
+async fn handle_hint_inner(
     hint: Hint<HintType>,
     cfg: &HostConfig,
     providers: &HostProviders,

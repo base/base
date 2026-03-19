@@ -14,8 +14,9 @@ use tokio::{
     sync::RwLock,
     task::{self, JoinHandle},
 };
-use tracing::info;
+use tracing::{info, info_span, Instrument};
 
+use crate::metrics::timed;
 #[cfg(feature = "disk")]
 use crate::DiskKeyValueStore;
 use crate::{
@@ -100,7 +101,8 @@ impl Host {
             HintReader::new(hint_chan.host),
             Arc::clone(&backend),
         );
-        let mut server_task = task::spawn(async move { server.start().await });
+        let mut server_task =
+            task::spawn(async move { server.start().await }.instrument(info_span!("preimage_server")));
 
         let recording = RecordingOracle::new(
             OracleReader::new(preimage_chan.client),
@@ -108,10 +110,8 @@ impl Host {
             Arc::clone(&witness),
         );
 
-        // Both the oracle and hint arms share the same RecordingOracle, ensuring all
-        // fetched preimages are captured into the witness regardless of which channel
-        // triggers them.
-        let client_task = Box::pin(Self::run_client(recording));
+        let mut replay_timer = timed!(crate::Metrics::REPLAY_DURATION_SECONDS);
+        let client_task = Box::pin(Self::run_client(recording).instrument(info_span!("run_client")));
 
         tokio::select! {
             result = &mut server_task => {
@@ -122,6 +122,7 @@ impl Host {
                 };
             }
             result = client_task => {
+                replay_timer.stop();
                 result.map_err(|e| HostError::ProofProgram(Box::new(e)))?;
             }
         }
@@ -131,6 +132,7 @@ impl Host {
 
         witness.finalize()?;
         let preimage_count = witness.preimage_count()?;
+        base_macros::set!(gauge, crate::Metrics::PREIMAGE_COUNT, preimage_count as f64);
         info!(preimage_count, "witness capture complete");
 
         Arc::try_unwrap(witness).map_err(|arc| {
@@ -191,12 +193,29 @@ impl Host {
 
     /// Creates the providers required for the host backend.
     pub async fn create_providers(&self) -> Result<HostProviders> {
+        let mut timer = timed!(
+            crate::Metrics::PROVIDER_CONNECT_DURATION_SECONDS,
+            crate::Metrics::LABEL_PROVIDER => crate::Metrics::PROVIDER_L1,
+        );
         let l1_provider = rpc_provider(&self.config.prover.l1_eth_url).await?;
+        timer.stop();
+
+        let mut timer = timed!(
+            crate::Metrics::PROVIDER_CONNECT_DURATION_SECONDS,
+            crate::Metrics::LABEL_PROVIDER => crate::Metrics::PROVIDER_BEACON,
+        );
         let blob_provider = OnlineBlobProvider::init(OnlineBeaconClient::new_http(
             self.config.prover.l1_beacon_url.clone(),
         ))
         .await;
+        timer.stop();
+
+        let mut timer = timed!(
+            crate::Metrics::PROVIDER_CONNECT_DURATION_SECONDS,
+            crate::Metrics::LABEL_PROVIDER => crate::Metrics::PROVIDER_L2,
+        );
         let l2_provider = rpc_provider::<Base>(&self.config.prover.l2_eth_url).await?;
+        timer.stop();
 
         Ok(HostProviders { l1: l1_provider, blobs: blob_provider, l2: l2_provider })
     }

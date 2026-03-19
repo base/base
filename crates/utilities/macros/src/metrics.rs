@@ -46,6 +46,23 @@ macro_rules! inc {
     };
 }
 
+/// Decrements a metric value, optionally with a specified label.
+#[macro_export]
+macro_rules! dec {
+    ($instrument:ident, $metric:path, $value:expr) => {
+        #[cfg(feature = "metrics")]
+        metrics::$instrument!($metric, "type" => $value).decrement(1.0);
+    };
+    ($instrument:ident, $metric:path $(, $label_key:expr $(=> $label_value:expr)?)*$(,)?) => {
+        #[cfg(feature = "metrics")]
+        metrics::$instrument!($metric $(, $label_key $(=> $label_value)?)*).decrement(1.0);
+    };
+    ($instrument:ident, $metric:path, $value:expr $(, $label_key:expr $(=> $label_value:expr)?)*$(,)?) => {
+        #[cfg(feature = "metrics")]
+        metrics::$instrument!($metric $(, $label_key $(=> $label_value)?)*).decrement($value);
+    };
+}
+
 /// Records a value, optionally with a specified label.
 #[macro_export]
 macro_rules! record {

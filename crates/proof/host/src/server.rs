@@ -4,7 +4,7 @@ use base_proof_preimage::{
     HintReaderServer, PreimageOracleServer, PreimageServerBackend, errors::PreimageOracleError,
 };
 use tokio::spawn;
-use tracing::{error, info};
+use tracing::{error, info, info_span, Instrument};
 
 use crate::HostError;
 
@@ -30,10 +30,14 @@ where
 
     /// Starts the [`PreimageServer`] and waits for incoming requests.
     pub async fn start(self) -> Result<(), HostError> {
-        let server =
-            spawn(Self::start_oracle_server(self.oracle_server, Arc::clone(&self.backend)));
-        let hint_router =
-            spawn(Self::start_hint_router(self.hint_reader, Arc::clone(&self.backend)));
+        let server = spawn(
+            Self::start_oracle_server(self.oracle_server, Arc::clone(&self.backend))
+                .instrument(info_span!("oracle_server_loop")),
+        );
+        let hint_router = spawn(
+            Self::start_hint_router(self.hint_reader, Arc::clone(&self.backend))
+                .instrument(info_span!("hint_router_loop")),
+        );
 
         tokio::select! {
             s = server => s.map_err(|e| HostError::Custom(e.to_string()))?,
