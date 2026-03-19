@@ -251,7 +251,7 @@ impl PerChainConfig {
                 pectra_blob_schedule_time: None,
                 isthmus_time: Some(0),
                 jovian_time: Some(0),
-                base: Some(BaseHardforkConfig { v1: Some(0) }),
+                base: BaseHardforkConfig { v1: Some(0) },
             },
             chain_op_config: BaseFeeConfig::base_mainnet(),
         }

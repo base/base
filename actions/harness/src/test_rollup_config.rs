@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use base_consensus_genesis::{BaseHardforkConfig, HardForkConfig, RollupConfig};
+use base_consensus_genesis::{HardForkConfig, RollupConfig};
 use base_consensus_registry::Registry;
 
 use crate::BatcherConfig;
@@ -136,8 +136,8 @@ impl TestRollupConfigBuilder {
     ///
     /// Base V1 is a standalone Base-specific fork, independent of the OP
     /// cascade chain. Chaining after any `through_*` method is fine.
-    pub fn with_base_v1_at(mut self, t: u64) -> Self {
-        self.config.hardforks.base.get_or_insert_with(BaseHardforkConfig::default).v1 = Some(t);
+    pub const fn with_base_v1_at(mut self, t: u64) -> Self {
+        self.config.hardforks.base.v1 = Some(t);
         self
     }
 
@@ -145,7 +145,7 @@ impl TestRollupConfigBuilder {
     ///
     /// `base_mainnet` intentionally keeps the harness's existing "Canyon through
     /// Fjord active" behavior; this opt-in extends that to the later upgrades.
-    pub fn all_forks_active(mut self) -> Self {
+    pub const fn all_forks_active(mut self) -> Self {
         self.config.hardforks.regolith_time = Some(0);
         self.config.hardforks.canyon_time = Some(0);
         self.config.hardforks.delta_time = Some(0);
@@ -156,7 +156,7 @@ impl TestRollupConfigBuilder {
         self.config.hardforks.pectra_blob_schedule_time = Some(0);
         self.config.hardforks.isthmus_time = Some(0);
         self.config.hardforks.jovian_time = Some(0);
-        self.config.hardforks.base.get_or_insert_with(BaseHardforkConfig::default).v1 = Some(0);
+        self.config.hardforks.base.v1 = Some(0);
         self
     }
 

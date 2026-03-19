@@ -158,10 +158,7 @@ impl BaseUpgrade {
                 ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_ISTHMUS_TIMESTAMP),
             ),
             (Self::Jovian, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
-            // V1 co-activates with Jovian on this devnet. Both resolve to OpSpecId::BASE_V1
-            // since spec_by_timestamp_after_bedrock checks V1 first (newest wins). This is
-            // intentional: V1 is a strict superset of Jovian on this devnet configuration.
-            (Self::V1, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
+            (Self::V1, ForkCondition::Never),
         ]
     }
 

@@ -280,7 +280,7 @@ impl RollupConfig {
 
     /// Returns true if Base V1 is active at the given timestamp.
     pub fn is_base_v1_active(&self, timestamp: u64) -> bool {
-        self.hardforks.base.as_ref().and_then(|b| b.v1).is_some_and(|t| timestamp >= t)
+        self.hardforks.base.v1.is_some_and(|t| timestamp >= t)
     }
 
     /// Returns true if the timestamp marks the first Base V1 block.
@@ -417,13 +417,9 @@ impl BaseUpgrades for RollupConfig {
                 .unwrap_or(ForkCondition::Never),
             // V1 is standalone: not part of the Base upgrade cascade chain. It only activates
             // when explicitly configured and never implies (or is implied by) Jovian being active.
-            BaseUpgrade::V1 => self
-                .hardforks
-                .base
-                .as_ref()
-                .and_then(|b| b.v1)
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
+            BaseUpgrade::V1 => {
+                self.hardforks.base.v1.map(ForkCondition::Timestamp).unwrap_or(ForkCondition::Never)
+            }
             _ => ForkCondition::Never,
         }
     }
@@ -471,10 +467,10 @@ mod tests {
         assert_eq!(config.spec_id(60), base_revm::OpSpecId::ISTHMUS);
         config.hardforks.jovian_time = Some(65);
         assert_eq!(config.spec_id(65), base_revm::OpSpecId::JOVIAN);
-        config.hardforks.base = Some(crate::BaseHardforkConfig { v1: Some(70) });
+        config.hardforks.base = crate::BaseHardforkConfig { v1: Some(70) };
         assert_eq!(config.spec_id(70), base_revm::OpSpecId::BASE_V1);
         // V1 takes precedence over Jovian when both are active at the same timestamp
-        config.hardforks.base = Some(crate::BaseHardforkConfig { v1: Some(65) });
+        config.hardforks.base = crate::BaseHardforkConfig { v1: Some(65) };
         assert_eq!(config.spec_id(65), base_revm::OpSpecId::BASE_V1);
     }
 
@@ -620,7 +616,7 @@ mod tests {
         use crate::BaseHardforkConfig;
         let mut config = RollupConfig::default();
         assert!(!config.is_base_v1_active(0));
-        config.hardforks.base = Some(BaseHardforkConfig { v1: Some(10) });
+        config.hardforks.base = BaseHardforkConfig { v1: Some(10) };
         // V1 does not cascade upward to existing forks
         assert!(!config.is_regolith_active(10));
         assert!(!config.is_canyon_active(10));
@@ -644,7 +640,7 @@ mod tests {
                 pectra_blob_schedule_time: Some(80),
                 isthmus_time: Some(90),
                 jovian_time: Some(100),
-                base: Some(BaseHardforkConfig { v1: Some(110) }),
+                base: BaseHardforkConfig { v1: Some(110) },
             },
             block_time: 2,
             ..Default::default()

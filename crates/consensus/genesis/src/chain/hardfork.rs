@@ -15,6 +15,13 @@ pub struct BaseHardforkConfig {
     pub v1: Option<u64>,
 }
 
+impl BaseHardforkConfig {
+    /// Returns true if no Base-specific hardforks are configured.
+    pub const fn is_empty(&self) -> bool {
+        self.v1.is_none()
+    }
+}
+
 /// Hardfork configuration.
 ///
 /// See: <https://github.com/ethereum-optimism/superchain-registry/blob/8ff62ada16e14dd59d0fb94ffb47761c7fa96e01/ops/internal/config/chain.go#L102-L110>
@@ -80,8 +87,11 @@ pub struct HardForkConfig {
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub jovian_time: Option<u64>,
     /// `base` contains Base-specific hardfork activation times.
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    pub base: Option<BaseHardforkConfig>,
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "BaseHardforkConfig::is_empty")
+    )]
+    pub base: BaseHardforkConfig,
 }
 
 impl Display for HardForkConfig {
@@ -113,7 +123,7 @@ impl HardForkConfig {
             ("Pectra Blob Schedule", self.pectra_blob_schedule_time),
             ("Isthmus", self.isthmus_time),
             ("Jovian", self.jovian_time),
-            ("Base V1", self.base.and_then(|b| b.v1)),
+            ("Base V1", self.base.v1),
         ]
         .into_iter()
     }
@@ -148,7 +158,7 @@ mod tests {
             pectra_blob_schedule_time: None,
             isthmus_time: None,
             jovian_time: None,
-            base: None,
+            base: BaseHardforkConfig::default(),
         };
 
         let deserialized: HardForkConfig = serde_json::from_str(raw).unwrap();
@@ -195,7 +205,7 @@ mod tests {
             pectra_blob_schedule_time: None,
             isthmus_time: None,
             jovian_time: None,
-            base: None,
+            base: BaseHardforkConfig::default(),
         };
 
         let deserialized: HardForkConfig = toml::from_str(raw).unwrap();
@@ -229,7 +239,7 @@ mod tests {
             pectra_blob_schedule_time: Some(8),
             isthmus_time: Some(9),
             jovian_time: Some(10),
-            base: Some(BaseHardforkConfig { v1: Some(11) }),
+            base: BaseHardforkConfig { v1: Some(11) },
         };
 
         let mut iter = hardforks.iter();
