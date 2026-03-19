@@ -156,35 +156,48 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let factory_client = Arc::new(factory_client);
     let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
 
-    // ── 5a. Construct tx-manager ─────────────────────────────────────────
-    let l1_tx_provider = alloy_provider::RootProvider::new_http(config.l1_eth_rpc.clone());
-    let l1_chain_id = l1_tx_provider
-        .get_chain_id()
-        .await
-        .map_err(|e| eyre::eyre!("failed to fetch L1 chain ID: {e}"))?;
-    let tx_manager = SimpleTxManager::new(
-        l1_tx_provider,
-        config.signing,
-        config.tx_manager,
-        l1_chain_id,
-        Arc::new(BaseTxMetrics::new("proposer")),
-    )
-    .await
-    .map_err(|e| eyre::eyre!("failed to construct tx manager: {e}"))?;
-    let proposer_address = tx_manager.sender_address();
-    info!(%proposer_address, "Transaction manager initialized");
-
-    // ── 5b. Create prover ────────────────────────────────────────────────
+    // ── 5a. Create prover ──────────────────────────────────────────────
     let prover_client: Arc<dyn ProverClient> = Arc::new(prover_client);
-    info!(proposer = %proposer_address, "Prover initialized");
+    info!("Prover initialized");
 
-    // ── 5c. Create output proposer ──────────────────────────────────────
-    let output_proposer: Arc<dyn crate::OutputProposer> = Arc::new(ProposalSubmitter::new(
-        tx_manager,
-        config.dispute_game_factory_addr,
-        config.game_type,
-        init_bond,
-    ));
+    // ── 5b. Create output proposer (or dry-run stub) ────────────────────
+    let (output_proposer, proposer_address): (Arc<dyn crate::OutputProposer>, Option<Address>) =
+        if config.dry_run {
+            info!("Dry-run mode enabled — proofs will be sourced but NOT submitted on-chain");
+            (Arc::new(crate::DryRunProposer), None)
+        } else {
+            let signing = config
+                .signing
+                .ok_or_else(|| eyre::eyre!("signing config required when not in dry-run mode"))?;
+            let tx_config = config.tx_manager.ok_or_else(|| {
+                eyre::eyre!("tx manager config required when not in dry-run mode")
+            })?;
+
+            let l1_tx_provider = alloy_provider::RootProvider::new_http(config.l1_eth_rpc.clone());
+            let l1_chain_id = l1_tx_provider
+                .get_chain_id()
+                .await
+                .map_err(|e| eyre::eyre!("failed to fetch L1 chain ID: {e}"))?;
+            let tx_manager = SimpleTxManager::new(
+                l1_tx_provider,
+                signing,
+                tx_config,
+                l1_chain_id,
+                Arc::new(BaseTxMetrics::new("proposer")),
+            )
+            .await
+            .map_err(|e| eyre::eyre!("failed to construct tx manager: {e}"))?;
+            let addr = tx_manager.sender_address();
+            info!(%addr, "Transaction manager initialized");
+
+            let submitter = ProposalSubmitter::new(
+                tx_manager,
+                config.dispute_game_factory_addr,
+                config.game_type,
+                init_bond,
+            );
+            (Arc::new(submitter), Some(addr))
+        };
     info!("Output proposer initialized");
 
     // ── 6. Create driver ───────────────────────────────────────────────────
@@ -227,11 +240,12 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         tokio::spawn(async move { serve(addr, ready_flag, admin_driver, health_cancel).await })
     };
 
-    // ── 8. Start balance monitor (if metrics enabled) ────────────────────
-    let balance_handle: Option<JoinHandle<()>> = if config.metrics.enabled {
-        let handle =
-            tokio::spawn(balance_monitor(Arc::clone(&l1_client), proposer_address, cancel.clone()));
-        info!(%proposer_address, "Balance monitor started");
+    // ── 8. Start balance monitor (if metrics enabled and not dry-run) ───
+    let balance_handle: Option<JoinHandle<()>> = if config.metrics.enabled
+        && let Some(addr) = proposer_address
+    {
+        let handle = tokio::spawn(balance_monitor(Arc::clone(&l1_client), addr, cancel.clone()));
+        info!(%addr, "Balance monitor started");
         Some(handle)
     } else {
         None

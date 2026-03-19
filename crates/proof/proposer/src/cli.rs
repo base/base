@@ -40,6 +40,10 @@ pub struct Cli {
 #[derive(Debug, Clone, Parser)]
 #[command(next_help_heading = "Proposer")]
 pub struct ProposerArgs {
+    /// Dry-run mode: source proofs but do not submit transactions on-chain.
+    #[arg(long = "dry-run", env = cli_env!("DRY_RUN"), default_value = "false")]
+    pub dry_run: bool,
+
     /// Allow proposals based on non-finalized L1 data.
     #[arg(
         long = "allow-non-finalized",
@@ -204,6 +208,7 @@ mod tests {
         let cli = Cli::try_parse_from(args).unwrap();
 
         // Check defaults
+        assert!(!cli.proposer.dry_run);
         assert!(!cli.proposer.allow_non_finalized);
         assert_eq!(cli.proposer.poll_interval, Duration::from_secs(12));
         assert_eq!(cli.proposer.rpc_timeout, Duration::from_secs(30));

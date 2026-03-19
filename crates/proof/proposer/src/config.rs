@@ -48,6 +48,8 @@ pub enum ConfigError {
 /// Validated proposer configuration.
 #[derive(Debug)]
 pub struct ProposerConfig {
+    /// Dry-run mode: source proofs but do not submit transactions on-chain.
+    pub dry_run: bool,
     /// Allow proposals based on non-finalized L1 data.
     pub allow_non_finalized: bool,
     /// URL of the prover RPC endpoint.
@@ -83,9 +85,11 @@ pub struct ProposerConfig {
     /// RPC retry configuration.
     pub retry: RetryConfig,
     /// Signing configuration for L1 transaction submission.
-    pub signing: base_tx_manager::SignerConfig,
+    /// `None` when running in dry-run mode.
+    pub signing: Option<base_tx_manager::SignerConfig>,
     /// Transaction manager configuration.
-    pub tx_manager: base_tx_manager::TxManagerConfig,
+    /// `None` when running in dry-run mode.
+    pub tx_manager: Option<base_tx_manager::TxManagerConfig>,
 }
 
 impl ProposerConfig {
@@ -124,15 +128,18 @@ impl ProposerConfig {
         // Extract retry config before moving signer out of proposer
         let retry = RetryConfig::from(&cli.proposer);
 
-        // Validate and extract signing config
-        let signing = base_tx_manager::SignerConfig::try_from(cli.proposer.signer)
-            .map_err(|e| ConfigError::Signing(e.to_string()))?;
-
-        // Validate and extract tx manager config
-        let tx_manager = base_tx_manager::TxManagerConfig::try_from(cli.proposer.tx_manager)
-            .map_err(|e| ConfigError::TxManager(e.to_string()))?;
+        let (signing, tx_manager) = if cli.proposer.dry_run {
+            (None, None)
+        } else {
+            let s = base_tx_manager::SignerConfig::try_from(cli.proposer.signer)
+                .map_err(|e| ConfigError::Signing(e.to_string()))?;
+            let t = base_tx_manager::TxManagerConfig::try_from(cli.proposer.tx_manager)
+                .map_err(|e| ConfigError::TxManager(e.to_string()))?;
+            (Some(s), Some(t))
+        };
 
         Ok(Self {
+            dry_run: cli.proposer.dry_run,
             allow_non_finalized: cli.proposer.allow_non_finalized,
             prover_rpc: cli.proposer.prover_rpc,
             l1_eth_rpc: cli.proposer.l1_eth_rpc,
@@ -212,6 +219,7 @@ mod tests {
     fn minimal_cli() -> Cli {
         Cli {
             proposer: ProposerArgs {
+                dry_run: false,
                 allow_non_finalized: false,
                 prover_rpc: Url::parse("http://localhost:8080").unwrap(),
                 l1_eth_rpc: Url::parse("http://localhost:8545").unwrap(),
@@ -266,6 +274,7 @@ mod tests {
     fn test_valid_config() {
         let cli = minimal_cli();
         let config = ProposerConfig::from_cli(cli).unwrap();
+        assert!(!config.dry_run);
         assert!(!config.allow_non_finalized);
         assert_eq!(config.game_type, 1);
         assert_eq!(config.poll_interval, Duration::from_secs(12));
@@ -402,7 +411,7 @@ mod tests {
     fn test_signing_config_local() {
         let cli = minimal_cli();
         let config = ProposerConfig::from_cli(cli).unwrap();
-        assert!(matches!(config.signing, base_tx_manager::SignerConfig::Local { .. }));
+        assert!(matches!(config.signing, Some(base_tx_manager::SignerConfig::Local { .. })));
     }
 
     #[test]
@@ -414,7 +423,7 @@ mod tests {
             signer_address: Some("0x1234567890123456789012345678901234567890".parse().unwrap()),
         };
         let config = ProposerConfig::from_cli(cli).unwrap();
-        assert!(matches!(config.signing, base_tx_manager::SignerConfig::Remote { .. }));
+        assert!(matches!(config.signing, Some(base_tx_manager::SignerConfig::Remote { .. })));
     }
 
     #[test]
@@ -424,6 +433,18 @@ mod tests {
             SignerCli { private_key: None, signer_endpoint: None, signer_address: None };
         let result = ProposerConfig::from_cli(cli);
         assert!(matches!(result, Err(ConfigError::Signing(_))));
+    }
+
+    #[test]
+    fn test_dry_run_skips_signer_validation() {
+        let mut cli = minimal_cli();
+        cli.proposer.dry_run = true;
+        cli.proposer.signer =
+            SignerCli { private_key: None, signer_endpoint: None, signer_address: None };
+        let config = ProposerConfig::from_cli(cli).unwrap();
+        assert!(config.dry_run);
+        assert!(config.signing.is_none());
+        assert!(config.tx_manager.is_none());
     }
 
     #[test]

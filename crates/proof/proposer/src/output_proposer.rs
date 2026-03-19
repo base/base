@@ -67,6 +67,30 @@ pub trait OutputProposer: Send + Sync {
     ) -> Result<(), ProposerError>;
 }
 
+/// No-op output proposer that logs proposals without submitting transactions.
+#[derive(Debug)]
+pub struct DryRunProposer;
+
+#[async_trait]
+impl OutputProposer for DryRunProposer {
+    async fn propose_output(
+        &self,
+        proposal: &Proposal,
+        l2_block_number: u64,
+        parent_index: u32,
+        intermediate_roots: &[B256],
+    ) -> Result<(), ProposerError> {
+        info!(
+            l2_block_number,
+            parent_index,
+            output_root = ?proposal.output_root,
+            intermediate_roots_count = intermediate_roots.len(),
+            "DRY RUN: would create dispute game (skipping submission)"
+        );
+        Ok(())
+    }
+}
+
 /// Submits output proposals to L1 via the [`TxManager`].
 #[derive(Debug)]
 pub struct ProposalSubmitter<T> {

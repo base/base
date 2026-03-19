@@ -20,7 +20,7 @@ pub use constants::*;
 
 mod output_proposer;
 pub use output_proposer::{
-    OutputProposer, ProposalSubmitter, build_proof_data, is_game_already_exists,
+    DryRunProposer, OutputProposer, ProposalSubmitter, build_proof_data, is_game_already_exists,
 };
 
 mod driver;
