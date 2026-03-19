@@ -7,8 +7,8 @@ use alloy_rpc_types_engine::{
 };
 use alloy_transport::{Transport, TransportResult};
 use base_alloy_rpc_types_engine::{
-    OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
-    OpPayloadAttributes,
+    OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadEnvelopeV5,
+    OpExecutionPayloadV4, OpPayloadAttributes,
 };
 
 /// Extension trait for engine API RPC methods.
@@ -136,6 +136,20 @@ pub trait OpEngineApi<N, T> {
         &self,
         payload_id: PayloadId,
     ) -> TransportResult<OpExecutionPayloadEnvelopeV4>;
+
+    /// Returns the most recent version of the payload that is available in the corresponding
+    /// payload build process at the time of receiving this call.
+    ///
+    /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/osaka.md#engine_getpayloadv5>
+    ///
+    /// OP modifications:
+    /// - the response type is [`OpExecutionPayloadEnvelopeV5`], which uses
+    ///   [`OpExecutionPayloadV4`](base_alloy_rpc_types_engine::OpExecutionPayloadV4) for the
+    ///   execution payload and otherwise follows the V5 envelope shape.
+    async fn get_payload_v5(
+        &self,
+        payload_id: PayloadId,
+    ) -> TransportResult<OpExecutionPayloadEnvelopeV5>;
 
     /// Returns the execution payload bodies by the given hash.
     ///
@@ -268,6 +282,13 @@ where
         payload_id: PayloadId,
     ) -> TransportResult<OpExecutionPayloadEnvelopeV4> {
         self.client().request("engine_getPayloadV4", (payload_id,)).await
+    }
+
+    async fn get_payload_v5(
+        &self,
+        payload_id: PayloadId,
+    ) -> TransportResult<OpExecutionPayloadEnvelopeV5> {
+        self.client().request("engine_getPayloadV5", (payload_id,)).await
     }
 
     async fn get_payload_bodies_by_hash_v1(

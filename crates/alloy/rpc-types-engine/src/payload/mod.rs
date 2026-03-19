@@ -7,6 +7,13 @@ mod v3;
 pub use v3::OpExecutionPayloadEnvelopeV3;
 
 mod v4;
+pub use v4::{OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4};
+
+mod v5;
+pub use v5::OpExecutionPayloadEnvelopeV5;
+
+pub use alloy_rpc_types_engine::BlobsBundleV2;
+
 use alloc::vec::Vec;
 
 use alloy_consensus::{Block, BlockHeader, HeaderInfo, Transaction};
@@ -16,10 +23,6 @@ use alloy_rpc_types_engine::{
     ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2,
     ExecutionPayloadV3, PayloadError,
 };
-pub use v4::{OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4};
-
-mod v5;
-pub use v5::OpExecutionPayloadEnvelopeV5;
 
 use crate::OpExecutionPayloadSidecar;
 
