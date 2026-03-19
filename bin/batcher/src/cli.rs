@@ -105,11 +105,7 @@ pub(crate) struct BatcherArgs {
     /// Only relevant when `--batch-type=span`. Should be slightly below the
     /// typical observed ratio to avoid creating a small leftover frame.
     /// Matches op-batcher's `--approx-compr-ratio` default.
-    #[arg(
-        long = "approx-compr-ratio",
-        default_value = "0.6",
-        env = "BATCHER_APPROX_COMPR_RATIO"
-    )]
+    #[arg(long = "approx-compr-ratio", default_value = "0.6", env = "BATCHER_APPROX_COMPR_RATIO")]
     pub approx_compr_ratio: f64,
 
     /// Maximum number of in-flight (unconfirmed) transactions.
