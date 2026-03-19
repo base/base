@@ -323,7 +323,7 @@ If the upgrade introduces new precompiles, create a new `base_v1()` function. If
 
 ```rust
 // Reuse previous precompile set
-OpSpecId::OSAKA | OpSpecId::JOVIAN | OpSpecId::BASE_V1 => jovian(),
+OpSpecId::JOVIAN | OpSpecId::BASE_V1 => jovian(),
 
 // Or add a new set
 OpSpecId::BASE_V1 => base_v1(),
