@@ -10,7 +10,8 @@ pub trait BaseChainUpgradesExt {
     /// Expands Base hardforks into a full [`ChainHardforks`] including implied Ethereum entries.
     ///
     /// Pre-Bedrock Ethereum hardforks are set to block 0. Paired Ethereum hardforks
-    /// use their Base counterpart's timestamp: Shanghai=Canyon, Cancun=Ecotone, Prague=Isthmus.
+    /// use their Base counterpart's timestamp:
+    /// Shanghai=Canyon, Cancun=Ecotone, Prague=Isthmus, Osaka=V1.
     fn to_chain_hardforks(&self) -> ChainHardforks;
 }
 
@@ -62,9 +63,8 @@ impl BaseChainUpgradesExt for BaseChainUpgrades {
         forks.push((BaseUpgrade::Jovian.boxed(), self[BaseUpgrade::Jovian]));
 
         let base_v1 = self[BaseUpgrade::V1];
-        if base_v1 != ForkCondition::Never {
-            forks.push((BaseUpgrade::V1.boxed(), base_v1));
-        }
+        forks.push((EthereumHardfork::Osaka.boxed(), base_v1));
+        forks.push((BaseUpgrade::V1.boxed(), base_v1));
 
         ChainHardforks::new(forks)
     }
@@ -85,3 +85,23 @@ pub static BASE_MAINNET_HARDFORKS: Lazy<ChainHardforks> =
 /// Base devnet-0-sepolia-dev-0 list of hardforks.
 pub static BASE_DEVNET_0_SEPOLIA_DEV_0_HARDFORKS: Lazy<ChainHardforks> =
     Lazy::new(|| BaseChainUpgrades::base_devnet_0_sepolia_dev_0().to_chain_hardforks());
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base_v1_expands_to_osaka() {
+        let hardforks =
+            BaseChainUpgrades::new(BaseUpgrade::devnet().into_iter().map(|(fork, cond)| {
+                if fork == BaseUpgrade::V1 {
+                    (fork, ForkCondition::Timestamp(1_000_000))
+                } else {
+                    (fork, cond)
+                }
+            }))
+            .to_chain_hardforks();
+        assert_eq!(hardforks.get(BaseUpgrade::V1), Some(ForkCondition::Timestamp(1_000_000)));
+        assert_eq!(hardforks.get(EthereumHardfork::Osaka), hardforks.get(BaseUpgrade::V1));
+    }
+}

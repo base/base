@@ -74,6 +74,7 @@ impl EthereumHardforks for BaseChainUpgrades {
             Shanghai if forks_len <= Canyon.idx() => ForkCondition::Never,
             Cancun if forks_len <= Ecotone.idx() => ForkCondition::Never,
             Prague if forks_len <= Isthmus.idx() => ForkCondition::Never,
+            Osaka if forks_len <= V1.idx() => ForkCondition::Never,
             _ => self[fork],
         }
     }
@@ -114,7 +115,7 @@ impl Index<EthereumHardfork> for BaseChainUpgrades {
     fn index(&self, hf: EthereumHardfork) -> &Self::Output {
         match hf {
             // Dao Hardfork is not needed for BaseChainUpgrades
-            Dao | Osaka | Bpo1 | Bpo2 | Bpo3 | Bpo4 | Bpo5 | Amsterdam => &ForkCondition::Never,
+            Dao | Bpo1 | Bpo2 | Bpo3 | Bpo4 | Bpo5 | Amsterdam => &ForkCondition::Never,
             Frontier | Homestead | Tangerine | SpuriousDragon | Byzantium | Constantinople
             | Petersburg | Istanbul | MuirGlacier | Berlin => &ForkCondition::ZERO_BLOCK,
             London | ArrowGlacier | GrayGlacier => &self[Bedrock],
@@ -126,6 +127,7 @@ impl Index<EthereumHardfork> for BaseChainUpgrades {
             Shanghai => &self[Canyon],
             Cancun => &self[Ecotone],
             Prague => &self[Isthmus],
+            Osaka => &self[V1],
             _ => unreachable!(),
         }
     }
@@ -268,6 +270,27 @@ mod tests {
         let devnet0_forks = BaseChainUpgrades::base_devnet_0_sepolia_dev_0();
         assert!(!devnet0_forks.is_base_v1_active_at_timestamp(0));
         assert!(!devnet0_forks.is_base_v1_active_at_timestamp(u64::MAX));
+    }
+
+    #[test]
+    fn osaka_tracks_base_v1_activation() {
+        let base_mainnet_forks = BaseChainUpgrades::mainnet();
+        assert_eq!(
+            base_mainnet_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
+            ForkCondition::Never
+        );
+
+        let devnet_forks = BaseChainUpgrades::devnet();
+        assert_eq!(
+            devnet_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
+            ForkCondition::ZERO_TIMESTAMP
+        );
+
+        let devnet0_forks = BaseChainUpgrades::base_devnet_0_sepolia_dev_0();
+        assert_eq!(
+            devnet0_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
+            ForkCondition::Never
+        );
     }
 
     #[test]
