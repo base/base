@@ -5,7 +5,7 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_alloy_rpc_types_engine::{
     OpExecutionData, OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4,
-    OpPayloadAttributes,
+    OpExecutionPayloadEnvelopeV5, OpPayloadAttributes,
 };
 use base_execution_consensus::isthmus;
 use base_execution_forks::BaseUpgrades;
@@ -57,14 +57,15 @@ where
         + TryInto<ExecutionPayloadV1>
         + TryInto<ExecutionPayloadEnvelopeV2>
         + TryInto<OpExecutionPayloadEnvelopeV3>
-        + TryInto<OpExecutionPayloadEnvelopeV4>,
+        + TryInto<OpExecutionPayloadEnvelopeV4>
+        + TryInto<OpExecutionPayloadEnvelopeV5>,
 {
     type ExecutionPayloadEnvelopeV1 = ExecutionPayloadV1;
     type ExecutionPayloadEnvelopeV2 = ExecutionPayloadEnvelopeV2;
     type ExecutionPayloadEnvelopeV3 = OpExecutionPayloadEnvelopeV3;
     type ExecutionPayloadEnvelopeV4 = OpExecutionPayloadEnvelopeV4;
-    type ExecutionPayloadEnvelopeV5 = OpExecutionPayloadEnvelopeV4;
-    type ExecutionPayloadEnvelopeV6 = OpExecutionPayloadEnvelopeV4;
+    type ExecutionPayloadEnvelopeV5 = OpExecutionPayloadEnvelopeV5;
+    type ExecutionPayloadEnvelopeV6 = OpExecutionPayloadEnvelopeV5;
 }
 
 /// Validator for Base engine API.

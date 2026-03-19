@@ -24,7 +24,7 @@ pub use sidecar::OpExecutionPayloadSidecar;
 
 mod payload;
 pub use payload::{
-    OpExecutionPayload, OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4,
+    BlobsBundleV2, OpExecutionPayload, OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4,
     OpExecutionPayloadEnvelopeV5, OpExecutionPayloadV4, OpPayloadError,
 };
 

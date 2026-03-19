@@ -266,7 +266,7 @@ mod tests {
         let devnet_forks = BaseChainUpgrades::devnet();
         assert!(devnet_forks.is_base_v1_active_at_timestamp(0));
 
-        // V1 is not scheduled on devnet-0-sepolia-dev-0 (ForkCondition::Never)
+        // V1 is not scheduled on devnet-0-sepolia-dev-0 yet
         let devnet0_forks = BaseChainUpgrades::base_devnet_0_sepolia_dev_0();
         assert!(!devnet0_forks.is_base_v1_active_at_timestamp(0));
         assert!(!devnet0_forks.is_base_v1_active_at_timestamp(u64::MAX));

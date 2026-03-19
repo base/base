@@ -26,8 +26,8 @@ use base_alloy_network::Base;
 use base_alloy_provider::OpEngineApi;
 use base_alloy_rpc_types::Transaction;
 use base_alloy_rpc_types_engine::{
-    OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
-    OpPayloadAttributes,
+    OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadEnvelopeV5,
+    OpExecutionPayloadV4, OpPayloadAttributes,
 };
 use base_consensus_genesis::RollupConfig;
 use base_protocol::{FromBlockError, L2BlockInfo};
@@ -309,6 +309,18 @@ where
         payload_id: PayloadId,
     ) -> TransportResult<OpExecutionPayloadEnvelopeV4> {
         let call = <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::get_payload_v4(
+            &self.engine,
+            payload_id,
+        );
+
+        record_call_time(call, Metrics::GET_PAYLOAD_METHOD).await
+    }
+
+    async fn get_payload_v5(
+        &self,
+        payload_id: PayloadId,
+    ) -> TransportResult<OpExecutionPayloadEnvelopeV5> {
+        let call = <L2Provider as OpEngineApi<Base, Http<HyperAuthClient>>>::get_payload_v5(
             &self.engine,
             payload_id,
         );

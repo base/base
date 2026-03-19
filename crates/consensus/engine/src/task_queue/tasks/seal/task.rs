@@ -56,7 +56,8 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
     ///
     /// - `engine_getPayloadV2` is used for payloads with a timestamp before the Ecotone fork.
     /// - `engine_getPayloadV3` is used for payloads with a timestamp after the Ecotone fork.
-    /// - `engine_getPayloadV4` is used for payloads with a timestamp after the Isthmus fork.
+    /// - `engine_getPayloadV4` is used for Isthmus/Jovian payloads before Base V1.
+    /// - `engine_getPayloadV5` is used for Base V1 / Osaka payloads.
     async fn seal_payload(
         &self,
         cfg: &RollupConfig,
@@ -75,6 +76,22 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
 
         let get_payload_version = EngineGetPayloadVersion::from_cfg(cfg, payload_timestamp);
         let payload_envelope = match get_payload_version {
+            EngineGetPayloadVersion::V5 => {
+                let payload = engine.get_payload_v5(payload_id).await.map_err(|e| {
+                    error!(target: "engine", error = %e, "Payload fetch failed");
+                    SealTaskError::GetPayloadFailed(e)
+                })?;
+
+                // V5 drops parent_beacon_block_root from the get_payload response; source it
+                // from the attributes instead so InsertTask can still pass it to new_payload.
+                OpExecutionPayloadEnvelope {
+                    parent_beacon_block_root: payload_attrs
+                        .attributes()
+                        .payload_attributes
+                        .parent_beacon_block_root,
+                    execution_payload: OpExecutionPayload::V4(payload.execution_payload),
+                }
+            }
             EngineGetPayloadVersion::V4 => {
                 let payload = engine.get_payload_v4(payload_id).await.map_err(|e| {
                     error!(target: "engine", error = %e, "Payload fetch failed");

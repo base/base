@@ -19,8 +19,8 @@ use base_alloy_network::Base;
 use base_alloy_provider::OpEngineApi;
 use base_alloy_rpc_types::Transaction as OpTransaction;
 use base_alloy_rpc_types_engine::{
-    OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
-    OpPayloadAttributes,
+    OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadEnvelopeV5,
+    OpExecutionPayloadV4, OpPayloadAttributes,
 };
 use base_consensus_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
@@ -67,6 +67,8 @@ pub struct MockEngineStorage {
     pub execution_payload_v3: Option<OpExecutionPayloadEnvelopeV3>,
     /// Storage for OP execution payload envelope v4 responses.
     pub execution_payload_v4: Option<OpExecutionPayloadEnvelopeV4>,
+    /// Storage for OP execution payload envelope v5 responses.
+    pub execution_payload_v5: Option<OpExecutionPayloadEnvelopeV5>,
 
     // Version-specific get_payload_bodies responses
     /// Storage for `get_payload_bodies_by_hash_v1` responses.
@@ -198,6 +200,12 @@ impl MockEngineClientBuilder {
     /// Sets the execution payload v4 response.
     pub fn with_execution_payload_v4(mut self, payload: OpExecutionPayloadEnvelopeV4) -> Self {
         self.storage.execution_payload_v4 = Some(payload);
+        self
+    }
+
+    /// Sets the execution payload v5 response.
+    pub fn with_execution_payload_v5(mut self, payload: OpExecutionPayloadEnvelopeV5) -> Self {
+        self.storage.execution_payload_v5 = Some(payload);
         self
     }
 
@@ -357,6 +365,11 @@ impl MockEngineClient {
     /// Sets the execution payload v4 response.
     pub async fn set_execution_payload_v4(&self, payload: OpExecutionPayloadEnvelopeV4) {
         self.storage.write().await.execution_payload_v4 = Some(payload);
+    }
+
+    /// Sets the execution payload v5 response.
+    pub async fn set_execution_payload_v5(&self, payload: OpExecutionPayloadEnvelopeV5) {
+        self.storage.write().await.execution_payload_v5 = Some(payload);
     }
 
     /// Sets the `get_payload_bodies_by_hash_v1` response.
@@ -601,6 +614,18 @@ impl OpEngineApi<Base, Http<HyperAuthClient>> for MockEngineClient {
         storage.execution_payload_v4.clone().ok_or_else(|| {
             TransportError::from(TransportErrorKind::custom_str(
                 "No execution payload v4 set in mock",
+            ))
+        })
+    }
+
+    async fn get_payload_v5(
+        &self,
+        _payload_id: PayloadId,
+    ) -> TransportResult<OpExecutionPayloadEnvelopeV5> {
+        let storage = self.storage.read().await;
+        storage.execution_payload_v5.clone().ok_or_else(|| {
+            TransportError::from(TransportErrorKind::custom_str(
+                "No execution payload v5 set in mock",
             ))
         })
     }
