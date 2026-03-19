@@ -155,7 +155,7 @@ mod tests {
 
     #[tokio::test]
     async fn signer_attestation_rejects_oversized_user_data() {
-        let server = Arc::new(EnclaveServer::new().unwrap());
+        let server = Arc::new(EnclaveServer::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(Arc::clone(&server)));
         let rpc = NitroSignerRpc { transport };
 
@@ -168,7 +168,7 @@ mod tests {
 
     #[tokio::test]
     async fn signer_attestation_rejects_oversized_nonce() {
-        let server = Arc::new(EnclaveServer::new().unwrap());
+        let server = Arc::new(EnclaveServer::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(Arc::clone(&server)));
         let rpc = NitroSignerRpc { transport };
 

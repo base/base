@@ -100,7 +100,7 @@ impl Server {
         Ok(Self { pcr0, signer_key, tee_image_hash })
     }
 
-    fn new_local() -> Result<Self> {
+    pub fn new_local() -> Result<Self> {
         let signer_key = match std::env::var(SIGNER_KEY_ENV_VAR) {
             Ok(hex_key) => {
                 info!("using signer key from environment variable");
