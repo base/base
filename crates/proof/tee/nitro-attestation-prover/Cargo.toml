@@ -20,8 +20,10 @@ thiserror.workspace = true
 async-trait.workspace = true
 alloy-primitives.workspace = true
 
-# Proving backends (behind `prove` feature to avoid pulling in risc0-sys
-# and its Metal kernel build requirement on macOS)
+# Proving backends (behind `prove` feature). This serves two purposes:
+# 1. Avoids pulling in risc0-sys and its Metal kernel build on macOS
+# 2. Reduces compile times for consumers that only need the trait/types/errors
+#    (e.g. the registrar library compiles in seconds without `prove`)
 url = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 boundless-market = { workspace = true, optional = true }

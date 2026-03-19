@@ -1,3 +1,8 @@
+# Skip risc0-sys Metal GPU kernel compilation on macOS. These kernels are only
+# needed for GPU-accelerated local proving, which is not a supported path —
+# proving goes through Bonsai (remote) or dev-mode (mock).
+export RISC0_SKIP_BUILD_KERNELS := "1"
+
 set positional-arguments := true
 
 mod tee 'crates/proof/tee'
