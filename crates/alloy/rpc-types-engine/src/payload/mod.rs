@@ -18,6 +18,9 @@ use alloy_rpc_types_engine::{
 };
 pub use v4::{OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4};
 
+mod v5;
+pub use v5::OpExecutionPayloadEnvelopeV5;
+
 use crate::OpExecutionPayloadSidecar;
 
 /// An execution payload, which can be either [`ExecutionPayloadV2`], [`ExecutionPayloadV3`], or
