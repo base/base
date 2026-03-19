@@ -90,7 +90,7 @@ impl EnclaveApiServer for NitroSignerRpc {
         user_data: Option<Vec<u8>>,
         nonce: Option<Vec<u8>>,
     ) -> RpcResult<Vec<u8>> {
-        // NSM limits: user_data ≤ 1024 bytes, nonce ≤ 512 bytes.
+        // NSM limits: user_data ≤ 512 bytes, nonce ≤ 512 bytes.
         // Reject oversized payloads early to avoid allocating and forwarding them
         // through the vsock transport only to be rejected by the enclave.
         if user_data.as_ref().is_some_and(|d| d.len() > MAX_USER_DATA_BYTES) {
