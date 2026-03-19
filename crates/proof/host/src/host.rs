@@ -14,15 +14,14 @@ use tokio::{
     sync::RwLock,
     task::{self, JoinHandle},
 };
-use tracing::{info, info_span, Instrument};
+use tracing::{Instrument, info, info_span};
 
-use crate::metrics::timed;
 #[cfg(feature = "disk")]
 use crate::DiskKeyValueStore;
 use crate::{
     BootKeyValueStore, HostConfig, HostError, HostProviders, MemoryKeyValueStore,
     OfflineHostBackend, OnlineHostBackend, PreimageServer, RecordingOracle, Result,
-    SharedKeyValueStore, SplitKeyValueStore,
+    SharedKeyValueStore, SplitKeyValueStore, metrics::timed,
 };
 
 /// The proof host orchestrator.
@@ -101,8 +100,9 @@ impl Host {
             HintReader::new(hint_chan.host),
             Arc::clone(&backend),
         );
-        let mut server_task =
-            task::spawn(async move { server.start().await }.instrument(info_span!("preimage_server")));
+        let mut server_task = task::spawn(
+            async move { server.start().await }.instrument(info_span!("preimage_server")),
+        );
 
         let recording = RecordingOracle::new(
             OracleReader::new(preimage_chan.client),
@@ -111,7 +111,8 @@ impl Host {
         );
 
         let mut replay_timer = timed!(crate::Metrics::REPLAY_DURATION_SECONDS);
-        let client_task = Box::pin(Self::run_client(recording).instrument(info_span!("run_client")));
+        let client_task =
+            Box::pin(Self::run_client(recording).instrument(info_span!("run_client")));
 
         tokio::select! {
             result = &mut server_task => {

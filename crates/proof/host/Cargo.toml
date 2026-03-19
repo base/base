@@ -43,11 +43,11 @@ ark-ff.workspace = true
 
 # misc
 serde.workspace = true
-base-macros.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
+base-macros.workspace = true
 
 # `metrics` feature
 metrics = { workspace = true, optional = true }

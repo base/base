@@ -144,7 +144,7 @@ impl Metrics {
     pub const REQUESTS_TOTAL: &str = "base_proof_host_requests_total";
 
     /// Proof request outcomes, labeled by `outcome`
-    /// (success/rpc_error/witness_error/prove_error/timeout).
+    /// (`success/rpc_error/witness_error/prove_error/timeout`).
     pub const REQUESTS_RESULT_TOTAL: &str = "base_proof_host_requests_result_total";
 
     /// Hint requests by type, labeled by `hint_type`.

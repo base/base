@@ -4,7 +4,7 @@ use base_proof_preimage::{
     HintReaderServer, PreimageOracleServer, PreimageServerBackend, errors::PreimageOracleError,
 };
 use tokio::spawn;
-use tracing::{error, info, info_span, Instrument};
+use tracing::{Instrument, error, info, info_span};
 
 use crate::HostError;
 

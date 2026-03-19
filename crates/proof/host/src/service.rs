@@ -1,10 +1,9 @@
 use std::fmt;
 
 use base_proof_primitives::{ProofRequest, ProofResult, ProverBackend};
-use tracing::{info, info_span, Instrument};
+use tracing::{Instrument, info, info_span};
 
-use crate::metrics::timed;
-use crate::{Host, HostConfig, HostError, ProverConfig};
+use crate::{Host, HostConfig, HostError, ProverConfig, metrics::timed};
 
 /// Orchestrates witness generation ([`Host`]) and proving ([`ProverBackend`]).
 ///
@@ -46,8 +45,7 @@ impl<B: ProverBackend> ProverService<B> {
 
         let l2_block = request.claimed_l2_block_number;
         let result = Box::pin(
-            self.prove_block_inner(request)
-                .instrument(info_span!("proof_request", l2_block)),
+            self.prove_block_inner(request).instrument(info_span!("proof_request", l2_block)),
         )
         .await;
 
@@ -67,10 +65,7 @@ impl<B: ProverBackend> ProverService<B> {
         &self,
         request: ProofRequest,
     ) -> Result<ProofResult, ProverError<B>> {
-        info!(
-            l2_block = request.claimed_l2_block_number,
-            "starting proof generation"
-        );
+        info!(l2_block = request.claimed_l2_block_number, "starting proof generation");
 
         let host = Host::new(HostConfig { request, prover: self.config.clone(), data_dir: None });
         let oracle = self.backend.create_oracle();
