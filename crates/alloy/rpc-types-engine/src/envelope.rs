@@ -61,7 +61,11 @@ impl ssz::Encode for OpExecutionPayloadEnvelope {
 
     fn ssz_bytes_len(&self) -> usize {
         let mut len = 0;
-        len += B256::ssz_fixed_len(); // parent_beacon_block_root is always 32 bytes
+        // parent_beacon_block_root is only encoded for V3/V4 payloads.
+        if !matches!(self.execution_payload, OpExecutionPayload::V1(_) | OpExecutionPayload::V2(_))
+        {
+            len += B256::ssz_fixed_len();
+        }
         len += self.execution_payload.ssz_bytes_len();
         len
     }
@@ -639,7 +643,7 @@ impl PayloadHash {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::b256;
+    use alloy_primitives::{B256, b256};
     #[cfg(feature = "std")]
     use alloy_primitives::hex;
     #[cfg(feature = "std")]
@@ -671,6 +675,35 @@ mod tests {
         let expected = b256!("9999999999999999999999999999999999999999999999999999999999999999");
         assert_eq!(envelope.parent_beacon_block_root.unwrap(), expected);
         let _ = serde_json::to_string(&envelope).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_ssz_bytes_len_matches_serialized_len_for_v1_and_v2() {
+        use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2};
+        use ssz::Encode;
+
+        let envelope_v1 = OpExecutionPayloadEnvelope {
+            parent_beacon_block_root: Some(B256::from([0x11; 32])),
+            execution_payload: OpExecutionPayload::V1(ExecutionPayloadV1::default()),
+        };
+        let serialized_v1 = envelope_v1.as_ssz_bytes();
+        assert_eq!(
+            envelope_v1.ssz_bytes_len(),
+            serialized_v1.len(),
+            "V1 envelope reported SSZ length must match serialized length"
+        );
+
+        let envelope_v2 = OpExecutionPayloadEnvelope {
+            parent_beacon_block_root: Some(B256::from([0x22; 32])),
+            execution_payload: OpExecutionPayload::V2(ExecutionPayloadV2::default()),
+        };
+        let serialized_v2 = envelope_v2.as_ssz_bytes();
+        assert_eq!(
+            envelope_v2.ssz_bytes_len(),
+            serialized_v2.len(),
+            "V2 envelope reported SSZ length must match serialized length"
+        );
     }
 
     #[test]
