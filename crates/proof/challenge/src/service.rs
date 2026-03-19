@@ -120,6 +120,7 @@ impl ChallengerService {
                 eyre::eyre!("tee_request_timeout must be set when tee_rpc_url is configured")
             })?;
             let client = jsonrpsee::http_client::HttpClientBuilder::default()
+                .request_timeout(request_timeout)
                 .build(tee_url.as_str())
                 .map_err(|e| eyre::eyre!("failed to create TEE RPC client: {e}"))?;
             info!(endpoint = %tee_url, "TEE proof client initialized");
