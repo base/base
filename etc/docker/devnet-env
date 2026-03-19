@@ -100,6 +100,9 @@ MINIO_CONSOLE_PORT=7001
 # Chain Configuration
 L1_CHAIN_ID=1337
 L2_CHAIN_ID=84538453
+# Optional: set to a non-negative block number to schedule Base V1 in devnet.
+# Leave unset to avoid setting base.v1/osakaTime during genesis generation.
+# L2_BASE_V1_BLOCK=10
 
 # Metering Resource Limits
 # Whole-block budgets for gas/state-root/DA, plus a per-flashblock execution budget.

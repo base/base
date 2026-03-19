@@ -288,10 +288,30 @@ where
             }
         };
 
+        self.log_hardfork_activation(attributes.payload_attributes.timestamp);
         attributes.no_tx_pool = Some(!self.should_use_tx_pool(l1_origin, &attributes));
 
         let attrs_with_parent = OpAttributesWithParent::new(attributes, unsafe_head, None, false);
         Ok(Some(attrs_with_parent))
+    }
+
+    /// Logs hardfork activation when building the first block of a fork.
+    fn log_hardfork_activation(&self, timestamp: u64) {
+        if self.rollup_config.is_first_ecotone_block(timestamp) {
+            info!(target: "sequencer", "Sequencing ecotone upgrade block");
+        } else if self.rollup_config.is_first_fjord_block(timestamp) {
+            info!(target: "sequencer", "Sequencing fjord upgrade block");
+        } else if self.rollup_config.is_first_granite_block(timestamp) {
+            info!(target: "sequencer", "Sequencing granite upgrade block");
+        } else if self.rollup_config.is_first_holocene_block(timestamp) {
+            info!(target: "sequencer", "Sequencing holocene upgrade block");
+        } else if self.rollup_config.is_first_isthmus_block(timestamp) {
+            info!(target: "sequencer", "Sequencing isthmus upgrade block");
+        } else if self.rollup_config.is_first_jovian_block(timestamp) {
+            info!(target: "sequencer", "Sequencing jovian upgrade block");
+        } else if self.rollup_config.is_first_base_v1_block(timestamp) {
+            info!(target: "sequencer", "Sequencing base v1 upgrade block");
+        }
     }
 
     /// Determines, for the provided L1 origin block and payload attributes being constructed, if
@@ -312,38 +332,32 @@ where
 
         // Do not include transactions in the first Ecotone block.
         if self.rollup_config.is_first_ecotone_block(attributes.payload_attributes.timestamp) {
-            info!(target: "sequencer", "Sequencing ecotone upgrade block");
             return false;
         }
 
         // Do not include transactions in the first Fjord block.
         if self.rollup_config.is_first_fjord_block(attributes.payload_attributes.timestamp) {
-            info!(target: "sequencer", "Sequencing fjord upgrade block");
             return false;
         }
 
         // Do not include transactions in the first Granite block.
         if self.rollup_config.is_first_granite_block(attributes.payload_attributes.timestamp) {
-            info!(target: "sequencer", "Sequencing granite upgrade block");
             return false;
         }
 
         // Do not include transactions in the first Holocene block.
         if self.rollup_config.is_first_holocene_block(attributes.payload_attributes.timestamp) {
-            info!(target: "sequencer", "Sequencing holocene upgrade block");
             return false;
         }
 
         // Do not include transactions in the first Isthmus block.
         if self.rollup_config.is_first_isthmus_block(attributes.payload_attributes.timestamp) {
-            info!(target: "sequencer", "Sequencing isthmus upgrade block");
             return false;
         }
 
         // Do not include transactions in the first Jovian block.
         // See: `<https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/derivation.md#activation-block-rules>`
         if self.rollup_config.is_first_jovian_block(attributes.payload_attributes.timestamp) {
-            info!(target: "sequencer", "Sequencing jovian upgrade block");
             return false;
         }
 
