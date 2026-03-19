@@ -8,7 +8,8 @@
 //!
 //! - **Bedrock, Canyon, Delta** → V2 methods
 //! - **Ecotone (Cancun)** → V3 methods
-//! - **Isthmus** → V4 methods
+//! - **Isthmus, Jovian** → V4 methods
+//! - **Base V1 (Osaka)** → `getPayloadV5`, `newPayloadV4`
 //!
 //! Adapted from the [OP Node version providers](https://github.com/ethereum-optimism/optimism/blob/develop/op-node/rollup/types.go#L546).
 
@@ -46,7 +47,7 @@ impl EngineForkchoiceVersion {
 /// Progressive version selection based on hardfork activation:
 /// - V2: Basic payload processing
 /// - V3: Adds Cancun/Ecotone support
-/// - V4: Adds Isthmus hardfork features
+/// - V4: Adds Isthmus/Jovian/Base V1 support
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EngineNewPayloadVersion {
     /// Version 2: Basic payload processing for early hardforks.
@@ -85,6 +86,8 @@ pub enum EngineGetPayloadVersion {
     V3,
     /// Version 4: Extended payload format for Isthmus.
     V4,
+    /// Version 5: Osaka payload retrieval for Base V1.
+    V5,
 }
 
 impl EngineGetPayloadVersion {
@@ -92,7 +95,9 @@ impl EngineGetPayloadVersion {
     ///
     /// Uses the [`RollupConfig`] to check which hardfork is active at the given timestamp.
     pub fn from_cfg(cfg: &RollupConfig, timestamp: u64) -> Self {
-        if cfg.is_isthmus_active(timestamp) {
+        if cfg.is_base_v1_active(timestamp) {
+            Self::V5
+        } else if cfg.is_isthmus_active(timestamp) {
             Self::V4
         } else if cfg.is_ecotone_active(timestamp) {
             // Cancun
@@ -100,5 +105,56 @@ impl EngineGetPayloadVersion {
         } else {
             Self::V2
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use base_consensus_genesis::{BaseHardforkConfig, HardForkConfig};
+
+    use super::*;
+
+    fn test_rollup_config() -> RollupConfig {
+        RollupConfig {
+            hardforks: HardForkConfig {
+                ecotone_time: Some(20),
+                jovian_time: Some(30),
+                base: BaseHardforkConfig { v1: Some(40) },
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn get_payload_version_uses_v2_before_ecotone() {
+        assert_eq!(
+            EngineGetPayloadVersion::from_cfg(&test_rollup_config(), 10),
+            EngineGetPayloadVersion::V2
+        );
+    }
+
+    #[test]
+    fn get_payload_version_uses_v3_for_ecotone() {
+        assert_eq!(
+            EngineGetPayloadVersion::from_cfg(&test_rollup_config(), 25),
+            EngineGetPayloadVersion::V3
+        );
+    }
+
+    #[test]
+    fn get_payload_version_uses_v4_for_jovian_before_base_v1() {
+        assert_eq!(
+            EngineGetPayloadVersion::from_cfg(&test_rollup_config(), 35),
+            EngineGetPayloadVersion::V4
+        );
+    }
+
+    #[test]
+    fn get_payload_version_uses_v5_for_base_v1() {
+        assert_eq!(
+            EngineGetPayloadVersion::from_cfg(&test_rollup_config(), 45),
+            EngineGetPayloadVersion::V5
+        );
     }
 }
