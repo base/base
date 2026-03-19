@@ -236,7 +236,7 @@ pub(crate) use proof_guard;
 impl Metrics {
     // ---- Counters ----
 
-    /// Total proof requests received, labeled by `mode` (online/offline).
+    /// Total proof requests received, labeled by `mode`.
     pub const REQUESTS_TOTAL: &str = "base_proof_host_requests_total";
 
     /// Proof request outcomes, labeled by `outcome`
@@ -302,9 +302,6 @@ impl Metrics {
 
     /// Online operating mode.
     pub const MODE_ONLINE: &str = "online";
-
-    /// Offline operating mode.
-    pub const MODE_OFFLINE: &str = "offline";
 
     /// Successful proof outcome.
     pub const OUTCOME_SUCCESS: &str = "success";
@@ -393,7 +390,6 @@ impl Metrics {
         base_macros::set!(gauge, Self::PREIMAGE_COUNT, 0);
 
         base_macros::set!(counter, Self::REQUESTS_TOTAL, Self::LABEL_MODE, Self::MODE_ONLINE, 0);
-        base_macros::set!(counter, Self::REQUESTS_TOTAL, Self::LABEL_MODE, Self::MODE_OFFLINE, 0);
 
         base_macros::set!(
             counter,
@@ -432,5 +428,8 @@ impl Metrics {
             Self::RESULT_MISS,
             0
         );
+
+        base_macros::set!(counter, Self::PREIMAGE_ACCESSES_TOTAL, 0);
+        base_macros::set!(counter, Self::OFFLINE_MISSES_TOTAL, 0);
     }
 }
