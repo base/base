@@ -1,5 +1,8 @@
 set positional-arguments := true
 
+# Skip risc0 Metal kernel compilation on macOS (avoids requiring full Xcode).
+export RISC0_SKIP_BUILD_KERNELS := if os() == "macos" { "1" } else { "0" }
+
 mod tee 'crates/proof/tee'
 mod actions 'actions'
 # Docker-based local devnet management
@@ -83,16 +86,7 @@ check-deny:
     cargo deny check bans --hide-inclusion-graph
 
 # Fixes formatting and clippy issues
-fix: build-contracts
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # Skip risc0 Metal kernel compilation on macOS (avoids requiring full Xcode).
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        export RISC0_SKIP_BUILD_KERNELS=1
-    fi
-    just format-fix
-    just clippy-fix
-    just zepter-fix
+fix: build-contracts format-fix clippy-fix zepter-fix
 
 # Runs zepter feature checks, installing zepter if necessary
 zepter:
