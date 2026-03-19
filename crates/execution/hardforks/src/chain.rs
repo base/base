@@ -57,14 +57,21 @@ impl BaseChainUpgradesExt for BaseChainUpgrades {
         forks.push((BaseUpgrade::Holocene.boxed(), self[BaseUpgrade::Holocene]));
 
         let isthmus = self[BaseUpgrade::Isthmus];
-        forks.push((EthereumHardfork::Prague.boxed(), isthmus));
-        forks.push((BaseUpgrade::Isthmus.boxed(), isthmus));
+        if !matches!(isthmus, ForkCondition::Never) {
+            forks.push((EthereumHardfork::Prague.boxed(), isthmus));
+            forks.push((BaseUpgrade::Isthmus.boxed(), isthmus));
+        }
 
-        forks.push((BaseUpgrade::Jovian.boxed(), self[BaseUpgrade::Jovian]));
+        let jovian = self[BaseUpgrade::Jovian];
+        if !matches!(jovian, ForkCondition::Never) {
+            forks.push((BaseUpgrade::Jovian.boxed(), jovian));
+        }
 
         let base_v1 = self[BaseUpgrade::V1];
-        forks.push((EthereumHardfork::Osaka.boxed(), base_v1));
-        forks.push((BaseUpgrade::V1.boxed(), base_v1));
+        if !matches!(base_v1, ForkCondition::Never) {
+            forks.push((EthereumHardfork::Osaka.boxed(), base_v1));
+            forks.push((BaseUpgrade::V1.boxed(), base_v1));
+        }
 
         ChainHardforks::new(forks)
     }
