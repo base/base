@@ -80,7 +80,8 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
         source.push(block2.clone());
         source.push(block3_invalid);
         source.push(block4.clone());
-        Batcher::new(source, &h.rollup_config, span_cfg).advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, span_cfg)
+            .advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone()); // L1 block 1: span batch with invalid block 3
 
@@ -121,7 +122,8 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
         let mut source = ActionL2Source::new();
         source.push(block3_empty);
         source.push(block4_recovery);
-        Batcher::new(source, &h.rollup_config, span_cfg).advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, span_cfg)
+            .advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: recovery span batch (blocks 3–4)
 
@@ -177,7 +179,8 @@ async fn mixed_singular_and_span_batches_after_delta() {
         let singular_cfg = BatcherConfig { batch_type: BatchType::Single, ..batcher_cfg.clone() };
         let mut source = ActionL2Source::new();
         source.push(block1);
-        Batcher::new(source, &h.rollup_config, singular_cfg).advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, singular_cfg)
+            .advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone()); // L1 block 1: singular batch for L2 block 1
 
@@ -186,7 +189,8 @@ async fn mixed_singular_and_span_batches_after_delta() {
         let span_cfg = BatcherConfig { batch_type: BatchType::Span, ..batcher_cfg };
         let mut source = ActionL2Source::new();
         source.push(block2);
-        Batcher::new(source, &h.rollup_config, span_cfg).advance(&mut h.l1).await;
+        Batcher::new(source, &h.rollup_config, span_cfg)
+            .advance(&mut h.l1).await;
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: span batch for L2 block 2
 
@@ -345,7 +349,8 @@ async fn granite_channel_timeout_enforced() {
     // --- Recovery: new batcher, all frames in one L1 block ---
     let mut source2 = ActionL2Source::new();
     source2.push(block);
-    Batcher::new(source2, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
+    Batcher::new(source2, &h.rollup_config, batcher_cfg)
+        .advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
     let recovery_num = h.l1.latest_number();
@@ -443,10 +448,11 @@ async fn jovian_single_batch_transition_block_deposit_only() {
 
     // Submit each block as a separate SingleBatch channel, one L1 block each.
     // L1 blocks 1–4 each contain one singular batch.
+    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in [block1, block2, block3_invalid, block4] {
-        let mut source = ActionL2Source::new();
-        source.push(block);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
+        batcher.push_block(block);
+        batcher
+            .advance(&mut h.l1).await;
         chain.push(h.l1.tip().clone());
     }
 

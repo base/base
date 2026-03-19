@@ -140,12 +140,12 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
+    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
+
     // Blocks 1 and 2: pre-Ecotone, user txs OK.
     for _ in 1..=2u64 {
-        let block = builder.build_next_block();
-        let mut source = ActionL2Source::new();
-        source.push(block);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
+        batcher.push_block(builder.build_next_block());
+        batcher.advance(&mut h.l1).await;
     }
 
     // Block 3 at ts=6 (first Ecotone): build WITH a user tx. Unlike Jovian,
@@ -156,16 +156,12 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
         block3_with_user_tx.header.timestamp, ecotone_time,
         "block 3 must land exactly at ecotone_time"
     );
-
-    let mut source3 = ActionL2Source::new();
-    source3.push(block3_with_user_tx);
-    Batcher::new(source3, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
+    batcher.push_block(block3_with_user_tx);
+    batcher.advance(&mut h.l1).await;
 
     // Block 4: post-Ecotone, user txs OK.
-    let block4 = builder.build_next_block();
-    let mut source4 = ActionL2Source::new();
-    source4.push(block4);
-    Batcher::new(source4, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
+    batcher.push_block(builder.build_next_block());
+    batcher.advance(&mut h.l1).await;
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -234,6 +230,7 @@ async fn ecotone_derivation_crosses_activation_boundary() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     // Build and submit 4 L2 blocks individually (one batch per L1 block).
+    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for i in 1..=4u64 {
         let block = if i == 3 {
             // First Ecotone block: must be deposit-only (no user txs) because
@@ -242,10 +239,8 @@ async fn ecotone_derivation_crosses_activation_boundary() {
         } else {
             builder.build_next_block()
         };
-
-        let mut source = ActionL2Source::new();
-        source.push(block);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
+        batcher.push_block(block);
+        batcher.advance(&mut h.l1).await;
     }
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(

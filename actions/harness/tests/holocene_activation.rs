@@ -62,11 +62,10 @@ async fn holocene_derivation_crosses_activation_boundary() {
 
     // Build and submit 4 L2 blocks; no upgrade-tx constraint at Holocene,
     // so user txs are valid in all blocks including block 3.
+    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 1..=4u64 {
-        let block = builder.build_next_block();
-        let mut source = ActionL2Source::new();
-        source.push(block);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
+        batcher.push_block(builder.build_next_block());
+        batcher.advance(&mut h.l1).await;
         chain.push(h.l1.tip().clone());
     }
 

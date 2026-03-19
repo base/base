@@ -361,11 +361,10 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
+    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 0..4u64 {
         // All blocks carry user transactions — Isthmus allows user txs at transition.
-        let mut source = ActionL2Source::new();
-        source.push(builder.build_next_block());
-        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.push_block(builder.build_next_block());
         batcher.advance(&mut h.l1).await;
     }
 
@@ -439,10 +438,9 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     // Build three L2 blocks — each with 1 user transaction (the sequencer default).
     // Block 3 (ts=6) is the first Jovian block. The batch validator will drop the
     // non-empty batch for that slot with NonEmptyTransitionBlock.
+    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 1u64..=3 {
-        let mut source = ActionL2Source::new();
-        source.push(builder.build_next_block());
-        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.push_block(builder.build_next_block());
         batcher.advance(&mut h.l1).await;
     }
 
@@ -608,7 +606,8 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
     // L2 blocks 1–5 (ts=2,4,6,8,10): epoch 0, OLD config.
     let mut epoch0_blocks: Vec<base_alloy_consensus::OpBlock> = Vec::new();
     for _ in 0..5 {
-        epoch0_blocks.push(sequencer.build_next_block());
+        let block = sequencer.build_next_block();
+        epoch0_blocks.push(block);
     }
 
     // L2 block 6 (ts=12): epoch 1, epoch change — NEW config from L1 block 1's receipts.

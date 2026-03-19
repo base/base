@@ -20,12 +20,10 @@ async fn batcher_blob_da_end_to_end() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
-    // One Batcher per L2 block so each lands in a separate L1 block.
+    // One block per L1 inclusion block.
+    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 1..=3u64 {
-        let block = sequencer.build_next_block();
-        let mut source = ActionL2Source::new();
-        source.push(block);
-        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.push_block(sequencer.build_next_block());
         batcher.advance(&mut h.l1).await;
     }
 
@@ -107,12 +105,10 @@ async fn batcher_calldata_da() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
-    // One Batcher per L2 block so each lands in a separate L1 block.
+    // One block per L1 inclusion block.
+    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 1..=3u64 {
-        let block = sequencer.build_next_block();
-        let mut source = ActionL2Source::new();
-        source.push(block);
-        let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+        batcher.push_block(sequencer.build_next_block());
         batcher.advance(&mut h.l1).await;
     }
 
@@ -152,21 +148,19 @@ async fn batcher_da_switching() {
     let blob_cfg = BatcherConfig::default(); // DaType::Blob by default
 
     // Blocks 1-3: submit as calldata.
+    let mut calldata_batcher =
+        Batcher::new(ActionL2Source::new(), &h.rollup_config, calldata_cfg.clone());
     for _ in 1..=3u64 {
-        let block = sequencer.build_next_block();
-        let mut source = ActionL2Source::new();
-        source.push(block);
-        let mut batcher = Batcher::new(source, &h.rollup_config, calldata_cfg.clone());
-        batcher.advance(&mut h.l1).await;
+        calldata_batcher.push_block(sequencer.build_next_block());
+        calldata_batcher.advance(&mut h.l1).await;
     }
 
     // Blocks 4-6: submit as blobs.
+    let mut blob_batcher =
+        Batcher::new(ActionL2Source::new(), &h.rollup_config, blob_cfg.clone());
     for _ in 4..=6u64 {
-        let block = sequencer.build_next_block();
-        let mut source = ActionL2Source::new();
-        source.push(block);
-        let mut batcher = Batcher::new(source, &h.rollup_config, blob_cfg.clone());
-        batcher.advance(&mut h.l1).await;
+        blob_batcher.push_block(sequencer.build_next_block());
+        blob_batcher.advance(&mut h.l1).await;
     }
 
     let (mut verifier, _chain) = h.create_blob_verifier_from_sequencer(
@@ -276,7 +270,8 @@ async fn blob_da_channel_timeout() {
     // Recovery: resubmit all frames as blobs in a fresh channel.
     let mut source2 = ActionL2Source::new();
     source2.push(block);
-    Batcher::new(source2, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
+    Batcher::new(source2, &h.rollup_config, batcher_cfg)
+        .advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone()); // L1 block 6: fresh blob channel with all frames
 
     verifier.act_l1_head_signal(h.l1.block_info_at(6)).await;
