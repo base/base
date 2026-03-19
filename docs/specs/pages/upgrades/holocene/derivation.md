@@ -224,7 +224,7 @@ better worst-case cached data usage.
 
 - The frame queue only ever holds frames from a single batcher transaction.
 - The channel bank only ever holds a single staging channel, that is either being built up by
-incoming frames, or is is being processed by later stages.
+incoming frames, or is being processed by later stages.
 - The batch queue only ever holds at most a single span batch (that is being processed) and a single singular
 batch (from the span batch, or the staging channel directly)
 - The sync start greatly simplifies in the average production case.
