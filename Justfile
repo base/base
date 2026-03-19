@@ -1,7 +1,8 @@
-# Skip risc0-sys Metal GPU kernel compilation on macOS. These kernels are only
-# needed for GPU-accelerated local proving, which is not a supported path —
-# proving goes through Bonsai (remote) or dev-mode (mock).
-export RISC0_SKIP_BUILD_KERNELS := "1"
+# On macOS, skip risc0-sys kernel compilation for check/clippy commands.
+# The kernels require Xcode (Metal) on macOS but are only needed for linking
+# (cargo build), not for type-checking (cargo check/clippy). CI builds run
+# on Linux where CPU kernels compile without issue.
+_skip_kernels := if os() == "macos" { "RISC0_SKIP_BUILD_KERNELS=1" } else { "" }
 
 set positional-arguments := true
 
@@ -178,15 +179,15 @@ format-fix:
 
 # Checks clippy
 check-clippy: build-contracts
-    cargo clippy --workspace --all-targets -- -D warnings
+    {{_skip_kernels}} cargo clippy --workspace --all-targets -- -D warnings
 
 # Checks clippy with ci profile for minimal disk usage
 check-clippy-ci: build-contracts
-    cargo clippy --locked --workspace --all-targets --profile ci -- -D warnings
+    {{_skip_kernels}} cargo clippy --locked --workspace --all-targets --profile ci -- -D warnings
 
 # Fixes any clippy issues
 clippy-fix:
-    cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
+    {{_skip_kernels}} cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
 
 # Builds the workspace with release
 build:
