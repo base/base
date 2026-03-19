@@ -171,7 +171,7 @@ mod tests {
     {
         let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover = Arc::new(test_prover());
+        let prover = test_prover();
         let rollup = Arc::new(MockRollupClient { sync_status });
         let anchor_registry =
             Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });

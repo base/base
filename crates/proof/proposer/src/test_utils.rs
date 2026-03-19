@@ -1,19 +1,20 @@
 //! Shared test utilities: reusable mock stubs for L1/L2 clients and a `test_prover` helper.
 
+use std::sync::Arc;
+
 use alloy_primitives::{Address, B256, Bytes, U256};
 use async_trait::async_trait;
-use base_enclave::{
-    AccountResult, BlockId, Genesis, GenesisSystemConfig, PerChainConfig, RollupConfig,
-};
+use base_enclave::{AccountResult, RollupConfig};
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorRoot, AnchorStateRegistryClient, ContractError,
     DisputeGameFactoryClient, GameAtIndex, GameInfo,
 };
-use base_proof_primitives::Proposal;
+use base_proof_primitives::{Proposal, ProverClient};
 use base_proof_rpc::{
     L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OpBlock, OutputAtBlock,
     RollupProvider, RpcError, RpcResult, SyncStatus,
 };
+use jsonrpsee::http_client::HttpClientBuilder;
 
 use crate::{error::ProposerError, output_proposer::OutputProposer};
 
@@ -167,27 +168,6 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 }
 
-/// Build a default `PerChainConfig` for tests.
-pub(crate) fn test_per_chain_config() -> PerChainConfig {
-    PerChainConfig {
-        chain_id: U256::from(1),
-        genesis: Genesis {
-            l1: BlockId { hash: B256::ZERO, number: 0 },
-            l2: BlockId { hash: B256::ZERO, number: 0 },
-            l2_time: 0,
-            system_config: GenesisSystemConfig {
-                batcher_addr: Address::ZERO,
-                overhead: B256::ZERO,
-                scalar: B256::ZERO,
-                gas_limit: 30_000_000,
-            },
-        },
-        block_time: 2,
-        deposit_contract_address: Address::ZERO,
-        l1_system_config_address: Address::ZERO,
-    }
-}
-
 pub(crate) fn test_l1_block_ref(number: u64) -> L1BlockRef {
     L1BlockRef { hash: B256::ZERO, number, parent_hash: B256::ZERO, timestamp: 1_000_000 + number }
 }
@@ -223,11 +203,9 @@ pub(crate) fn test_anchor_root(block_number: u64) -> AnchorRoot {
     AnchorRoot { root: B256::ZERO, l2_block_number: block_number }
 }
 
-pub(crate) fn test_prover() -> crate::prover::Prover {
-    use jsonrpsee::http_client::HttpClientBuilder;
-
+pub(crate) fn test_prover() -> Arc<dyn ProverClient> {
     let client = HttpClientBuilder::default().build("http://localhost:19999").expect("valid URL");
-    crate::prover::Prover::new(test_per_chain_config(), std::sync::Arc::new(client))
+    Arc::new(client)
 }
 
 /// Mock output proposer that does nothing (returns `Ok(())`).

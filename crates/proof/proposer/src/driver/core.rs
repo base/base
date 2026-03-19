@@ -10,7 +10,7 @@ use alloy_primitives::{B256, U256};
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient,
 };
-use base_proof_primitives::{ProofRequest, ProofResult, Proposal};
+use base_proof_primitives::{ProofRequest, ProofResult, Proposal, ProverClient};
 use base_proof_rpc::{L1Provider, L2BlockRef, L2Provider, RollupProvider};
 use eyre::Result;
 use tokio::time::sleep;
@@ -22,7 +22,6 @@ use crate::{
     error::ProposerError,
     metrics as proposer_metrics,
     output_proposer::{OutputProposer, is_game_already_exists},
-    prover::Prover,
 };
 
 /// Driver configuration.
@@ -80,7 +79,7 @@ where
     F: DisputeGameFactoryClient,
 {
     config: DriverConfig,
-    prover: Arc<Prover>,
+    prover: Arc<dyn ProverClient>,
     l1_client: Arc<L1>,
     l2_client: Arc<L2>,
     rollup_client: Arc<R>,
@@ -116,7 +115,7 @@ where
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: DriverConfig,
-        prover: Arc<Prover>,
+        prover: Arc<dyn ProverClient>,
         l1_client: Arc<L1>,
         l2_client: Arc<L2>,
         rollup_client: Arc<R>,
@@ -300,7 +299,8 @@ where
             "Sending proof request to prover"
         );
 
-        let proof_result = self.prover.prove(request).await?;
+        let proof_result =
+            self.prover.prove(request).await.map_err(|e| ProposerError::Prover(e.to_string()))?;
 
         let (aggregate_proposal, proposals) = match proof_result {
             ProofResult::Tee { aggregate_proposal, proposals } => (aggregate_proposal, proposals),
@@ -482,7 +482,7 @@ mod tests {
     {
         let l1 = Arc::new(MockL1 { latest_block_number: l1_block_number });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover = Arc::new(test_prover());
+        let prover = test_prover();
         let rollup = Arc::new(MockRollupClient { sync_status });
         let anchor_registry =
             Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
@@ -724,7 +724,7 @@ mod tests {
         let sync_status = test_sync_status(200, B256::ZERO);
         let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover = Arc::new(test_prover());
+        let prover = test_prover();
 
         Driver::new(
             DriverConfig { game_type, block_interval: 10, ..Default::default() },

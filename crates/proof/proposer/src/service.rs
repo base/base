@@ -15,8 +15,10 @@ use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
+use base_proof_primitives::ProverClient;
 use base_proof_rpc::{
-    L1Client, L1ClientConfig, L2ClientConfig, RollupClient, RollupClientConfig, RollupProvider,
+    L1Client, L1ClientConfig, L2Client, L2ClientConfig, RollupClient, RollupClientConfig,
+    RollupProvider,
 };
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxManager};
 use eyre::Result;
@@ -29,12 +31,9 @@ use crate::{
     balance::balance_monitor,
     config::ProposerConfig,
     driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl},
-    enclave::rollup_config_to_per_chain_config,
     health::serve,
     metrics::record_startup_metrics,
     output_proposer::ProposalSubmitter,
-    prover::Prover,
-    rpc::L2Client,
 };
 
 /// Runs the full proposer service lifecycle.
@@ -98,8 +97,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     // Fetch chain configuration from op-node
     info!("Fetching chain configuration from rollup RPC...");
     let chain_config = rollup_client.rollup_config().await?;
-    let per_chain_config = rollup_config_to_per_chain_config(&chain_config)?;
-    info!(chain_id = %per_chain_config.chain_id, "Chain configuration loaded");
+    info!(chain_id = %chain_config.l2_chain_id.id(), "Chain configuration loaded");
 
     let prover_client = HttpClientBuilder::default()
         .request_timeout(crate::constants::PROVER_TIMEOUT)
@@ -177,8 +175,8 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     info!(%proposer_address, "Transaction manager initialized");
 
     // ── 5b. Create prover ────────────────────────────────────────────────
-    let prover = Arc::new(Prover::new(per_chain_config, Arc::new(prover_client)));
-    info!(config_hash = ?prover.config_hash(), proposer = %proposer_address, "Prover initialized");
+    let prover_client: Arc<dyn ProverClient> = Arc::new(prover_client);
+    info!(proposer = %proposer_address, "Prover initialized");
 
     // ── 5c. Create output proposer ──────────────────────────────────────
     let output_proposer: Arc<dyn crate::OutputProposer> = Arc::new(ProposalSubmitter::new(
@@ -200,7 +198,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     };
     let driver = Driver::new(
         driver_config,
-        prover,
+        prover_client,
         Arc::clone(&l1_client),
         l2_client,
         rollup_client,

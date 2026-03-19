@@ -26,9 +26,6 @@ pub use output_proposer::{
 mod driver;
 pub use driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl, RecoveredState};
 
-mod enclave;
-pub use enclave::rollup_config_to_per_chain_config;
-
 mod error;
 pub use error::*;
 
@@ -39,12 +36,6 @@ mod metrics;
 pub use metrics::{
     ACCOUNT_BALANCE_WEI, INFO, L2_OUTPUT_PROPOSALS_TOTAL, LABEL_VERSION, UP, record_startup_metrics,
 };
-
-mod prover;
-pub use prover::Prover;
-
-mod rpc;
-pub use rpc::{L2Client, L2ClientConfig, L2Provider};
 
 mod service;
 pub use service::run;
