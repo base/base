@@ -29,7 +29,6 @@
 //! | `base_proof_host_witness_build_duration_seconds` | | Witness build duration |
 //! | `base_proof_host_prover_duration_seconds` | | Backend prover duration |
 //! | `base_proof_host_hint_duration_seconds` | `hint_type` | Hint processing duration by type |
-//! | `base_proof_host_provider_connect_duration_seconds` | `provider` | RPC provider connection time |
 //! | `base_proof_host_witness_size_bytes` | | Witness size in bytes |
 //! | `base_proof_host_replay_duration_seconds` | | Client replay (prologue+execute+validate) duration |
 //! | `base_proof_host_rpc_payload_size_bytes` | `hint_type` | RPC response payload size by hint type |
@@ -186,10 +185,6 @@ impl Metrics {
     /// Per-hint-type processing duration in seconds, labeled by `hint_type`.
     pub const HINT_DURATION_SECONDS: &str = "base_proof_host_hint_duration_seconds";
 
-    /// RPC provider connection time in seconds, labeled by `provider` (l1/beacon/l2).
-    pub const PROVIDER_CONNECT_DURATION_SECONDS: &str =
-        "base_proof_host_provider_connect_duration_seconds";
-
     /// Witness size in bytes.
     pub const WITNESS_SIZE_BYTES: &str = "base_proof_host_witness_size_bytes";
 
@@ -212,9 +207,6 @@ impl Metrics {
 
     /// Label key for KV lookup result.
     pub const LABEL_RESULT: &str = "result";
-
-    /// Label key for the RPC provider name.
-    pub const LABEL_PROVIDER: &str = "provider";
 
     // ---- Label values ----
 
@@ -241,15 +233,6 @@ impl Metrics {
 
     /// KV cache miss.
     pub const RESULT_MISS: &str = "miss";
-
-    /// L1 provider.
-    pub const PROVIDER_L1: &str = "l1";
-
-    /// Beacon provider.
-    pub const PROVIDER_BEACON: &str = "beacon";
-
-    /// L2 provider.
-    pub const PROVIDER_L2: &str = "l2";
 }
 
 impl Metrics {
@@ -301,11 +284,6 @@ impl Metrics {
             Self::HINT_DURATION_SECONDS,
             metrics::Unit::Seconds,
             "Per-hint-type processing duration"
-        );
-        metrics::describe_histogram!(
-            Self::PROVIDER_CONNECT_DURATION_SECONDS,
-            metrics::Unit::Seconds,
-            "RPC provider connection time"
         );
         metrics::describe_histogram!(
             Self::WITNESS_SIZE_BYTES,

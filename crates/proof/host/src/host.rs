@@ -193,29 +193,12 @@ impl Host {
 
     /// Creates the providers required for the host backend.
     pub async fn create_providers(&self) -> Result<HostProviders> {
-        let mut timer = timed!(
-            crate::Metrics::PROVIDER_CONNECT_DURATION_SECONDS,
-            crate::Metrics::LABEL_PROVIDER => crate::Metrics::PROVIDER_L1,
-        );
         let l1_provider = rpc_provider(&self.config.prover.l1_eth_url).await?;
-        timer.stop();
-
-        let mut timer = timed!(
-            crate::Metrics::PROVIDER_CONNECT_DURATION_SECONDS,
-            crate::Metrics::LABEL_PROVIDER => crate::Metrics::PROVIDER_BEACON,
-        );
         let blob_provider = OnlineBlobProvider::init(OnlineBeaconClient::new_http(
             self.config.prover.l1_beacon_url.clone(),
         ))
         .await;
-        timer.stop();
-
-        let mut timer = timed!(
-            crate::Metrics::PROVIDER_CONNECT_DURATION_SECONDS,
-            crate::Metrics::LABEL_PROVIDER => crate::Metrics::PROVIDER_L2,
-        );
         let l2_provider = rpc_provider::<Base>(&self.config.prover.l2_eth_url).await?;
-        timer.stop();
 
         Ok(HostProviders { l1: l1_provider, blobs: blob_provider, l2: l2_provider })
     }
