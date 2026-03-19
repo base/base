@@ -142,7 +142,7 @@ impl ProofGuard {
     /// Creates a new guard. Prefer the [`proof_guard!`] macro.
     #[inline]
     pub fn new(gauge: &'static str, counter: &'static str) -> Self {
-        metrics::gauge!(gauge).increment(1.0);
+        base_macros::inc!(gauge, gauge);
         Self { gauge, counter, outcome: Metrics::OUTCOME_DROPPED }
     }
 
@@ -169,8 +169,11 @@ impl ProofGuard {
 #[cfg(feature = "metrics")]
 impl Drop for ProofGuard {
     fn drop(&mut self) {
-        metrics::gauge!(self.gauge).decrement(1.0);
-        metrics::counter!(self.counter, Metrics::LABEL_OUTCOME => self.outcome).increment(1);
+        let gauge = self.gauge;
+        let counter = self.counter;
+        let outcome = self.outcome;
+        base_macros::dec!(gauge, gauge);
+        base_macros::inc!(counter, counter, Metrics::LABEL_OUTCOME => outcome);
     }
 }
 
@@ -192,13 +195,13 @@ impl Drop for ProofGuard {
 /// ```
 macro_rules! timed {
     ($metric:expr $(, $label_key:expr => $label_value:expr)*$(,)?) => {{
-        // Suppress unused-variable warnings for `$metric` and label arguments.
-        #[cfg(not(feature = "metrics"))]
-        { let _ = ($metric, $($label_key, $label_value,)*); }
         #[cfg(feature = "metrics")]
         { $crate::DropTimer::new(metrics::histogram!($metric $(, $label_key => $label_value)*)) }
         #[cfg(not(feature = "metrics"))]
-        { $crate::DropTimer::new() }
+        {
+            let _ = ($metric, $($label_key, $label_value,)*);
+            $crate::DropTimer::new()
+        }
     }};
 }
 
@@ -216,16 +219,13 @@ pub(crate) use timed;
 /// ```
 macro_rules! proof_guard {
     ($gauge:expr, $counter:expr) => {{
-        #[cfg(not(feature = "metrics"))]
-        {
-            let _ = ($gauge, $counter);
-        }
         #[cfg(feature = "metrics")]
         {
             $crate::ProofGuard::new($gauge, $counter)
         }
         #[cfg(not(feature = "metrics"))]
         {
+            let _ = ($gauge, $counter);
             $crate::ProofGuard::new()
         }
     }};
