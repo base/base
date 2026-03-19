@@ -36,7 +36,7 @@ impl OpPrecompiles {
             OpSpecId::FJORD => fjord(),
             OpSpecId::GRANITE | OpSpecId::HOLOCENE => granite(),
             OpSpecId::ISTHMUS => isthmus(),
-            OpSpecId::OSAKA | OpSpecId::JOVIAN | OpSpecId::BASE_V1 => jovian(),
+            OpSpecId::JOVIAN | OpSpecId::BASE_V1 => jovian(),
         };
 
         Self { inner: EthPrecompiles { precompiles, spec: SpecId::default() }, spec }

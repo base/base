@@ -1,7 +1,7 @@
 //! Contains the `[OpSpecId]` type and its implementation.
 use core::str::FromStr;
 
-use revm::primitives::hardfork::{SpecId, UnknownHardfork, name as eth_name};
+use revm::primitives::hardfork::{SpecId, UnknownHardfork};
 
 /// Base spec id.
 #[repr(u8)]
@@ -30,8 +30,6 @@ pub enum OpSpecId {
     JOVIAN,
     /// Base V1 spec id.
     BASE_V1,
-    /// Osaka spec id.
-    OSAKA,
 }
 
 impl OpSpecId {
@@ -41,8 +39,8 @@ impl OpSpecId {
             Self::BEDROCK | Self::REGOLITH => SpecId::MERGE,
             Self::CANYON => SpecId::SHANGHAI,
             Self::ECOTONE | Self::FJORD | Self::GRANITE | Self::HOLOCENE => SpecId::CANCUN,
-            Self::ISTHMUS | Self::JOVIAN | Self::BASE_V1 => SpecId::PRAGUE,
-            Self::OSAKA => SpecId::OSAKA,
+            Self::ISTHMUS | Self::JOVIAN => SpecId::PRAGUE,
+            Self::BASE_V1 => SpecId::OSAKA,
         }
     }
 
@@ -73,7 +71,6 @@ impl FromStr for OpSpecId {
             name::ISTHMUS => Ok(Self::ISTHMUS),
             name::JOVIAN => Ok(Self::JOVIAN),
             name::BASE_V1 => Ok(Self::BASE_V1),
-            eth_name::OSAKA => Ok(Self::OSAKA),
             _ => Err(UnknownHardfork),
         }
     }
@@ -92,7 +89,6 @@ impl From<OpSpecId> for &'static str {
             OpSpecId::ISTHMUS => name::ISTHMUS,
             OpSpecId::JOVIAN => name::JOVIAN,
             OpSpecId::BASE_V1 => name::BASE_V1,
-            OpSpecId::OSAKA => eth_name::OSAKA,
         }
     }
 }
@@ -217,6 +213,7 @@ mod tests {
             (
                 OpSpecId::BASE_V1,
                 vec![
+                    (SpecId::OSAKA, true),
                     (SpecId::PRAGUE, true),
                     (SpecId::SHANGHAI, true),
                     (SpecId::CANCUN, true),
