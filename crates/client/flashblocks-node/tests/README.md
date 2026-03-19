@@ -1,6 +1,6 @@
 ## Flashblocks RPC Integration Tests
 
-The suites under this directory exercise `base-flashblocks-rpc` the same way external
+The suites under this directory exercise `base-flashblocks-node` the same way external
 consumers do — by linking against the published library instead of the crate's `cfg(test)` build.
 Running them from `tests/` ensures:
 
