@@ -38,6 +38,8 @@ pub enum EngineClientError {
 pub enum EngineActorRequest {
     /// Request to build.
     BuildRequest(Box<BuildRequest>),
+    /// Request to get the sealed payload without inserting it.
+    GetPayloadRequest(Box<GetPayloadRequest>),
     /// Request to consolidate using a safe L2 signal from attributes or delegated safe-block
     /// derivation
     ProcessSafeL2SignalRequest(ConsolidateInput),
@@ -86,6 +88,18 @@ pub struct SealRequest {
     /// The `PayloadId` to seal and canonicalize.
     pub payload_id: PayloadId,
     /// The attributes necessary for the seal operation.
+    pub attributes: OpAttributesWithParent,
+    /// The channel on which the result, successful or not, will be sent.
+    pub result_tx: mpsc::Sender<Result<OpExecutionPayloadEnvelope, SealTaskError>>,
+}
+
+/// A request to get the sealed payload without inserting it into the engine.
+/// Contains the `PayloadId`, attributes, and a channel to send back the result.
+#[derive(Debug)]
+pub struct GetPayloadRequest {
+    /// The `PayloadId` to fetch.
+    pub payload_id: PayloadId,
+    /// The attributes associated with the payload.
     pub attributes: OpAttributesWithParent,
     /// The channel on which the result, successful or not, will be sent.
     pub result_tx: mpsc::Sender<Result<OpExecutionPayloadEnvelope, SealTaskError>>,

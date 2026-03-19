@@ -59,6 +59,8 @@ impl Metrics {
     pub const BUILD_TASK_LABEL: &str = "build";
     /// Seal task label.
     pub const SEAL_TASK_LABEL: &str = "seal";
+    /// Get-payload task label.
+    pub const GET_PAYLOAD_TASK_LABEL: &str = "get-payload";
     /// Finalize task label.
     pub const FINALIZE_TASK_LABEL: &str = "finalize";
 

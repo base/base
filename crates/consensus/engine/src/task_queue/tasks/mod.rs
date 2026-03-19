@@ -17,6 +17,9 @@ pub use build::{BuildTask, BuildTaskError, EngineBuildError};
 mod seal;
 pub use seal::{SealTask, SealTaskError};
 
+mod get_payload;
+pub use get_payload::GetPayloadTask;
+
 mod consolidate;
 pub use consolidate::{ConsolidateInput, ConsolidateTask, ConsolidateTaskError};
 

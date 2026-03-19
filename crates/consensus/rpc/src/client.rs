@@ -84,4 +84,8 @@ pub enum SequencerAdminAPIError {
     /// Error overriding leader.
     #[error("Error overriding leader: {0}.")]
     LeaderOverrideError(String),
+
+    /// Node is not the conductor leader and cannot start sequencing.
+    #[error("Node is not the conductor leader.")]
+    NotLeader,
 }

@@ -13,6 +13,9 @@ use url::Url;
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait Conductor: Debug + Send + Sync {
+    /// Check if this node is the conductor leader.
+    async fn leader(&self) -> Result<bool, ConductorError>;
+
     /// Commit an unsafe payload to the conductor.
     async fn commit_unsafe_payload(
         &self,
@@ -32,6 +35,11 @@ pub struct ConductorClient {
 
 #[async_trait]
 impl Conductor for ConductorClient {
+    /// Check if this node is the conductor leader.
+    async fn leader(&self) -> Result<bool, ConductorError> {
+        self.rpc.request("conductor_leader", ()).await.map_err(Into::into)
+    }
+
     /// Commit an unsafe payload to the conductor.
     async fn commit_unsafe_payload(
         &self,
@@ -51,11 +59,6 @@ impl ConductorClient {
     pub fn new_http(url: Url) -> Self {
         let rpc = ReqwestClient::new_http(url);
         Self { rpc }
-    }
-
-    /// Check if the node is a leader of the conductor.
-    pub async fn leader(&self) -> Result<bool, ConductorError> {
-        self.rpc.request("conductor_leader", ()).await.map_err(Into::into)
     }
 
     /// Check if the conductor is active.

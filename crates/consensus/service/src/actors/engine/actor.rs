@@ -153,6 +153,9 @@ where
                         EngineActorRequest::ResetRequest(reset_req) => {
                             send_engine_processing_request(EngineProcessingRequest::Reset(reset_req)).await?;
                         }
+                        EngineActorRequest::GetPayloadRequest(get_payload_req) => {
+                            send_engine_processing_request(EngineProcessingRequest::GetPayload(get_payload_req)).await?;
+                        }
                         EngineActorRequest::SealRequest(seal_req) => {
                             send_engine_processing_request(EngineProcessingRequest::Seal(seal_req)).await?;
                         }

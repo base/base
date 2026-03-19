@@ -4,7 +4,7 @@ use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
     BuildTask, ConsolidateInput, ConsolidateTask, Engine, EngineClient, EngineTask,
-    EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, InsertTask, SealTask,
+    EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, GetPayloadTask, InsertTask, SealTask,
 };
 use base_consensus_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
@@ -14,7 +14,8 @@ use tokio::{
 };
 
 use crate::{
-    BuildRequest, EngineClientError, EngineDerivationClient, EngineError, ResetRequest, SealRequest,
+    BuildRequest, EngineClientError, EngineDerivationClient, EngineError, GetPayloadRequest,
+    ResetRequest, SealRequest,
 };
 
 /// Requires that the implementor handles [`EngineProcessingRequest`]s via the provided channel.
@@ -33,6 +34,8 @@ pub trait EngineRequestReceiver: Send + Sync {
 pub enum EngineProcessingRequest {
     /// Request to start building a block.
     Build(Box<BuildRequest>),
+    /// Request to fetch a sealed payload without inserting it.
+    GetPayload(Box<GetPayloadRequest>),
     /// Request to process a Safe signal, which can be derived attributes or delegated block info.
     ProcessSafeL2Signal(ConsolidateInput),
     /// Request to process the finalized L2 block with the provided block number.
@@ -253,6 +256,18 @@ where
                         let task = EngineTask::Build(Box::new(BuildTask::new(
                             Arc::clone(&self.client),
                             Arc::clone(&self.rollup),
+                            attributes,
+                            Some(result_tx),
+                        )));
+                        self.engine.enqueue(task);
+                    }
+                    EngineProcessingRequest::GetPayload(get_payload_request) => {
+                        let GetPayloadRequest { payload_id, attributes, result_tx } =
+                            *get_payload_request;
+                        let task = EngineTask::GetPayload(Box::new(GetPayloadTask::new(
+                            Arc::clone(&self.client),
+                            Arc::clone(&self.rollup),
+                            payload_id,
                             attributes,
                             Some(result_tx),
                         )));

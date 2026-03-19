@@ -9,6 +9,15 @@ pub use origin_selector::{
     L1OriginSelectorProvider, OriginSelector,
 };
 
+mod seal;
+pub use seal::{PayloadSealer, SealState, SealStepError};
+
+mod pool;
+pub use pool::PoolActivation;
+
+mod upgrades;
+pub use upgrades::UpgradeActivations;
+
 mod actor;
 pub use actor::SequencerActor;
 

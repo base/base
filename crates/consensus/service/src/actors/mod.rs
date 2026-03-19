@@ -10,7 +10,7 @@ pub use engine::{
     BuildRequest, EngineActor, EngineActorRequest, EngineClientError, EngineClientResult,
     EngineConfig, EngineDerivationClient, EngineError, EngineProcessingRequest, EngineProcessor,
     EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest, EngineRpcRequestReceiver,
-    QueuedEngineDerivationClient, ResetRequest, SealRequest,
+    GetPayloadRequest, QueuedEngineDerivationClient, ResetRequest, SealRequest,
 };
 
 mod rpc;
@@ -42,14 +42,13 @@ pub use network::{
 };
 
 mod sequencer;
-
 #[cfg(test)]
 pub use network::MockUnsafePayloadGossipClient;
 pub use sequencer::{
     Conductor, ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, L1OriginSelector,
-    L1OriginSelectorError, L1OriginSelectorProvider, OriginSelector, QueuedSequencerEngineClient,
-    SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
-    SequencerEngineClient,
+    L1OriginSelectorError, L1OriginSelectorProvider, OriginSelector, PayloadSealer, PoolActivation,
+    QueuedSequencerEngineClient, SealState, SealStepError, SequencerActor, SequencerActorError,
+    SequencerAdminQuery, SequencerConfig, SequencerEngineClient, UpgradeActivations,
 };
 #[cfg(test)]
 pub use sequencer::{MockConductor, MockOriginSelector, MockSequencerEngineClient};

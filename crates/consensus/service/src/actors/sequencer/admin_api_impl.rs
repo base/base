@@ -115,6 +115,10 @@ where
     ///
     /// `unsafe_head` identifies the block the caller intends to start sequencing from.
     /// Note: the forkchoice update to `unsafe_head` is not yet implemented (see TODO in body).
+    ///
+    /// When a conductor is configured, this checks `conductor_leader` before activating,
+    /// matching op-node's `Start()` behavior. If the node is not the leader the call returns
+    /// [`SequencerAdminAPIError::NotLeader`] and the sequencer remains inactive.
     pub(super) async fn start_sequencer(
         &mut self,
         unsafe_head: B256,
@@ -122,6 +126,20 @@ where
         if self.is_active {
             info!(target: "sequencer", unsafe_head = %unsafe_head, "received request to start sequencer, but it is already started");
             return Ok(());
+        }
+
+        if let Some(conductor) = &self.conductor {
+            match conductor.leader().await {
+                Ok(true) => {}
+                Ok(false) => {
+                    warn!(target: "sequencer", "Not the conductor leader, refusing to start sequencer");
+                    return Err(SequencerAdminAPIError::NotLeader);
+                }
+                Err(err) => {
+                    error!(target: "sequencer", error = %err, "Failed to check conductor leadership");
+                    return Err(SequencerAdminAPIError::RequestError(err.to_string()));
+                }
+            }
         }
 
         // TODO: call self.engine_client to update the engine forkchoice to unsafe_head before
@@ -139,6 +157,7 @@ where
     pub(super) async fn stop_sequencer(&mut self) -> Result<B256, SequencerAdminAPIError> {
         info!(target: "sequencer", "Stopping sequencer");
         self.is_active = false;
+        self.sealer = None;
 
         self.update_metrics();
 

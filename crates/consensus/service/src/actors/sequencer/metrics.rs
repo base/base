@@ -51,11 +51,6 @@ pub(super) fn update_attributes_build_duration_metrics(duration: Duration) {
 }
 
 #[inline]
-pub(super) fn update_conductor_commitment_duration_metrics(duration: Duration) {
-    base_macros::set!(gauge, crate::Metrics::SEQUENCER_CONDUCTOR_COMMITMENT_DURATION, duration);
-}
-
-#[inline]
 pub(super) fn update_block_build_duration_metrics(duration: Duration) {
     base_macros::set!(
         gauge,
