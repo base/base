@@ -13,7 +13,7 @@
 # Environment variables (defaults match `just tee nitro-local`):
 #   OP_NODE_URL     - OP rollup node RPC         (default: base mainnet reth proofs)
 #   L1_ETH_URL      - L1 execution RPC           (default: https://ethereum-rpc.publicnode.com)
-#   PROVER_RPC_URL  - Prover JSON-RPC endpoint   (default: http://localhost:7300)
+#   PROVER_RPC_URL  - Prover JSON-RPC endpoint   (default: http://localhost:8000)
 
 set -euo pipefail
 
@@ -22,7 +22,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 OP_NODE_URL="${OP_NODE_URL:?must set OP_NODE_URL}"
 L1_ETH_URL="${L1_ETH_URL:?must set L1_ETH_URL}"
-PROVER_RPC_URL="${PROVER_RPC_URL:-http://localhost:7300}"
+PROVER_RPC_URL="${PROVER_RPC_URL:-http://localhost:8000}"
 BLOCK_RANGE="${BLOCK_RANGE:-10}"
 L1_HEAD_BUFFER=50
 
