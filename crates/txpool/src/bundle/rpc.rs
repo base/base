@@ -79,86 +79,109 @@ fn rpc_err(code: ErrorCode, msg: impl Into<String>) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(code.code(), msg.into(), None::<()>)
 }
 
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+enum BundleValidationError {
+    #[error("txs must contain exactly 1 transaction, got {got}")]
+    SingleTransactionOnly { got: usize },
+    #[error("blockNumber {block_number} is in the past (current {current_block})")]
+    BlockNumberInPast { block_number: u64, current_block: u64 },
+    #[error("blockNumber {block_number} is too far ahead (max {max_block}, current {current_block})")]
+    BlockNumberTooFarAhead { block_number: u64, max_block: u64, current_block: u64 },
+    #[error("minTimestamp {min_timestamp}ms is too far ahead (max {max_allowed}ms)")]
+    MinTimestampTooFarAhead { min_timestamp: u64, max_allowed: u64 },
+    #[error("maxTimestamp {max_timestamp}ms is in the past (now {now_ms}ms)")]
+    MaxTimestampInPast { max_timestamp: u64, now_ms: u64 },
+    #[error("maxTimestamp {max_timestamp}ms is too far ahead (max {max_allowed}ms)")]
+    MaxTimestampTooFarAhead { max_timestamp: u64, max_allowed: u64 },
+    #[error("minTimestamp {min_timestamp}ms is after maxTimestamp {max_timestamp}ms")]
+    MinTimestampAfterMaxTimestamp { min_timestamp: u64, max_timestamp: u64 },
+    #[error("revertingTxHashes is not supported")]
+    RevertingTxHashesNotSupported,
+    #[error("replacementUuid is not supported")]
+    ReplacementUuidNotSupported,
+    #[error("builders is not supported")]
+    BuildersNotSupported,
+}
+
+impl From<BundleValidationError> for ErrorObjectOwned {
+    fn from(value: BundleValidationError) -> Self {
+        rpc_err(ErrorCode::InvalidParams, value.to_string())
+    }
+}
+
 /// Validates the structural constraints on a [`SendBundleRequest`].
 ///
-/// Returns `Ok(())` if all restrictions pass, or an RPC error describing the
-/// first violated constraint.
+/// Returns `Ok(())` if all restrictions pass, or a validation error
+/// describing the first violated constraint.
 fn validate_bundle_request(
     req: &SendBundleRequest,
     current_block: u64,
-) -> Result<(), ErrorObjectOwned> {
+) -> Result<(), BundleValidationError> {
     if req.txs.len() != 1 {
-        return Err(rpc_err(
-            ErrorCode::InvalidParams,
-            format!("txs must contain exactly 1 transaction, got {}", req.txs.len()),
-        ));
+        return Err(BundleValidationError::SingleTransactionOnly { got: req.txs.len() });
     }
 
     let now_ms = crate::transaction::unix_time_millis() as u64;
 
     if let Some(block_number) = req.block_number {
         if block_number < current_block {
-            return Err(rpc_err(
-                ErrorCode::InvalidParams,
-                format!("blockNumber {block_number} is in the past (current {current_block})",),
-            ));
+            return Err(BundleValidationError::BlockNumberInPast { block_number, current_block });
         }
         let max_block = current_block + MAX_BUNDLE_ADVANCE_BLOCKS;
         if block_number > max_block {
-            return Err(rpc_err(
-                ErrorCode::InvalidParams,
-                format!(
-                    "blockNumber {block_number} is too far ahead (max {max_block}, current {current_block})",
-                ),
-            ));
+            return Err(BundleValidationError::BlockNumberTooFarAhead {
+                block_number,
+                max_block,
+                current_block,
+            });
         }
     }
 
     if let Some(min_ts) = req.min_timestamp {
         let max_allowed = now_ms + MAX_BUNDLE_ADVANCE_MILLIS;
         if min_ts > max_allowed {
-            return Err(rpc_err(
-                ErrorCode::InvalidParams,
-                format!("minTimestamp {min_ts}ms is too far ahead (max {max_allowed}ms)"),
-            ));
+            return Err(BundleValidationError::MinTimestampTooFarAhead {
+                min_timestamp: min_ts,
+                max_allowed,
+            });
         }
     }
 
     if let Some(max_ts) = req.max_timestamp {
         if max_ts < now_ms {
-            return Err(rpc_err(
-                ErrorCode::InvalidParams,
-                format!("maxTimestamp {max_ts}ms is in the past (now {now_ms}ms)"),
-            ));
+            return Err(BundleValidationError::MaxTimestampInPast {
+                max_timestamp: max_ts,
+                now_ms,
+            });
         }
         let max_allowed = now_ms + MAX_BUNDLE_ADVANCE_MILLIS;
         if max_ts > max_allowed {
-            return Err(rpc_err(
-                ErrorCode::InvalidParams,
-                format!("maxTimestamp {max_ts}ms is too far ahead (max {max_allowed}ms)"),
-            ));
+            return Err(BundleValidationError::MaxTimestampTooFarAhead {
+                max_timestamp: max_ts,
+                max_allowed,
+            });
         }
     }
 
     if let (Some(min_ts), Some(max_ts)) = (req.min_timestamp, req.max_timestamp)
         && min_ts > max_ts
     {
-        return Err(rpc_err(
-            ErrorCode::InvalidParams,
-            format!("minTimestamp {min_ts}ms is after maxTimestamp {max_ts}ms"),
-        ));
+        return Err(BundleValidationError::MinTimestampAfterMaxTimestamp {
+            min_timestamp: min_ts,
+            max_timestamp: max_ts,
+        });
     }
 
     if req.reverting_tx_hashes.as_ref().is_some_and(|v| !v.is_empty()) {
-        return Err(rpc_err(ErrorCode::InvalidParams, "revertingTxHashes is not supported"));
+        return Err(BundleValidationError::RevertingTxHashesNotSupported);
     }
 
     if req.replacement_uuid.is_some() {
-        return Err(rpc_err(ErrorCode::InvalidParams, "replacementUuid is not supported"));
+        return Err(BundleValidationError::ReplacementUuidNotSupported);
     }
 
     if req.builders.as_ref().is_some_and(|v| !v.is_empty()) {
-        return Err(rpc_err(ErrorCode::InvalidParams, "builders is not supported"));
+        return Err(BundleValidationError::BuildersNotSupported);
     }
 
     Ok(())
@@ -175,7 +198,7 @@ where
         }
 
         let current_block = self.current_block_number.load(std::sync::atomic::Ordering::Relaxed);
-        validate_bundle_request(&bundle, current_block)?;
+        validate_bundle_request(&bundle, current_block).map_err(ErrorObjectOwned::from)?;
 
         let raw = &bundle.txs[0];
         let consensus_tx = OpTransactionSigned::decode_2718(&mut raw.as_ref()).map_err(|e| {
@@ -227,7 +250,7 @@ mod tests {
             builders: None,
         };
         let err = validate_bundle_request(&req, 100).unwrap_err();
-        assert!(err.message().contains("exactly 1 transaction"));
+        assert!(matches!(err, BundleValidationError::SingleTransactionOnly { got: 0 }));
     }
 
     #[test]
@@ -242,7 +265,7 @@ mod tests {
             builders: None,
         };
         let err = validate_bundle_request(&req, 100).unwrap_err();
-        assert!(err.message().contains("exactly 1 transaction"));
+        assert!(matches!(err, BundleValidationError::SingleTransactionOnly { got: 2 }));
     }
 
     #[test]
@@ -257,7 +280,10 @@ mod tests {
             builders: None,
         };
         let err = validate_bundle_request(&req, 100).unwrap_err();
-        assert!(err.message().contains("too far ahead"));
+        assert!(matches!(
+            err,
+            BundleValidationError::BlockNumberTooFarAhead { block_number: 200, .. }
+        ));
     }
 
     #[test]
@@ -286,7 +312,7 @@ mod tests {
             builders: None,
         };
         let err = validate_bundle_request(&req, 100).unwrap_err();
-        assert!(err.message().contains("revertingTxHashes"));
+        assert_eq!(err, BundleValidationError::RevertingTxHashesNotSupported);
     }
 
     #[test]
@@ -301,7 +327,7 @@ mod tests {
             builders: None,
         };
         let err = validate_bundle_request(&req, 100).unwrap_err();
-        assert!(err.message().contains("replacementUuid"));
+        assert_eq!(err, BundleValidationError::ReplacementUuidNotSupported);
     }
 
     #[test]
@@ -316,7 +342,7 @@ mod tests {
             builders: Some(vec!["builder1".to_string()]),
         };
         let err = validate_bundle_request(&req, 100).unwrap_err();
-        assert!(err.message().contains("builders"));
+        assert_eq!(err, BundleValidationError::BuildersNotSupported);
     }
 
     #[test]
@@ -331,7 +357,10 @@ mod tests {
             builders: None,
         };
         let err = validate_bundle_request(&req, 100).unwrap_err();
-        assert!(err.message().contains("in the past"));
+        assert_eq!(
+            err,
+            BundleValidationError::BlockNumberInPast { block_number: 50, current_block: 100 }
+        );
     }
 
     #[test]
@@ -346,7 +375,10 @@ mod tests {
             builders: None,
         };
         let err = validate_bundle_request(&req, 100).unwrap_err();
-        assert!(err.message().contains("in the past"));
+        assert!(matches!(
+            err,
+            BundleValidationError::MaxTimestampInPast { max_timestamp: 1, .. }
+        ));
     }
 
     #[test]
@@ -362,7 +394,13 @@ mod tests {
             builders: None,
         };
         let err = validate_bundle_request(&req, 100).unwrap_err();
-        assert!(err.message().contains("after maxTimestamp"));
+        assert_eq!(
+            err,
+            BundleValidationError::MinTimestampAfterMaxTimestamp {
+                min_timestamp: now + 30_000,
+                max_timestamp: now + 10_000,
+            }
+        );
     }
 
     #[test]

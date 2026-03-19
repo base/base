@@ -5000,6 +5000,7 @@ dependencies = [
  "reth-tasks",
  "reth-transaction-pool",
  "serde",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tokio-util",
