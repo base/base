@@ -279,11 +279,17 @@ async fn deep_reorg_past_confirmation_depth_removes_receipt() {
     // Snapshot before sending tx.
     let snap = snapshot(manager.provider()).await;
 
-    // Send tx, auto-mine includes it.
+    // Send tx. Force-mine one block immediately to flush Anvil's auto-mine,
+    // which may not have committed the tx under CI load. After this call the
+    // tx is guaranteed to be in a block regardless of whether auto-mine fired
+    // synchronously or was deferred.
     let (tx_hash, send_state) = publish_simple_tx(&manager).await;
+    mine_block(manager.provider()).await;
 
-    // Mine 2 extra blocks for full confirmation (tx_block + 3 <= tip + 1).
-    mine_blocks(manager.provider(), 2).await;
+    // Mine 3 more blocks so the confirmation check has a 1-block margin.
+    // After the flush the tx is at block B; tip reaches B+3, so
+    // tx_block + 3 <= tip + 1 holds (B+3 <= B+4) for any value of B.
+    mine_blocks(manager.provider(), 3).await;
 
     let receipt = query(&send_state, &manager, tx_hash, 3).await;
     assert!(receipt.is_some(), "receipt should be fully confirmed before reorg");
