@@ -230,6 +230,7 @@ impl BeaconClient for OnlineBeaconClient {
 
         let result = async {
             let first = self.inner.get(format!("{}/{}", self.base, SPEC_METHOD)).send().await?;
+            let first = first.error_for_status()?;
             first.json::<APIConfigResponse>().await
         }
         .await;
@@ -246,6 +247,7 @@ impl BeaconClient for OnlineBeaconClient {
 
         let result = async {
             let first = self.inner.get(format!("{}/{}", self.base, GENESIS_METHOD)).send().await?;
+            let first = first.error_for_status()?;
             first.json::<APIGenesisResponse>().await
         }
         .await;
@@ -392,6 +394,42 @@ mod tests {
         assert!(
             matches!(response, Err(BeaconClientError::SlotNotFound(s)) if s == slot),
             "expected SlotNotFound({slot}), got {response:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_slot_interval_non_success_status_is_error() {
+        let server = MockServer::start();
+        let spec_mock = server.mock(|when, then| {
+            when.method(GET).path("/eth/v1/config/spec");
+            then.status(500).body(r#"{"code":500,"message":"internal error"}"#);
+        });
+
+        let client = OnlineBeaconClient::new_http(server.base_url());
+        let response = client.slot_interval().await;
+        spec_mock.assert();
+
+        assert!(
+            matches!(response, Err(BeaconClientError::Http(_))),
+            "expected Http error for non-success spec response, got {response:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_genesis_time_non_success_status_is_error() {
+        let server = MockServer::start();
+        let genesis_mock = server.mock(|when, then| {
+            when.method(GET).path("/eth/v1/beacon/genesis");
+            then.status(503).body(r#"{"code":503,"message":"unavailable"}"#);
+        });
+
+        let client = OnlineBeaconClient::new_http(server.base_url());
+        let response = client.genesis_time().await;
+        genesis_mock.assert();
+
+        assert!(
+            matches!(response, Err(BeaconClientError::Http(_))),
+            "expected Http error for non-success genesis response, got {response:?}"
         );
     }
 }
