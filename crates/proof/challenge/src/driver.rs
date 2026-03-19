@@ -22,6 +22,7 @@ use base_zk_client::{ProofType, ProveBlockRequest, ZkProofProvider};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use crate::{
     CandidateGame, ChallengeSubmitter, ChallengerMetrics, GameScanner,
@@ -396,14 +397,16 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         // checkpoint: [prior_checkpoint .. invalid_checkpoint].
         let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
 
+        let session_id = derive_session_id(game_address, invalid_index);
         let request = ProveBlockRequest {
             start_block_number,
             number_of_blocks_to_prove: candidate.intermediate_block_interval,
             sequence_window: None,
             proof_type: ProofType::GenericZkvmClusterCompressed as i32,
+            session_id: Some(session_id),
         };
 
-        let prove_response = self.zk_prover.prove_block(request).await?;
+        let prove_response = self.zk_prover.prove_block(request.clone()).await?;
         let session_id = prove_response.session_id;
 
         info!(
@@ -523,8 +526,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             return Ok(());
         }
 
-        let request = match pending.prove_request {
-            Some(req) => req,
+        let request = match &pending.prove_request {
+            Some(req) => req.clone(),
             None => {
                 // TEE proofs have no ZK session to re-initiate — drop the entry.
                 debug!(game = %game_address, "TEE proof has no ZK request, dropping entry");
@@ -562,5 +565,39 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         }
 
         Ok(())
+    }
+}
+
+/// Derives a deterministic session ID from a game address and invalid index.
+///
+/// Uses UUID v5 (SHA-1 namespace hash) over `game_address || invalid_index`
+/// to produce an idempotency key that is stable across retries.
+fn derive_session_id(game_address: Address, invalid_index: u64) -> String {
+    let mut bytes = [0u8; 28];
+    bytes[..20].copy_from_slice(game_address.as_slice());
+    bytes[20..].copy_from_slice(&invalid_index.to_be_bytes());
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, &bytes).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::Address;
+
+    use super::derive_session_id;
+
+    #[test]
+    fn session_id_is_deterministic() {
+        let addr = Address::repeat_byte(0xAA);
+        assert_eq!(derive_session_id(addr, 42), derive_session_id(addr, 42));
+    }
+
+    #[test]
+    fn session_id_differs_for_different_inputs() {
+        let addr = Address::repeat_byte(0xAA);
+        assert_ne!(derive_session_id(addr, 1), derive_session_id(addr, 2));
+        assert_ne!(
+            derive_session_id(Address::repeat_byte(0xBB), 1),
+            derive_session_id(Address::repeat_byte(0xCC), 1),
+        );
     }
 }

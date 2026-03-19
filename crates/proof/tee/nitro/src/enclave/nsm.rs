@@ -5,7 +5,7 @@ use aws_nitro_enclaves_nsm_api::api::{Request, Response};
 #[cfg(target_os = "linux")]
 use aws_nitro_enclaves_nsm_api::driver::{nsm_exit, nsm_init, nsm_process_request};
 use rand_08::{CryptoRng, RngCore};
-use tracing::warn;
+use tracing::debug;
 
 use crate::error::{NsmError, Result};
 
@@ -34,7 +34,7 @@ impl NsmSession {
     pub fn open() -> Result<Option<Self>> {
         let fd = nsm_init();
         if fd < 0 {
-            warn!("failed to open Nitro Secure Module session, running in local mode");
+            debug!("failed to open Nitro Secure Module session");
             Ok(None)
         } else {
             Ok(Some(Self { fd }))
@@ -46,7 +46,7 @@ impl NsmSession {
     /// On non-Linux platforms, always returns `None` (local mode).
     #[cfg(not(target_os = "linux"))]
     pub fn open() -> Result<Option<Self>> {
-        warn!("NSM not available on this platform, running in local mode");
+        debug!("NSM not available on this platform");
         Ok(None)
     }
 

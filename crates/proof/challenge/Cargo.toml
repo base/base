@@ -70,6 +70,7 @@ tokio-util.workspace = true
 # Misc
 url.workspace = true
 humantime.workspace = true
+uuid = { workspace = true, features = ["v5"] }
 axum = { workspace = true, features = ["http1", "tokio"] }
 
 # Test utilities (optional)

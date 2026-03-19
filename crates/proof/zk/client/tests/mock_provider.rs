@@ -56,6 +56,7 @@ async fn mock_prove_block_returns_session_id() {
         number_of_blocks_to_prove: 1,
         sequence_window: None,
         proof_type: ProofType::KailuaBentoStark.into(),
+        session_id: None,
     };
 
     let response = provider.prove_block(request).await.expect("prove_block should succeed");

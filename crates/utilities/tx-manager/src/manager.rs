@@ -1453,18 +1453,21 @@ impl SimpleTxManager {
         num_confirmations: u64,
         network_timeout: Duration,
     ) -> TxManagerResult<Option<TransactionReceipt>> {
-        // Fetch tip *before* the receipt so that a reorg between the two
-        // calls can only undercount confirmations (safe), never overcount.
-        let tip_height = tokio::time::timeout(network_timeout, provider.get_block_number())
-            .await
+        // Fetch tip and receipt in parallel. The canonical block hash check
+        // below ensures the receipt is on the canonical chain, so call order
+        // no longer matters for reorg safety.
+        let (tip_result, receipt_result) = tokio::join!(
+            tokio::time::timeout(network_timeout, provider.get_block_number()),
+            tokio::time::timeout(network_timeout, provider.get_transaction_receipt(tx_hash)),
+        );
+
+        let tip_height = tip_result
             .map_err(|_| TxManagerError::Rpc("get_block_number timed out".into()))?
             .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
 
-        let receipt_opt =
-            tokio::time::timeout(network_timeout, provider.get_transaction_receipt(tx_hash))
-                .await
-                .map_err(|_| TxManagerError::Rpc("get_transaction_receipt timed out".into()))?
-                .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+        let receipt_opt = receipt_result
+            .map_err(|_| TxManagerError::Rpc("get_transaction_receipt timed out".into()))?
+            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
 
         let receipt = match receipt_opt {
             Some(r) => r,
@@ -1484,7 +1487,40 @@ impl SimpleTxManager {
             }
         };
 
-        // Receipt exists with a block number — record as mined.
+        // Verify the receipt is on the canonical chain by comparing its block
+        // hash against the canonical block at the same height.
+        let receipt_block_hash = match receipt.block_hash {
+            Some(hash) => hash,
+            None => {
+                send_state.tx_not_mined(tx_hash);
+                debug!(tx_hash = %tx_hash, "receipt has no block hash, treating as not mined");
+                return Ok(None);
+            }
+        };
+
+        let canonical_block = tokio::time::timeout(
+            network_timeout,
+            provider.get_block_by_number(BlockNumberOrTag::Number(tx_block)),
+        )
+        .await
+        .map_err(|_| TxManagerError::Rpc("get_block_by_number timed out".into()))?
+        .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+
+        let is_canonical =
+            canonical_block.as_ref().is_some_and(|block| block.header.hash == receipt_block_hash);
+
+        if !is_canonical {
+            send_state.tx_not_mined(tx_hash);
+            debug!(
+                tx_hash = %tx_hash,
+                tx_block = %tx_block,
+                receipt_block_hash = %receipt_block_hash,
+                "receipt block hash does not match canonical chain",
+            );
+            return Ok(None);
+        }
+
+        // Receipt is on the canonical chain — record as mined.
         send_state.tx_mined(tx_hash);
 
         // Check confirmation depth: tx_block + num_confirmations <= tip + 1

@@ -93,8 +93,8 @@ pub struct ChallengerConfig {
     pub dispute_game_factory_addr: Address,
     /// Polling interval for new dispute games.
     pub poll_interval: Duration,
-    /// URL of the ZK proof service endpoint.
-    pub zk_proof_service_endpoint: Validated<Url>,
+    /// URL of the ZK RPC endpoint.
+    pub zk_rpc_url: Validated<Url>,
     /// Timeout for establishing the initial gRPC connection to the ZK proof service.
     pub zk_connect_timeout: Duration,
     /// Timeout for individual gRPC requests to the ZK proof service.
@@ -141,8 +141,7 @@ impl ChallengerConfig {
         // Validate URLs have scheme and host
         let l1_eth_rpc = validate(cli.challenger.l1_eth_rpc, "l1-eth-rpc")?;
         let l2_eth_rpc = validate(cli.challenger.l2_eth_rpc, "l2-eth-rpc")?;
-        let zk_proof_service_endpoint =
-            validate(cli.challenger.zk_proof_service_endpoint, "zk-proof-service-endpoint")?;
+        let zk_rpc_url = validate(cli.challenger.zk_rpc_url, "zk-rpc-url")?;
         let tee_rpc_url =
             cli.challenger.tee_rpc_url.map(|url| validate(url, "tee-rpc-url")).transpose()?;
 
@@ -214,7 +213,7 @@ impl ChallengerConfig {
             l2_eth_rpc,
             dispute_game_factory_addr: cli.challenger.dispute_game_factory_addr,
             poll_interval: cli.challenger.poll_interval,
-            zk_proof_service_endpoint,
+            zk_rpc_url,
             zk_connect_timeout: cli.challenger.zk_connect_timeout,
             zk_request_timeout: cli.challenger.zk_request_timeout,
             tee_rpc_url,
@@ -251,7 +250,7 @@ mod tests {
             ("--l1-eth-rpc", "http://localhost:8545"),
             ("--l2-eth-rpc", "http://localhost:9545"),
             ("--dispute-game-factory-addr", "0x1234567890123456789012345678901234567890"),
-            ("--zk-proof-service-endpoint", "http://localhost:5000"),
+            ("--zk-rpc-url", "http://localhost:5000"),
         ];
 
         let mut args = vec!["challenger"];
@@ -413,7 +412,7 @@ mod tests {
             "http://localhost:9545",
             "--dispute-game-factory-addr",
             "0x1234567890123456789012345678901234567890",
-            "--zk-proof-service-endpoint",
+            "--zk-rpc-url",
             "http://localhost:5000",
             "--private-key",
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
@@ -435,7 +434,7 @@ mod tests {
             "http://localhost:9545",
             "--dispute-game-factory-addr",
             "0x1234567890123456789012345678901234567890",
-            "--zk-proof-service-endpoint",
+            "--zk-rpc-url",
             "http://localhost:5000",
             "--signer-endpoint",
             "http://localhost:8546",
@@ -444,18 +443,15 @@ mod tests {
     }
 
     #[test]
-    fn test_zk_proof_endpoint_validated() {
+    fn test_zk_rpc_url_validated() {
         let cli = cli_from_args(&[
-            "--zk-proof-service-endpoint",
+            "--zk-rpc-url",
             "file:///no/host",
             "--private-key",
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
         ]);
         let result = ChallengerConfig::from_cli(cli);
-        assert!(matches!(
-            result,
-            Err(ConfigError::InvalidUrl { field: "zk-proof-service-endpoint", .. })
-        ));
+        assert!(matches!(result, Err(ConfigError::InvalidUrl { field: "zk-rpc-url", .. })));
     }
 
     #[test]

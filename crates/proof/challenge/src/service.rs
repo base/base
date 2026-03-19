@@ -107,12 +107,12 @@ impl ChallengerService {
 
         // ── 6. ZK proof client ───────────────────────────────────────────────
         let zk_config = ZkProofClientConfig {
-            endpoint: config.zk_proof_service_endpoint.as_ref().clone(),
+            endpoint: config.zk_rpc_url.as_ref().clone(),
             connect_timeout: config.zk_connect_timeout,
             request_timeout: config.zk_request_timeout,
         };
         let zk_client = Arc::new(ZkProofClient::new(&zk_config)?);
-        info!(endpoint = %config.zk_proof_service_endpoint, "ZK proof client initialized");
+        info!(endpoint = %config.zk_rpc_url, "ZK proof client initialized");
 
         // ── 6b. TEE enclave client (optional) ────────────────────────────────
         let tee: Option<crate::TeeConfig> = if let Some(ref tee_url) = config.tee_rpc_url {
