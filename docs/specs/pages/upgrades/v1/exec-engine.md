@@ -86,6 +86,25 @@ will not be populated in V1.
 
 ## RPC Changes
 
+### Engine API Usage
+
+At and after V1 activation, block production and import use the following Engine API methods:
+
+- `engine_forkchoiceUpdatedV3` for starting block builds and forkchoice synchronization.
+- `engine_getPayloadV5` for fetching built payloads.
+- `engine_newPayloadV4` for importing payloads into the execution engine.
+
+`engine_getPayloadV5` returns a V5 envelope, but the contained execution payload is still V4-shaped.
+As a result, payload insertion continues through `engine_newPayloadV4` (there is no `engine_newPayloadV5`
+path used by Base V1 clients).
+
+V1 constraints for this flow:
+
+- Blob-related Engine API inputs are constrained to empty values:
+  - `expectedBlobVersionedHashes` MUST be an empty array.
+  - `blobsBundle` in `engine_getPayloadV5` responses is expected to be empty.
+- `executionRequests` in `engine_newPayloadV4` MUST be an empty array.
+
 ### eth_config RPC Method
 
 [EIP-7910](https://eips.ethereum.org/EIPS/eip-7910) introduces the `eth_config` JSON-RPC method,

@@ -15,7 +15,7 @@ use super::v4::OpExecutionPayloadV4;
 /// to the mainnet [`ExecutionPayloadEnvelopeV5`](alloy_rpc_types_engine::ExecutionPayloadEnvelopeV5).
 ///
 /// See also:
-/// [execution payload envelope v5] <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/exec-engine.md#engine_getpayloadv5>
+/// [execution payload envelope v5] <https://specs.base.org/upgrades/v1/exec-engine#engine-api-usage>
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]

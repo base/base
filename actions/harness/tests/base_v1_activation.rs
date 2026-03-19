@@ -32,23 +32,23 @@ async fn base_v1_derivation_crosses_activation_boundary() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     for _ in 1..=4u64 {
-        let block = builder.build_next_block().expect("build L2 block");
+        let block = builder.build_next_block();
         let mut source = ActionL2Source::new();
         source.push(block);
         let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-        batcher.advance(&mut h.l1).await.expect("advance");
+        batcher.advance(&mut h.l1).await;
     }
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
         &builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await.expect("initialize");
+    verifier.initialize().await;
 
     for i in 1..=4u64 {
         let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(l1_block).await.expect("signal");
-        let derived = verifier.act_l2_pipeline_full().await.expect("pipeline");
+        verifier.act_l1_head_signal(l1_block).await;
+        let derived = verifier.act_l2_pipeline_full().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
 
         let block = verifier.derived_block(i).expect("derived block must be recorded");
