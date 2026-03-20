@@ -168,7 +168,9 @@ impl SignerArgs {
             .header
             .iter()
             .map(|h| {
-                let (key, value) = h.split_once('=').ok_or(SignerArgsParseError::InvalidHeader)?;
+                let mut parts = h.splitn(2, '=');
+                let key = parts.next().ok_or(SignerArgsParseError::InvalidHeader)?;
+                let value = parts.next().ok_or(SignerArgsParseError::InvalidHeader)?;
                 Ok((HeaderName::from_str(key)?, HeaderValue::from_str(value)?))
             })
             .collect::<Result<HeaderMap, SignerArgsParseError>>()?;
