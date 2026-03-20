@@ -14,6 +14,20 @@ use reth_primitives_traits::header::HeaderMut;
 use reth_rpc_eth_api::helpers::config::{EthConfigApiServer, EthConfigHandler};
 use reth_storage_api::BlockReaderIdExt;
 
+const fn zero_blob_params() -> BlobParams {
+    BlobParams {
+        target_blob_count: 0,
+        max_blob_count: 0,
+        update_fraction: 0,
+        // EIP-7840's serde shape omits this field, so clients round-trip a missing value back to
+        // the protocol default of `1`. Keep the wire-observable default aligned while zeroing the
+        // blob capacity fields that Base must not advertise.
+        min_blob_fee: BLOB_TX_MIN_BLOB_GASPRICE,
+        max_blobs_per_tx: 0,
+        blob_base_cost: 0,
+    }
+}
+
 fn sanitize_system_contracts_for_fork(
     chain_spec: &impl BaseUpgrades,
     fork_config: &mut EthForkConfig,
@@ -48,14 +62,7 @@ pub trait BaseEthConfigApi {
 #[derive(Debug, Clone)]
 pub struct BaseEthConfigHandler<Provider, Evm> {
     provider: Provider,
-    evm_config: Evm,
-}
-
-impl<Provider, Evm> BaseEthConfigHandler<Provider, Evm> {
-    /// Creates a new [`BaseEthConfigHandler`].
-    pub const fn new(provider: Provider, evm_config: Evm) -> Self {
-        Self { provider, evm_config }
-    }
+    eth_config: EthConfigHandler<Provider, Evm>,
 }
 
 impl<Provider, Evm> BaseEthConfigHandler<Provider, Evm>
@@ -66,26 +73,21 @@ where
         + 'static,
     Evm: ConfigureEvm<Primitives: NodePrimitives<BlockHeader = Provider::Header>> + Clone + 'static,
 {
-    const fn zero_blob_params() -> BlobParams {
-        BlobParams {
-            target_blob_count: 0,
-            max_blob_count: 0,
-            update_fraction: 0,
-            min_blob_fee: BLOB_TX_MIN_BLOB_GASPRICE,
-            max_blobs_per_tx: 0,
-            blob_base_cost: 0,
-        }
+    /// Creates a new [`BaseEthConfigHandler`].
+    pub fn new(provider: Provider, evm_config: Evm) -> Self {
+        let eth_config = EthConfigHandler::new(provider.clone(), evm_config);
+        Self { provider, eth_config }
     }
 
     const fn sanitize_blob_schedules(&self, config: &mut EthConfig) {
-        config.current.blob_schedule = Self::zero_blob_params();
+        config.current.blob_schedule = zero_blob_params();
 
         if let Some(next) = config.next.as_mut() {
-            next.blob_schedule = Self::zero_blob_params();
+            next.blob_schedule = zero_blob_params();
         }
 
         if let Some(last) = config.last.as_mut() {
-            last.blob_schedule = Self::zero_blob_params();
+            last.blob_schedule = zero_blob_params();
         }
     }
 
@@ -113,10 +115,7 @@ where
     Evm: ConfigureEvm<Primitives: NodePrimitives<BlockHeader = Provider::Header>> + Clone + 'static,
 {
     fn config(&self) -> RpcResult<EthConfig> {
-        let mut config = EthConfigApiServer::config(&EthConfigHandler::new(
-            self.provider.clone(),
-            self.evm_config.clone(),
-        ))?;
+        let mut config = EthConfigApiServer::config(&self.eth_config)?;
         self.sanitize_blob_schedules(&mut config);
         self.sanitize_system_contracts(&mut config);
         Ok(config)
@@ -129,23 +128,11 @@ mod tests {
 
     use alloy_eips::{
         eip4844::BLOB_TX_MIN_BLOB_GASPRICE,
-        eip7840::BlobParams,
         eip7910::{EthForkConfig, SystemContract},
     };
     use base_execution_chainspec::OpChainSpecBuilder;
 
-    use super::sanitize_system_contracts_for_fork;
-
-    fn zero_blob_params() -> BlobParams {
-        BlobParams {
-            target_blob_count: 0,
-            max_blob_count: 0,
-            update_fraction: 0,
-            min_blob_fee: BLOB_TX_MIN_BLOB_GASPRICE,
-            max_blobs_per_tx: 0,
-            blob_base_cost: 0,
-        }
-    }
+    use super::{sanitize_system_contracts_for_fork, zero_blob_params};
 
     fn prague_system_contracts() -> BTreeMap<SystemContract, alloy_primitives::Address> {
         SystemContract::cancun().into_iter().chain(SystemContract::prague(None)).collect()
@@ -186,5 +173,17 @@ mod tests {
             fork_config.system_contracts.keys().copied().collect::<Vec<_>>(),
             vec![SystemContract::BeaconRoots, SystemContract::HistoryStorage]
         );
+    }
+
+    #[test]
+    fn zero_blob_params_zeroes_blob_capacity_fields() {
+        let params = zero_blob_params();
+
+        assert_eq!(params.target_blob_count, 0);
+        assert_eq!(params.max_blob_count, 0);
+        assert_eq!(params.update_fraction, 0);
+        assert_eq!(params.min_blob_fee, BLOB_TX_MIN_BLOB_GASPRICE);
+        assert_eq!(params.max_blobs_per_tx, 0);
+        assert_eq!(params.blob_base_cost, 0);
     }
 }

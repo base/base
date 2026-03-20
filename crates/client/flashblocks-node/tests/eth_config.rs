@@ -13,17 +13,28 @@ fn assert_zero_blob_schedule(config: &EthConfig) {
     assert_eq!(current.update_fraction, 0);
     assert_eq!(current.max_blob_count, 0);
     assert_eq!(current.target_blob_count, 0);
+    // `min_blob_fee` is omitted from the EIP-7840 wire format, so deserialization falls back to
+    // the protocol default of `1` even though Base zeroes the advertised blob capacity fields.
+    assert_eq!(current.min_blob_fee, 1);
+    assert_eq!(current.max_blobs_per_tx, 0);
+    assert_eq!(current.blob_base_cost, 0);
 
     if let Some(next) = config.next.as_ref() {
         assert_eq!(next.blob_schedule.update_fraction, 0);
         assert_eq!(next.blob_schedule.max_blob_count, 0);
         assert_eq!(next.blob_schedule.target_blob_count, 0);
+        assert_eq!(next.blob_schedule.min_blob_fee, 1);
+        assert_eq!(next.blob_schedule.max_blobs_per_tx, 0);
+        assert_eq!(next.blob_schedule.blob_base_cost, 0);
     }
 
     if let Some(last) = config.last.as_ref() {
         assert_eq!(last.blob_schedule.update_fraction, 0);
         assert_eq!(last.blob_schedule.max_blob_count, 0);
         assert_eq!(last.blob_schedule.target_blob_count, 0);
+        assert_eq!(last.blob_schedule.min_blob_fee, 1);
+        assert_eq!(last.blob_schedule.max_blobs_per_tx, 0);
+        assert_eq!(last.blob_schedule.blob_base_cost, 0);
     }
 }
 
