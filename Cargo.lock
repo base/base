@@ -3595,18 +3595,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-enclave-client"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-enclave",
- "base-proof-primitives",
- "jsonrpsee",
- "rustls 0.23.37",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "base-engine-tree"
 version = "0.0.0"
 dependencies = [

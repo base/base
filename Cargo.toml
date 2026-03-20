@@ -26,7 +26,6 @@ members = [
   "crates/proof/std-fpvm-proc",
   "crates/proof/tee/core",
   "crates/proof/tee/nitro",
-  "crates/proof/tee/client",
   "crates/proof/tee/registrar",
   "crates/proof/tee/nitro-verifier",
   "crates/proof/tee/nitro-attestation-prover",
@@ -239,7 +238,6 @@ base-zk-client = { path = "crates/proof/zk/client" }
 base-zk-outbox = { path = "crates/proof/zk/outbox" }
 base-challenger = { path = "crates/proof/challenge" }
 base-zk-service = { path = "crates/proof/zk/service" }
-base-enclave-client = { path = "crates/proof/tee/client" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-tee-nitro = { path = "crates/proof/tee/nitro" }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
