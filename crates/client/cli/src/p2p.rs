@@ -60,9 +60,6 @@ fn resolve_host(host: &str) -> Result<IpAddr, String> {
 /// P2P CLI Flags
 #[derive(Parser, Clone, Debug, PartialEq, Eq)]
 pub struct P2PArgs {
-    /// Disable Discv5 (node discovery).
-    #[arg(long = "p2p.no-discovery", default_value = "false", env = "BASE_NODE_P2P_NO_DISCOVERY")]
-    pub no_discovery: bool,
     /// Read the hex-encoded 32-byte private key for the peer ID from this txt file.
     /// Created if not already exists. Important to persist to keep the same network identity after
     /// restarting, maintaining the previous advertised identity.
@@ -606,12 +603,6 @@ mod tests {
         assert_eq!(args.p2p.discovery_randomize, Some(10));
         let args = MockCommand::parse_from(["test"]);
         assert_eq!(args.p2p.discovery_randomize, None);
-    }
-
-    #[test]
-    fn test_p2p_args_no_discovery() {
-        let args = MockCommand::parse_from(["test", "--p2p.no-discovery"]);
-        assert!(args.p2p.no_discovery);
     }
 
     #[test]
