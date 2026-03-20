@@ -143,9 +143,9 @@ pub struct OnlineBeaconClient {
 impl OnlineBeaconClient {
     /// Creates a new [`OnlineBeaconClient`] from the provided base URL string.
     pub fn new_http(mut base: String) -> Self {
-        // If base ends with a slash, remove it
-        if base.ends_with('/') {
-            base.remove(base.len() - 1);
+        // Remove all trailing slashes
+        while base.ends_with('/') {
+            base.pop();
         }
         Self {
             base,
@@ -393,5 +393,23 @@ mod tests {
             matches!(response, Err(BeaconClientError::SlotNotFound(s)) if s == slot),
             "expected SlotNotFound({slot}), got {response:?}"
         );
+    }
+
+    #[test]
+    fn test_new_http_strips_single_trailing_slash() {
+        let client = OnlineBeaconClient::new_http("http://beacon.example.com/".to_string());
+        assert_eq!(client.base, "http://beacon.example.com");
+    }
+
+    #[test]
+    fn test_new_http_strips_multiple_trailing_slashes() {
+        let client = OnlineBeaconClient::new_http("http://beacon.example.com//".to_string());
+        assert_eq!(client.base, "http://beacon.example.com");
+    }
+
+    #[test]
+    fn test_new_http_no_trailing_slash_unchanged() {
+        let client = OnlineBeaconClient::new_http("http://beacon.example.com".to_string());
+        assert_eq!(client.base, "http://beacon.example.com");
     }
 }
