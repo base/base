@@ -35,7 +35,7 @@ where
         {
             let state_flags: [(&str, String); 2] = [
                 ("active", self.is_active.to_string()),
-                ("recovery", self.in_recovery_mode.to_string()),
+                ("recovery", self.recovery_mode.get().to_string()),
             ];
 
             let gauge = metrics::gauge!(crate::Metrics::SEQUENCER_STATE, &state_flags);

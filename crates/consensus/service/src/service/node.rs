@@ -21,10 +21,11 @@ use crate::{
     ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor, DerivationActor,
     DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest, EngineConfig,
     EngineProcessor, EngineRpcProcessor, L1OriginSelector, L1WatcherActor, NetworkActor,
-    NetworkBuilder, NetworkConfig, NodeActor, NodeMode, QueuedDerivationEngineClient,
-    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
-    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    RpcActor, RpcContext, SequencerActor, SequencerConfig,
+    NetworkBuilder, NetworkConfig, NodeActor, NodeMode, PayloadBuilder,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
+    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
+    QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
+    SequencerConfig,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -344,16 +345,24 @@ impl RollupNode {
             let queued_gossip_client =
                 QueuedUnsafePayloadGossipClient::new(gossip_payload_tx.clone());
 
+            let recovery_mode =
+                RecoveryModeGuard::new(self.sequencer_config.sequencer_recovery_mode);
+            let engine_client = Arc::new(sequencer_engine_client);
             (
                 Some(SequencerActor {
                     admin_api_rx: sequencer_admin_api_rx,
-                    attributes_builder: self.create_attributes_builder(),
+                    builder: PayloadBuilder {
+                        attributes_builder: self.create_attributes_builder(),
+                        engine_client: Arc::clone(&engine_client),
+                        origin_selector: delayed_origin_selector,
+                        recovery_mode: recovery_mode.clone(),
+                        rollup_config: Arc::clone(&self.config),
+                    },
                     cancellation_token: cancellation.clone(),
                     conductor,
-                    engine_client: sequencer_engine_client,
+                    engine_client,
                     is_active: self.sequencer_config.sequencer_stopped.not(),
-                    in_recovery_mode: self.sequencer_config.sequencer_recovery_mode,
-                    origin_selector: delayed_origin_selector,
+                    recovery_mode,
                     rollup_config: Arc::clone(&self.config),
                     unsafe_payload_gossip_client: queued_gossip_client,
                     sealer: None,

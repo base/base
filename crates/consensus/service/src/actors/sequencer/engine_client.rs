@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 
 use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
@@ -46,6 +46,44 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
 
     /// Returns the current unsafe head [`L2BlockInfo`].
     async fn get_unsafe_head(&self) -> EngineClientResult<L2BlockInfo>;
+}
+
+/// Blanket implementation so [`Arc<T>`] can be used wherever `T: SequencerEngineClient`.
+///
+/// Both [`crate::SequencerActor`] and [`super::build::PayloadBuilder`] hold an
+/// `Arc` to the same engine client, so this impl allows both to call trait
+/// methods without any additional wrapping.
+#[async_trait]
+impl<T: SequencerEngineClient> SequencerEngineClient for Arc<T> {
+    async fn reset_engine_forkchoice(&self) -> EngineClientResult<()> {
+        (**self).reset_engine_forkchoice().await
+    }
+
+    async fn start_build_block(
+        &self,
+        attributes: OpAttributesWithParent,
+    ) -> EngineClientResult<PayloadId> {
+        (**self).start_build_block(attributes).await
+    }
+
+    async fn get_sealed_payload(
+        &self,
+        payload_id: PayloadId,
+        attributes: OpAttributesWithParent,
+    ) -> EngineClientResult<OpExecutionPayloadEnvelope> {
+        (**self).get_sealed_payload(payload_id, attributes).await
+    }
+
+    async fn insert_unsafe_payload(
+        &self,
+        payload: OpExecutionPayloadEnvelope,
+    ) -> EngineClientResult<()> {
+        (**self).insert_unsafe_payload(payload).await
+    }
+
+    async fn get_unsafe_head(&self) -> EngineClientResult<L2BlockInfo> {
+        (**self).get_unsafe_head().await
+    }
 }
 
 /// Queue-based implementation of the [`SequencerEngineClient`] trait. This handles all

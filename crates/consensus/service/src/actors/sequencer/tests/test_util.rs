@@ -8,7 +8,9 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     SequencerActor,
     actors::{
-        MockConductor, MockOriginSelector, MockSequencerEngineClient, MockUnsafePayloadGossipClient,
+        MockConductor, MockOriginSelector, MockSequencerEngineClient,
+        MockUnsafePayloadGossipClient,
+        sequencer::{PayloadBuilder, RecoveryModeGuard},
     },
 };
 
@@ -23,16 +25,24 @@ pub(crate) fn test_actor() -> SequencerActor<
     // The sender is intentionally dropped, so the channel starts closed.
     // If future tests need to send messages, keep the sender instead of dropping it.
     let (_admin_api_tx, admin_api_rx) = mpsc::channel(20);
+    let rollup_config = Arc::new(RollupConfig::default());
+    let recovery_mode = RecoveryModeGuard::new(false);
+    let engine_client = Arc::new(MockSequencerEngineClient::new());
     SequencerActor {
         admin_api_rx,
-        attributes_builder: TestAttributesBuilder { attributes: vec![] },
+        builder: PayloadBuilder {
+            attributes_builder: TestAttributesBuilder { attributes: vec![] },
+            engine_client: Arc::clone(&engine_client),
+            origin_selector: MockOriginSelector::new(),
+            recovery_mode: recovery_mode.clone(),
+            rollup_config: Arc::clone(&rollup_config),
+        },
         cancellation_token: CancellationToken::new(),
         conductor: None,
-        engine_client: MockSequencerEngineClient::new(),
+        engine_client,
         is_active: true,
-        in_recovery_mode: false,
-        origin_selector: MockOriginSelector::new(),
-        rollup_config: Arc::new(RollupConfig::default()),
+        recovery_mode,
+        rollup_config,
         unsafe_payload_gossip_client: MockUnsafePayloadGossipClient::new(),
         sealer: None,
     }

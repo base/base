@@ -108,7 +108,7 @@ where
 
     /// Returns whether the node is in recovery mode.
     pub(super) async fn in_recovery_mode(&self) -> Result<bool, SequencerAdminAPIError> {
-        Ok(self.in_recovery_mode)
+        Ok(self.recovery_mode.get())
     }
 
     /// Starts the sequencer in an idempotent fashion.
@@ -174,7 +174,7 @@ where
         &mut self,
         is_active: bool,
     ) -> Result<(), SequencerAdminAPIError> {
-        self.in_recovery_mode = is_active;
+        self.recovery_mode.set(is_active);
         info!(target: "sequencer", is_active, "Updated recovery mode");
 
         self.update_metrics();

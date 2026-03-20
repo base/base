@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ExecutionPayloadV1;
 use alloy_transport::RpcError;
@@ -10,11 +12,11 @@ use rstest::rstest;
 
 #[cfg(test)]
 use crate::{
-    ConductorError, SealState, SealStepError, SequencerActorError,
+    ConductorError, SealState, SealStepError, SequencerActorError, UnsealedPayloadHandle,
     actors::{
         MockConductor, MockOriginSelector, MockSequencerEngineClient,
         MockUnsafePayloadGossipClient,
-        sequencer::{PayloadSealer, actor::UnsealedPayloadHandle, tests::test_util::test_actor},
+        sequencer::{PayloadSealer, tests::test_util::test_actor},
     },
 };
 
@@ -48,7 +50,7 @@ fn dummy_attributes_with_parent() -> OpAttributesWithParent {
     OpAttributesWithParent::new(OpPayloadAttributes::default(), L2BlockInfo::default(), None, false)
 }
 
-// --- build_unsealed_payload tests ---
+// --- build tests ---
 
 #[rstest]
 #[case::temp(PipelineErrorKind::Temporary(BuilderError::Custom(String::new()).into()), false)]
@@ -75,11 +77,11 @@ async fn test_build_unsealed_payload_prepare_payload_attributes_error(
     let attributes_builder = TestAttributesBuilder { attributes: vec![Err(forced_error)] };
 
     let mut actor = test_actor();
-    actor.origin_selector = origin_selector;
-    actor.engine_client = client;
-    actor.attributes_builder = attributes_builder;
+    actor.builder.origin_selector = origin_selector;
+    actor.builder.engine_client = Arc::new(client);
+    actor.builder.attributes_builder = attributes_builder;
 
-    let result = actor.build_unsealed_payload().await;
+    let result = actor.builder.build().await;
     if expect_err {
         assert!(result.is_err());
         assert!(matches!(
@@ -101,7 +103,7 @@ async fn test_seal_payload_success_returns_sealer() {
     client.expect_get_sealed_payload().times(1).return_once(move |_, _| Ok(envelope));
 
     let mut actor = test_actor();
-    actor.engine_client = client;
+    actor.engine_client = Arc::new(client);
 
     let handle = UnsealedPayloadHandle {
         payload_id: Default::default(),
@@ -124,7 +126,7 @@ async fn test_seal_payload_failure_propagates() {
         .return_once(|_, _| Err(EngineClientError::RequestError("engine offline".to_string())));
 
     let mut actor = test_actor();
-    actor.engine_client = client;
+    actor.engine_client = Arc::new(client);
 
     let handle = UnsealedPayloadHandle {
         payload_id: Default::default(),
