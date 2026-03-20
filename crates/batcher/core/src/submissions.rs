@@ -33,6 +33,7 @@ pub struct SubmissionQueue<TM: TxManager> {
 impl<TM: TxManager> SubmissionQueue<TM> {
     /// Create a new [`SubmissionQueue`].
     pub fn new(tx_manager: TM, inbox: Address, max_pending: usize) -> Self {
+        assert!(max_pending > 0, "max_pending must be greater than zero");
         Self {
             tx_manager,
             in_flight: FuturesUnordered::new(),

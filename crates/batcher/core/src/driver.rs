@@ -606,4 +606,20 @@ mod tests {
             );
         });
     }
+
+    #[test]
+    #[should_panic(expected = "max_pending must be greater than zero")]
+    fn test_build_with_zero_max_pending_panics() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+
+            let _driver = DriverFixture::build_with_max_pending(
+                ctx.clone(),
+                pipeline,
+                ImmediateConfirmTxManager { l1_block: 1 },
+                0,
+            );
+        });
+    }
 }
