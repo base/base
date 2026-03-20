@@ -3,7 +3,7 @@ use std::{
     panic::{self, AssertUnwindSafe},
 };
 
-use base_consensus_genesis::{BaseHardforkConfig, HardForkConfig};
+use base_consensus_genesis::HardForkConfig;
 
 type ForkSetter = fn(&mut HardForkConfig);
 
@@ -24,7 +24,7 @@ static FORK_PROGRESSION: &[(&str, ForkSetter)] = &[
     ("pectra-blob-schedule", |h| h.pectra_blob_schedule_time = Some(0)),
     ("isthmus", |h| h.isthmus_time = Some(0)),
     ("jovian", |h| h.jovian_time = Some(0)),
-    ("base-v1", |h| h.base.get_or_insert_with(BaseHardforkConfig::default).v1 = Some(0)),
+    ("base-v1", |h| h.base.v1 = Some(0)),
 ];
 
 /// Named hardfork schedules for parametrizing harness tests across protocol upgrades.
@@ -54,7 +54,7 @@ impl ForkMatrix {
     ///
     /// Base-specific forks (e.g. `base-v1`) are excluded.
     pub fn from_isthmus() -> Self {
-        Self::all().retain(|_, h| h.isthmus_time.is_some() && h.base.is_none())
+        Self::all().retain(|_, h| h.isthmus_time.is_some() && h.base.is_empty())
     }
 
     /// Returns the canonical OP fault-proof fork progression from Granite onward.
