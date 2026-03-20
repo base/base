@@ -17,6 +17,8 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
+use crate::RegistrarError;
+
 // ---------------------------------------------------------------------------
 // Shared state
 // ---------------------------------------------------------------------------
@@ -78,15 +80,16 @@ impl HealthServer {
         addr: SocketAddr,
         ready: Arc<AtomicBool>,
         cancel: CancellationToken,
-    ) -> eyre::Result<()> {
+    ) -> crate::Result<()> {
         let app = ServerState { ready }.router();
 
-        let listener = TcpListener::bind(addr).await?;
+        let listener = TcpListener::bind(addr).await.map_err(RegistrarError::HealthServer)?;
         info!(%addr, "Health server started");
 
         axum::serve(listener, app)
             .with_graceful_shutdown(async move { cancel.cancelled().await })
-            .await?;
+            .await
+            .map_err(RegistrarError::HealthServer)?;
 
         info!("Health server stopped");
         Ok(())

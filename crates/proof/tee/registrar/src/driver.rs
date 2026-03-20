@@ -105,7 +105,7 @@ where
     /// Single registration cycle: discover → resolve addresses → register → deregister orphans.
     async fn step(&self) -> Result<()> {
         let instances = self.discovery.discover_instances().await?;
-        metrics::counter!(RegistrarMetrics::DISCOVERY_TOTAL).increment(1);
+        metrics::counter!(RegistrarMetrics::DISCOVERY_SUCCESS_TOTAL).increment(1);
 
         if !instances.is_empty() {
             let registerable =

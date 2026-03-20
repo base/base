@@ -17,8 +17,8 @@ impl RegistrarMetrics {
     /// Counter: total number of signer deregistrations submitted.
     pub const DEREGISTRATIONS_TOTAL: &str = "base_registrar_deregistrations_total";
 
-    /// Counter: total number of discovery cycles completed.
-    pub const DISCOVERY_TOTAL: &str = "base_registrar_discovery_total";
+    /// Counter: total number of successful discovery cycles.
+    pub const DISCOVERY_SUCCESS_TOTAL: &str = "base_registrar_discovery_success_total";
 
     /// Counter: total number of processing errors encountered.
     pub const PROCESSING_ERRORS_TOTAL: &str = "base_registrar_processing_errors_total";
@@ -52,7 +52,7 @@ mod tests {
     #[case::up(RegistrarMetrics::UP)]
     #[case::registrations(RegistrarMetrics::REGISTRATIONS_TOTAL)]
     #[case::deregistrations(RegistrarMetrics::DEREGISTRATIONS_TOTAL)]
-    #[case::discovery(RegistrarMetrics::DISCOVERY_TOTAL)]
+    #[case::discovery(RegistrarMetrics::DISCOVERY_SUCCESS_TOTAL)]
     #[case::processing_errors(RegistrarMetrics::PROCESSING_ERRORS_TOTAL)]
     fn metric_names_follow_naming_convention(#[case] name: &str) {
         assert!(name.starts_with(METRIC_PREFIX), "{name} must start with {METRIC_PREFIX}");
@@ -61,7 +61,7 @@ mod tests {
     #[rstest]
     #[case::registrations(RegistrarMetrics::REGISTRATIONS_TOTAL)]
     #[case::deregistrations(RegistrarMetrics::DEREGISTRATIONS_TOTAL)]
-    #[case::discovery(RegistrarMetrics::DISCOVERY_TOTAL)]
+    #[case::discovery(RegistrarMetrics::DISCOVERY_SUCCESS_TOTAL)]
     #[case::processing_errors(RegistrarMetrics::PROCESSING_ERRORS_TOTAL)]
     fn counter_names_use_total_suffix(#[case] name: &str) {
         assert!(name.ends_with("_total"), "{name} must end with _total");

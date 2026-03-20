@@ -24,6 +24,7 @@ use base_proof_tee_registrar::{
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use clap::{Args, Parser, ValueEnum};
+use eyre::WrapErr;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use url::Url;
@@ -289,16 +290,20 @@ impl Cli {
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             prover_timeout: Duration::from_secs(self.prover_timeout_secs),
             health_addr,
-            log: self.log.into(),
-            metrics: self.metrics.into(),
         })
     }
 
     /// Run the registrar service.
-    pub(crate) async fn run(self) -> eyre::Result<()> {
+    pub(crate) async fn run(mut self) -> eyre::Result<()> {
+        // Extract observability args before into_config() consumes self.
+        // LogArgs/MetricsArgs are binary-layer concerns, not part of RegistrarConfig.
+        let log_config: base_cli_utils::LogConfig = std::mem::take(&mut self.log).into();
+        let metrics_config: base_cli_utils::MetricsConfig =
+            std::mem::take(&mut self.metrics).into();
+
         let config = self.into_config()?;
 
-        config.log.init_tracing_subscriber()?;
+        log_config.init_tracing_subscriber()?;
 
         // Install the default rustls CryptoProvider before any TLS connections are created.
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -310,10 +315,7 @@ impl Cli {
         let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
 
         // ── 2. Metrics recorder (if enabled) ─────────────────────────────────
-        config
-            .metrics
-            .init()
-            .map_err(|e| eyre::eyre!("failed to install Prometheus recorder: {e}"))?;
+        metrics_config.init().wrap_err("failed to install Prometheus recorder")?;
 
         RegistrarMetrics::record_startup(env!("CARGO_PKG_VERSION"));
 
@@ -651,19 +653,19 @@ mod tests {
     }
 
     #[rstest]
-    fn default_metrics_config() {
-        let config = Cli::parse_from(boundless_args()).into_config().unwrap();
-        assert!(!config.metrics.enabled);
-        assert_eq!(config.metrics.port, DEFAULT_METRICS_PORT);
+    fn default_metrics_args() {
+        let cli = Cli::parse_from(boundless_args());
+        assert!(!cli.metrics.enabled);
+        assert_eq!(cli.metrics.port, DEFAULT_METRICS_PORT);
     }
 
     #[rstest]
-    fn custom_metrics_config() {
+    fn custom_metrics_args() {
         let mut args = boundless_args();
         args.extend(["--metrics.enabled", "--metrics.port", "9100"]);
-        let config = Cli::parse_from(args).into_config().unwrap();
-        assert!(config.metrics.enabled);
-        assert_eq!(config.metrics.port, 9100);
+        let cli = Cli::parse_from(args);
+        assert!(cli.metrics.enabled);
+        assert_eq!(cli.metrics.port, 9100);
     }
 
     // ── parse_image_id unit tests ───────────────────────────────────────

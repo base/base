@@ -42,7 +42,6 @@ tokio-util.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
 
 # Error
-eyre.workspace = true
 thiserror.workspace = true
 
 # Metrics
@@ -53,9 +52,6 @@ tracing.workspace = true
 
 # HTTP (health server)
 axum = { workspace = true, features = ["http1", "tokio"] }
-
-# CLI utilities
-base-cli-utils.workspace = true
 
 # Misc
 url.workspace = true

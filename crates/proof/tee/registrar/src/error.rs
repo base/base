@@ -49,6 +49,10 @@ pub enum RegistrarError {
     #[error("transaction error")]
     Transaction(#[source] Box<dyn std::error::Error + Send + Sync>),
 
+    /// Health server failed to bind or serve.
+    #[error("health server error")]
+    HealthServer(#[source] std::io::Error),
+
     /// Configuration is invalid.
     #[error("config error: {0}")]
     Config(String),
