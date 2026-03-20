@@ -107,9 +107,9 @@ impl PrecompilePayload {
         Bytes::new()
     }
 
-    fn encode_blake2f_data(rng: &mut SeededRng) -> Bytes {
+    fn encode_blake2f_data(rng: &mut SeededRng) -> (Bytes, u64) {
         let mut data = vec![0u8; 213];
-        let rounds = rng.gen_range(1..=12) as u32;
+        let rounds = rng.gen_range(1..=400_000) as u32;
         data[0..4].copy_from_slice(&rounds.to_be_bytes());
 
         for byte in &mut data[4..212] {
@@ -117,7 +117,8 @@ impl PrecompilePayload {
         }
         data[212] = 1;
 
-        Bytes::from(data)
+        let gas_limit = 30_000 + u64::from(rounds);
+        (Bytes::from(data), gas_limit)
     }
 
     fn encode_kzg_data() -> Bytes {
@@ -141,7 +142,7 @@ impl Payload for PrecompilePayload {
             PrecompileId::Bn254Add => (Self::encode_bn254_add_data(), 25_000),
             PrecompileId::Bn254Mul => (Self::encode_bn254_mul_data(), 30_000),
             PrecompileId::Bn254Pairing => (Self::encode_bn254_pairing_data(), 70_000),
-            PrecompileId::Blake2F => (Self::encode_blake2f_data(rng), 130_000),
+            PrecompileId::Blake2F => Self::encode_blake2f_data(rng),
             PrecompileId::KzgPointEvaluation => (Self::encode_kzg_data(), 75_000),
             _ => (Bytes::from(rng.gen_bytes::<32>().to_vec()), 100_000),
         };

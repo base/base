@@ -5,7 +5,11 @@ use alloy_rpc_types::TransactionRequest;
 use super::Payload;
 use crate::workload::SeededRng;
 
+const GAS_PER_ZERO_BYTE: u64 = 4;
 const GAS_PER_NONZERO_BYTE: u64 = 16;
+
+/// EIP-7623 floor cost per calldata token (active on Prague / OP Stack Isthmus+).
+const EIP7623_FLOOR_COST_PER_TOKEN: u64 = 10;
 
 /// Generates ETH transfer transactions with random calldata.
 #[derive(Debug, Clone)]
@@ -63,7 +67,16 @@ impl Payload for CalldataPayload {
             let chunk: Vec<u8> = (0..chunk_size).map(|_| rng.gen_range(0..=255)).collect();
             chunk.iter().cycle().take(size).copied().collect()
         };
-        let gas_limit = 21_000 + (size as u64 * GAS_PER_NONZERO_BYTE);
+        let zero_bytes = data.iter().filter(|&&b| b == 0).count() as u64;
+        let nonzero_bytes = data.len() as u64 - zero_bytes;
+
+        let intrinsic_gas =
+            21_000 + zero_bytes * GAS_PER_ZERO_BYTE + nonzero_bytes * GAS_PER_NONZERO_BYTE;
+
+        let tokens = zero_bytes + nonzero_bytes * (GAS_PER_NONZERO_BYTE / GAS_PER_ZERO_BYTE);
+        let floor_gas = 21_000 + tokens * EIP7623_FLOOR_COST_PER_TOKEN;
+
+        let gas_limit = intrinsic_gas.max(floor_gas);
 
         TransactionRequest::default()
             .with_to(to)
