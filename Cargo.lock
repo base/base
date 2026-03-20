@@ -2679,6 +2679,7 @@ dependencies = [
  "alloy-serde",
  "arbitrary",
  "arbtest",
+ "base-access-lists",
  "base-alloy-consensus",
  "ethereum_ssz 0.9.1",
  "ethereum_ssz_derive 0.9.1",

@@ -120,6 +120,7 @@ mod tests {
             block_number: 100,
             new_account_balances: BTreeMap::new(),
             receipts: BTreeMap::new(),
+            ..Default::default()
         };
 
         OpFlashblockPayload {

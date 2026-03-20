@@ -16,6 +16,7 @@ workspace = true
 [dependencies]
 # Workspace
 base-alloy-consensus.workspace = true
+base-access-lists = { workspace = true, optional = true }
 
 # Alloy
 alloy-rlp.workspace = true
@@ -59,6 +60,7 @@ std = [
 	"alloy-rpc-types-engine/ssz",
 	"alloy-rpc-types-engine/std",
 	"alloy-serde?/std",
+	"dep:base-access-lists",
 	"base-alloy-consensus/std",
 	"dep:ethereum_ssz",
 	"dep:ethereum_ssz_derive",

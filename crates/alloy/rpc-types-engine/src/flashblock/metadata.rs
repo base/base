@@ -3,6 +3,8 @@
 use alloc::collections::BTreeMap;
 
 use alloy_primitives::{Address, B256, U256};
+#[cfg(feature = "std")]
+use base_access_lists::FlashblockAccessList;
 use base_alloy_consensus::OpReceipt;
 
 /// Provides metadata about the block that may be useful for indexing or analysis.
@@ -14,11 +16,19 @@ pub struct OpFlashblockPayloadMetadata {
     pub block_number: u64,
     /// A map of addresses to their updated balances after the block execution.
     /// This represents balance changes due to transactions, rewards, or system transfers.
+    #[cfg_attr(feature = "serde", serde(default))]
     pub new_account_balances: BTreeMap<Address, U256>,
     /// Execution receipts for all transactions in the block.
     /// Contains logs, gas usage, and other EVM-level metadata.
-    #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_flashblock_receipts"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, deserialize_with = "deserialize_flashblock_receipts")
+    )]
     pub receipts: BTreeMap<B256, OpReceipt>,
+    /// The flashblock access list (introduced in Base V1 metadata).
+    #[cfg(feature = "std")]
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub access_list: Option<FlashblockAccessList>,
 }
 
 #[cfg(feature = "serde")]
@@ -91,7 +101,12 @@ mod tests {
         });
         receipts.insert(B256::ZERO, receipt);
 
-        OpFlashblockPayloadMetadata { block_number: 100, new_account_balances: balances, receipts }
+        OpFlashblockPayloadMetadata {
+            block_number: 100,
+            new_account_balances: balances,
+            receipts,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -126,6 +141,7 @@ mod tests {
             block_number: 1,
             new_account_balances: balances,
             receipts: BTreeMap::new(),
+            ..Default::default()
         };
 
         let json = serde_json::to_value(&metadata).unwrap();
@@ -151,6 +167,7 @@ mod tests {
             block_number: 1,
             new_account_balances: BTreeMap::new(),
             receipts,
+            ..Default::default()
         };
 
         let json = serde_json::to_value(&metadata).unwrap();
@@ -180,6 +197,7 @@ mod tests {
             block_number: 1,
             new_account_balances: BTreeMap::new(),
             receipts,
+            ..Default::default()
         };
 
         let json = serde_json::to_value(&metadata).unwrap();
@@ -197,5 +215,41 @@ mod tests {
         assert_eq!(metadata.block_number, 0);
         assert!(metadata.new_account_balances.is_empty());
         assert!(metadata.receipts.is_empty());
+        #[cfg(feature = "std")]
+        assert!(metadata.access_list.is_none());
+    }
+
+    #[test]
+    #[cfg(all(feature = "serde", feature = "std"))]
+    fn test_post_v1_metadata_deserializes_with_missing_legacy_fields() {
+        let json = serde_json::json!({
+            "block_number": 123,
+            "access_list": {
+                "account_changes": [],
+                "min_tx_index": 0,
+                "max_tx_index": 0,
+                "fal_hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+            }
+        });
+
+        let metadata: OpFlashblockPayloadMetadata = serde_json::from_value(json).unwrap();
+        assert_eq!(metadata.block_number, 123);
+        assert!(metadata.new_account_balances.is_empty());
+        assert!(metadata.receipts.is_empty());
+        assert!(metadata.access_list.is_some());
+    }
+
+    #[test]
+    #[cfg(all(feature = "serde", feature = "std"))]
+    fn test_access_list_is_omitted_when_none() {
+        let metadata = OpFlashblockPayloadMetadata {
+            block_number: 1,
+            new_account_balances: BTreeMap::new(),
+            receipts: BTreeMap::new(),
+            access_list: None,
+        };
+
+        let json = serde_json::to_string(&metadata).unwrap();
+        assert!(!json.contains("access_list"));
     }
 }

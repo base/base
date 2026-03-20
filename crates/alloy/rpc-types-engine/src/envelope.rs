@@ -794,6 +794,7 @@ mod tests {
             block_number: 100,
             new_account_balances: BTreeMap::new(),
             receipts: BTreeMap::new(),
+            ..Default::default()
         };
 
         OpFlashblockPayload { payload_id: PayloadId::new([1u8; 8]), index, base, diff, metadata }
