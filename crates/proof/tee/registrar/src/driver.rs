@@ -107,19 +107,20 @@ where
         let registerable: Vec<_> =
             instances.iter().filter(|i| i.health_status.should_register()).collect();
 
-        let registerable_count = registerable.len();
-        if registerable_count > 0 {
+        if !registerable.is_empty() {
             info!(
                 total = instances.len(),
-                registerable = registerable_count,
+                registerable = registerable.len(),
                 "discovered prover instances"
             );
         }
 
         let mut active_signers = HashSet::new();
+        let mut cancelled = false;
 
         for instance in registerable {
             if self.config.cancel.is_cancelled() {
+                cancelled = true;
                 break;
             }
 
@@ -138,15 +139,21 @@ where
             }
         }
 
-        // Guard against mass deregistration from transient failures: if we had
-        // registerable instances but resolved zero signer addresses, our view of
-        // the active set is unreliable. Skip orphan cleanup to avoid deregistering
-        // signers that are actually still active.
-        if active_signers.is_empty() && registerable_count > 0 {
-            warn!(
-                registerable = registerable_count,
-                "all instance processing failed, skipping orphan deregistration"
-            );
+        // Skip orphan cleanup if the loop was interrupted by cancellation,
+        // since the active set is incomplete and could cause false deregistrations.
+        if cancelled {
+            debug!("shutdown requested, skipping orphan deregistration");
+            return Ok(());
+        }
+
+        // Guard against mass deregistration from transient failures: if
+        // discovery found instances but no active signers were resolved (all
+        // processing failed, or all instances are unhealthy/draining and may
+        // recover), our view of the active set is unreliable. Only proceed
+        // when discovery itself returns zero instances (truly no instances
+        // exist) or we successfully resolved at least one active signer.
+        if active_signers.is_empty() && !instances.is_empty() {
+            warn!("no active signers resolved, skipping orphan deregistration");
             return Ok(());
         }
 
