@@ -77,7 +77,7 @@ where
         }
     }
 
-    fn sanitize_blob_schedules(&self, config: &mut EthConfig) {
+    const fn sanitize_blob_schedules(&self, config: &mut EthConfig) {
         config.current.blob_schedule = Self::zero_blob_params();
 
         if let Some(next) = config.next.as_mut() {
