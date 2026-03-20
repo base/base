@@ -258,10 +258,7 @@ async fn test_start_sequencer_already_active_skips_leader_check(
 #[tokio::test]
 async fn test_start_sequencer_engine_not_initialized(#[values(true, false)] via_channel: bool) {
     let mut client = MockSequencerEngineClient::new();
-    client
-        .expect_get_unsafe_head()
-        .times(1)
-        .return_once(|| Ok(L2BlockInfo::default())); // hash == B256::ZERO
+    client.expect_get_unsafe_head().times(1).return_once(|| Ok(L2BlockInfo::default())); // hash == B256::ZERO
 
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
