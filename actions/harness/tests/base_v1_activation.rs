@@ -1,21 +1,21 @@
 //! Action tests for Base V1 (Osaka) hardfork activation.
 
+use alloy_primitives::{Bytes, TxKind, U256, hex};
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
     L1MinerConfig, SharedL1Chain, TEST_ACCOUNT_ADDRESS, TestRollupConfigBuilder, block_info_from,
 };
 
-use alloy_primitives::{Bytes, TxKind, U256, hex};
-use base_consensus_genesis::{BaseHardforkConfig, HardForkConfig};
-
 /// CLZ probe-contract init code.
 ///
-/// Deploys runtime that executes:
-/// `CALLDATALOAD(0) → CLZ → SSTORE(slot 0) → PUSH 1 → SSTORE(slot 1) → STOP`.
+/// Deploys runtime that:
+///  1. `CALLDATALOAD(0) → DUP → CLZ → SSTORE(slot 0)` — stores the CLZ result.
+///  2. `GAS → SWAP → CLZ → POP → GAS → SWAP → SUB → SSTORE(slot 2)` — stores CLZ gas delta.
+///  3. `PUSH 1 → SSTORE(slot 1)` — sentinel proving execution completed.
 ///
-/// Slot 0 receives the CLZ result, slot 1 receives a sentinel value of `1`.
-/// If CLZ aborts (pre-fork, invalid opcode) neither SSTORE executes.
-const INIT_CODE: [u8; 25] = hex!("600d600c600039600d6000f36000351e600055600160015500");
+/// If CLZ aborts (pre-fork, invalid opcode) no SSTORE executes.
+const INIT_CODE: [u8; 36] =
+    hex!("6018600c60003960186000f3600035801e6000555a901e505a9003600255600160015500");
 
 /// Input word `1` — `CLZ(1) = 255`.
 const INPUT_ONE: [u8; 32] =
@@ -30,6 +30,14 @@ const RESULT_SLOT: U256 = U256::ZERO;
 
 /// Storage slot where the post-CLZ sentinel (`1`) is written.
 const SENTINEL_SLOT: U256 = U256::from_limbs([1, 0, 0, 0]);
+
+/// Storage slot where the measured gas delta is written.
+const GAS_DELTA_SLOT: U256 = U256::from_limbs([2, 0, 0, 0]);
+
+/// Expected gas delta between the two `GAS` readings around CLZ.
+///
+/// The measured window includes `SWAP1(3) + CLZ(5) + POP(2) + GAS(2) = 12`.
+const EXPECTED_GAS_DELTA: u64 = 12;
 
 /// Derives 4 L2 blocks across the Base V1 activation boundary (ts=4, block 2)
 /// and asserts each block includes 1 user transaction.
@@ -95,21 +103,11 @@ async fn base_v1_clz_op_code() {
 
     // All forks through Jovian at genesis; Base V1 at ts=6 (block 3).
     let base_v1_time = 6u64;
-    let hardforks = HardForkConfig {
-        regolith_time: Some(0),
-        canyon_time: Some(0),
-        delta_time: Some(0),
-        ecotone_time: Some(0),
-        fjord_time: Some(0),
-        granite_time: Some(0),
-        holocene_time: Some(0),
-        isthmus_time: Some(0),
-        jovian_time: Some(0),
-        base: BaseHardforkConfig { v1: Some(base_v1_time) },
-        ..Default::default()
-    };
-    let rollup_cfg =
-        TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .through_isthmus()
+        .with_jovian_at(0)
+        .with_base_v1_at(base_v1_time)
+        .build();
     let chain_id = rollup_cfg.l2_chain_id.id();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 
@@ -142,7 +140,7 @@ async fn base_v1_clz_op_code() {
         let db = builder.db();
         let acct = db.cache.accounts.get(&contract_addr).expect("contract must exist in DB");
         assert!(
-            acct.info.code.as_ref().map_or(false, |c| !c.is_empty()),
+            acct.info.code.as_ref().is_some_and(|c| !c.is_empty()),
             "deployed contract must have non-empty code"
         );
     }
@@ -196,8 +194,14 @@ async fn base_v1_clz_op_code() {
         let acct = db.cache.accounts.get(&contract_addr).expect("contract must exist");
         let sentinel = acct.storage.get(&SENTINEL_SLOT).copied().unwrap_or(U256::ZERO);
         let result = acct.storage.get(&RESULT_SLOT).copied().unwrap_or(U256::ZERO);
+        let gas_delta = acct.storage.get(&GAS_DELTA_SLOT).copied().unwrap_or(U256::ZERO);
         assert_eq!(sentinel, U256::from(1), "sentinel must be 1 after successful CLZ");
         assert_eq!(result, U256::from(255), "CLZ(1) must equal 255");
+        assert_eq!(
+            gas_delta,
+            U256::from(EXPECTED_GAS_DELTA),
+            "gas delta must be {EXPECTED_GAS_DELTA} (SWAP1=3 + CLZ=5 + POP=2 + GAS=2)"
+        );
     }
 
     // ── Block 4 (ts=8, post-fork): call CLZ(0x8000…0) — result = 0 ──
@@ -218,15 +222,21 @@ async fn base_v1_clz_op_code() {
         let acct = db.cache.accounts.get(&contract_addr).expect("contract must exist");
         let sentinel = acct.storage.get(&SENTINEL_SLOT).copied().unwrap_or(U256::ZERO);
         let result = acct.storage.get(&RESULT_SLOT).copied().unwrap_or(U256::ZERO);
+        let gas_delta = acct.storage.get(&GAS_DELTA_SLOT).copied().unwrap_or(U256::ZERO);
         assert_eq!(sentinel, U256::from(1), "sentinel must remain 1");
         assert_eq!(result, U256::ZERO, "CLZ(0x8000…0) must equal 0");
+        assert_eq!(
+            gas_delta,
+            U256::from(EXPECTED_GAS_DELTA),
+            "gas delta must be consistent across inputs"
+        );
     }
 
     // ── Batch and derive all 4 blocks ────────────────────────────────
+    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in [block1, block2, block3, block4] {
-        let mut source = ActionL2Source::new();
-        source.push(block);
-        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
+        batcher.push_block(block);
+        batcher.advance(&mut h.l1).await;
         chain.push(h.l1.tip().clone());
     }
 
