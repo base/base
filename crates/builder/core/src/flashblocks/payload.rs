@@ -6,11 +6,12 @@ use std::{
 };
 
 use alloy_consensus::{
-    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, Transaction, constants::EMPTY_WITHDRAWALS, proofs,
+    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, Transaction, TxReceipt,
+    constants::EMPTY_WITHDRAWALS, proofs,
 };
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::Database;
-use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
+use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
 use base_access_lists::{FlashblockAccessList, FlashblockAccessListBuilder};
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::OpReceipt;
@@ -32,7 +33,7 @@ use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
-    BlockExecutionOutput, BlockExecutionResult, ExecutionOutcome, HashedPostStateProvider,
+    BlockExecutionOutput, BlockExecutionResult, HashedPostStateProvider,
     ProviderError, StateRootProvider, StorageRootProvider,
 };
 use reth_revm::{
@@ -949,36 +950,13 @@ where
         ));
     }
 
-    let execution_outcome = ExecutionOutcome::new(
-        state.bundle_state.clone(),
-        vec![info.receipts.clone()],
-        block_number,
-        vec![],
+    let receipts_root = calculate_receipt_root_no_memo_optimism(
+        &info.receipts,
+        &ctx.chain_spec,
+        ctx.attributes().timestamp(),
     );
-
-    let receipts_root = execution_outcome
-        .generic_receipts_root_slow(block_number, |receipts| {
-            calculate_receipt_root_no_memo_optimism(
-                receipts,
-                &ctx.chain_spec,
-                ctx.attributes().timestamp(),
-            )
-        })
-        .ok_or_else(|| {
-            PayloadBuilderError::Other(
-                eyre::eyre!(
-                    "receipts and block number not in range, block number {}",
-                    block_number
-                )
-                .into(),
-            )
-        })?;
-    let logs_bloom = execution_outcome.block_logs_bloom(block_number).ok_or_else(|| {
-        PayloadBuilderError::Other(
-            eyre::eyre!("logs bloom and block number not in range, block number {}", block_number)
-                .into(),
-        )
-    })?;
+    let logs_bloom: Bloom =
+        logs_bloom(info.receipts.iter().flat_map(|r| r.logs()));
 
     // TODO: maybe recreate state with bundle in here
     // calculate the state root
@@ -989,7 +967,7 @@ where
 
     if calculate_state_root {
         let state_provider = state.database.as_ref();
-        hashed_state = state_provider.hashed_post_state(execution_outcome.state());
+        hashed_state = state_provider.hashed_post_state(&state.bundle_state);
         (state_root, trie_output) = {
             state.database.as_ref().state_root_with_updates(hashed_state.clone()).inspect_err(
                 |err| {
@@ -1015,7 +993,7 @@ where
             // withdrawals root field in block header is used for storage root of L2 predeploy
             // `l2tol1-message-passer`
             Some(
-                isthmus::withdrawals_root(execution_outcome.state(), state.database.as_ref())
+                isthmus::withdrawals_root(&state.bundle_state, state.database.as_ref())
                     .map_err(PayloadBuilderError::other)?,
             )
         } else if ctx.chain_spec.is_canyon_active_at_timestamp(ctx.attributes().timestamp()) {
