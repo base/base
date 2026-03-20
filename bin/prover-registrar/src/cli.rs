@@ -394,12 +394,13 @@ impl Cli {
         ready.store(true, Ordering::SeqCst);
 
         let cancel_guard = cancel.clone().drop_guard();
-        RegistrationDriver::new(discovery, proof_provider, registry, tx_manager, driver_config)
-            .run()
-            .await?;
+        let driver_result =
+            RegistrationDriver::new(discovery, proof_provider, registry, tx_manager, driver_config)
+                .run()
+                .await;
         drop(cancel_guard);
 
-        // ── 9. Graceful shutdown ─────────────────────────────────────────────
+        // ── 9. Graceful shutdown (always runs, even on driver error) ─────────
         info!("Driver stopped, shutting down...");
         ready.store(false, Ordering::SeqCst);
 
@@ -417,6 +418,7 @@ impl Cli {
         }
 
         info!("Service stopped");
+        driver_result?;
         Ok(())
     }
 }
