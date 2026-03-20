@@ -32,7 +32,7 @@ use url::Url;
 // Generate env-var helper and CLI structs with the `BASE_REGISTRAR_` prefix.
 base_cli_utils::define_cli_env!("BASE_REGISTRAR");
 base_cli_utils::define_log_args!("BASE_REGISTRAR");
-base_cli_utils::define_metrics_args!("BASE_REGISTRAR", 7320);
+base_cli_utils::define_metrics_args!("BASE_REGISTRAR", 7300);
 base_tx_manager::define_signer_cli!("BASE_REGISTRAR");
 base_tx_manager::define_tx_manager_cli!("BASE_REGISTRAR");
 
@@ -315,9 +315,12 @@ impl Cli {
         let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
 
         // ── 2. Metrics recorder (if enabled) ─────────────────────────────────
-        metrics_config.init().wrap_err("failed to install Prometheus recorder")?;
-
-        RegistrarMetrics::record_startup(env!("CARGO_PKG_VERSION"));
+        metrics_config
+            .init_with(|| {
+                base_cli_utils::register_version_metrics!();
+                RegistrarMetrics::record_startup();
+            })
+            .wrap_err("failed to install Prometheus recorder")?;
 
         // ── 3. Build L1 provider and tx manager ──────────────────────────────
         let provider = RootProvider::new_http(config.l1_rpc_url.clone());
@@ -376,6 +379,7 @@ impl Cli {
         };
 
         // ── 7. Start health HTTP server ──────────────────────────────────────
+        // health_handle is awaited during graceful shutdown in step 9 below.
         let ready = Arc::new(AtomicBool::new(false));
         let health_handle = tokio::spawn(HealthServer::serve(
             config.health_addr,
@@ -461,7 +465,6 @@ mod tests {
     const DEFAULT_PROVER_TIMEOUT_SECS: u64 = 30;
     const DEFAULT_PROVER_PORT: u16 = 8000;
     const DEFAULT_HEALTH_PORT: u16 = 8080;
-    const DEFAULT_METRICS_PORT: u16 = 7320;
 
     // ── Arg builders ────────────────────────────────────────────────────
 
@@ -663,7 +666,7 @@ mod tests {
     fn default_metrics_args() {
         let cli = Cli::parse_from(boundless_args());
         assert!(!cli.metrics.enabled);
-        assert_eq!(cli.metrics.port, DEFAULT_METRICS_PORT);
+        assert_eq!(cli.metrics.port, MetricsArgs::default().port);
     }
 
     #[rstest]

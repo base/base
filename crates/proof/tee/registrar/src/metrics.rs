@@ -5,10 +5,7 @@
 pub struct RegistrarMetrics;
 
 impl RegistrarMetrics {
-    /// Gauge: registrar build info, labelled with `version`.
-    pub const INFO: &str = "base_registrar_info";
-
-    /// Gauge: registrar is running (set to 1 at startup).
+    /// Gauge: registrar is running (set to 1 at startup, 0 on shutdown).
     pub const UP: &str = "base_registrar_up";
 
     /// Counter: total number of signer registrations submitted.
@@ -23,12 +20,10 @@ impl RegistrarMetrics {
     /// Counter: total number of processing errors encountered.
     pub const PROCESSING_ERRORS_TOTAL: &str = "base_registrar_processing_errors_total";
 
-    /// Label key for version.
-    pub const LABEL_VERSION: &str = "version";
-
-    /// Records startup metrics (INFO gauge with version label, UP gauge set to 1).
-    pub fn record_startup(version: &str) {
-        metrics::gauge!(Self::INFO, Self::LABEL_VERSION => version.to_string()).set(1.0);
+    /// Sets the UP gauge to 1. Called once at startup inside the metrics
+    /// recorder's `init_with` callback (version info is handled separately
+    /// by `register_version_metrics!`).
+    pub fn record_startup() {
         metrics::gauge!(Self::UP).set(1.0);
     }
 
@@ -49,11 +44,10 @@ mod tests {
 
     #[rstest]
     fn record_startup_does_not_panic() {
-        RegistrarMetrics::record_startup("0.1.0-test");
+        RegistrarMetrics::record_startup();
     }
 
     #[rstest]
-    #[case::info(RegistrarMetrics::INFO)]
     #[case::up(RegistrarMetrics::UP)]
     #[case::registrations(RegistrarMetrics::REGISTRATIONS_TOTAL)]
     #[case::deregistrations(RegistrarMetrics::DEREGISTRATIONS_TOTAL)]
