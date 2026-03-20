@@ -141,7 +141,7 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
             value: self.init_bond,
             ..Default::default()
         };
-        
+
         info!(
             tx = ?candidate,
             "Sending tx candidate",
