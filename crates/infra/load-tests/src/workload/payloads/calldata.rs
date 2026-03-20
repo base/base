@@ -1,7 +1,9 @@
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_network::TransactionBuilder;
+use alloy_primitives::{Address, Bytes};
+use alloy_rpc_types::TransactionRequest;
 
 use super::Payload;
-use crate::{rpc::TransactionRequest, workload::SeededRng};
+use crate::workload::SeededRng;
 
 const GAS_PER_NONZERO_BYTE: u64 = 16;
 
@@ -63,12 +65,9 @@ impl Payload for CalldataPayload {
         };
         let gas_limit = 21_000 + (size as u64 * GAS_PER_NONZERO_BYTE);
 
-        TransactionRequest {
-            to,
-            value: U256::ZERO,
-            data: Bytes::from(data),
-            gas_limit: Some(gas_limit),
-            nonce: None,
-        }
+        TransactionRequest::default()
+            .with_to(to)
+            .with_input(Bytes::from(data))
+            .with_gas_limit(gas_limit)
     }
 }

@@ -4140,7 +4140,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-load-tests-core"
+name = "base-load-tests"
 version = "0.0.0"
 dependencies = [
  "alloy-network",
@@ -4149,6 +4149,8 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-signer-local",
  "alloy-sol-types",
+ "base-alloy-network",
+ "base-alloy-rpc-types",
  "base-cli-utils",
  "base-tx-manager",
  "eyre",

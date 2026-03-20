@@ -1,7 +1,9 @@
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U256};
+use alloy_rpc_types::TransactionRequest;
 
 use super::Payload;
-use crate::{rpc::TransactionRequest, workload::SeededRng};
+use crate::workload::SeededRng;
 
 /// Generates ERC20 transfer transactions.
 #[derive(Debug, Clone)]
@@ -46,6 +48,9 @@ impl Payload for Erc20Payload {
 
         let data = Self::encode_transfer(to, amount);
 
-        TransactionRequest::contract_call(self.token_address, data).with_gas_limit(65_000)
+        TransactionRequest::default()
+            .with_to(self.token_address)
+            .with_input(data)
+            .with_gas_limit(65_000)
     }
 }

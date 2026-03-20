@@ -9,9 +9,7 @@ mod utils;
 pub use utils::{BaselineError, Result, init_tracing};
 
 mod rpc;
-pub use rpc::{
-    ReceiptProvider, RpcClient, TransactionRequest, WalletProvider, create_wallet_provider,
-};
+pub use rpc::{ReceiptProvider, RpcClient, WalletProvider, create_wallet_provider};
 
 mod metrics;
 pub use metrics::{

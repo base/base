@@ -46,7 +46,7 @@ members = [
   "crates/infra/ingress-rpc",
   "crates/infra/mempool-rebroadcaster",
   "crates/infra/websocket-proxy",
-  "crates/infra/load-tests/*",
+  "crates/infra/load-tests",
   "crates/alloy/*",
   "crates/execution/*",
   "crates/txpool",

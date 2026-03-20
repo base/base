@@ -5,8 +5,8 @@
 # RPC endpoint for local devnet
 rpc: http://localhost:8545
 
-# Pre-funded Anvil dev key (Account #0)
-funder_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+# Pre-funded Anvil dev key (Account #1 - Account #0 is used as deployer and has depleted funds)
+funder_key: "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 
 # Number of sender accounts
 sender_count: 10

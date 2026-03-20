@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use alloy_signer_local::PrivateKeySigner;
-use base_load_tests_core::{LoadRunner, RpcClient, TestConfig, init_tracing};
+use base_load_tests::{LoadRunner, RpcClient, TestConfig, init_tracing};
 use eyre::{Result, bail};
 
 fn resolve_funder_key(config_key: &str) -> Result<String> {
@@ -35,7 +35,6 @@ async fn main() -> Result<()> {
     }
 
     println!("=== Baseline Transaction Spammer ===");
-    println!("Loading config from: {}", config_path.display());
 
     let test_config = TestConfig::load(&config_path)?;
 
@@ -46,13 +45,16 @@ async fn main() -> Result<()> {
 
     let load_config = test_config.to_load_config(rpc_chain_id)?;
 
-    println!("RPC URL: {}", test_config.rpc);
-    println!("Chain ID: {}", load_config.chain_id);
-    println!("Target GPS: {}", load_config.target_gps);
-    println!("Duration: {:?}", load_config.duration);
-    println!("Accounts: {}", load_config.account_count);
-    println!("Max in-flight per sender: {}", load_config.max_in_flight_per_sender);
-    println!("Transaction types: {}", test_config.transactions.len());
+    println!(
+        "Config: {} | RPC: {} | Chain: {}",
+        config_path.display(),
+        test_config.rpc,
+        load_config.chain_id
+    );
+    println!(
+        "Target: {} GPS | Duration: {:?} | Accounts: {}",
+        load_config.target_gps, load_config.duration, load_config.account_count
+    );
     println!();
 
     let mut runner = LoadRunner::new(load_config)?;
@@ -62,31 +64,39 @@ async fn main() -> Result<()> {
     let funding_key: PrivateKeySigner = funder_key.parse()?;
     let funding_amount = test_config.parse_funding_amount()?;
     runner.fund_accounts(funding_key, funding_amount).await?;
-    println!("Accounts funded!");
+    println!("Accounts funded.");
     println!();
 
-    println!("Starting load test...");
+    println!("Running load test...");
     let summary = runner.run().await?;
 
     println!();
     println!("=== Results ===");
-    println!("Submitted: {}", summary.throughput.total_submitted);
-    println!("Confirmed: {}", summary.throughput.total_confirmed);
-    println!("Failed: {}", summary.throughput.total_failed);
-    println!("TPS: {:.2}", summary.throughput.tps);
-    println!("GPS: {:.2}", summary.throughput.gps);
-    println!("Success Rate: {:.2}%", summary.throughput.success_rate());
+    println!(
+        "Submitted: {} | Confirmed: {} | Failed: {}",
+        summary.throughput.total_submitted,
+        summary.throughput.total_confirmed,
+        summary.throughput.total_failed
+    );
+    println!(
+        "TPS: {:.2} | GPS: {:.0} | Success: {:.1}%",
+        summary.throughput.tps,
+        summary.throughput.gps,
+        summary.throughput.success_rate()
+    );
     println!();
-    println!("Latency:");
-    println!("  Min: {:?}", summary.latency.min);
-    println!("  Max: {:?}", summary.latency.max);
-    println!("  Mean: {:?}", summary.latency.mean);
-    println!("  P50: {:?}", summary.latency.p50);
-    println!("  P99: {:?}", summary.latency.p99);
-    println!();
-    println!("Gas:");
-    println!("  Total: {}", summary.gas.total_gas);
-    println!("  Avg per tx: {}", summary.gas.avg_gas);
+    println!(
+        "Latency: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
+        summary.latency.min,
+        summary.latency.p50,
+        summary.latency.mean,
+        summary.latency.p99,
+        summary.latency.max
+    );
+    println!(
+        "Gas: total={}  avg/tx={}",
+        summary.gas.total_gas, summary.gas.avg_gas
+    );
 
     Ok(())
 }

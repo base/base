@@ -1,8 +1,10 @@
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes};
+use alloy_rpc_types::TransactionRequest;
 use revm::precompile::{PrecompileId, PrecompileSpecId};
 
 use super::Payload;
-use crate::{rpc::TransactionRequest, workload::SeededRng};
+use crate::workload::SeededRng;
 
 /// Parses a precompile identifier from a config string.
 pub fn parse_precompile_id(s: &str) -> Result<PrecompileId, String> {
@@ -144,7 +146,9 @@ impl Payload for PrecompilePayload {
             _ => (Bytes::from(rng.gen_bytes::<32>().to_vec()), 100_000),
         };
 
-        TransactionRequest::contract_call(precompile_address(&self.id), data)
+        TransactionRequest::default()
+            .with_to(precompile_address(&self.id))
+            .with_input(data)
             .with_gas_limit(gas_limit)
     }
 }

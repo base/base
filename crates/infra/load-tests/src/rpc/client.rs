@@ -6,7 +6,9 @@ use alloy_provider::{
     Identity, Provider, ProviderBuilder, RootProvider,
     fillers::{ChainIdFiller, FillProvider, JoinFill, WalletFiller},
 };
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionReceipt};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag};
+use base_alloy_network::Base;
+use base_alloy_rpc_types::OpTransactionReceipt;
 use tracing::instrument;
 use url::Url;
 
@@ -24,16 +26,14 @@ pub trait ReceiptProvider: Send + Sync {
     fn get_block_receipts(
         &self,
         block_number: u64,
-    ) -> impl Future<Output = Result<Option<Vec<TransactionReceipt>>>> + Send;
+    ) -> impl Future<Output = Result<Option<Vec<OpTransactionReceipt>>>> + Send;
 
     /// Fetches the transaction receipt for a given hash.
     fn get_transaction_receipt(
         &self,
         tx_hash: TxHash,
-    ) -> impl Future<Output = Result<Option<TransactionReceipt>>> + Send;
+    ) -> impl Future<Output = Result<Option<OpTransactionReceipt>>> + Send;
 }
-
-type HttpProvider = RootProvider<Ethereum>;
 
 /// Provider type with wallet signing capability for sending transactions.
 ///
@@ -55,27 +55,22 @@ pub fn create_wallet_provider(rpc_url: Url, wallet: EthereumWallet) -> WalletPro
         .connect_http(rpc_url)
 }
 
-/// RPC client for read-only interactions with Ethereum nodes.
+/// RPC client for read-only interactions with Base nodes.
 pub struct RpcClient {
-    provider: HttpProvider,
+    provider: RootProvider<Base>,
     url: Url,
 }
 
 impl RpcClient {
     /// Creates a new RPC client.
     pub fn new(url: Url) -> Self {
-        let provider = RootProvider::new_http(url.clone());
+        let provider = RootProvider::<Base>::new_http(url.clone());
         Self { provider, url }
     }
 
     /// Returns the RPC endpoint URL.
     pub const fn url(&self) -> &Url {
         &self.url
-    }
-
-    /// Returns a reference to the underlying provider.
-    pub const fn provider(&self) -> &HttpProvider {
-        &self.provider
     }
 
     /// Fetches the chain ID from the RPC endpoint.
@@ -110,7 +105,7 @@ impl RpcClient {
     pub async fn get_transaction_receipt(
         &self,
         tx_hash: TxHash,
-    ) -> Result<Option<TransactionReceipt>> {
+    ) -> Result<Option<OpTransactionReceipt>> {
         self.provider
             .get_transaction_receipt(tx_hash)
             .await
@@ -128,7 +123,7 @@ impl RpcClient {
     pub async fn get_block_receipts(
         &self,
         block_number: u64,
-    ) -> Result<Option<Vec<TransactionReceipt>>> {
+    ) -> Result<Option<Vec<OpTransactionReceipt>>> {
         self.provider
             .get_block_receipts(BlockId::Number(BlockNumberOrTag::Number(block_number)))
             .await
@@ -150,11 +145,11 @@ impl ReceiptProvider for RpcClient {
     async fn get_block_receipts(
         &self,
         block_number: u64,
-    ) -> Result<Option<Vec<TransactionReceipt>>> {
+    ) -> Result<Option<Vec<OpTransactionReceipt>>> {
         self.get_block_receipts(block_number).await
     }
 
-    async fn get_transaction_receipt(&self, tx_hash: TxHash) -> Result<Option<TransactionReceipt>> {
+    async fn get_transaction_receipt(&self, tx_hash: TxHash) -> Result<Option<OpTransactionReceipt>> {
         self.get_transaction_receipt(tx_hash).await
     }
 }

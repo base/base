@@ -190,7 +190,8 @@ impl LoadRunner {
             account.nonce = account_nonce;
 
             if balance < amount_per_account {
-                accounts_to_fund.push(account.address);
+                let deficit = amount_per_account.saturating_sub(balance);
+                accounts_to_fund.push((account.address, deficit));
             } else {
                 debug!(address = %account.address, balance = %balance, "account already funded");
             }
@@ -206,6 +207,7 @@ impl LoadRunner {
         let funder_provider = create_wallet_provider(self.config.rpc_url.clone(), wallet);
         let mut nonce = funder_provider
             .get_transaction_count(funder_address)
+            .pending()
             .await
             .map_err(|e| BaselineError::Rpc(e.to_string()))?;
 
@@ -221,10 +223,10 @@ impl LoadRunner {
         let max_priority_fee = (gas_price / 10).max(1);
 
         let mut pending_txs = Vec::new();
-        for address in &accounts_to_fund {
+        for (address, deficit) in &accounts_to_fund {
             let tx = AlloyTxRequest::default()
                 .with_to(*address)
-                .with_value(amount_per_account)
+                .with_value(*deficit)
                 .with_nonce(nonce)
                 .with_chain_id(self.config.chain_id)
                 .with_gas_limit(21_000)
@@ -234,7 +236,7 @@ impl LoadRunner {
             match funder_provider.send_transaction(tx).await {
                 Ok(pending) => {
                     let tx_hash = *pending.tx_hash();
-                    debug!(to = %address, nonce, tx_hash = %tx_hash, "funding tx sent");
+                    debug!(to = %address, deficit = %deficit, nonce, tx_hash = %tx_hash, "funding tx sent");
                     pending_txs.push((tx_hash, *address));
                     nonce += 1;
                 }
@@ -282,14 +284,6 @@ impl LoadRunner {
 
         for account in self.accounts.accounts_mut() {
             let balance = self.client.get_balance(account.address).await?;
-            if balance < amount_per_account {
-                return Err(BaselineError::Transaction(format!(
-                    "account {} has mass {} but needs {}. \
-                     If seed is not set, accounts change each run. \
-                     Set 'seed: <number>' in config for consistent accounts.",
-                    account.address, balance, amount_per_account
-                )));
-            }
             account.balance = balance;
             let account_nonce = self.client.get_nonce(account.address).await?;
             account.nonce = account_nonce;
@@ -298,7 +292,7 @@ impl LoadRunner {
             let nonce_manager = NonceManager::new(provider, account.address, NONCE_RPC_TIMEOUT);
             self.nonce_managers.insert(account.address, nonce_manager);
 
-            debug!(address = %account.address, balance = %balance, nonce = account_nonce, "account state updated");
+            debug!(address = %account.address, balance = %balance, nonce = account_nonce, "account state refreshed");
         }
 
         info!(funded = accounts_to_fund.len(), "funding complete");
@@ -366,8 +360,10 @@ impl LoadRunner {
         let mut consecutive_at_limit = 0usize;
         let mut last_gas_price_refresh = Instant::now();
         let mut last_rate_limiter_update = Instant::now();
+        let mut last_progress_report = Instant::now();
         const GAS_PRICE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
         const RATE_LIMITER_UPDATE_INTERVAL: Duration = Duration::from_secs(10);
+        const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 
         while start.elapsed() < self.config.duration && !self.stop_flag.load(Ordering::SeqCst) {
             if last_gas_price_refresh.elapsed() >= GAS_PRICE_REFRESH_INTERVAL {
@@ -418,13 +414,12 @@ impl LoadRunner {
 
             let tx_request = self.generator.generate_payload(from, to)?;
 
-            pending_batch.push(PreparedTx {
-                from,
-                to: tx_request.to,
-                value: tx_request.value,
-                data: tx_request.data,
-                gas_limit: tx_request.gas_limit.unwrap_or(21_000),
-            });
+            let to_addr = tx_request.to.and_then(|kind| kind.to().copied()).unwrap_or(to);
+            let value = tx_request.value.unwrap_or(U256::ZERO);
+            let data = tx_request.input.input().cloned().unwrap_or_default();
+            let gas_limit = tx_request.gas.unwrap_or(21_000);
+
+            pending_batch.push(PreparedTx { from, to: to_addr, value, data, gas_limit });
 
             current_account_idx = (current_account_idx + 1) % account_count;
 
@@ -438,6 +433,23 @@ impl LoadRunner {
                 let submitted = self.submit_batch(batch, &confirmer_handle, &mut backoff).await;
 
                 debug!(submitted, "batch submitted");
+            }
+
+            if last_progress_report.elapsed() >= PROGRESS_REPORT_INTERVAL {
+                let elapsed_secs = start.elapsed().as_secs();
+                let submitted = self.collector.submitted_count();
+                let confirmed = self.collector.confirmed_count();
+                let failed = self.collector.failed_count();
+                let in_flight = confirmer_handle.total_in_flight();
+                info!(
+                    elapsed_secs,
+                    submitted,
+                    confirmed,
+                    failed,
+                    in_flight,
+                    "progress"
+                );
+                last_progress_report = Instant::now();
             }
         }
 
@@ -586,7 +598,7 @@ impl LoadRunner {
                             break;
                         }
 
-                        warn!(
+                        debug!(
                             from = %prepared.from,
                             nonce,
                             error = %error_str,

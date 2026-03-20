@@ -202,16 +202,16 @@ impl Confirmer {
                         "fetched block receipts"
                     );
                     for receipt in receipts {
-                        let tx_hash = receipt.transaction_hash;
+                        let tx_hash = receipt.inner.transaction_hash;
                         if let Some(pending) = self.pending.get(&tx_hash) {
                             found_in_blocks.insert(tx_hash);
                             let latency = pending.submit_time.elapsed();
                             let metrics = TransactionMetrics::new(
                                 tx_hash,
                                 latency,
-                                receipt.gas_used,
-                                receipt.effective_gas_price,
-                                receipt.block_number.unwrap_or(block_num),
+                                receipt.inner.gas_used,
+                                receipt.inner.effective_gas_price,
+                                receipt.inner.block_number.unwrap_or(block_num),
                             );
                             debug!(
                                 tx_hash = %tx_hash,
@@ -290,9 +290,9 @@ impl Confirmer {
                     let metrics = TransactionMetrics::new(
                         tx_hash,
                         latency,
-                        receipt.gas_used,
-                        receipt.effective_gas_price,
-                        receipt.block_number.unwrap_or(0),
+                        receipt.inner.gas_used,
+                        receipt.inner.effective_gas_price,
+                        receipt.inner.block_number.unwrap_or(0),
                     );
                     debug!(
                         tx_hash = %tx_hash,

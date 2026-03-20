@@ -14,18 +14,18 @@ default:
 
 # Run load test against devnet (local)
 devnet:
-    cargo run -p base-load-tests-core --example load_test -- crates/infra/load-tests/base-load-tests-core/examples/devnet.yaml
+    cargo run -p base-load-tests --example load_test -- crates/infra/load-tests/examples/devnet.yaml
 
 # Run load test against sepolia-alpha network
 sepolia-alpha private_key:
     #!/usr/bin/env bash
     set -euo pipefail
     export FUNDER_KEY="{{ private_key }}"
-    cargo run -p base-load-tests-core --example load_test -- crates/infra/load-tests/base-load-tests-core/examples/sepolia-alpha.yaml
+    cargo run -p base-load-tests --example load_test -- crates/infra/load-tests/examples/sepolia-alpha.yaml
 
 # Run load test against sepolia network
 sepolia private_key:
     #!/usr/bin/env bash
     set -euo pipefail
     export FUNDER_KEY="{{ private_key }}"
-    cargo run -p base-load-tests-core --example load_test -- crates/infra/load-tests/base-load-tests-core/examples/sepolia.yaml
+    cargo run -p base-load-tests --example load_test -- crates/infra/load-tests/examples/sepolia.yaml

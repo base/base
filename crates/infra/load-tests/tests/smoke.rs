@@ -2,8 +2,8 @@
 
 use std::time::Duration;
 
-use alloy_primitives::{Address, TxHash, U256};
-use base_load_tests_core::{
+use alloy_primitives::{Address, TxHash, TxKind, U256};
+use base_load_tests::{
     AccountPool, MetricsCollector, Payload, SeededRng, TransactionMetrics, TransferPayload,
     WorkloadConfig, WorkloadGenerator,
 };
@@ -28,9 +28,9 @@ fn transfer_payload_fixed_value() {
     let mut rng = SeededRng::new(42);
 
     let tx = payload.generate(&mut rng, Address::ZERO, Address::repeat_byte(1));
-    assert_eq!(tx.value, U256::from(1_000_000));
-    assert_eq!(tx.to, Address::repeat_byte(1));
-    assert_eq!(tx.gas_limit, Some(21_000));
+    assert_eq!(tx.value, Some(U256::from(1_000_000)));
+    assert_eq!(tx.to, Some(TxKind::Call(Address::repeat_byte(1))));
+    assert_eq!(tx.gas, Some(21_000));
 }
 
 #[test]
@@ -42,8 +42,8 @@ fn transfer_payload_random_value() {
 
     for _ in 0..10 {
         let tx = payload.generate(&mut rng, Address::ZERO, Address::repeat_byte(1));
-        assert!(tx.value >= min);
-        assert!(tx.value <= max);
+        assert!(tx.value >= Some(min));
+        assert!(tx.value <= Some(max));
     }
 }
 
@@ -58,7 +58,7 @@ fn workload_payload_generation() {
     let to = Address::repeat_byte(2);
 
     let tx = generator.generate_payload(from, to).unwrap();
-    assert_eq!(tx.to, to);
+    assert_eq!(tx.to, Some(TxKind::Call(to)));
 }
 
 #[test]

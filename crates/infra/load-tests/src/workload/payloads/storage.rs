@@ -1,7 +1,9 @@
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U256};
+use alloy_rpc_types::TransactionRequest;
 
 use super::Payload;
-use crate::{rpc::TransactionRequest, workload::SeededRng};
+use crate::workload::SeededRng;
 
 /// Generates storage-heavy transactions that write to contract slots.
 #[derive(Debug, Clone)]
@@ -36,7 +38,9 @@ impl Payload for StoragePayload {
         let seed: u64 = rng.random();
         let data = Self::encode_fill_storage(self.slots_per_tx, seed);
 
-        TransactionRequest::contract_call(self.contract, data)
+        TransactionRequest::default()
+            .with_to(self.contract)
+            .with_input(data)
             .with_gas_limit(u64::from(self.slots_per_tx) * 22_000 + 21_000)
     }
 }

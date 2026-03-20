@@ -1,10 +1,12 @@
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U160, U256, Uint};
+use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, sol};
 
 type U24 = Uint<24, 1>;
 
 use super::Payload;
-use crate::{rpc::TransactionRequest, workload::SeededRng};
+use crate::workload::SeededRng;
 
 sol! {
     interface IUniswapV2Router {
@@ -77,7 +79,9 @@ impl Payload for UniswapV2Payload {
             deadline: U256::from(u64::MAX),
         };
 
-        TransactionRequest::contract_call(self.router, Bytes::from(call.abi_encode()))
+        TransactionRequest::default()
+            .with_to(self.router)
+            .with_input(Bytes::from(call.abi_encode()))
             .with_value(amount)
             .with_gas_limit(200_000)
     }
@@ -134,7 +138,9 @@ impl Payload for UniswapV3Payload {
             },
         };
 
-        TransactionRequest::contract_call(self.router, Bytes::from(call.abi_encode()))
+        TransactionRequest::default()
+            .with_to(self.router)
+            .with_input(Bytes::from(call.abi_encode()))
             .with_gas_limit(250_000)
     }
 }

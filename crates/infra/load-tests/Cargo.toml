@@ -1,5 +1,5 @@
 [package]
-name = "base-load-tests-core"
+name = "base-load-tests"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -23,6 +23,8 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 # base
 base-cli-utils.workspace = true
 base-tx-manager.workspace = true
+base-alloy-network.workspace = true
+base-alloy-rpc-types.workspace = true
 
 # misc
 url.workspace = true

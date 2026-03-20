@@ -1,8 +1,9 @@
 //! Transaction payload types for different workload scenarios.
 
 use alloy_primitives::Address;
+use alloy_rpc_types::TransactionRequest;
 
-use crate::{rpc::TransactionRequest, workload::SeededRng};
+use crate::workload::SeededRng;
 
 mod transfer;
 pub use transfer::TransferPayload;

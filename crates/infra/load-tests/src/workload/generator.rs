@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
+use alloy_rpc_types::TransactionRequest;
 use tracing::instrument;
 
 use super::{Payload, SeededRng};
-use crate::{BaselineError, config::WorkloadConfig, rpc::TransactionRequest, utils::Result};
+use crate::{BaselineError, config::WorkloadConfig, utils::Result};
 
 /// Generates transaction workloads from configured payloads.
 pub struct WorkloadGenerator {

@@ -1,7 +1,9 @@
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, U256};
+use alloy_rpc_types::TransactionRequest;
 
 use super::Payload;
-use crate::{rpc::TransactionRequest, workload::SeededRng};
+use crate::workload::SeededRng;
 
 /// Generates simple ETH transfer transactions.
 #[derive(Debug, Clone)]
@@ -47,6 +49,6 @@ impl Payload for TransferPayload {
             U256::from(rng.gen_range(min..=max))
         };
 
-        TransactionRequest::transfer(to, value)
+        TransactionRequest::default().with_to(to).with_value(value).with_gas_limit(21_000)
     }
 }
