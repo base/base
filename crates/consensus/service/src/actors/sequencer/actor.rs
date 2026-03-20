@@ -224,11 +224,16 @@ where
                     }
                 }
                 // Drive the seal pipeline (commit → gossip → insert) one step at a time.
-                result = self.sealer.as_mut().unwrap().step(
-                    &self.conductor,
-                    &self.unsafe_payload_gossip_client,
-                    &self.engine_client,
-                ), if self.sealer.is_some() => {
+                Some(result) = async {
+                    match self.sealer.as_mut() {
+                        Some(s) => Some(s.step(
+                            &self.conductor,
+                            &self.unsafe_payload_gossip_client,
+                            &self.engine_client,
+                        ).await),
+                        None => std::future::pending().await,
+                    }
+                } => {
                     match result {
                         Ok(true) => {
                             self.sealer = None;
