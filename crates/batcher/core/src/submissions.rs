@@ -81,12 +81,21 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                         continue;
                     }
                 },
-                DaType::Calldata => TxCandidate {
-                    to: Some(self.inbox),
-                    tx_data: FrameEncoder::to_calldata(&sub.frames[0]),
-                    value: U256::ZERO,
-                    gas_limit: 0,
-                    blobs: vec![].into(),
+                DaType::Calldata => {
+                    let Some(frame) = sub.frames.first() else {
+                        warn!(id = %id.0, "calldata submission had no frames, requeueing");
+                        pipeline.requeue(id);
+                        drop(permit);
+                        continue;
+                    };
+
+                    TxCandidate {
+                        to: Some(self.inbox),
+                        tx_data: FrameEncoder::to_calldata(frame),
+                        value: U256::ZERO,
+                        gas_limit: 0,
+                        blobs: vec![].into(),
+                    }
                 },
             };
             info!(

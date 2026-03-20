@@ -538,6 +538,48 @@ mod tests {
         });
     }
 
+    /// Calldata submissions with an empty frame list must not panic.
+    /// They should be requeued so the pipeline can recover instead of crashing
+    /// on `sub.frames[0]` indexing.
+    #[test]
+    fn test_empty_calldata_submission_requeues_instead_of_panicking() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            pipeline.submissions.push_back(BatchSubmission {
+                id: SubmissionId(0),
+                channel_id: ChannelId::default(),
+                da_type: DaType::Calldata,
+                frames: vec![],
+            });
+
+            let handle = ctx.spawn(
+                DriverFixture::build(
+                    ctx.clone(),
+                    pipeline,
+                    ImmediateConfirmTxManager { l1_block: 1 },
+                )
+                .run(),
+            );
+
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
+
+            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+
+            let recorded = recorded.lock().unwrap();
+            assert_eq!(
+                recorded.requeued,
+                vec![SubmissionId(0)],
+                "empty calldata submission must be requeued instead of panicking"
+            );
+            assert!(
+                recorded.l1_heads.is_empty(),
+                "advance_l1_head must not be called for empty calldata submission"
+            );
+        });
+    }
+
     /// The semaphore must prevent more concurrent in-flight submissions than
     /// `max_pending_transactions`. With max=1 and a tx manager that never
     /// confirms, exactly one submission must be dequeued; the second must not
