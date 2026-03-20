@@ -77,6 +77,9 @@ impl BlobDecoder {
         let mut input_pos = 32usize;
         let mut encoded_byte = [0u8; 4];
         encoded_byte[0] = data[0];
+        if encoded_byte[0] & 0b1100_0000 != 0 {
+            return Err(BlobDecodeError::InvalidFieldElement { offset: 0 });
+        }
 
         // Decode field elements 1..3, validating high-order bits.
         for b in encoded_byte.iter_mut().skip(1) {
@@ -214,5 +217,19 @@ mod tests {
         let blob = BlobEncoder::encode(b"").expect("encode empty");
         let decoded = BlobDecoder::decode(&blob).expect("decode empty");
         assert!(decoded.is_empty());
+    }
+
+    #[test]
+    fn invalid_high_bits_in_first_field_element() {
+        let mut blob = Box::new(Blob::ZERO);
+        let data: &mut [u8; BYTES_PER_BLOB] = blob.as_mut();
+        data[VERSIONED_HASH_VERSION_KZG as usize] = 0;
+        // Set a valid short length.
+        data[4] = 1;
+        // Set high bits on field element 0 (byte offset 0).
+        data[0] = 0b1100_0000;
+
+        let err = BlobDecoder::decode(&blob).unwrap_err();
+        assert_eq!(err, BlobDecodeError::InvalidFieldElement { offset: 0 });
     }
 }
