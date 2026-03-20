@@ -37,6 +37,21 @@ pub struct Transaction {
     pub data: Bytes,
 }
 
+/// A transaction that was rejected during block building.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RejectedTransaction {
+    /// The block number the transaction was intended for.
+    pub block_number: u64,
+    /// The transaction hash.
+    pub tx_hash: TxHash,
+    /// The raw EIP-2718 encoded transaction bytes.
+    pub raw_tx: Bytes,
+    /// The reason the transaction was rejected.
+    pub reason: String,
+    /// Unix timestamp when the rejection occurred.
+    pub timestamp: u64,
+}
+
 /// Bundle lifecycle event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", content = "data")]

@@ -24,6 +24,9 @@ pub use reader::{
     Event, EventReader, KafkaAuditLogReader, assign_topic_partition, create_kafka_consumer,
 };
 
+mod rpc;
+pub use rpc::{AuditArchiverApiServer, AuditArchiverRpc};
+
 mod storage;
 pub use storage::{
     BundleEventS3Reader, BundleHistory, BundleHistoryEvent, EventWriter, S3EventReaderWriter,
@@ -33,7 +36,9 @@ pub use storage::{
 mod types;
 use tokio::sync::mpsc;
 use tracing::error;
-pub use types::{BundleEvent, BundleId, DropReason, Transaction, TransactionId};
+pub use types::{
+    BundleEvent, BundleId, DropReason, RejectedTransaction, Transaction, TransactionId,
+};
 
 /// Connects bundle event receivers to publishers.
 #[derive(Debug)]

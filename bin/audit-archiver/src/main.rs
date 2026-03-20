@@ -1,14 +1,18 @@
 //! Audit archiver binary entry point.
 
+use std::net::SocketAddr;
+
 use anyhow::Result;
 use audit_archiver_lib::{
-    KafkaAuditArchiver, KafkaAuditLogReader, S3EventReaderWriter, create_kafka_consumer,
+    AuditArchiverApiServer, AuditArchiverRpc, KafkaAuditArchiver, KafkaAuditLogReader,
+    S3EventReaderWriter, create_kafka_consumer,
 };
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
 use base_cli_utils::LogConfig;
 use clap::{Parser, ValueEnum};
+use jsonrpsee::server::ServerBuilder;
 use rdkafka::consumer::Consumer;
 use tracing::info;
 
@@ -60,6 +64,9 @@ struct Args {
     #[arg(long, env = "TIPS_AUDIT_CHANNEL_BUFFER_SIZE", default_value = "500")]
     channel_buffer_size: usize,
 
+    #[arg(long, env = "TIPS_AUDIT_RPC_PORT", default_value = "9100")]
+    rpc_port: u16,
+
     #[arg(long, env = "TIPS_AUDIT_NOOP_ARCHIVE", default_value = "false")]
     noop_archive: bool,
 }
@@ -96,6 +103,15 @@ async fn main() -> Result<()> {
     let s3_bucket = args.s3_bucket.clone();
     let writer = S3EventReaderWriter::new(s3_client, s3_bucket);
 
+    let rpc_addr = SocketAddr::from(([0, 0, 0, 0], args.rpc_port));
+    let rpc_module = AuditArchiverRpc::new(writer.clone());
+    let rpc_server = ServerBuilder::default()
+        .build(rpc_addr)
+        .await
+        .expect("Failed to build RPC server");
+    let rpc_handle = rpc_server.start(rpc_module.into_rpc());
+    info!(rpc_addr = %rpc_addr, "Audit archiver RPC server started");
+
     let mut archiver = KafkaAuditArchiver::new(
         reader,
         writer,
@@ -106,7 +122,12 @@ async fn main() -> Result<()> {
 
     info!("Audit archiver initialized, starting main loop");
 
-    archiver.run().await
+    tokio::select! {
+        result = archiver.run() => result,
+        _ = rpc_handle.stopped() => {
+            Err(anyhow::anyhow!("RPC server stopped unexpectedly"))
+        }
+    }
 }
 
 async fn create_s3_client(args: &Args) -> Result<S3Client> {

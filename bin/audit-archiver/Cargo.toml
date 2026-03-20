@@ -21,6 +21,7 @@ tokio.workspace = true
 anyhow.workspace = true
 dotenvy.workspace = true
 rdkafka.workspace = true
+jsonrpsee.workspace = true
 aws-config.workspace = true
 aws-sdk-s3.workspace = true
 base-cli-utils.workspace = true

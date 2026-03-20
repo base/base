@@ -104,6 +104,14 @@ pub struct Args {
     #[arg(long = "builder.metering-wait-duration-ms")]
     pub metering_wait_duration_ms: Option<u64>,
 
+    /// URL of the audit-archiver RPC endpoint for forwarding rejected transactions
+    #[arg(long = "builder.audit-archiver-url", env = "BUILDER_AUDIT_ARCHIVER_URL")]
+    pub audit_archiver_url: Option<String>,
+
+    /// Bounded channel capacity for rejected transaction forwarding (drops on full)
+    #[arg(long = "builder.rejected-tx-channel-size", default_value = "1000")]
+    pub rejected_tx_channel_size: usize,
+
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
     pub tx_data_store_buffer_size: usize,
@@ -151,6 +159,8 @@ impl Default for Args {
             enable_resource_metering: false,
             max_uncompressed_block_size: None,
             metering_wait_duration_ms: None,
+            audit_archiver_url: None,
+            rejected_tx_channel_size: 1000,
             tx_data_store_buffer_size: 10000,
             rejection_cache_max_capacity: 100_000,
             rejection_cache_ttl_secs: 1800,
@@ -198,6 +208,8 @@ impl Args {
                 self.rejection_cache_max_capacity,
                 Duration::from_secs(self.rejection_cache_ttl_secs),
             ),
+            audit_archiver_url: self.audit_archiver_url,
+            rejected_tx_channel_size: self.rejected_tx_channel_size,
         })
     }
 }
