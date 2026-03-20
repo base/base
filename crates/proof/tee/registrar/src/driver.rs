@@ -143,6 +143,7 @@ where
                         endpoint = %instance.endpoint,
                         "failed to resolve signer address"
                     );
+                    metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
                 }
             }
         }
@@ -172,6 +173,7 @@ where
 
         if let Err(e) = self.deregister_orphans(&active_signers).await {
             warn!(error = %e, "failed to deregister orphan signers");
+            metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
         }
 
         Ok(())
@@ -213,6 +215,7 @@ where
                 instance = %instance.instance_id,
                 "registration attempt failed"
             );
+            metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
         }
 
         Ok(signer_address)
@@ -345,6 +348,7 @@ where
                         signer = %signer,
                         "failed to deregister orphan signer"
                     );
+                    metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
                 }
             }
         }
