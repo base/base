@@ -101,26 +101,28 @@ where
         Ok(())
     }
 
-    /// Single registration cycle: discover → filter → register → deregister orphans.
+    /// Single registration cycle: discover → resolve addresses → register → deregister orphans.
     async fn step(&self) -> Result<()> {
         let instances = self.discovery.discover_instances().await?;
-        let registerable: Vec<_> =
-            instances.iter().filter(|i| i.health_status.should_register()).collect();
 
-        if !registerable.is_empty() {
+        if !instances.is_empty() {
+            let registerable =
+                instances.iter().filter(|i| i.health_status.should_register()).count();
             info!(
                 total = instances.len(),
-                registerable = registerable.len(),
+                registerable = registerable,
                 "discovered prover instances"
             );
         }
 
+        // Resolve signer addresses for ALL reachable instances (regardless of
+        // health status) to build a complete active set. This protects draining
+        // and transiently-unhealthy instances from premature deregistration.
+        // Registration is only attempted for instances that pass should_register().
         let mut active_signers = HashSet::new();
-        let mut cancelled = false;
 
-        for instance in registerable {
+        for instance in &instances {
             if self.config.cancel.is_cancelled() {
-                cancelled = true;
                 break;
             }
 
@@ -133,7 +135,7 @@ where
                         error = %e,
                         instance = %instance.instance_id,
                         endpoint = %instance.endpoint,
-                        "failed to process instance"
+                        "failed to resolve signer address"
                     );
                 }
             }
@@ -141,19 +143,23 @@ where
 
         // Skip orphan cleanup if the loop was interrupted by cancellation,
         // since the active set is incomplete and could cause false deregistrations.
-        if cancelled {
+        // CancellationToken is monotonic — once cancelled, it stays cancelled.
+        if self.config.cancel.is_cancelled() {
             debug!("shutdown requested, skipping orphan deregistration");
             return Ok(());
         }
 
-        // Guard against mass deregistration from transient failures: if
-        // discovery found instances but no active signers were resolved (all
-        // processing failed, or all instances are unhealthy/draining and may
-        // recover), our view of the active set is unreliable. Only proceed
-        // when discovery itself returns zero instances (truly no instances
-        // exist) or we successfully resolved at least one active signer.
-        if active_signers.is_empty() && !instances.is_empty() {
-            warn!("no active signers resolved, skipping orphan deregistration");
+        // Guard against mass deregistration from transient failures: if fewer
+        // than half of the discovered instances could be reached, our view of
+        // the active set is unreliable. Only proceed when we have a clear
+        // majority, or when discovery itself returns zero instances (truly no
+        // instances exist).
+        if !instances.is_empty() && active_signers.len() * 2 < instances.len() {
+            warn!(
+                active = active_signers.len(),
+                total = instances.len(),
+                "majority of instances unreachable, skipping orphan deregistration"
+            );
             return Ok(());
         }
 
@@ -164,29 +170,68 @@ where
         Ok(())
     }
 
-    /// Processes a single instance: check registration first (cheap), then
-    /// fetch attestation and generate proof only if needed.
+    /// Resolves a signer address from an instance and attempts registration
+    /// if the instance is healthy.
     ///
     /// Returns the derived signer address regardless of whether registration
-    /// was needed, so the caller can build the active signer set.
+    /// was needed or succeeded, so the caller can build the active signer set.
+    /// Registration failures are logged but do not prevent the address from
+    /// being returned.
     async fn process_instance(&self, instance: &ProverInstance) -> Result<Address> {
         let client = ProverClient::new(&instance.endpoint, self.config.prover_timeout)?;
 
-        // Fetch only the public key (cheap RPC) and derive the address to
-        // check registration before triggering the expensive NSM attestation call.
+        // Fetch only the public key (cheap RPC) and derive the address.
         let public_key = client.signer_public_key().await?;
         let signer_address = ProverClient::derive_address(&public_key)?;
 
+        // Only attempt registration for instances that pass should_register().
+        // Non-registerable instances (Draining, Unhealthy) still contribute
+        // their address to the active signer set to prevent premature
+        // deregistration.
+        if !instance.health_status.should_register() {
+            debug!(
+                signer = %signer_address,
+                status = ?instance.health_status,
+                "instance not registerable, skipping registration"
+            );
+            return Ok(signer_address);
+        }
+
+        // Registration is best-effort: failures are logged but the address is
+        // still returned to protect the signer from orphan deregistration.
+        if let Err(e) = self.try_register(&client, instance, signer_address).await {
+            warn!(
+                error = %e,
+                signer = %signer_address,
+                instance = %instance.instance_id,
+                "registration attempt failed"
+            );
+        }
+
+        Ok(signer_address)
+    }
+
+    /// Attempts to register a signer on-chain if not already registered.
+    ///
+    /// This is the expensive path: checks on-chain status, fetches the NSM
+    /// attestation document, generates a ZK proof, and submits a registration
+    /// transaction.
+    async fn try_register(
+        &self,
+        client: &ProverClient,
+        instance: &ProverInstance,
+        signer_address: Address,
+    ) -> Result<()> {
         if self.registry.is_registered(signer_address).await? {
             debug!(signer = %signer_address, "already registered, skipping");
-            return Ok(signer_address);
+            return Ok(());
         }
 
         // Check cancellation before the most expensive operation (proof generation
         // can take minutes via Boundless).
         if self.config.cancel.is_cancelled() {
             debug!("shutdown requested, skipping proof generation");
-            return Ok(signer_address);
+            return Ok(());
         }
 
         info!(
@@ -206,7 +251,7 @@ where
         // new on-chain work if shutdown is in progress.
         if self.config.cancel.is_cancelled() {
             debug!("shutdown requested, skipping transaction submission");
-            return Ok(signer_address);
+            return Ok(());
         }
 
         let calldata = ITEEProverRegistry::registerSignerCall {
@@ -229,7 +274,7 @@ where
             "signer registered successfully"
         );
 
-        Ok(signer_address)
+        Ok(())
     }
 
     /// Deregisters any on-chain signer that is not in the `active_signers` set.
@@ -244,13 +289,6 @@ where
     ///   registrar instances manage disjoint prover fleets, one registrar would
     ///   incorrectly deregister another's signers. The current deployment model
     ///   assumes a single registrar per registry contract.
-    ///
-    /// - **Draining instances are expendable**: Instances in the `Draining`
-    ///   state are excluded from `active_signers` (they don't pass
-    ///   `should_register()`), so their on-chain signers will be deregistered.
-    ///   This is correct as long as the ALB drain timeout completes before the
-    ///   next deregistration cycle, ensuring no in-flight signed operations are
-    ///   disrupted.
     async fn deregister_orphans(&self, active_signers: &HashSet<Address>) -> Result<()> {
         let orphans: Vec<_> = self
             .registry
@@ -309,11 +347,24 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, address};
-    use alloy_sol_types::SolCall;
-    use rstest::rstest;
+    use std::{
+        collections::HashSet,
+        sync::{Arc, Mutex},
+    };
 
-    use crate::registry::ITEEProverRegistry;
+    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+    use alloy_primitives::{Address, B256, Bloom, Bytes, address};
+    use alloy_rpc_types_eth::TransactionReceipt;
+    use alloy_sol_types::SolCall;
+    use async_trait::async_trait;
+    use base_tx_manager::{SendHandle, TxCandidate, TxManager};
+    use rstest::rstest;
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::{RegistryClient, Result, registry::ITEEProverRegistry};
+
+    // ── Shared constants ────────────────────────────────────────────────
 
     /// Expected byte length of ABI-encoded `deregisterSigner(address)` calldata:
     /// 4-byte selector + 32-byte left-padded address word.
@@ -329,6 +380,127 @@ mod tests {
     /// Well-known Hardhat / Anvil account #0 address.
     const HARDHAT_ACCOUNT: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 
+    // ── Test helpers ─────────────────────────────────────────────────────
+
+    /// Builds a minimal `TransactionReceipt` for mock tx managers.
+    fn stub_receipt() -> TransactionReceipt {
+        let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
+            receipt: Receipt {
+                status: Eip658Value::Eip658(true),
+                cumulative_gas_used: 21_000,
+                logs: vec![],
+            },
+            logs_bloom: Bloom::ZERO,
+        });
+        TransactionReceipt {
+            inner,
+            transaction_hash: B256::ZERO,
+            transaction_index: Some(0),
+            block_hash: Some(B256::ZERO),
+            block_number: Some(1),
+            gas_used: 21_000,
+            effective_gas_price: 1_000_000_000,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: Some(Address::ZERO),
+            contract_address: None,
+        }
+    }
+
+    // ── Mock implementations ────────────────────────────────────────────
+
+    /// Mock discovery that is unused by `deregister_orphans` tests.
+    #[derive(Debug)]
+    struct StubDiscovery;
+
+    #[async_trait]
+    impl InstanceDiscovery for StubDiscovery {
+        async fn discover_instances(&self) -> Result<Vec<ProverInstance>> {
+            Ok(vec![])
+        }
+    }
+
+    /// Mock proof provider that is unused by `deregister_orphans` tests.
+    #[derive(Debug)]
+    struct StubProofProvider;
+
+    #[async_trait]
+    impl AttestationProofProvider for StubProofProvider {
+        async fn generate_proof(
+            &self,
+            _attestation_bytes: &[u8],
+        ) -> base_proof_tee_nitro_attestation_prover::Result<
+            base_proof_tee_nitro_attestation_prover::AttestationProof,
+        > {
+            unimplemented!("not used in deregister_orphans tests")
+        }
+    }
+
+    /// Mock registry that returns a configured set of registered signers.
+    #[derive(Debug)]
+    struct MockRegistry {
+        signers: Vec<Address>,
+    }
+
+    #[async_trait]
+    impl RegistryClient for MockRegistry {
+        async fn is_registered(&self, _signer: Address) -> Result<bool> {
+            Ok(false)
+        }
+
+        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
+            Ok(self.signers.clone())
+        }
+    }
+
+    /// Mock tx manager that records submitted calldata for assertion.
+    #[derive(Debug, Clone)]
+    struct SharedTxManager {
+        sent: Arc<Mutex<Vec<Bytes>>>,
+    }
+
+    impl SharedTxManager {
+        fn new() -> Self {
+            Self { sent: Arc::new(Mutex::new(vec![])) }
+        }
+
+        fn sent_calldata(&self) -> Vec<Bytes> {
+            self.sent.lock().unwrap().clone()
+        }
+    }
+
+    impl TxManager for SharedTxManager {
+        async fn send(&self, candidate: TxCandidate) -> base_tx_manager::SendResponse {
+            self.sent.lock().unwrap().push(candidate.tx_data);
+            Ok(stub_receipt())
+        }
+
+        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
+            unimplemented!("not used in deregister_orphans tests")
+        }
+
+        fn sender_address(&self) -> Address {
+            Address::ZERO
+        }
+    }
+
+    fn driver_with_shared_tx(
+        registered_signers: Vec<Address>,
+        tx: SharedTxManager,
+    ) -> RegistrationDriver<StubDiscovery, StubProofProvider, MockRegistry, SharedTxManager> {
+        let registry = MockRegistry { signers: registered_signers };
+        let config = DriverConfig {
+            registry_address: Address::repeat_byte(0x01),
+            poll_interval: Duration::from_secs(1),
+            prover_timeout: Duration::from_secs(1),
+            cancel: CancellationToken::new(),
+        };
+        RegistrationDriver::new(StubDiscovery, StubProofProvider, registry, tx, config)
+    }
+
+    // ── Calldata encoding tests ─────────────────────────────────────────
+
     #[rstest]
     #[case::zero_address(Address::ZERO)]
     #[case::hardhat_account(HARDHAT_ACCOUNT)]
@@ -342,5 +514,65 @@ mod tests {
         assert_eq!(&calldata[4..ABI_ADDRESS_OFFSET], &[0u8; ABI_ADDRESS_PAD]);
         // The last 20 bytes must be the raw signer address.
         assert_eq!(&calldata[ABI_ADDRESS_OFFSET..], signer.as_slice());
+    }
+
+    // ── deregister_orphans tests ────────────────────────────────────────
+
+    #[rstest]
+    #[case::no_orphans(&[0xAA, 0xBB], &[0xAA, 0xBB], 0)]
+    #[case::one_orphan(&[0xAA, 0xBB], &[0xAA], 1)]
+    #[case::all_orphans(&[0xAA, 0xBB], &[], 2)]
+    #[tokio::test]
+    async fn deregister_orphans_tx_count(
+        #[case] registered_bytes: &[u8],
+        #[case] active_bytes: &[u8],
+        #[case] expected_txs: usize,
+    ) {
+        let registered: Vec<Address> =
+            registered_bytes.iter().map(|b| Address::repeat_byte(*b)).collect();
+        let active: HashSet<Address> =
+            active_bytes.iter().map(|b| Address::repeat_byte(*b)).collect();
+
+        let tx = SharedTxManager::new();
+        let driver = driver_with_shared_tx(registered, tx.clone());
+
+        driver.deregister_orphans(&active).await.unwrap();
+
+        assert_eq!(tx.sent_calldata().len(), expected_txs);
+    }
+
+    #[tokio::test]
+    async fn deregister_orphans_calldata_targets_orphan() {
+        let active_signer = Address::repeat_byte(0xAA);
+        let orphan = Address::repeat_byte(0xBB);
+
+        let tx = SharedTxManager::new();
+        let driver = driver_with_shared_tx(vec![active_signer, orphan], tx.clone());
+
+        driver.deregister_orphans(&HashSet::from([active_signer])).await.unwrap();
+
+        let sent = tx.sent_calldata();
+        let expected = ITEEProverRegistry::deregisterSignerCall { signer: orphan }.abi_encode();
+        assert_eq!(sent[0], Bytes::from(expected));
+    }
+
+    #[tokio::test]
+    async fn deregister_orphans_respects_cancellation() {
+        let tx = SharedTxManager::new();
+        let cancel = CancellationToken::new();
+        let registry = MockRegistry { signers: vec![Address::repeat_byte(0xAA)] };
+        let config = DriverConfig {
+            registry_address: Address::repeat_byte(0x01),
+            poll_interval: Duration::from_secs(1),
+            prover_timeout: Duration::from_secs(1),
+            cancel: cancel.clone(),
+        };
+        let driver =
+            RegistrationDriver::new(StubDiscovery, StubProofProvider, registry, tx.clone(), config);
+
+        cancel.cancel();
+        driver.deregister_orphans(&HashSet::new()).await.unwrap();
+
+        assert!(tx.sent_calldata().is_empty(), "no txs should be sent after cancellation");
     }
 }

@@ -53,5 +53,8 @@ url.workspace = true
 [dev-dependencies]
 rstest.workspace = true
 hex-literal.workspace = true
+alloy-consensus.workspace = true
+alloy-rpc-types-eth.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
+
