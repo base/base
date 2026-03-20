@@ -391,6 +391,10 @@ impl Cli {
             cancel: cancel.clone(),
         };
 
+        // Mark the service as ready. This signals "initialised and running", not
+        // "connectivity verified" — the registrar is an outbound-only service that
+        // does not receive traffic, so readiness gating on L1/AWS connectivity
+        // would add complexity without benefit.
         ready.store(true, Ordering::SeqCst);
 
         let cancel_guard = cancel.clone().drop_guard();
