@@ -12,6 +12,9 @@ const TOKENS_PER_NONZERO_BYTE: u64 = GAS_PER_NONZERO_BYTE / GAS_PER_ZERO_BYTE;
 /// EIP-7623 floor cost per calldata token (active on Prague / OP Stack Isthmus+).
 const EIP7623_FLOOR_COST_PER_TOKEN: u64 = 10;
 
+/// EIP-7623 floor cost per calldata token (active on Prague / OP Stack Isthmus+).
+const EIP7623_FLOOR_COST_PER_TOKEN: u64 = 10;
+
 /// Generates ETH transfer transactions with random calldata.
 #[derive(Debug, Clone)]
 pub struct CalldataPayload {
