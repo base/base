@@ -15,7 +15,7 @@ use alloy_eips::{BlockId, BlockNumberOrTag};
 pub struct BlockNumberOrTagExt(BlockNumberOrTag);
 
 impl BlockNumberOrTagExt {
-    fn is_pending(&self) -> bool {
+    const fn is_pending(&self) -> bool {
         self.0.is_pending()
     }
 }
