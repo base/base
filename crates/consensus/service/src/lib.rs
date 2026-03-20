@@ -30,13 +30,14 @@ pub use actors::{
     L1WatcherActor, L1WatcherActorError, L1WatcherDerivationClient, L2SourceClient, NetworkActor,
     NetworkActorError, NetworkBuilder, NetworkBuilderError, NetworkConfig, NetworkDriver,
     NetworkDriverError, NetworkEngineClient, NetworkHandler, NetworkInboundData, NodeActor,
-    OriginSelector, PayloadBuilder, PayloadSealer, PoolActivation, QueuedDerivationEngineClient,
-    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
-    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    QueuedUnsafePayloadGossipClient, RecoveryModeGuard, ResetRequest, RpcActor, RpcActorError,
-    RpcContext, SealRequest, SealState, SealStepError, SequencerActor, SequencerActorError,
-    SequencerAdminQuery, SequencerConfig, SequencerEngineClient, UnsafePayloadGossipClient,
-    UnsafePayloadGossipClientError, UnsealedPayloadHandle, UpgradeActivations,
+    OriginSelector, PayloadBuilder, PayloadSealer, PendingStopSender, PoolActivation,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
+    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
+    QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, RecoveryModeGuard, ResetRequest,
+    RpcActor, RpcActorError, RpcContext, SealRequest, SealState, SealStepError, SequencerActor,
+    SequencerActorError, SequencerAdminQuery, SequencerConfig, SequencerEngineClient,
+    UnsafePayloadGossipClient, UnsafePayloadGossipClientError, UnsealedPayloadHandle,
+    UpgradeActivations,
 };
 
 mod metrics;

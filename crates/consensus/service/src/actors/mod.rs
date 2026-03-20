@@ -47,8 +47,8 @@ pub use network::MockUnsafePayloadGossipClient;
 pub use sequencer::{
     Conductor, ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, L1OriginSelector,
     L1OriginSelectorError, L1OriginSelectorProvider, OriginSelector, PayloadBuilder, PayloadSealer,
-    PoolActivation, QueuedSequencerEngineClient, RecoveryModeGuard, SealState, SealStepError,
-    SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
+    PendingStopSender, PoolActivation, QueuedSequencerEngineClient, RecoveryModeGuard, SealState,
+    SealStepError, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
     SequencerEngineClient, UnsealedPayloadHandle, UpgradeActivations,
 };
 #[cfg(test)]

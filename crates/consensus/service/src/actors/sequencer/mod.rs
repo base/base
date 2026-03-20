@@ -25,7 +25,7 @@ mod upgrades;
 pub use upgrades::UpgradeActivations;
 
 mod actor;
-pub use actor::SequencerActor;
+pub use actor::{PendingStopSender, SequencerActor};
 
 mod admin_api_impl;
 pub use admin_api_impl::SequencerAdminQuery;

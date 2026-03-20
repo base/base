@@ -256,17 +256,13 @@ async fn test_stop_sequencer_success(
     assert_eq!(result.unwrap(), !already_stopped);
 
     // stop the sequencer
-    let result = async {
-        match via_channel {
-            false => actor.stop_sequencer().await,
-            true => {
-                let (tx, rx) = oneshot::channel();
-                actor.handle_admin_query(SequencerAdminQuery::StopSequencer(tx)).await;
-                rx.await.unwrap()
-            }
-        }
+    let (tx, rx) = oneshot::channel();
+    if via_channel {
+        actor.handle_admin_query(SequencerAdminQuery::StopSequencer(tx)).await;
+    } else {
+        actor.stop_sequencer(tx).await;
     }
-    .await;
+    let result = rx.await.unwrap();
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), expected_hash);
 
@@ -288,17 +284,13 @@ async fn test_stop_sequencer_error_fetching_unsafe_head(#[values(true, false)] v
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
 
-    let result = async {
-        match via_channel {
-            false => actor.stop_sequencer().await,
-            true => {
-                let (tx, rx) = oneshot::channel();
-                actor.handle_admin_query(SequencerAdminQuery::StopSequencer(tx)).await;
-                rx.await.unwrap()
-            }
-        }
+    let (tx, rx) = oneshot::channel();
+    if via_channel {
+        actor.handle_admin_query(SequencerAdminQuery::StopSequencer(tx)).await;
+    } else {
+        actor.stop_sequencer(tx).await;
     }
-    .await;
+    let result = rx.await.unwrap();
     assert!(result.is_err());
 
     assert!(matches!(

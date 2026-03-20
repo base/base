@@ -64,9 +64,7 @@ where
                 }
             }
             SequencerAdminQuery::StopSequencer(tx) => {
-                if tx.send(self.stop_sequencer().await).is_err() {
-                    warn!(target: "sequencer", "Failed to send response for stop_sequencer query");
-                }
+                self.stop_sequencer(tx).await;
             }
             SequencerAdminQuery::ConductorEnabled(tx) => {
                 if tx.send(self.is_conductor_enabled().await).is_err() {
@@ -153,25 +151,42 @@ where
         Ok(())
     }
 
-    /// Stops the sequencer in an idempotent fashion.
-    pub(super) async fn stop_sequencer(&mut self) -> Result<B256, SequencerAdminAPIError> {
+    /// Stops the sequencer. If a seal pipeline is in-flight, the response is deferred
+    /// until the pipeline completes so the returned hash reflects the fully inserted head.
+    pub(super) async fn stop_sequencer(
+        &mut self,
+        tx: oneshot::Sender<Result<B256, SequencerAdminAPIError>>,
+    ) {
         info!(target: "sequencer", "Stopping sequencer");
         self.is_active = false;
-        self.sealer = None;
-
         self.update_metrics();
 
+        if self.sealer.is_some() {
+            info!(target: "sequencer", "Seal pipeline in-flight, deferring stop response");
+            self.pending_stop = Some(tx);
+        } else {
+            let result = self.resolve_stop_head().await;
+            if tx.send(result).is_err() {
+                warn!(target: "sequencer", "Failed to send stop_sequencer response");
+            }
+        }
+    }
+
+    /// Returns the current unsafe head hash for the stop response.
+    pub(super) async fn resolve_stop_head(&self) -> Result<B256, SequencerAdminAPIError> {
         self.engine_client.get_unsafe_head().await
             .map(|h| h.hash())
             .map_err(|e| {
-                error!(target: "sequencer", err=?e, "Error fetching unsafe head after stopping sequencer, which should never happen.");
-                SequencerAdminAPIError::ErrorAfterSequencerWasStopped("current unsafe hash is unavailable.".to_string())
+                error!(target: "sequencer", err=?e, "Error fetching unsafe head after stopping sequencer");
+                SequencerAdminAPIError::ErrorAfterSequencerWasStopped(
+                    "current unsafe hash is unavailable.".to_string(),
+                )
             })
     }
 
     /// Sets the recovery mode of the sequencer in an idempotent fashion.
     pub(super) async fn set_recovery_mode(
-        &mut self,
+        &self,
         is_active: bool,
     ) -> Result<(), SequencerAdminAPIError> {
         self.recovery_mode.set(is_active);

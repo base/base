@@ -5,10 +5,15 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_consensus_derive::AttributesBuilder;
 use base_consensus_genesis::RollupConfig;
-use tokio::{select, sync::mpsc};
+use base_consensus_rpc::SequencerAdminAPIError;
+use tokio::{
+    select,
+    sync::{mpsc, oneshot},
+};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
 use crate::{
@@ -27,6 +32,9 @@ use crate::{
         },
     },
 };
+
+/// Sender stashed by `stop_sequencer` when waiting for an in-flight seal pipeline to drain.
+pub type PendingStopSender = oneshot::Sender<Result<B256, SequencerAdminAPIError>>;
 
 /// The [`SequencerActor`] is responsible for building L2 blocks on top of the current unsafe head
 /// and scheduling them to be signed and gossipped by the P2P layer, extending the L2 chain with new
@@ -66,6 +74,9 @@ pub struct SequencerActor<
     /// In-flight seal pipeline. [`Some`] while a sealed payload is being committed,
     /// gossiped, and inserted. [`None`] when idle.
     pub sealer: Option<PayloadSealer>,
+    /// Stashed response sender for a pending `stop_sequencer` call that is waiting
+    /// for the in-flight seal pipeline to complete before responding.
+    pub pending_stop: Option<PendingStopSender>,
 }
 
 impl<
@@ -221,6 +232,12 @@ where
                     match result {
                         Ok(true) => {
                             self.sealer = None;
+                            if let Some(tx) = self.pending_stop.take() {
+                                let result = self.resolve_stop_head().await;
+                                if tx.send(result).is_err() {
+                                    warn!(target: "sequencer", "Failed to send deferred stop_sequencer response");
+                                }
+                            }
                         }
                         Ok(false) => {}
                         Err(err) => {

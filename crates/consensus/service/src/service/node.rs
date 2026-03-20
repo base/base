@@ -366,6 +366,7 @@ impl RollupNode {
                     rollup_config: Arc::clone(&self.config),
                     unsafe_payload_gossip_client: queued_gossip_client,
                     sealer: None,
+                    pending_stop: None,
                 }),
                 Some(QueuedSequencerAdminAPIClient::new(sequencer_admin_api_tx)),
             )
