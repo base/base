@@ -144,7 +144,7 @@ impl L1BlockInfo {
             ..Default::default()
         };
 
-        // Post-Ecotone
+        // Pre-Ecotone
         if !spec_id.is_enabled_in(OpSpecId::ECOTONE) {
             out.l1_base_fee_scalar = db.storage(L1_BLOCK_CONTRACT, L1_SCALAR_SLOT)?;
             out.l1_fee_overhead = Some(db.storage(L1_BLOCK_CONTRACT, L1_OVERHEAD_SLOT)?);
