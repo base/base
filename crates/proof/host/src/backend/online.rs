@@ -76,10 +76,8 @@ impl PreimageFetcher for OnlineHostBackend {
         let mut preimage = kv_lock.get(key.into());
         drop(kv_lock);
 
-        if preimage.is_some() {
-            base_macros::inc!(counter, crate::Metrics::KV_LOOKUPS_TOTAL, crate::Metrics::LABEL_RESULT => crate::Metrics::RESULT_HIT);
-        } else {
-            base_macros::inc!(counter, crate::Metrics::KV_LOOKUPS_TOTAL, crate::Metrics::LABEL_RESULT => crate::Metrics::RESULT_MISS);
+        if preimage.is_none() {
+            base_macros::inc!(counter, crate::Metrics::KV_COLD_LOOKUPS_TOTAL);
         }
 
         while preimage.is_none() {

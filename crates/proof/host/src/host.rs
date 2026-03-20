@@ -111,10 +111,7 @@ impl Host {
         );
 
         let client_task = Box::pin(async {
-            let mut timer = timed!(crate::Metrics::REPLAY_DURATION_SECONDS);
-            let result = Self::run_client(recording).instrument(info_span!("run_client")).await;
-            timer.stop();
-            result
+            Self::run_client(recording).instrument(info_span!("run_client")).await
         });
 
         tokio::select! {
@@ -160,6 +157,7 @@ impl Host {
         H: base_proof_preimage::HintWriterClient + Send + Sync + Clone + std::fmt::Debug + 'static,
         W: WitnessOracle + std::fmt::Debug + 'static,
     {
+        let _timer = timed!(crate::Metrics::REPLAY_DURATION_SECONDS);
         let driver =
             Prologue::new(recording.clone(), recording, OpEvmFactory::default()).load().await?;
         let epilogue = driver.execute().await?;

@@ -10,7 +10,7 @@
 //! | `base_proof_host_requests_result_total` | `outcome` | Proof request outcomes (incl. `dropped`) |
 //! | `base_proof_host_hint_requests_total` | `hint_type` | Hint requests by type |
 //! | `base_proof_host_hint_errors_total` | `hint_type` | Hint errors by type |
-//! | `base_proof_host_kv_lookups_total` | `result` | KV store lookups by hit/miss |
+//! | `base_proof_host_kv_cold_lookups_total` | | KV lookups that missed the cache (resolved via hint fetch) |
 //! | `base_proof_host_preimage_accesses_total` | | Total preimage accesses |
 //! | `base_proof_host_offline_misses_total` | | Offline backend key misses |
 //!
@@ -249,8 +249,8 @@ impl Metrics {
     /// Hint processing errors by type, labeled by `hint_type`.
     pub const HINT_ERRORS_TOTAL: &str = "base_proof_host_hint_errors_total";
 
-    /// KV store lookup results, labeled by `result` (hit/miss).
-    pub const KV_LOOKUPS_TOTAL: &str = "base_proof_host_kv_lookups_total";
+    /// KV lookups that missed the cache and required hint fetching.
+    pub const KV_COLD_LOOKUPS_TOTAL: &str = "base_proof_host_kv_cold_lookups_total";
 
     /// Total preimage accesses through the recording oracle.
     pub const PREIMAGE_ACCESSES_TOTAL: &str = "base_proof_host_preimage_accesses_total";
@@ -295,9 +295,6 @@ impl Metrics {
     /// Label key for the hint type.
     pub const LABEL_HINT_TYPE: &str = "hint_type";
 
-    /// Label key for KV lookup result.
-    pub const LABEL_RESULT: &str = "result";
-
     // ---- Label values ----
 
     /// Online operating mode.
@@ -314,12 +311,6 @@ impl Metrics {
 
     /// Future was cancelled (dropped) before completion.
     pub const OUTCOME_DROPPED: &str = "dropped";
-
-    /// KV cache hit.
-    pub const RESULT_HIT: &str = "hit";
-
-    /// KV cache miss.
-    pub const RESULT_MISS: &str = "miss";
 }
 
 impl Metrics {
@@ -333,6 +324,7 @@ impl Metrics {
         Self::zero();
     }
 
+    /// No-op when the `metrics` feature is disabled.
     #[cfg(not(feature = "metrics"))]
     pub fn init() {}
 
@@ -342,7 +334,10 @@ impl Metrics {
         metrics::describe_counter!(Self::REQUESTS_RESULT_TOTAL, "Proof request outcomes by result");
         metrics::describe_counter!(Self::HINT_REQUESTS_TOTAL, "Hint requests by type");
         metrics::describe_counter!(Self::HINT_ERRORS_TOTAL, "Hint processing errors by type");
-        metrics::describe_counter!(Self::KV_LOOKUPS_TOTAL, "KV store lookups by hit or miss");
+        metrics::describe_counter!(
+            Self::KV_COLD_LOOKUPS_TOTAL,
+            "KV lookups that missed the cache and required hint fetching"
+        );
         metrics::describe_counter!(
             Self::PREIMAGE_ACCESSES_TOTAL,
             "Total preimage accesses through the recording oracle"
@@ -420,14 +415,7 @@ impl Metrics {
             0
         );
 
-        base_macros::set!(counter, Self::KV_LOOKUPS_TOTAL, Self::LABEL_RESULT, Self::RESULT_HIT, 0);
-        base_macros::set!(
-            counter,
-            Self::KV_LOOKUPS_TOTAL,
-            Self::LABEL_RESULT,
-            Self::RESULT_MISS,
-            0
-        );
+        base_macros::set!(counter, Self::KV_COLD_LOOKUPS_TOTAL, 0);
 
         base_macros::set!(counter, Self::PREIMAGE_ACCESSES_TOTAL, 0);
         base_macros::set!(counter, Self::OFFLINE_MISSES_TOTAL, 0);
