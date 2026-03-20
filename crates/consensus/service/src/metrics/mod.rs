@@ -48,9 +48,8 @@ impl Metrics {
     /// Counter for seal errors labeled by fatal ("true"|"false").
     pub const SEQUENCER_SEAL_ERROR_TOTAL: &str = "base_node_sequencer_seal_errors_total";
     /// Counter for sequencer start rejections labeled by reason.
-    pub const SEQUENCER_START_REJECTED_TOTAL: &str =
-        "base_node_sequencer_start_rejected_total";
-    /// Counter for deferred stop_sequencer responses due to in-flight seal pipeline.
+    pub const SEQUENCER_START_REJECTED_TOTAL: &str = "base_node_sequencer_start_rejected_total";
+    /// Counter for deferred `stop_sequencer` responses due to in-flight seal pipeline.
     pub const SEQUENCER_STOP_DEFERRED_TOTAL: &str = "base_node_sequencer_stop_deferred_total";
     /// Counter for blocks sequenced in recovery mode (always empty blocks).
     pub const SEQUENCER_RECOVERY_MODE_BLOCKS_TOTAL: &str =
@@ -132,10 +131,7 @@ impl Metrics {
             Self::SEQUENCER_SEAL_PIPELINE_OVERLAP_TOTAL,
             "Seal pipeline overlaps: pipeline not complete before next block tick"
         );
-        metrics::describe_counter!(
-            Self::SEQUENCER_SEAL_ERROR_TOTAL,
-            "Seal errors by fatality"
-        );
+        metrics::describe_counter!(Self::SEQUENCER_SEAL_ERROR_TOTAL, "Seal errors by fatality");
         metrics::describe_counter!(
             Self::SEQUENCER_START_REJECTED_TOTAL,
             "Sequencer start rejections by reason"

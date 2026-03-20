@@ -11,7 +11,10 @@ use crate::{
     UnsafePayloadGossipClient,
     actors::{
         SequencerEngineClient,
-        sequencer::{conductor::Conductor, metrics::{inc_seal_step_retry, update_seal_step_duration}},
+        sequencer::{
+            conductor::Conductor,
+            metrics::{inc_seal_step_retry, update_seal_step_duration},
+        },
     },
 };
 

@@ -3,7 +3,10 @@ use base_consensus_derive::AttributesBuilder;
 use base_consensus_rpc::SequencerAdminAPIError;
 use tokio::sync::oneshot;
 
-use super::{SequencerActor, metrics::{inc_start_rejected, inc_stop_deferred}};
+use super::{
+    SequencerActor,
+    metrics::{inc_start_rejected, inc_stop_deferred},
+};
 use crate::{Conductor, OriginSelector, SequencerEngineClient, UnsafePayloadGossipClient};
 
 /// The query types to the sequencer actor for the admin api.
