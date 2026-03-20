@@ -2,11 +2,15 @@
 
 use std::sync::Arc;
 
-use alloy_primitives::{B256, Bloom, Bytes, U256};
+use alloy_primitives::{Address, B256, Bloom, Bytes, U256};
 use alloy_rpc_types_engine::{
-    ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2, ExecutionPayloadV1, PayloadId,
+    ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2, ExecutionPayloadV1, ExecutionPayloadV2,
+    ExecutionPayloadV3, PayloadId,
 };
-use base_consensus_genesis::RollupConfig;
+use base_alloy_rpc_types_engine::{
+    BlobsBundleV2, OpExecutionPayload, OpExecutionPayloadEnvelopeV5, OpExecutionPayloadV4,
+};
+use base_consensus_genesis::{BaseHardforkConfig, HardForkConfig, RollupConfig};
 use rstest::rstest;
 use tokio::sync::mpsc;
 
@@ -15,26 +19,62 @@ use crate::{
     test_utils::{TestAttributesBuilder, TestEngineStateBuilder, test_engine_client_builder},
 };
 
-/// A minimal all-zeros `ExecutionPayloadEnvelopeV2` for testing.
+/// A non-zero `ExecutionPayloadEnvelopeV2` for testing.
 fn v2_envelope() -> ExecutionPayloadEnvelopeV2 {
     ExecutionPayloadEnvelopeV2 {
         execution_payload: ExecutionPayloadFieldV2::V1(ExecutionPayloadV1 {
-            parent_hash: B256::ZERO,
-            fee_recipient: Default::default(),
-            state_root: B256::ZERO,
-            receipts_root: B256::ZERO,
+            parent_hash: B256::repeat_byte(0x11),
+            fee_recipient: Address::repeat_byte(0x22),
+            state_root: B256::repeat_byte(0x33),
+            receipts_root: B256::repeat_byte(0x44),
             logs_bloom: Bloom::ZERO,
-            prev_randao: B256::ZERO,
-            block_number: 0,
-            gas_limit: 0,
-            gas_used: 0,
-            timestamp: 0,
+            prev_randao: B256::repeat_byte(0x55),
+            block_number: 1,
+            gas_limit: 30_000_000,
+            gas_used: 21_000,
+            timestamp: 100,
             extra_data: Bytes::new(),
-            base_fee_per_gas: U256::ZERO,
-            block_hash: B256::ZERO,
+            base_fee_per_gas: U256::from(1_000_000_000u64),
+            block_hash: B256::repeat_byte(0x66),
             transactions: vec![],
         }),
-        block_value: U256::ZERO,
+        block_value: U256::from(500_000_000_000u64),
+    }
+}
+
+/// A non-zero [`OpExecutionPayloadEnvelopeV5`] for Osaka / Base V1 testing.
+fn v5_envelope() -> OpExecutionPayloadEnvelopeV5 {
+    OpExecutionPayloadEnvelopeV5 {
+        execution_payload: OpExecutionPayloadV4 {
+            payload_inner: ExecutionPayloadV3 {
+                payload_inner: ExecutionPayloadV2 {
+                    payload_inner: ExecutionPayloadV1 {
+                        parent_hash: B256::repeat_byte(0xAA),
+                        fee_recipient: Address::repeat_byte(0xBB),
+                        state_root: B256::repeat_byte(0xCC),
+                        receipts_root: B256::repeat_byte(0xDD),
+                        logs_bloom: Bloom::ZERO,
+                        prev_randao: B256::repeat_byte(0xEE),
+                        block_number: 42,
+                        gas_limit: 30_000_000,
+                        gas_used: 100_000,
+                        timestamp: 2000,
+                        extra_data: Bytes::new(),
+                        base_fee_per_gas: U256::from(7_000_000_000u64),
+                        block_hash: B256::repeat_byte(0xFF),
+                        transactions: vec![],
+                    },
+                    withdrawals: vec![],
+                },
+                blob_gas_used: 0,
+                excess_blob_gas: 0,
+            },
+            withdrawals_root: B256::repeat_byte(0x77),
+        },
+        block_value: U256::from(1_000_000_000_000u64),
+        blobs_bundle: BlobsBundleV2 { commitments: vec![], proofs: vec![], blobs: vec![] },
+        should_override_builder: false,
+        execution_requests: vec![],
     }
 }
 
@@ -97,6 +137,61 @@ async fn test_get_payload_v2_success(#[values(true, false)] with_channel: bool) 
     if with_channel {
         let channel_result = rx.recv().await.expect("channel should have a result");
         assert!(channel_result.is_ok(), "channel result should be Ok, got {channel_result:?}");
+    }
+}
+
+/// When the unsafe head matches the attributes parent and the engine returns a valid V5 payload
+/// (Osaka / Base V1), `GetPayloadTask` must call `get_payload_v5`, wrap the inner
+/// [`OpExecutionPayloadV4`] as an [`OpExecutionPayload::V4`] variant, and source
+/// `parent_beacon_block_root` from the attributes rather than the payload envelope.
+#[rstest]
+#[tokio::test]
+async fn test_get_payload_v5_success(#[values(true, false)] with_channel: bool) {
+    let attributes = TestAttributesBuilder::new().build();
+    let parent = attributes.parent;
+
+    // Activate Base V1 (Osaka) at the default attributes timestamp (2000) so that
+    // `EngineGetPayloadVersion::V5` is selected.
+    let cfg = Arc::new(RollupConfig {
+        hardforks: HardForkConfig {
+            base: BaseHardforkConfig { v1: Some(2000) },
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+
+    let client = test_engine_client_builder().with_execution_payload_v5(v5_envelope()).build();
+    let mut state = TestEngineStateBuilder::new().with_unsafe_head(parent).build();
+
+    let (tx, mut rx) = mpsc::channel(1);
+    let task = GetPayloadTask::new(
+        Arc::new(client),
+        cfg,
+        PayloadId::default(),
+        attributes,
+        if with_channel { Some(tx) } else { None },
+    );
+
+    let result = task.execute(&mut state).await;
+    assert!(result.is_ok(), "task should succeed, got {result:?}");
+
+    if with_channel {
+        let channel_result = rx.recv().await.expect("channel should have a result");
+        assert!(channel_result.is_ok(), "channel result should be Ok, got {channel_result:?}");
+        let envelope = channel_result.unwrap();
+        // V5 wraps the execution payload as the V4 variant inside OpExecutionPayload.
+        assert!(
+            matches!(envelope.execution_payload, OpExecutionPayload::V4(_)),
+            "V5 get_payload should produce a V4 execution payload variant, got {:?}",
+            envelope.execution_payload
+        );
+        // V5 omits parent_beacon_block_root from the response envelope; the task sources
+        // it from the attributes. TestAttributesBuilder::new() defaults to Some(B256::ZERO).
+        assert_eq!(
+            envelope.parent_beacon_block_root,
+            Some(B256::ZERO),
+            "parent_beacon_block_root should be sourced from attributes for V5 payloads"
+        );
     }
 }
 

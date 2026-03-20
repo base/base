@@ -149,7 +149,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for GetPayloadTask<EngineClient_
         let res = if unsafe_block_info.hash != parent_block_info.hash
             || unsafe_block_info.number != parent_block_info.number
         {
-            info!(
+            error!(
                 target: "engine",
                 unsafe_block_info = ?unsafe_block_info,
                 parent_block_info = ?parent_block_info,
