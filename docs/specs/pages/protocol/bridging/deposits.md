@@ -153,7 +153,7 @@ Any non-EVM state-transition error emitted by the EVM execution is processed in 
   Note that a previous `nonce` increment may have happened during EVM processing, but this would be rolled back first.
 
 Finally, after the above processing, the execution post-processing runs the same:
-i.e. the gas pool and receipt are processed identical to a regular transaction.
+i.e. the gas pool and receipt are processed identically to a regular transaction.
 The receipt of deposit transactions is extended with an additional
 `depositNonce` value, storing the `nonce` value of the `from` sender as registered _before_ the EVM processing.
 
