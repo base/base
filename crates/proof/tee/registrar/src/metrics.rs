@@ -31,6 +31,11 @@ impl RegistrarMetrics {
         metrics::gauge!(Self::INFO, Self::LABEL_VERSION => version.to_string()).set(1.0);
         metrics::gauge!(Self::UP).set(1.0);
     }
+
+    /// Records shutdown by setting the UP gauge to 0.
+    pub fn record_shutdown() {
+        metrics::gauge!(Self::UP).set(0.0);
+    }
 }
 
 #[cfg(test)]

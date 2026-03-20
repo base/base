@@ -403,6 +403,7 @@ impl Cli {
         // ── 9. Graceful shutdown (always runs, even on driver error) ─────────
         info!("Driver stopped, shutting down...");
         ready.store(false, Ordering::SeqCst);
+        RegistrarMetrics::record_shutdown();
 
         match health_handle.await {
             Ok(Ok(())) => {}
