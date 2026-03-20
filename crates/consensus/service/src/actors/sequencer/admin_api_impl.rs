@@ -111,8 +111,12 @@ where
 
     /// Starts the sequencer in an idempotent fashion.
     ///
-    /// `unsafe_head` identifies the block the caller intends to start sequencing from.
-    /// Note: the forkchoice update to `unsafe_head` is not yet implemented (see TODO in body).
+    /// `unsafe_head` is a safety guard: it must match the engine's current unsafe head hash.
+    /// This prevents split-brain situations where two nodes attempt to start sequencing from
+    /// different chain tips. Activation is rejected when:
+    ///
+    /// - The engine has not yet received a forkchoice update (`unsafe_head == B256::ZERO`).
+    /// - `unsafe_head` does not match the engine's current unsafe head hash.
     ///
     /// When a conductor is configured, this checks `conductor_leader` before activating,
     /// matching op-node's `Start()` behavior. If the node is not the leader the call returns
@@ -140,9 +144,25 @@ where
             }
         }
 
-        // TODO: call self.engine_client to update the engine forkchoice to unsafe_head before
-        // setting is_active, matching op-node behavior where the caller's intended starting point
-        // is honored. See reset_derivation_pipeline() for the engine_client pattern.
+        let engine_head = self.engine_client.get_unsafe_head().await.map_err(|e| {
+            error!(target: "sequencer", error = %e, "Failed to fetch engine unsafe head");
+            SequencerAdminAPIError::RequestError(e.to_string())
+        })?;
+
+        if engine_head.block_info.hash == B256::ZERO {
+            return Err(SequencerAdminAPIError::RequestError(
+                "no prestate: engine unsafe head is uninitialized, cannot safely start sequencer"
+                    .to_string(),
+            ));
+        }
+
+        if unsafe_head != engine_head.block_info.hash {
+            return Err(SequencerAdminAPIError::RequestError(format!(
+                "block hash mismatch: engine unsafe head is {}, caller requested {}",
+                engine_head.block_info.hash, unsafe_head,
+            )));
+        }
+
         info!(target: "sequencer", unsafe_head = %unsafe_head, "Starting sequencer");
         self.is_active = true;
 

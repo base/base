@@ -98,15 +98,27 @@ async fn test_start_sequencer_no_conductor(
     #[values(true, false)] already_started: bool,
     #[values(true, false)] via_channel: bool,
 ) {
+    let test_hash = B256::from([1u8; 32]);
+    let engine_head = L2BlockInfo {
+        block_info: BlockInfo { hash: test_hash, ..Default::default() },
+        ..Default::default()
+    };
+
+    let mut client = MockSequencerEngineClient::new();
+    // .returning() (not .return_once()) allows 0 or 1 calls: the already-started case
+    // returns early before reaching the engine check.
+    client.expect_get_unsafe_head().returning(move || Ok(engine_head));
+
     let mut actor = test_actor();
+    actor.engine_client = Arc::new(client);
     actor.is_active = already_started;
 
     let result = async {
         match via_channel {
-            false => actor.start_sequencer(B256::ZERO).await,
+            false => actor.start_sequencer(test_hash).await,
             true => {
                 let (tx, rx) = oneshot::channel();
-                actor.handle_admin_query(SequencerAdminQuery::StartSequencer(B256::ZERO, tx)).await;
+                actor.handle_admin_query(SequencerAdminQuery::StartSequencer(test_hash, tx)).await;
                 rx.await.unwrap()
             }
         }
@@ -121,19 +133,29 @@ async fn test_start_sequencer_no_conductor(
 #[rstest]
 #[tokio::test]
 async fn test_start_sequencer_conductor_is_leader(#[values(true, false)] via_channel: bool) {
+    let test_hash = B256::from([1u8; 32]);
+    let engine_head = L2BlockInfo {
+        block_info: BlockInfo { hash: test_hash, ..Default::default() },
+        ..Default::default()
+    };
+
     let mut conductor = MockConductor::new();
     conductor.expect_leader().times(1).return_once(|| Ok(true));
 
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_get_unsafe_head().times(1).return_once(move || Ok(engine_head));
+
     let mut actor = test_actor();
     actor.conductor = Some(conductor);
+    actor.engine_client = Arc::new(client);
     actor.is_active = false;
 
     let result = async {
         match via_channel {
-            false => actor.start_sequencer(B256::ZERO).await,
+            false => actor.start_sequencer(test_hash).await,
             true => {
                 let (tx, rx) = oneshot::channel();
-                actor.handle_admin_query(SequencerAdminQuery::StartSequencer(B256::ZERO, tx)).await;
+                actor.handle_admin_query(SequencerAdminQuery::StartSequencer(test_hash, tx)).await;
                 rx.await.unwrap()
             }
         }
@@ -229,6 +251,112 @@ async fn test_start_sequencer_already_active_skips_leader_check(
 
     assert!(result.is_ok());
     assert!(actor.is_active);
+}
+
+/// Engine returns a zero hash: sequencer refuses to activate (engine not yet initialized).
+#[rstest]
+#[tokio::test]
+async fn test_start_sequencer_engine_not_initialized(#[values(true, false)] via_channel: bool) {
+    let mut client = MockSequencerEngineClient::new();
+    client
+        .expect_get_unsafe_head()
+        .times(1)
+        .return_once(|| Ok(L2BlockInfo::default())); // hash == B256::ZERO
+
+    let mut actor = test_actor();
+    actor.engine_client = Arc::new(client);
+    actor.is_active = false;
+
+    let result = async {
+        match via_channel {
+            false => actor.start_sequencer(B256::from([1u8; 32])).await,
+            true => {
+                let (tx, rx) = oneshot::channel();
+                actor
+                    .handle_admin_query(SequencerAdminQuery::StartSequencer(
+                        B256::from([1u8; 32]),
+                        tx,
+                    ))
+                    .await;
+                rx.await.unwrap()
+            }
+        }
+    }
+    .await;
+
+    assert!(matches!(result.unwrap_err(), SequencerAdminAPIError::RequestError(_)));
+    assert!(!actor.is_active);
+}
+
+/// Caller's `unsafe_head` does not match the engine's current unsafe head: sequencer refuses.
+#[rstest]
+#[tokio::test]
+async fn test_start_sequencer_unsafe_head_mismatch(#[values(true, false)] via_channel: bool) {
+    let requested_hash = B256::from([1u8; 32]);
+    let engine_hash = B256::from([2u8; 32]);
+    let engine_head = L2BlockInfo {
+        block_info: BlockInfo { hash: engine_hash, ..Default::default() },
+        ..Default::default()
+    };
+
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_get_unsafe_head().times(1).return_once(move || Ok(engine_head));
+
+    let mut actor = test_actor();
+    actor.engine_client = Arc::new(client);
+    actor.is_active = false;
+
+    let result = async {
+        match via_channel {
+            false => actor.start_sequencer(requested_hash).await,
+            true => {
+                let (tx, rx) = oneshot::channel();
+                actor
+                    .handle_admin_query(SequencerAdminQuery::StartSequencer(requested_hash, tx))
+                    .await;
+                rx.await.unwrap()
+            }
+        }
+    }
+    .await;
+
+    assert!(matches!(result.unwrap_err(), SequencerAdminAPIError::RequestError(_)));
+    assert!(!actor.is_active);
+}
+
+/// Engine client returns an error when fetching the unsafe head: sequencer refuses to activate.
+#[rstest]
+#[tokio::test]
+async fn test_start_sequencer_engine_client_error(#[values(true, false)] via_channel: bool) {
+    let mut client = MockSequencerEngineClient::new();
+    client
+        .expect_get_unsafe_head()
+        .times(1)
+        .return_once(|| Err(EngineClientError::RequestError("rpc failure".to_string())));
+
+    let mut actor = test_actor();
+    actor.engine_client = Arc::new(client);
+    actor.is_active = false;
+
+    let result = async {
+        match via_channel {
+            false => actor.start_sequencer(B256::from([1u8; 32])).await,
+            true => {
+                let (tx, rx) = oneshot::channel();
+                actor
+                    .handle_admin_query(SequencerAdminQuery::StartSequencer(
+                        B256::from([1u8; 32]),
+                        tx,
+                    ))
+                    .await;
+                rx.await.unwrap()
+            }
+        }
+    }
+    .await;
+
+    assert!(matches!(result.unwrap_err(), SequencerAdminAPIError::RequestError(_)));
+    assert!(!actor.is_active);
 }
 
 #[rstest]
