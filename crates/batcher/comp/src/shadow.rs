@@ -78,7 +78,7 @@ impl CompressorWriter for ShadowCompressor {
         self.shadow.write(data)?;
 
         // The new bound increases by the length of the compressed data.
-        let mut newbound = data.len() as u64;
+        let mut newbound = self.bound + data.len() as u64;
         if newbound > self.config.target_output_size {
             // Don't flush the buffer if there's a chance we're over the size limit.
             self.shadow.flush()?;
