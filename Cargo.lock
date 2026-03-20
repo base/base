@@ -4780,7 +4780,6 @@ dependencies = [
  "base-proof-contracts",
  "base-proof-primitives",
  "base-proof-rpc",
- "base-protocol",
  "base-tx-manager",
  "bytes",
  "clap",
