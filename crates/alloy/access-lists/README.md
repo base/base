@@ -1,4 +1,4 @@
-# `base-fbal`
+# `base-access-lists`
 
 A library to build and process Flashblock-level Access Lists (FBALs).
 
