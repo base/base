@@ -1,25 +1,37 @@
 //! CLI argument parsing and config construction for the prover registrar.
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    net::{IpAddr, SocketAddr},
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use alloy_primitives::Address;
 use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
+use base_cli_utils::RuntimeManager;
 use base_proof_tee_nitro_attestation_prover::{
     AttestationProofProvider, BoundlessProver, DirectProver,
 };
 use base_proof_tee_registrar::{
-    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, DriverConfig, ProvingConfig,
-    RegistrarConfig, RegistrarError, RegistrationDriver, RegistryContractClient,
+    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, DriverConfig, HealthServer,
+    ProvingConfig, RegistrarConfig, RegistrarError, RegistrarMetrics, RegistrationDriver,
+    RegistryContractClient,
 };
-use base_tx_manager::{NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
+use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use clap::{Args, Parser, ValueEnum};
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{info, warn};
 use url::Url;
 
 // Generate env-var helper and CLI structs with the `BASE_REGISTRAR_` prefix.
 base_cli_utils::define_cli_env!("BASE_REGISTRAR");
+base_cli_utils::define_log_args!("BASE_REGISTRAR");
+base_cli_utils::define_metrics_args!("BASE_REGISTRAR", 7320);
 base_tx_manager::define_signer_cli!("BASE_REGISTRAR");
 base_tx_manager::define_tx_manager_cli!("BASE_REGISTRAR");
 
@@ -92,9 +104,22 @@ pub(crate) struct Cli {
     #[arg(long, env = cli_env!("PROVER_TIMEOUT_SECS"), default_value_t = 30)]
     prover_timeout_secs: u64,
 
-    /// Port for the health check and Prometheus metrics HTTP server.
-    #[arg(long, env = cli_env!("HEALTH_PORT"), default_value_t = 7300)]
+    // ── Health Server ─────────────────────────────────────────────────────────
+    /// IP address for the health check HTTP server.
+    #[arg(long = "health.addr", env = cli_env!("HEALTH_ADDR"), default_value = "0.0.0.0")]
+    health_addr: IpAddr,
+
+    /// Port for the health check HTTP server.
+    #[arg(long = "health.port", env = cli_env!("HEALTH_PORT"), default_value_t = 8080)]
     health_port: u16,
+
+    // ── Logging ───────────────────────────────────────────────────────────────
+    #[command(flatten)]
+    log: LogArgs,
+
+    // ── Metrics ───────────────────────────────────────────────────────────────
+    #[command(flatten)]
+    metrics: MetricsArgs,
 }
 
 /// ZK proving backend selector.
@@ -251,6 +276,8 @@ impl Cli {
             ));
         }
 
+        let health_addr = SocketAddr::new(self.health_addr, self.health_port);
+
         Ok(RegistrarConfig {
             l1_rpc_url: self.l1_rpc_url,
             tee_prover_registry_address: self.tee_prover_registry_address,
@@ -261,7 +288,9 @@ impl Cli {
             proving,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             prover_timeout: Duration::from_secs(self.prover_timeout_secs),
-            health_port: self.health_port,
+            health_addr,
+            log: self.log.into(),
+            metrics: self.metrics.into(),
         })
     }
 
@@ -269,9 +298,26 @@ impl Cli {
     pub(crate) async fn run(self) -> eyre::Result<()> {
         let config = self.into_config()?;
 
-        info!(config = ?config, "starting prover registrar");
+        config.log.init_tracing_subscriber()?;
 
-        // Build L1 provider.
+        // Install the default rustls CryptoProvider before any TLS connections are created.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        info!(version = env!("CARGO_PKG_VERSION"), "Registrar starting");
+
+        // ── 1. Cancellation token and signal handler ─────────────────────────
+        let cancel = CancellationToken::new();
+        let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
+
+        // ── 2. Metrics recorder (if enabled) ─────────────────────────────────
+        config
+            .metrics
+            .init()
+            .map_err(|e| eyre::eyre!("failed to install Prometheus recorder: {e}"))?;
+
+        RegistrarMetrics::record_startup(env!("CARGO_PKG_VERSION"));
+
+        // ── 3. Build L1 provider and tx manager ──────────────────────────────
         let provider = RootProvider::new_http(config.l1_rpc_url.clone());
 
         let tx_manager = SimpleTxManager::new(
@@ -279,11 +325,11 @@ impl Cli {
             config.signing,
             config.tx_manager,
             config.l1_chain_id,
-            Arc::new(NoopTxMetrics),
+            Arc::new(BaseTxMetrics::new("registrar")),
         )
         .await?;
 
-        // Build AWS SDK clients for discovery.
+        // ── 4. Build AWS SDK clients for discovery ───────────────────────────
         let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
             .region(aws_config::Region::new(config.discovery.aws_region.clone()))
             .load()
@@ -298,24 +344,13 @@ impl Cli {
             config.discovery.port,
         );
 
-        // Build registry client.
+        // ── 5. Build registry client ─────────────────────────────────────────
         let registry = RegistryContractClient::new(
             config.tee_prover_registry_address,
             config.l1_rpc_url.clone(),
         );
 
-        // Cancel the driver's token on ctrl-c so the inner loop observes
-        // shutdown and in-flight operations can complete gracefully.
-        let cancel = CancellationToken::new();
-        let cancel_on_signal = cancel.clone();
-        tokio::spawn(async move {
-            let _ = tokio::signal::ctrl_c().await;
-            info!("received ctrl-c, shutting down");
-            cancel_on_signal.cancel();
-        });
-
-        // Build proof provider based on proving mode (type-erased so the
-        // driver construction is not duplicated per variant).
+        // ── 6. Build proof provider ──────────────────────────────────────────
         let proof_provider: Box<dyn AttestationProofProvider> = match config.proving {
             ProvingConfig::Boundless(ref boundless) => Box::new(BoundlessProver {
                 rpc_url: boundless.rpc_url.clone(),
@@ -338,17 +373,48 @@ impl Cli {
             }
         };
 
+        // ── 7. Start health HTTP server ──────────────────────────────────────
+        let ready = Arc::new(AtomicBool::new(false));
+        let health_handle = tokio::spawn(HealthServer::serve(
+            config.health_addr,
+            Arc::clone(&ready),
+            cancel.clone(),
+        ));
+
+        // ── 8. Build and run driver ──────────────────────────────────────────
         let driver_config = DriverConfig {
             registry_address: config.tee_prover_registry_address,
             poll_interval: config.poll_interval,
             prover_timeout: config.prover_timeout,
-            cancel,
+            cancel: cancel.clone(),
         };
 
+        ready.store(true, Ordering::SeqCst);
+
+        let cancel_guard = cancel.clone().drop_guard();
         RegistrationDriver::new(discovery, proof_provider, registry, tx_manager, driver_config)
             .run()
             .await?;
+        drop(cancel_guard);
 
+        // ── 9. Graceful shutdown ─────────────────────────────────────────────
+        info!("Driver stopped, shutting down...");
+        ready.store(false, Ordering::SeqCst);
+
+        match health_handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => warn!(error = %e, "Health server error during shutdown"),
+            Err(e) => warn!(error = %e, "Health server task panicked"),
+        }
+
+        signal_handle.abort();
+        match signal_handle.await {
+            Ok(()) => {}
+            Err(e) if e.is_cancelled() => {}
+            Err(e) => warn!(error = %e, "Signal handler task panicked"),
+        }
+
+        info!("Service stopped");
         Ok(())
     }
 }
@@ -385,6 +451,8 @@ mod tests {
     const DEFAULT_POLL_INTERVAL_SECS: u64 = 30;
     const DEFAULT_PROVER_TIMEOUT_SECS: u64 = 30;
     const DEFAULT_PROVER_PORT: u16 = 8000;
+    const DEFAULT_HEALTH_PORT: u16 = 8080;
+    const DEFAULT_METRICS_PORT: u16 = 7320;
 
     // ── Arg builders ────────────────────────────────────────────────────
 
@@ -566,6 +634,36 @@ mod tests {
         let config = Cli::parse_from(boundless_args()).into_config().unwrap();
         assert_eq!(config.tx_manager.num_confirmations, 10);
         assert_eq!(config.tx_manager.fee_limit_multiplier, 5);
+    }
+
+    #[rstest]
+    fn default_health_addr() {
+        let config = Cli::parse_from(boundless_args()).into_config().unwrap();
+        assert_eq!(config.health_addr, SocketAddr::from(([0, 0, 0, 0], DEFAULT_HEALTH_PORT)));
+    }
+
+    #[rstest]
+    fn custom_health_addr() {
+        let mut args = boundless_args();
+        args.extend(["--health.addr", "127.0.0.1", "--health.port", "9090"]);
+        let config = Cli::parse_from(args).into_config().unwrap();
+        assert_eq!(config.health_addr, SocketAddr::from(([127, 0, 0, 1], 9090)));
+    }
+
+    #[rstest]
+    fn default_metrics_config() {
+        let config = Cli::parse_from(boundless_args()).into_config().unwrap();
+        assert!(!config.metrics.enabled);
+        assert_eq!(config.metrics.port, DEFAULT_METRICS_PORT);
+    }
+
+    #[rstest]
+    fn custom_metrics_config() {
+        let mut args = boundless_args();
+        args.extend(["--metrics.enabled", "--metrics.port", "9100"]);
+        let config = Cli::parse_from(args).into_config().unwrap();
+        assert!(config.metrics.enabled);
+        assert_eq!(config.metrics.port, 9100);
     }
 
     // ── parse_image_id unit tests ───────────────────────────────────────

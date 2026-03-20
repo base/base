@@ -1,7 +1,8 @@
-use std::{path::PathBuf, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
+use base_cli_utils::{LogConfig, MetricsConfig};
 use base_tx_manager::{SignerConfig, TxManagerConfig};
 use url::Url;
 
@@ -97,8 +98,13 @@ pub struct RegistrarConfig {
     pub poll_interval: Duration,
     /// Timeout for JSON-RPC calls to prover instances.
     pub prover_timeout: Duration,
-    /// Port for the health check and Prometheus metrics HTTP server.
-    pub health_port: u16,
+    /// Health server socket address.
+    pub health_addr: SocketAddr,
+    // ── Observability ─────────────────────────────────────────────────────────
+    /// Logging configuration (from base-cli-utils).
+    pub log: LogConfig,
+    /// Metrics server configuration.
+    pub metrics: MetricsConfig,
 }
 
 impl std::fmt::Debug for RegistrarConfig {
@@ -113,7 +119,9 @@ impl std::fmt::Debug for RegistrarConfig {
             .field("proving", &self.proving)
             .field("poll_interval", &self.poll_interval)
             .field("prover_timeout", &self.prover_timeout)
-            .field("health_port", &self.health_port)
+            .field("health_addr", &self.health_addr)
+            .field("log", &self.log)
+            .field("metrics", &self.metrics)
             .finish()
     }
 }
