@@ -2,9 +2,10 @@
 //!
 //! Discovers prover instances, checks on-chain registration status, generates
 //! ZK proofs for unregistered signers, and submits registration transactions
-//! to L1 via the [`TxManager`].
+//! to L1 via the [`TxManager`]. Also detects orphaned on-chain signers (those
+//! no longer backed by a healthy instance) and deregisters them.
 
-use std::{fmt, time::Duration};
+use std::{collections::HashSet, fmt, time::Duration};
 
 use alloy_primitives::{Address, Bytes, hex};
 use alloy_sol_types::SolCall;
@@ -100,35 +101,57 @@ where
         Ok(())
     }
 
-    /// Single registration cycle: discover → filter → register.
+    /// Single registration cycle: discover → filter → register → deregister orphans.
     async fn step(&self) -> Result<()> {
         let instances = self.discovery.discover_instances().await?;
         let registerable: Vec<_> =
             instances.iter().filter(|i| i.health_status.should_register()).collect();
 
-        if registerable.is_empty() {
-            return Ok(());
+        let registerable_count = registerable.len();
+        if registerable_count > 0 {
+            info!(
+                total = instances.len(),
+                registerable = registerable_count,
+                "discovered prover instances"
+            );
         }
 
-        info!(
-            total = instances.len(),
-            registerable = registerable.len(),
-            "discovered prover instances"
-        );
+        let mut active_signers = HashSet::new();
 
         for instance in registerable {
             if self.config.cancel.is_cancelled() {
                 break;
             }
 
-            if let Err(e) = self.process_instance(instance).await {
-                warn!(
-                    error = %e,
-                    instance = %instance.instance_id,
-                    endpoint = %instance.endpoint,
-                    "failed to process instance"
-                );
+            match self.process_instance(instance).await {
+                Ok(address) => {
+                    active_signers.insert(address);
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        instance = %instance.instance_id,
+                        endpoint = %instance.endpoint,
+                        "failed to process instance"
+                    );
+                }
             }
+        }
+
+        // Guard against mass deregistration from transient failures: if we had
+        // registerable instances but resolved zero signer addresses, our view of
+        // the active set is unreliable. Skip orphan cleanup to avoid deregistering
+        // signers that are actually still active.
+        if active_signers.is_empty() && registerable_count > 0 {
+            warn!(
+                registerable = registerable_count,
+                "all instance processing failed, skipping orphan deregistration"
+            );
+            return Ok(());
+        }
+
+        if let Err(e) = self.deregister_orphans(&active_signers).await {
+            warn!(error = %e, "failed to deregister orphan signers");
         }
 
         Ok(())
@@ -136,7 +159,10 @@ where
 
     /// Processes a single instance: check registration first (cheap), then
     /// fetch attestation and generate proof only if needed.
-    async fn process_instance(&self, instance: &ProverInstance) -> Result<()> {
+    ///
+    /// Returns the derived signer address regardless of whether registration
+    /// was needed, so the caller can build the active signer set.
+    async fn process_instance(&self, instance: &ProverInstance) -> Result<Address> {
         let client = ProverClient::new(&instance.endpoint, self.config.prover_timeout)?;
 
         // Fetch only the public key (cheap RPC) and derive the address to
@@ -146,14 +172,14 @@ where
 
         if self.registry.is_registered(signer_address).await? {
             debug!(signer = %signer_address, "already registered, skipping");
-            return Ok(());
+            return Ok(signer_address);
         }
 
         // Check cancellation before the most expensive operation (proof generation
         // can take minutes via Boundless).
         if self.config.cancel.is_cancelled() {
             debug!("shutdown requested, skipping proof generation");
-            return Ok(());
+            return Ok(signer_address);
         }
 
         info!(
@@ -173,7 +199,7 @@ where
         // new on-chain work if shutdown is in progress.
         if self.config.cancel.is_cancelled() {
             debug!("shutdown requested, skipping transaction submission");
-            return Ok(());
+            return Ok(signer_address);
         }
 
         let calldata = ITEEProverRegistry::registerSignerCall {
@@ -196,6 +222,118 @@ where
             "signer registered successfully"
         );
 
+        Ok(signer_address)
+    }
+
+    /// Deregisters any on-chain signer that is not in the `active_signers` set.
+    ///
+    /// These orphans arise when a prover instance is terminated (e.g. ASG
+    /// scale-down) without first deregistering its signer on-chain.
+    ///
+    /// # Assumptions
+    ///
+    /// - **Single registrar**: This method queries *all* on-chain signers and
+    ///   treats any signer not in `active_signers` as an orphan. If multiple
+    ///   registrar instances manage disjoint prover fleets, one registrar would
+    ///   incorrectly deregister another's signers. The current deployment model
+    ///   assumes a single registrar per registry contract.
+    ///
+    /// - **Draining instances are expendable**: Instances in the `Draining`
+    ///   state are excluded from `active_signers` (they don't pass
+    ///   `should_register()`), so their on-chain signers will be deregistered.
+    ///   This is correct as long as the ALB drain timeout completes before the
+    ///   next deregistration cycle, ensuring no in-flight signed operations are
+    ///   disrupted.
+    async fn deregister_orphans(&self, active_signers: &HashSet<Address>) -> Result<()> {
+        let orphans: Vec<_> = self
+            .registry
+            .get_registered_signers()
+            .await?
+            .into_iter()
+            .filter(|addr| !active_signers.contains(addr))
+            .collect();
+
+        if orphans.is_empty() {
+            return Ok(());
+        }
+
+        info!(count = orphans.len(), "deregistering orphan signers");
+
+        let mut deregistered = 0usize;
+        for signer in orphans {
+            if self.config.cancel.is_cancelled() {
+                debug!("shutdown requested, stopping orphan deregistration");
+                break;
+            }
+
+            info!(signer = %signer, "deregistering orphan signer");
+
+            let calldata = ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode();
+
+            let candidate = TxCandidate {
+                tx_data: Bytes::from(calldata),
+                to: Some(self.config.registry_address),
+                ..Default::default()
+            };
+
+            match self.tx_manager.send(candidate).await {
+                Ok(receipt) => {
+                    info!(
+                        signer = %signer,
+                        tx_hash = %receipt.transaction_hash,
+                        "orphan signer deregistered"
+                    );
+                    deregistered += 1;
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        signer = %signer,
+                        "failed to deregister orphan signer"
+                    );
+                }
+            }
+        }
+
+        info!(count = deregistered, "orphan deregistration complete");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, address};
+    use alloy_sol_types::SolCall;
+    use rstest::rstest;
+
+    use crate::registry::ITEEProverRegistry;
+
+    /// Expected byte length of ABI-encoded `deregisterSigner(address)` calldata:
+    /// 4-byte selector + 32-byte left-padded address word.
+    const DEREGISTER_CALLDATA_LEN: usize = 36;
+
+    /// Number of zero-padding bytes before the 20-byte address in the ABI word.
+    const ABI_ADDRESS_PAD: usize = 12;
+
+    /// Byte offset where the raw 20-byte address starts in the encoded calldata
+    /// (after the 4-byte selector and 12 bytes of zero-padding).
+    const ABI_ADDRESS_OFFSET: usize = 4 + ABI_ADDRESS_PAD;
+
+    /// Well-known Hardhat / Anvil account #0 address.
+    const HARDHAT_ACCOUNT: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+
+    #[rstest]
+    #[case::zero_address(Address::ZERO)]
+    #[case::hardhat_account(HARDHAT_ACCOUNT)]
+    #[case::all_ones(Address::repeat_byte(0xFF))]
+    fn deregister_calldata_encodes_correctly(#[case] signer: Address) {
+        let calldata = ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode();
+
+        assert_eq!(calldata.len(), DEREGISTER_CALLDATA_LEN);
+        assert_eq!(&calldata[..4], &ITEEProverRegistry::deregisterSignerCall::SELECTOR);
+        // The 12 bytes between the selector and the address must be zero-padding.
+        assert_eq!(&calldata[4..ABI_ADDRESS_OFFSET], &[0u8; ABI_ADDRESS_PAD]);
+        // The last 20 bytes must be the raw signer address.
+        assert_eq!(&calldata[ABI_ADDRESS_OFFSET..], signer.as_slice());
     }
 }
