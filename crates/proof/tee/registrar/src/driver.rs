@@ -117,7 +117,11 @@ where
 
         // Resolve signer addresses for ALL reachable instances (regardless of
         // health status) to build a complete active set. This protects draining
-        // and transiently-unhealthy instances from premature deregistration.
+        // instances (still running, usually reachable) from premature
+        // deregistration. Truly unreachable instances will fail the RPC and be
+        // excluded — the majority guard below is the safeguard for that case.
+        // A signer-address cache across cycles would strengthen this but adds
+        // state management complexity; deferred for now.
         // Registration is only attempted for instances that pass should_register().
         let mut active_signers = HashSet::new();
 
@@ -149,12 +153,13 @@ where
             return Ok(());
         }
 
-        // Guard against mass deregistration from transient failures: if fewer
-        // than half of the discovered instances could be reached, our view of
-        // the active set is unreliable. Only proceed when we have a clear
-        // majority, or when discovery itself returns zero instances (truly no
-        // instances exist).
-        if !instances.is_empty() && active_signers.len() * 2 < instances.len() {
+        // Guard against mass deregistration from transient failures: require a
+        // strict majority (>50%) of discovered instances to be reachable before
+        // proceeding with orphan cleanup. When discovery returns zero instances
+        // (e.g. after ASG scale-down removes them from the target group),
+        // deregistration proceeds normally — scaled-down instances leave the
+        // target group entirely, so they don't inflate `instances.len()`.
+        if !instances.is_empty() && active_signers.len() * 2 <= instances.len() {
             warn!(
                 active = active_signers.len(),
                 total = instances.len(),
