@@ -64,11 +64,7 @@ impl RejectedTxForwarder {
                 "timestamp": info.timestamp,
             })];
 
-            match self
-                .client
-                .request::<bool, _>("base_persistTransaction", params)
-                .await
-            {
+            match self.client.request::<bool, _>("base_persistTransaction", params).await {
                 Ok(_) => {}
                 Err(e) => {
                     warn!(

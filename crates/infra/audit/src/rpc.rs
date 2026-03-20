@@ -25,7 +25,7 @@ pub struct AuditArchiverRpc {
 
 impl AuditArchiverRpc {
     /// Creates a new `AuditArchiverRpc`.
-    pub fn new(storage: S3EventReaderWriter) -> Self {
+    pub const fn new(storage: S3EventReaderWriter) -> Self {
         Self { storage }
     }
 }

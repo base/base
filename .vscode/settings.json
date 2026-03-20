@@ -1,5 +1,0 @@
-{
-  "rust-analyzer.cargo.extraEnv": {
-    "RISC0_SKIP_BUILD_KERNELS": "1"
-  }
-}
