@@ -57,13 +57,13 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    // Build 4 L2 blocks. build_next_block() includes a user transaction in
+    // Build 4 L2 blocks. build_next_block_with_single_transaction() includes a user transaction in
     // every block. Block 3 (ts=6) is the first Jovian block, which must be
     // deposit-only — including a user tx here is the deliberate error.
-    let block1 = builder.build_next_block(); // ts=2
-    let block2 = builder.build_next_block(); // ts=4
-    let block3_invalid = builder.build_next_block(); // ts=6
-    let block4 = builder.build_next_block(); // ts=8
+    let block1 = builder.build_next_block_with_single_transaction(); // ts=2
+    let block2 = builder.build_next_block_with_single_transaction(); // ts=4
+    let block3_invalid = builder.build_next_block_with_single_transaction(); // ts=6
+    let block4 = builder.build_next_block_with_single_transaction(); // ts=8
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -110,10 +110,10 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     {
         let l1_chain2 = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
         let mut builder2 = h.create_l2_sequencer(l1_chain2);
-        let _rb1 = builder2.build_next_block();
-        let _rb2 = builder2.build_next_block();
+        let _rb1 = builder2.build_next_block_with_single_transaction();
+        let _rb2 = builder2.build_next_block_with_single_transaction();
         let block3_empty = builder2.build_empty_block();
-        let block4_recovery = builder2.build_next_block();
+        let block4_recovery = builder2.build_next_block_with_single_transaction();
 
         let span_cfg = BatcherConfig { batch_type: BatchType::Span, ..batcher_cfg };
         let mut source = ActionL2Source::new();
@@ -160,8 +160,8 @@ async fn mixed_singular_and_span_batches_after_delta() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    let block1 = builder.build_next_block();
-    let block2 = builder.build_next_block();
+    let block1 = builder.build_next_block_with_single_transaction();
+    let block2 = builder.build_next_block_with_single_transaction();
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -265,7 +265,7 @@ async fn granite_channel_timeout_enforced() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block();
+    let block = sequencer.build_next_block_with_single_transaction();
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &sequencer,
@@ -412,16 +412,16 @@ async fn jovian_single_batch_transition_block_deposit_only() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    // Build 4 L2 blocks. build_next_block() includes a user transaction in
+    // Build 4 L2 blocks. build_next_block_with_single_transaction() includes a user transaction in
     // every block. Block 3 (ts=6) is the first Jovian block — including a
     // user tx is the deliberate error that derivation must handle.
-    let block1 = builder.build_next_block(); // ts=2
-    let block2 = builder.build_next_block(); // ts=4
-    let block3_invalid = builder.build_next_block(); // ts=6
-    let block4 = builder.build_next_block(); // ts=8
+    let block1 = builder.build_next_block_with_single_transaction(); // ts=2
+    let block2 = builder.build_next_block_with_single_transaction(); // ts=4
+    let block3_invalid = builder.build_next_block_with_single_transaction(); // ts=6
+    let block4 = builder.build_next_block_with_single_transaction(); // ts=8
 
     // Precondition: block 3 must contain at least one user transaction (deposits
-    // don't count). If build_next_block() ever started returning empty blocks,
+    // don't count). If build_next_block_with_single_transaction() ever started returning empty blocks,
     // this test would silently stop exercising the NonEmptyTransitionBlock path.
     assert!(
         block3_invalid.body.transactions.len() > 1,

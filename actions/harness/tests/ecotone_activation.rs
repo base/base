@@ -45,7 +45,7 @@ fn ecotone_l1_info_format_transitions_at_activation() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     // Block 1: ts=2 — pre-Ecotone. Expect Bedrock format.
-    let block1 = builder.build_next_block();
+    let block1 = builder.build_next_block_with_single_transaction();
     let info1 = ActionTestHarness::l1_info_from_block(&block1);
     assert!(
         matches!(info1, L1BlockInfoTx::Bedrock(_)),
@@ -53,7 +53,7 @@ fn ecotone_l1_info_format_transitions_at_activation() {
     );
 
     // Block 2: ts=4 — still pre-Ecotone. Expect Bedrock format.
-    let block2 = builder.build_next_block();
+    let block2 = builder.build_next_block_with_single_transaction();
     let info2 = ActionTestHarness::l1_info_from_block(&block2);
     assert!(
         matches!(info2, L1BlockInfoTx::Bedrock(_)),
@@ -73,7 +73,7 @@ fn ecotone_l1_info_format_transitions_at_activation() {
 
     // Block 4: ts=8 — second Ecotone block. L1Block contract now upgraded.
     // Sequencer sends Ecotone-format L1 info tx.
-    let block4 = builder.build_next_block();
+    let block4 = builder.build_next_block_with_single_transaction();
     let info4 = ActionTestHarness::l1_info_from_block(&block4);
     assert!(
         matches!(info4, L1BlockInfoTx::Ecotone(_)),
@@ -130,14 +130,14 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
 
     // Blocks 1 and 2: pre-Ecotone, user txs OK.
     for _ in 1..=2u64 {
-        batcher.push_block(builder.build_next_block());
+        batcher.push_block(builder.build_next_block_with_single_transaction());
         batcher.advance(&mut h.l1).await;
     }
 
     // Block 3 at ts=6 (first Ecotone): build WITH a user tx. Unlike Jovian,
     // Ecotone has no NonEmptyTransitionBlock batch check, so this batch is
     // accepted and block 3 is NOT deposit-only.
-    let block3_with_user_tx = builder.build_next_block();
+    let block3_with_user_tx = builder.build_next_block_with_single_transaction();
     assert_eq!(
         block3_with_user_tx.header.timestamp, ecotone_time,
         "block 3 must land exactly at ecotone_time"
@@ -146,7 +146,7 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
     batcher.advance(&mut h.l1).await;
 
     // Block 4: post-Ecotone, user txs OK.
-    batcher.push_block(builder.build_next_block());
+    batcher.push_block(builder.build_next_block_with_single_transaction());
     batcher.advance(&mut h.l1).await;
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -221,7 +221,7 @@ async fn ecotone_derivation_crosses_activation_boundary() {
             // the pipeline prepends the Ecotone upgrade transactions here.
             builder.build_empty_block()
         } else {
-            builder.build_next_block()
+            builder.build_next_block_with_single_transaction()
         };
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;

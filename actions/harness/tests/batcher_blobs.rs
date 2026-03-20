@@ -23,7 +23,7 @@ async fn batcher_blob_da_end_to_end() {
     // One block per L1 inclusion block.
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 1..=3u64 {
-        batcher.push_block(sequencer.build_next_block());
+        batcher.push_block(sequencer.build_next_block_with_single_transaction());
         batcher.advance(&mut h.l1).await;
     }
 
@@ -59,7 +59,7 @@ async fn batcher_multi_blob_packing() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block();
+    let block = sequencer.build_next_block_with_single_transaction();
 
     let mut source = ActionL2Source::new();
     source.push(block);
@@ -108,7 +108,7 @@ async fn batcher_calldata_da() {
     // One block per L1 inclusion block.
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 1..=3u64 {
-        batcher.push_block(sequencer.build_next_block());
+        batcher.push_block(sequencer.build_next_block_with_single_transaction());
         batcher.advance(&mut h.l1).await;
     }
 
@@ -151,14 +151,14 @@ async fn batcher_da_switching() {
     let mut calldata_batcher =
         Batcher::new(ActionL2Source::new(), &h.rollup_config, calldata_cfg.clone());
     for _ in 1..=3u64 {
-        calldata_batcher.push_block(sequencer.build_next_block());
+        calldata_batcher.push_block(sequencer.build_next_block_with_single_transaction());
         calldata_batcher.advance(&mut h.l1).await;
     }
 
     // Blocks 4-6: submit as blobs.
     let mut blob_batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, blob_cfg.clone());
     for _ in 4..=6u64 {
-        blob_batcher.push_block(sequencer.build_next_block());
+        blob_batcher.push_block(sequencer.build_next_block_with_single_transaction());
         blob_batcher.advance(&mut h.l1).await;
     }
 
@@ -212,7 +212,7 @@ async fn blob_da_channel_timeout() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block();
+    let block = sequencer.build_next_block_with_single_transaction();
 
     // Encode the L2 block into multiple frames (tiny max_frame_size).
     let mut source = ActionL2Source::new();
