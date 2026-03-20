@@ -347,7 +347,7 @@ mod tests {
     };
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
 
-    use crate::{BASE_MAINNET, BASE_SEPOLIA, OpChainSpec, OpChainSpecBuilder};
+    use crate::{BASE_MAINNET, BASE_SEPOLIA, BASE_ZERONET, OpChainSpec, OpChainSpecBuilder};
 
     #[test]
     fn test_storage_root_consistency() {
@@ -531,6 +531,15 @@ mod tests {
         );
         let base_fee = BASE_SEPOLIA.next_block_base_fee(genesis, genesis.timestamp).unwrap();
         assert_eq!(base_fee, 980000000);
+    }
+
+    #[test]
+    fn base_zeronet_genesis() {
+        let genesis = BASE_ZERONET.genesis_header();
+        assert_eq!(
+            genesis.hash_slow(),
+            b256!("0x1842d6ef4c40e2a4794458e167f6d327269df919b626979111c37ad3a96047bf")
+        );
     }
 
     #[test]
