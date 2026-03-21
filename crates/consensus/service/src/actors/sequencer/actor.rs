@@ -25,7 +25,10 @@ use crate::{
             build::{PayloadBuilder, UnsealedPayloadHandle},
             conductor::Conductor,
             error::SequencerActorError,
-            metrics::{update_seal_duration_metrics, update_total_transactions_sequenced},
+            metrics::{
+                inc_seal_error, inc_seal_pipeline_overlap, update_seal_duration_metrics,
+                update_total_transactions_sequenced,
+            },
             origin_selector::OriginSelector,
             recovery::RecoveryModeGuard,
             seal::PayloadSealer,
@@ -186,6 +189,7 @@ where
                     if let Some(handle) = next_payload_to_seal.take() {
                         if self.sealer.is_some() {
                             error!(target: "sequencer", "Seal pipeline did not complete before next block was sealed");
+                            inc_seal_pipeline_overlap();
                             self.sealer = None;
                         }
 
@@ -198,9 +202,12 @@ where
                             Err(SequencerActorError::EngineError(EngineClientError::SealError(err))) => {
                                 if err.is_fatal() {
                                     error!(target: "sequencer", error = ?err, "Critical seal task error occurred");
+                                    inc_seal_error(true);
                                     self.cancellation_token.cancel();
                                     return Err(SequencerActorError::EngineError(EngineClientError::SealError(err)));
                                 }
+                                warn!(target: "sequencer", error = ?err, "Non-fatal seal error, dropping block");
+                                inc_seal_error(false);
                             }
                             Err(other_err) => {
                                 error!(target: "sequencer", error = ?other_err, "Unexpected error sealing payload");
@@ -246,7 +253,8 @@ where
                         }
                         Ok(false) => {}
                         Err(err) => {
-                            warn!(target: "sequencer", error = ?err, "Seal step failed, will retry");
+                            let step = self.sealer.as_ref().map(|s| s.state.label()).unwrap_or("unknown");
+                            warn!(target: "sequencer", error = ?err, step, "Seal step failed, will retry");
                         }
                     }
                 }

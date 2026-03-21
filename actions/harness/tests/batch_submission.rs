@@ -87,7 +87,7 @@ async fn batcher_reorg_during_submission() {
     // Build L2 block 1.
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block();
+    let block = sequencer.build_next_block_with_single_transaction();
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &sequencer,

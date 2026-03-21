@@ -62,7 +62,7 @@ async fn holocene_derivation_crosses_activation_boundary() {
     // so user txs are valid in all blocks including block 3.
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 1..=4u64 {
-        batcher.push_block(builder.build_next_block());
+        batcher.push_block(builder.build_next_block_with_single_transaction());
         batcher.advance(&mut h.l1).await;
         chain.push(h.l1.tip().clone());
     }
@@ -129,7 +129,7 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block();
+    let block = sequencer.build_next_block_with_single_transaction();
 
     // Encode the block into frames without mining.
     let mut source = ActionL2Source::new();
@@ -236,8 +236,8 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
-    let block_a = sequencer.build_next_block();
-    let block_b = sequencer.build_next_block();
+    let block_a = sequencer.build_next_block_with_single_transaction();
+    let block_b = sequencer.build_next_block_with_single_transaction();
 
     // Encode channel A (block A) and channel B (block B) separately.
     // Each Batcher instance generates a distinct random channel ID.
@@ -348,7 +348,7 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block();
+    let block = sequencer.build_next_block_with_single_transaction();
 
     // Encode the block into frames without mining.
     let mut source = ActionL2Source::new();
@@ -405,7 +405,7 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
     // -- Recovery: new Batcher (new channel ID) re-submits all frames in order.
     // `block` was cloned into `source` above (line 372), so the original value
     // is still valid here — same L2 block 1 with the same transactions and
-    // timestamp. The sequencer has not advanced since build_next_block().
+    // timestamp. The sequencer has not advanced since build_next_block_with_single_transaction().
     let mut recovery_source = ActionL2Source::new();
     recovery_source.push(block);
     let mut batcher2 = Batcher::new(recovery_source, &h.rollup_config, batcher_cfg.clone());

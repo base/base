@@ -5,11 +5,13 @@ use std::{
 
 use alloy_consensus::{Header, SignableTransaction};
 use alloy_eips::BlockNumHash;
+use alloy_hardforks::ForkCondition;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{EMPTY_ROOT_HASH, TrieAccount, root::state_root_unhashed};
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
+use base_alloy_upgrades::BaseUpgrade;
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_execution_chainspec::OpChainSpecBuilder;
 use base_execution_evm::OpEvmConfig;
@@ -42,6 +44,83 @@ pub const TEST_ACCOUNT_ADDRESS: Address =
 
 /// Initial balance for the test account (1 ETH).
 const TEST_ACCOUNT_BALANCE: U256 = U256::from_limbs([1_000_000_000_000_000_000u64, 0, 0, 0]);
+
+/// A test account with nonce tracking and signing capability.
+///
+/// Wraps a [`PrivateKeySigner`] with an auto-incrementing nonce so callers
+/// can build correctly-sequenced signed transactions without manual bookkeeping.
+/// Shared via [`Arc`] so the sequencer and external test code stay in sync.
+#[derive(Debug)]
+pub struct TestAccount {
+    signer: PrivateKeySigner,
+    nonce: u64,
+}
+
+impl TestAccount {
+    /// Create a new test account from a private key with nonce starting at 0.
+    pub fn new(key: B256) -> Self {
+        let signer = PrivateKeySigner::from_bytes(&key).expect("valid key");
+        Self { signer, nonce: 0 }
+    }
+
+    /// Return the address derived from this account's private key.
+    pub const fn address(&self) -> Address {
+        self.signer.address()
+    }
+
+    /// Sign a pre-built EIP-1559 transaction without modifying the nonce.
+    ///
+    /// The caller is responsible for setting the correct nonce in the
+    /// transaction fields before calling this method.
+    pub fn sign_tx(
+        &mut self,
+        tx: alloy_consensus::TxEip1559,
+    ) -> Result<OpTxEnvelope, alloy_signer::Error> {
+        let sig = self.signer.sign_hash_sync(&tx.signature_hash())?;
+        Ok(OpTxEnvelope::Eip1559(tx.into_signed(sig)))
+    }
+
+    /// Creates and signs a minimal EIP-1559 transfer, auto-incrementing the nonce.
+    pub fn create_eip1559_tx(&mut self, chain_id: u64) -> OpTxEnvelope {
+        self.create_tx(chain_id, TxKind::Call(Address::ZERO), Bytes::new(), U256::from(1), 21_000)
+    }
+
+    /// Creates and signs a custom EIP-1559 transaction, auto-incrementing the nonce.
+    ///
+    /// The caller provides the destination, calldata, value, and gas limit.
+    /// Chain-level fields (`chain_id`, `nonce`, fee caps) are filled in automatically.
+    pub fn create_tx(
+        &mut self,
+        chain_id: u64,
+        to: TxKind,
+        input: Bytes,
+        value: U256,
+        gas_limit: u64,
+    ) -> OpTxEnvelope {
+        let tx = alloy_consensus::TxEip1559 {
+            chain_id,
+            nonce: self.nonce,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 1_000_000,
+            gas_limit,
+            to,
+            value,
+            input,
+            access_list: Default::default(),
+        };
+        let sig = self
+            .signer
+            .sign_hash_sync(&tx.signature_hash())
+            .expect("test account signing must not fail");
+        self.nonce += 1;
+        OpTxEnvelope::Eip1559(tx.into_signed(sig))
+    }
+
+    /// Return the current nonce.
+    pub const fn nonce(&self) -> u64 {
+        self.nonce
+    }
+}
 
 /// Error type returned by [`L2Sequencer`].
 #[derive(Debug, thiserror::Error)]
@@ -155,12 +234,8 @@ pub struct L2Sequencer {
     l1_chain_config: L1ChainConfig,
     /// Current system config (updated on epoch changes or key rotation).
     system_config: SystemConfig,
-    /// Signer for user transactions.
-    signer: PrivateKeySigner,
-    /// Number of user EIP-1559 transactions to include per block.
-    user_txs_per_block: usize,
-    /// Per-account nonce for the test signer.
-    nonce: u64,
+    /// Test account used for signing user transactions.
+    test_account: Arc<Mutex<TestAccount>>,
     /// In-memory EVM database carrying state across blocks.
     db: InMemoryDB,
     /// Optional pinned L1 origin. When set, epoch selection is bypassed and
@@ -178,8 +253,7 @@ impl L2Sequencer {
         rollup_config: RollupConfig,
         system_config: SystemConfig,
     ) -> Self {
-        let signer = PrivateKeySigner::from_bytes(&TEST_ACCOUNT_KEY)
-            .expect("TEST_ACCOUNT_KEY is a valid secp256k1 scalar");
+        let test_account = Arc::new(Mutex::new(TestAccount::new(TEST_ACCOUNT_KEY)));
 
         let mut db = InMemoryDB::default();
         db.insert_account_info(
@@ -193,24 +267,32 @@ impl L2Sequencer {
             rollup_config,
             l1_chain_config: L1ChainConfig::default(),
             system_config,
-            signer,
-            user_txs_per_block: 1,
-            nonce: 0,
+            test_account,
             db,
             l1_origin_pin: None,
             block_hashes: SharedBlockHashRegistry::new(),
         }
     }
 
-    /// Set the number of signed user transactions included per block.
-    pub const fn with_user_txs_per_block(mut self, n: usize) -> Self {
-        self.user_txs_per_block = n;
-        self
-    }
-
     /// Return the current unsafe L2 head.
     pub const fn head(&self) -> L2BlockInfo {
         self.head
+    }
+
+    /// Return a shared handle to the sequencer's test account.
+    ///
+    /// External test code can use this to build signed transactions with
+    /// correct nonce tracking, independent of the sequencer.
+    pub fn test_account(&self) -> Arc<Mutex<TestAccount>> {
+        Arc::clone(&self.test_account)
+    }
+
+    /// Returns a reference to the sequencer's in-memory EVM database.
+    ///
+    /// Callers can inspect account state and storage written by executed
+    /// transactions.
+    pub const fn db(&self) -> &InMemoryDB {
+        &self.db
     }
 
     /// Return the sequencer's shared block-hash registry.
@@ -246,11 +328,16 @@ impl L2Sequencer {
     ///
     /// [`build_next_block`]: L2Sequencer::build_next_block
     pub fn build_empty_block(&mut self) -> OpBlock {
-        let saved = self.user_txs_per_block;
-        self.user_txs_per_block = 0;
-        let result = self.build_next_block();
-        self.user_txs_per_block = saved;
-        result
+        self.build_next_block_with_transactions(vec![])
+    }
+
+    /// Build the next L2 block with a single transaction.
+    pub fn build_next_block_with_single_transaction(&mut self) -> OpBlock {
+        let tx = {
+            let mut account = self.test_account.lock().expect("test account lock poisoned");
+            account.create_eip1559_tx(self.rollup_config.l2_chain_id.id())
+        };
+        self.build_next_block_with_transactions(vec![tx])
     }
 
     /// Build the next L2 block and advance the internal head.
@@ -265,8 +352,11 @@ impl L2Sequencer {
     /// the error.
     ///
     /// [`try_build_next_block`]: L2Sequencer::try_build_next_block
-    pub fn build_next_block(&mut self) -> OpBlock {
-        self.try_build_next_block()
+    pub fn build_next_block_with_transactions(
+        &mut self,
+        transactions: Vec<OpTxEnvelope>,
+    ) -> OpBlock {
+        self.try_build_next_block_with_transactions(transactions)
             .unwrap_or_else(|e| panic!("L2Sequencer::build_next_block failed: {e}"))
     }
 
@@ -276,7 +366,11 @@ impl L2Sequencer {
     /// callers that need to inspect the failure reason.
     ///
     /// [`build_next_block`]: L2Sequencer::build_next_block
-    pub fn try_build_next_block(&mut self) -> Result<OpBlock, L2SequencerError> {
+    pub fn try_build_next_block_with_transactions(
+        &mut self,
+        transactions: Vec<OpTxEnvelope>,
+    ) -> Result<OpBlock, L2SequencerError> {
+        let mut transactions = transactions;
         let next_number = self.head.block_info.number + 1;
         let next_timestamp = self.head.block_info.timestamp + self.rollup_config.block_time;
         let parent_hash = self.head.block_info.hash;
@@ -320,25 +414,7 @@ impl L2Sequencer {
             next_timestamp,
         )?;
 
-        let mut transactions: Vec<OpTxEnvelope> = vec![OpTxEnvelope::Deposit(deposit_tx)];
-
-        // Build signed EIP-1559 user transactions.
-        for _ in 0..self.user_txs_per_block {
-            let tx = alloy_consensus::TxEip1559 {
-                chain_id: self.rollup_config.l2_chain_id.id(),
-                nonce: self.nonce,
-                max_fee_per_gas: 1_000_000_000,
-                max_priority_fee_per_gas: 1_000_000,
-                gas_limit: 21_000,
-                to: TxKind::Call(Address::ZERO),
-                value: U256::from(1u64),
-                input: Bytes::new(),
-                access_list: Default::default(),
-            };
-            let sig = self.signer.sign_hash_sync(&tx.signature_hash())?;
-            self.nonce += 1;
-            transactions.push(OpTxEnvelope::Eip1559(tx.into_signed(sig)));
-        }
+        transactions.insert(0, OpTxEnvelope::Deposit(deposit_tx));
 
         // Execute transactions against the in-memory EVM.
         let (state_root, gas_used) =
@@ -387,9 +463,14 @@ impl L2Sequencer {
         timestamp: u64,
         parent_hash: B256,
     ) -> Result<(B256, u64), L2SequencerError> {
-        let chain_spec = Arc::new(
-            OpChainSpecBuilder::base_mainnet().chain(self.rollup_config.l2_chain_id).build(),
-        );
+        let mut spec_builder =
+            OpChainSpecBuilder::base_mainnet().chain(self.rollup_config.l2_chain_id);
+
+        if let Some(ts) = self.rollup_config.hardforks.base.v1 {
+            spec_builder = spec_builder.with_fork(BaseUpgrade::V1, ForkCondition::Timestamp(ts));
+        }
+
+        let chain_spec = Arc::new(spec_builder.build());
         let evm_config = OpEvmConfig::optimism(chain_spec);
 
         let header = Header {
@@ -402,9 +483,11 @@ impl L2Sequencer {
         };
 
         let mut cumulative_gas_used = 0u64;
+        let default_sender =
+            self.test_account.lock().expect("test account lock poisoned").address();
 
         for tx in transactions {
-            let sender = tx_sender(tx, &self.signer);
+            let sender = tx_sender(tx, default_sender);
             let op_tx: OpTransaction<TxEnv> = OpTransaction::from_recovered_tx(tx, sender);
 
             let evm_env =
@@ -429,11 +512,11 @@ impl L2Sequencer {
 /// Determine the sender address for a transaction.
 ///
 /// Deposit transactions carry an explicit `from` field. Signed user
-/// transactions are always from [`TEST_ACCOUNT_ADDRESS`] in this test harness.
-const fn tx_sender(tx: &OpTxEnvelope, signer: &PrivateKeySigner) -> Address {
+/// transactions are always from the given `default_sender` in this test harness.
+const fn tx_sender(tx: &OpTxEnvelope, default_sender: Address) -> Address {
     match tx {
         OpTxEnvelope::Deposit(sealed) => sealed.inner().from,
-        _ => signer.address(),
+        _ => default_sender,
     }
 }
 
@@ -476,6 +559,6 @@ fn compute_state_root(db: &InMemoryDB) -> B256 {
 
 impl L2BlockProvider for L2Sequencer {
     fn next_block(&mut self) -> Option<OpBlock> {
-        Some(self.build_next_block())
+        Some(self.build_next_block_with_single_transaction())
     }
 }

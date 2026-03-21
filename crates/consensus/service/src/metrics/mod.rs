@@ -37,6 +37,27 @@ impl Metrics {
     pub const SEQUENCER_TOTAL_TRANSACTIONS_SEQUENCED: &str =
         "base_node_sequencer_total_transactions_sequenced";
 
+    /// Counter for seal pipeline step retries, labeled by step ("conductor"|"gossip"|"insert").
+    pub const SEQUENCER_SEAL_STEP_RETRIES_TOTAL: &str =
+        "base_node_sequencer_seal_step_retries_total";
+    /// Gauge for seal pipeline step duration, labeled by step.
+    pub const SEQUENCER_SEAL_STEP_DURATION: &str = "base_node_sequencer_seal_step_duration";
+    /// Counter for seal pipeline overlaps (previous not complete when next block tick fires).
+    pub const SEQUENCER_SEAL_PIPELINE_OVERLAP_TOTAL: &str =
+        "base_node_sequencer_seal_pipeline_overlap_total";
+    /// Counter for seal errors labeled by fatal ("true"|"false").
+    pub const SEQUENCER_SEAL_ERROR_TOTAL: &str = "base_node_sequencer_seal_errors_total";
+    /// Counter for sequencer start rejections labeled by reason.
+    pub const SEQUENCER_START_REJECTED_TOTAL: &str = "base_node_sequencer_start_rejected_total";
+    /// Counter for deferred `stop_sequencer` responses due to in-flight seal pipeline.
+    pub const SEQUENCER_STOP_DEFERRED_TOTAL: &str = "base_node_sequencer_stop_deferred_total";
+    /// Counter for blocks sequenced in recovery mode (always empty blocks).
+    pub const SEQUENCER_RECOVERY_MODE_BLOCKS_TOTAL: &str =
+        "base_node_sequencer_recovery_mode_blocks_total";
+    /// Counter for empty blocks produced due to sequencer drift threshold.
+    pub const SEQUENCER_DRIFT_EMPTY_BLOCKS_TOTAL: &str =
+        "base_node_sequencer_drift_empty_blocks_total";
+
     /// Initializes metrics for the node service.
     ///
     /// This does two things:
@@ -96,6 +117,37 @@ impl Metrics {
             metrics::Unit::Count,
             "Total count of sequenced transactions"
         );
+
+        metrics::describe_counter!(
+            Self::SEQUENCER_SEAL_STEP_RETRIES_TOTAL,
+            "Sequencer seal step retries by step"
+        );
+        metrics::describe_gauge!(
+            Self::SEQUENCER_SEAL_STEP_DURATION,
+            metrics::Unit::Seconds,
+            "Sequencer seal step duration by step"
+        );
+        metrics::describe_counter!(
+            Self::SEQUENCER_SEAL_PIPELINE_OVERLAP_TOTAL,
+            "Seal pipeline overlaps: pipeline not complete before next block tick"
+        );
+        metrics::describe_counter!(Self::SEQUENCER_SEAL_ERROR_TOTAL, "Seal errors by fatality");
+        metrics::describe_counter!(
+            Self::SEQUENCER_START_REJECTED_TOTAL,
+            "Sequencer start rejections by reason"
+        );
+        metrics::describe_counter!(
+            Self::SEQUENCER_STOP_DEFERRED_TOTAL,
+            "Deferred stop_sequencer responses due to in-flight seal pipeline"
+        );
+        metrics::describe_counter!(
+            Self::SEQUENCER_RECOVERY_MODE_BLOCKS_TOTAL,
+            "Blocks sequenced in recovery mode"
+        );
+        metrics::describe_counter!(
+            Self::SEQUENCER_DRIFT_EMPTY_BLOCKS_TOTAL,
+            "Empty blocks produced due to sequencer drift threshold"
+        );
     }
 
     /// Initializes metrics to `0` so they can be queried immediately by consumers of prometheus
@@ -110,5 +162,23 @@ impl Metrics {
 
         // Sequencer: reset total transactions sequenced
         base_macros::set!(counter, Self::SEQUENCER_TOTAL_TRANSACTIONS_SEQUENCED, 0);
+
+        base_macros::set!(counter, Self::SEQUENCER_SEAL_STEP_RETRIES_TOTAL, "step", "conductor", 0);
+        base_macros::set!(counter, Self::SEQUENCER_SEAL_STEP_RETRIES_TOTAL, "step", "gossip", 0);
+        base_macros::set!(counter, Self::SEQUENCER_SEAL_STEP_RETRIES_TOTAL, "step", "insert", 0);
+        base_macros::set!(counter, Self::SEQUENCER_SEAL_ERROR_TOTAL, "fatal", "true", 0);
+        base_macros::set!(counter, Self::SEQUENCER_SEAL_ERROR_TOTAL, "fatal", "false", 0);
+        base_macros::set!(counter, Self::SEQUENCER_SEAL_PIPELINE_OVERLAP_TOTAL, 0);
+        base_macros::set!(counter, Self::SEQUENCER_START_REJECTED_TOTAL, "reason", "not_leader", 0);
+        base_macros::set!(
+            counter,
+            Self::SEQUENCER_START_REJECTED_TOTAL,
+            "reason",
+            "leadership_check_failed",
+            0
+        );
+        base_macros::set!(counter, Self::SEQUENCER_STOP_DEFERRED_TOTAL, 0);
+        base_macros::set!(counter, Self::SEQUENCER_RECOVERY_MODE_BLOCKS_TOTAL, 0);
+        base_macros::set!(counter, Self::SEQUENCER_DRIFT_EMPTY_BLOCKS_TOTAL, 0);
     }
 }

@@ -29,7 +29,7 @@ async fn single_l2_block_derived_from_batcher_frame() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
     let mut source = ActionL2Source::new();
-    source.push(builder.build_next_block());
+    source.push(builder.build_next_block_with_single_transaction());
     Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
 
     // Create the verifier AFTER mining so the SharedL1Chain snapshot already
@@ -80,7 +80,7 @@ async fn multiple_l1_blocks_each_derive_one_l2_block() {
 
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 1..=L2_BLOCK_COUNT {
-        batcher.push_block(builder.build_next_block());
+        batcher.push_block(builder.build_next_block_with_single_transaction());
         batcher.advance(&mut h.l1).await;
     }
 
@@ -117,7 +117,7 @@ async fn batch_in_orphaned_l1_block_is_not_derived() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
     let mut source = ActionL2Source::new();
-    source.push(builder.build_next_block());
+    source.push(builder.build_next_block_with_single_transaction());
     Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
 
     // Reorg L1 back to genesis; mine an empty replacement block 1'.
@@ -157,7 +157,7 @@ async fn reorg_reverts_derived_safe_head() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
     let mut source = ActionL2Source::new();
-    source.push(builder.build_next_block());
+    source.push(builder.build_next_block_with_single_transaction());
     Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
 
     // Create the verifier and derive L2 block 1.
@@ -214,7 +214,7 @@ async fn reorg_and_resubmit_rederives_l2_block() {
     // --- Pre-reorg: derive L2 block 1 from L1 block 1. ---
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
-    let block1 = builder.build_next_block();
+    let block1 = builder.build_next_block_with_single_transaction();
 
     {
         let mut source = ActionL2Source::new();
@@ -289,7 +289,7 @@ async fn reorg_flip_flop() {
     // epoch info is the same (all forks reference L1 genesis as epoch 0).
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block1 = sequencer.build_next_block();
+    let block1 = sequencer.build_next_block_with_single_transaction();
 
     // Shared reset helpers — computed once, valid across all forks because
     // genesis is immutable.
@@ -381,8 +381,8 @@ async fn reorg_flip_flop_empty_middle_fork() {
     // and their encoded batch frames are valid on any fork sharing genesis.
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
-    let block1 = builder.build_next_block();
-    let block2 = builder.build_next_block();
+    let block1 = builder.build_next_block_with_single_transaction();
+    let block2 = builder.build_next_block_with_single_transaction();
 
     // Shared reset targets — valid across all forks because genesis is immutable.
     let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis always present"));
@@ -504,7 +504,7 @@ async fn batch_accepted_at_last_seq_window_block() {
     // Build L2 block 1 referencing L1 genesis (epoch 0).
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
-    let block1 = builder.build_next_block();
+    let block1 = builder.build_next_block_with_single_transaction();
 
     // Mine 2 empty L1 blocks (no batch yet).
     h.mine_l1_blocks(2); // blocks 1 and 2
@@ -559,7 +559,7 @@ async fn l1_deposit_included_in_derived_l2_block() {
     // Build L2 block 1 from the sequencer.
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block1 = sequencer.build_next_block();
+    let block1 = sequencer.build_next_block_with_single_transaction();
 
     // Enqueue a user deposit log: from=0xAA..AA, to=0xBB..BB, value=1 ETH, gas=100k.
     h.l1.enqueue_user_deposit(&UserDeposit {
@@ -641,9 +641,9 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     // stay in epoch 0 (genesis ts=0), so the builder picks the same L1 origin.
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
-    let block1 = builder.build_next_block();
-    let block2 = builder.build_next_block();
-    let block3 = builder.build_next_block();
+    let block1 = builder.build_next_block_with_single_transaction();
+    let block2 = builder.build_next_block_with_single_transaction();
+    let block3 = builder.build_next_block_with_single_transaction();
 
     // --- L1 blocks 1-2: batcher A submits → L2 blocks 1-2 derived. ---
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_a.clone());
@@ -729,7 +729,7 @@ async fn multi_l2_per_l1_epoch() {
 
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 1..=L2_COUNT {
-        batcher.push_block(builder.build_next_block());
+        batcher.push_block(builder.build_next_block_with_single_transaction());
         batcher.advance(&mut h.l1).await;
         chain.push(h.l1.tip().clone());
     }
@@ -775,7 +775,7 @@ async fn batch_past_sequence_window_rejected() {
     // Build L2 block 1 (epoch 0).
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
-    let block1 = builder.build_next_block();
+    let block1 = builder.build_next_block_with_single_transaction();
 
     // Mine 2 empty L1 blocks (seq_window=3, so valid inclusion is blocks 1 and 2 only).
     // Batch is valid if inclusion_block < epoch + seq_window = 0 + 3 = 3.
@@ -848,7 +848,7 @@ async fn multi_epoch_sequence() {
 
     let mut blocks = Vec::new();
     for _ in 0..12 {
-        let block = builder.build_next_block();
+        let block = builder.build_next_block_with_single_transaction();
         blocks.push(block);
     }
 
@@ -904,7 +904,7 @@ async fn same_epoch_multi_batch_one_l1_block() {
 
     let mut source = ActionL2Source::new();
     for _ in 1..=3u64 {
-        let block = builder.build_next_block();
+        let block = builder.build_next_block_with_single_transaction();
         source.push(block);
     }
 
@@ -947,7 +947,7 @@ async fn deep_reorg_multi_block() {
     // Build 5 L2 blocks.
     let mut blocks = Vec::new();
     for _ in 0..5 {
-        let block = builder.build_next_block();
+        let block = builder.build_next_block_with_single_transaction();
         blocks.push(block);
     }
 
@@ -1018,7 +1018,7 @@ async fn garbage_frame_data_ignored() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
-    let block = builder.build_next_block();
+    let block = builder.build_next_block_with_single_transaction();
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -1087,7 +1087,7 @@ async fn multi_frame_channel_reassembled() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
-    let block = builder.build_next_block();
+    let block = builder.build_next_block_with_single_transaction();
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -1141,7 +1141,7 @@ async fn single_l2_block_derived_from_span_batch() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let mut source = ActionL2Source::new();
-    source.push(sequencer.build_next_block());
+    source.push(sequencer.build_next_block_with_single_transaction());
     Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
@@ -1177,7 +1177,7 @@ async fn three_l2_blocks_derived_from_span_batch() {
 
     let mut source = ActionL2Source::new();
     for _ in 1..=3u64 {
-        let block = sequencer.build_next_block();
+        let block = sequencer.build_next_block_with_single_transaction();
         source.push(block);
     }
     Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
@@ -1218,8 +1218,8 @@ async fn gpo_params_change_does_not_disrupt_derivation() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block1 = sequencer.build_next_block();
-    let block2 = sequencer.build_next_block();
+    let block1 = sequencer.build_next_block_with_single_transaction();
+    let block2 = sequencer.build_next_block_with_single_transaction();
 
     // L1 block 1: batch for L2 block 1.
     {
@@ -1274,8 +1274,8 @@ async fn gas_limit_change_does_not_disrupt_derivation() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block1 = sequencer.build_next_block();
-    let block2 = sequencer.build_next_block();
+    let block1 = sequencer.build_next_block_with_single_transaction();
+    let block2 = sequencer.build_next_block_with_single_transaction();
 
     // L1 block 1: batch for L2 block 1.
     {
@@ -1329,7 +1329,7 @@ async fn garbage_payload_silently_ignored_then_valid_batch_derived(
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block();
+    let block = sequencer.build_next_block_with_single_transaction();
 
     // L1 block 1: garbage frame only.
     h.l1.submit_tx(PendingTx {
@@ -1436,8 +1436,8 @@ async fn l2_finalized_advances_via_l1_finalized_signal() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
-    let block1 = sequencer.build_next_block();
-    let block2 = sequencer.build_next_block();
+    let block1 = sequencer.build_next_block_with_single_transaction();
+    let block2 = sequencer.build_next_block_with_single_transaction();
 
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in [block1, block2] {
@@ -1499,7 +1499,7 @@ async fn sequencer_pin_l1_origin_keeps_epoch_and_empty_block() {
     // Build 3 L2 blocks — all must reference epoch 0 even though L1 blocks 1
     // and 2 are available.
     for _ in 0..3 {
-        let _block = sequencer.build_next_block();
+        let _block = sequencer.build_next_block_with_single_transaction();
         assert_eq!(
             sequencer.head().l1_origin.number,
             0,
@@ -1518,7 +1518,7 @@ async fn sequencer_pin_l1_origin_keeps_epoch_and_empty_block() {
 
     // Clear the pin — automatic epoch selection resumes.
     sequencer.clear_l1_origin_pin();
-    let _block = sequencer.build_next_block();
+    let _block = sequencer.build_next_block_with_single_transaction();
     // With block_time=2 and L1 block 1 at ts=12, the first unpinned block's
     // timestamp (current head ts + 2) is well below 12, so the epoch remains
     // at 0. Regardless, we just verify the pin was cleared without error.
@@ -1589,7 +1589,7 @@ async fn derive_chain_from_near_l1_genesis() {
     // Build 2 L2 blocks and batch them into L1 blocks #6 and #7.
     let mut batcher = Batcher::new(ActionL2Source::new(), &rollup_cfg, batcher_cfg.clone());
     for _ in 1..=2u64 {
-        let block = sequencer.build_next_block();
+        let block = sequencer.build_next_block_with_single_transaction();
         // With block_time=2 and L1 block 6 at ts=72, L2 block ts < 72
         // so the epoch stays at 5.
         assert_eq!(sequencer.head().l1_origin.number, 5, "epoch should stay at 5");
@@ -1644,7 +1644,7 @@ async fn single_l2_block_derived_from_blob() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
     let mut source = ActionL2Source::new();
-    source.push(builder.build_next_block());
+    source.push(builder.build_next_block_with_single_transaction());
     Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
 
     // Create the blob verifier AFTER mining so the snapshot contains the blob.
@@ -1676,7 +1676,7 @@ async fn multiple_l2_blocks_derived_from_blob() {
 
     let mut source = ActionL2Source::new();
     for _ in 1..=L2_BLOCK_COUNT {
-        source.push(builder.build_next_block());
+        source.push(builder.build_next_block_with_single_transaction());
     }
 
     // Encode all 3 blocks into a single blob channel and mine.
@@ -1736,9 +1736,9 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     // Build L2 blocks 1, 2, 3 upfront from the L1 genesis state.
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
-    let block1 = builder.build_next_block();
-    let block2 = builder.build_next_block();
-    let block3 = builder.build_next_block();
+    let block1 = builder.build_next_block_with_single_transaction();
+    let block2 = builder.build_next_block_with_single_transaction();
+    let block3 = builder.build_next_block_with_single_transaction();
 
     // Clone blocks for resubmission on the new fork after reorg.
     let block1_clone = block1.clone();
@@ -1854,8 +1854,8 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     // Build 2 L2 blocks in epoch 0 (both reference L1 genesis as L1 origin).
-    let block1 = builder.build_next_block();
-    let block2 = builder.build_next_block();
+    let block1 = builder.build_next_block_with_single_transaction();
+    let block2 = builder.build_next_block_with_single_transaction();
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -1942,7 +1942,7 @@ async fn pipeline_idle_before_l1_signal_derives_after() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
-    let block1 = builder.build_next_block();
+    let block1 = builder.build_next_block_with_single_transaction();
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -2006,8 +2006,8 @@ async fn pipeline_l1_origin_advance_observable_after_epoch_exhausted() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     // Build 2 L2 blocks and submit them in a single L1 channel (same L1 block).
-    let block1 = builder.build_next_block();
-    let block2 = builder.build_next_block();
+    let block1 = builder.build_next_block_with_single_transaction();
+    let block2 = builder.build_next_block_with_single_transaction();
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -2097,7 +2097,7 @@ async fn span_batch_crossing_l1_epoch_boundary() {
     // Blocks 1–5 (ts=2..10) reference epoch 0; block 6 (ts=12) references epoch 1.
     let mut source = ActionL2Source::new();
     for _ in 1..=6u64 {
-        source.push(builder.build_next_block());
+        source.push(builder.build_next_block_with_single_transaction());
     }
     assert_eq!(builder.head().l1_origin.number, 1, "block 6 must reference epoch 1");
 
@@ -2159,8 +2159,8 @@ async fn out_of_order_span_batches_reordered_by_batch_queue() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    let block1 = builder.build_next_block();
-    let block2 = builder.build_next_block();
+    let block1 = builder.build_next_block_with_single_transaction();
+    let block2 = builder.build_next_block_with_single_transaction();
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &builder,
@@ -2245,8 +2245,8 @@ async fn large_l1_gaps_within_sequence_window() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     // Build 2 L2 blocks in epoch 0 (both reference L1 genesis as their origin).
-    let block1 = builder.build_next_block();
-    let block2 = builder.build_next_block();
+    let block1 = builder.build_next_block_with_single_transaction();
+    let block2 = builder.build_next_block_with_single_transaction();
 
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
         &builder,

@@ -3,7 +3,10 @@ use base_consensus_derive::AttributesBuilder;
 use base_consensus_rpc::SequencerAdminAPIError;
 use tokio::sync::oneshot;
 
-use super::SequencerActor;
+use super::{
+    SequencerActor,
+    metrics::{inc_start_rejected, inc_stop_deferred},
+};
 use crate::{Conductor, OriginSelector, SequencerEngineClient, UnsafePayloadGossipClient};
 
 /// The query types to the sequencer actor for the admin api.
@@ -131,10 +134,12 @@ where
                 Ok(true) => {}
                 Ok(false) => {
                     warn!(target: "sequencer", "Not the conductor leader, refusing to start sequencer");
+                    inc_start_rejected("not_leader");
                     return Err(SequencerAdminAPIError::NotLeader);
                 }
                 Err(err) => {
                     error!(target: "sequencer", error = %err, "Failed to check conductor leadership");
+                    inc_start_rejected("leadership_check_failed");
                     return Err(SequencerAdminAPIError::RequestError(err.to_string()));
                 }
             }
@@ -163,6 +168,7 @@ where
 
         if self.sealer.is_some() {
             info!(target: "sequencer", "Seal pipeline in-flight, deferring stop response");
+            inc_stop_deferred();
             self.pending_stop = Some(tx);
         } else {
             let result = self.resolve_stop_head().await;

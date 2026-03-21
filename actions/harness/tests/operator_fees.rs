@@ -40,7 +40,7 @@ fn operator_fee_not_encoded_before_isthmus() {
         let mut builder = h.create_l2_sequencer(l1_chain);
 
         // Build one block and verify it uses the Ecotone format with zero operator fees.
-        let block = builder.build_next_block();
+        let block = builder.build_next_block_with_single_transaction();
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
@@ -91,7 +91,7 @@ fn operator_fee_encoded_in_l1_info_from_isthmus_onward() {
 
         // Build one block and verify it uses the active post-Isthmus format with
         // the configured operator fee params.
-        let block = builder.build_next_block();
+        let block = builder.build_next_block_with_single_transaction();
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         let expected_format = matches!(
@@ -153,7 +153,7 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
 
     // Stage 1: Blocks 1-2 (ts=2, 4) — pre-Isthmus → Ecotone format, zero operator fees.
     for i in 1u64..=2 {
-        let block = builder.build_next_block();
+        let block = builder.build_next_block_with_single_transaction();
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
@@ -170,7 +170,7 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
     // the upgrade deposit transactions land in the same block to upgrade the
     // L1Block contract, enabling the Isthmus format from block 4 onwards.
     {
-        let block = builder.build_next_block();
+        let block = builder.build_next_block_with_single_transaction();
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
@@ -191,7 +191,7 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
 
     // Stage 3: Block 4 (ts=8) — second Isthmus block, Isthmus format, fees active.
     {
-        let block = builder.build_next_block();
+        let block = builder.build_next_block_with_single_transaction();
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
@@ -254,7 +254,7 @@ fn l1_info_format_transitions_at_jovian_boundary() {
 
     // Stage 1: Blocks 1-2 (ts=2, 4) — Isthmus active, Jovian not yet → Isthmus format.
     for i in 1u64..=2 {
-        let block = builder.build_next_block();
+        let block = builder.build_next_block_with_single_transaction();
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
@@ -285,7 +285,7 @@ fn l1_info_format_transitions_at_jovian_boundary() {
     // The operator fee scalar and constant are unchanged; only the EVM formula
     // differs (gas * scalar * 100 vs gas * scalar / 1_000_000 for Isthmus).
     {
-        let block = builder.build_next_block();
+        let block = builder.build_next_block_with_single_transaction();
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
@@ -362,7 +362,7 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 0..4u64 {
         // All blocks carry user transactions — Isthmus allows user txs at transition.
-        batcher.push_block(builder.build_next_block());
+        batcher.push_block(builder.build_next_block_with_single_transaction());
         batcher.advance(&mut h.l1).await;
     }
 
@@ -438,7 +438,7 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     // non-empty batch for that slot with NonEmptyTransitionBlock.
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 1u64..=3 {
-        batcher.push_block(builder.build_next_block());
+        batcher.push_block(builder.build_next_block_with_single_transaction());
         batcher.advance(&mut h.l1).await;
     }
 
@@ -571,12 +571,12 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
     // L2 blocks 1–5 (ts=2,4,6,8,10): epoch 0, OLD config.
     let mut epoch0_blocks: Vec<base_alloy_consensus::OpBlock> = Vec::new();
     for _ in 0..5 {
-        let block = sequencer.build_next_block();
+        let block = sequencer.build_next_block_with_single_transaction();
         epoch0_blocks.push(block);
     }
 
     // L2 block 6 (ts=12): epoch 1, epoch change — NEW config from L1 block 1's receipts.
-    let block6 = sequencer.build_next_block();
+    let block6 = sequencer.build_next_block_with_single_transaction();
 
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..batcher_cfg.encoder.clone() },

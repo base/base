@@ -3,11 +3,19 @@
 //! Tracks a sealed payload through the commit → gossip → insert pipeline,
 //! retrying the current step on failure without rebuilding the payload.
 
+use std::time::Instant;
+
 use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 
 use crate::{
     UnsafePayloadGossipClient,
-    actors::{SequencerEngineClient, sequencer::conductor::Conductor},
+    actors::{
+        SequencerEngineClient,
+        sequencer::{
+            conductor::Conductor,
+            metrics::{inc_seal_step_retry, update_seal_step_duration},
+        },
+    },
 };
 
 /// Tracks where a sealed payload is in the commit → gossip → insert pipeline.
@@ -19,6 +27,17 @@ pub enum SealState {
     Committed,
     /// Gossiped to peers. Ready for engine insertion.
     Gossiped,
+}
+
+impl SealState {
+    /// Returns a static label string for metrics (matches the metric label values).
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Sealed => "conductor",
+            Self::Committed => "gossip",
+            Self::Gossiped => "insert",
+        }
+    }
 }
 
 /// Drives a sealed payload through the commit → gossip → insert pipeline.
@@ -59,7 +78,10 @@ impl PayloadSealer {
         G: UnsafePayloadGossipClient,
         E: SequencerEngineClient,
     {
-        match self.state {
+        let step_label = self.state.label();
+        let step_start = Instant::now();
+
+        let result = match self.state {
             SealState::Sealed => {
                 if let Some(conductor) = conductor {
                     conductor
@@ -85,7 +107,14 @@ impl PayloadSealer {
                     .map_err(SealStepError::Insert)?;
                 Ok(true)
             }
+        };
+
+        match &result {
+            Ok(_) => update_seal_step_duration(step_label, step_start.elapsed()),
+            Err(_) => inc_seal_step_retry(step_label),
         }
+
+        result
     }
 }
 

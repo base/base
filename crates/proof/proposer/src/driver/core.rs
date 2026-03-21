@@ -293,9 +293,7 @@ where
         };
 
         info!(
-            starting_block = starting_block_number,
-            target_block,
-            l1_head = ?l1_head.hash,
+            request = ?request,
             "Sending proof request to prover"
         );
 
@@ -310,6 +308,21 @@ where
                 ));
             }
         };
+
+        debug!(
+            output_root = ?aggregate_proposal.output_root,
+            l2_block_number = ?aggregate_proposal.l2_block_number,
+            l1_origin_number = ?aggregate_proposal.l1_origin_number,
+            l1_origin_hash = ?aggregate_proposal.l1_origin_hash,
+            prev_output_root = ?aggregate_proposal.prev_output_root,
+            "Received aggregate proposal from TEE prover"
+        );
+
+        debug!(
+            count = proposals.len(),
+            proposals = ?proposals.iter().map(|p| (p.l2_block_number, p.output_root)).collect::<Vec<_>>(),
+            "Received per-block proposals from TEE prover"
+        );
 
         // Reorg detection: verify the claimed output root matches the canonical chain.
         let canonical_output =
@@ -427,7 +440,7 @@ where
                     );
                 } else {
                     warn!(
-                        error = %e,
+                        error = ?e,
                         l2_block_number,
                         "Failed to create dispute game"
                     );

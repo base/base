@@ -14,7 +14,7 @@ pub use miner::{
 mod l2;
 pub use l2::{
     ActionL2Source, L2Sequencer, L2SequencerError, SharedBlockHashRegistry, TEST_ACCOUNT_ADDRESS,
-    TEST_ACCOUNT_KEY,
+    TEST_ACCOUNT_KEY, TestAccount,
 };
 
 mod harness;

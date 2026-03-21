@@ -6,6 +6,8 @@ use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_consensus_genesis::RollupConfig;
 use base_protocol::BlockInfo;
 
+use super::metrics::{inc_drift_empty_block, inc_recovery_mode_block};
+
 /// The `PoolActivation` type identifies if the transaction pool should be enabled.
 #[derive(Debug, Clone)]
 pub struct PoolActivation {
@@ -29,6 +31,7 @@ impl PoolActivation {
     ) -> bool {
         if recovery_mode {
             warn!(target: "sequencer", "Sequencer is in recovery mode, producing empty block");
+            inc_recovery_mode_block();
             return false;
         }
 
@@ -37,6 +40,13 @@ impl PoolActivation {
         if attributes.payload_attributes.timestamp
             > l1_origin.timestamp + self.rollup_config.max_sequencer_drift(l1_origin.timestamp)
         {
+            warn!(
+                target: "sequencer",
+                l2_timestamp = attributes.payload_attributes.timestamp,
+                l1_timestamp = l1_origin.timestamp,
+                "L2 timestamp beyond sequencer drift, producing empty block"
+            );
+            inc_drift_empty_block();
             return false;
         }
 

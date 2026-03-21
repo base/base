@@ -16,15 +16,9 @@ alloy-eips = { workspace = true, features = ["serde"] }
 alloy-consensus = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 
-# Base Alloy
-base-alloy-consensus = { workspace = true, features = ["serde"] }
-
 # Proof
 base-proof-primitives = { workspace = true, features = ["serde"] }
 base-consensus-genesis = { workspace = true, features = ["serde"] }
-
-# Consensus
-base-protocol = { workspace = true, features = ["serde"] }
 
 # Misc
 thiserror.workspace = true

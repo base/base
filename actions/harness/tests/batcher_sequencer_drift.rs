@@ -80,7 +80,7 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
     // Collect all 8 blocks and batch them in one L1 block.
     let mut source = ActionL2Source::new();
     for _ in 1u64..=8 {
-        source.push(sequencer.build_next_block());
+        source.push(sequencer.build_next_block_with_single_transaction());
     }
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.advance(&mut h.l1).await;
@@ -166,7 +166,7 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
     // (over drift, ts=2100, 2400). block_time=300 s, max_drift=1800 s.
     let mut source = ActionL2Source::new();
     for _ in 1u64..=6 {
-        source.push(sequencer.build_next_block());
+        source.push(sequencer.build_next_block_with_single_transaction());
     }
     // Build empty blocks past the drift boundary. The empty block has only
     // the deposit tx — the batcher encodes it but the pipeline drops it

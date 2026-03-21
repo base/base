@@ -88,7 +88,7 @@ impl ActionTestHarness {
     ///
     /// The returned sequencer generates real [`OpBlock`]s with a proper
     /// L1-info deposit transaction (first tx) and signed EIP-1559 user
-    /// transactions. Call `build_next_block()` once per L2 block to advance
+    /// transactions. Call `build_next_block_with_single_transaction()` once per L2 block to advance
     /// the sequencer.
     ///
     /// After mining new L1 blocks, push them to the [`SharedL1Chain`] returned
@@ -143,7 +143,7 @@ impl ActionTestHarness {
         let mut sequencer = self.create_l2_sequencer(chain);
         let mut source = ActionL2Source::new();
         for _ in 0..n {
-            source.push(sequencer.build_next_block());
+            source.push(sequencer.build_next_block_with_single_transaction());
         }
         source
     }

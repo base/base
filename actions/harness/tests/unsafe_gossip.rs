@@ -29,7 +29,7 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let mut blocks = Vec::with_capacity(L2_BLOCK_COUNT as usize);
     for _ in 0..L2_BLOCK_COUNT {
-        blocks.push(sequencer.build_next_block());
+        blocks.push(sequencer.build_next_block_with_single_transaction());
     }
 
     // Create the verifier before any mining so chain updates are visible.
@@ -102,9 +102,9 @@ async fn test_out_of_order_gossip_is_dropped() {
     // Build 3 sequential L2 blocks (we will inject block 3 first, skipping 1 & 2).
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block1 = sequencer.build_next_block();
-    let _block2 = sequencer.build_next_block();
-    let block3 = sequencer.build_next_block();
+    let block1 = sequencer.build_next_block_with_single_transaction();
+    let _block2 = sequencer.build_next_block_with_single_transaction();
+    let block3 = sequencer.build_next_block_with_single_transaction();
 
     let (mut verifier, _chain) = h.create_verifier_from_sequencer(
         &sequencer,

@@ -130,6 +130,7 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
             l2_block_number,
             factory = %self.factory_address,
             game_type = self.game_type,
+            calldata = %calldata,
             parent_index,
             "Creating dispute game"
         );
@@ -140,6 +141,11 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
             value: self.init_bond,
             ..Default::default()
         };
+
+        info!(
+            tx = ?candidate,
+            "Sending tx candidate",
+        );
 
         let receipt = self.tx_manager.send(candidate).await.map_err(classify_tx_manager_error)?;
 

@@ -29,7 +29,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block();
+    let block = sequencer.build_next_block_with_single_transaction();
 
     // Create verifier before any mining so all future blocks are pushed to chain.
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -117,7 +117,7 @@ async fn channel_timeout_recovery_resubmits_successfully() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block();
+    let block = sequencer.build_next_block_with_single_transaction();
 
     // Create verifier before any mining so all future blocks are pushed to chain.
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -198,8 +198,8 @@ async fn interleaved_channels_correctly_reassembled() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block_a = sequencer.build_next_block();
-    let block_b = sequencer.build_next_block();
+    let block_a = sequencer.build_next_block_with_single_transaction();
+    let block_b = sequencer.build_next_block_with_single_transaction();
 
     // Batcher A: block 1 in its own channel (distinct random channel ID).
     let mut source_a = ActionL2Source::new();
@@ -267,7 +267,7 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block();
+    let block = sequencer.build_next_block_with_single_transaction();
 
     // Create verifier before any mining so all future blocks are pushed to chain.
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
@@ -345,7 +345,7 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block();
+    let block = sequencer.build_next_block_with_single_transaction();
 
     // Create verifier before any mining so all future blocks are pushed to chain.
     let (mut verifier, chain) = h.create_verifier_from_sequencer(
