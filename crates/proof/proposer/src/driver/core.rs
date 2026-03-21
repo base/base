@@ -6,7 +6,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient,
 };
@@ -40,6 +40,9 @@ pub struct DriverConfig {
     /// If true, use `safe_l2` (derived from L1 but L1 not yet finalized).
     /// If false (default), use `finalized_l2` (derived from finalized L1).
     pub allow_non_finalized: bool,
+    /// Address of the proposer that submits proof transactions on-chain.
+    /// Included in the proof journal so the enclave signs over the correct `msg.sender`.
+    pub proposer_address: Address,
 }
 
 impl Default for DriverConfig {
@@ -51,6 +54,7 @@ impl Default for DriverConfig {
             init_bond: U256::ZERO,
             game_type: 0,
             allow_non_finalized: false,
+            proposer_address: Address::ZERO,
         }
     }
 }
@@ -290,6 +294,7 @@ where
             agreed_l2_output_root,
             claimed_l2_output_root: claimed_output.output_root,
             claimed_l2_block_number: target_block,
+            proposer: self.config.proposer_address,
         };
 
         info!(

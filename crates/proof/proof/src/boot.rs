@@ -1,7 +1,7 @@
 //! This module contains the prologue phase of the client program, pulling in the boot information
 //! through the `PreimageOracle` ABI as local keys.
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 use base_consensus_registry::Registry;
 use base_proof_preimage::{PreimageKey, PreimageOracleClient};
@@ -57,6 +57,13 @@ pub const L2_ROLLUP_CONFIG_KEY: U256 = U256::from_be_slice(&[6]);
 /// the preimage oracle when no hardcoded configuration is available for the
 /// given chain ID. Oracle-loaded configs require additional validation.
 pub const L1_CONFIG_KEY: U256 = U256::from_be_slice(&[7]);
+
+/// The local key identifier for the proposer address.
+///
+/// This key retrieves the address of the proposer that will submit the proof
+/// transaction on-chain. The enclave includes this address in the proof journal
+/// so on-chain verification can match it against the actual `msg.sender`.
+pub const PROPOSER_KEY: U256 = U256::from_be_slice(&[8]);
 
 /// The boot information for the client program.
 ///
@@ -132,6 +139,15 @@ pub struct BootInfo {
     ///
     /// **Security**: Loaded from registry (secure) or oracle (requires validation).
     pub l1_config: L1ChainConfig,
+    /// The proposer address that will submit the proof transaction on-chain.
+    ///
+    /// Included in the proof journal so on-chain verification can match it against
+    /// the actual `msg.sender` (gameCreator). Defaults to `Address::ZERO` when not set.
+    ///
+    /// **Security**: User-submitted input; the on-chain contract validates that the
+    /// transaction sender matches this value.
+    #[serde(default)]
+    pub proposer: Address,
 }
 
 impl BootInfo {
@@ -238,6 +254,15 @@ impl BootInfo {
             "Successfully loaded boot information"
         );
 
+        // Load proposer address (optional — defaults to zero for backwards compatibility).
+        let proposer = match oracle
+            .get(PreimageKey::new_local(PROPOSER_KEY.to()))
+            .await
+        {
+            Ok(bytes) if bytes.len() == 20 => Address::from_slice(&bytes),
+            _ => Address::ZERO,
+        };
+
         Ok(Self {
             l1_head,
             agreed_l2_output_root: l2_output_root,
@@ -246,6 +271,7 @@ impl BootInfo {
             chain_id,
             rollup_config,
             l1_config,
+            proposer,
         })
     }
 }

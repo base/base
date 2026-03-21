@@ -208,6 +208,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         init_bond,
         game_type: config.game_type,
         allow_non_finalized: config.allow_non_finalized,
+        proposer_address: proposer_address.unwrap_or_default(),
     };
     let driver = Driver::new(
         driver_config,

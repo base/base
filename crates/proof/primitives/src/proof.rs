@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use base_proof_preimage::PreimageKey;
 
 use crate::Proposal;
@@ -51,6 +51,12 @@ pub struct ProofRequest {
     pub claimed_l2_output_root: B256,
     /// L2 block number that the claimed output root commits to.
     pub claimed_l2_block_number: u64,
+    /// Address of the proposer that will submit the proof transaction on-chain.
+    ///
+    /// Included in the proof journal so on-chain verification can match it against
+    /// the actual `msg.sender` (gameCreator).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub proposer: Address,
 }
 
 /// A proof request bundled with the witness data needed to fulfill it.

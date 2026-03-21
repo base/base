@@ -180,7 +180,7 @@ impl Server {
             let l1_origin_number = U256::from(l2_info.l1_origin.number);
 
             let journal = ProofJournal {
-                proposer: self.signer_key.address(),
+                proposer: boot_info.proposer,
                 l1_origin_hash,
                 prev_output_root,
                 starting_l2_block: l2_block_number
@@ -219,7 +219,7 @@ impl Server {
                 proposals[..proposals.len() - 1].iter().map(|p| p.output_root).collect();
 
             let journal = ProofJournal {
-                proposer: self.signer_key.address(),
+                proposer: boot_info.proposer,
                 l1_origin_hash: last.l1_origin_hash,
                 prev_output_root: agreed_l2_output_root,
                 starting_l2_block: first
