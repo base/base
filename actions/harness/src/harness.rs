@@ -1,14 +1,16 @@
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 use alloy_eips::BlockNumHash;
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
+use base_consensus_derive::{DataAvailabilityProvider, PipelineBuilder, StatefulAttributesBuilder};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{
-    ActionBlobDataSource, ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider,
-    ActionL2Source, BlobVerifierPipeline, L1Miner, L1MinerConfig, L2Sequencer, L2Verifier,
-    SharedL1Chain, StatefulL2Executor, TestGossipTransport, VerifierPipeline, block_info_from,
+    ActionBlobDataSource, ActionDataSource, ActionEngineClient, ActionL1ChainProvider,
+    ActionL2ChainProvider, ActionL2Source, ActionPipeline, BlobVerifierPipeline, L1Miner,
+    L1MinerConfig, L2Sequencer, SharedL1Chain, TestGossipTransport, TestRollupNode,
+    VerifierPipeline, block_info_from,
 };
 
 /// Top-level test harness that owns all actors for a single action test.
@@ -97,6 +99,137 @@ impl ActionTestHarness {
         transport
     }
 
+    /// Create a [`TestRollupNode`] wired to a sequencer's block-hash registry.
+    ///
+    /// Builds the full derivation pipeline and an [`ActionEngineClient`] that
+    /// shares `sequencer.block_hash_registry()`, ensuring state-root
+    /// comparisons in `new_payload_vX` work automatically. The `l1_chain` is
+    /// shared between the providers and the engine client so newly pushed L1
+    /// blocks are visible to both.
+    ///
+    /// The returned node must be [`initialize`]d before its first [`step`] or
+    /// [`run_until_idle`] call:
+    ///
+    /// ```rust,ignore
+    /// let mut node = h.create_test_rollup_node(&sequencer, chain, transport);
+    /// node.initialize().await;
+    /// ```
+    ///
+    /// [`initialize`]: TestRollupNode::initialize
+    /// [`step`]: TestRollupNode::step
+    /// [`run_until_idle`]: TestRollupNode::run_until_idle
+    pub fn create_test_rollup_node(
+        &self,
+        sequencer: &L2Sequencer,
+        l1_chain: SharedL1Chain,
+        p2p: TestGossipTransport,
+    ) -> TestRollupNode<VerifierPipeline> {
+        let dap_source =
+            ActionDataSource::new(l1_chain.clone(), self.rollup_config.batch_inbox_address);
+        self.build_node_inner(sequencer, l1_chain, p2p, dap_source)
+    }
+
+    /// Create a [`TestRollupNode`] wired to blob DA.
+    ///
+    /// Identical to [`create_test_rollup_node`] but uses
+    /// [`ActionBlobDataSource`] so the pipeline reads blobs from the L1 chain
+    /// instead of calldata.
+    ///
+    /// [`create_test_rollup_node`]: ActionTestHarness::create_test_rollup_node
+    pub fn create_blob_test_rollup_node(
+        &self,
+        sequencer: &L2Sequencer,
+        l1_chain: SharedL1Chain,
+        p2p: TestGossipTransport,
+    ) -> TestRollupNode<BlobVerifierPipeline> {
+        let dap_source =
+            ActionBlobDataSource::new(l1_chain.clone(), self.rollup_config.batch_inbox_address);
+        self.build_node_inner(sequencer, l1_chain, p2p, dap_source)
+    }
+
+    /// Build a [`TestRollupNode`] for any data-availability source.
+    ///
+    /// Shared implementation for [`create_test_rollup_node`] and
+    /// [`create_blob_test_rollup_node`]; the two public methods differ only in
+    /// which `dap_source` they construct before delegating here.
+    ///
+    /// [`create_test_rollup_node`]: ActionTestHarness::create_test_rollup_node
+    /// [`create_blob_test_rollup_node`]: ActionTestHarness::create_blob_test_rollup_node
+    fn build_node_inner<D>(
+        &self,
+        sequencer: &L2Sequencer,
+        l1_chain: SharedL1Chain,
+        p2p: TestGossipTransport,
+        dap_source: D,
+    ) -> TestRollupNode<ActionPipeline<D>>
+    where
+        D: DataAvailabilityProvider + Send + Sync + Debug,
+    {
+        let rollup_config = Arc::new(self.rollup_config.clone());
+        let l1_chain_config = Arc::new(L1ChainConfig::default());
+
+        let l1_provider = ActionL1ChainProvider::new(l1_chain.clone());
+        let l2_provider = ActionL2ChainProvider::from_genesis(&self.rollup_config);
+
+        let genesis_l1 = block_info_from(self.l1.chain().first().expect("genesis always present"));
+        let safe_head = self.l2_genesis();
+
+        let attrs_builder = StatefulAttributesBuilder::new(
+            Arc::clone(&rollup_config),
+            Arc::clone(&l1_chain_config),
+            l2_provider.clone(),
+            l1_provider.clone(),
+        );
+        let pipeline = PipelineBuilder::new()
+            .rollup_config(Arc::clone(&rollup_config))
+            .origin(genesis_l1)
+            .chain_provider(l1_provider)
+            .dap_source(dap_source)
+            .l2_chain_provider(l2_provider)
+            .builder(attrs_builder)
+            .build_indexed();
+
+        let engine = ActionEngineClient::new(
+            Arc::clone(&rollup_config),
+            safe_head,
+            sequencer.block_hash_registry(),
+            l1_chain,
+        );
+
+        TestRollupNode::new(pipeline, engine, p2p, safe_head, rollup_config)
+    }
+
+    /// Create a [`TestRollupNode`] wired to a sequencer's block-hash registry, returning
+    /// `(node, l1_chain)` for convenient L1-push-then-signal patterns.
+    ///
+    /// Wires `sequencer` to a fresh [`TestGossipTransport`] channel and builds the
+    /// full calldata derivation pipeline.
+    pub fn create_test_rollup_node_from_sequencer(
+        &self,
+        sequencer: &mut L2Sequencer,
+        l1_chain: SharedL1Chain,
+    ) -> (TestRollupNode<VerifierPipeline>, SharedL1Chain) {
+        let transport = self.create_supervised_p2p(sequencer);
+        let node = self.create_test_rollup_node(sequencer, l1_chain.clone(), transport);
+        (node, l1_chain)
+    }
+
+    /// Create a blob-DA [`TestRollupNode`] wired to a sequencer's block-hash registry,
+    /// returning `(node, l1_chain)`.
+    ///
+    /// Identical to [`create_test_rollup_node_from_sequencer`] but uses blob DA.
+    ///
+    /// [`create_test_rollup_node_from_sequencer`]: ActionTestHarness::create_test_rollup_node_from_sequencer
+    pub fn create_blob_test_rollup_node_from_sequencer(
+        &self,
+        sequencer: &mut L2Sequencer,
+        l1_chain: SharedL1Chain,
+    ) -> (TestRollupNode<BlobVerifierPipeline>, SharedL1Chain) {
+        let transport = self.create_supervised_p2p(sequencer);
+        let node = self.create_blob_test_rollup_node(sequencer, l1_chain.clone(), transport);
+        (node, l1_chain)
+    }
+
     /// Create an [`L2Sequencer`] starting from L2 genesis, wired to a
     /// snapshot of the current L1 chain.
     ///
@@ -160,173 +293,6 @@ impl ActionTestHarness {
             source.push(sequencer.build_next_block_with_single_transaction());
         }
         source
-    }
-
-    /// Create an [`L2Verifier`] wired to the harness's L1 chain.
-    ///
-    /// A [`SharedL1Chain`] is initialised from the miner's current chain and
-    /// returned alongside the verifier. Mine new blocks with `l1.mine_block()`
-    /// then call `chain.push(l1.tip().clone())` and
-    /// `verifier.act_l1_head_signal(block_info).await` to feed them into the
-    /// pipeline.
-    pub fn create_verifier(&self) -> (L2Verifier<VerifierPipeline>, SharedL1Chain) {
-        let l2_provider = ActionL2ChainProvider::from_genesis(&self.rollup_config);
-        self.create_verifier_with_l2_provider(l2_provider)
-    }
-
-    /// Create an [`L2Verifier`] wired to a sequencer's block-hash registry and
-    /// a fresh [`StatefulL2Executor`] for per-block state-root validation.
-    ///
-    /// This is the normal path for tests that build blocks with [`L2Sequencer`]
-    /// and then derive them with a verifier. The supplied `l1_chain` becomes
-    /// the verifier's shared L1 view and is returned so tests can keep pushing
-    /// newly mined L1 blocks into it.
-    ///
-    /// After every derived [`OpAttributesWithParent`], the verifier re-executes
-    /// the block's transactions through the EVM and asserts the computed state
-    /// root matches the value registered by [`L2Sequencer`]. Validation is
-    /// silently skipped for blocks whose state root was not registered (e.g.
-    /// deposit-only blocks produced by the pipeline without sequencer input).
-    pub fn create_verifier_from_sequencer(
-        &self,
-        sequencer: &L2Sequencer,
-        l1_chain: SharedL1Chain,
-    ) -> (L2Verifier<VerifierPipeline>, SharedL1Chain) {
-        let executor = StatefulL2Executor::new(self.rollup_config.clone());
-        let l2_provider = ActionL2ChainProvider::from_genesis(&self.rollup_config);
-        let (verifier, chain) =
-            self.create_verifier_with_l2_provider_and_chain(l2_provider, l1_chain);
-        (
-            verifier
-                .with_block_hash_registry(sequencer.block_hash_registry())
-                .with_executor(executor),
-            chain,
-        )
-    }
-
-    /// Create an [`L2Verifier`] using a caller-supplied [`ActionL2ChainProvider`].
-    ///
-    /// Use this when the test needs to pre-populate the provider with custom
-    /// [`SystemConfig`] entries before derivation starts.
-    ///
-    /// [`SystemConfig`]: base_consensus_genesis::SystemConfig
-    pub fn create_verifier_with_l2_provider(
-        &self,
-        l2_provider: ActionL2ChainProvider,
-    ) -> (L2Verifier<VerifierPipeline>, SharedL1Chain) {
-        let chain = SharedL1Chain::from_blocks(self.l1.chain().to_vec());
-        self.create_verifier_with_l2_provider_and_chain(l2_provider, chain)
-    }
-
-    /// Create an [`L2Verifier`] wired to blob DA.
-    ///
-    /// Identical to [`create_verifier`] but uses [`ActionBlobDataSource`] so
-    /// the pipeline reads blobs from the L1 chain instead of calldata.
-    ///
-    /// [`create_verifier`]: ActionTestHarness::create_verifier
-    pub fn create_blob_verifier(&self) -> (L2Verifier<BlobVerifierPipeline>, SharedL1Chain) {
-        let chain = SharedL1Chain::from_blocks(self.l1.chain().to_vec());
-        self.create_blob_verifier_with_chain(chain)
-    }
-
-    /// Create a blob verifier wired to a sequencer's block-hash registry and
-    /// a fresh [`StatefulL2Executor`] for per-block state-root validation.
-    ///
-    /// Identical to [`create_verifier_from_sequencer`] but uses blob DA.
-    ///
-    /// [`create_verifier_from_sequencer`]: ActionTestHarness::create_verifier_from_sequencer
-    pub fn create_blob_verifier_from_sequencer(
-        &self,
-        sequencer: &L2Sequencer,
-        l1_chain: SharedL1Chain,
-    ) -> (L2Verifier<BlobVerifierPipeline>, SharedL1Chain) {
-        let executor = StatefulL2Executor::new(self.rollup_config.clone());
-        let (verifier, chain) = self.create_blob_verifier_with_chain(l1_chain);
-        (
-            verifier
-                .with_block_hash_registry(sequencer.block_hash_registry())
-                .with_executor(executor),
-            chain,
-        )
-    }
-
-    fn create_verifier_with_l2_provider_and_chain(
-        &self,
-        l2_provider: ActionL2ChainProvider,
-        chain: SharedL1Chain,
-    ) -> (L2Verifier<VerifierPipeline>, SharedL1Chain) {
-        let rollup_config = Arc::new(self.rollup_config.clone());
-        let l1_chain_config = Arc::new(L1ChainConfig::default());
-
-        let l1_provider = ActionL1ChainProvider::new(chain.clone());
-        let dap_source =
-            ActionDataSource::new(chain.clone(), self.rollup_config.batch_inbox_address);
-
-        let genesis_l1_block = self.l1.chain().first().expect("genesis always present");
-        let genesis_l1 = block_info_from(genesis_l1_block);
-
-        let safe_head = L2BlockInfo {
-            block_info: BlockInfo {
-                hash: self.rollup_config.genesis.l2.hash,
-                number: self.rollup_config.genesis.l2.number,
-                parent_hash: Default::default(),
-                timestamp: self.rollup_config.genesis.l2_time,
-            },
-            l1_origin: BlockNumHash { number: genesis_l1.number, hash: genesis_l1.hash },
-            seq_num: 0,
-        };
-
-        (
-            L2Verifier::new(
-                rollup_config,
-                l1_chain_config,
-                l1_provider,
-                dap_source,
-                l2_provider,
-                safe_head,
-                genesis_l1,
-            ),
-            chain,
-        )
-    }
-
-    fn create_blob_verifier_with_chain(
-        &self,
-        chain: SharedL1Chain,
-    ) -> (L2Verifier<BlobVerifierPipeline>, SharedL1Chain) {
-        let rollup_config = Arc::new(self.rollup_config.clone());
-        let l1_chain_config = Arc::new(L1ChainConfig::default());
-
-        let l1_provider = ActionL1ChainProvider::new(chain.clone());
-        let dap_source =
-            ActionBlobDataSource::new(chain.clone(), self.rollup_config.batch_inbox_address);
-
-        let genesis_l1_block = self.l1.chain().first().expect("genesis always present");
-        let genesis_l1 = block_info_from(genesis_l1_block);
-
-        let safe_head = L2BlockInfo {
-            block_info: BlockInfo {
-                hash: self.rollup_config.genesis.l2.hash,
-                number: self.rollup_config.genesis.l2.number,
-                parent_hash: Default::default(),
-                timestamp: self.rollup_config.genesis.l2_time,
-            },
-            l1_origin: BlockNumHash { number: genesis_l1.number, hash: genesis_l1.hash },
-            seq_num: 0,
-        };
-
-        (
-            L2Verifier::new_blob(
-                rollup_config,
-                l1_chain_config,
-                l1_provider,
-                dap_source,
-                ActionL2ChainProvider::from_genesis(&self.rollup_config),
-                safe_head,
-                genesis_l1,
-            ),
-            chain,
-        )
     }
 }
 

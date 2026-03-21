@@ -38,7 +38,7 @@ use crate::{SharedBlockHashRegistry, SharedL1Chain, StatefulL2Executor};
 
 /// A payload built in-process during sequencer mode, waiting to be fetched via `get_payload`.
 #[derive(Debug)]
-struct PendingPayload {
+pub struct PendingPayload {
     payload: ExecutionPayloadV1,
     parent_beacon_block_root: B256,
 }
@@ -46,7 +46,7 @@ struct PendingPayload {
 /// Mutable state owned by [`ActionEngineClient`], protected by a `Mutex` so
 /// the client can implement the `&self` methods required by [`EngineClient`].
 #[derive(Debug)]
-struct ActionEngineClientInner {
+pub struct ActionEngineClientInner {
     executor: StatefulL2Executor,
     canonical_head: L2BlockInfo,
     executed_headers: HashMap<u64, Header>,
@@ -110,6 +110,16 @@ impl ActionEngineClient {
             payload_counter: 0,
         }));
         Self { inner, rollup_config, block_registry, l1_chain }
+    }
+
+    /// Return a clone of the shared block-hash registry.
+    pub fn block_hash_registry(&self) -> SharedBlockHashRegistry {
+        self.block_registry.clone()
+    }
+
+    /// Return a clone of the shared L1 chain.
+    pub fn l1_chain(&self) -> SharedL1Chain {
+        self.l1_chain.clone()
     }
 
     /// Execute the transactions in a V1 payload against the internal EVM, returning the block hash.

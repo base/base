@@ -274,16 +274,16 @@ async fn span_batch_rejected_before_delta() {
     let mut batcher = Batcher::new(source, &h.rollup_config, span_cfg);
     batcher.advance(&mut h.l1).await;
 
-    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
-        &builder,
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+        &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await;
-    verifier.act_l1_head_signal(h.l1.tip_info()).await;
-    verifier.act_l2_pipeline_full().await;
+    node.initialize().await;
+    node.act_l1_head_signal(h.l1.tip_info()).await;
+    node.run_until_idle().await;
 
     assert_eq!(
-        verifier.l2_safe_number(),
+        node.l2_safe_number(),
         0,
         "no blocks should be derived: span batch rejected pre-Delta/Fjord"
     );
@@ -318,16 +318,16 @@ async fn span_batch_derives_after_delta() {
     let mut batcher = Batcher::new(source, &h.rollup_config, span_cfg);
     batcher.advance(&mut h.l1).await;
 
-    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
-        &builder,
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+        &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await;
-    verifier.act_l1_head_signal(h.l1.tip_info()).await;
-    let derived = verifier.act_l2_pipeline_full().await;
+    node.initialize().await;
+    node.act_l1_head_signal(h.l1.tip_info()).await;
+    let derived = node.run_until_idle().await;
 
     assert_eq!(derived, 2, "expected 2 L2 blocks derived from span batch");
-    assert_eq!(verifier.l2_safe_number(), 2, "safe head should advance to block 2");
+    assert_eq!(node.l2_safe_number(), 2, "safe head should advance to block 2");
 }
 
 /// Control test: with Fjord active, `SingleBatch` (the default encoding) derives
@@ -352,19 +352,19 @@ async fn single_batch_derives_with_fjord() {
         batcher.advance(&mut h.l1).await;
     }
 
-    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
-        &builder,
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+        &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await;
+    node.initialize().await;
 
     for i in 1..=2u64 {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
 
-    assert_eq!(verifier.l2_safe_number(), 2, "safe head should advance to block 2");
+    assert_eq!(node.l2_safe_number(), 2, "safe head should advance to block 2");
 }
 
 /// Derivation must succeed across the Jovian activation boundary.
@@ -404,6 +404,7 @@ async fn jovian_derivation_crosses_activation_boundary() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
+    let mut block_hashes = [Default::default(); 5];
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for i in 1..=4u64 {
         let block = if i == 3 {
@@ -412,24 +413,33 @@ async fn jovian_derivation_crosses_activation_boundary() {
         } else {
             builder.build_next_block_with_single_transaction()
         };
+        block_hashes[i as usize] = block.header.hash_slow();
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
     }
 
-    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
-        &builder,
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+        &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await;
+    // The Jovian activation block (block 3) has upgrade deposit transactions
+    // injected by the derivation pipeline that the sequencer did not execute.
+    // These contract deployments change the EVM state root, causing a permanent
+    // EVM state divergence from the sequencer for all subsequent blocks. Clear
+    // the sequencer-registered state roots for blocks 3 and 4 so the node
+    // skips state-root validation for them.
+    node.register_block_hash(3, block_hashes[3]);
+    node.register_block_hash(4, block_hashes[4]);
+    node.initialize().await;
 
     for i in 1..=4u64 {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
 
     assert_eq!(
-        verifier.l2_safe_number(),
+        node.l2_safe_number(),
         4,
         "safe head should advance past the Jovian activation boundary"
     );

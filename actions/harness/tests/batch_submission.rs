@@ -90,8 +90,8 @@ async fn batcher_reorg_during_submission() {
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let block = sequencer.build_next_block_with_single_transaction();
 
-    let (mut verifier, chain) = h.create_verifier_from_sequencer(
-        &sequencer,
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
@@ -125,18 +125,18 @@ async fn batcher_reorg_during_submission() {
     chain.push(h.l1.tip().clone());
     batcher.confirm_staged(recovery_num).await;
 
-    // Verify the verifier re-derives L2 block 1 from the new-fork submission.
-    verifier.initialize().await;
+    // Verify the node re-derives L2 block 1 from the new-fork submission.
+    node.initialize().await;
 
-    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    let empty = verifier.act_l2_pipeline_full().await;
+    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
+    let empty = node.run_until_idle().await;
     assert_eq!(empty, 0, "empty block 1' has no batch data");
 
-    verifier.act_l1_head_signal(h.l1.block_info_at(recovery_num)).await;
-    let derived = verifier.act_l2_pipeline_full().await;
+    node.act_l1_head_signal(h.l1.block_info_at(recovery_num)).await;
+    let derived = node.run_until_idle().await;
     assert_eq!(derived, 1, "same-batcher resubmission must derive L2 block 1");
     assert_eq!(
-        verifier.l2_safe_number(),
+        node.l2_safe_number(),
         1,
         "safe head must recover to 1 after same-batcher resubmission on new fork"
     );

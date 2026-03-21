@@ -14,7 +14,7 @@ use tracing::info;
 use crate::{L1Miner, PendingTx};
 
 /// A pending submission waiting for [`L1MinerTxManager::mine_block`] to fire its receipt.
-struct Pending {
+pub struct Pending {
     /// Calldata transaction, or `None` for blob-only submissions.
     tx: Option<PendingTx>,
     /// Blob sidecars for EIP-4844 submissions.
@@ -32,8 +32,9 @@ impl std::fmt::Debug for Pending {
     }
 }
 
+/// Internal mutable state for [`L1MinerTxManager`]: pending and staged submissions.
 #[derive(Debug, Default)]
-struct Inner {
+pub struct Inner {
     pending: Vec<Pending>,
     staged: Vec<Pending>,
 }

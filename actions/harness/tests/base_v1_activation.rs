@@ -72,24 +72,24 @@ async fn base_v1_derivation_crosses_activation_boundary() {
         batcher.advance(&mut h.l1).await;
     }
 
-    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
-        &builder,
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+        &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await;
+    node.initialize().await;
 
     for i in 1..=4u64 {
         let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(l1_block).await;
-        let derived = verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(l1_block).await;
+        let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
 
-        let block = verifier.derived_block(i).expect("derived block must be recorded");
+        let block = node.derived_block(i).expect("derived block must be recorded");
         assert_eq!(block.user_tx_count, 1, "L2 block {i} should contain 1 user transaction");
     }
 
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        node.l2_safe().block_info.number,
         4,
         "safe head should advance past the Base V1 activation boundary"
     );
@@ -115,8 +115,8 @@ async fn base_v1_clz_op_code() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    let (mut verifier, chain) = h.create_verifier_from_sequencer(
-        &builder,
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
@@ -241,17 +241,17 @@ async fn base_v1_clz_op_code() {
         chain.push(h.l1.tip().clone());
     }
 
-    verifier.initialize().await;
+    node.initialize().await;
 
     for i in 1..=4u64 {
         let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        verifier.act_l1_head_signal(blk).await;
-        let derived = verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(blk).await;
+        let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
 
     assert_eq!(
-        verifier.l2_safe().block_info.number,
+        node.l2_safe().block_info.number,
         4,
         "all 4 L2 blocks must derive through the Base V1 boundary"
     );

@@ -5,7 +5,8 @@ use std::{
 
 use base_consensus_genesis::HardForkConfig;
 
-type ForkSetter = fn(&mut HardForkConfig);
+/// A function that activates a single hardfork on a [`HardForkConfig`].
+pub type ForkSetter = fn(&mut HardForkConfig);
 
 /// All supported hardfork stages in canonical order. Each setter activates
 /// exactly one additional fork; [`ForkMatrix::all`] applies these in sequence

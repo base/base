@@ -360,27 +360,46 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
+    let mut isthmus_block_hash = Default::default();
+    let mut block4_hash = Default::default();
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
-    for _ in 0..4u64 {
+    for i in 1..=4u64 {
         // All blocks carry user transactions — Isthmus allows user txs at transition.
-        batcher.push_block(builder.build_next_block_with_single_transaction());
+        let block = builder.build_next_block_with_single_transaction();
+        if i == 3 {
+            isthmus_block_hash = block.header.hash_slow();
+        }
+        if i == 4 {
+            block4_hash = block.header.hash_slow();
+        }
+        batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
     }
 
-    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
-        &builder,
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+        &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await;
+    // The Isthmus activation block (block 3) has upgrade deposit transactions
+    // injected by the derivation pipeline that the sequencer did not execute.
+    // These contract deployments change the EVM state root, so we clear the
+    // sequencer's registered state root for blocks 3 and 4 to skip state-root
+    // validation for those blocks. Block 4's root also differs because it is
+    // derived starting from the pipeline's block 3 state (which includes the
+    // Isthmus upgrade contracts), while the sequencer computed it from its own
+    // block 3 state (without those contracts).
+    node.register_block_hash(3, isthmus_block_hash);
+    node.register_block_hash(4, block4_hash);
+    node.initialize().await;
 
     for i in 1..=4u64 {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} must derive exactly one L2 block");
     }
 
     assert_eq!(
-        verifier.l2_safe_number(),
+        node.l2_safe_number(),
         4,
         "safe head must reach block 4 after crossing the Isthmus operator fee boundary"
     );
@@ -412,7 +431,7 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
 /// pipeline generated a deposit-only block for slot 3 (count = 0) while
 /// preserving the user transactions in the earlier blocks.
 ///
-/// [`derived_user_tx_counts`]: base_action_harness::L2Verifier::derived_user_tx_counts
+/// [`derived_user_tx_counts`]: base_action_harness::TestRollupNode::derived_user_tx_counts
 #[tokio::test]
 async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     let batcher_cfg = BatcherConfig::default();
@@ -437,9 +456,14 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     // Build three L2 blocks — each with 1 user transaction (the sequencer default).
     // Block 3 (ts=6) is the first Jovian block. The batch validator will drop the
     // non-empty batch for that slot with NonEmptyTransitionBlock.
+    let mut jovian_block_hash = Default::default();
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
-    for _ in 1u64..=3 {
-        batcher.push_block(builder.build_next_block_with_single_transaction());
+    for i in 1u64..=3 {
+        let block = builder.build_next_block_with_single_transaction();
+        if i == 3 {
+            jovian_block_hash = block.header.hash_slow();
+        }
+        batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
     }
 
@@ -447,37 +471,42 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     // (0 + seq_window_size 4 = 4), triggering force-inclusion for L2 slot 3.
     h.l1.mine_block();
 
-    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
-        &builder,
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+        &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await;
+    // The first Jovian block (block 3) is force-included as a deposit-only block by
+    // the pipeline (the non-empty batch is dropped). The derived block has different
+    // transactions than the sequencer's version, producing a different state root.
+    // Clear the sequencer's registered state root for block 3 to skip validation.
+    node.register_block_hash(3, jovian_block_hash);
+    node.initialize().await;
 
     // Signal L1 blocks 1–3. Blocks 1–2 are derived from their valid batches.
     // Block 3's batch is dropped (NonEmptyTransitionBlock) and the pipeline
     // stalls waiting for more L1 data (the seq window has not yet closed).
     for i in 1u64..=3 {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        node.run_until_idle().await;
     }
     assert_eq!(
-        verifier.l2_safe_number(),
+        node.l2_safe_number(),
         2,
         "only blocks 1–2 derived from valid batches; block 3 pending (batch dropped)"
     );
 
     // Signal L1 block 4. The epoch-0 window is now closed, so the pipeline
     // force-includes L2 slot 3 as a deposit-only block.
-    verifier.act_l1_head_signal(h.l1.block_info_at(4)).await;
-    verifier.act_l2_pipeline_full().await;
+    node.act_l1_head_signal(h.l1.block_info_at(4)).await;
+    node.run_until_idle().await;
 
     assert!(
-        verifier.l2_safe_number() >= 3,
+        node.l2_safe_number() >= 3,
         "safe head must advance past block 3 after force-inclusion"
     );
 
-    // Verify per-block user tx counts via the verifier's tracking field.
-    let counts = verifier.derived_user_tx_counts();
+    // Verify per-block user tx counts via the node's tracking field.
+    let counts = node.derived_user_tx_counts();
     let find = |n: u64| counts.iter().find(|(bn, _)| *bn == n).map(|(_, c)| *c);
 
     assert_eq!(find(1), Some(1), "block 1: batch accepted, 1 user tx");
@@ -602,21 +631,21 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
         batcher.advance(&mut h.l1).await; // L1 block 3, ts=36
     }
 
-    // Verifier snapshot includes all L1 blocks 0–3.
-    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
-        &sequencer,
+    // Node snapshot includes all L1 blocks 0–3.
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await;
+    node.initialize().await;
 
     for i in 1u64..=3 {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        node.run_until_idle().await;
     }
 
-    assert_eq!(verifier.l2_safe_number(), 6, "all 6 L2 blocks must be derived");
+    assert_eq!(node.l2_safe_number(), 6, "all 6 L2 blocks must be derived");
 
-    let infos = verifier.derived_l1_info_txs();
+    let infos = node.derived_l1_info_txs();
     let find = |n: u64| infos.iter().find(|(bn, _)| *bn == n).map(|(_, tx)| tx);
 
     // Blocks 1–5 (epoch 0, no receipt update) carry OLD fee params.

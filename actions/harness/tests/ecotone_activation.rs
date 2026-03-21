@@ -150,23 +150,23 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
     batcher.push_block(builder.build_next_block_with_single_transaction());
     batcher.advance(&mut h.l1).await;
 
-    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
-        &builder,
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+        &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await;
+    node.initialize().await;
 
     // Drive derivation through all 4 L1 blocks.
     for i in 1..=4u64 {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        node.run_until_idle().await;
     }
 
     // Ecotone has no NonEmptyTransitionBlock batch check, so block 3's batch
     // (with user txs) is accepted. All 4 blocks must derive: block 3 is NOT
     // deposit-only, unlike the Jovian transition block.
     assert_eq!(
-        verifier.l2_safe_number(),
+        node.l2_safe_number(),
         4,
         "safe head must reach block 4; Ecotone has no batch-level empty-block enforcement"
     );
@@ -228,20 +228,20 @@ async fn ecotone_derivation_crosses_activation_boundary() {
         batcher.advance(&mut h.l1).await;
     }
 
-    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
-        &builder,
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+        &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await;
+    node.initialize().await;
 
     for i in 1..=4u64 {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
 
     assert_eq!(
-        verifier.l2_safe_number(),
+        node.l2_safe_number(),
         4,
         "derivation must succeed through the Ecotone activation boundary"
     );

@@ -177,26 +177,28 @@ impl L2BlockProvider for ActionL2Source {
     }
 }
 
-type BlockHashInner = Arc<Mutex<HashMap<u64, (B256, Option<B256>)>>>;
+/// Underlying map type for [`SharedBlockHashRegistry`]: block number → (hash, optional state root).
+pub type BlockHashInner = Arc<Mutex<HashMap<u64, (B256, Option<B256>)>>>;
 
 /// Shared L2 block hashes and state roots keyed by block number.
 ///
 /// `L2Sequencer` writes into this registry as blocks are built, and
-/// `L2Verifier` reads from the same registry when it applies derived
+/// `TestRollupNode` reads from the same registry when it applies derived
 /// attributes so the resulting safe-head hash chain matches the sequencer's
-/// sealed headers. When a [`StatefulL2Executor`] is attached to the verifier,
-/// it also reads the stored state root for post-derivation execution
-/// validation.
+/// sealed headers. The [`StatefulL2Executor`] inside the node's
+/// [`ActionEngineClient`] reads the stored state root for post-derivation
+/// execution validation.
 ///
 /// The state root field is `Option<B256>`: it is `Some` only when the entry
 /// was produced by real EVM execution (e.g. via [`L2Sequencer`] or
-/// [`L2Verifier::act_l2_unsafe_gossip_receive`]). Entries created with
-/// [`L2Verifier::register_block_hash`] store `None`, which causes the
+/// [`TestRollupNode::act_l2_unsafe_gossip_receive`]). Entries created with
+/// [`TestRollupNode::register_block_hash`] store `None`, which causes the
 /// executor to skip state-root validation for that block rather than panic
 /// against a bogus sentinel value.
 ///
-/// [`L2Verifier::act_l2_unsafe_gossip_receive`]: crate::L2Verifier::act_l2_unsafe_gossip_receive
-/// [`L2Verifier::register_block_hash`]: crate::L2Verifier::register_block_hash
+/// [`ActionEngineClient`]: crate::ActionEngineClient
+/// [`TestRollupNode::act_l2_unsafe_gossip_receive`]: crate::TestRollupNode::act_l2_unsafe_gossip_receive
+/// [`TestRollupNode::register_block_hash`]: crate::TestRollupNode::register_block_hash
 #[derive(Debug, Clone, Default)]
 pub struct SharedBlockHashRegistry(BlockHashInner);
 
@@ -209,10 +211,12 @@ impl SharedBlockHashRegistry {
     /// Record the block hash and optional state root for an L2 block number.
     ///
     /// Pass `Some(state_root)` when the block was produced by real EVM
-    /// execution so that an attached [`StatefulL2Executor`] can validate it.
+    /// execution so that the [`StatefulL2Executor`] inside the node can validate it.
     /// Pass `None` for synthetic blocks (e.g. via
-    /// [`L2Verifier::register_block_hash`]); the executor will skip
+    /// [`TestRollupNode::register_block_hash`]); the executor will skip
     /// state-root validation for those blocks.
+    ///
+    /// [`TestRollupNode::register_block_hash`]: crate::TestRollupNode::register_block_hash
     pub fn insert(&self, number: u64, hash: B256, state_root: Option<B256>) {
         self.0
             .lock()
@@ -228,7 +232,9 @@ impl SharedBlockHashRegistry {
     /// Return the registered state root for an L2 block number, if any.
     ///
     /// Returns `None` when the block was not registered or was registered
-    /// without a state root (e.g. via [`L2Verifier::register_block_hash`]).
+    /// without a state root (e.g. via [`TestRollupNode::register_block_hash`]).
+    ///
+    /// [`TestRollupNode::register_block_hash`]: crate::TestRollupNode::register_block_hash
     pub fn get_state_root(&self, number: u64) -> Option<B256> {
         self.0.lock().expect("block hash registry lock poisoned").get(&number).and_then(|(_, s)| *s)
     }
@@ -538,7 +544,7 @@ const fn tx_sender(tx: &OpTxEnvelope, default_sender: Address) -> Address {
 ///
 /// Iterates over all accounts in the DB cache and builds a proper MPT root,
 /// giving each account the correct storage root and code hash.
-fn compute_state_root(db: &InMemoryDB) -> B256 {
+pub fn compute_state_root(db: &InMemoryDB) -> B256 {
     let accounts = db
         .cache
         .accounts
@@ -578,7 +584,7 @@ impl L2BlockProvider for L2Sequencer {
 }
 
 /// Decode raw EIP-2718-encoded transaction bytes into [`OpTxEnvelope`]s.
-fn decode_raw_transactions(raw_txs: &[Bytes]) -> Result<Vec<OpTxEnvelope>, L2SequencerError> {
+pub fn decode_raw_transactions(raw_txs: &[Bytes]) -> Result<Vec<OpTxEnvelope>, L2SequencerError> {
     raw_txs
         .iter()
         .map(|raw| {
