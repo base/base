@@ -14,6 +14,7 @@ use tokio::{
 };
 
 use crate::{
+    actors::activation_art::BASE_V1_ACTIVATION_BANNER,
     BuildRequest, EngineClientError, EngineDerivationClient, EngineError, GetPayloadRequest,
     ResetRequest, SealRequest,
 };
@@ -216,6 +217,20 @@ where
 
         Ok(())
     }
+
+    fn log_follower_upgrade_activation(&self, envelope: &OpExecutionPayloadEnvelope) {
+        if self.unsafe_head_tx.is_some() {
+            return;
+        }
+
+        let timestamp = envelope.execution_payload.timestamp();
+        if self.rollup.is_first_base_v1_block(timestamp) {
+            for line in BASE_V1_ACTIVATION_BANNER.lines() {
+                info!(target: "sequencer", "{line}");
+            }
+            info!(target: "sequencer", "Sequencing base v1 upgrade block");
+        }
+    }
 }
 
 impl<EngineClient_, DerivationClient> EngineRequestReceiver
@@ -293,6 +308,7 @@ where
                         self.engine.enqueue(task);
                     }
                     EngineProcessingRequest::ProcessUnsafeL2Block(envelope) => {
+                        self.log_follower_upgrade_activation(&envelope);
                         let task = EngineTask::Insert(Box::new(InsertTask::new(
                             Arc::clone(&self.client),
                             Arc::clone(&self.rollup),

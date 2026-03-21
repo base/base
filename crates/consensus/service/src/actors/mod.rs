@@ -5,6 +5,8 @@
 mod traits;
 pub use traits::{CancellableContext, NodeActor};
 
+mod activation_art;
+
 mod engine;
 pub use engine::{
     BuildRequest, EngineActor, EngineActorRequest, EngineClientError, EngineClientResult,

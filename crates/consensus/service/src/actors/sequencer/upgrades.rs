@@ -3,7 +3,7 @@
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_consensus_genesis::RollupConfig;
 
-use super::activation_art::ActivationArt;
+use crate::actors::activation_art::BASE_V1_ACTIVATION_BANNER;
 
 // TODO(refcell): Move this into a crate where it can be re-used.
 
@@ -29,7 +29,9 @@ impl UpgradeActivations {
         } else if config.is_first_jovian_block(timestamp) {
             info!(target: "sequencer", "Sequencing jovian upgrade block");
         } else if config.is_first_base_v1_block(timestamp) {
-            info!(target: "sequencer", "\n{}", ActivationArt::BASE_V1_ACTIVATION_BANNER);
+            for line in BASE_V1_ACTIVATION_BANNER.lines() {
+                info!(target: "sequencer", "{line}");
+            }
             info!(target: "sequencer", "Sequencing base v1 upgrade block");
         }
     }
