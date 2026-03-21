@@ -153,11 +153,10 @@ fn render_footer(f: &mut Frame<'_>, area: Rect, op_pending: bool) {
         Span::styled("select node", desc_style),
     ];
 
+    spans.push(sep.clone());
     if op_pending {
-        spans.push(sep.clone());
         spans.push(Span::styled("transferring…", Style::default().fg(Color::Yellow)));
     } else {
-        spans.push(sep.clone());
         spans.push(Span::styled("[t]", key_style));
         spans.push(Span::raw(" "));
         spans.push(Span::styled("transfer to any peer", desc_style));
