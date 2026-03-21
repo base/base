@@ -265,7 +265,14 @@ impl BootInfo {
                 );
                 Address::ZERO
             }
-            Err(_) => Address::ZERO,
+            Err(e) => {
+                debug!(
+                    target: "boot_loader",
+                    error = %e,
+                    "Proposer preimage not found, defaulting to Address::ZERO"
+                );
+                Address::ZERO
+            }
         };
 
         Ok(Self {
