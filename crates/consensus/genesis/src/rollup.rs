@@ -426,17 +426,8 @@ impl BaseUpgrades for RollupConfig {
 }
 
 impl RollupConfig {
-    const BASE_V1_ACTIVATION_BANNER: &str = r#"######################################################
-#                                                    #
-#  BBBBB    AAA    SSSSS  EEEEE      V   V      111  #
-#  B   B   A   A   S      E          V   V    1   1  #
-#  BBBBB   AAAAA    SSS   EEEE       V   V        1  #
-#  B   B   A   A       S  E           V V         1  #
-#  BBBBB   A   A   SSSSS  EEEEE        V      11111  #
-#                                                    #
-#           ALL YOUR BASE ARE BELONG TO US           #
-#                                                    #
-######################################################"#;
+    const BASE_V1_ACTIVATION_BANNER: &str =
+        include_str!("../static/base_v1_activation_banner.txt");
 
     /// Logs hardfork activation when building or processing the first block of a fork.
     pub fn log_upgrade_activation(&self, block_number: u64, timestamp: u64) {
