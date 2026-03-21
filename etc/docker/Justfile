@@ -70,9 +70,9 @@ follow-leader:
 transfer-leader to='':
     ./etc/scripts/devnet/transfer-leader.sh {{ to }}
 
-# Real-time dashboard: conductor role, unsafe L2 block, and P2P peers for all sequencers
-conductor-status:
-    ./etc/scripts/devnet/conductor-status.sh
+# TUI dashboard: HA conductor cluster monitor (requires devnet running)
+conductor:
+    cargo run --quiet -p basectl -- --config devnet conductor
 
 # Stops devnet+ingress, deletes data, and starts fresh with full ingress stack
 ingress: ingress-down _build-setup-image (_build-rust-images "ingress" "dev")

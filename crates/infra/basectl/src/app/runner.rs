@@ -10,9 +10,10 @@ use crate::{
     config::ChainConfig,
     l1_client::fetch_full_system_config,
     rpc::{
-        BacklogFetchResult, BlockDaInfo, L1BlockInfo, L1ConnectionMode, TimestampedFlashblock,
-        fetch_initial_backlog_with_progress, run_block_fetcher, run_flashblock_ws,
-        run_flashblock_ws_timestamped, run_l1_blob_watcher, run_safe_head_poller,
+        BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, L1BlockInfo, L1ConnectionMode,
+        TimestampedFlashblock, fetch_initial_backlog_with_progress, run_block_fetcher,
+        run_conductor_poller, run_flashblock_ws, run_flashblock_ws_timestamped,
+        run_l1_blob_watcher, run_safe_head_poller,
     },
     tui::Toast,
 };
@@ -99,6 +100,12 @@ fn start_background_services(config: &ChainConfig, resources: &mut Resources) {
             let _ = sys_config_tx.send(cfg).await;
         }
     });
+
+    if let Some(conductor_nodes) = config.conductors.clone() {
+        let (conductor_tx, conductor_rx) = mpsc::channel::<Vec<ConductorNodeStatus>>(4);
+        resources.conductor.set_channel(conductor_rx);
+        tokio::spawn(run_conductor_poller(conductor_nodes, conductor_tx));
+    }
 }
 
 /// Streams flashblocks as JSON lines to stdout.

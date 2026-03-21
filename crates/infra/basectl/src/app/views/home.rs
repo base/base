@@ -51,6 +51,12 @@ const MENU_ITEMS: &[MenuItem] = &[
         description: "Subscribe to flashblocks stream",
         view_id: Some(ViewId::Flashblocks),
     },
+    MenuItem {
+        key: 'h',
+        label: "HA Conductor",
+        description: "Monitor HA conductor cluster",
+        view_id: Some(ViewId::Conductor),
+    },
     MenuItem { key: 'q', label: "Quit", description: "Exit basectl", view_id: None },
 ];
 
@@ -59,6 +65,7 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "c", description: "Config" },
     Keybinding { key: "d", description: "DA Monitor" },
     Keybinding { key: "f", description: "Flashblocks" },
+    Keybinding { key: "h", description: "HA Conductor" },
     Keybinding { key: "j/k", description: "Navigate" },
     Keybinding { key: "Enter", description: "Select" },
     Keybinding { key: "q", description: "Quit" },
@@ -88,6 +95,7 @@ impl View for HomeView {
             KeyCode::Char('c') => Action::SwitchView(ViewId::Config),
             KeyCode::Char('d') => Action::SwitchView(ViewId::DaMonitor),
             KeyCode::Char('f') => Action::SwitchView(ViewId::Flashblocks),
+            KeyCode::Char('h') => Action::SwitchView(ViewId::Conductor),
             KeyCode::Up | KeyCode::Char('k') => {
                 self.selected_index = self.selected_index.saturating_sub(1);
                 Action::None

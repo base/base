@@ -11,6 +11,8 @@ pub enum ViewId {
     Flashblocks,
     /// Chain and system configuration viewer.
     Config,
+    /// HA conductor cluster status monitor.
+    Conductor,
 }
 
 /// Manages view navigation history and the current active view.

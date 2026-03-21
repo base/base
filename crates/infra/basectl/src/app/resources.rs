@@ -7,12 +7,39 @@ use tokio::sync::mpsc;
 use crate::{
     commands::common::{DaTracker, FlashblockEntry, LoadingState},
     config::ChainConfig,
-    rpc::{BacklogFetchResult, BlockDaInfo, L1BlockInfo, L1ConnectionMode, TimestampedFlashblock},
+    rpc::{
+        BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, L1BlockInfo, L1ConnectionMode,
+        TimestampedFlashblock,
+    },
     tui::ToastState,
 };
 
 const MAX_FLASH_BLOCKS: usize = 30;
 const MAX_RECENT_DA_FLASHBLOCK_IDS: usize = 512;
+
+/// State for HA conductor cluster monitoring.
+#[derive(Debug, Default)]
+pub(crate) struct ConductorState {
+    /// Most recent status snapshot for each conductor node.
+    pub nodes: Vec<ConductorNodeStatus>,
+    rx: Option<mpsc::Receiver<Vec<ConductorNodeStatus>>>,
+}
+
+impl ConductorState {
+    /// Sets the channel for receiving conductor status updates.
+    pub(crate) fn set_channel(&mut self, rx: mpsc::Receiver<Vec<ConductorNodeStatus>>) {
+        self.rx = Some(rx);
+    }
+
+    /// Drains the latest status snapshot from the background poller.
+    pub(crate) fn poll(&mut self) {
+        let Some(ref mut rx) = self.rx else { return };
+        // Drain all pending updates, keeping only the most recent snapshot.
+        while let Ok(statuses) = rx.try_recv() {
+            self.nodes = statuses;
+        }
+    }
+}
 
 /// Shared resources available to all TUI views.
 #[derive(Debug)]
@@ -25,6 +52,8 @@ pub(crate) struct Resources {
     pub flash: FlashState,
     /// Toast notification state.
     pub toasts: ToastState,
+    /// HA conductor cluster monitoring state.
+    pub conductor: ConductorState,
     /// L1 system config fetched from the contract.
     pub system_config: Option<SystemConfig>,
     sys_config_rx: Option<mpsc::Receiver<SystemConfig>>,
@@ -81,6 +110,7 @@ impl Resources {
             da: DaState::new(),
             flash: FlashState::new(),
             toasts: ToastState::new(),
+            conductor: ConductorState::default(),
             system_config: None,
             sys_config_rx: None,
         }

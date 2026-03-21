@@ -1,6 +1,9 @@
 mod command_center;
 pub(crate) use command_center::CommandCenterView;
 
+mod conductor;
+pub(crate) use conductor::ConductorView;
+
 mod config;
 pub(crate) use config::ConfigView;
 

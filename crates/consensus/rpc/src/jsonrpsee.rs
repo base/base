@@ -212,3 +212,27 @@ pub trait HealthzApi {
     #[method(name = "healthz")]
     async fn healthz(&self) -> RpcResult<HealthzResponse>;
 }
+
+/// The conductor RPC API for HA sequencer cluster management.
+///
+/// Implemented by op-conductor nodes. See:
+/// <https://github.com/ethereum-optimism/optimism/blob/develop/op-conductor/rpc/api.go>
+#[cfg_attr(not(feature = "client"), rpc(server, namespace = "conductor"))]
+#[cfg_attr(feature = "client", rpc(server, client, namespace = "conductor"))]
+pub trait ConductorApi {
+    /// Returns whether this node is the current Raft leader.
+    #[method(name = "leader")]
+    async fn conductor_leader(&self) -> RpcResult<bool>;
+
+    /// Transfers Raft leadership to any available peer.
+    #[method(name = "transferLeader")]
+    async fn conductor_transfer_leader(&self) -> RpcResult<()>;
+
+    /// Transfers Raft leadership to a specific peer identified by server ID and Raft address.
+    #[method(name = "transferLeaderToServer")]
+    async fn conductor_transfer_leader_to_server(
+        &self,
+        server_id: String,
+        raft_addr: String,
+    ) -> RpcResult<()>;
+}

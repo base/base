@@ -9,12 +9,14 @@ use anyhow::Result;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_flashblocks::Flashblock;
 use base_alloy_network::{Base, TransactionResponse};
+use base_consensus_rpc::{ConductorApiClient, OpP2PApiClient, RollupNodeApiClient};
 use futures::{StreamExt, stream};
+use jsonrpsee::http_client::HttpClientBuilder;
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tracing::warn;
 
-use crate::tui::Toast;
+use crate::{config::ConductorNodeConfig, tui::Toast};
 
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
 const WS_RECONNECT_INITIAL_DELAY: Duration = Duration::from_secs(1);
@@ -611,6 +613,148 @@ pub(crate) async fn fetch_block_transactions(
         Err(e) => {
             warn!(error = %e, block = block_number, "failed to fetch block transactions");
             let _ = tx.send(Err(e.to_string())).await;
+        }
+    }
+}
+
+/// Live status snapshot for a single node in an HA conductor cluster.
+#[derive(Debug, Clone)]
+pub(crate) struct ConductorNodeStatus {
+    /// Human-readable name for this node.
+    pub name: String,
+    /// Whether this node is the Raft leader. `None` means the node is unreachable.
+    pub is_leader: Option<bool>,
+    /// Unsafe L2 block number from `optimism_syncStatus`. `None` means unreachable.
+    pub unsafe_l2_block: Option<u64>,
+    /// Number of connected P2P peers from `opp2p_peerStats`. `None` means unreachable.
+    pub peer_count: Option<u32>,
+}
+
+/// Finds the current Raft leader and transfers leadership.
+///
+/// If `target_name` is `None`, leadership is transferred to any available peer
+/// (`conductor_transferLeader`). If `target_name` is `Some(name)`, leadership
+/// is transferred to the named node via `conductor_transferLeaderToServer`.
+///
+/// The result — `Ok(description)` or `Err(message)` — is sent to `result_tx`.
+pub(crate) async fn transfer_conductor_leader(
+    nodes: Vec<ConductorNodeConfig>,
+    target_name: Option<String>,
+    result_tx: mpsc::Sender<Result<String, String>>,
+) {
+    const TIMEOUT: Duration = Duration::from_millis(500);
+
+    let outcome: anyhow::Result<String> = async {
+        let mut leader_client = None;
+        let mut leader_name = String::new();
+
+        for node in &nodes {
+            let client = HttpClientBuilder::default()
+                .request_timeout(TIMEOUT)
+                .build(node.conductor_rpc.as_str())
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            if ConductorApiClient::conductor_leader(&client).await.unwrap_or(false) {
+                leader_client = Some(client);
+                leader_name = node.name.clone();
+                break;
+            }
+        }
+
+        let leader =
+            leader_client.ok_or_else(|| anyhow::anyhow!("no leader found in cluster"))?;
+
+        match target_name {
+            None => {
+                ConductorApiClient::conductor_transfer_leader(&leader)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                Ok(format!("leadership transferred from {leader_name}"))
+            }
+            Some(ref target) => {
+                let target_node = nodes
+                    .iter()
+                    .find(|n| n.name == *target)
+                    .ok_or_else(|| anyhow::anyhow!("target node {target} not found"))?;
+                ConductorApiClient::conductor_transfer_leader_to_server(
+                    &leader,
+                    target_node.server_id.clone(),
+                    target_node.raft_addr.clone(),
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+                Ok(format!("leadership transferred to {target}"))
+            }
+        }
+    }
+    .await;
+
+    let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
+}
+
+/// Polls all conductor nodes every 200 ms and forwards status snapshots.
+///
+/// Builds one pair of HTTP clients per node (conductor RPC + CL RPC) before
+/// entering the loop so connection setup cost is paid only once. Each poll
+/// fires all per-node requests concurrently via [`futures::future::join_all`].
+/// Any individual RPC that times out or errors yields `None` for that field —
+/// the node is shown as offline when `is_leader` is `None`.
+pub(crate) async fn run_conductor_poller(
+    nodes: Vec<ConductorNodeConfig>,
+    tx: mpsc::Sender<Vec<ConductorNodeStatus>>,
+) {
+    const POLL_INTERVAL: Duration = Duration::from_millis(200);
+    const RPC_TIMEOUT: Duration = Duration::from_millis(500);
+
+    let clients: Vec<(String, _, _)> = nodes
+        .into_iter()
+        .filter_map(|node| {
+            let conductor_client = HttpClientBuilder::default()
+                .request_timeout(RPC_TIMEOUT)
+                .build(node.conductor_rpc.as_str())
+                .inspect_err(|e| {
+                    warn!(error = %e, node = %node.name, "failed to build conductor HTTP client");
+                })
+                .ok()?;
+            let cl_client = HttpClientBuilder::default()
+                .request_timeout(RPC_TIMEOUT)
+                .build(node.cl_rpc.as_str())
+                .inspect_err(|e| {
+                    warn!(error = %e, node = %node.name, "failed to build CL HTTP client");
+                })
+                .ok()?;
+            Some((node.name, conductor_client, cl_client))
+        })
+        .collect();
+
+    let mut interval = tokio::time::interval(POLL_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        interval.tick().await;
+
+        let statuses = futures::future::join_all(clients.iter().map(
+            |(name, conductor_client, cl_client)| async move {
+                let is_leader = ConductorApiClient::conductor_leader(conductor_client).await.ok();
+                let unsafe_l2_block = RollupNodeApiClient::op_sync_status(cl_client)
+                    .await
+                    .ok()
+                    .map(|s| s.unsafe_l2.block_info.number);
+                let peer_count = OpP2PApiClient::opp2p_peer_stats(cl_client)
+                    .await
+                    .ok()
+                    .map(|s| s.connected);
+                ConductorNodeStatus {
+                    name: name.clone(),
+                    is_leader,
+                    unsafe_l2_block,
+                    peer_count,
+                }
+            },
+        ))
+        .await;
+
+        if tx.send(statuses).await.is_err() {
+            break;
         }
     }
 }

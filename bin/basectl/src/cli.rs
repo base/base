@@ -34,4 +34,7 @@ pub(crate) enum Commands {
     /// Command center (combined view)
     #[command(visible_alias = "cc")]
     CommandCenter,
+    /// HA conductor cluster monitor
+    #[command(visible_alias = "co")]
+    Conductor,
 }

@@ -49,6 +49,7 @@ impl App {
             self.resources.da.poll();
             self.resources.flash.poll();
             self.resources.toasts.poll();
+            self.resources.conductor.poll();
             self.resources.poll_sys_config();
 
             let action = current_view.tick(&mut self.resources);
