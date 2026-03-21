@@ -27,3 +27,6 @@ mod handler;
 #[cfg(test)]
 pub use gossip::MockUnsafePayloadGossipClient;
 pub use handler::NetworkHandler;
+
+mod transport;
+pub use transport::GossipTransport;

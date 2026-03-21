@@ -288,7 +288,9 @@ impl RollupNode {
             QueuedNetworkEngineClient { engine_actor_request_tx: engine_actor_request_tx.clone() },
             cancellation.clone(),
             self.network_builder(),
-        );
+        )
+        .await
+        .map_err(|e| format!("Failed to start network actor: {e}"))?;
 
         let (l1_head_updates_tx, l1_head_updates_rx) = watch::channel(None);
         let delayed_l1_provider = DelayedL1OriginSelectorProvider::new(

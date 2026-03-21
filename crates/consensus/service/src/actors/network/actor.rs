@@ -1,6 +1,6 @@
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_alloy_rpc_types_engine::{OpExecutionPayloadEnvelope, OpNetworkPayloadEnvelope};
+use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use base_consensus_gossip::P2pRpcRequest;
 use base_consensus_rpc::NetworkAdminQuery;
 use base_consensus_sources::BlockSignerError;
@@ -13,6 +13,7 @@ use crate::{
     CancellableContext, NetworkEngineClient, NodeActor,
     actors::network::{
         builder::NetworkBuilder, driver::NetworkDriverError, error::NetworkBuilderError,
+        handler::NetworkHandler, transport::GossipTransport,
     },
 };
 
@@ -20,7 +21,9 @@ use crate::{
 /// - *discovery*: Peer discovery over UDP using discv5.
 /// - *gossip*: Block gossip over TCP using libp2p.
 ///
-/// The network actor itself is a light wrapper around the [`NetworkBuilder`].
+/// `NetworkActor` is generic over the gossip transport backend via [`GossipTransport`]. The
+/// production transport is [`NetworkHandler`], which opens real TCP and UDP sockets. Test
+/// environments can supply an in-process channel-based transport to avoid binding ports.
 ///
 /// ## Example
 ///
@@ -32,21 +35,13 @@ use crate::{
 /// let signer = Address::random();
 /// let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 9099);
 ///
-/// // Construct the `Network` using the builder.
-/// // let mut driver = Network::builder()
-/// //    .with_unsafe_block_signer(signer)
-/// //    .with_chain_id(chain_id)
-/// //    .with_gossip_addr(socket)
-/// //    .build()
-/// //    .unwrap();
-///
-/// // Construct the `NetworkActor` with the [`Network`].
-/// // let actor = NetworkActor::new(driver);
+/// // Construct the `Network` using the builder, then wrap it in a `NetworkActor`.
+/// // let (inbound_data, actor) = NetworkActor::new(engine_client, token, builder).await?;
 /// ```
 #[derive(Debug)]
-pub struct NetworkActor<NetworkEngineClient_: NetworkEngineClient> {
-    /// Network driver
-    pub(super) builder: NetworkBuilder,
+pub struct NetworkActor<E: NetworkEngineClient, T: GossipTransport> {
+    /// Gossip and discovery backend.
+    pub(super) transport: T,
     /// The cancellation token, shared between all tasks.
     pub(super) cancellation_token: CancellationToken,
     /// A channel to receive the unsafe block signer address.
@@ -58,7 +53,7 @@ pub struct NetworkActor<NetworkEngineClient_: NetworkEngineClient> {
     /// A channel to receive unsafe blocks and send them through the gossip layer.
     pub(super) publish_rx: mpsc::Receiver<OpExecutionPayloadEnvelope>,
     /// A channel to use to interact with the engine actor.
-    pub(super) engine_client: NetworkEngineClient_,
+    pub(super) engine_client: E,
 }
 
 /// The inbound data for the network actor.
@@ -76,19 +71,38 @@ pub struct NetworkInboundData {
     pub gossip_payload_tx: mpsc::Sender<OpExecutionPayloadEnvelope>,
 }
 
-impl<NetworkEngineClient_: NetworkEngineClient> NetworkActor<NetworkEngineClient_> {
-    /// Constructs a new [`NetworkActor`] given the [`NetworkBuilder`]
-    pub fn new(
-        engine_client: NetworkEngineClient_,
+impl<E: NetworkEngineClient> NetworkActor<E, NetworkHandler> {
+    /// Constructs a new production [`NetworkActor`] by building a [`NetworkHandler`] from the
+    /// provided [`NetworkBuilder`].
+    ///
+    /// This is the standard constructor for production use. It performs the async startup of the
+    /// libp2p swarm and discv5 discovery service before returning.
+    pub async fn new(
+        engine_client: E,
         cancellation_token: CancellationToken,
-        driver: NetworkBuilder,
+        builder: NetworkBuilder,
+    ) -> Result<(NetworkInboundData, Self), NetworkActorError> {
+        let transport = builder.build()?.start().await?;
+        Ok(Self::with_transport(engine_client, cancellation_token, transport))
+    }
+}
+
+impl<E: NetworkEngineClient, T: GossipTransport> NetworkActor<E, T> {
+    /// Constructs a new [`NetworkActor`] with a pre-built [`GossipTransport`].
+    ///
+    /// Use this constructor when supplying a custom transport, such as a channel-based test
+    /// transport that does not bind real network ports.
+    pub fn with_transport(
+        engine_client: E,
+        cancellation_token: CancellationToken,
+        transport: T,
     ) -> (NetworkInboundData, Self) {
         let (signer_tx, signer_rx) = mpsc::channel(16);
         let (rpc_tx, rpc_rx) = mpsc::channel(1024);
         let (admin_rpc_tx, admin_rpc_rx) = mpsc::channel(1024);
-        let (publish_tx, publish_rx) = tokio::sync::mpsc::channel(256);
+        let (publish_tx, publish_rx) = mpsc::channel(256);
         let actor = Self {
-            builder: driver,
+            transport,
             cancellation_token,
             signer: signer_rx,
             p2p_rpc: rpc_rx,
@@ -96,17 +110,17 @@ impl<NetworkEngineClient_: NetworkEngineClient> NetworkActor<NetworkEngineClient
             publish_rx,
             engine_client,
         };
-        let outbound_data = NetworkInboundData {
+        let inbound_data = NetworkInboundData {
             signer: signer_tx,
             p2p_rpc: rpc_tx,
             admin_rpc: admin_rpc_tx,
             gossip_payload_tx: publish_tx,
         };
-        (outbound_data, actor)
+        (inbound_data, actor)
     }
 }
 
-impl<E: NetworkEngineClient> CancellableContext for NetworkActor<E> {
+impl<E: NetworkEngineClient, T: GossipTransport> CancellableContext for NetworkActor<E, T> {
     fn cancelled(&self) -> WaitForCancellationFuture<'_> {
         self.cancellation_token.cancelled()
     }
@@ -138,19 +152,22 @@ pub enum NetworkActorError {
     FailedToSignPayload(#[from] BlockSignerError),
 }
 
+impl From<std::convert::Infallible> for NetworkActorError {
+    fn from(e: std::convert::Infallible) -> Self {
+        match e {}
+    }
+}
+
 #[async_trait]
-impl<NetworkEngineClient_: NetworkEngineClient + 'static> NodeActor
-    for NetworkActor<NetworkEngineClient_>
+impl<E: NetworkEngineClient + 'static, T: GossipTransport + 'static> NodeActor
+    for NetworkActor<E, T>
+where
+    T::Error: Into<NetworkActorError>,
 {
     type Error = NetworkActorError;
     type StartData = ();
 
     async fn start(mut self, _: Self::StartData) -> Result<(), Self::Error> {
-        let mut handler = self.builder.build()?.start().await?;
-
-        // New unsafe block channel.
-        let (unsafe_block_tx, mut unsafe_block_rx) = tokio::sync::mpsc::unbounded_channel();
-
         loop {
             select! {
                 _ = self.cancellation_token.cancelled() => {
@@ -160,17 +177,6 @@ impl<NetworkEngineClient_: NetworkEngineClient + 'static> NodeActor
                     );
                     return Ok(());
                 }
-                block = unsafe_block_rx.recv() => {
-                    let Some(block) = block else {
-                        error!(target: "node::p2p", "The unsafe block receiver channel has closed");
-                        return Err(NetworkActorError::ChannelClosed);
-                    };
-
-                    if self.engine_client.send_unsafe_block(block).await.is_err() {
-                        warn!(target: "network", "Failed to forward unsafe block to engine");
-                        return Err(NetworkActorError::ChannelClosed);
-                    }
-                }
                 signer = self.signer.recv() => {
                     let Some(signer) = signer else {
                         warn!(
@@ -179,72 +185,30 @@ impl<NetworkEngineClient_: NetworkEngineClient + 'static> NodeActor
                         );
                         return Err(NetworkActorError::ChannelClosed);
                     };
-                    if handler.unsafe_block_signer_sender.send(signer).is_err() {
-                        warn!(
-                            target: "network",
-                            "Failed to send unsafe block signer to network handler",
-                        );
-                    }
+                    self.transport.set_block_signer(signer);
                 }
                 Some(block) = self.publish_rx.recv(), if !self.publish_rx.is_closed() => {
-                    let timestamp = block.execution_payload.timestamp();
-                    let selector = |handler: &base_consensus_gossip::BlockHandler| {
-                        handler.topic(timestamp)
+                    self.transport.publish(block).await.map_err(Into::into)?;
+                }
+                block = self.transport.next_unsafe_block() => {
+                    let Some(block) = block else {
+                        error!(target: "node::p2p", "The gossip transport has closed");
+                        return Err(NetworkActorError::ChannelClosed);
                     };
-                    let Some(signer) = handler.signer.as_ref() else {
-                        warn!(target: "net", "No local signer available to sign the payload");
-                        continue;
-                    };
-
-                    let chain_id = handler.discovery.chain_id;
-
-                    let sender_address = *handler.unsafe_block_signer_sender.borrow();
-
-                    let payload_hash = block.payload_hash();
-                    let signature = signer.sign_block(payload_hash, chain_id, sender_address).await?;
-
-                    let payload = OpNetworkPayloadEnvelope {
-                        payload: block.execution_payload,
-                        parent_beacon_block_root: block.parent_beacon_block_root,
-                        signature,
-                        payload_hash,
-                    };
-
-                    match handler.gossip.publish(selector, Some(payload)) {
-                        Ok(id) => info!(id = ?id, "Published unsafe payload"),
-                        Err(e) => warn!(error = ?e, "Failed to publish unsafe payload"),
+                    if self.engine_client.send_unsafe_block(block.into()).await.is_err() {
+                        warn!(target: "network", "Failed to forward unsafe block to engine");
+                        return Err(NetworkActorError::ChannelClosed);
                     }
                 }
-                event = handler.gossip.next() => {
-                    let Some(event) = event else {
-                        error!(target: "node::p2p", "The gossip swarm stream has ended");
-                        return Err(NetworkActorError::ChannelClosed);
-                    };
-
-                    if let Some(payload) = handler.gossip.handle_event(event)
-                        && unsafe_block_tx.send(payload.into()).is_err() {
-                            warn!(target: "node::p2p", "Failed to send unsafe block to network handler");
-                        }
-                },
-                enr = handler.enr_receiver.recv() => {
-                    let Some(enr) = enr else {
-                        error!(target: "node::p2p", "The enr receiver channel has closed");
-                        return Err(NetworkActorError::ChannelClosed);
-                    };
-                    handler.gossip.dial(enr);
-                },
-                _ = handler.peer_score_inspector.tick(), if handler.gossip.peer_monitoring.as_ref().is_some() => {
-                    handler.handle_peer_monitoring().await;
-                },
                 Some(NetworkAdminQuery::PostUnsafePayload { payload }) = self.admin_rpc.recv(), if !self.admin_rpc.is_closed() => {
-                    debug!(target: "node::p2p", "Broadcasting unsafe payload from admin api");
-                    if unsafe_block_tx.send(payload).is_err() {
-                        warn!(target: "node::p2p", "Failed to send unsafe block to network handler");
+                    debug!(target: "node::p2p", "Forwarding unsafe payload from admin api to engine");
+                    if self.engine_client.send_unsafe_block(payload).await.is_err() {
+                        warn!(target: "node::p2p", "Failed to forward admin api unsafe block to engine");
                     }
-                },
+                }
                 Some(req) = self.p2p_rpc.recv(), if !self.p2p_rpc.is_closed() => {
-                    req.handle(&mut handler.gossip, &handler.discovery);
-                },
+                    self.transport.handle_p2p_rpc(req);
+                }
             }
         }
     }
@@ -280,7 +244,7 @@ mod tests {
 
         let payload_hash = block.payload_hash();
         let signature = pubkey.sign_hash_sync(&payload_hash.signature_message(CHAIN_ID)).unwrap();
-        let payload = OpNetworkPayloadEnvelope {
+        let payload = base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope {
             payload: block.execution_payload,
             parent_beacon_block_root: block.parent_beacon_block_root,
             signature,
@@ -288,7 +252,9 @@ mod tests {
         };
         let encoded_payload = payload.encode_v1().unwrap();
 
-        let decoded_payload = OpNetworkPayloadEnvelope::decode_v1(&encoded_payload).unwrap();
+        let decoded_payload =
+            base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope::decode_v1(&encoded_payload)
+                .unwrap();
 
         let msg = decoded_payload.payload_hash.signature_message(CHAIN_ID);
         let msg_signer = decoded_payload.signature.recover_address_from_prehash(&msg).unwrap();
@@ -314,7 +280,7 @@ mod tests {
 
         let payload_hash = block.payload_hash();
         let signature = pubkey.sign_hash_sync(&payload_hash.signature_message(CHAIN_ID)).unwrap();
-        let payload = OpNetworkPayloadEnvelope {
+        let payload = base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope {
             payload: block.execution_payload,
             parent_beacon_block_root: block.parent_beacon_block_root,
             signature,
@@ -322,7 +288,9 @@ mod tests {
         };
         let encoded_payload = payload.encode_v3().unwrap();
 
-        let decoded_payload = OpNetworkPayloadEnvelope::decode_v3(&encoded_payload).unwrap();
+        let decoded_payload =
+            base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope::decode_v3(&encoded_payload)
+                .unwrap();
 
         let msg = decoded_payload.payload_hash.signature_message(CHAIN_ID);
         let msg_signer = decoded_payload.signature.recover_address_from_prehash(&msg).unwrap();

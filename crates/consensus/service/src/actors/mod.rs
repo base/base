@@ -35,10 +35,10 @@ pub use l1_watcher::{
 
 mod network;
 pub use network::{
-    NetworkActor, NetworkActorError, NetworkBuilder, NetworkBuilderError, NetworkConfig,
-    NetworkDriver, NetworkDriverError, NetworkEngineClient, NetworkHandler, NetworkInboundData,
-    QueuedNetworkEngineClient, QueuedUnsafePayloadGossipClient, UnsafePayloadGossipClient,
-    UnsafePayloadGossipClientError,
+    GossipTransport, NetworkActor, NetworkActorError, NetworkBuilder, NetworkBuilderError,
+    NetworkConfig, NetworkDriver, NetworkDriverError, NetworkEngineClient, NetworkHandler,
+    NetworkInboundData, QueuedNetworkEngineClient, QueuedUnsafePayloadGossipClient,
+    UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
 };
 
 mod sequencer;

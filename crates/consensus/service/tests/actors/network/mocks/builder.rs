@@ -59,7 +59,7 @@ impl TestNetworkBuilder {
 
     /// Minimal network configuration.
     /// Only allows loopback addresses in the discovery table.
-    pub(crate) fn build(&mut self, bootnodes: Vec<Enr>) -> TestNetwork {
+    pub(crate) async fn build(&mut self, bootnodes: Vec<Enr>) -> TestNetwork {
         let keypair = self.custom_keypair.take().unwrap_or_else(Keypair::generate_secp256k1);
 
         let secp256k1_key = keypair.clone().try_into_secp256k1()
@@ -102,7 +102,9 @@ impl TestNetworkBuilder {
             ForwardingNetworkEngineClient { blocks_tx },
             CancellationToken::new(),
             builder,
-        );
+        )
+        .await
+        .expect("Failed to build NetworkActor");
 
         let handle = tokio::spawn(async move { actor.start(()).await });
 
