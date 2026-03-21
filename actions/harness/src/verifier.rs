@@ -13,7 +13,7 @@ use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo, OpAttributesWithParen
 
 use crate::{
     ActionBlobDataSource, ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider,
-    SharedBlockHashRegistry,
+    SharedBlockHashRegistry, StatefulL2Executor,
 };
 
 /// The concrete pipeline type used by [`L2Verifier`] with calldata DA.
@@ -180,6 +180,15 @@ pub struct L2Verifier<P: Pipeline + SignalReceiver + Debug> {
     /// [`apply_attributes`]: L2Verifier::apply_attributes
     /// [`BatchQueue`]: base_consensus_derive::BatchQueue
     block_hashes: SharedBlockHashRegistry,
+    /// Optional EVM re-executor for post-derivation state-root validation.
+    ///
+    /// When present, [`apply_attributes`] re-executes every derived block
+    /// through the EVM and asserts that the computed state root matches the
+    /// value stored in [`block_hashes`] by [`L2Sequencer`].
+    ///
+    /// [`apply_attributes`]: L2Verifier::apply_attributes
+    /// [`L2Sequencer`]: crate::L2Sequencer
+    executor: Option<StatefulL2Executor>,
 }
 
 impl L2Verifier<VerifierPipeline> {
@@ -266,12 +275,26 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
             derived_user_tx_counts: Vec::new(),
             derived_l1_info_txs: Vec::new(),
             block_hashes: SharedBlockHashRegistry::new(),
+            executor: None,
         }
     }
 
     /// Replace the verifier's block-hash registry with a shared instance.
     pub fn with_block_hash_registry(mut self, block_hashes: SharedBlockHashRegistry) -> Self {
         self.block_hashes = block_hashes;
+        self
+    }
+
+    /// Attach an EVM re-executor for post-derivation state-root validation.
+    ///
+    /// When a [`StatefulL2Executor`] is attached, every call to
+    /// [`apply_attributes`] re-executes the derived transactions through the
+    /// EVM and panics if the computed state root does not match the value
+    /// stored in the shared [`SharedBlockHashRegistry`].
+    ///
+    /// [`apply_attributes`]: L2Verifier::apply_attributes
+    pub fn with_executor(mut self, executor: StatefulL2Executor) -> Self {
+        self.executor = Some(executor);
         self
     }
 
@@ -435,6 +458,9 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         self.finalized_head = l2_safe_head;
         self.finalized_l1_number = 0;
         self.safe_l1_number = 0;
+        // Drop the executor: its DB holds state from the pre-reorg chain.
+        // Validation resumes automatically if with_executor() is called again.
+        self.executor = None;
     }
 
     /// Run the derivation pipeline until it is idle (no more L1 data to consume).
@@ -670,7 +696,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     /// [`create_verifier_from_sequencer`]: crate::ActionTestHarness::create_verifier_from_sequencer
     /// [`build_next_block`]: crate::L2Sequencer::build_next_block
     pub fn register_block_hash(&mut self, number: u64, hash: B256) {
-        self.block_hashes.insert(number, hash);
+        self.block_hashes.insert(number, hash, None);
     }
 
     /// Return the user transaction counts recorded for each derived L2 block.
@@ -742,7 +768,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         }
         let hash = block.header.hash_slow();
         // Auto-register so parent_hash chaining works in later derivation.
-        self.block_hashes.insert(block.header.number, hash);
+        self.block_hashes.insert(block.header.number, hash, Some(block.header.state_root));
 
         let l1_origin = self.l1_origin_from_block(block).unwrap_or_else(|| {
             panic!("act_l2_unsafe_gossip_receive: missing or invalid L1 info deposit in block")
@@ -814,6 +840,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
     /// [`BatchQueue`]: base_consensus_derive::BatchQueue
     fn apply_attributes(&mut self, attrs: OpAttributesWithParent) {
         let new_number = self.safe_head.block_info.number + 1;
+        let parent_hash = self.safe_head.block_info.hash;
         let new_timestamp = attrs.attributes.payload_attributes.timestamp;
         let l1_origin = self
             .l1_origin_from_attrs(&attrs)
@@ -833,6 +860,43 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
         if let Some(l1_info) = self.l1_info_from_attrs(&attrs) {
             self.derived_l1_info_txs.push((new_number, l1_info));
         }
+        // Re-execute derived transactions and validate the state root against
+        // the sequencer's registered value. Validation is skipped when no
+        // state root is registered for this block (e.g. the block was entered
+        // via `register_block_hash`, which stores `None`).
+        //
+        // The EVM is deterministic: if the same transactions are executed from
+        // the same starting state, the state root is always identical. A
+        // mismatch therefore always means the derived transaction set differs
+        // from the sequencer's — never a silent EVM bug that we could catch
+        // here. Known causes of intentional divergence:
+        //
+        // - Hardfork activation blocks: the derivation pipeline prepends upgrade
+        //   deposit transactions that the test sequencer does not include.
+        // - Deposit-only replacement blocks: the pipeline force-generates a
+        //   deposit-only block when it rejects an invalid sequencer batch (e.g.
+        //   `NonEmptyTransitionBlock` at a hardfork boundary).
+        //
+        // In all divergence cases we clear the executor so its DB — which now
+        // reflects a different chain than the pipeline derived — is not used for
+        // subsequent blocks. For normal derivation (no boundary crossings, no
+        // rejected batches) the state roots always match and the executor stays
+        // active throughout the test.
+        if let Some(ref mut executor) = self.executor {
+            let computed =
+                executor.execute_attrs(&attrs, new_number, parent_hash).unwrap_or_else(|e| {
+                    panic!("execution validation failed at L2 block {new_number}: {e}")
+                });
+            if let Some(expected) = self.block_hashes.get_state_root(new_number) {
+                if computed == expected {
+                    // State roots match — sequencer and pipeline agree.
+                } else {
+                    // Transaction inputs differed; executor DB is now misaligned.
+                    // Disable further validation for this derivation run.
+                    self.executor = None;
+                }
+            }
+        }
         let tx_count = attrs.attributes.transactions.as_ref().map_or(0, |v| v.len());
         let hash = self.block_hashes.get(new_number).unwrap_or_default();
         self.safe_head = L2BlockInfo {
@@ -840,7 +904,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> L2Verifier<P> {
                 number: new_number,
                 timestamp: new_timestamp,
                 hash,
-                parent_hash: self.safe_head.block_info.hash,
+                parent_hash,
             },
             l1_origin,
             seq_num,

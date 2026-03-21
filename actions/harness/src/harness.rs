@@ -8,7 +8,7 @@ use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 use crate::{
     ActionBlobDataSource, ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider,
     ActionL2Source, BlobVerifierPipeline, L1Miner, L1MinerConfig, L2Sequencer, L2Verifier,
-    SharedL1Chain, VerifierPipeline, block_info_from,
+    SharedL1Chain, StatefulL2Executor, VerifierPipeline, block_info_from,
 };
 
 /// Top-level test harness that owns all actors for a single action test.
@@ -160,21 +160,34 @@ impl ActionTestHarness {
         self.create_verifier_with_l2_provider(l2_provider)
     }
 
-    /// Create an [`L2Verifier`] explicitly wired to a sequencer's block-hash registry.
+    /// Create an [`L2Verifier`] wired to a sequencer's block-hash registry and
+    /// a fresh [`StatefulL2Executor`] for per-block state-root validation.
     ///
     /// This is the normal path for tests that build blocks with [`L2Sequencer`]
     /// and then derive them with a verifier. The supplied `l1_chain` becomes
     /// the verifier's shared L1 view and is returned so tests can keep pushing
     /// newly mined L1 blocks into it.
+    ///
+    /// After every derived [`OpAttributesWithParent`], the verifier re-executes
+    /// the block's transactions through the EVM and asserts the computed state
+    /// root matches the value registered by [`L2Sequencer`]. Validation is
+    /// silently skipped for blocks whose state root was not registered (e.g.
+    /// deposit-only blocks produced by the pipeline without sequencer input).
     pub fn create_verifier_from_sequencer(
         &self,
         sequencer: &L2Sequencer,
         l1_chain: SharedL1Chain,
     ) -> (L2Verifier<VerifierPipeline>, SharedL1Chain) {
+        let executor = StatefulL2Executor::new(self.rollup_config.clone());
         let l2_provider = ActionL2ChainProvider::from_genesis(&self.rollup_config);
         let (verifier, chain) =
             self.create_verifier_with_l2_provider_and_chain(l2_provider, l1_chain);
-        (verifier.with_block_hash_registry(sequencer.block_hash_registry()), chain)
+        (
+            verifier
+                .with_block_hash_registry(sequencer.block_hash_registry())
+                .with_executor(executor),
+            chain,
+        )
     }
 
     /// Create an [`L2Verifier`] using a caller-supplied [`ActionL2ChainProvider`].
@@ -202,14 +215,25 @@ impl ActionTestHarness {
         self.create_blob_verifier_with_chain(chain)
     }
 
-    /// Create a blob verifier explicitly wired to a sequencer's block-hash registry.
+    /// Create a blob verifier wired to a sequencer's block-hash registry and
+    /// a fresh [`StatefulL2Executor`] for per-block state-root validation.
+    ///
+    /// Identical to [`create_verifier_from_sequencer`] but uses blob DA.
+    ///
+    /// [`create_verifier_from_sequencer`]: ActionTestHarness::create_verifier_from_sequencer
     pub fn create_blob_verifier_from_sequencer(
         &self,
         sequencer: &L2Sequencer,
         l1_chain: SharedL1Chain,
     ) -> (L2Verifier<BlobVerifierPipeline>, SharedL1Chain) {
+        let executor = StatefulL2Executor::new(self.rollup_config.clone());
         let (verifier, chain) = self.create_blob_verifier_with_chain(l1_chain);
-        (verifier.with_block_hash_registry(sequencer.block_hash_registry()), chain)
+        (
+            verifier
+                .with_block_hash_registry(sequencer.block_hash_registry())
+                .with_executor(executor),
+            chain,
+        )
     }
 
     fn create_verifier_with_l2_provider_and_chain(

@@ -4,7 +4,7 @@ use std::{
 };
 
 use alloy_consensus::{Header, SignableTransaction};
-use alloy_eips::BlockNumHash;
+use alloy_eips::{BlockNumHash, eip2718::Decodable2718};
 use alloy_hardforks::ForkCondition;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_signer::SignerSync;
@@ -15,7 +15,7 @@ use base_alloy_upgrades::BaseUpgrade;
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_execution_chainspec::OpChainSpecBuilder;
 use base_execution_evm::OpEvmConfig;
-use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
+use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo, OpAttributesWithParent};
 use base_revm::OpTransaction;
 use reth_evm::{ConfigureEvm, Evm as _, FromRecoveredTx};
 use revm::{
@@ -176,14 +176,28 @@ impl L2BlockProvider for ActionL2Source {
     }
 }
 
-/// Shared L2 block hashes keyed by block number.
+type BlockHashInner = Arc<Mutex<HashMap<u64, (B256, Option<B256>)>>>;
+
+/// Shared L2 block hashes and state roots keyed by block number.
 ///
 /// `L2Sequencer` writes into this registry as blocks are built, and
 /// `L2Verifier` reads from the same registry when it applies derived
 /// attributes so the resulting safe-head hash chain matches the sequencer's
-/// sealed headers.
+/// sealed headers. When a [`StatefulL2Executor`] is attached to the verifier,
+/// it also reads the stored state root for post-derivation execution
+/// validation.
+///
+/// The state root field is `Option<B256>`: it is `Some` only when the entry
+/// was produced by real EVM execution (e.g. via [`L2Sequencer`] or
+/// [`L2Verifier::act_l2_unsafe_gossip_receive`]). Entries created with
+/// [`L2Verifier::register_block_hash`] store `None`, which causes the
+/// executor to skip state-root validation for that block rather than panic
+/// against a bogus sentinel value.
+///
+/// [`L2Verifier::act_l2_unsafe_gossip_receive`]: crate::L2Verifier::act_l2_unsafe_gossip_receive
+/// [`L2Verifier::register_block_hash`]: crate::L2Verifier::register_block_hash
 #[derive(Debug, Clone, Default)]
-pub struct SharedBlockHashRegistry(Arc<Mutex<HashMap<u64, B256>>>);
+pub struct SharedBlockHashRegistry(BlockHashInner);
 
 impl SharedBlockHashRegistry {
     /// Create an empty shared registry.
@@ -191,14 +205,31 @@ impl SharedBlockHashRegistry {
         Self(Arc::new(Mutex::new(HashMap::new())))
     }
 
-    /// Record the hash for an L2 block number.
-    pub fn insert(&self, number: u64, hash: B256) {
-        self.0.lock().expect("block hash registry lock poisoned").insert(number, hash);
+    /// Record the block hash and optional state root for an L2 block number.
+    ///
+    /// Pass `Some(state_root)` when the block was produced by real EVM
+    /// execution so that an attached [`StatefulL2Executor`] can validate it.
+    /// Pass `None` for synthetic blocks (e.g. via
+    /// [`L2Verifier::register_block_hash`]); the executor will skip
+    /// state-root validation for those blocks.
+    pub fn insert(&self, number: u64, hash: B256, state_root: Option<B256>) {
+        self.0
+            .lock()
+            .expect("block hash registry lock poisoned")
+            .insert(number, (hash, state_root));
     }
 
-    /// Return the registered hash for an L2 block number.
+    /// Return the registered block hash for an L2 block number.
     pub fn get(&self, number: u64) -> Option<B256> {
-        self.0.lock().expect("block hash registry lock poisoned").get(&number).copied()
+        self.0.lock().expect("block hash registry lock poisoned").get(&number).map(|(h, _)| *h)
+    }
+
+    /// Return the registered state root for an L2 block number, if any.
+    ///
+    /// Returns `None` when the block was not registered or was registered
+    /// without a state root (e.g. via [`L2Verifier::register_block_hash`]).
+    pub fn get_state_root(&self, number: u64) -> Option<B256> {
+        self.0.lock().expect("block hash registry lock poisoned").get(&number).and_then(|(_, s)| *s)
     }
 }
 
@@ -236,8 +267,8 @@ pub struct L2Sequencer {
     system_config: SystemConfig,
     /// Test account used for signing user transactions.
     test_account: Arc<Mutex<TestAccount>>,
-    /// In-memory EVM database carrying state across blocks.
-    db: InMemoryDB,
+    /// In-process EVM executor carrying state across blocks.
+    executor: StatefulL2Executor,
     /// Optional pinned L1 origin. When set, epoch selection is bypassed and
     /// this block is used as the epoch for every subsequent L2 block built.
     l1_origin_pin: Option<BlockInfo>,
@@ -254,12 +285,7 @@ impl L2Sequencer {
         system_config: SystemConfig,
     ) -> Self {
         let test_account = Arc::new(Mutex::new(TestAccount::new(TEST_ACCOUNT_KEY)));
-
-        let mut db = InMemoryDB::default();
-        db.insert_account_info(
-            TEST_ACCOUNT_ADDRESS,
-            AccountInfo { balance: TEST_ACCOUNT_BALANCE, ..Default::default() },
-        );
+        let executor = StatefulL2Executor::new(rollup_config.clone());
 
         Self {
             head,
@@ -268,7 +294,7 @@ impl L2Sequencer {
             l1_chain_config: L1ChainConfig::default(),
             system_config,
             test_account,
-            db,
+            executor,
             l1_origin_pin: None,
             block_hashes: SharedBlockHashRegistry::new(),
         }
@@ -292,7 +318,7 @@ impl L2Sequencer {
     /// Callers can inspect account state and storage written by executed
     /// transactions.
     pub const fn db(&self) -> &InMemoryDB {
-        &self.db
+        self.executor.db()
     }
 
     /// Return the sequencer's shared block-hash registry.
@@ -417,8 +443,12 @@ impl L2Sequencer {
         transactions.insert(0, OpTxEnvelope::Deposit(deposit_tx));
 
         // Execute transactions against the in-memory EVM.
-        let (state_root, gas_used) =
-            self.execute_transactions(&transactions, next_number, next_timestamp, parent_hash)?;
+        let (state_root, gas_used) = self.executor.execute_transactions(
+            &transactions,
+            next_number,
+            next_timestamp,
+            parent_hash,
+        )?;
 
         let epoch_hash = l1_header.hash_slow();
         let header = Header {
@@ -449,63 +479,9 @@ impl L2Sequencer {
             l1_origin: BlockNumHash { number: epoch_number, hash: epoch_hash },
             seq_num,
         };
-        self.block_hashes.insert(next_number, block_hash);
+        self.block_hashes.insert(next_number, block_hash, Some(state_root));
 
         Ok(block)
-    }
-
-    /// Execute all transactions in the block against the in-memory EVM and
-    /// return the resulting (`state_root`, `cumulative_gas_used`).
-    fn execute_transactions(
-        &mut self,
-        transactions: &[OpTxEnvelope],
-        block_number: u64,
-        timestamp: u64,
-        parent_hash: B256,
-    ) -> Result<(B256, u64), L2SequencerError> {
-        let mut spec_builder =
-            OpChainSpecBuilder::base_mainnet().chain(self.rollup_config.l2_chain_id);
-
-        if let Some(ts) = self.rollup_config.hardforks.base.v1 {
-            spec_builder = spec_builder.with_fork(BaseUpgrade::V1, ForkCondition::Timestamp(ts));
-        }
-
-        let chain_spec = Arc::new(spec_builder.build());
-        let evm_config = OpEvmConfig::optimism(chain_spec);
-
-        let header = Header {
-            number: block_number,
-            timestamp,
-            parent_hash,
-            gas_limit: 30_000_000,
-            base_fee_per_gas: Some(1_000_000_000),
-            ..Default::default()
-        };
-
-        let mut cumulative_gas_used = 0u64;
-        let default_sender =
-            self.test_account.lock().expect("test account lock poisoned").address();
-
-        for tx in transactions {
-            let sender = tx_sender(tx, default_sender);
-            let op_tx: OpTransaction<TxEnv> = OpTransaction::from_recovered_tx(tx, sender);
-
-            let evm_env =
-                evm_config.evm_env(&header).map_err(|e| L2SequencerError::Evm(e.to_string()))?;
-            let mut evm = evm_config.evm_with_env(&mut self.db, evm_env);
-            match evm.transact(op_tx) {
-                Ok(ResultAndState { state, result }) => {
-                    cumulative_gas_used = cumulative_gas_used.saturating_add(result.gas_used());
-                    self.db.commit(state);
-                }
-                Err(e) => {
-                    return Err(L2SequencerError::Evm(format!("{e:?}")));
-                }
-            }
-        }
-
-        let state_root = compute_state_root(&self.db);
-        Ok((state_root, cumulative_gas_used))
     }
 }
 
@@ -560,5 +536,131 @@ fn compute_state_root(db: &InMemoryDB) -> B256 {
 impl L2BlockProvider for L2Sequencer {
     fn next_block(&mut self) -> Option<OpBlock> {
         Some(self.build_next_block_with_single_transaction())
+    }
+}
+
+/// Decode raw EIP-2718-encoded transaction bytes into [`OpTxEnvelope`]s.
+fn decode_raw_transactions(raw_txs: &[Bytes]) -> Result<Vec<OpTxEnvelope>, L2SequencerError> {
+    raw_txs
+        .iter()
+        .map(|raw| {
+            OpTxEnvelope::decode_2718(&mut raw.as_ref())
+                .map_err(|e| L2SequencerError::Evm(format!("tx decode: {e}")))
+        })
+        .collect()
+}
+
+/// In-process EVM re-executor for validating derived L2 blocks.
+///
+/// Mirrors the [`L2Sequencer`]'s execution environment — same seeded test
+/// account, same EVM configuration, same state-root computation. Call
+/// [`execute_attrs`] in L2-block order so the internal EVM state advances
+/// identically to the sequencer's. The returned state root can be compared
+/// against the value stored in [`SharedBlockHashRegistry`] to confirm that
+/// the derivation pipeline re-produces the exact same execution result.
+///
+/// [`execute_attrs`]: StatefulL2Executor::execute_attrs
+#[derive(Debug)]
+pub struct StatefulL2Executor {
+    db: InMemoryDB,
+    rollup_config: RollupConfig,
+}
+
+impl StatefulL2Executor {
+    /// Create a new executor with the standard test account seeded.
+    ///
+    /// The initial EVM state matches the [`L2Sequencer`]'s genesis: the
+    /// [`TEST_ACCOUNT_ADDRESS`] is funded with [`TEST_ACCOUNT_BALANCE`].
+    pub fn new(rollup_config: RollupConfig) -> Self {
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            TEST_ACCOUNT_ADDRESS,
+            AccountInfo { balance: TEST_ACCOUNT_BALANCE, ..Default::default() },
+        );
+        Self { db, rollup_config }
+    }
+
+    /// Returns a reference to the internal EVM database.
+    ///
+    /// Callers can inspect account state and storage written by executed
+    /// transactions.
+    pub const fn db(&self) -> &InMemoryDB {
+        &self.db
+    }
+
+    /// Execute the transactions from `attrs` and return the resulting state root.
+    ///
+    /// Decodes each raw EIP-2718-encoded transaction from
+    /// `attrs.attributes.transactions`, executes them in order against the
+    /// internal EVM database, and returns the Merkle Patricia Trie state root.
+    /// The internal state persists between calls so repeated invocations
+    /// mirror the sequencer's block-by-block execution.
+    pub fn execute_attrs(
+        &mut self,
+        attrs: &OpAttributesWithParent,
+        block_number: u64,
+        parent_hash: B256,
+    ) -> Result<B256, L2SequencerError> {
+        let timestamp = attrs.attributes.payload_attributes.timestamp;
+        let txs = decode_raw_transactions(attrs.attributes.transactions.as_deref().unwrap_or(&[]))?;
+        let (state_root, _gas_used) =
+            self.execute_transactions(&txs, block_number, timestamp, parent_hash)?;
+        Ok(state_root)
+    }
+
+    /// Execute transactions against the internal EVM database and return
+    /// `(state_root, cumulative_gas_used)`.
+    ///
+    /// This is the single authoritative execution path shared by both
+    /// [`L2Sequencer`] (which needs the gas total for header construction) and
+    /// [`execute_attrs`] (which only needs the state root for validation).
+    ///
+    /// [`execute_attrs`]: StatefulL2Executor::execute_attrs
+    pub fn execute_transactions(
+        &mut self,
+        transactions: &[OpTxEnvelope],
+        block_number: u64,
+        timestamp: u64,
+        parent_hash: B256,
+    ) -> Result<(B256, u64), L2SequencerError> {
+        let mut spec_builder =
+            OpChainSpecBuilder::base_mainnet().chain(self.rollup_config.l2_chain_id);
+
+        if let Some(ts) = self.rollup_config.hardforks.base.v1 {
+            spec_builder = spec_builder.with_fork(BaseUpgrade::V1, ForkCondition::Timestamp(ts));
+        }
+
+        let chain_spec = Arc::new(spec_builder.build());
+        let evm_config = OpEvmConfig::optimism(chain_spec);
+
+        let header = Header {
+            number: block_number,
+            timestamp,
+            parent_hash,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(1_000_000_000),
+            ..Default::default()
+        };
+
+        let mut cumulative_gas_used = 0u64;
+        for tx in transactions {
+            let sender = tx_sender(tx, TEST_ACCOUNT_ADDRESS);
+            let op_tx: OpTransaction<TxEnv> = OpTransaction::from_recovered_tx(tx, sender);
+
+            let evm_env =
+                evm_config.evm_env(&header).map_err(|e| L2SequencerError::Evm(e.to_string()))?;
+            let mut evm = evm_config.evm_with_env(&mut self.db, evm_env);
+            match evm.transact(op_tx) {
+                Ok(ResultAndState { state, result }) => {
+                    cumulative_gas_used = cumulative_gas_used.saturating_add(result.gas_used());
+                    self.db.commit(state);
+                }
+                Err(e) => {
+                    return Err(L2SequencerError::Evm(format!("{e:?}")));
+                }
+            }
+        }
+
+        Ok((compute_state_root(&self.db), cumulative_gas_used))
     }
 }
