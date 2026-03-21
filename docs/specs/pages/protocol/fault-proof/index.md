@@ -455,7 +455,7 @@ chain to retrieve data from. `<chainID>` must be specified when the interop hard
 
 Requests the host to prepare all preimages used in the building of the payload specified by `<payload_attributes>`.
 `<payload_attributes>` is a JSON object with the fields `parentBlockHash`, `payloadAttributes` and optionally `chainID`.
-The `chainID` must be specific when the interop hard fork is active.
+The `chainID` must be specified when the interop hard fork is active.
 
 #### `l2-account-proof <blockhash_and_address>`
 
