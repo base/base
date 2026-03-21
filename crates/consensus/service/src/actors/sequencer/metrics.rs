@@ -62,7 +62,11 @@ pub(super) fn update_block_build_duration_metrics(_duration: Duration) {
 #[inline]
 pub(super) fn update_seal_duration_metrics(_duration: Duration) {
     // Log the block building seal task duration, if metrics are enabled.
-    base_macros::set!(gauge, crate::Metrics::SEQUENCER_BLOCK_BUILDING_SEAL_TASK_DURATION, _duration);
+    base_macros::set!(
+        gauge,
+        crate::Metrics::SEQUENCER_BLOCK_BUILDING_SEAL_TASK_DURATION,
+        _duration
+    );
 }
 
 #[inline]
@@ -79,7 +83,13 @@ pub(super) fn inc_seal_step_retry(_step: &'static str) {
 
 #[inline]
 pub(super) fn update_seal_step_duration(_step: &'static str, _duration: Duration) {
-    base_macros::set!(gauge, crate::Metrics::SEQUENCER_SEAL_STEP_DURATION, "step", _step, _duration);
+    base_macros::set!(
+        gauge,
+        crate::Metrics::SEQUENCER_SEAL_STEP_DURATION,
+        "step",
+        _step,
+        _duration
+    );
 }
 
 #[inline]
