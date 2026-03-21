@@ -68,6 +68,8 @@ required-features = ["test-utils"]
 
 [features]
 test-utils = [
+	"base-protocol/test-utils",
+	"base-runtime/test-utils",
 	"dep:alloy-consensus",
 	"dep:alloy-rpc-types-eth",
 	"dep:async-trait",

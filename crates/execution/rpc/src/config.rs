@@ -1,5 +1,7 @@
 //! Base-specific `eth_config` RPC support.
 
+use std::sync::Arc;
+
 use alloy_eips::{
     eip4844::BLOB_TX_MIN_BLOB_GASPRICE,
     eip7840::BlobParams,
@@ -40,8 +42,9 @@ fn sanitize_system_contracts_for_fork(
             chain_spec.is_isthmus_active_at_timestamp(activation_time)
         }
         // Base does not support L1-style deposit, consolidation, or withdrawal request contracts.
-        // Any future variants are also excluded until explicitly opted in.
-        _ => false,
+        SystemContract::ConsolidationRequestPredeploy
+        | SystemContract::DepositContract
+        | SystemContract::WithdrawalRequestPredeploy => false,
     });
 }
 
@@ -72,8 +75,8 @@ pub trait BaseEthConfigApi {
 
 /// Base-specific handler for the `eth_config` RPC endpoint.
 #[derive(Debug, Clone)]
-pub struct BaseEthConfigHandler<Provider, Evm> {
-    provider: Provider,
+pub struct BaseEthConfigHandler<Provider: ChainSpecProvider, Evm> {
+    chain_spec: Arc<<Provider as ChainSpecProvider>::ChainSpec>,
     eth_config: EthConfigHandler<Provider, Evm>,
 }
 
@@ -87,8 +90,9 @@ where
 {
     /// Creates a new [`BaseEthConfigHandler`].
     pub fn new(provider: Provider, evm_config: Evm) -> Self {
-        let eth_config = EthConfigHandler::new(provider.clone(), evm_config);
-        Self { provider, eth_config }
+        let chain_spec = provider.chain_spec();
+        let eth_config = EthConfigHandler::new(provider, evm_config);
+        Self { chain_spec, eth_config }
     }
 
     fn sanitize_blob_schedules(&self, config: &mut EthConfig) {
@@ -98,8 +102,9 @@ where
     }
 
     fn sanitize_system_contracts(&self, config: &mut EthConfig) {
-        let chain_spec = self.provider.chain_spec();
-        for_each_fork(config, |fork| sanitize_system_contracts_for_fork(chain_spec.as_ref(), fork));
+        for_each_fork(config, |fork| {
+            sanitize_system_contracts_for_fork(self.chain_spec.as_ref(), fork)
+        });
     }
 }
 

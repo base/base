@@ -1,8 +1,8 @@
-#![allow(missing_docs)]
+//! Integration tests for the `eth_config` RPC endpoint.
 
 use std::sync::Arc;
 
-use alloy_eips::eip7910::EthConfig;
+use alloy_eips::eip7910::{EthConfig, EthForkConfig, SystemContract};
 use alloy_provider::Provider;
 use base_execution_chainspec::OpChainSpec;
 use base_node_runner::test_utils::{TestHarnessBuilder, build_test_genesis_v1};
@@ -38,6 +38,54 @@ fn assert_zero_blob_schedule(config: &EthConfig) {
     }
 }
 
+fn assert_supported_system_contracts(fork: &EthForkConfig) {
+    assert!(
+        fork.system_contracts.contains_key(&SystemContract::BeaconRoots),
+        "expected BeaconRoots to remain enabled at activation_time={}",
+        fork.activation_time
+    );
+    assert!(
+        !fork.system_contracts.contains_key(&SystemContract::DepositContract),
+        "DepositContract should be filtered at activation_time={}",
+        fork.activation_time
+    );
+    assert!(
+        !fork.system_contracts.contains_key(&SystemContract::ConsolidationRequestPredeploy),
+        "ConsolidationRequestPredeploy should be filtered at activation_time={}",
+        fork.activation_time
+    );
+    assert!(
+        !fork.system_contracts.contains_key(&SystemContract::WithdrawalRequestPredeploy),
+        "WithdrawalRequestPredeploy should be filtered at activation_time={}",
+        fork.activation_time
+    );
+    assert!(
+        fork.system_contracts.keys().all(|contract| matches!(
+            contract,
+            SystemContract::BeaconRoots | SystemContract::HistoryStorage
+        )),
+        "unexpected system contracts at activation_time={}: {:?}",
+        fork.activation_time,
+        fork.system_contracts.keys().collect::<Vec<_>>()
+    );
+}
+
+fn assert_sanitized_system_contracts(config: &EthConfig) {
+    assert!(
+        config.current.system_contracts.contains_key(&SystemContract::HistoryStorage),
+        "expected HistoryStorage to remain enabled in the active V1 config"
+    );
+    assert_supported_system_contracts(&config.current);
+
+    if let Some(next) = config.next.as_ref() {
+        assert_supported_system_contracts(next);
+    }
+
+    if let Some(last) = config.last.as_ref() {
+        assert_supported_system_contracts(last);
+    }
+}
+
 #[tokio::test]
 async fn eth_config_available_on_base_v1_node() -> Result<()> {
     let harness = TestHarnessBuilder::new()
@@ -48,6 +96,7 @@ async fn eth_config_available_on_base_v1_node() -> Result<()> {
 
     let config = provider.client().request_noparams::<EthConfig>("eth_config").await?;
     assert_zero_blob_schedule(&config);
+    assert_sanitized_system_contracts(&config);
 
     Ok(())
 }
