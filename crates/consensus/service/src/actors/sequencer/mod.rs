@@ -21,6 +21,8 @@ pub use seal::{PayloadSealer, SealState, SealStepError};
 mod pool;
 pub use pool::PoolActivation;
 
+mod activation_art;
+
 mod upgrades;
 pub use upgrades::UpgradeActivations;
 
