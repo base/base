@@ -390,7 +390,7 @@ forks.push((BaseUpgrade::V1.boxed(), self[BaseUpgrade::V1]));  // <-- add
 - [ ] `is_X_active_at_timestamp` added to `BaseUpgrades` trait
 - [ ] Timestamp constants added to `mainnet.rs`, `sepolia.rs`, `devnet_0_sepolia_dev_0.rs`; re-exported from `lib.rs`
 - [ ] Registry fixtures (`base_mainnet.rs`, `base_sepolia.rs`) updated
-- [ ] Default rollup config updated (`defaults.rs`)
+- [ ] Default rollup config updated (`base_sepolia.rs`)
 - [ ] Upgrade consistency tests pass
 
 ### Required when EVM execution changes
