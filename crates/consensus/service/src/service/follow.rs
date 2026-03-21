@@ -3,13 +3,12 @@ use std::{sync::Arc, time::Duration};
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
 use base_alloy_network::Base;
-use base_consensus_engine::{Engine, EngineState};
+use base_consensus_engine::{Engine, EngineClient, EngineState};
 use base_consensus_genesis::RollupConfig;
 use base_consensus_rpc::RpcBuilder;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
-use super::LocalEngineActor;
 use crate::{
     AlloyL1BlockFetcher, BlockStream, DelegateL2Client, DelegateL2DerivationActor, EngineActor,
     EngineActorRequest, EngineConfig, EngineProcessor, EngineRpcProcessor, L1Config,
@@ -70,18 +69,17 @@ impl FollowNode {
         self
     }
 
-    fn create_engine_actor(
+    fn create_engine_actor<E: EngineClient + 'static>(
         &self,
+        engine_client: Arc<E>,
         cancellation_token: CancellationToken,
         engine_request_rx: mpsc::Receiver<EngineActorRequest>,
         derivation_client: QueuedEngineDerivationClient,
-    ) -> LocalEngineActor {
+    ) -> EngineActor<EngineProcessor<E, QueuedEngineDerivationClient>, EngineRpcProcessor<E>> {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);
         let engine = Engine::new(engine_state, engine_state_tx, engine_queue_length_tx);
-
-        let engine_client = Arc::new(self.engine_config.clone().build_engine_client());
 
         let engine_processor = EngineProcessor::new(
             Arc::clone(&engine_client),
@@ -108,12 +106,31 @@ impl FollowNode {
 
     /// Starts the follow node.
     pub async fn start(&self) -> Result<(), String> {
+        let engine_client = Arc::new(self.engine_config.clone().build_engine_client());
+        self.start_inner(engine_client).await
+    }
+
+    /// Starts the follow node with a pre-built engine client.
+    ///
+    /// Enables dependency injection of the engine client for testing scenarios.
+    pub async fn start_with_engine_client<E: EngineClient + 'static>(
+        &self,
+        engine_client: Arc<E>,
+    ) -> Result<(), String> {
+        self.start_inner(engine_client).await
+    }
+
+    async fn start_inner<E: EngineClient + 'static>(
+        &self,
+        engine_client: Arc<E>,
+    ) -> Result<(), String> {
         let cancellation = CancellationToken::new();
 
         let (derivation_actor_request_tx, derivation_actor_request_rx) = mpsc::channel(1024);
         let (engine_actor_request_tx, engine_actor_request_rx) = mpsc::channel(1024);
 
         let engine_actor = self.create_engine_actor(
+            engine_client,
             cancellation.clone(),
             engine_actor_request_rx,
             QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()),

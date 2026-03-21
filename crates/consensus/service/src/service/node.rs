@@ -5,7 +5,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
 use base_alloy_network::Base;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
-use base_consensus_engine::{Engine, EngineState};
+use base_consensus_engine::{Engine, EngineClient, EngineState};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 use base_consensus_providers::{
     AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
@@ -16,7 +16,6 @@ use base_protocol::L2BlockInfo;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
-use super::LocalEngineActor;
 use crate::{
     AlloyL1BlockFetcher, ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
     DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
@@ -175,23 +174,18 @@ impl RollupNode {
         )
     }
 
-    /// Helper function to assemble the [`EngineActor`] since there are many structs created that
-    /// are not relevant to other actors or logic.
-    /// Note: ignoring complex type warning. This type only pertains to this function, so it is
-    /// better to have the full type here than have to piece it together from multiple type defs.
-    fn create_engine_actor(
+    fn create_engine_actor<E: EngineClient + 'static>(
         &self,
+        engine_client: Arc<E>,
         cancellation_token: CancellationToken,
         engine_request_rx: mpsc::Receiver<EngineActorRequest>,
         derivation_client: QueuedEngineDerivationClient,
         unsafe_head_tx: watch::Sender<L2BlockInfo>,
-    ) -> LocalEngineActor {
+    ) -> EngineActor<EngineProcessor<E, QueuedEngineDerivationClient>, EngineRpcProcessor<E>> {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);
         let engine = Engine::new(engine_state, engine_state_tx, engine_queue_length_tx);
-
-        let engine_client = Arc::new(self.engine_config().build_engine_client());
 
         let engine_processor = EngineProcessor::new(
             Arc::clone(&engine_client),
@@ -237,7 +231,8 @@ impl RollupNode {
     /// received.
     pub async fn start(&self) -> Result<(), String> {
         let pipeline = self.create_pipeline().await;
-        self.start_with(pipeline).await
+        let engine_client = Arc::new(self.engine_config().build_engine_client());
+        self.start_inner(engine_client, pipeline).await
     }
 
     /// Starts the rollup node service with a pre-built derivation pipeline.
@@ -254,7 +249,30 @@ impl RollupNode {
         DerivationActor<QueuedDerivationEngineClient, P>:
             NodeActor<StartData = (), Error = DerivationError>,
     {
-        // Create a global cancellation token for graceful shutdown of tasks.
+        let engine_client = Arc::new(self.engine_config().build_engine_client());
+        self.start_inner(engine_client, pipeline).await
+    }
+
+    /// Starts the rollup node with a pre-built engine client.
+    ///
+    /// This method enables dependency injection of the engine client, useful for testing
+    /// scenarios where a mock or in-memory engine client should be used instead of
+    /// connecting to a live L2 Engine API.
+    pub async fn start_with_engine_client<E: EngineClient + 'static>(
+        &self,
+        engine_client: Arc<E>,
+    ) -> Result<(), String> {
+        let pipeline = self.create_pipeline().await;
+        self.start_inner(engine_client, pipeline).await
+    }
+
+    async fn start_inner<E, P>(&self, engine_client: Arc<E>, pipeline: P) -> Result<(), String>
+    where
+        E: EngineClient + 'static,
+        P: Pipeline + SignalReceiver + Send + Sync + 'static,
+        DerivationActor<QueuedDerivationEngineClient, P>:
+            NodeActor<StartData = (), Error = DerivationError>,
+    {
         let cancellation = CancellationToken::new();
 
         let (derivation_actor_request_tx, derivation_actor_request_rx) = mpsc::channel(1024);
@@ -263,6 +281,7 @@ impl RollupNode {
         let (unsafe_head_tx, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
 
         let engine_actor = self.create_engine_actor(
+            engine_client,
             cancellation.clone(),
             engine_actor_request_rx,
             QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()),
