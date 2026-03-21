@@ -14,9 +14,8 @@ use tokio::{
 };
 
 use crate::{
-    actors::UpgradeActivations,
     BuildRequest, EngineClientError, EngineDerivationClient, EngineError, GetPayloadRequest,
-    ResetRequest, SealRequest,
+    ResetRequest, SealRequest, actors::UpgradeActivations,
 };
 
 /// Requires that the implementor handles [`EngineProcessingRequest`]s via the provided channel.

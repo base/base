@@ -25,22 +25,22 @@ impl UpgradeActivations {
     /// Logs hardfork activation when building or processing the first block of a fork.
     pub fn log(config: &RollupConfig, block_number: u64, timestamp: u64) {
         if config.is_first_ecotone_block(timestamp) {
-            info!(target: "sequencer", block_number, "Sequencing ecotone upgrade block");
+            info!(target: "upgrades", block_number, "Activating ecotone upgrade");
         } else if config.is_first_fjord_block(timestamp) {
-            info!(target: "sequencer", block_number, "Sequencing fjord upgrade block");
+            info!(target: "upgrades", block_number, "Activating fjord upgrade");
         } else if config.is_first_granite_block(timestamp) {
-            info!(target: "sequencer", block_number, "Sequencing granite upgrade block");
+            info!(target: "upgrades", block_number, "Activating granite upgrade");
         } else if config.is_first_holocene_block(timestamp) {
-            info!(target: "sequencer", block_number, "Sequencing holocene upgrade block");
+            info!(target: "upgrades", block_number, "Activating holocene upgrade");
         } else if config.is_first_isthmus_block(timestamp) {
-            info!(target: "sequencer", block_number, "Sequencing isthmus upgrade block");
+            info!(target: "upgrades", block_number, "Activating isthmus upgrade");
         } else if config.is_first_jovian_block(timestamp) {
-            info!(target: "sequencer", block_number, "Sequencing jovian upgrade block");
+            info!(target: "upgrades", block_number, "Activating jovian upgrade");
         } else if config.is_first_base_v1_block(timestamp) {
             for line in Self::BASE_V1_ACTIVATION_BANNER.lines() {
-                info!(target: "sequencer", "{line}");
+                info!(target: "upgrades", "{line}");
             }
-            info!(target: "sequencer", block_number, "Sequencing base v1 upgrade block");
+            info!(target: "upgrades", block_number, "Activating base v1 upgrade");
         }
     }
 }
