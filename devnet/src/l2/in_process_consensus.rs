@@ -19,7 +19,7 @@ use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
 };
 use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
-use base_consensus_rpc::{AdminApiClient, OpP2PApiClient, RpcBuilder};
+use base_consensus_rpc::{AdminApiClient, OpP2PApiClient, RollupNodeApiClient, RpcBuilder};
 use base_consensus_sources::BlockSigner;
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
@@ -239,14 +239,28 @@ impl InProcessConsensus {
             .build(self.rpc_url().as_str())
             .wrap_err("Failed to build RPC client")?;
 
-        // Pass `B256::ZERO` because the devnet always starts from genesis, so there is no
-        // meaningful unsafe head to provide. The server currently logs the hash but does not yet
-        // use it to set forkchoice.
+        // The consensus node validates that the provided hash matches the engine's actual unsafe
+        // head before activating the sequencer. Poll sync status until the engine is initialized
+        // (non-zero unsafe head hash), then pass the real value.
+        let mut unsafe_head = B256::ZERO;
+        for _ in 0..40 {
+            match client.op_sync_status().await {
+                Ok(status) if status.unsafe_l2.block_info.hash != B256::ZERO => {
+                    unsafe_head = status.unsafe_l2.block_info.hash;
+                    break;
+                }
+                _ => tokio::time::sleep(std::time::Duration::from_millis(250)).await,
+            }
+        }
+        if unsafe_head == B256::ZERO {
+            return Err(eyre::eyre!("Engine unsafe head did not initialize within 10s"));
+        }
+
         client
-            .admin_start_sequencer(B256::ZERO)
+            .admin_start_sequencer(unsafe_head)
             .await
             .wrap_err("Failed to start sequencer via RPC")?;
-        info!("sequencer started via admin RPC");
+        info!(unsafe_head = %unsafe_head, "sequencer started via admin RPC");
         Ok(())
     }
 
