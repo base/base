@@ -9,3 +9,6 @@ pub use client::{L1WatcherDerivationClient, QueuedL1WatcherDerivationClient};
 
 mod error;
 pub use error::L1WatcherActorError;
+
+mod fetcher;
+pub use fetcher::{AlloyL1BlockFetcher, L1BlockFetcher};

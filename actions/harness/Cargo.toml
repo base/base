@@ -18,6 +18,7 @@ thiserror.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 async-trait.workspace = true
+base-consensus-node.workspace = true
 alloy-signer.workspace = true
 alloy-hardforks.workspace = true
 alloy-primitives.workspace = true

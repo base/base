@@ -11,10 +11,10 @@ use tokio_util::sync::CancellationToken;
 
 use super::LocalEngineActor;
 use crate::{
-    BlockStream, DelegateL2Client, DelegateL2DerivationActor, EngineActor, EngineActorRequest,
-    EngineConfig, EngineProcessor, EngineRpcProcessor, L1Config, L1WatcherActor, NodeActor,
-    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
-    QueuedL1WatcherDerivationClient, RpcActor, RpcContext,
+    AlloyL1BlockFetcher, BlockStream, DelegateL2Client, DelegateL2DerivationActor, EngineActor,
+    EngineActorRequest, EngineConfig, EngineProcessor, EngineRpcProcessor, L1Config,
+    L1WatcherActor, NodeActor, QueuedDerivationEngineClient, QueuedEngineDerivationClient,
+    QueuedEngineRpcClient, QueuedL1WatcherDerivationClient, RpcActor, RpcContext,
     service::node::{FINALIZED_STREAM_POLL_INTERVAL, HEAD_STREAM_POLL_INTERVAL},
 };
 
@@ -158,7 +158,7 @@ impl FollowNode {
         // Create the [`L1WatcherActor`]. Previously known as the DA watcher actor.
         let l1_watcher = L1WatcherActor::new(
             Arc::clone(&self.config),
-            self.l1_config.engine_provider.clone(),
+            AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
             l1_query_rx,
             l1_head_updates_tx,
             QueuedL1WatcherDerivationClient { derivation_actor_request_tx },

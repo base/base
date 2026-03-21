@@ -45,6 +45,16 @@ impl SharedL1Chain {
         self.0.lock().expect("chain lock poisoned").get(number as usize).cloned()
     }
 
+    /// Return the tip (latest) block, or `None` if the chain is empty.
+    pub fn tip(&self) -> Option<L1Block> {
+        self.0.lock().expect("chain lock poisoned").last().cloned()
+    }
+
+    /// Look up a block by hash, returning a clone if it exists.
+    pub fn block_by_hash(&self, hash: alloy_primitives::B256) -> Option<L1Block> {
+        self.0.lock().expect("chain lock poisoned").iter().find(|b| b.hash() == hash).cloned()
+    }
+
     fn with<R>(&self, f: impl FnOnce(&[L1Block]) -> R) -> R {
         let g = self.0.lock().expect("chain lock poisoned");
         f(&g)
