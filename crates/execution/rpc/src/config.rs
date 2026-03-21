@@ -39,10 +39,22 @@ fn sanitize_system_contracts_for_fork(
         SystemContract::HistoryStorage => {
             chain_spec.is_isthmus_active_at_timestamp(activation_time)
         }
-        SystemContract::ConsolidationRequestPredeploy
-        | SystemContract::DepositContract
-        | SystemContract::WithdrawalRequestPredeploy => false,
+        // Base does not support L1-style deposit, consolidation, or withdrawal request contracts.
+        // Any future variants are also excluded until explicitly opted in.
+        _ => false,
     });
+}
+
+fn for_each_fork(config: &mut EthConfig, mut f: impl FnMut(&mut EthForkConfig)) {
+    f(&mut config.current);
+
+    if let Some(next) = config.next.as_mut() {
+        f(next);
+    }
+
+    if let Some(last) = config.last.as_mut() {
+        f(last);
+    }
 }
 
 /// RPC endpoint support for Base's `eth_config` response.
@@ -79,30 +91,15 @@ where
         Self { provider, eth_config }
     }
 
-    const fn sanitize_blob_schedules(&self, config: &mut EthConfig) {
-        config.current.blob_schedule = zero_blob_params();
-
-        if let Some(next) = config.next.as_mut() {
-            next.blob_schedule = zero_blob_params();
-        }
-
-        if let Some(last) = config.last.as_mut() {
-            last.blob_schedule = zero_blob_params();
-        }
+    fn sanitize_blob_schedules(&self, config: &mut EthConfig) {
+        for_each_fork(config, |fork| {
+            fork.blob_schedule = zero_blob_params();
+        });
     }
 
     fn sanitize_system_contracts(&self, config: &mut EthConfig) {
         let chain_spec = self.provider.chain_spec();
-
-        sanitize_system_contracts_for_fork(chain_spec.as_ref(), &mut config.current);
-
-        if let Some(next) = config.next.as_mut() {
-            sanitize_system_contracts_for_fork(chain_spec.as_ref(), next);
-        }
-
-        if let Some(last) = config.last.as_mut() {
-            sanitize_system_contracts_for_fork(chain_spec.as_ref(), last);
-        }
+        for_each_fork(config, |fork| sanitize_system_contracts_for_fork(chain_spec.as_ref(), fork));
     }
 }
 
