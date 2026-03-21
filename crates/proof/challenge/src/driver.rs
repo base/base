@@ -358,6 +358,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             agreed_l2_output_root,
             claimed_l2_output_root,
             claimed_l2_block_number,
+            proposer: self.submitter.sender_address(),
         };
 
         let result = tee.provider.prove(request).await.map_err(|e| eyre::eyre!(e))?;

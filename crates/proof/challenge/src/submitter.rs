@@ -21,6 +21,11 @@ impl<T: TxManager> ChallengeSubmitter<T> {
         Self { tx_manager }
     }
 
+    /// Returns the address that will submit transactions on-chain.
+    pub fn sender_address(&self) -> Address {
+        self.tx_manager.sender_address()
+    }
+
     /// Submits a `nullify()` transaction to the given dispute game contract.
     ///
     /// Returns the transaction hash on success, or an error if the transaction

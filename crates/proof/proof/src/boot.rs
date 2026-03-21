@@ -257,7 +257,15 @@ impl BootInfo {
         // Load proposer address (optional — defaults to zero for backwards compatibility).
         let proposer = match oracle.get(PreimageKey::new_local(PROPOSER_KEY.to())).await {
             Ok(bytes) if bytes.len() == 20 => Address::from_slice(&bytes),
-            _ => Address::ZERO,
+            Ok(bytes) => {
+                warn!(
+                    target: "boot_loader",
+                    len = bytes.len(),
+                    "Proposer preimage has unexpected length, defaulting to Address::ZERO"
+                );
+                Address::ZERO
+            }
+            Err(_) => Address::ZERO,
         };
 
         Ok(Self {
