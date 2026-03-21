@@ -183,8 +183,7 @@ fn render_cluster_table(
     selected: usize,
     op_pending: bool,
 ) {
-    let title =
-        if op_pending { " HA Conductor [transferring…] " } else { " HA Conductor " };
+    let title = if op_pending { " HA Conductor [transferring…] " } else { " HA Conductor " };
 
     let block = Block::default()
         .title(title)
@@ -226,14 +225,14 @@ fn render_cluster_table(
         .height(1);
 
     // ── Role row ───────────────────────────────────────────────────────────
-    let mut role_cells = vec![Cell::from("Role")
-        .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))];
+    let mut role_cells = vec![
+        Cell::from("Role").style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
     for node in nodes {
         let (label, style) = match node.is_leader {
-            Some(true) => (
-                "★  LEADER",
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-            ),
+            Some(true) => {
+                ("★  LEADER", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+            }
             Some(false) => ("   follower", Style::default().fg(Color::DarkGray)),
             None => ("   offline", Style::default().fg(Color::Red)),
         };
@@ -242,8 +241,10 @@ fn render_cluster_table(
     let role_row = Row::new(role_cells).height(1);
 
     // ── Unsafe L2 row ──────────────────────────────────────────────────────
-    let mut l2_cells = vec![Cell::from("Unsafe L2")
-        .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))];
+    let mut l2_cells = vec![
+        Cell::from("Unsafe L2")
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
     for node in nodes {
         let (label, style) = match node.unsafe_l2_block {
             Some(n) if node.is_leader == Some(true) => {
@@ -257,8 +258,10 @@ fn render_cluster_table(
     let l2_row = Row::new(l2_cells).height(1);
 
     // ── P2P peers row ──────────────────────────────────────────────────────
-    let mut peers_cells = vec![Cell::from("P2P Peers")
-        .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))];
+    let mut peers_cells = vec![
+        Cell::from("P2P Peers")
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
     for node in nodes {
         let (label, style) = match node.peer_count {
             Some(0) => ("   0".to_string(), Style::default().fg(Color::Red)),

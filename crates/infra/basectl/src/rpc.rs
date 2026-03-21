@@ -660,8 +660,7 @@ pub(crate) async fn transfer_conductor_leader(
             }
         }
 
-        let leader =
-            leader_client.ok_or_else(|| anyhow::anyhow!("no leader found in cluster"))?;
+        let leader = leader_client.ok_or_else(|| anyhow::anyhow!("no leader found in cluster"))?;
 
         match target_name {
             None => {
@@ -739,16 +738,9 @@ pub(crate) async fn run_conductor_poller(
                     .await
                     .ok()
                     .map(|s| s.unsafe_l2.block_info.number);
-                let peer_count = OpP2PApiClient::opp2p_peer_stats(cl_client)
-                    .await
-                    .ok()
-                    .map(|s| s.connected);
-                ConductorNodeStatus {
-                    name: name.clone(),
-                    is_leader,
-                    unsafe_l2_block,
-                    peer_count,
-                }
+                let peer_count =
+                    OpP2PApiClient::opp2p_peer_stats(cl_client).await.ok().map(|s| s.connected);
+                ConductorNodeStatus { name: name.clone(), is_leader, unsafe_l2_block, peer_count }
             },
         ))
         .await;

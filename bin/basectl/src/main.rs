@@ -24,9 +24,7 @@ async fn main() -> anyhow::Result<()> {
         Some(cli::Commands::CommandCenter) => {
             run_app_with_view(chain_config, ViewId::CommandCenter).await
         }
-        Some(cli::Commands::Conductor) => {
-            run_app_with_view(chain_config, ViewId::Conductor).await
-        }
+        Some(cli::Commands::Conductor) => run_app_with_view(chain_config, ViewId::Conductor).await,
         None => run_app(chain_config).await,
     }
 }

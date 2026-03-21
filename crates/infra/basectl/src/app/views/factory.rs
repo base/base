@@ -1,4 +1,6 @@
-use super::{CommandCenterView, ConductorView, ConfigView, DaMonitorView, FlashblocksView, HomeView};
+use super::{
+    CommandCenterView, ConductorView, ConfigView, DaMonitorView, FlashblocksView, HomeView,
+};
 use crate::app::{View, ViewId};
 
 /// Creates a boxed view instance for the given view identifier.
