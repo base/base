@@ -114,6 +114,10 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             }
         }
 
+        // Broadcast the updated state so watch-channel subscribers (e.g. op_syncStatus RPC)
+        // see the new forkchoice immediately, without waiting for a task to pass through drain().
+        self.state_sender.send_replace(self.state);
+
         // Find the new safe head's L1 origin and SystemConfig.
         let origin_block = start
             .safe

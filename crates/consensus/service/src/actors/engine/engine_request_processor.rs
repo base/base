@@ -229,6 +229,33 @@ where
         mut request_channel: mpsc::Receiver<EngineProcessingRequest>,
     ) -> JoinHandle<Result<(), EngineError>> {
         tokio::spawn(async move {
+            // Bootstrap: pre-populate the engine watch channels by performing an initial reset.
+            // Without this, external callers (op_syncStatus, admin_startSequencer) would always
+            // observe a zero unsafe head until the first engine task completes. On nodes where
+            // the sequencer starts stopped (e.g. devnet), no tasks arrive until after
+            // admin_startSequencer is called — creating a deadlock.
+            //
+            // We call engine.reset() directly (bypassing EngineProcessor::reset() and
+            // mark_el_sync_complete_and_notify_derivation_actor) so that we do NOT start
+            // derivation here. The el_sync_finished / el_sync_complete gate is preserved:
+            // if the EL responds with Valid, el_sync_finished is set to true and the first
+            // drain() iteration will trigger mark_el_sync_complete_and_notify_derivation_actor
+            // normally. If the EL is still syncing (Syncing response), el_sync_finished stays
+            // false and derivation waits — exactly the same as before.
+            match self.engine.reset(Arc::clone(&self.client), Arc::clone(&self.rollup)).await {
+                Ok(_) => {
+                    if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
+                        let new_head = self.engine.state().sync_state.unsafe_head();
+                        unsafe_head_tx.send_if_modified(|val| {
+                            (*val != new_head).then(|| *val = new_head).is_some()
+                        });
+                    }
+                }
+                Err(err) => {
+                    warn!(target: "engine", ?err, "Engine startup bootstrap failed; will initialize on first task");
+                }
+            }
+
             loop {
                 // Attempt to drain all outstanding tasks from the engine queue before adding new
                 // ones.
