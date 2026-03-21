@@ -6,11 +6,12 @@ use std::{
 use alloy_consensus::{Header, SignableTransaction};
 use alloy_eips::{BlockNumHash, eip2718::Decodable2718};
 use alloy_hardforks::ForkCondition;
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{EMPTY_ROOT_HASH, TrieAccount, root::state_root_unhashed};
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
+use base_alloy_rpc_types_engine::{OpExecutionPayload, OpNetworkPayloadEnvelope, PayloadHash};
 use base_alloy_upgrades::BaseUpgrade;
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_execution_chainspec::OpChainSpecBuilder;
@@ -25,7 +26,7 @@ use revm::{
     state::AccountInfo,
 };
 
-use crate::{L2BlockProvider, SharedL1Chain};
+use crate::{L2BlockProvider, SharedL1Chain, SupervisedP2P};
 
 /// Hardcoded private key for the test account used across all action tests.
 ///
@@ -274,6 +275,8 @@ pub struct L2Sequencer {
     l1_origin_pin: Option<BlockInfo>,
     /// Shared registry of built L2 block hashes, keyed by block number.
     block_hashes: SharedBlockHashRegistry,
+    /// Optional P2P handle for broadcasting unsafe blocks to a test transport.
+    supervised_p2p: Option<SupervisedP2P>,
 }
 
 impl L2Sequencer {
@@ -297,6 +300,7 @@ impl L2Sequencer {
             executor,
             l1_origin_pin: None,
             block_hashes: SharedBlockHashRegistry::new(),
+            supervised_p2p: None,
         }
     }
 
@@ -340,6 +344,40 @@ impl L2Sequencer {
     /// Clear the pinned L1 origin, restoring automatic epoch selection.
     pub const fn clear_l1_origin_pin(&mut self) {
         self.l1_origin_pin = None;
+    }
+
+    /// Wire a [`SupervisedP2P`] handle to this sequencer.
+    ///
+    /// Once set, calling [`broadcast_unsafe_block`] delivers blocks to the
+    /// matching [`TestGossipTransport`] receiver. Use
+    /// [`ActionTestHarness::create_supervised_p2p`] to construct the pair and
+    /// wire it in a single step.
+    ///
+    /// [`broadcast_unsafe_block`]: L2Sequencer::broadcast_unsafe_block
+    /// [`ActionTestHarness::create_supervised_p2p`]: crate::ActionTestHarness::create_supervised_p2p
+    pub fn set_supervised_p2p(&mut self, p2p: SupervisedP2P) {
+        self.supervised_p2p = Some(p2p);
+    }
+
+    /// Broadcast `block` as an [`OpNetworkPayloadEnvelope`] to the wired
+    /// [`SupervisedP2P`] handle.
+    ///
+    /// A no-op when no handle has been set via [`set_supervised_p2p`]. The
+    /// envelope carries a zero signature; test transports skip signature
+    /// validation.
+    ///
+    /// [`set_supervised_p2p`]: L2Sequencer::set_supervised_p2p
+    pub fn broadcast_unsafe_block(&self, block: &OpBlock) {
+        let Some(p2p) = &self.supervised_p2p else { return };
+        let block_hash = block.header.hash_slow();
+        let (execution_payload, _) = OpExecutionPayload::from_block_unchecked(block_hash, block);
+        let network = OpNetworkPayloadEnvelope {
+            payload: execution_payload,
+            signature: Signature::new(U256::ZERO, U256::ZERO, false),
+            payload_hash: PayloadHash(B256::ZERO),
+            parent_beacon_block_root: None,
+        };
+        p2p.send(network);
     }
 
     /// Build the next L2 block containing no user transactions.

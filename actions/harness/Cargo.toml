@@ -19,6 +19,7 @@ alloy-rlp.workspace = true
 alloy-eips.workspace = true
 async-trait.workspace = true
 base-consensus-node.workspace = true
+base-consensus-gossip.workspace = true
 alloy-signer.workspace = true
 alloy-hardforks.workspace = true
 alloy-primitives.workspace = true
@@ -31,6 +32,7 @@ base-protocol = { workspace = true, features = ["std"] }
 base-execution-evm.workspace = true
 base-alloy-consensus = { workspace = true, features = ["std", "evm"] }
 base-alloy-upgrades.workspace = true
+base-alloy-rpc-types-engine.workspace = true
 base-execution-chainspec.workspace = true
 base-consensus-genesis = { workspace = true, features = ["std"] }
 base-consensus-derive = { workspace = true, features = ["test-utils"] }

@@ -8,7 +8,7 @@ use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 use crate::{
     ActionBlobDataSource, ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider,
     ActionL2Source, BlobVerifierPipeline, L1Miner, L1MinerConfig, L2Sequencer, L2Verifier,
-    SharedL1Chain, StatefulL2Executor, VerifierPipeline, block_info_from,
+    SharedL1Chain, StatefulL2Executor, TestGossipTransport, VerifierPipeline, block_info_from,
 };
 
 /// Top-level test harness that owns all actors for a single action test.
@@ -81,6 +81,20 @@ impl ActionTestHarness {
             l1_origin: BlockNumHash { number: genesis_l1.number, hash: genesis_l1.hash },
             seq_num: 0,
         }
+    }
+
+    /// Create a [`SupervisedP2P`] / [`TestGossipTransport`] channel pair and
+    /// wire the handle to `sequencer`.
+    ///
+    /// After this call, [`L2Sequencer::broadcast_unsafe_block`] delivers blocks
+    /// into the returned [`TestGossipTransport`]. The transport can be held by
+    /// a `TestRollupNode` or polled directly in single-node tests.
+    ///
+    /// [`SupervisedP2P`]: crate::SupervisedP2P
+    pub fn create_supervised_p2p(&self, sequencer: &mut L2Sequencer) -> TestGossipTransport {
+        let (p2p, transport) = TestGossipTransport::channel();
+        sequencer.set_supervised_p2p(p2p);
+        transport
     }
 
     /// Create an [`L2Sequencer`] starting from L2 genesis, wired to a

@@ -37,6 +37,9 @@ pub use providers::{
     L2ProviderError, SharedL1Chain,
 };
 
+mod p2p;
+pub use p2p::{SupervisedP2P, TestGossipTransport, TestGossipTransportError};
+
 mod verifier;
 pub use base_consensus_derive::StepResult;
 pub use verifier::{
