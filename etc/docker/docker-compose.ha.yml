@@ -1,0 +1,495 @@
+x-sequencer-el-base: &sequencer-el-base
+  image: base-builder:local
+  build:
+    context: ../..
+    dockerfile: etc/docker/Dockerfile.rust-services
+    args:
+      PROFILE: "${CARGO_PROFILE:-dev}"
+    target: builder
+  entrypoint: /app/base-builder
+  depends_on:
+    setup-l2:
+      condition: service_completed_successfully
+  restart: unless-stopped
+
+x-sequencer-cl-base: &sequencer-cl-base
+  image: base-consensus:local
+  build:
+    context: ../..
+    dockerfile: etc/docker/Dockerfile.rust-services
+    args:
+      PROFILE: "${CARGO_PROFILE:-dev}"
+    target: consensus
+  entrypoint: /app/base-consensus
+  restart: unless-stopped
+
+x-conductor-base: &conductor-base
+  image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-conductor:v0.9.2
+  entrypoint: ["op-conductor"]
+
+x-sequencer-healthcheck: &sequencer-healthcheck
+  interval: 250ms
+  timeout: 1s
+  retries: 240
+  start_period: 250ms
+
+x-conductor-healthcheck: &conductor-healthcheck
+  interval: 250ms
+  timeout: 2s
+  retries: 240
+  start_period: 1s
+
+services:
+  setup-l2:
+    volumes:
+      - ../../.devnet/l2/sequencer-1:/data/l2-sequencer-1
+      - ../../.devnet/l2/sequencer-1-cl:/data/l2-sequencer-1-cl
+      - ../../.devnet/l2/sequencer-2:/data/l2-sequencer-2
+      - ../../.devnet/l2/sequencer-2-cl:/data/l2-sequencer-2-cl
+    environment:
+      - SEQ1_P2P_KEY=${SEQ1_P2P_KEY}
+      - SEQ2_P2P_KEY=${SEQ2_P2P_KEY}
+
+  base-builder-cl:
+    command:
+      - node
+      - --chain
+      - ${L2_CHAIN_ID}
+      - --l1-eth-rpc
+      - http://l1-el:${L1_HTTP_PORT}
+      - --l1-beacon
+      - http://l1-cl:${L1_CL_HTTP_PORT}
+      - --l2-engine-rpc
+      - http://base-builder:${L2_BUILDER_AUTH_PORT}
+      - --l2-engine-jwt-secret
+      - /genesis/jwt.hex
+      - --l2-config-file
+      - /genesis/l2/rollup.json
+      - --l1-config-file
+      - /genesis/el/chain-config.json
+      - --l1-slot-duration-override
+      - "4"
+      - --rpc.addr
+      - "0.0.0.0"
+      - --rpc.port
+      - "${L2_BUILDER_CL_RPC_PORT}"
+      - --p2p.listen.tcp
+      - "${L2_BUILDER_CL_P2P_PORT}"
+      - --p2p.listen.udp
+      - "${L2_BUILDER_CL_P2P_PORT}"
+      - --p2p.advertise.ip
+      - base-builder-cl
+      - --p2p.priv.path
+      - /genesis/l2/builder-p2p-key.txt
+      - --metrics.enabled
+      - --metrics.addr
+      - "0.0.0.0"
+      - --metrics.port
+      - "${L2_BUILDER_CL_METRICS_PORT}"
+      - --mode
+      - Sequencer
+      - --sequencer.l1-confs
+      - "0"
+      - --conductor.rpc
+      - http://op-conductor-0:${CONDUCTOR0_RPC_PORT}
+      - --p2p.sequencer.key
+      - ${SEQUENCER_KEY}
+      - --p2p.scoring
+      - Off
+
+  base-batcher:
+    depends_on:
+      setup-conductor:
+        condition: service_completed_successfully
+    command:
+      - --l1-rpc-url
+      - http://l1-el:${L1_HTTP_PORT}
+      - --l2-rpc-url
+      - http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - --rollup-rpc-url
+      - http://op-conductor-0:${CONDUCTOR0_RPC_PORT}
+      - --private-key
+      - ${BATCHER_KEY}
+      - --max-channel-duration
+      - "2"
+      - --poll-interval
+      - "1"
+      - --sub-safety-margin
+      - "0"
+      - --num-confirmations
+      - "1"
+      - --metrics.enabled
+      - --metrics.addr
+      - "0.0.0.0"
+      - --metrics.port
+      - "${BATCHER_METRICS_PORT}"
+
+  base-sequencer-1:
+    <<: *sequencer-el-base
+    container_name: base-sequencer-1
+    ports:
+      - "${L2_SEQ1_HTTP_PORT}:${L2_SEQ1_HTTP_PORT}"                     # HTTP RPC
+      - "${L2_SEQ1_WS_PORT}:${L2_SEQ1_WS_PORT}"                         # WebSocket
+      - "${L2_SEQ1_AUTH_PORT}:${L2_SEQ1_AUTH_PORT}"                     # Auth RPC (Engine API)
+      - "${L2_SEQ1_P2P_PORT}:${L2_SEQ1_P2P_PORT}"                       # P2P
+      - "${L2_SEQ1_FLASHBLOCKS_PORT}:${L2_SEQ1_FLASHBLOCKS_PORT}"       # Flashblocks
+      - "${L2_SEQ1_METRICS_PORT}:${L2_SEQ1_METRICS_PORT}"               # Metrics
+    volumes:
+      - ../../.devnet/l2/sequencer-1:/data
+      - ../../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l2/configs:/genesis/l2:ro
+    environment:
+      - OTEL_SERVICE_NAME=base-sequencer-1
+    command:
+      - node
+      - --chain=/genesis/l2/genesis.json
+      - --datadir=/data
+      - --tracing-otlp=http://jaeger:4318
+      - --tracing-otlp.filter=debug,providers::state::overlay=off,trie=off
+      - --telemetry.sampling-ratio=1
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=${L2_SEQ1_HTTP_PORT}
+      - --http.api=admin,eth,web3,net,rpc,debug,txpool,miner
+      - --http.corsdomain=*
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=${L2_SEQ1_WS_PORT}
+      - --ws.api=eth,web3,net,txpool,debug
+      - --ws.origins=*
+      - --authrpc.port=${L2_SEQ1_AUTH_PORT}
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.jwtsecret=/genesis/jwt.hex
+      - --port=${L2_SEQ1_P2P_PORT}
+      - --discovery.port=${L2_SEQ1_P2P_PORT}
+      - --p2p-secret-key-hex=${SEQ1_P2P_KEY}
+      - --flashblocks.addr=0.0.0.0
+      - --flashblocks.port=${L2_SEQ1_FLASHBLOCKS_PORT}
+      - --flashblocks.block-time=200
+      - --rollup.chain-block-time=2000
+      - --metrics=0.0.0.0:${L2_SEQ1_METRICS_PORT}
+      - --txpool.nolocals
+      - --rpc.txfeecap=0
+      - --rpc.gascap=600000000
+      - --color=never
+      - -vvv
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_SEQ1_HTTP_PORT}"]
+      <<: *sequencer-healthcheck
+
+  base-sequencer-1-cl:
+    <<: *sequencer-cl-base
+    container_name: base-sequencer-1-cl
+    depends_on:
+      base-sequencer-1:
+        condition: service_healthy
+      base-builder-cl:
+        condition: service_healthy
+    ports:
+      - "${L2_SEQ1_CL_RPC_PORT}:${L2_SEQ1_CL_RPC_PORT}"               # RPC
+      - "${L2_SEQ1_CL_P2P_PORT}:${L2_SEQ1_CL_P2P_PORT}"               # P2P TCP
+      - "${L2_SEQ1_CL_P2P_PORT}:${L2_SEQ1_CL_P2P_PORT}/udp"           # P2P UDP
+      - "${L2_SEQ1_CL_METRICS_PORT}:${L2_SEQ1_CL_METRICS_PORT}"       # Metrics
+    volumes:
+      - ../../.devnet/l2/sequencer-1-cl:/data
+      - ../../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l2/configs:/genesis/l2:ro
+    command:
+      - node
+      - --chain
+      - ${L2_CHAIN_ID}
+      - --l1-eth-rpc
+      - http://l1-el:${L1_HTTP_PORT}
+      - --l1-beacon
+      - http://l1-cl:${L1_CL_HTTP_PORT}
+      - --l2-engine-rpc
+      - http://base-sequencer-1:${L2_SEQ1_AUTH_PORT}
+      - --l2-engine-jwt-secret
+      - /genesis/jwt.hex
+      - --l2-config-file
+      - /genesis/l2/rollup.json
+      - --l1-config-file
+      - /genesis/el/chain-config.json
+      - --l1-slot-duration-override
+      - "4"
+      - --rpc.addr
+      - "0.0.0.0"
+      - --rpc.port
+      - "${L2_SEQ1_CL_RPC_PORT}"
+      - --p2p.listen.tcp
+      - "${L2_SEQ1_CL_P2P_PORT}"
+      - --p2p.listen.udp
+      - "${L2_SEQ1_CL_P2P_PORT}"
+      - --p2p.advertise.ip
+      - base-sequencer-1-cl
+      - --p2p.priv.path
+      - /genesis/l2/sequencer-1-p2p-key.txt
+      - --metrics.enabled
+      - --metrics.addr
+      - "0.0.0.0"
+      - --metrics.port
+      - "${L2_SEQ1_CL_METRICS_PORT}"
+      - --mode
+      - Sequencer
+      - --sequencer.l1-confs
+      - "0"
+      - --sequencer.stopped
+      - --conductor.rpc
+      - http://op-conductor-1:${CONDUCTOR1_RPC_PORT}
+      - --p2p.sequencer.key
+      - ${SEQUENCER_KEY}
+      - --p2p.bootnodes
+      - enode://${BUILDER_ENODE_ID}@base-builder-cl:${L2_BUILDER_CL_P2P_PORT}
+      - --p2p.scoring
+      - Off
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:${L2_SEQ1_CL_RPC_PORT}/healthz"]
+      <<: *sequencer-healthcheck
+
+  base-sequencer-2:
+    <<: *sequencer-el-base
+    container_name: base-sequencer-2
+    ports:
+      - "${L2_SEQ2_HTTP_PORT}:${L2_SEQ2_HTTP_PORT}"                     # HTTP RPC
+      - "${L2_SEQ2_WS_PORT}:${L2_SEQ2_WS_PORT}"                         # WebSocket
+      - "${L2_SEQ2_AUTH_PORT}:${L2_SEQ2_AUTH_PORT}"                     # Auth RPC (Engine API)
+      - "${L2_SEQ2_P2P_PORT}:${L2_SEQ2_P2P_PORT}"                       # P2P
+      - "${L2_SEQ2_FLASHBLOCKS_PORT}:${L2_SEQ2_FLASHBLOCKS_PORT}"       # Flashblocks
+      - "${L2_SEQ2_METRICS_PORT}:${L2_SEQ2_METRICS_PORT}"               # Metrics
+    volumes:
+      - ../../.devnet/l2/sequencer-2:/data
+      - ../../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l2/configs:/genesis/l2:ro
+    environment:
+      - OTEL_SERVICE_NAME=base-sequencer-2
+    command:
+      - node
+      - --chain=/genesis/l2/genesis.json
+      - --datadir=/data
+      - --tracing-otlp=http://jaeger:4318
+      - --tracing-otlp.filter=debug,providers::state::overlay=off,trie=off
+      - --telemetry.sampling-ratio=1
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=${L2_SEQ2_HTTP_PORT}
+      - --http.api=admin,eth,web3,net,rpc,debug,txpool,miner
+      - --http.corsdomain=*
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=${L2_SEQ2_WS_PORT}
+      - --ws.api=eth,web3,net,txpool,debug
+      - --ws.origins=*
+      - --authrpc.port=${L2_SEQ2_AUTH_PORT}
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.jwtsecret=/genesis/jwt.hex
+      - --port=${L2_SEQ2_P2P_PORT}
+      - --discovery.port=${L2_SEQ2_P2P_PORT}
+      - --p2p-secret-key-hex=${SEQ2_P2P_KEY}
+      - --flashblocks.addr=0.0.0.0
+      - --flashblocks.port=${L2_SEQ2_FLASHBLOCKS_PORT}
+      - --flashblocks.block-time=200
+      - --rollup.chain-block-time=2000
+      - --metrics=0.0.0.0:${L2_SEQ2_METRICS_PORT}
+      - --txpool.nolocals
+      - --rpc.txfeecap=0
+      - --rpc.gascap=600000000
+      - --color=never
+      - -vvv
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_SEQ2_HTTP_PORT}"]
+      <<: *sequencer-healthcheck
+
+  base-sequencer-2-cl:
+    <<: *sequencer-cl-base
+    container_name: base-sequencer-2-cl
+    depends_on:
+      base-sequencer-2:
+        condition: service_healthy
+      base-builder-cl:
+        condition: service_healthy
+    ports:
+      - "${L2_SEQ2_CL_RPC_PORT}:${L2_SEQ2_CL_RPC_PORT}"               # RPC
+      - "${L2_SEQ2_CL_P2P_PORT}:${L2_SEQ2_CL_P2P_PORT}"               # P2P TCP
+      - "${L2_SEQ2_CL_P2P_PORT}:${L2_SEQ2_CL_P2P_PORT}/udp"           # P2P UDP
+      - "${L2_SEQ2_CL_METRICS_PORT}:${L2_SEQ2_CL_METRICS_PORT}"       # Metrics
+    volumes:
+      - ../../.devnet/l2/sequencer-2-cl:/data
+      - ../../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l2/configs:/genesis/l2:ro
+    command:
+      - node
+      - --chain
+      - ${L2_CHAIN_ID}
+      - --l1-eth-rpc
+      - http://l1-el:${L1_HTTP_PORT}
+      - --l1-beacon
+      - http://l1-cl:${L1_CL_HTTP_PORT}
+      - --l2-engine-rpc
+      - http://base-sequencer-2:${L2_SEQ2_AUTH_PORT}
+      - --l2-engine-jwt-secret
+      - /genesis/jwt.hex
+      - --l2-config-file
+      - /genesis/l2/rollup.json
+      - --l1-config-file
+      - /genesis/el/chain-config.json
+      - --l1-slot-duration-override
+      - "4"
+      - --rpc.addr
+      - "0.0.0.0"
+      - --rpc.port
+      - "${L2_SEQ2_CL_RPC_PORT}"
+      - --p2p.listen.tcp
+      - "${L2_SEQ2_CL_P2P_PORT}"
+      - --p2p.listen.udp
+      - "${L2_SEQ2_CL_P2P_PORT}"
+      - --p2p.advertise.ip
+      - base-sequencer-2-cl
+      - --p2p.priv.path
+      - /genesis/l2/sequencer-2-p2p-key.txt
+      - --metrics.enabled
+      - --metrics.addr
+      - "0.0.0.0"
+      - --metrics.port
+      - "${L2_SEQ2_CL_METRICS_PORT}"
+      - --mode
+      - Sequencer
+      - --sequencer.l1-confs
+      - "0"
+      - --sequencer.stopped
+      - --conductor.rpc
+      - http://op-conductor-2:${CONDUCTOR2_RPC_PORT}
+      - --p2p.sequencer.key
+      - ${SEQUENCER_KEY}
+      - --p2p.bootnodes
+      - enode://${BUILDER_ENODE_ID}@base-builder-cl:${L2_BUILDER_CL_P2P_PORT}
+      - --p2p.scoring
+      - Off
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:${L2_SEQ2_CL_RPC_PORT}/healthz"]
+      <<: *sequencer-healthcheck
+
+  op-conductor-0:
+    <<: *conductor-base
+    container_name: op-conductor-0
+    depends_on:
+      base-builder-cl:
+        condition: service_healthy
+    ports:
+      - "${CONDUCTOR0_RPC_PORT}:${CONDUCTOR0_RPC_PORT}"           # RPC
+      - "${CONDUCTOR0_RAFT_PORT}:${CONDUCTOR0_RAFT_PORT}"         # Raft
+      - "${CONDUCTOR0_METRICS_PORT}:${CONDUCTOR0_METRICS_PORT}"   # Metrics
+    volumes:
+      - ../../.devnet/conductor-0:/data
+      - ../../.devnet/l2/configs:/genesis/l2:ro
+    command:
+      - --rollup.config=/genesis/l2/rollup.json
+      - --raft.server.id=sequencer-0
+      - --raft.storage.dir=/data/raft
+      - --raft.bootstrap=true
+      - --consensus.addr=0.0.0.0
+      - --consensus.port=${CONDUCTOR0_RAFT_PORT}
+      - --consensus.advertised=op-conductor-0:${CONDUCTOR0_RAFT_PORT}
+      - --node.rpc=http://base-builder-cl:${L2_BUILDER_CL_RPC_PORT}
+      - --execution.rpc=http://base-builder:${L2_BUILDER_HTTP_PORT}
+      - --healthcheck.interval=1
+      - --healthcheck.unsafe-interval=30
+      - --healthcheck.min-peer-count=1
+      - --rpc.addr=0.0.0.0
+      - --rpc.port=${CONDUCTOR0_RPC_PORT}
+      - --rpc.enable-proxy=true
+      - --metrics.enabled
+      - --metrics.addr=0.0.0.0
+      - --metrics.port=${CONDUCTOR0_METRICS_PORT}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "${CONDUCTOR0_RPC_PORT}"]
+      <<: *conductor-healthcheck
+
+  op-conductor-1:
+    <<: *conductor-base
+    container_name: op-conductor-1
+    depends_on:
+      base-sequencer-1-cl:
+        condition: service_healthy
+    ports:
+      - "${CONDUCTOR1_RPC_PORT}:${CONDUCTOR1_RPC_PORT}"           # RPC
+      - "${CONDUCTOR1_RAFT_PORT}:${CONDUCTOR1_RAFT_PORT}"         # Raft
+      - "${CONDUCTOR1_METRICS_PORT}:${CONDUCTOR1_METRICS_PORT}"   # Metrics
+    volumes:
+      - ../../.devnet/conductor-1:/data
+      - ../../.devnet/l2/configs:/genesis/l2:ro
+    command:
+      - --rollup.config=/genesis/l2/rollup.json
+      - --raft.server.id=sequencer-1
+      - --raft.storage.dir=/data/raft
+      - --raft.bootstrap=false
+      - --consensus.addr=0.0.0.0
+      - --consensus.port=${CONDUCTOR1_RAFT_PORT}
+      - --consensus.advertised=op-conductor-1:${CONDUCTOR1_RAFT_PORT}
+      - --node.rpc=http://base-sequencer-1-cl:${L2_SEQ1_CL_RPC_PORT}
+      - --execution.rpc=http://base-sequencer-1:${L2_SEQ1_HTTP_PORT}
+      - --healthcheck.interval=1
+      - --healthcheck.unsafe-interval=30
+      - --healthcheck.min-peer-count=1
+      - --rpc.addr=0.0.0.0
+      - --rpc.port=${CONDUCTOR1_RPC_PORT}
+      - --rpc.enable-proxy=true
+      - --metrics.enabled
+      - --metrics.addr=0.0.0.0
+      - --metrics.port=${CONDUCTOR1_METRICS_PORT}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "${CONDUCTOR1_RPC_PORT}"]
+      <<: *conductor-healthcheck
+
+  op-conductor-2:
+    <<: *conductor-base
+    container_name: op-conductor-2
+    depends_on:
+      base-sequencer-2-cl:
+        condition: service_healthy
+    ports:
+      - "${CONDUCTOR2_RPC_PORT}:${CONDUCTOR2_RPC_PORT}"           # RPC
+      - "${CONDUCTOR2_RAFT_PORT}:${CONDUCTOR2_RAFT_PORT}"         # Raft
+      - "${CONDUCTOR2_METRICS_PORT}:${CONDUCTOR2_METRICS_PORT}"   # Metrics
+    volumes:
+      - ../../.devnet/conductor-2:/data
+      - ../../.devnet/l2/configs:/genesis/l2:ro
+    command:
+      - --rollup.config=/genesis/l2/rollup.json
+      - --raft.server.id=sequencer-2
+      - --raft.storage.dir=/data/raft
+      - --raft.bootstrap=false
+      - --consensus.addr=0.0.0.0
+      - --consensus.port=${CONDUCTOR2_RAFT_PORT}
+      - --consensus.advertised=op-conductor-2:${CONDUCTOR2_RAFT_PORT}
+      - --node.rpc=http://base-sequencer-2-cl:${L2_SEQ2_CL_RPC_PORT}
+      - --execution.rpc=http://base-sequencer-2:${L2_SEQ2_HTTP_PORT}
+      - --healthcheck.interval=1
+      - --healthcheck.unsafe-interval=30
+      - --healthcheck.min-peer-count=1
+      - --rpc.addr=0.0.0.0
+      - --rpc.port=${CONDUCTOR2_RPC_PORT}
+      - --rpc.enable-proxy=true
+      - --metrics.enabled
+      - --metrics.addr=0.0.0.0
+      - --metrics.port=${CONDUCTOR2_METRICS_PORT}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "${CONDUCTOR2_RPC_PORT}"]
+      <<: *conductor-healthcheck
+
+  setup-conductor:
+    image: devnet-setup:local
+    container_name: setup-conductor
+    depends_on:
+      op-conductor-0:
+        condition: service_healthy
+      op-conductor-1:
+        condition: service_healthy
+      op-conductor-2:
+        condition: service_healthy
+    environment:
+      - CONDUCTOR0_URL=http://op-conductor-0:${CONDUCTOR0_RPC_PORT}
+      - CONDUCTOR1_URL=http://op-conductor-1:${CONDUCTOR1_RPC_PORT}
+      - CONDUCTOR2_URL=http://op-conductor-2:${CONDUCTOR2_RPC_PORT}
+      - CONDUCTOR1_RAFT_ADDR=op-conductor-1:${CONDUCTOR1_RAFT_PORT}
+      - CONDUCTOR2_RAFT_ADDR=op-conductor-2:${CONDUCTOR2_RAFT_PORT}
+    entrypoint: ["/usr/local/bin/setup-conductor.sh"]

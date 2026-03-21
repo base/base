@@ -3,6 +3,53 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
+
+/// A [`BlockNumberOrTag`] wrapper that also accepts `"unsafe"` as an alias for `"latest"`.
+///
+/// Op-conductor v0.9.2 calls `eth_getBlockByNumber("unsafe")` to retrieve the execution-layer
+/// unsafe head before starting a sequencer. Our EL exposes this state as `"latest"` (the most
+/// recently sealed block), not as `"unsafe"`. This type handles the deserialization so that
+/// `"unsafe"` is transparently remapped to `"latest"` before reaching the block lookup logic.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(transparent)]
+pub struct BlockNumberOrTagExt(BlockNumberOrTag);
+
+impl BlockNumberOrTagExt {
+    const fn is_pending(&self) -> bool {
+        self.0.is_pending()
+    }
+}
+
+impl From<BlockNumberOrTagExt> for BlockId {
+    fn from(tag: BlockNumberOrTagExt) -> Self {
+        tag.0.into()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for BlockNumberOrTagExt {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl serde::de::Visitor<'_> for Visitor {
+            type Value = BlockNumberOrTagExt;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a block number or tag")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                // Remap the OP Stack "unsafe" tag to "latest". Our EL surfaces the unsafe
+                // head as "latest" (the most recently sealed block via engine_forkchoiceUpdated).
+                if v == "unsafe" {
+                    return Ok(BlockNumberOrTagExt(BlockNumberOrTag::Latest));
+                }
+                v.parse::<BlockNumberOrTag>().map(BlockNumberOrTagExt).map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_str(Visitor)
+    }
+}
 use alloy_primitives::{
     Address, TxHash, U256,
     map::foldhash::{HashSet, HashSetExt},
@@ -44,7 +91,7 @@ pub trait EthApiOverride {
     #[method(name = "getBlockByNumber")]
     async fn block_by_number(
         &self,
-        number: BlockNumberOrTag,
+        number: BlockNumberOrTagExt,
         full: bool,
     ) -> RpcResult<Option<RpcBlock<Base>>>;
 
@@ -143,7 +190,7 @@ where
 {
     async fn block_by_number(
         &self,
-        number: BlockNumberOrTag,
+        number: BlockNumberOrTagExt,
         full: bool,
     ) -> RpcResult<Option<RpcBlock<Base>>> {
         debug!(

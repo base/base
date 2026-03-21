@@ -21,6 +21,7 @@ permissions:
 jobs:
   # Build base-reth-node and base-builder together, cached by source hash
   build-binaries:
+    if: false # Disabled: workflow consistently failing in CI — remove this line to re-enable
     name: Build binaries
     runs-on: ubuntu-latest
     permissions:

@@ -17,8 +17,8 @@ pub use service::{
 
 mod actors;
 pub use actors::{
-    BlockStream, BuildRequest, CancellableContext, Conductor, ConductorClient, ConductorError,
-    DelayedL1OriginSelectorProvider, DelegateDerivationActor, DelegateL2Client,
+    AlloyL1BlockFetcher, BlockStream, BuildRequest, CancellableContext, Conductor, ConductorClient,
+    ConductorError, DelayedL1OriginSelectorProvider, DelegateDerivationActor, DelegateL2Client,
     DelegateL2ClientError, DelegateL2DerivationActor, DerivationActor, DerivationActorRequest,
     DerivationClientError, DerivationClientResult, DerivationDelegateClient,
     DerivationDelegateClientError, DerivationEngineClient, DerivationError, DerivationState,
@@ -26,7 +26,7 @@ pub use actors::{
     EngineActorRequest, EngineClientError, EngineClientResult, EngineConfig,
     EngineDerivationClient, EngineError, EngineProcessingRequest, EngineProcessor,
     EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest, EngineRpcRequestReceiver,
-    GetPayloadRequest, GossipTransport, L1OriginSelector, L1OriginSelectorError,
+    GetPayloadRequest, GossipTransport, L1BlockFetcher, L1OriginSelector, L1OriginSelectorError,
     L1OriginSelectorProvider, L1WatcherActor, L1WatcherActorError, L1WatcherDerivationClient,
     L2SourceClient, NetworkActor, NetworkActorError, NetworkBuilder, NetworkBuilderError,
     NetworkConfig, NetworkDriver, NetworkDriverError, NetworkEngineClient, NetworkHandler,

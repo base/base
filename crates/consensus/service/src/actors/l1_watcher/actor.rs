@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use alloy_eips::BlockId;
 use alloy_primitives::Address;
-use alloy_provider::Provider;
 use async_trait::async_trait;
 use base_consensus_genesis::{
     RollupConfig, SystemConfigLog, SystemConfigUpdate, UnsafeBlockSignerUpdate,
@@ -22,7 +21,7 @@ use tokio::{
 };
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
-use super::L1WatcherDerivationClient;
+use super::{L1BlockFetcher, L1WatcherDerivationClient};
 use crate::{
     NodeActor,
     actors::{CancellableContext, l1_watcher::error::L1WatcherActorError},
@@ -33,7 +32,7 @@ use crate::{
 pub struct L1WatcherActor<BlockStream, L1Provider, L1WatcherDerivationClient_>
 where
     BlockStream: Stream<Item = BlockInfo> + Unpin + Send,
-    L1Provider: Provider,
+    L1Provider: L1BlockFetcher,
     L1WatcherDerivationClient_: L1WatcherDerivationClient,
 {
     /// The [`RollupConfig`] to tell if ecotone is active.
@@ -60,7 +59,7 @@ impl<BlockStream, L1Provider, L1WatcherDerivationClient_>
     L1WatcherActor<BlockStream, L1Provider, L1WatcherDerivationClient_>
 where
     BlockStream: Stream<Item = BlockInfo> + Unpin + Send,
-    L1Provider: Provider,
+    L1Provider: L1BlockFetcher,
     L1WatcherDerivationClient_: L1WatcherDerivationClient,
 {
     /// Instantiate a new [`L1WatcherActor`].
@@ -95,7 +94,7 @@ impl<BlockStream, L1Provider, L1WatcherDerivationClient_> NodeActor
     for L1WatcherActor<BlockStream, L1Provider, L1WatcherDerivationClient_>
 where
     BlockStream: Stream<Item = BlockInfo> + Unpin + Send + 'static,
-    L1Provider: Provider + 'static,
+    L1Provider: L1BlockFetcher + 'static,
     L1WatcherDerivationClient_: L1WatcherDerivationClient + 'static,
 {
     type Error = L1WatcherActorError<BlockInfo>;
@@ -134,7 +133,11 @@ where
                         // If the update is an Unsafe block signer update, send the address
                         // to the block signer sender.
                         let filter_address =  self.rollup_config.l1_system_config_address;
-                        let logs = self.l1_provider .get_logs(&alloy_rpc_types_eth::Filter::new().address(filter_address).select(head_block_info.hash)).await?;
+                        let logs = self.l1_provider.get_logs(
+                            alloy_rpc_types_eth::Filter::new()
+                                .address(filter_address)
+                                .select(head_block_info.hash),
+                        ).await.map_err(|e| L1WatcherActorError::Fetcher(e.to_string()))?;
                         let ecotone_active = self.rollup_config.is_ecotone_active(head_block_info.timestamp);
                         for log in logs {
                             let sys_cfg_log = SystemConfigLog::new(log.into(), ecotone_active);
@@ -222,7 +225,7 @@ impl<BlockStream, L1Provider, L1WatcherDerivationClient_> CancellableContext
     for L1WatcherActor<BlockStream, L1Provider, L1WatcherDerivationClient_>
 where
     BlockStream: Stream<Item = BlockInfo> + Unpin + Send + 'static,
-    L1Provider: Provider,
+    L1Provider: L1BlockFetcher,
     L1WatcherDerivationClient_: L1WatcherDerivationClient + 'static,
 {
     fn cancelled(&self) -> WaitForCancellationFuture<'_> {

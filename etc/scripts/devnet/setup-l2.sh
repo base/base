@@ -82,7 +82,7 @@ echo "Configuring intent.toml for devnet..."
 L2_CHAIN_ID_HEX=$(printf "0x%064x" $L2_CHAIN_ID)
 
 # Export variables for envsubst
-export L1_CHAIN_ID L2_CHAIN_ID_HEX DEPLOYER_ADDR SEQUENCER_ADDR BATCHER_ADDR PROPOSER_ADDR CHALLENGER_ADDR
+export L1_CHAIN_ID L2_CHAIN_ID_HEX DEPLOYER_ADDR SEQUENCER_ADDR BATCHER_ADDR PROPOSER_ADDR CHALLENGER_ADDR SEQ1_P2P_KEY SEQ2_P2P_KEY
 
 envsubst <"$TEMPLATE_DIR/l2-intent.toml.template" >"$INTENT_FILE"
 
@@ -196,9 +196,13 @@ echo "=== Generating P2P Keys ==="
 
 echo "$BUILDER_P2P_KEY" >"$OUTPUT_DIR/builder-p2p-key.txt"
 echo "$BUILDER_ENODE_ID" >"$OUTPUT_DIR/builder-enode-id.txt"
+echo "$SEQ1_P2P_KEY" >"$OUTPUT_DIR/sequencer-1-p2p-key.txt"
+echo "$SEQ2_P2P_KEY" >"$OUTPUT_DIR/sequencer-2-p2p-key.txt"
 
 echo "Builder P2P key written to $OUTPUT_DIR/builder-p2p-key.txt"
 echo "Builder enode ID: $BUILDER_ENODE_ID"
+echo "Sequencer-1 P2P key written to $OUTPUT_DIR/sequencer-1-p2p-key.txt"
+echo "Sequencer-2 P2P key written to $OUTPUT_DIR/sequencer-2-p2p-key.txt"
 
 # Cleanup
 rm -rf "$OP_DEPLOYER_WORKDIR"

@@ -48,6 +48,7 @@ std = [
 	"base-protocol/std",
 	"brotli?/std",
 	"dep:brotli",
+	"derive_more/std",
 	"miniz_oxide/std",
 	"rand/std",
 	"thiserror/std",

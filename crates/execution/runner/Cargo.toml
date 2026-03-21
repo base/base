@@ -11,6 +11,70 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[dependencies]
+# workspace
+base-cli-utils.workspace = true
+base-engine-tree.workspace = true
+base-test-utils = { workspace = true, optional = true }
+
+# reth
+reth-db.workspace = true
+reth-evm.workspace = true
+reth-exex.workspace = true
+reth-tracing.workspace = true
+reth-provider.workspace = true
+reth-node-api.workspace = true
+reth-rpc-api.workspace = true
+reth-chainspec.workspace = true
+reth-node-builder.workspace = true
+reth-primitives-traits.workspace = true
+reth-rpc-server-types.workspace = true
+reth-transaction-pool.workspace = true
+reth-ipc = { workspace = true, optional = true }
+reth-tasks = { workspace = true, optional = true }
+reth-node-core = { workspace = true, optional = true }
+reth-rpc-layer = { workspace = true, optional = true }
+
+# op-reth
+base-txpool.workspace = true
+base-node-core.workspace = true
+base-execution-rpc = { workspace = true, features = ["client"] }
+base-execution-forks.workspace = true
+base-execution-storage.workspace = true
+base-execution-chainspec.workspace = true
+base-execution-primitives.workspace = true
+base-execution-payload-builder.workspace = true
+
+# alloy
+alloy-eips = { workspace = true, optional = true, features = ["std"] }
+alloy-signer = { workspace = true, optional = true }
+alloy-genesis = { workspace = true, optional = true, features = ["std"] }
+alloy-provider = { workspace = true, optional = true }
+alloy-rpc-types = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, optional = true }
+alloy-rpc-client = { workspace = true, optional = true }
+alloy-rpc-types-engine = { workspace = true, optional = true, features = ["std"] }
+
+# base-alloy
+base-alloy-network = { workspace = true, optional = true }
+base-alloy-rpc-types-engine = { workspace = true, optional = true }
+
+# tokio
+tokio.workspace = true
+
+# rpc
+jsonrpsee = { workspace = true, optional = true }
+
+# misc
+eyre.workspace = true
+futures.workspace = true
+serde = { workspace = true, features = ["std"] }
+tower = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+tracing = { workspace = true, features = ["std"] }
+tracing-subscriber = { workspace = true, optional = true }
+
 [features]
 test-utils = [
 	"base-node-core/test-utils",
@@ -27,10 +91,8 @@ test-utils = [
 	"dep:base-test-utils",
 	"dep:chrono",
 	"dep:jsonrpsee",
-	"dep:reth-chainspec",
 	"dep:reth-ipc",
 	"dep:reth-node-core",
-	"dep:reth-primitives-traits",
 	"dep:reth-rpc-layer",
 	"dep:reth-tasks",
 	"dep:tower",
@@ -40,71 +102,8 @@ test-utils = [
 	"reth-db/test-utils",
 	"reth-evm/test-utils",
 	"reth-node-builder/test-utils",
-	"reth-primitives-traits?/test-utils",
+	"reth-primitives-traits/test-utils",
 	"reth-provider/test-utils",
 	"reth-tasks?/test-utils",
 	"reth-transaction-pool/test-utils",
 ]
-
-[dependencies]
-# workspace
-base-cli-utils.workspace = true
-base-engine-tree.workspace = true
-base-test-utils = { workspace = true, optional = true }
-
-# reth
-reth-db.workspace = true
-reth-evm.workspace = true
-reth-exex.workspace = true
-base-txpool.workspace = true
-reth-tracing.workspace = true
-reth-provider.workspace = true
-reth-node-api.workspace = true
-base-node-core.workspace = true
-reth-rpc-api.workspace = true
-reth-node-builder.workspace = true
-base-execution-forks.workspace = true
-reth-rpc-server-types.workspace = true
-base-execution-storage.workspace = true
-reth-transaction-pool.workspace = true
-base-execution-chainspec.workspace = true
-base-execution-primitives.workspace = true
-reth-ipc = { workspace = true, optional = true }
-reth-tasks = { workspace = true, optional = true }
-base-execution-payload-builder.workspace = true
-reth-chainspec = { workspace = true, optional = true }
-reth-node-core = { workspace = true, optional = true }
-reth-rpc-layer = { workspace = true, optional = true }
-reth-primitives-traits = { workspace = true, optional = true }
-base-execution-rpc = { workspace = true, features = ["client"] }
-
-# alloy
-alloy-signer = { workspace = true, optional = true }
-alloy-provider = { workspace = true, optional = true }
-alloy-rpc-types = { workspace = true, optional = true }
-alloy-primitives = { workspace = true, optional = true }
-alloy-rpc-client = { workspace = true, optional = true }
-alloy-eips = { workspace = true, optional = true, features = ["std"] }
-alloy-genesis = { workspace = true, optional = true, features = ["std"] }
-alloy-rpc-types-engine = { workspace = true, optional = true, features = ["std"] }
-
-# base-alloy
-base-alloy-network = { workspace = true, optional = true }
-base-alloy-rpc-types-engine = { workspace = true, optional = true }
-
-# tokio
-tokio.workspace = true
-
-# rpc
-jsonrpsee = { workspace = true, optional = true }
-
-# misc
-eyre.workspace = true
-futures.workspace = true
-url = { workspace = true, optional = true }
-tower = { workspace = true, optional = true }
-chrono = { workspace = true, optional = true }
-serde = { workspace = true, features = ["std"] }
-tracing = { workspace = true, features = ["std"] }
-
-tracing-subscriber = { workspace = true, optional = true }

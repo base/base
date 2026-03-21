@@ -2517,6 +2517,7 @@ dependencies = [
  "base-blobs",
  "base-consensus-derive",
  "base-consensus-genesis",
+ "base-consensus-node",
  "base-consensus-registry",
  "base-execution-chainspec",
  "base-execution-evm",

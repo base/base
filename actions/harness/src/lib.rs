@@ -32,8 +32,9 @@ pub use test_rollup_config::TestRollupConfigBuilder;
 
 mod providers;
 pub use providers::{
-    ActionBlobDataSource, ActionBlobProvider, ActionDataSource, ActionL1ChainProvider,
-    ActionL2ChainProvider, L1ProviderError, L2ProviderError, SharedL1Chain,
+    ActionBlobDataSource, ActionBlobProvider, ActionDataSource, ActionL1BlockFetcher,
+    ActionL1ChainProvider, ActionL1FetcherError, ActionL2ChainProvider, L1ProviderError,
+    L2ProviderError, SharedL1Chain,
 };
 
 mod verifier;

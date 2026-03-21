@@ -87,4 +87,9 @@ tokio = { workspace = true, features = ["test-util"] }
 base-challenger = { path = ".", features = ["test-utils"] }
 
 [features]
-test-utils = [ "alloy-rlp", "alloy-trie", "serde_json" ]
+test-utils = [
+	"alloy-rlp",
+	"alloy-trie",
+	"base-protocol/test-utils",
+	"serde_json",
+]

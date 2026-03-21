@@ -109,3 +109,23 @@ V1 constraints for this flow:
 
 [EIP-7910](https://eips.ethereum.org/EIPS/eip-7910) introduces the `eth_config` JSON-RPC method,
 which returns chain configuration parameters such as fork activation timestamps.
+
+Base V1 exposes `eth_config` using the standard EIP-7910 response schema.
+
+The Base-specific behavior is:
+
+- `blobSchedule` is always returned as zeroed values for `current`, `next`, and `last`.
+  Base does not support native blob transactions, so it must not advertise synthetic Ethereum blob
+  schedule defaults.
+- `precompiles` reflects the active EVM precompile set for that fork. This includes the standard
+  Ethereum precompiles plus any Base-active additions documented in the
+  [precompiles specification](../../protocol/execution/evm/precompiles.md).
+- `systemContracts` is limited to the contracts representable by EIP-7910. On Base this means:
+  - `BEACON_ROOTS_ADDRESS` is included once Ecotone is active.
+  - `HISTORY_STORAGE_ADDRESS` is included once Isthmus is active.
+  - `DEPOSIT_CONTRACT_ADDRESS`, `CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS`, and
+    `WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS` are omitted.
+
+Base-specific predeploys and other OP Stack system contracts documented in the
+[predeploys specification](../../protocol/execution/evm/predeploys.md) are not serialized into
+`eth_config` unless they are part of the EIP-7910 schema.

@@ -7,6 +7,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+pub mod config;
 pub mod debug;
 pub mod engine;
 pub mod error;
@@ -17,6 +18,7 @@ pub mod sequencer;
 pub mod state;
 pub mod witness;
 
+pub use config::{BaseEthConfigApiServer, BaseEthConfigHandler};
 #[cfg(feature = "client")]
 pub use engine::OpEngineApiClient;
 pub use engine::{OP_ENGINE_CAPABILITIES, OpEngineApi, OpEngineApiServer};
