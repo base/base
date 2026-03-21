@@ -93,8 +93,7 @@ async fn main() -> Result<()> {
     let reader = KafkaAuditLogReader::new(consumer, args.kafka_topic.clone())?;
 
     let s3_client = create_s3_client(&args).await?;
-    let s3_bucket = args.s3_bucket.clone();
-    let writer = S3EventReaderWriter::new(s3_client, s3_bucket);
+    let writer = S3EventReaderWriter::new(s3_client, args.s3_bucket.clone());
 
     let mut archiver = KafkaAuditArchiver::new(
         reader,
