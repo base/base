@@ -255,10 +255,7 @@ impl BootInfo {
         );
 
         // Load proposer address (optional — defaults to zero for backwards compatibility).
-        let proposer = match oracle
-            .get(PreimageKey::new_local(PROPOSER_KEY.to()))
-            .await
-        {
+        let proposer = match oracle.get(PreimageKey::new_local(PROPOSER_KEY.to())).await {
             Ok(bytes) if bytes.len() == 20 => Address::from_slice(&bytes),
             _ => Address::ZERO,
         };
