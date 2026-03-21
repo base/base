@@ -167,7 +167,11 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
             }
         };
 
-        UpgradeActivations::log(&self.rollup_config, &attributes);
+        UpgradeActivations::log(
+            &self.rollup_config,
+            unsafe_head.block_info.number.saturating_add(1),
+            attributes.payload_attributes.timestamp,
+        );
         let activator = PoolActivation::new(Arc::clone(&self.rollup_config));
         attributes.no_tx_pool =
             Some(!activator.is_enabled(self.recovery_mode.get(), l1_origin, &attributes));

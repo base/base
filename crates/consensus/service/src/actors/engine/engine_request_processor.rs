@@ -14,7 +14,7 @@ use tokio::{
 };
 
 use crate::{
-    actors::activation_art::BASE_V1_ACTIVATION_BANNER,
+    actors::UpgradeActivations,
     BuildRequest, EngineClientError, EngineDerivationClient, EngineError, GetPayloadRequest,
     ResetRequest, SealRequest,
 };
@@ -223,13 +223,11 @@ where
             return;
         }
 
-        let timestamp = envelope.execution_payload.timestamp();
-        if self.rollup.is_first_base_v1_block(timestamp) {
-            for line in BASE_V1_ACTIVATION_BANNER.lines() {
-                info!(target: "sequencer", "{line}");
-            }
-            info!(target: "sequencer", "Sequencing base v1 upgrade block");
-        }
+        UpgradeActivations::log(
+            &self.rollup,
+            envelope.execution_payload.block_number(),
+            envelope.execution_payload.timestamp(),
+        );
     }
 }
 
