@@ -25,6 +25,7 @@ alloy-primitives.workspace = true
 base-alloy-upgrades.workspace = true
 
 # Misc
+tracing.workspace = true
 thiserror.workspace = true
 derive_more = { workspace = true, features = ["from", "try_from"] }
 

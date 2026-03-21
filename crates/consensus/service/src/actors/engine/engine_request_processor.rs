@@ -15,7 +15,7 @@ use tokio::{
 
 use crate::{
     BuildRequest, EngineClientError, EngineDerivationClient, EngineError, GetPayloadRequest,
-    ResetRequest, SealRequest, actors::UpgradeActivations,
+    ResetRequest, SealRequest,
 };
 
 /// Requires that the implementor handles [`EngineProcessingRequest`]s via the provided channel.
@@ -222,8 +222,7 @@ where
             return;
         }
 
-        UpgradeActivations::log(
-            &self.rollup,
+        self.rollup.log_upgrade_activation(
             envelope.execution_payload.block_number(),
             envelope.execution_payload.timestamp(),
         );

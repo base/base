@@ -12,7 +12,7 @@ use base_consensus_genesis::RollupConfig;
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
 
 use crate::{
-    PoolActivation, UpgradeActivations,
+    PoolActivation,
     actors::{
         SequencerEngineClient,
         sequencer::{
@@ -167,8 +167,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
             }
         };
 
-        UpgradeActivations::log(
-            &self.rollup_config,
+        self.rollup_config.log_upgrade_activation(
             unsafe_head.block_info.number.saturating_add(1),
             attributes.payload_attributes.timestamp,
         );

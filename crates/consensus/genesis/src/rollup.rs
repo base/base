@@ -425,6 +425,42 @@ impl BaseUpgrades for RollupConfig {
     }
 }
 
+impl RollupConfig {
+    const BASE_V1_ACTIVATION_BANNER: &str = r#"######################################################
+#                                                    #
+#  BBBBB    AAA    SSSSS  EEEEE      V   V      111  #
+#  B   B   A   A   S      E          V   V    1   1  #
+#  BBBBB   AAAAA    SSS   EEEE       V   V        1  #
+#  B   B   A   A       S  E           V V         1  #
+#  BBBBB   A   A   SSSSS  EEEEE        V      11111  #
+#                                                    #
+#           ALL YOUR BASE ARE BELONG TO US           #
+#                                                    #
+######################################################"#;
+
+    /// Logs hardfork activation when building or processing the first block of a fork.
+    pub fn log_upgrade_activation(&self, block_number: u64, timestamp: u64) {
+        if self.is_first_ecotone_block(timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating ecotone upgrade");
+        } else if self.is_first_fjord_block(timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating fjord upgrade");
+        } else if self.is_first_granite_block(timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating granite upgrade");
+        } else if self.is_first_holocene_block(timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating holocene upgrade");
+        } else if self.is_first_isthmus_block(timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating isthmus upgrade");
+        } else if self.is_first_jovian_block(timestamp) {
+            tracing::info!(target: "upgrades", block_number, "Activating jovian upgrade");
+        } else if self.is_first_base_v1_block(timestamp) {
+            for line in Self::BASE_V1_ACTIVATION_BANNER.lines() {
+                tracing::info!(target: "upgrades", "{line}");
+            }
+            tracing::info!(target: "upgrades", block_number, "Activating base v1 upgrade");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "serde")]

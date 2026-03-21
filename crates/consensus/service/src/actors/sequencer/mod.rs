@@ -21,8 +21,6 @@ pub use seal::{PayloadSealer, SealState, SealStepError};
 mod pool;
 pub use pool::PoolActivation;
 
-mod upgrades;
-pub use upgrades::UpgradeActivations;
 
 mod actor;
 pub use actor::{PendingStopSender, SequencerActor};
