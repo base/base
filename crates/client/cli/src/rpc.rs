@@ -87,4 +87,37 @@ mod tests {
         mutate(&mut expected);
         assert_eq!(cli, expected);
     }
+
+    #[test]
+    fn test_rpc_args_from_env() {
+        use std::net::{IpAddr, Ipv4Addr};
+
+        let original_disabled = std::env::var_os("BASE_NODE_RPC_DISABLED");
+        let original_port = std::env::var_os("BASE_NODE_RPC_PORT");
+        let original_addr = std::env::var_os("BASE_NODE_RPC_ADDR");
+
+        std::env::set_var("BASE_NODE_RPC_DISABLED", "true");
+        std::env::set_var("BASE_NODE_RPC_PORT", "9999");
+        std::env::set_var("BASE_NODE_RPC_ADDR", "127.0.0.1");
+
+        let args = RpcArgs::parse_from(["base-consensus"]);
+
+        assert!(args.rpc_disabled);
+        assert_eq!(args.listen_port, 9999);
+        assert_eq!(args.listen_addr, IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+
+        match original_disabled {
+            Some(v) => std::env::set_var("BASE_NODE_RPC_DISABLED", v),
+            None => std::env::remove_var("BASE_NODE_RPC_DISABLED"),
+        }
+        match original_port {
+            Some(v) => std::env::set_var("BASE_NODE_RPC_PORT", v),
+            None => std::env::remove_var("BASE_NODE_RPC_PORT"),
+        }
+        match original_addr {
+            Some(v) => std::env::set_var("BASE_NODE_RPC_ADDR", v),
+            None => std::env::remove_var("BASE_NODE_RPC_ADDR"),
+        }
+    }
 }
+
