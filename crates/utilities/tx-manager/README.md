@@ -9,8 +9,8 @@ Transaction lifecycle management for Base onchain components.
 
 - **`TxManagerError`**: Error types for transaction management, categorized as critical
   (non-retryable), fee/replacement (retryable via fee bumps), and infrastructure (transient/retryable).
-- **`RpcErrorClassifier`**: Maps raw RPC/geth error strings into structured `TxManagerError` variants
-  using ordered substring matching.
+- **`RpcErrorClassifier`**: Classifies alloy `TransportError`s into structured `TxManagerError`
+  variants using the `ErrorPayload`'s structured fields and ordered substring matching.
 - **`TxManagerResult<T>`**: Result type alias for transaction manager operations.
 - **`TxCandidate`**: Input to the send pipeline. With empty `blobs` it produces a regular
   EIP-1559 (type-2) transaction; with non-empty `blobs` it produces an EIP-4844 (type-3)
@@ -94,8 +94,8 @@ type:
 ```rust,ignore
 use base_tx_manager::{RpcErrorClassifier, TxManagerError};
 
-fn handle_rpc_error(raw_msg: &str) {
-    let err = RpcErrorClassifier::classify_rpc_error(raw_msg);
+fn handle_rpc_error(transport_err: &alloy_transport::TransportError) {
+    let err = RpcErrorClassifier::classify_rpc_error(transport_err);
     if err.is_already_known() {
         // Transaction is already in the mempool — treat as success on resubmission.
     } else if err.is_retryable() {
@@ -118,11 +118,14 @@ exceeds `fee_limit_multiplier × suggested_fee` and the suggested fee is at or a
 first nonce-too-low error after a successful publish, making fee bumps impossible. It is
 non-retryable.
 
-`RpcErrorClassifier::classify_rpc_error` lowercases the input and matches against known
-geth error substrings in a fixed order (e.g., `"replacement transaction underpriced"`
-before `"transaction underpriced"`). Unrecognized strings fall through to the
-`TxManagerError::Rpc` fallback, which is conservatively treated as retryable — callers
-must enforce bounded retry counts.
+`RpcErrorClassifier::classify_rpc_error` accepts an alloy `TransportError` and, for
+server error responses, matches against the `ErrorPayload`'s `message` field using known
+geth substrings in a fixed order (e.g., `"replacement transaction underpriced"` before
+`"transaction underpriced"`). For `"execution reverted"` errors, revert data is extracted
+via `ErrorPayload::as_revert_data` and decoded with `alloy_sol_types::decode_revert_reason`.
+Non-server errors and unrecognised messages fall through to the `TxManagerError::Rpc`
+fallback, which is conservatively treated as retryable — callers must enforce bounded
+retry counts.
 
 For custom error matching beyond the built-in classification, use
 `RpcErrorClassifier::err_string_contains_any`.

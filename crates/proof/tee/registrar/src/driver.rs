@@ -278,6 +278,17 @@ where
 
         let receipt = self.tx_manager.send(candidate).await.map_err(RegistrarError::from)?;
 
+        if !receipt.inner.status() {
+            warn!(
+                signer = %signer_address,
+                tx_hash = %receipt.transaction_hash,
+                "registration transaction reverted onchain",
+            );
+            return Err(RegistrarError::Transaction(
+                format!("registration transaction {} reverted", receipt.transaction_hash,).into(),
+            ));
+        }
+
         info!(
             signer = %signer_address,
             tx_hash = %receipt.transaction_hash,
@@ -334,6 +345,15 @@ where
 
             match self.tx_manager.send(candidate).await {
                 Ok(receipt) => {
+                    if !receipt.inner.status() {
+                        warn!(
+                            signer = %signer,
+                            tx_hash = %receipt.transaction_hash,
+                            "deregistration transaction reverted onchain",
+                        );
+                        metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+                        continue;
+                    }
                     info!(
                         signer = %signer,
                         tx_hash = %receipt.transaction_hash,

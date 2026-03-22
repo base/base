@@ -24,10 +24,27 @@ static GAME_ALREADY_EXISTS_HEX: LazyLock<String> =
 
 /// Classifies a [`TxManagerError`] into a [`ProposerError`].
 ///
-/// Checks whether the error string contains the `GameAlreadyExists` selector,
-/// returning [`ProposerError::GameAlreadyExists`] if so, otherwise wrapping
-/// it as [`ProposerError::TxManager`].
+/// Checks the structured revert reason and raw data for the
+/// `GameAlreadyExists` selector first, then falls back to searching the
+/// Display string for non-`ExecutionReverted` variants (e.g. `Rpc`).
+/// Returns [`ProposerError::GameAlreadyExists`] if found, otherwise
+/// wrapping it as [`ProposerError::TxManager`].
 fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
+    if let TxManagerError::ExecutionReverted { ref reason, ref data } = err {
+        // Check reason string for GameAlreadyExists.
+        if reason.as_deref().is_some_and(|r| r.contains("GameAlreadyExists")) {
+            return ProposerError::GameAlreadyExists;
+        }
+        // Check raw data for the GameAlreadyExists selector.
+        if data.as_ref().is_some_and(|d| d.len() >= 4 && d[..4] == game_already_exists_selector()) {
+            return ProposerError::GameAlreadyExists;
+        }
+        // Structured fields exhausted — no need to format the Display
+        // string since it won't contain additional GameAlreadyExists info.
+        return ProposerError::TxManager(err);
+    }
+    // Fallback: check Display output for non-ExecutionReverted variants
+    // (e.g. Rpc) that may carry "GameAlreadyExists" in their message.
     let msg = err.to_string();
     if msg.contains(GAME_ALREADY_EXISTS_HEX.as_str()) || msg.contains("GameAlreadyExists") {
         return ProposerError::GameAlreadyExists;
@@ -351,6 +368,42 @@ mod tests {
         let err = TxManagerError::Rpc("GameAlreadyExists()".to_string());
         let result = classify_tx_manager_error(err);
         assert!(matches!(result, ProposerError::GameAlreadyExists));
+    }
+
+    #[test]
+    fn classify_execution_reverted_with_reason() {
+        let err = TxManagerError::ExecutionReverted {
+            reason: Some("GameAlreadyExists()".to_string()),
+            data: None,
+        };
+        let result = classify_tx_manager_error(err);
+        assert!(matches!(result, ProposerError::GameAlreadyExists));
+    }
+
+    #[test]
+    fn classify_execution_reverted_with_selector_data() {
+        use alloy_primitives::Bytes;
+        use base_proof_contracts::game_already_exists_selector;
+
+        // Build data: 4-byte selector + 32 bytes of argument.
+        let mut data = game_already_exists_selector().to_vec();
+        data.extend_from_slice(&[0u8; 32]);
+
+        let err = TxManagerError::ExecutionReverted { reason: None, data: Some(Bytes::from(data)) };
+        let result = classify_tx_manager_error(err);
+        assert!(matches!(result, ProposerError::GameAlreadyExists));
+    }
+
+    #[test]
+    fn classify_execution_reverted_other() {
+        use alloy_primitives::Bytes;
+
+        let err = TxManagerError::ExecutionReverted {
+            reason: Some("SomeOtherError()".to_string()),
+            data: Some(Bytes::from(vec![0xde, 0xad, 0xbe, 0xef])),
+        };
+        let result = classify_tx_manager_error(err);
+        assert!(matches!(result, ProposerError::TxManager(_)));
     }
 
     #[test]

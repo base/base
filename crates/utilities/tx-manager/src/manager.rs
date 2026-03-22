@@ -49,6 +49,7 @@ use alloy_network::{Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder}
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
+use alloy_transport::TransportError;
 use backon::{ConstantBuilder, Retryable};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
@@ -229,7 +230,7 @@ impl SimpleTxManager {
             tokio::time::timeout(config.network_timeout, provider.get_chain_id())
                 .await
                 .map_err(|_| TxManagerError::Rpc("get_chain_id timed out".into()))?
-                .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+                .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e))?;
 
         if chain_id != provider_chain_id {
             return Err(TxManagerError::InvalidConfig(format!(
@@ -304,12 +305,12 @@ impl SimpleTxManager {
         TxManagerError::Rpc(msg.into())
     }
 
-    /// Classifies an RPC error string and records an RPC error metric when the
-    /// error is an unrecognised transport failure ([`TxManagerError::Rpc`]).
+    /// Classifies a [`TransportError`] and records an RPC error metric when
+    /// the error is an unrecognised transport failure ([`TxManagerError::Rpc`]).
     /// Recognised state errors (e.g. `NonceTooLow`, `ExecutionReverted`) are
     /// returned without inflating the RPC error counter.
-    fn classify_and_record_rpc(&self, error_msg: &str) -> TxManagerError {
-        let err = RpcErrorClassifier::classify_rpc_error(error_msg);
+    fn classify_and_record_rpc(&self, error: &TransportError) -> TxManagerError {
+        let err = RpcErrorClassifier::classify_rpc_error(error);
         if err.is_rpc_error() {
             self.metrics.record_rpc_error();
         }
@@ -481,11 +482,11 @@ impl SimpleTxManager {
 
         let raw_tip_cap = tip_result
             .map_err(|_| self.rpc_error("get_max_priority_fee_per_gas timed out"))?
-            .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?;
+            .map_err(|e| self.classify_and_record_rpc(&e))?;
 
         let latest_block = block_result
             .map_err(|_| self.rpc_error("get_block_by_number timed out"))?
-            .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?
+            .map_err(|e| self.classify_and_record_rpc(&e))?
             .ok_or_else(|| self.rpc_error("latest block not found"))?;
 
         let raw_base_fee = u128::from(
@@ -514,7 +515,7 @@ impl SimpleTxManager {
             Some(result) => {
                 let raw_blob_base_fee = result
                     .map_err(|_| self.rpc_error("get_blob_base_fee timed out"))?
-                    .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?;
+                    .map_err(|e| self.classify_and_record_rpc(&e))?;
                 let raw_blob_cap = FeeCalculator::calc_blob_fee_cap(raw_blob_base_fee);
                 let blob_base_fee = raw_blob_base_fee.max(self.config.min_blob_fee);
                 let blob_cap = FeeCalculator::calc_blob_fee_cap(blob_base_fee);
@@ -788,7 +789,13 @@ impl SimpleTxManager {
         )
         .await
         .map_err(|_| self.rpc_error("estimate_gas timed out"))?
-        .map_err(|e| self.classify_and_record_rpc(&e.to_string()))?;
+        .map_err(|e| {
+            let err = self.classify_and_record_rpc(&e);
+            if matches!(err, TxManagerError::ExecutionReverted { .. }) {
+                error!(error = %err, "gas estimation reverted");
+            }
+            err
+        })?;
         tx_request.sidecar = sidecar_stash;
         let gas_floor = fee_overrides.as_ref().map_or(0, |fo| fo.gas_limit_floor);
         let gas_limit = candidate.gas_limit.max(gas_floor).max(estimated);
@@ -1068,7 +1075,8 @@ impl SimpleTxManager {
                 info!(
                     tx_hash = %receipt.transaction_hash,
                     block = ?receipt.block_number,
-                    "transaction confirmed",
+                    status = %receipt.inner.status(),
+                    "transaction receipt received",
                 );
                 return Ok(receipt);
             }
@@ -1110,7 +1118,8 @@ impl SimpleTxManager {
                             info!(
                                 tx_hash = %receipt.transaction_hash,
                                 block = ?receipt.block_number,
-                                "transaction confirmed",
+                                status = %receipt.inner.status(),
+                                "transaction receipt received",
                             );
                             return Ok(receipt);
                         }
@@ -1295,7 +1304,7 @@ impl SimpleTxManager {
                 Ok(tx_hash)
             }
             Ok(Err(e)) => {
-                let classified = self.classify_and_record_rpc(&e.to_string());
+                let classified = self.classify_and_record_rpc(&e);
 
                 // AlreadyKnown on resubmission is a success — the tx is in
                 // the mempool from a prior publish. Return the previous hash.
@@ -1317,6 +1326,8 @@ impl SimpleTxManager {
 
                 if classified.is_retryable() {
                     warn!(error = %classified, "publish failed, will retry");
+                } else if matches!(classified, TxManagerError::ExecutionReverted { .. }) {
+                    error!(error = %classified, "transaction execution reverted");
                 } else {
                     error!(error = %classified, "publish failed with non-retryable error");
                 }
@@ -1463,11 +1474,11 @@ impl SimpleTxManager {
 
         let tip_height = tip_result
             .map_err(|_| TxManagerError::Rpc("get_block_number timed out".into()))?
-            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e))?;
 
         let receipt_opt = receipt_result
             .map_err(|_| TxManagerError::Rpc("get_transaction_receipt timed out".into()))?
-            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+            .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e))?;
 
         let receipt = match receipt_opt {
             Some(r) => r,
@@ -1504,7 +1515,7 @@ impl SimpleTxManager {
         )
         .await
         .map_err(|_| TxManagerError::Rpc("get_block_by_number timed out".into()))?
-        .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e.to_string()))?;
+        .map_err(|e| RpcErrorClassifier::classify_rpc_error(&e))?;
 
         let is_canonical =
             canonical_block.as_ref().is_some_and(|block| block.header.hash == receipt_block_hash);
