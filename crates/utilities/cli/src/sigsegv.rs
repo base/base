@@ -1,23 +1,47 @@
-//! Signal handler to extract a backtrace from reth, which is originally from stack overflow.
+//! Signal handler to extract a backtrace from stack overflows and segfaults.
 //!
 //! Implementation modified from [reth](https://github.com/paradigmxyz/reth/blob/main/crates/cli/util/src/sigsegv_handler.rs#L120).
 //!
 //! Implementation modified from [`rustc`](https://github.com/rust-lang/rust/blob/3dee9775a8c94e701a08f7b2df2c444f353d8699/compiler/rustc_driver_impl/src/signal_handler.rs).
 
-use std::{
-    alloc::{Layout, alloc},
-    fmt, mem, ptr,
-};
-
 /// The SIGSEGV handler.
 #[derive(Debug, Clone, Copy)]
 pub struct SigsegvHandler;
 
+#[cfg(all(unix, not(target_env = "musl")))]
 impl SigsegvHandler {
     /// Installs a SIGSEGV handler.
     ///
     /// When SIGSEGV is delivered to the process, print a stack trace and then exit.
     pub fn install() {
+        glibc_impl::install();
+    }
+}
+
+#[cfg(not(all(unix, not(target_env = "musl"))))]
+impl SigsegvHandler {
+    /// No-op on musl and non-unix targets because `libc::backtrace`
+    /// and `backtrace_symbols_fd` are glibc extensions.
+    pub const fn install() {}
+}
+
+/// All platform-specific implementation lives behind a single `#[cfg]` gate.
+///
+/// The functions used here (`libc::backtrace`, `backtrace_symbols_fd`) are
+/// glibc/libSystem extensions not available in musl libc, and `libc::getauxval`
+/// is a glibc extension gated separately for Linux/Android only.
+/// Gating the module on `not(target_env = "musl")` avoids linker errors when
+/// building for musl targets (e.g. the Nitro Enclave `x86_64-unknown-linux-musl`
+/// build) while preserving the handler on macOS and other unix platforms.
+#[cfg(all(unix, not(target_env = "musl")))]
+mod glibc_impl {
+    use std::{
+        alloc::{Layout, alloc},
+        mem, ptr,
+    };
+
+    /// Install the signal handler on the current thread.
+    pub(super) fn install() {
         // SAFETY: We allocate a fresh stack for the signal handler and configure
         // sigaction with valid parameters. The signal handler only writes to stderr
         // and does not access any shared mutable state.
@@ -35,134 +59,138 @@ impl SigsegvHandler {
             libc::sigaction(libc::SIGSEGV, &sa, ptr::null_mut());
         }
     }
-}
 
-unsafe extern "C" {
-    fn backtrace_symbols_fd(buffer: *const *mut libc::c_void, size: libc::c_int, fd: libc::c_int);
-}
-
-fn backtrace_stderr(buffer: &[*mut libc::c_void]) {
-    let size = buffer.len().try_into().unwrap_or_default();
-    // SAFETY: backtrace_symbols_fd is a standard libc function that writes symbol
-    // information to the given file descriptor. The buffer contains valid pointers
-    // from libc::backtrace, and STDERR_FILENO is always valid.
-    unsafe { backtrace_symbols_fd(buffer.as_ptr(), size, libc::STDERR_FILENO) };
-}
-
-/// Unbuffered, unsynchronized writer to stderr.
-///
-/// Only acceptable because everything will end soon anyways.
-struct RawStderr(());
-
-impl fmt::Write for RawStderr {
-    fn write_str(&mut self, s: &str) -> Result<(), fmt::Error> {
-        // SAFETY: libc::write is a standard syscall. STDERR_FILENO is always valid,
-        // and we pass a valid pointer and length from the string slice.
-        let ret = unsafe { libc::write(libc::STDERR_FILENO, s.as_ptr().cast(), s.len()) };
-        if ret == -1 { Err(fmt::Error) } else { Ok(()) }
+    unsafe extern "C" {
+        fn backtrace_symbols_fd(
+            buffer: *const *mut libc::c_void,
+            size: libc::c_int,
+            fd: libc::c_int,
+        );
     }
-}
 
-/// We don't really care how many bytes we actually get out. SIGSEGV comes for our head.
-/// Splash stderr with letters of our own blood to warn our friends about the monster.
-macro_rules! raw_errln {
-    ($tokens:tt) => {
-        let _ = ::core::fmt::Write::write_fmt(&mut RawStderr(()), format_args!($tokens));
-        let _ = ::core::fmt::Write::write_char(&mut RawStderr(()), '\n');
-    };
-}
+    fn backtrace_stderr(buffer: &[*mut libc::c_void]) {
+        let size = buffer.len().try_into().unwrap_or_default();
+        // SAFETY: backtrace_symbols_fd is a standard libc function that writes symbol
+        // information to the given file descriptor. The buffer contains valid pointers
+        // from libc::backtrace, and STDERR_FILENO is always valid.
+        unsafe { backtrace_symbols_fd(buffer.as_ptr(), size, libc::STDERR_FILENO) };
+    }
 
-/// Signal handler installed for SIGSEGV
-extern "C" fn print_stack_trace(_: libc::c_int) {
-    const MAX_FRAMES: usize = 256;
-    let mut stack_trace: [*mut libc::c_void; MAX_FRAMES] = [ptr::null_mut(); MAX_FRAMES];
-    // SAFETY: libc::backtrace fills the provided buffer with return addresses
-    // from the call stack. The buffer is valid and properly sized.
-    let stack = unsafe {
-        // Collect return addresses
-        let depth = libc::backtrace(stack_trace.as_mut_ptr(), MAX_FRAMES as i32);
-        if depth == 0 {
-            return;
+    /// Unbuffered, unsynchronized writer to stderr.
+    ///
+    /// Only acceptable because everything will end soon anyways.
+    struct RawStderr(());
+
+    impl std::fmt::Write for RawStderr {
+        fn write_str(&mut self, s: &str) -> Result<(), std::fmt::Error> {
+            // SAFETY: libc::write is a standard syscall. STDERR_FILENO is always valid,
+            // and we pass a valid pointer and length from the string slice.
+            let ret = unsafe { libc::write(libc::STDERR_FILENO, s.as_ptr().cast(), s.len()) };
+            if ret == -1 { Err(std::fmt::Error) } else { Ok(()) }
         }
-        &stack_trace[0..depth as usize]
-    };
+    }
 
-    // Just a stack trace is cryptic. Explain what we're doing.
-    raw_errln!("error: reth interrupted by SIGSEGV, printing backtrace\n");
-    let mut written = 1;
-    let mut consumed = 0;
-    // Begin elaborating return addrs into symbols and writing them directly to stderr
-    // Most backtraces are stack overflow, most stack overflows are from recursion
-    // Check for cycles before writing 250 lines of the same ~5 symbols
-    let cycled = |(runner, walker)| runner == walker;
-    let mut cyclic = false;
-    if let Some(period) = stack.iter().skip(1).step_by(2).zip(stack).position(cycled) {
-        let period = period.saturating_add(1); // avoid "what if wrapped?" branches
-        let Some(offset) = stack.iter().skip(period).zip(stack).position(cycled) else {
-            // impossible.
-            return;
-        };
-
-        // Count matching trace slices, else we could miscount "biphasic cycles"
-        // with the same period + loop entry but a different inner loop
-        let next_cycle = stack[offset..].chunks_exact(period).skip(1);
-        let cycles = 1 + next_cycle
-            .zip(stack[offset..].chunks_exact(period))
-            .filter(|(next, prev)| next == prev)
-            .count();
-        backtrace_stderr(&stack[..offset]);
-        written += offset;
-        consumed += offset;
-        if cycles > 1 {
-            raw_errln!("\n### cycle encountered after {offset} frames with period {period}");
-            backtrace_stderr(&stack[consumed..consumed + period]);
-            raw_errln!("### recursed {cycles} times\n");
-            written += period + 4;
-            consumed += period * cycles;
-            cyclic = true;
+    /// We don't really care how many bytes we actually get out. SIGSEGV comes for our head.
+    /// Splash stderr with letters of our own blood to warn our friends about the monster.
+    macro_rules! raw_errln {
+        ($tokens:tt) => {
+            let _ = ::core::fmt::Write::write_fmt(&mut RawStderr(()), format_args!($tokens));
+            let _ = ::core::fmt::Write::write_char(&mut RawStderr(()), '\n');
         };
     }
-    let rem = &stack[consumed..];
-    backtrace_stderr(rem);
-    raw_errln!("");
-    written += rem.len() + 1;
 
-    let random_depth = || 8 * 16; // chosen by random diceroll (2d20)
-    if cyclic || stack.len() > random_depth() {
-        // technically speculation, but assert it with confidence anyway.
-        // We only arrived in this signal handler because bad things happened
-        // and this message is for explaining it's not the programmer's fault
-        raw_errln!("note: reth unexpectedly overflowed its stack! this is a bug");
+    /// Signal handler installed for SIGSEGV.
+    extern "C" fn print_stack_trace(_: libc::c_int) {
+        const MAX_FRAMES: usize = 256;
+        let mut stack_trace: [*mut libc::c_void; MAX_FRAMES] = [ptr::null_mut(); MAX_FRAMES];
+        // SAFETY: libc::backtrace fills the provided buffer with return addresses
+        // from the call stack. The buffer is valid and properly sized.
+        let stack = unsafe {
+            // Collect return addresses
+            let depth = libc::backtrace(stack_trace.as_mut_ptr(), MAX_FRAMES as i32);
+            if depth == 0 {
+                return;
+            }
+            &stack_trace[0..depth as usize]
+        };
+
+        // Just a stack trace is cryptic. Explain what we're doing.
+        raw_errln!("error: process interrupted by SIGSEGV, printing backtrace\n");
+        let mut written = 1;
+        let mut consumed = 0;
+        // Begin elaborating return addrs into symbols and writing them directly to stderr
+        // Most backtraces are stack overflow, most stack overflows are from recursion
+        // Check for cycles before writing 250 lines of the same ~5 symbols
+        let cycled = |(runner, walker)| runner == walker;
+        let mut cyclic = false;
+        if let Some(period) = stack.iter().skip(1).step_by(2).zip(stack).position(cycled) {
+            let period = period.saturating_add(1); // avoid "what if wrapped?" branches
+            let Some(offset) = stack.iter().skip(period).zip(stack).position(cycled) else {
+                // impossible.
+                return;
+            };
+
+            // Count matching trace slices, else we could miscount "biphasic cycles"
+            // with the same period + loop entry but a different inner loop
+            let next_cycle = stack[offset..].chunks_exact(period).skip(1);
+            let cycles = 1 + next_cycle
+                .zip(stack[offset..].chunks_exact(period))
+                .filter(|(next, prev)| next == prev)
+                .count();
+            backtrace_stderr(&stack[..offset]);
+            written += offset;
+            consumed += offset;
+            if cycles > 1 {
+                raw_errln!("\n### cycle encountered after {offset} frames with period {period}");
+                backtrace_stderr(&stack[consumed..consumed + period]);
+                raw_errln!("### recursed {cycles} times\n");
+                written += period + 4;
+                consumed += period * cycles;
+                cyclic = true;
+            };
+        }
+        let rem = &stack[consumed..];
+        backtrace_stderr(rem);
+        raw_errln!("");
+        written += rem.len() + 1;
+
+        let random_depth = || 8 * 16; // chosen by random diceroll (2d20)
+        if cyclic || stack.len() > random_depth() {
+            // technically speculation, but assert it with confidence anyway.
+            // We only arrived in this signal handler because bad things happened
+            // and this message is for explaining it's not the programmer's fault
+            raw_errln!("note: process unexpectedly overflowed its stack! this is a bug");
+            written += 1;
+        }
+        if stack.len() == MAX_FRAMES {
+            raw_errln!("note: maximum backtrace depth reached, frames may have been lost");
+            written += 1;
+        }
+        raw_errln!("note: we would appreciate a bug report at https://github.com/base/base");
         written += 1;
+        if written > 24 {
+            // We probably just scrolled the earlier "we got SIGSEGV" message off the terminal
+            raw_errln!("note: backtrace dumped due to SIGSEGV! resuming signal");
+        }
     }
-    if stack.len() == MAX_FRAMES {
-        raw_errln!("note: maximum backtrace depth reached, frames may have been lost");
-        written += 1;
-    }
-    raw_errln!("note: we would appreciate a report at https://github.com/paradigmxyz/reth");
-    written += 1;
-    if written > 24 {
-        // We probably just scrolled the earlier "we got SIGSEGV" message off the terminal
-        raw_errln!("note: backtrace dumped due to SIGSEGV! resuming signal");
-    }
-}
 
-/// Modern kernels on modern hardware can have dynamic signal stack sizes.
-#[cfg(any(target_os = "linux", target_os = "android"))]
-fn min_sigstack_size() -> usize {
-    const AT_MINSIGSTKSZ: core::ffi::c_ulong = 51;
-    // SAFETY: `getauxval` is a standard libc function that retrieves values from
-    // the auxiliary vector. AT_MINSIGSTKSZ is a valid key, and the function
-    // returns 0 if the key is not found, which is handled below.
-    let dynamic_sigstksz = unsafe { libc::getauxval(AT_MINSIGSTKSZ) };
-    // If getauxval couldn't find the entry, it returns 0,
-    // so take the higher of the "constant" and auxval.
-    // This transparently supports older kernels which don't provide AT_MINSIGSTKSZ
-    libc::MINSIGSTKSZ.max(dynamic_sigstksz as _)
-}
+    /// Modern kernels on modern hardware can have dynamic signal stack sizes.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn min_sigstack_size() -> usize {
+        const AT_MINSIGSTKSZ: core::ffi::c_ulong = 51;
+        // SAFETY: `getauxval` is a standard libc function that retrieves values from
+        // the auxiliary vector. AT_MINSIGSTKSZ is a valid key, and the function
+        // returns 0 if the key is not found, which is handled below.
+        let dynamic_sigstksz = unsafe { libc::getauxval(AT_MINSIGSTKSZ) };
+        // If getauxval couldn't find the entry, it returns 0,
+        // so take the higher of the "constant" and auxval.
+        // This transparently supports older kernels which don't provide AT_MINSIGSTKSZ
+        libc::MINSIGSTKSZ.max(dynamic_sigstksz as _)
+    }
 
-/// Not all OS support hardware where this is needed.
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-const fn min_sigstack_size() -> usize {
-    libc::MINSIGSTKSZ
+    /// Not all OS support hardware where this is needed.
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    const fn min_sigstack_size() -> usize {
+        libc::MINSIGSTKSZ
+    }
 }
