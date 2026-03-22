@@ -3443,13 +3443,11 @@ dependencies = [
 name = "base-consensus-peers"
 version = "0.0.0"
 dependencies = [
- "alloy-consensus",
  "alloy-primitives",
  "alloy-rlp",
  "arbitrary",
  "arbtest",
  "base-alloy-chains",
- "base-consensus-genesis",
  "derive_more",
  "dirs",
  "discv5",
@@ -13184,9 +13182,9 @@ dependencies = [
 
 [[package]]
 name = "pulldown-cmark"
-version = "0.13.2"
+version = "0.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14104c5a24d9bcf7eb2c24753e0f49fe14555d8bd565ea3d38e4b4303267259d"
+checksum = "7c3a14896dfa883796f1cb410461aef38810ea05f2b2c33c5aded3649095fdad"
 dependencies = [
  "bitflags 2.11.0",
  "memchr",
