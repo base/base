@@ -3,21 +3,22 @@
 use base_alloy_chains::BaseChainConfig;
 use derive_more::Deref;
 
-use crate::BootNode;
+use crate::{BootNode, BootNodeParseError};
 
 /// Bootnodes for Base.
 #[derive(Debug, Clone, Deref, PartialEq, Eq, Default, derive_more::From)]
 pub struct BootNodes(pub Vec<BootNode>);
 
-impl From<&BaseChainConfig> for BootNodes {
-    fn from(config: &BaseChainConfig) -> Self {
-        Self(
-            config
-                .bootnodes
-                .iter()
-                .map(|raw| BootNode::parse_bootnode(raw).expect("hardcoded bootnode should parse"))
-                .collect(),
-        )
+impl TryFrom<&BaseChainConfig> for BootNodes {
+    type Error = BootNodeParseError;
+
+    fn try_from(config: &BaseChainConfig) -> Result<Self, Self::Error> {
+        config
+            .bootnodes
+            .iter()
+            .map(|raw| BootNode::parse_bootnode(raw))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Self)
     }
 }
 
@@ -26,17 +27,19 @@ impl BootNodes {
     ///
     /// If the chain id is not recognized, no bootnodes are returned.
     pub fn from_chain_id(id: u64) -> Self {
-        BaseChainConfig::by_chain_id(id).map(Self::from).unwrap_or_default()
+        BaseChainConfig::by_chain_id(id)
+            .map(|c| Self::try_from(c).expect("hardcoded bootnode should parse"))
+            .unwrap_or_default()
     }
 
     /// Returns the bootnodes for the mainnet.
     pub fn mainnet() -> Self {
-        Self::from(BaseChainConfig::mainnet())
+        Self::try_from(BaseChainConfig::mainnet()).expect("hardcoded bootnode should parse")
     }
 
     /// Returns the bootnodes for the testnet.
     pub fn testnet() -> Self {
-        Self::from(BaseChainConfig::sepolia())
+        Self::try_from(BaseChainConfig::sepolia()).expect("hardcoded bootnode should parse")
     }
 
     /// Returns the length of the bootnodes.
