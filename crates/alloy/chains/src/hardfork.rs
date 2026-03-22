@@ -1,4 +1,3 @@
-use alloy_chains::Chain;
 use alloy_hardforks::{ForkCondition, hardfork};
 
 use crate::BaseChainConfig;
@@ -36,27 +35,6 @@ hardfork!(
 );
 
 impl BaseUpgrade {
-    /// Reverse lookup to find the hardfork given a chain ID and block timestamp.
-    /// Returns the active hardfork at the given timestamp for the specified Base chain.
-    ///
-    /// Note: standalone upgrades like [`BaseUpgrade::V1`] are not included here because
-    /// they do not participate in the sequential cascade and have no scheduled activation
-    /// timestamp on production chains. Use [`crate::BaseUpgrades::is_base_v1_active_at_timestamp`]
-    /// to check those independently.
-    pub fn from_chain_and_timestamp(chain: Chain, timestamp: u64) -> Option<Self> {
-        let cfg = BaseChainConfig::by_chain_id(chain.id())?;
-        Some(match timestamp {
-            _ if timestamp < cfg.canyon_timestamp => Self::Regolith,
-            _ if timestamp < cfg.ecotone_timestamp => Self::Canyon,
-            _ if timestamp < cfg.fjord_timestamp => Self::Ecotone,
-            _ if timestamp < cfg.granite_timestamp => Self::Fjord,
-            _ if timestamp < cfg.holocene_timestamp => Self::Granite,
-            _ if timestamp < cfg.isthmus_timestamp => Self::Holocene,
-            _ if timestamp < cfg.jovian_timestamp => Self::Isthmus,
-            _ => Self::Jovian,
-        })
-    }
-
     /// Returns the list of hardforks with their activation conditions for the given chain config.
     pub const fn forks_for(cfg: &BaseChainConfig) -> [(Self, ForkCondition); 10] {
         let v1 = match cfg.base_v1_timestamp {
@@ -105,6 +83,7 @@ impl BaseUpgrade {
 
 #[cfg(test)]
 mod tests {
+    use alloy_chains::Chain;
     use core::str::FromStr;
 
     use super::*;
@@ -139,6 +118,23 @@ mod tests {
     #[test]
     fn check_nonexistent_hardfork_from_str() {
         assert!(BaseUpgrade::from_str("not a hardfork").is_err());
+    }
+
+    /// Reverse lookup to find the upgrade given a chain ID and block timestamp.
+    /// Returns the active upgrade at the given timestamp for the specified Base chain.
+    fn upgrade_from_chain_and_timestamp(chain: Chain, timestamp: u64) -> Option<BaseUpgrade> {
+        let cfg = BaseChainConfig::by_chain_id(chain.id())?;
+        Some(match timestamp {
+            _ if timestamp < cfg.canyon_timestamp => BaseUpgrade::Regolith,
+            _ if timestamp < cfg.ecotone_timestamp => BaseUpgrade::Canyon,
+            _ if timestamp < cfg.fjord_timestamp => BaseUpgrade::Ecotone,
+            _ if timestamp < cfg.granite_timestamp => BaseUpgrade::Fjord,
+            _ if timestamp < cfg.holocene_timestamp => BaseUpgrade::Granite,
+            _ if timestamp < cfg.isthmus_timestamp => BaseUpgrade::Holocene,
+            _ if timestamp < cfg.jovian_timestamp => BaseUpgrade::Isthmus,
+            _ if cfg.base_v1_timestamp.is_some_and(|v1| timestamp >= v1) => BaseUpgrade::V1,
+            _ => BaseUpgrade::Jovian,
+        })
     }
 
     #[test]
@@ -178,12 +174,12 @@ mod tests {
 
         for (chain_id, timestamp, expected) in test_cases {
             assert_eq!(
-                BaseUpgrade::from_chain_and_timestamp(chain_id, timestamp),
+                upgrade_from_chain_and_timestamp(chain_id, timestamp),
                 Some(expected),
                 "chain {chain_id} at timestamp {timestamp}"
             );
         }
 
-        assert_eq!(BaseUpgrade::from_chain_and_timestamp(Chain::from_id(999999), 1000000), None);
+        assert_eq!(upgrade_from_chain_and_timestamp(Chain::from_id(999999), 1000000), None);
     }
 }
