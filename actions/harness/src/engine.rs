@@ -124,9 +124,10 @@ impl ActionEngineClient {
     ) -> TransportResult<B256> {
         // Skip re-execution if this block was already built in-process (sequencer mode).
         if let Some(existing) = inner.executed_headers.get(&payload.block_number)
-            && existing.hash_slow() == payload.block_hash {
-                return Ok(payload.block_hash);
-            }
+            && existing.hash_slow() == payload.block_hash
+        {
+            return Ok(payload.block_hash);
+        }
 
         let txs = payload
             .transactions
