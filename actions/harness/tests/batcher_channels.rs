@@ -1,9 +1,10 @@
 //! Action tests for channel timeout and interleaving scenarios.
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
-    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
+    TestRollupConfigBuilder,
 };
+use base_batcher_encoder::{DaType, EncoderConfig};
 
 // ---------------------------------------------------------------------------
 // A. Channel timeout — first frame's inclusion span exceeds channel_timeout

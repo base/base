@@ -1,9 +1,10 @@
 //! Action tests for L2 finalization via the verifier pipeline.
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
-    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
+    TestRollupConfigBuilder, block_info_from,
 };
+use base_batcher_encoder::{DaType, EncoderConfig};
 
 /// When multiple L2 blocks share the same L1 epoch (`l1_origin`), finalizing the
 /// L1 inclusion block causes ALL L2 blocks in that epoch to become finalized

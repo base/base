@@ -295,7 +295,7 @@ fn chain_spec() -> Arc<OpChainSpec> {
 /// Returns a chain spec identical to the default test chain spec but with
 /// `BaseUpgrade::V1` activated at genesis (timestamp 0).
 pub fn chain_spec_with_base_v1() -> Arc<OpChainSpec> {
-    use base_execution_forks::BaseUpgrade;
+    use base_alloy_chains::BaseUpgrade;
     use reth_chainspec::ForkCondition;
 
     let genesis = include_str!("./artifacts/genesis.json.tmpl");

@@ -10,9 +10,9 @@ mod tests {
 
     use alloy_consensus::{Block, BlockBody, Header, SignableTransaction, TxEip1559};
     use alloy_primitives::{Address, Signature, StorageKey, StorageValue, U256, b256};
-    use base_alloy_consensus::TxDeposit;
+    use base_alloy_consensus::{OpReceipt, TxDeposit};
     use base_execution_chainspec::{OpChainSpec, OpChainSpecBuilder};
-    use base_execution_primitives::{OpReceipt, OpTransactionSigned};
+    use base_execution_primitives::OpTransactionSigned;
     use base_revm::L1_BLOCK_CONTRACT;
     use reth_chainspec::MIN_TRANSACTION_GAS;
     use reth_evm::execute::{BasicBlockExecutor, Executor};

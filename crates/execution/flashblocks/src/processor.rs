@@ -7,15 +7,14 @@ use alloy_consensus::{
     transaction::{Recovered, SignerRecoverable},
 };
 use alloy_eips::BlockNumberOrTag;
+use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
-use base_alloy_consensus::OpTxEnvelope;
+use base_alloy_chains::BaseUpgrades;
+use base_alloy_consensus::{OpBlock, OpTxEnvelope};
 use base_alloy_flashblocks::Flashblock;
-use base_alloy_network::TransactionResponse;
 use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use base_execution_forks::BaseUpgrades;
-use base_execution_primitives::OpBlock;
 use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;

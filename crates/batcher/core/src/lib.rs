@@ -36,7 +36,6 @@ pub use admin::{
 };
 
 mod driver;
-pub use base_batcher_encoder::BatcherMetrics;
 pub use driver::BatchDriver;
 
 pub mod test_utils;

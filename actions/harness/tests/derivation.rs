@@ -6,10 +6,11 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::{Address, Bytes, U256};
 use base_action_harness::{
     ActionDataSource, ActionL1ChainProvider, ActionL2ChainProvider, ActionL2Source,
-    ActionTestHarness, BatchType, Batcher, BatcherConfig, DaType, EncoderConfig, L1MinerConfig,
-    L2Sequencer, L2Verifier, PendingTx, SharedL1Chain, StepResult, TestRollupConfigBuilder,
-    UserDeposit, block_info_from,
+    ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, L2Sequencer, L2Verifier, PendingTx,
+    SharedL1Chain, TestRollupConfigBuilder, UserDeposit, block_info_from,
 };
+use base_batcher_encoder::{BatchType, DaType, EncoderConfig};
+use base_consensus_derive::StepResult;
 use base_consensus_genesis::L1ChainConfig;
 use base_protocol::{BlockInfo, DERIVATION_VERSION_0, L2BlockInfo};
 

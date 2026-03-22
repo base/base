@@ -24,7 +24,7 @@ reth-primitives-traits.workspace = true
 
 # op-reth
 base-protocol.workspace = true
-base-execution-forks.workspace = true
+base-alloy-chains.workspace = true
 base-execution-primitives.workspace = true
 
 # ethereum
@@ -49,6 +49,7 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 alloy-chains.workspace = true
 
 base-alloy-consensus.workspace = true
+base-execution-forks.workspace = true
 
 [features]
 default = [ "std" ]
@@ -60,7 +61,6 @@ std = [
 	"alloy-trie/std",
 	"base-alloy-consensus/std",
 	"base-execution-chainspec/std",
-	"base-execution-forks/std",
 	"base-execution-primitives/std",
 	"base-protocol/std",
 	"reth-chainspec/std",

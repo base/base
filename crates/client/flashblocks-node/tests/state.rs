@@ -1,7 +1,7 @@
 //! Integration tests that stress Flashblocks state handling.
 
+use alloy_network::BlockResponse;
 use alloy_primitives::U256;
-use base_alloy_network::BlockResponse;
 use base_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
 use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
 use base_node_runner::test_utils::Account;

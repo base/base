@@ -15,10 +15,12 @@ use core::fmt::Debug;
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
+use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::EIP1559ParamError;
-use base_alloy_evm::{OpReceiptBuilder, OpTxEnv};
+use base_alloy_evm::{
+    OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvm, OpEvmFactory, OpReceiptBuilder, OpTxEnv,
+};
 use base_execution_chainspec::OpChainSpec;
-use base_execution_forks::BaseUpgrades;
 use base_execution_primitives::{DepositReceipt, OpPrimitives};
 use base_revm::{OpSpecId, OpTransaction};
 use reth_chainspec::EthChainSpec;
@@ -53,7 +55,6 @@ mod build;
 pub use build::OpBlockAssembler;
 
 mod error;
-pub use base_alloy_evm::{OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvm, OpEvmFactory};
 pub use error::{L1BlockInfoError, OpBlockExecutionError};
 
 /// Builds an [`EvmEnv`] for a given block header using [`base_alloy_evm`]'s spec resolution.
@@ -347,8 +348,9 @@ mod tests {
         Address, B256, LogData, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
+    use base_alloy_consensus::{OpBlock, OpReceipt};
     use base_execution_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
-    use base_execution_primitives::{OpBlock, OpPrimitives, OpReceipt};
+    use base_execution_primitives::OpPrimitives;
     use base_revm::OpSpecId;
     use reth_chainspec::ChainSpec;
     use reth_evm::execute::ProviderError;

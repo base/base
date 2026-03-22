@@ -95,6 +95,7 @@ base-node-core = { workspace = true, features = ["test-utils"] }
 revm = { workspace = true, features = ["std"] }
 
 # alloy
+alloy-network.workspace = true
 alloy-contract.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-types.workspace = true

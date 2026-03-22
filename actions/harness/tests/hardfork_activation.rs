@@ -1,9 +1,10 @@
 //! Action tests for hardfork activation gating and cascade semantics.
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatchType, Batcher, BatcherConfig, DaType, EncoderConfig,
-    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
+    TestRollupConfigBuilder,
 };
+use base_batcher_encoder::{BatchType, DaType, EncoderConfig};
 use base_consensus_genesis::HardForkConfig;
 
 // ---------------------------------------------------------------------------

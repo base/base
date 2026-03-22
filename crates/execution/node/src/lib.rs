@@ -34,12 +34,6 @@ pub mod proof_history;
 #[cfg(feature = "test-utils")]
 pub mod utils;
 
-pub use base_execution_evm::*;
-pub use base_execution_payload_builder::{
-    self as payload, OpBuiltPayload, OpPayloadAttributes, OpPayloadBuilder,
-    OpPayloadBuilderAttributes, OpPayloadPrimitives, OpPayloadTypes, config::OpDAConfig,
-};
-pub use base_execution_storage::OpStorage;
 use base_revm as _;
 #[cfg(feature = "test-utils")]
 use reth_tasks as _;

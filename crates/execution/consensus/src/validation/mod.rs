@@ -10,8 +10,8 @@ use alloy_consensus::{BlockHeader, EMPTY_OMMER_ROOT_HASH, TxReceipt};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
+use base_alloy_chains::BaseUpgrades;
 pub use base_execution_chainspec::decode_holocene_base_fee;
-use base_execution_forks::BaseUpgrades;
 use base_execution_primitives::DepositReceipt;
 use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
@@ -213,10 +213,10 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::{Bytes, U256, b256, hex};
-    use base_alloy_consensus::OpTxEnvelope;
+    use base_alloy_chains::BaseUpgrade;
+    use base_alloy_consensus::{OpReceipt, OpTxEnvelope};
     use base_execution_chainspec::{BASE_SEPOLIA, OpChainSpec};
-    use base_execution_forks::{BASE_SEPOLIA_HARDFORKS, BaseUpgrade};
-    use base_execution_primitives::OpReceipt;
+    use base_execution_forks::BASE_SEPOLIA_HARDFORKS;
     use reth_chainspec::{BaseFeeParams, ChainSpec, EthChainSpec, ForkCondition, Hardfork};
 
     use super::*;

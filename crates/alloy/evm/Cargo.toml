@@ -20,6 +20,7 @@ alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 
 # base
+base-alloy-flz.workspace = true
 base-alloy-chains.workspace = true
 base-revm = { workspace = true, features = ["alloy"] }
 base-alloy-consensus = { workspace = true, features = ["evm"] }
@@ -43,6 +44,7 @@ std = [
 	"alloy-evm/std",
 	"alloy-primitives/std",
 	"base-alloy-consensus/std",
+	"base-alloy-flz/std",
 	"base-revm/std",
 	"revm/std",
 	"thiserror/std",

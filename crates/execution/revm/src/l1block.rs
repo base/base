@@ -1,4 +1,5 @@
 //! Contains the `[L1BlockInfo]` type and its implementation.
+use base_alloy_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use revm::{
     context_interface::cfg::gas::{NON_ZERO_BYTE_MULTIPLIER_ISTANBUL, STANDARD_TOKEN_COST},
     database_interface::Database,
@@ -15,7 +16,6 @@ use crate::{
         NON_ZERO_BYTE_COST, OPERATOR_FEE_CONSTANT_OFFSET, OPERATOR_FEE_JOVIAN_MULTIPLIER,
         OPERATOR_FEE_SCALAR_DECIMAL, OPERATOR_FEE_SCALAR_OFFSET, OPERATOR_FEE_SCALARS_SLOT,
     },
-    estimate_tx_compressed_size,
     transaction::OpTxTr,
 };
 

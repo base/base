@@ -39,6 +39,7 @@ base-revm.workspace = true
 revm-database.workspace = true
 
 # alloy
+alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
 alloy-primitives.workspace = true
@@ -51,6 +52,8 @@ alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 base-alloy-rpc-types-engine.workspace = true
 
 # base-alloy
+base-alloy-flz.workspace = true
+base-alloy-chains.workspace = true
 base-alloy-network.workspace = true
 base-alloy-consensus.workspace = true
 base-alloy-rpc-types.workspace = true

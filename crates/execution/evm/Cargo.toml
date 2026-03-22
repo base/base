@@ -26,6 +26,7 @@ alloy-evm.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
+base-alloy-chains.workspace = true
 base-alloy-evm = { workspace = true, features = ["std", "reth"] }
 base-alloy-consensus = { workspace = true, features = ["evm"] }
 base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }

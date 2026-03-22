@@ -2,9 +2,10 @@
 
 use alloy_primitives::{Bytes, TxKind, U256, hex};
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
-    L1MinerConfig, SharedL1Chain, TEST_ACCOUNT_ADDRESS, TestRollupConfigBuilder, block_info_from,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
+    TEST_ACCOUNT_ADDRESS, TestRollupConfigBuilder, block_info_from,
 };
+use base_batcher_encoder::{DaType, EncoderConfig};
 
 /// CLZ probe-contract init code.
 ///

@@ -65,6 +65,7 @@ base-revm.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-eth.workspace = true
+base-alloy-chains.workspace = true
 base-alloy-consensus.workspace = true
 alloy-rpc-types-engine.workspace = true
 base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
@@ -102,7 +103,6 @@ futures.workspace = true
 alloy-eips.workspace = true
 alloy-network.workspace = true
 base-alloy-network.workspace = true
-base-alloy-chains.workspace = true
 
 [features]
 default = [ "reth-codec" ]

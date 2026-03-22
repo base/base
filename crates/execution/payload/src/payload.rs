@@ -12,6 +12,7 @@ use alloy_rpc_types_engine::{
     BlobsBundleV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2, ExecutionPayloadV1,
     ExecutionPayloadV3, PayloadId,
 };
+use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 /// Re-export for use in downstream arguments.
 pub use base_alloy_rpc_types_engine::OpPayloadAttributes;
@@ -20,7 +21,6 @@ use base_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV5, OpExecutionPayloadV4,
 };
 use base_execution_evm::OpNextBlockEnvAttributes;
-use base_execution_forks::BaseUpgrades;
 use base_execution_primitives::OpPrimitives;
 use reth_chainspec::EthChainSpec;
 use reth_payload_builder::{EthPayloadBuilderAttributes, PayloadBuilderError};

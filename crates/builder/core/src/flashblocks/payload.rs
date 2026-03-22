@@ -12,15 +12,16 @@ use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONC
 use alloy_evm::Database;
 use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use base_access_lists::{FlashblockAccessList, FlashblockAccessListBuilder};
+use base_alloy_chains::BaseUpgrades;
+use base_alloy_consensus::OpReceipt;
 use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
 use base_builder_publish::WebSocketPublisher;
 use base_execution_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use base_execution_forks::BaseUpgrades;
-use base_execution_primitives::{OpReceipt, OpTransactionSigned};
-use base_node_core::{OpBuiltPayload, OpPayloadBuilderAttributes};
+use base_execution_payload_builder::{OpBuiltPayload, OpPayloadBuilderAttributes};
+use base_execution_primitives::OpTransactionSigned;
 use either::Either;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
@@ -1167,8 +1168,8 @@ where
 mod tests {
     use alloy_consensus::Receipt;
     use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
+    use base_alloy_consensus::OpReceipt;
     use base_alloy_flashblocks::Metadata;
-    use base_execution_primitives::OpReceipt;
 
     use super::FlashblocksMetadata;
 

@@ -7,12 +7,12 @@ use std::time::Duration;
 
 use alloy_consensus::SignableTransaction;
 use alloy_eips::eip2718::Encodable2718;
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_alloy_network::TransactionBuilder;
 use base_alloy_rpc_types::OpTransactionRequest;
 use base_tx_forwarding::TxForwardingConfig;
 use base_txpool::ValidatedTransaction;

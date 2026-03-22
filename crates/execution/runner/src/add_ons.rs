@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use base_execution_forks::BaseUpgrades;
+use base_alloy_chains::BaseUpgrades;
 use base_execution_payload_builder::{
     OpAttributes, OpPayloadPrimitives,
     config::{OpDAConfig, OpGasLimitConfig},

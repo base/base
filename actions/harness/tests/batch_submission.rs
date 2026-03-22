@@ -1,9 +1,10 @@
 //! Action tests for L2 batch submission via the Batcher actor.
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatchType, Batcher, BatcherConfig, BatcherError, DaType,
-    EncoderConfig, L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, BatcherError, L1MinerConfig,
+    SharedL1Chain, TestRollupConfigBuilder,
 };
+use base_batcher_encoder::{BatchType, DaType, EncoderConfig};
 
 // ---------------------------------------------------------------------------
 // Batcher: persistent pipeline end-to-end path

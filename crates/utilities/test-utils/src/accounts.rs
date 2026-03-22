@@ -5,7 +5,6 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, TxHash, address, hex};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_alloy_network::TransactionBuilder;
 use base_alloy_rpc_types::OpTransactionRequest;
 use eyre::{Result, eyre};
 
@@ -80,12 +79,12 @@ impl Account {
         let tx_request = OpTransactionRequest::default()
             .from(self.address())
             .transaction_type(EIP1559_TX_TYPE)
-            .with_gas_limit(3_000_000)
-            .with_max_fee_per_gas(1_000_000_000)
-            .with_max_priority_fee_per_gas(0)
-            .with_chain_id(DEVNET_CHAIN_ID)
-            .with_deploy_code(bytecode)
-            .with_nonce(nonce);
+            .gas_limit(3_000_000)
+            .max_fee_per_gas(1_000_000_000)
+            .max_priority_fee_per_gas(0)
+            .chain_id(DEVNET_CHAIN_ID)
+            .deploy_code(bytecode)
+            .nonce(nonce);
 
         let tx = tx_request.build_typed_tx().map_err(|_| eyre!("invalid transaction request"))?;
         let signature = self.signer().sign_hash_sync(&tx.signature_hash())?;
@@ -101,10 +100,10 @@ impl Account {
         let tx_request = tx_request
             .from(self.address())
             .transaction_type(EIP1559_TX_TYPE)
-            .with_gas_limit(500_000)
-            .with_chain_id(DEVNET_CHAIN_ID)
-            .with_max_fee_per_gas(1_000_000_000)
-            .with_max_priority_fee_per_gas(0);
+            .gas_limit(500_000)
+            .chain_id(DEVNET_CHAIN_ID)
+            .max_fee_per_gas(1_000_000_000)
+            .max_priority_fee_per_gas(0);
 
         let tx = tx_request.build_typed_tx().map_err(|_| eyre!("invalid transaction request"))?;
         let signature = self.signer().sign_hash_sync(&tx.signature_hash())?;

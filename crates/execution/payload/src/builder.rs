@@ -6,7 +6,7 @@ use alloy_evm::Evm as AlloyEvm;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
-use base_execution_forks::BaseUpgrades;
+use base_alloy_chains::BaseUpgrades;
 use base_execution_primitives::transaction::OpTransaction;
 use base_protocol::Predeploys;
 use base_revm::{L1_BLOCK_CONTRACT, L1BlockInfo};

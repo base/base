@@ -4,9 +4,8 @@
 //! transactions seamlessly, without requiring error handling at the call site.
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
-use base_alloy_consensus::{OpDepositReceipt, OpTxEnvelope, OpTxType};
-use base_execution_forks::BaseUpgrades;
-use base_execution_primitives::OpReceipt;
+use base_alloy_chains::BaseUpgrades;
+use base_alloy_consensus::{OpDepositReceipt, OpReceipt, OpTxEnvelope, OpTxType};
 use reth_evm::Evm;
 use revm::{Database, context::result::ExecutionResult};
 

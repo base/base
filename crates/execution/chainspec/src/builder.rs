@@ -1,7 +1,7 @@
 use alloy_chains::Chain;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
-use base_execution_forks::BaseUpgrade;
+use base_alloy_chains::BaseUpgrade;
 use derive_more::From;
 use reth_chainspec::ChainSpecBuilder;
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};

@@ -2,7 +2,7 @@
 
 use alloy_consensus::Transaction;
 use alloy_primitives::{U16, U256, hex};
-use base_execution_forks::BaseUpgrades;
+use base_alloy_chains::BaseUpgrades;
 use base_revm::{L1BlockInfo, OpSpecId};
 use reth_execution_errors::BlockExecutionError;
 use reth_primitives_traits::BlockBody;
@@ -381,8 +381,8 @@ mod tests {
     use alloy_consensus::{Block, BlockBody, Header};
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Bytes, hex_literal::hex, keccak256};
+    use base_alloy_chains::BaseUpgrades;
     use base_execution_chainspec::BASE_MAINNET;
-    use base_execution_forks::BaseUpgrades;
     use base_execution_primitives::OpTransactionSigned;
 
     use super::*;

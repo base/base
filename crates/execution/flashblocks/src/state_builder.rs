@@ -12,13 +12,14 @@ use alloy_evm::{
 use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
+use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::{OpReceipt, OpTxEnvelope};
 use base_alloy_evm::ensure_create2_deployer;
+use base_alloy_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
-use base_execution_forks::BaseUpgrades;
 use base_execution_primitives::OpPrimitives;
 use base_execution_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
-use base_revm::{L1_BLOCK_CONTRACT, L1BlockInfo, OpHaltReason, estimate_tx_compressed_size};
+use base_revm::{L1_BLOCK_CONTRACT, L1BlockInfo, OpHaltReason};
 use reth_evm::{Evm, FromRecoveredTx};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use revm::{

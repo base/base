@@ -4,12 +4,12 @@ use std::time::Duration;
 
 use alloy_consensus::SignableTransaction;
 use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
-use alloy_network::Ethereum;
+use alloy_network::{Ethereum, TransactionBuilder};
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_alloy_network::{Base, TransactionBuilder};
+use base_alloy_network::Base;
 use base_alloy_rpc_types::OpTransactionRequest;
 use devnet::{DevnetBuilder, config::ANVIL_ACCOUNT_1};
 use eyre::{Result, WrapErr};

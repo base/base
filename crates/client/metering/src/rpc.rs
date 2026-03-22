@@ -8,11 +8,11 @@ use std::sync::{
 use alloy_consensus::{BlockHeader, Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, TxHash, U256};
+use base_alloy_consensus::OpBlock;
 use base_alloy_flz::flz_compress_len;
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
 use base_execution_chainspec::OpChainSpec;
 use base_execution_evm::extract_l1_info_from_tx;
-use base_execution_primitives::OpBlock;
 use base_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
 use base_revm::L1BlockInfo;
 use jsonrpsee::core::{RpcResult, async_trait};

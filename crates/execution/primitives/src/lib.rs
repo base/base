@@ -10,15 +10,13 @@
 
 // Used in submodule transaction::signed and receipt.
 use alloy_primitives as _;
+use base_alloy_consensus::{OpBlock, OpReceipt};
 
 pub mod transaction;
 pub use transaction::*;
 
 mod receipt;
 
-/// Base-specific block type.
-pub use base_alloy_consensus::OpBlock;
-pub use base_alloy_consensus::OpReceipt;
 pub use receipt::DepositReceipt;
 
 /// Base-specific block body type.
@@ -40,7 +38,5 @@ impl reth_primitives_traits::NodePrimitives for OpPrimitives {
 /// Bincode-compatible serde implementations.
 #[cfg(feature = "serde-bincode-compat")]
 pub mod serde_bincode_compat {
-    pub use base_alloy_consensus::serde_bincode_compat::OpReceipt;
-
     pub use super::receipt::serde_bincode_compat::OpReceipt as LocalOpReceipt;
 }

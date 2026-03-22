@@ -1,9 +1,10 @@
 //! TDD action test skeletons for sequencer drift scenarios.
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
-    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
+    TestRollupConfigBuilder,
 };
+use base_batcher_encoder::{DaType, EncoderConfig};
 
 // ---------------------------------------------------------------------------
 // A. Sequencer drift — L2 timestamp exceeds L1 origin time + max_sequencer_drift

@@ -2,9 +2,10 @@
 
 use alloy_primitives::Address;
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig, ForkMatrix,
-    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, ForkMatrix, L1MinerConfig,
+    SharedL1Chain, TestRollupConfigBuilder,
 };
+use base_batcher_encoder::{DaType, EncoderConfig};
 use base_protocol::L1BlockInfoTx;
 
 // ---------------------------------------------------------------------------

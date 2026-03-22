@@ -78,12 +78,12 @@ revm-bytecode.workspace = true
 revm-context-interface.workspace = true
 
 # alloy
+alloy-network.workspace = true
 alloy-rpc-client.workspace = true
 alloy-genesis = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # base-alloy
-base-alloy-network.workspace = true
 base-alloy-consensus.workspace = true
 base-alloy-rpc-types.workspace = true
 

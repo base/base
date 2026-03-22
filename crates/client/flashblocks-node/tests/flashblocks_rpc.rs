@@ -5,6 +5,7 @@ use std::str::FromStr;
 use DoubleCounter::DoubleCounterInstance;
 use alloy_consensus::{Transaction, constants::EMPTY_WITHDRAWALS};
 use alloy_eips::{BlockNumberOrTag, eip7685::EMPTY_REQUESTS_HASH};
+use alloy_network::{ReceiptResponse, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, address, b256, bytes};
 use alloy_provider::Provider;
 use alloy_rpc_client::RpcClient;
@@ -14,7 +15,7 @@ use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
 use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
-use base_alloy_network::{Base, ReceiptResponse, TransactionResponse};
+use base_alloy_network::Base;
 use base_alloy_rpc_types::OpTransactionRequest;
 use base_flashblocks_node::test_harness::FlashblocksHarness;
 use base_node_runner::test_utils::{Account, DoubleCounter, L1_BLOCK_INFO_DEPOSIT_TX};

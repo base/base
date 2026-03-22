@@ -32,7 +32,6 @@ mod spec;
 pub use spec::*;
 
 mod transaction;
-pub use base_alloy_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 pub use transaction::{
     DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, OpBuildError, OpTransaction,
     OpTransactionBuilder, OpTransactionError, OpTxTr,

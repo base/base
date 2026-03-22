@@ -4,7 +4,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
-use base_execution_forks::BaseUpgrades;
+use base_alloy_chains::BaseUpgrades;
 use base_execution_payload_builder::{OpAttributes, OpPayloadBuilder, OpPayloadPrimitives};
 use base_txpool::OpPooledTx;
 use jsonrpsee_core::{RpcResult, async_trait};

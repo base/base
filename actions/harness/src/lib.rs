@@ -21,7 +21,6 @@ mod harness;
 pub use harness::ActionTestHarness;
 
 mod batcher;
-pub use base_batcher_encoder::{BatchType, DaType, EncoderConfig};
 pub use batcher::{Batcher, BatcherConfig, BatcherError, L1MinerTxManager};
 
 mod matrix;
@@ -44,7 +43,6 @@ mod engine;
 pub use engine::ActionEngineClient;
 
 mod verifier;
-pub use base_consensus_derive::StepResult;
 pub use verifier::{
     BlobVerifierPipeline, DerivedBlock, L2Verifier, VerifierError, VerifierPipeline,
 };

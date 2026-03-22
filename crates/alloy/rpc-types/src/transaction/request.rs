@@ -5,7 +5,7 @@ use alloy_consensus::{
 };
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network_primitives::TransactionBuilder7702;
-use alloy_primitives::{Address, Signature, TxKind, U256};
+use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use base_alloy_consensus::{OpTxEnvelope, OpTypedTransaction, TxDeposit};
 use serde::{Deserialize, Serialize};
@@ -76,6 +76,19 @@ impl OpTransactionRequest {
     /// Sets the value (amount) for the transaction.
     pub const fn value(mut self, value: U256) -> Self {
         self.0.value = Some(value);
+        self
+    }
+
+    /// Sets the chain ID for the transaction.
+    pub const fn chain_id(mut self, chain_id: ChainId) -> Self {
+        self.0.chain_id = Some(chain_id);
+        self
+    }
+
+    /// Sets the input data as deploy (CREATE) bytecode.
+    pub fn deploy_code(mut self, code: impl Into<Bytes>) -> Self {
+        self.0.to = Some(TxKind::Create);
+        self.0.input.input = Some(code.into());
         self
     }
 

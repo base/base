@@ -1,9 +1,10 @@
 //! Action tests for batch format transitions across hardfork boundaries.
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, BatchType, Batcher, BatcherConfig, DaType, DerivedBlock,
-    EncoderConfig, L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DerivedBlock, L1MinerConfig,
+    SharedL1Chain, TestRollupConfigBuilder,
 };
+use base_batcher_encoder::{BatchType, DaType, EncoderConfig};
 use base_consensus_genesis::{GRANITE_CHANNEL_TIMEOUT, HardForkConfig};
 
 // ---------------------------------------------------------------------------

@@ -4,12 +4,12 @@ use std::{marker::PhantomData, sync::Arc};
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B64, B256};
+use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::OpPooledTransaction;
 use base_alloy_rpc_types_engine::{OpExecutionData, OpPayloadAttributes};
 use base_execution_chainspec::OpChainSpec;
 use base_execution_consensus::OpBeaconConsensus;
 use base_execution_evm::{OpEvmConfig, OpRethReceiptBuilder};
-use base_execution_forks::BaseUpgrades;
 use base_execution_payload_builder::{
     OpAttributes, OpBuiltPayload, OpPayloadPrimitives,
     builder::OpPayloadTransactions,

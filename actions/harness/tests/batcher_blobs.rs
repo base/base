@@ -1,9 +1,10 @@
 //! Action tests for blob DA submission and mixed calldata/blob derivation.
 
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DaType, EncoderConfig,
-    L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
+    TestRollupConfigBuilder,
 };
+use base_batcher_encoder::{DaType, EncoderConfig};
 
 // ---------------------------------------------------------------------------
 // Blob DA end-to-end

@@ -15,9 +15,8 @@ use alloy_evm::{
 use alloy_primitives::Address;
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::OpDepositReceipt;
-use base_revm::{
-    DEPOSIT_TRANSACTION_TYPE, L1_BLOCK_CONTRACT, L1BlockInfo, estimate_tx_compressed_size,
-};
+use base_alloy_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
+use base_revm::{DEPOSIT_TRANSACTION_TYPE, L1_BLOCK_CONTRACT, L1BlockInfo};
 use revm::{
     Database as _, DatabaseCommit,
     context::{Block, result::ResultAndState},

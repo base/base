@@ -6,8 +6,8 @@ use alloc::{string::ToString, vec::Vec};
 use alloy_consensus::{EMPTY_ROOT_HASH, Header, Sealed};
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_rlp::{Decodable, Encodable};
-use alloy_trie::TrieAccount;
-use base_proof_mpt::{Nibbles, TrieHinter, TrieNode, TrieNodeError};
+use alloy_trie::{Nibbles, TrieAccount};
+use base_proof_mpt::{TrieHinter, TrieNode, TrieNodeError};
 use revm::{
     Database,
     database::{BundleState, states::StorageSlot},

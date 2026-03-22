@@ -20,8 +20,6 @@ mod rpc;
 pub use rpc::RpcArgs;
 
 mod sequencer;
-pub use alloy_rpc_types_engine::JwtSecret;
-pub use base_jwt::{JwtError, JwtSecretReader};
 pub use sequencer::SequencerArgs;
 
 pub mod signer;

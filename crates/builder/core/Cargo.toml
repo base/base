@@ -131,6 +131,7 @@ alloy-sol-types = { workspace = true, features = ["json", "std"] }
 
 # base-alloy
 base-alloy-flz.workspace = true
+base-alloy-chains.workspace = true
 base-alloy-network.workspace = true
 base-alloy-consensus.workspace = true
 base-alloy-rpc-types.workspace = true

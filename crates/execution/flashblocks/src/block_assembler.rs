@@ -10,11 +10,11 @@ use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
     PraguePayloadFields,
 };
+use base_alloy_consensus::OpBlock;
 use base_alloy_flashblocks::{ExecutionPayloadBaseV1, Flashblock};
 use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadSidecar, OpExecutionPayloadV4,
 };
-use base_execution_primitives::OpBlock;
 use base_revm::L1BlockInfo;
 
 use crate::{ExecutionError, ProtocolError, Result};
