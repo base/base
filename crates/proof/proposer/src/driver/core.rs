@@ -295,6 +295,7 @@ where
             claimed_l2_output_root: claimed_output.output_root,
             claimed_l2_block_number: target_block,
             proposer: self.config.proposer_address,
+            intermediate_block_interval: self.config.intermediate_block_interval,
         };
 
         info!(
