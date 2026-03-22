@@ -4,10 +4,11 @@ use core::marker::PhantomData;
 use std::sync::OnceLock;
 
 use alloy_primitives::{Bytes, address};
+use base_alloy_evm::{OpBlockExecutorFactory, OpEvm, OpEvmFactory};
 use base_execution_chainspec::{BASE_MAINNET, BASE_SEPOLIA, OpChainSpec};
-use base_execution_evm::{OpBlockExecutorFactory, OpEvm, OpEvmFactory, OpRethReceiptBuilder};
+use base_execution_evm::{OpEvmConfig, OpRethReceiptBuilder};
 use base_execution_primitives::OpPrimitives;
-use base_node_core::{OpEvmConfig, OpExecutorBuilder, OpNode, args::RollupArgs};
+use base_node_core::{OpExecutorBuilder, OpNode, args::RollupArgs};
 use base_revm::{
     OpContext, OpHaltReason, OpPrecompiles, OpSpecId, OpTransaction, OpTransactionError,
 };

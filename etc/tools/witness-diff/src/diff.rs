@@ -9,9 +9,9 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rlp::Decodable;
 use alloy_rpc_client::RpcClient;
 use alloy_transport_http::{Client, Http};
-use alloy_trie::TrieAccount;
+use alloy_trie::{Nibbles, TrieAccount};
 use base_alloy_network::Base;
-use base_proof_mpt::{Nibbles, TrieNode};
+use base_proof_mpt::TrieNode;
 use eyre::Result;
 use serde::{Deserialize, Deserializer};
 

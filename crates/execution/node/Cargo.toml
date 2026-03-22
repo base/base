@@ -102,6 +102,7 @@ reth-node-builder = { workspace = true, features = ["test-utils"] }
 futures.workspace = true
 alloy-eips.workspace = true
 alloy-network.workspace = true
+base-alloy-evm.workspace = true
 base-alloy-network.workspace = true
 
 [features]

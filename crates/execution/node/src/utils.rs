@@ -4,6 +4,7 @@ use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::PayloadAttributes;
 use base_execution_chainspec::OpChainSpecBuilder;
+use base_execution_payload_builder::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_e2e_test_utils::{
     NodeHelperType, TmpDB, transaction::TransactionTestContext, wallet::Wallet,
 };
@@ -12,7 +13,7 @@ use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
 use tokio::sync::Mutex;
 
-use crate::{OpBuiltPayload, OpNode as OtherOpNode, OpPayloadBuilderAttributes};
+use crate::OpNode as OtherOpNode;
 
 /// Base Node Helper type
 pub(crate) type OpNode =

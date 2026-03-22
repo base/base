@@ -155,13 +155,11 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
+    use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+    use alloy_network::TxSignerSync;
     use alloy_primitives::{Bytes, bytes};
     use alloy_signer_local::PrivateKeySigner;
     use base_alloy_consensus::OpTxEnvelope;
-    use base_alloy_network::{
-        TxSignerSync,
-        eip2718::{Decodable2718, Encodable2718},
-    };
 
     use super::*;
 

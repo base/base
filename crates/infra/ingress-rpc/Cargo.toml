@@ -41,4 +41,6 @@ rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored
 
 [dev-dependencies]
 wiremock.workspace = true
+alloy-eips.workspace = true
+alloy-network.workspace = true
 base-bundles = { workspace = true, features = ["test-utils"] }
