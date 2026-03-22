@@ -615,10 +615,11 @@ mod test {
 
         let op_hardforks = &*BASE_MAINNET;
 
-        let receipt = OpReceiptFieldsBuilder::new(BaseChainConfig::mainnet().jovian_timestamp, u64::MAX)
-            .l1_block_info(&op_hardforks, &tx, &mut l1_block_info)
-            .expect("should parse revm l1 info")
-            .build();
+        let receipt =
+            OpReceiptFieldsBuilder::new(BaseChainConfig::mainnet().jovian_timestamp, u64::MAX)
+                .l1_block_info(&op_hardforks, &tx, &mut l1_block_info)
+                .expect("should parse revm l1 info")
+                .build();
 
         assert_eq!(receipt.l1_block_info.da_footprint_gas_scalar, Some(DA_FOOTPRINT_GAS_SCALAR));
     }
