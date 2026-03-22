@@ -70,6 +70,7 @@ serde = [
 	"alloy-eips/serde",
 	"alloy-hardforks/serde",
 	"alloy-primitives/serde",
+	"base-alloy-chains/serde",
 	"base-alloy-consensus/serde",
 	"base-alloy-rpc-types/serde",
 	"base-execution-forks/serde",

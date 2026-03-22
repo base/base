@@ -212,8 +212,7 @@ fn is_base_v1_active_at_timestamp(&self, timestamp: u64) -> bool {
 **Files:**
 - [`crates/alloy/chains/src/hardfork.rs`](../../crates/alloy/chains/src/hardfork.rs) (mainnet, sepolia, devnet constants)
 - [`crates/alloy/chains/src/lib.rs`](../../crates/alloy/chains/src/lib.rs)
-- [`crates/consensus/registry/src/test_utils/base_mainnet.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/base_mainnet.rs)
-- [`crates/consensus/registry/src/test_utils/base_sepolia.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/base_sepolia.rs)
+- [`crates/consensus/registry/src/test_utils/mod.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/mod.rs)
 
 Add named constants once an activation timestamp is confirmed:
 
@@ -245,7 +244,7 @@ Until an activation timestamp is confirmed, leave `base: None` and the chain arr
 
 ### 7. Update the default rollup config
 
-**File:** [`crates/consensus/registry/src/test_utils/base_sepolia.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/base_sepolia.rs)
+**File:** [`crates/consensus/registry/src/test_utils/mod.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/mod.rs)
 
 The `default_rollup_config()` function sets all upgrades active at genesis for dev use. Add the new upgrade:
 
@@ -387,7 +386,7 @@ forks.push((BaseUpgrade::V1.boxed(), self[BaseUpgrade::V1]));  // <-- add
 - [ ] `is_X_active` + `is_first_X_block` added to `RollupConfig`; `upgrade_activation` arm added; previous terminal upgrade cascades to new one (unless standalone)
 - [ ] `is_X_active_at_timestamp` added to `BaseUpgrades` trait
 - [ ] Timestamp constants added to `mainnet.rs`, `sepolia.rs`, `devnet_0_sepolia_dev_0.rs`; re-exported from `lib.rs`
-- [ ] Registry fixtures (`base_mainnet.rs`, `base_sepolia.rs`) updated
+- [ ] Registry fixtures (`test_utils/mod.rs`) updated
 - [ ] Default rollup config updated (`defaults.rs`)
 - [ ] Upgrade consistency tests pass
 

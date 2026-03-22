@@ -59,6 +59,7 @@ std = [
 	"derive_more/std",
 	"serde?/std",
 	"thiserror/std",
+	"tracing/std",
 ]
 arbitrary = [
 	"alloy-chains/arbitrary",

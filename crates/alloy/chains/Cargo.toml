@@ -29,8 +29,4 @@ serde = { workspace = true, optional = true }
 alloy-chains.workspace = true
 
 [features]
-serde = [
-	"alloy-hardforks/serde",
-	"alloy-primitives/serde",
-	"dep:serde",
-]
+serde = [ "alloy-hardforks/serde", "alloy-primitives/serde", "dep:serde" ]
