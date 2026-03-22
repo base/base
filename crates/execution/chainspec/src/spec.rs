@@ -338,8 +338,8 @@ mod tests {
     use alloy_genesis::{ChainConfig, Genesis};
     use alloy_hardforks::Hardfork;
     use alloy_primitives::{B256, U256, b256, hex};
+    use base_alloy_chains::BaseChainConfig;
     use base_alloy_rpc_types::OpBaseFeeInfo;
-    use base_alloy_upgrades::{BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP};
     use base_execution_forks::{BaseUpgrade, BaseUpgrades};
     use reth_chainspec::{
         BaseFeeParams, BaseFeeParamsKind, EthChainSpec, EthereumHardforks, test_fork_ids,
@@ -431,13 +431,13 @@ mod tests {
                     Head { number: 0, timestamp: 1746806401, ..Default::default() },
                     ForkId {
                         hash: ForkHash([0x86, 0x72, 0x8b, 0x4e]),
-                        next: BASE_MAINNET_JOVIAN_TIMESTAMP,
+                        next: BaseChainConfig::mainnet().jovian_timestamp,
                     },
                 ),
                 (
                     Head {
                         number: 0,
-                        timestamp: BASE_MAINNET_JOVIAN_TIMESTAMP,
+                        timestamp: BaseChainConfig::mainnet().jovian_timestamp,
                         ..Default::default()
                     },
                     BASE_MAINNET.hardfork_fork_id(BaseUpgrade::Jovian).unwrap(),
@@ -495,13 +495,13 @@ mod tests {
                     Head { number: 0, timestamp: 1744905600, ..Default::default() },
                     ForkId {
                         hash: ForkHash([0x06, 0x0a, 0x4d, 0x1d]),
-                        next: BASE_SEPOLIA_JOVIAN_TIMESTAMP,
+                        next: BaseChainConfig::sepolia().jovian_timestamp,
                     },
                 ),
                 (
                     Head {
                         number: 0,
-                        timestamp: BASE_SEPOLIA_JOVIAN_TIMESTAMP,
+                        timestamp: BaseChainConfig::sepolia().jovian_timestamp,
                         ..Default::default()
                     },
                     BASE_SEPOLIA.hardfork_fork_id(BaseUpgrade::Jovian).unwrap(),

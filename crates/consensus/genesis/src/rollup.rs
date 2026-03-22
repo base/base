@@ -3,9 +3,9 @@
 use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
-use base_alloy_upgrades::{BaseUpgrade, BaseUpgrades};
+use base_alloy_chains::{BaseUpgrade, BaseUpgrades};
 
-use crate::{BASE_MAINNET_BASE_FEE_CONFIG, BaseFeeConfig, ChainGenesis, HardForkConfig};
+use crate::{BaseFeeConfig, ChainGenesis, HardForkConfig, base_fee_config};
 
 /// The max rlp bytes per channel for the Bedrock hardfork.
 pub const MAX_RLP_BYTES_PER_CHANNEL_BEDROCK: u64 = 10_000_000;
@@ -78,10 +78,10 @@ pub struct RollupConfig {
 #[cfg(feature = "arbitrary")]
 impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        use crate::BASE_SEPOLIA_BASE_FEE_CONFIG;
+        use base_alloy_chains::BaseChainConfig;
         let chain_op_config = match u32::arbitrary(u)? % 2 {
-            0 => BASE_MAINNET_BASE_FEE_CONFIG,
-            _ => BASE_SEPOLIA_BASE_FEE_CONFIG,
+            0 => BaseFeeConfig::from(BaseChainConfig::mainnet()),
+            _ => BaseFeeConfig::from(BaseChainConfig::sepolia()),
         };
 
         Ok(Self {
@@ -122,7 +122,7 @@ impl Default for RollupConfig {
             l1_system_config_address: Address::ZERO,
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: None,
-            chain_op_config: BASE_MAINNET_BASE_FEE_CONFIG,
+            chain_op_config: base_fee_config(0),
         }
     }
 }
@@ -851,7 +851,7 @@ mod tests {
             l1_system_config_address: address!("94ee52a9d8edd72a85dea7fae3ba6d75e4bf1710"),
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: None,
-            chain_op_config: BASE_MAINNET_BASE_FEE_CONFIG,
+            chain_op_config: base_fee_config(0),
         };
 
         let deserialized: RollupConfig = serde_json::from_str(raw).unwrap();

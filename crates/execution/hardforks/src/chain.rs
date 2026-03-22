@@ -1,7 +1,7 @@
 use alloc::vec;
 
 use alloy_primitives::U256;
-use base_alloy_upgrades::{BaseChainUpgrades, BaseUpgrade};
+use base_alloy_chains::{BaseChainUpgrades, BaseUpgrade};
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition, Hardfork};
 use spin::Lazy;
 

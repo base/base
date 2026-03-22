@@ -1,17 +1,20 @@
 //! Rollup and L1 chain configuration registry.
 
 use alloy_primitives::{Address, map::HashMap};
+use base_alloy_chains::BaseChainConfig;
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 use spin::Lazy;
 
 use crate::L1Config;
 
-/// Private initializer that loads the chain configurations.
-static INIT: Lazy<(HashMap<u64, RollupConfig>, HashMap<u64, base_consensus_genesis::ChainConfig>)> =
-    Lazy::new(init_configs);
-
-/// Rollup configurations loaded from embedded TOML config files.
-static ROLLUP_CONFIGS: Lazy<HashMap<u64, RollupConfig>> = Lazy::new(|| INIT.0.clone());
+/// Rollup configurations derived from [`BaseChainConfig`] instances.
+static ROLLUP_CONFIGS: Lazy<HashMap<u64, RollupConfig>> = Lazy::new(|| {
+    let mut map = HashMap::default();
+    for cfg in BaseChainConfig::all() {
+        map.insert(cfg.chain_id, RollupConfig::from(cfg));
+    }
+    map
+});
 
 /// L1 chain configurations built from known L1 genesis data.
 static L1_CONFIGS: Lazy<HashMap<u64, L1ChainConfig>> = Lazy::new(L1Config::build_l1_configs);
@@ -19,8 +22,8 @@ static L1_CONFIGS: Lazy<HashMap<u64, L1ChainConfig>> = Lazy::new(L1Config::build
 /// A registry of chain configurations for Base networks.
 ///
 /// Provides access to rollup configs, L1 chain configs, and the unsafe block signer
-/// for supported chain IDs. All data is lazily initialized from embedded TOML config
-/// files and known L1 genesis data.
+/// for supported chain IDs. Rollup configs are derived from the compile-time
+/// [`BaseChainConfig`] instances in `base-alloy-chains`.
 #[derive(Debug)]
 pub struct Registry;
 
@@ -42,39 +45,8 @@ impl Registry {
 
     /// Returns the `unsafe_block_signer` address for the given chain ID.
     pub fn unsafe_block_signer(chain_id: u64) -> Option<Address> {
-        INIT.1.get(&chain_id)?.roles.as_ref()?.unsafe_block_signer
+        BaseChainConfig::by_chain_id(chain_id)?.unsafe_block_signer
     }
-}
-
-/// Initialize chain and rollup configurations from embedded TOML config files.
-fn init_configs() -> (HashMap<u64, RollupConfig>, HashMap<u64, base_consensus_genesis::ChainConfig>)
-{
-    let configs: [(&str, &str); 3] = [
-        ("base-mainnet", include_str!("../configs/base-mainnet.toml")),
-        ("base-sepolia", include_str!("../configs/base-sepolia.toml")),
-        (
-            "base-devnet-0-sepolia-dev-0",
-            include_str!("../configs/base-devnet-0-sepolia-dev-0.toml"),
-        ),
-    ];
-
-    let mut rollup_configs = HashMap::default();
-    let mut chain_configs = HashMap::default();
-
-    for (name, toml_str) in configs {
-        let mut chain_config: base_consensus_genesis::ChainConfig = toml::from_str(toml_str)
-            .unwrap_or_else(|e| panic!("Failed to parse {name} config: {e}"));
-
-        if let Some(a) = &mut chain_config.addresses {
-            a.zero_proof_addresses();
-        }
-
-        let rollup = chain_config.as_rollup_config();
-        rollup_configs.insert(chain_config.chain_id, rollup);
-        chain_configs.insert(chain_config.chain_id, chain_config);
-    }
-
-    (rollup_configs, chain_configs)
 }
 
 #[cfg(test)]
@@ -84,10 +56,9 @@ mod tests {
         holesky::{HOLESKY_BPO1_TIMESTAMP, HOLESKY_BPO2_TIMESTAMP},
         sepolia::{SEPOLIA_BPO1_TIMESTAMP, SEPOLIA_BPO2_TIMESTAMP},
     };
-    use base_alloy_upgrades::{BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_SEPOLIA_JOVIAN_TIMESTAMP};
+    use base_alloy_chains::BaseChainConfig;
 
     use super::*;
-    use crate::test_utils;
 
     #[test]
     fn test_unsafe_block_signer_mainnet() {
@@ -113,15 +84,14 @@ mod tests {
     }
 
     #[test]
-    fn test_hardcoded_rollup_configs() {
-        let test_cases =
-            [(8453, test_utils::BASE_MAINNET_CONFIG), (84532, test_utils::BASE_SEPOLIA_CONFIG)]
-                .to_vec();
+    fn test_rollup_config_derived_from_chain_config() {
+        let mainnet = Registry::rollup_config(8453).unwrap();
+        let expected = RollupConfig::from(BaseChainConfig::mainnet());
+        assert_eq!(*mainnet, expected);
 
-        for (chain_id, expected) in test_cases {
-            let derived = Registry::rollup_config(chain_id).unwrap();
-            assert_eq!(expected, *derived);
-        }
+        let sepolia = Registry::rollup_config(84532).unwrap();
+        let expected = RollupConfig::from(BaseChainConfig::sepolia());
+        assert_eq!(*sepolia, expected);
     }
 
     #[test]
@@ -137,10 +107,16 @@ mod tests {
     #[test]
     fn test_jovian_timestamps() {
         let base_mainnet = Registry::rollup_config(8453).unwrap();
-        assert_eq!(base_mainnet.hardforks.jovian_time, Some(BASE_MAINNET_JOVIAN_TIMESTAMP));
+        assert_eq!(
+            base_mainnet.hardforks.jovian_time,
+            Some(BaseChainConfig::mainnet().jovian_timestamp)
+        );
 
         let base_sepolia = Registry::rollup_config(84532).unwrap();
-        assert_eq!(base_sepolia.hardforks.jovian_time, Some(BASE_SEPOLIA_JOVIAN_TIMESTAMP));
+        assert_eq!(
+            base_sepolia.hardforks.jovian_time,
+            Some(BaseChainConfig::sepolia().jovian_timestamp)
+        );
     }
 
     #[test]

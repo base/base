@@ -141,52 +141,46 @@ mod tests {
     use alloy_hardforks::EthereumHardfork;
 
     use super::*;
-    use crate::{
-        BASE_MAINNET_BEDROCK_BLOCK, BASE_MAINNET_CANYON_TIMESTAMP, BASE_MAINNET_ECOTONE_TIMESTAMP,
-        BASE_MAINNET_FJORD_TIMESTAMP, BASE_MAINNET_GRANITE_TIMESTAMP,
-        BASE_MAINNET_HOLOCENE_TIMESTAMP, BASE_MAINNET_ISTHMUS_TIMESTAMP,
-        BASE_MAINNET_JOVIAN_TIMESTAMP, BASE_MAINNET_REGOLITH_TIMESTAMP, BASE_SEPOLIA_BEDROCK_BLOCK,
-        BASE_SEPOLIA_CANYON_TIMESTAMP, BASE_SEPOLIA_ECOTONE_TIMESTAMP,
-        BASE_SEPOLIA_FJORD_TIMESTAMP, BASE_SEPOLIA_GRANITE_TIMESTAMP,
-        BASE_SEPOLIA_HOLOCENE_TIMESTAMP, BASE_SEPOLIA_ISTHMUS_TIMESTAMP,
-        BASE_SEPOLIA_JOVIAN_TIMESTAMP, BASE_SEPOLIA_REGOLITH_TIMESTAMP,
-    };
+    use crate::BaseChainConfig;
 
     #[test]
     fn base_mainnet_fork_conditions() {
         let base_mainnet_forks = BaseChainUpgrades::mainnet();
-        assert_eq!(base_mainnet_forks[Bedrock], ForkCondition::Block(BASE_MAINNET_BEDROCK_BLOCK));
+        assert_eq!(
+            base_mainnet_forks[Bedrock],
+            ForkCondition::Block(BaseChainConfig::mainnet().bedrock_block)
+        );
         assert_eq!(
             base_mainnet_forks[Regolith],
-            ForkCondition::Timestamp(BASE_MAINNET_REGOLITH_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::mainnet().regolith_timestamp)
         );
         assert_eq!(
             base_mainnet_forks[Canyon],
-            ForkCondition::Timestamp(BASE_MAINNET_CANYON_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::mainnet().canyon_timestamp)
         );
         assert_eq!(
             base_mainnet_forks[Ecotone],
-            ForkCondition::Timestamp(BASE_MAINNET_ECOTONE_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::mainnet().ecotone_timestamp)
         );
         assert_eq!(
             base_mainnet_forks[Fjord],
-            ForkCondition::Timestamp(BASE_MAINNET_FJORD_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::mainnet().fjord_timestamp)
         );
         assert_eq!(
             base_mainnet_forks[Granite],
-            ForkCondition::Timestamp(BASE_MAINNET_GRANITE_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::mainnet().granite_timestamp)
         );
         assert_eq!(
             base_mainnet_forks[Holocene],
-            ForkCondition::Timestamp(BASE_MAINNET_HOLOCENE_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::mainnet().holocene_timestamp)
         );
         assert_eq!(
             base_mainnet_forks[Isthmus],
-            ForkCondition::Timestamp(BASE_MAINNET_ISTHMUS_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::mainnet().isthmus_timestamp)
         );
         assert_eq!(
             base_mainnet_forks[Jovian],
-            ForkCondition::Timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::mainnet().jovian_timestamp)
         );
         assert_eq!(base_mainnet_forks[V1], ForkCondition::Never);
     }
@@ -194,38 +188,41 @@ mod tests {
     #[test]
     fn base_sepolia_fork_conditions() {
         let base_sepolia_forks = BaseChainUpgrades::sepolia();
-        assert_eq!(base_sepolia_forks[Bedrock], ForkCondition::Block(BASE_SEPOLIA_BEDROCK_BLOCK));
+        assert_eq!(
+            base_sepolia_forks[Bedrock],
+            ForkCondition::Block(BaseChainConfig::sepolia().bedrock_block)
+        );
         assert_eq!(
             base_sepolia_forks[Regolith],
-            ForkCondition::Timestamp(BASE_SEPOLIA_REGOLITH_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::sepolia().regolith_timestamp)
         );
         assert_eq!(
             base_sepolia_forks[Canyon],
-            ForkCondition::Timestamp(BASE_SEPOLIA_CANYON_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::sepolia().canyon_timestamp)
         );
         assert_eq!(
             base_sepolia_forks[Ecotone],
-            ForkCondition::Timestamp(BASE_SEPOLIA_ECOTONE_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::sepolia().ecotone_timestamp)
         );
         assert_eq!(
             base_sepolia_forks[Fjord],
-            ForkCondition::Timestamp(BASE_SEPOLIA_FJORD_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::sepolia().fjord_timestamp)
         );
         assert_eq!(
             base_sepolia_forks[Granite],
-            ForkCondition::Timestamp(BASE_SEPOLIA_GRANITE_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::sepolia().granite_timestamp)
         );
         assert_eq!(
             base_sepolia_forks[Holocene],
-            ForkCondition::Timestamp(BASE_SEPOLIA_HOLOCENE_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::sepolia().holocene_timestamp)
         );
         assert_eq!(
             base_sepolia_forks[Isthmus],
-            ForkCondition::Timestamp(BASE_SEPOLIA_ISTHMUS_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::sepolia().isthmus_timestamp)
         );
         assert_eq!(
             base_sepolia_forks.upgrade_activation(Jovian),
-            ForkCondition::Timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP)
+            ForkCondition::Timestamp(BaseChainConfig::sepolia().jovian_timestamp)
         );
         assert_eq!(base_sepolia_forks[V1], ForkCondition::Never);
     }
@@ -233,21 +230,31 @@ mod tests {
     #[test]
     fn is_jovian_active_at_timestamp() {
         let base_mainnet_forks = BaseChainUpgrades::mainnet();
-        assert!(base_mainnet_forks.is_jovian_active_at_timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP));
         assert!(
-            !base_mainnet_forks.is_jovian_active_at_timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP - 1)
+            base_mainnet_forks
+                .is_jovian_active_at_timestamp(BaseChainConfig::mainnet().jovian_timestamp)
         );
         assert!(
-            base_mainnet_forks.is_jovian_active_at_timestamp(BASE_MAINNET_JOVIAN_TIMESTAMP + 1000)
+            !base_mainnet_forks
+                .is_jovian_active_at_timestamp(BaseChainConfig::mainnet().jovian_timestamp - 1)
+        );
+        assert!(
+            base_mainnet_forks
+                .is_jovian_active_at_timestamp(BaseChainConfig::mainnet().jovian_timestamp + 1000)
         );
 
         let base_sepolia_forks = BaseChainUpgrades::sepolia();
-        assert!(base_sepolia_forks.is_jovian_active_at_timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP));
         assert!(
-            !base_sepolia_forks.is_jovian_active_at_timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP - 1)
+            base_sepolia_forks
+                .is_jovian_active_at_timestamp(BaseChainConfig::sepolia().jovian_timestamp)
         );
         assert!(
-            base_sepolia_forks.is_jovian_active_at_timestamp(BASE_SEPOLIA_JOVIAN_TIMESTAMP + 1000)
+            !base_sepolia_forks
+                .is_jovian_active_at_timestamp(BaseChainConfig::sepolia().jovian_timestamp - 1)
+        );
+        assert!(
+            base_sepolia_forks
+                .is_jovian_active_at_timestamp(BaseChainConfig::sepolia().jovian_timestamp + 1000)
         );
     }
 

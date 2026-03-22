@@ -12,7 +12,7 @@ extern crate alloc;
 
 mod chain;
 // Re-export base-alloy-upgrades types.
-pub use base_alloy_upgrades::{BaseUpgrade, BaseUpgrades};
+pub use base_alloy_chains::{BaseUpgrade, BaseUpgrades};
 pub use chain::{
     BASE_DEVNET_0_SEPOLIA_DEV_0_HARDFORKS, BASE_MAINNET_HARDFORKS, BASE_SEPOLIA_HARDFORKS,
     BaseChainUpgradesExt, DEV_HARDFORKS,

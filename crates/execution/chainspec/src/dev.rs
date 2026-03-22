@@ -4,6 +4,7 @@ use alloc::sync::Arc;
 
 use alloy_chains::Chain;
 use alloy_primitives::U256;
+use base_alloy_chains::BaseChainConfig;
 use base_execution_forks::DEV_HARDFORKS;
 use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, ChainSpec};
 use reth_primitives_traits::{SealedHeader, sync::LazyLock};
@@ -15,7 +16,7 @@ use crate::OpChainSpec;
 /// Includes 20 prefunded accounts with `10_000` ETH each derived from mnemonic "test test test test
 /// test test test test test test test junk".
 pub static OP_DEV: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
-    let genesis = serde_json::from_str(include_str!("../res/genesis/dev.json"))
+    let genesis = serde_json::from_str(BaseChainConfig::devnet().genesis_json)
         .expect("Can't deserialize Dev testnet genesis json");
     let hardforks = DEV_HARDFORKS.clone();
     let genesis_header =

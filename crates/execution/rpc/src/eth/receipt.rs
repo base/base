@@ -347,8 +347,8 @@ mod test {
     use alloy_consensus::{Block, BlockBody, Eip658Value, TxEip7702, transaction::TransactionMeta};
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, Bytes, Signature, U256, hex};
+    use base_alloy_chains::BaseChainConfig;
     use base_alloy_consensus::OpTypedTransaction;
-    use base_alloy_upgrades::{BASE_MAINNET_ISTHMUS_TIMESTAMP, BASE_MAINNET_JOVIAN_TIMESTAMP};
     use base_execution_chainspec::BASE_MAINNET;
     use base_execution_primitives::{OpPrimitives, OpTransactionSigned};
     use reth_primitives_traits::Recovered;
@@ -615,7 +615,7 @@ mod test {
 
         let op_hardforks = &*BASE_MAINNET;
 
-        let receipt = OpReceiptFieldsBuilder::new(BASE_MAINNET_JOVIAN_TIMESTAMP, u64::MAX)
+        let receipt = OpReceiptFieldsBuilder::new(BaseChainConfig::mainnet().jovian_timestamp, u64::MAX)
             .l1_block_info(&op_hardforks, &tx, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();
@@ -662,7 +662,7 @@ mod test {
                 gas_used: 100,
                 next_log_index: 0,
                 meta: TransactionMeta {
-                    timestamp: BASE_MAINNET_JOVIAN_TIMESTAMP,
+                    timestamp: BaseChainConfig::mainnet().jovian_timestamp,
                     ..Default::default()
                 },
             },
@@ -716,7 +716,7 @@ mod test {
                 gas_used: 100,
                 next_log_index: 0,
                 meta: TransactionMeta {
-                    timestamp: BASE_MAINNET_ISTHMUS_TIMESTAMP,
+                    timestamp: BaseChainConfig::mainnet().isthmus_timestamp,
                     ..Default::default()
                 },
             },

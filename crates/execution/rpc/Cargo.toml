@@ -87,7 +87,7 @@ reth-metrics.workspace = true
 strum.workspace = true
 
 [dev-dependencies]
-base-alloy-upgrades.workspace = true
+base-alloy-chains.workspace = true
 base-execution-chainspec.workspace = true
 
 [features]

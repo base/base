@@ -1,6 +1,6 @@
 [package]
-name = "base-alloy-upgrades"
-description = "Named bindings for network upgrades"
+name = "base-alloy-chains"
+description = "Chain configuration and network upgrade bindings"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

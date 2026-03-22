@@ -25,9 +25,6 @@ pub use basefee::*;
 mod builder;
 pub use builder::OpChainSpecBuilder;
 
-mod constants;
-pub use constants::*;
-
 mod dev;
 pub use dev::OP_DEV;
 

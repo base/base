@@ -102,7 +102,7 @@ futures.workspace = true
 alloy-eips.workspace = true
 alloy-network.workspace = true
 base-alloy-network.workspace = true
-base-alloy-upgrades.workspace = true
+base-alloy-chains.workspace = true
 
 [features]
 default = [ "reth-codec" ]

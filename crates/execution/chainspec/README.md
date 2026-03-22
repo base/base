@@ -4,8 +4,8 @@
 
 Provides `OpChainSpec`, the chain specification type for Base nodes, along with pre-built specs
 for Base Mainnet (8453), Base Sepolia (84532), and a local dev chain. Includes hardfork-specific
-base fee computation helpers for Holocene and Jovian, and a `parse_op_chain_spec` helper for
-resolving chain specs from CLI strings.
+base fee computation helpers for Holocene and Jovian, and supported chain resolution from CLI
+strings.
 
 ## How it works
 
@@ -20,7 +20,7 @@ hardfork schedule:
 The genesis header is derived at startup from the genesis JSON using `make_op_genesis_header`,
 which computes the correct state root, storage root, and other fields for Base.
 
-Chain names are resolved from CLI strings via `parse_op_chain_spec`, which maps `"base"`,
+Chain names are resolved from CLI strings via `SUPPORTED_CHAINS`, which maps `"base"`,
 `"base_sepolia"`, `"base-sepolia"`, and `"dev"` to the corresponding static spec.
 
 ### Base fee computation
@@ -34,37 +34,25 @@ Two helpers handle hardfork-specific base fee logic:
   `extra_data`, and uses `max(gas_used, blob_gas_used)` as the effective gas used for the
   next-block fee calculation.
 
-### Constants
-
-The `constants` module exposes gas limit maximums observed on-chain:
-
-- `BASE_MAINNET_MAX_GAS_LIMIT` - 105,000,000
-- `BASE_SEPOLIA_MAX_GAS_LIMIT` - 45,000,000
+Gas limits and other chain parameters are sourced from
+[`base_alloy_chains::BaseChainConfig`](../../../crates/alloy/chains/src/config.rs).
 
 ## Usage
 
 Add the crate to your `Cargo.toml`:
 
-    base-execution-chainspec = { workspace = true }
+```toml,ignore
+base-execution-chainspec = { workspace = true }
+```
 
 Access the pre-built chain specs:
 
-    use base_execution_chainspec::{BASE_MAINNET, BASE_SEPOLIA, OP_DEV};
+```rust,ignore
+use base_execution_chainspec::{BASE_MAINNET, BASE_SEPOLIA, OP_DEV};
 
-    let spec = BASE_MAINNET.clone();
-    println!("chain: {}", spec.chain());
-
-Parse a chain spec from a CLI argument:
-
-    use base_execution_chainspec::parse_op_chain_spec;
-
-    let spec = parse_op_chain_spec("base").expect("unknown chain");
-
-Compute the next base fee under Holocene rules:
-
-    use base_execution_chainspec::decode_holocene_base_fee;
-
-    let base_fee = decode_holocene_base_fee(&chain_spec, &parent_header, next_timestamp)?;
+let spec = BASE_MAINNET.clone();
+println!("chain: {}", spec.chain());
+```
 
 ## License
 

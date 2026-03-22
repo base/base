@@ -160,7 +160,7 @@ base-bundles = { path = "crates/alloy/bundles" }
 base-alloy-signer = { path = "crates/alloy/signer" }
 base-alloy-network = { path = "crates/alloy/network" }
 base-alloy-provider = { path = "crates/alloy/provider" }
-base-alloy-upgrades = { path = "crates/alloy/upgrades" }
+base-alloy-chains = { path = "crates/alloy/chains" }
 base-alloy-rpc-types = { path = "crates/alloy/rpc-types" }
 base-access-lists = { path = "crates/alloy/access-lists" }
 base-alloy-flashblocks = { path = "crates/alloy/flashblocks" }

@@ -306,7 +306,7 @@ pub fn validate_withdrawals_presence(
 mod test {
     use alloy_primitives::{Address, B64, B256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
-    use base_alloy_upgrades::BASE_SEPOLIA_JOVIAN_TIMESTAMP;
+    use base_alloy_chains::BaseChainConfig;
     use base_execution_chainspec::BASE_SEPOLIA;
     use reth_provider::noop::NoopProvider;
     use reth_trie_common::KeccakKeyHasher;
@@ -449,8 +449,11 @@ mod test {
             BASE_SEPOLIA.clone(),
             NoopProvider::default(),
         );
-        let attributes =
-            get_attributes(Some(b64!("0000000000000000")), Some(1), BASE_SEPOLIA_JOVIAN_TIMESTAMP);
+        let attributes = get_attributes(
+            Some(b64!("0000000000000000")),
+            Some(1),
+            BaseChainConfig::sepolia().jovian_timestamp,
+        );
 
         let result = <engine::OpEngineValidator<_, _, _> as EngineApiValidator<
             OpEngineTypes,
@@ -467,7 +470,7 @@ mod test {
             BASE_SEPOLIA.clone(),
             NoopProvider::default(),
         );
-        let attributes = get_attributes(None, Some(1), BASE_SEPOLIA_JOVIAN_TIMESTAMP);
+        let attributes = get_attributes(None, Some(1), BaseChainConfig::sepolia().jovian_timestamp);
 
         let result = <engine::OpEngineValidator<_, _, _> as EngineApiValidator<
             OpEngineTypes,
@@ -501,8 +504,11 @@ mod test {
             BASE_SEPOLIA.clone(),
             NoopProvider::default(),
         );
-        let attributes =
-            get_attributes(Some(b64!("0000000000000000")), None, BASE_SEPOLIA_JOVIAN_TIMESTAMP);
+        let attributes = get_attributes(
+            Some(b64!("0000000000000000")),
+            None,
+            BaseChainConfig::sepolia().jovian_timestamp,
+        );
 
         let result = <engine::OpEngineValidator<_, _, _> as EngineApiValidator<
             OpEngineTypes,

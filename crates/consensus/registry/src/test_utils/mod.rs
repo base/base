@@ -1,7 +1,13 @@
-//! Test-only module containing hardcoded configs for testing.
+//! Test-only module providing rollup configs derived from [`BaseChainConfig`].
 
-mod base_mainnet;
-pub use base_mainnet::BASE_MAINNET_CONFIG;
+use base_alloy_chains::BaseChainConfig;
+use base_consensus_genesis::RollupConfig;
+use spin::Lazy;
 
-mod base_sepolia;
-pub use base_sepolia::BASE_SEPOLIA_CONFIG;
+/// The [`RollupConfig`] for Base Mainnet, derived from [`BaseChainConfig::mainnet`].
+pub static BASE_MAINNET_ROLLUP_CONFIG: Lazy<RollupConfig> =
+    Lazy::new(|| RollupConfig::from(BaseChainConfig::mainnet()));
+
+/// The [`RollupConfig`] for Base Sepolia, derived from [`BaseChainConfig::sepolia`].
+pub static BASE_SEPOLIA_ROLLUP_CONFIG: Lazy<RollupConfig> =
+    Lazy::new(|| RollupConfig::from(BaseChainConfig::sepolia()));

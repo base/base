@@ -1,0 +1,189 @@
+use alloy_chains::Chain;
+use alloy_hardforks::{ForkCondition, hardfork};
+
+use crate::BaseChainConfig;
+
+hardfork!(
+    /// The name of a Base network upgrade.
+    ///
+    /// When building a list of hardforks for a chain, it's still expected to zip with
+    /// [`EthereumHardfork`](alloy_hardforks::EthereumHardfork).
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    #[derive(Default)]
+    BaseUpgrade {
+        /// Bedrock: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#bedrock>.
+        Bedrock,
+        /// Regolith: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#regolith>.
+        Regolith,
+        /// <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#canyon>.
+        Canyon,
+        /// Ecotone: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#ecotone>.
+        Ecotone,
+        /// Fjord: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#fjord>
+        Fjord,
+        /// Granite: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#granite>
+        Granite,
+        /// Holocene: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/superchain-upgrades.md#holocene>
+        Holocene,
+        /// Isthmus: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/isthmus/overview.md>
+        #[default]
+        Isthmus,
+        /// Jovian: <https://github.com/ethereum-optimism/specs/tree/main/specs/protocol/jovian>
+        Jovian,
+        /// V1: First Base-specific network upgrade.
+        V1,
+    }
+);
+
+impl BaseUpgrade {
+    /// Reverse lookup to find the hardfork given a chain ID and block timestamp.
+    /// Returns the active hardfork at the given timestamp for the specified Base chain.
+    ///
+    /// Note: standalone upgrades like [`BaseUpgrade::V1`] are not included here because
+    /// they do not participate in the sequential cascade and have no scheduled activation
+    /// timestamp on production chains. Use [`crate::BaseUpgrades::is_base_v1_active_at_timestamp`]
+    /// to check those independently.
+    pub fn from_chain_and_timestamp(chain: Chain, timestamp: u64) -> Option<Self> {
+        let cfg = BaseChainConfig::by_chain_id(chain.id())?;
+        Some(match timestamp {
+            _ if timestamp < cfg.canyon_timestamp => Self::Regolith,
+            _ if timestamp < cfg.ecotone_timestamp => Self::Canyon,
+            _ if timestamp < cfg.fjord_timestamp => Self::Ecotone,
+            _ if timestamp < cfg.granite_timestamp => Self::Fjord,
+            _ if timestamp < cfg.holocene_timestamp => Self::Granite,
+            _ if timestamp < cfg.isthmus_timestamp => Self::Holocene,
+            _ if timestamp < cfg.jovian_timestamp => Self::Isthmus,
+            _ => Self::Jovian,
+        })
+    }
+
+    /// Returns the list of hardforks with their activation conditions for the given chain config.
+    pub const fn forks_for(cfg: &BaseChainConfig) -> [(Self, ForkCondition); 10] {
+        let v1 = match cfg.base_v1_timestamp {
+            Some(ts) => ForkCondition::Timestamp(ts),
+            None => ForkCondition::Never,
+        };
+        [
+            (Self::Bedrock, ForkCondition::Block(cfg.bedrock_block)),
+            (Self::Regolith, ForkCondition::Timestamp(cfg.regolith_timestamp)),
+            (Self::Canyon, ForkCondition::Timestamp(cfg.canyon_timestamp)),
+            (Self::Ecotone, ForkCondition::Timestamp(cfg.ecotone_timestamp)),
+            (Self::Fjord, ForkCondition::Timestamp(cfg.fjord_timestamp)),
+            (Self::Granite, ForkCondition::Timestamp(cfg.granite_timestamp)),
+            (Self::Holocene, ForkCondition::Timestamp(cfg.holocene_timestamp)),
+            (Self::Isthmus, ForkCondition::Timestamp(cfg.isthmus_timestamp)),
+            (Self::Jovian, ForkCondition::Timestamp(cfg.jovian_timestamp)),
+            (Self::V1, v1),
+        ]
+    }
+
+    /// Base mainnet list of hardforks.
+    pub const fn mainnet() -> [(Self, ForkCondition); 10] {
+        Self::forks_for(BaseChainConfig::mainnet())
+    }
+
+    /// Base Sepolia list of hardforks.
+    pub const fn sepolia() -> [(Self, ForkCondition); 10] {
+        Self::forks_for(BaseChainConfig::sepolia())
+    }
+
+    /// Devnet list of hardforks.
+    pub const fn devnet() -> [(Self, ForkCondition); 10] {
+        Self::forks_for(BaseChainConfig::devnet())
+    }
+
+    /// Base devnet-0-sepolia-dev-0 list of hardforks.
+    pub const fn base_devnet_0_sepolia_dev_0() -> [(Self, ForkCondition); 10] {
+        Self::forks_for(BaseChainConfig::alpha())
+    }
+
+    /// Returns index of `self` in sorted canonical array.
+    pub const fn idx(&self) -> usize {
+        *self as usize
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::str::FromStr;
+
+    use super::*;
+
+    extern crate alloc;
+
+    #[test]
+    fn check_base_hardfork_from_str() {
+        let hardfork_str = [
+            "beDrOck", "rEgOlITH", "cAnYoN", "eCoToNe", "FJorD", "GRaNiTe", "hOlOcEnE", "isthMUS",
+            "jOvIaN", "v1",
+        ];
+        let expected_hardforks = [
+            BaseUpgrade::Bedrock,
+            BaseUpgrade::Regolith,
+            BaseUpgrade::Canyon,
+            BaseUpgrade::Ecotone,
+            BaseUpgrade::Fjord,
+            BaseUpgrade::Granite,
+            BaseUpgrade::Holocene,
+            BaseUpgrade::Isthmus,
+            BaseUpgrade::Jovian,
+            BaseUpgrade::V1,
+        ];
+
+        let hardforks: alloc::vec::Vec<BaseUpgrade> =
+            hardfork_str.iter().map(|h| BaseUpgrade::from_str(h).unwrap()).collect();
+
+        assert_eq!(hardforks, expected_hardforks);
+    }
+
+    #[test]
+    fn check_nonexistent_hardfork_from_str() {
+        assert!(BaseUpgrade::from_str("not a hardfork").is_err());
+    }
+
+    #[test]
+    fn test_reverse_lookup_base_chains() {
+        let test_cases = [
+            (
+                Chain::base_mainnet(),
+                BaseChainConfig::mainnet().canyon_timestamp,
+                BaseUpgrade::Canyon,
+            ),
+            (
+                Chain::base_mainnet(),
+                BaseChainConfig::mainnet().ecotone_timestamp,
+                BaseUpgrade::Ecotone,
+            ),
+            (
+                Chain::base_mainnet(),
+                BaseChainConfig::mainnet().jovian_timestamp,
+                BaseUpgrade::Jovian,
+            ),
+            (
+                Chain::base_sepolia(),
+                BaseChainConfig::sepolia().canyon_timestamp,
+                BaseUpgrade::Canyon,
+            ),
+            (
+                Chain::base_sepolia(),
+                BaseChainConfig::sepolia().ecotone_timestamp,
+                BaseUpgrade::Ecotone,
+            ),
+            (
+                Chain::base_sepolia(),
+                BaseChainConfig::sepolia().jovian_timestamp,
+                BaseUpgrade::Jovian,
+            ),
+        ];
+
+        for (chain_id, timestamp, expected) in test_cases {
+            assert_eq!(
+                BaseUpgrade::from_chain_and_timestamp(chain_id, timestamp),
+                Some(expected),
+                "chain {chain_id} at timestamp {timestamp}"
+            );
+        }
+
+        assert_eq!(BaseUpgrade::from_chain_and_timestamp(Chain::from_id(999999), 1000000), None);
+    }
+}

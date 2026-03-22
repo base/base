@@ -22,11 +22,8 @@ alloy-eips.workspace = true
 alloy-genesis.workspace = true
 alloy-chains.workspace = true
 alloy-hardforks.workspace = true
-base-alloy-upgrades.workspace = true
+base-alloy-chains.workspace = true
 alloy-primitives = { workspace = true, features = ["map"] }
-
-# `serde`
-toml = { workspace = true, features = ["parse", "serde"] }
 
 # misc
 spin.workspace = true
@@ -49,6 +46,5 @@ std = [
 	"base-consensus-genesis/std",
 	"derive_more/std",
 	"spin/std",
-	"toml/std",
 ]
 test-utils = []

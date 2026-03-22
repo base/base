@@ -48,6 +48,7 @@ tempfile.workspace = true
 multihash.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 
+base-alloy-chains.workspace = true
 base-consensus-genesis.workspace = true
 
 arbitrary = { workspace = true, features = ["derive"] }

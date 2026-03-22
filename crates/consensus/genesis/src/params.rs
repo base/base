@@ -1,88 +1,23 @@
 //! Module containing fee parameters.
 
 use alloy_eips::eip1559::BaseFeeParams;
-
-use crate::BASE_SEPOLIA_CHAIN_ID;
-
-/// Base fee max change denominator for Base Sepolia.
-pub const BASE_SEPOLIA_EIP1559_DEFAULT_ELASTICITY_MULTIPLIER: u64 = 10;
-
-/// Base fee max change denominator for Base Sepolia.
-pub const BASE_SEPOLIA_EIP1559_DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR: u64 = 50;
-
-/// Base fee max change denominator for Base Sepolia (Canyon hardfork).
-pub const BASE_SEPOLIA_EIP1559_BASE_FEE_MAX_CHANGE_DENOMINATOR_CANYON: u64 = 250;
-
-/// Base fee max change denominator for Base Mainnet.
-pub const BASE_MAINNET_EIP1559_DEFAULT_ELASTICITY_MULTIPLIER: u64 = 6;
-
-/// Base fee max change denominator for Base Mainnet.
-pub const BASE_MAINNET_EIP1559_DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR: u64 = 50;
-
-/// Base fee max change denominator for Base Mainnet (Canyon hardfork).
-pub const BASE_MAINNET_EIP1559_BASE_FEE_MAX_CHANGE_DENOMINATOR_CANYON: u64 = 250;
-
-/// Get the base fee parameters for Base Mainnet.
-pub const BASE_MAINNET_BASE_FEE_PARAMS: BaseFeeParams = BaseFeeParams {
-    max_change_denominator: BASE_MAINNET_EIP1559_DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR as u128,
-    elasticity_multiplier: BASE_MAINNET_EIP1559_DEFAULT_ELASTICITY_MULTIPLIER as u128,
-};
-
-/// Get the base fee parameters for Base Sepolia.
-pub const BASE_SEPOLIA_BASE_FEE_PARAMS: BaseFeeParams = BaseFeeParams {
-    max_change_denominator: BASE_SEPOLIA_EIP1559_DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR as u128,
-    elasticity_multiplier: BASE_SEPOLIA_EIP1559_DEFAULT_ELASTICITY_MULTIPLIER as u128,
-};
-
-/// Get the base fee parameters for Base Mainnet (Canyon hardfork).
-pub const BASE_MAINNET_BASE_FEE_PARAMS_CANYON: BaseFeeParams = BaseFeeParams {
-    max_change_denominator: BASE_MAINNET_EIP1559_BASE_FEE_MAX_CHANGE_DENOMINATOR_CANYON as u128,
-    elasticity_multiplier: BASE_MAINNET_EIP1559_DEFAULT_ELASTICITY_MULTIPLIER as u128,
-};
-
-/// Get the base fee parameters for Base Sepolia (Canyon hardfork).
-pub const BASE_SEPOLIA_BASE_FEE_PARAMS_CANYON: BaseFeeParams = BaseFeeParams {
-    max_change_denominator: BASE_SEPOLIA_EIP1559_BASE_FEE_MAX_CHANGE_DENOMINATOR_CANYON as u128,
-    elasticity_multiplier: BASE_SEPOLIA_EIP1559_DEFAULT_ELASTICITY_MULTIPLIER as u128,
-};
+use base_alloy_chains::BaseChainConfig;
 
 /// Returns the [`BaseFeeParams`] for the given chain id.
-pub const fn base_fee_params(chain_id: u64) -> BaseFeeParams {
-    match chain_id {
-        BASE_SEPOLIA_CHAIN_ID => BASE_SEPOLIA_BASE_FEE_PARAMS,
-        _ => BASE_MAINNET_BASE_FEE_PARAMS,
-    }
+pub fn base_fee_params(chain_id: u64) -> BaseFeeParams {
+    base_fee_config(chain_id).pre_canyon_params()
 }
 
 /// Returns the [`BaseFeeParams`] for the given chain id, for Canyon hardfork.
-pub const fn base_fee_params_canyon(chain_id: u64) -> BaseFeeParams {
-    match chain_id {
-        BASE_SEPOLIA_CHAIN_ID => BASE_SEPOLIA_BASE_FEE_PARAMS_CANYON,
-        _ => BASE_MAINNET_BASE_FEE_PARAMS_CANYON,
-    }
+pub fn base_fee_params_canyon(chain_id: u64) -> BaseFeeParams {
+    base_fee_config(chain_id).post_canyon_params()
 }
 
 /// Returns the [`BaseFeeConfig`] for the given chain id.
-pub const fn base_fee_config(chain_id: u64) -> BaseFeeConfig {
-    match chain_id {
-        BASE_SEPOLIA_CHAIN_ID => BASE_SEPOLIA_BASE_FEE_CONFIG,
-        _ => BASE_MAINNET_BASE_FEE_CONFIG,
-    }
+pub fn base_fee_config(chain_id: u64) -> BaseFeeConfig {
+    let cfg = BaseChainConfig::by_chain_id(chain_id).unwrap_or(BaseChainConfig::mainnet());
+    BaseFeeConfig::from(cfg)
 }
-
-/// Get the base fee parameters for Base Sepolia.
-pub const BASE_SEPOLIA_BASE_FEE_CONFIG: BaseFeeConfig = BaseFeeConfig {
-    eip1559_elasticity: BASE_SEPOLIA_EIP1559_DEFAULT_ELASTICITY_MULTIPLIER,
-    eip1559_denominator: BASE_SEPOLIA_EIP1559_DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR,
-    eip1559_denominator_canyon: BASE_SEPOLIA_EIP1559_BASE_FEE_MAX_CHANGE_DENOMINATOR_CANYON,
-};
-
-/// Get the base fee parameters for Base Mainnet.
-pub const BASE_MAINNET_BASE_FEE_CONFIG: BaseFeeConfig = BaseFeeConfig {
-    eip1559_elasticity: BASE_MAINNET_EIP1559_DEFAULT_ELASTICITY_MULTIPLIER,
-    eip1559_denominator: BASE_MAINNET_EIP1559_DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR,
-    eip1559_denominator_canyon: BASE_MAINNET_EIP1559_BASE_FEE_MAX_CHANGE_DENOMINATOR_CANYON,
-};
 
 /// Base Fee Config.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -110,9 +45,9 @@ pub struct BaseFeeConfig {
 }
 
 impl BaseFeeConfig {
-    /// Get the base fee parameters for Base Mainnet
-    pub const fn base_mainnet() -> Self {
-        BASE_MAINNET_BASE_FEE_CONFIG
+    /// Returns the Base Mainnet base fee config (used as serde default).
+    pub fn base_mainnet() -> Self {
+        base_fee_config(BaseChainConfig::mainnet().chain_id)
     }
 
     /// Returns the [`BaseFeeParams`] before Canyon hardfork.
@@ -135,33 +70,44 @@ impl BaseFeeConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::BASE_MAINNET_CHAIN_ID;
 
     #[test]
     fn test_base_fee_params_from_chain_id() {
-        assert_eq!(base_fee_params(BASE_MAINNET_CHAIN_ID), BASE_MAINNET_BASE_FEE_PARAMS);
-        assert_eq!(base_fee_params(BASE_SEPOLIA_CHAIN_ID), BASE_SEPOLIA_BASE_FEE_PARAMS);
+        let mainnet = base_fee_config(BaseChainConfig::mainnet().chain_id);
+        let sepolia = base_fee_config(BaseChainConfig::sepolia().chain_id);
+
+        assert_eq!(
+            base_fee_params(BaseChainConfig::mainnet().chain_id),
+            mainnet.pre_canyon_params()
+        );
+        assert_eq!(
+            base_fee_params(BaseChainConfig::sepolia().chain_id),
+            sepolia.pre_canyon_params()
+        );
         // Unknown chain IDs fall back to Base Mainnet params
-        assert_eq!(base_fee_params(0), BASE_MAINNET_BASE_FEE_PARAMS);
+        assert_eq!(base_fee_params(0), mainnet.pre_canyon_params());
     }
 
     #[test]
     fn test_base_fee_params_canyon_from_chain_id() {
+        let mainnet = base_fee_config(BaseChainConfig::mainnet().chain_id);
+        let sepolia = base_fee_config(BaseChainConfig::sepolia().chain_id);
+
         assert_eq!(
-            base_fee_params_canyon(BASE_MAINNET_CHAIN_ID),
-            BASE_MAINNET_BASE_FEE_PARAMS_CANYON
+            base_fee_params_canyon(BaseChainConfig::mainnet().chain_id),
+            mainnet.post_canyon_params()
         );
         assert_eq!(
-            base_fee_params_canyon(BASE_SEPOLIA_CHAIN_ID),
-            BASE_SEPOLIA_BASE_FEE_PARAMS_CANYON
+            base_fee_params_canyon(BaseChainConfig::sepolia().chain_id),
+            sepolia.post_canyon_params()
         );
-        assert_eq!(base_fee_params_canyon(0), BASE_MAINNET_BASE_FEE_PARAMS_CANYON);
+        assert_eq!(base_fee_params_canyon(0), mainnet.post_canyon_params());
     }
 
     #[test]
     #[cfg(feature = "serde")]
     fn test_base_fee_config_ser() {
-        let config = BASE_MAINNET_BASE_FEE_CONFIG;
+        let config = base_fee_config(BaseChainConfig::mainnet().chain_id);
         let raw_str = serde_json::to_string(&config).unwrap();
         assert_eq!(
             raw_str,
@@ -175,6 +121,6 @@ mod tests {
         let raw_str: &'static str =
             r#"{"eip1559Elasticity":6,"eip1559Denominator":50,"eip1559DenominatorCanyon":250}"#;
         let config: BaseFeeConfig = serde_json::from_str(raw_str).unwrap();
-        assert_eq!(config, BASE_MAINNET_BASE_FEE_CONFIG);
+        assert_eq!(config, base_fee_config(BaseChainConfig::mainnet().chain_id));
     }
 }

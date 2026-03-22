@@ -10,18 +10,7 @@
 extern crate alloc;
 
 mod params;
-pub use params::{
-    BASE_MAINNET_BASE_FEE_CONFIG, BASE_MAINNET_BASE_FEE_PARAMS,
-    BASE_MAINNET_BASE_FEE_PARAMS_CANYON,
-    BASE_MAINNET_EIP1559_BASE_FEE_MAX_CHANGE_DENOMINATOR_CANYON,
-    BASE_MAINNET_EIP1559_DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR,
-    BASE_MAINNET_EIP1559_DEFAULT_ELASTICITY_MULTIPLIER, BASE_SEPOLIA_BASE_FEE_CONFIG,
-    BASE_SEPOLIA_BASE_FEE_PARAMS, BASE_SEPOLIA_BASE_FEE_PARAMS_CANYON,
-    BASE_SEPOLIA_EIP1559_BASE_FEE_MAX_CHANGE_DENOMINATOR_CANYON,
-    BASE_SEPOLIA_EIP1559_DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR,
-    BASE_SEPOLIA_EIP1559_DEFAULT_ELASTICITY_MULTIPLIER, BaseFeeConfig, base_fee_config,
-    base_fee_params, base_fee_params_canyon,
-};
+pub use params::{BaseFeeConfig, base_fee_config, base_fee_params, base_fee_params_canyon};
 
 mod updates;
 pub use updates::{
@@ -40,8 +29,7 @@ pub use system::{
 
 mod chain;
 pub use chain::{
-    AddressList, BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID, BaseHardforkConfig, ChainConfig,
-    HardForkConfig, L1ChainConfig, Roles,
+    AddressList, BaseHardforkConfig, ChainConfig, HardForkConfig, L1ChainConfig, Roles,
 };
 
 mod genesis;
@@ -52,3 +40,5 @@ pub use rollup::{
     FJORD_MAX_SEQUENCER_DRIFT, GRANITE_CHANNEL_TIMEOUT, MAX_RLP_BYTES_PER_CHANNEL_BEDROCK,
     MAX_RLP_BYTES_PER_CHANNEL_FJORD, RollupConfig,
 };
+
+mod conversions;

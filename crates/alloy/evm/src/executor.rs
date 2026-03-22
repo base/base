@@ -13,8 +13,8 @@ use alloy_evm::{
     eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
 };
 use alloy_primitives::Address;
+use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::OpDepositReceipt;
-use base_alloy_upgrades::BaseUpgrades;
 use base_revm::{
     DEPOSIT_TRANSACTION_TYPE, L1_BLOCK_CONTRACT, L1BlockInfo, estimate_tx_compressed_size,
 };
@@ -357,8 +357,8 @@ mod tests {
     use alloy_evm::{EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory};
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Signature, U256, uint};
+    use base_alloy_chains::{BaseChainUpgrades, BaseUpgrade};
     use base_alloy_consensus::OpTxEnvelope;
-    use base_alloy_upgrades::{BaseChainUpgrades, BaseUpgrade};
     use base_revm::{
         BASE_FEE_SCALAR_OFFSET, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
         ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, L1BlockInfo,

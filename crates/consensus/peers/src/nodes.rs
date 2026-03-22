@@ -117,7 +117,7 @@ pub static OP_RAW_TESTNET_BOOTNODES: &[&str] = &[
 mod tests {
     use std::str::FromStr;
 
-    use base_consensus_genesis::{BASE_MAINNET_CHAIN_ID, BASE_SEPOLIA_CHAIN_ID};
+    use base_alloy_chains::BaseChainConfig;
     use discv5::{Enr, enr::EnrPublicKey};
 
     use super::*;
@@ -141,10 +141,10 @@ mod tests {
 
     #[test]
     fn test_bootnodes_from_chain_id() {
-        let mainnet = BootNodes::from_chain_id(BASE_MAINNET_CHAIN_ID);
+        let mainnet = BootNodes::from_chain_id(BaseChainConfig::mainnet().chain_id);
         assert_eq!(mainnet.len(), 24);
 
-        let testnet = BootNodes::from_chain_id(BASE_SEPOLIA_CHAIN_ID);
+        let testnet = BootNodes::from_chain_id(BaseChainConfig::sepolia().chain_id);
         assert_eq!(testnet.len(), 8);
 
         let unknown = BootNodes::from_chain_id(0);
@@ -178,7 +178,7 @@ mod tests {
         let bootnodes = BootNodes(vec![]);
         assert!(bootnodes.is_empty());
 
-        let bootnodes = BootNodes::from_chain_id(BASE_MAINNET_CHAIN_ID);
+        let bootnodes = BootNodes::from_chain_id(BaseChainConfig::mainnet().chain_id);
         assert!(!bootnodes.is_empty());
     }
 }

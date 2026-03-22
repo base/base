@@ -15,7 +15,7 @@ workspace = true
 # reth
 reth-ethereum-forks.workspace = true
 
-base-alloy-upgrades.workspace = true
+base-alloy-chains.workspace = true
 
 # ethereum
 alloy-primitives.workspace = true
@@ -28,6 +28,6 @@ default = [ "std" ]
 std = [ "alloy-primitives/std", "reth-ethereum-forks/std", "spin/std" ]
 serde = [
 	"alloy-primitives/serde",
-	"base-alloy-upgrades/serde",
+	"base-alloy-chains/serde",
 	"reth-ethereum-forks/serde",
 ]

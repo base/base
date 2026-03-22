@@ -1,6 +1,6 @@
 use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
-use base_alloy_upgrades::BaseUpgrades;
+use base_alloy_chains::BaseUpgrades;
 use revm::{DatabaseCommit, primitives::HashMap, state::Bytecode};
 
 /// The address of the create2 deployer

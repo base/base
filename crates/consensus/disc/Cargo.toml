@@ -39,6 +39,7 @@ metrics = { workspace = true, optional = true }
 [dev-dependencies]
 tempfile.workspace = true
 base-cli-utils.workspace = true
+base-alloy-chains.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 
 [features]

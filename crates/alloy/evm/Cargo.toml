@@ -20,7 +20,7 @@ alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 
 # base
-base-alloy-upgrades.workspace = true
+base-alloy-chains.workspace = true
 base-revm = { workspace = true, features = ["alloy"] }
 base-alloy-consensus = { workspace = true, features = ["evm"] }
 
