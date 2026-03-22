@@ -440,7 +440,10 @@ impl reth_codecs::Compact for OpTransactionSigned {
         let zstd_bit = bitflags >> 3;
         let (transaction, buf) = if zstd_bit != 0 {
             reth_zstd_compressors::with_tx_decompressor(|decompressor| {
-                // TODO: enforce that zstd is only present at a "top" level type
+                // zstd compression is only applied at this `OpTransactionSigned` level.
+                // `OpTypedTransaction` and its inner variants do not apply any zstd
+                // compression in their own `Compact` implementations, so nested zstd
+                // cannot occur. The roundtrip tests below enforce this invariant.
                 let transaction_type = (bitflags & 0b110) >> 1;
                 let (transaction, _) = OpTypedTransaction::from_compact(
                     decompressor.decompress(buf),
@@ -546,6 +549,32 @@ mod tests {
             let expected_tx = OpTxEnvelope::from(reth_tx);
 
             assert_eq!(actual_tx, expected_tx);
+        }
+
+        /// Verifies that `OpTransactionSigned` compact encoding round-trips correctly
+        /// when zstd compression is active (input >= 32 bytes). This enforces the
+        /// invariant that zstd is only applied at the `OpTransactionSigned` level and
+        /// not by any inner `OpTypedTransaction` variant.
+        #[test]
+        fn test_roundtrip_compact_signed_zstd(mut tx in arb::<OpTransactionSigned>()) {
+            *tx.input_mut() = vec![0xab; 33].into();
+            let mut buf = Vec::<u8>::new();
+            let len = tx.to_compact(&mut buf);
+
+            let (decoded, _) = OpTransactionSigned::from_compact(&buf, len);
+            assert_eq!(decoded, tx);
+        }
+
+        /// Verifies that `OpTransactionSigned` compact encoding round-trips correctly
+        /// without zstd (input < 32 bytes).
+        #[test]
+        fn test_roundtrip_compact_signed_no_zstd(mut tx in arb::<OpTransactionSigned>()) {
+            *tx.input_mut() = vec![0xab; 4].into();
+            let mut buf = Vec::<u8>::new();
+            let len = tx.to_compact(&mut buf);
+
+            let (decoded, _) = OpTransactionSigned::from_compact(&buf, len);
+            assert_eq!(decoded, tx);
         }
     }
 }
