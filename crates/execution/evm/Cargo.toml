@@ -31,7 +31,6 @@ base-alloy-evm = { workspace = true, features = ["std", "reth"] }
 base-alloy-consensus = { workspace = true, features = ["evm"] }
 base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
 
-base-execution-forks.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
 base-execution-primitives.workspace = true
@@ -62,7 +61,6 @@ std = [
 	"base-alloy-rpc-types-engine/std",
 	"base-execution-chainspec/std",
 	"base-execution-consensus/std",
-	"base-execution-forks/std",
 	"base-execution-primitives/std",
 	"base-revm/std",
 	"reth-chainspec/std",

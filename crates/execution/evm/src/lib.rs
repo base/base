@@ -18,7 +18,7 @@ use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::EIP1559ParamError;
 use base_alloy_evm::{
-    OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvm, OpEvmFactory, OpReceiptBuilder, OpTxEnv,
+    OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvmFactory, OpReceiptBuilder, OpTxEnv,
 };
 use base_execution_chainspec::OpChainSpec;
 use base_execution_primitives::{DepositReceipt, OpPrimitives};
