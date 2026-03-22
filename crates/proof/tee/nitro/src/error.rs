@@ -97,6 +97,9 @@ pub enum ProposalError {
     /// No proposals provided for aggregation.
     #[error("no proposals provided for aggregation")]
     EmptyProposals,
+    /// Intermediate block interval must not be zero.
+    #[error("intermediate_block_interval must not be zero")]
+    InvalidInterval,
     /// Signature verification failed at the given index.
     #[error("invalid signature at proposal index {index}: {reason}")]
     InvalidSignature {

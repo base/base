@@ -305,7 +305,14 @@ impl BootInfo {
                 );
                 0
             }
-            Err(_) => 0,
+            Err(e) => {
+                debug!(
+                    target: "boot_loader",
+                    error = %e,
+                    "Intermediate block interval preimage not found, defaulting to 0"
+                );
+                0
+            }
         };
 
         Ok(Self {

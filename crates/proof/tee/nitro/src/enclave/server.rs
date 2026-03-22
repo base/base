@@ -217,7 +217,7 @@ impl Server {
 
             let interval = boot_info.intermediate_block_interval;
             if interval == 0 {
-                return Err(ProposalError::EmptyProposals.into());
+                return Err(ProposalError::InvalidInterval.into());
             }
             let interval = interval as usize;
             let count = proposals.len() / interval;
