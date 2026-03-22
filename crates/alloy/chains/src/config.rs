@@ -119,9 +119,9 @@ impl BaseChainConfig {
         &DEVNET
     }
 
-    /// Returns all known chain configurations.
-    pub const fn all() -> [&'static Self; 3] {
-        [&MAINNET, &SEPOLIA, &ALPHA]
+    /// Returns all known chain configurations, including devnet.
+    pub const fn all() -> [&'static Self; 4] {
+        [&MAINNET, &SEPOLIA, &ALPHA, &DEVNET]
     }
 
     /// Looks up a chain config by L2 chain ID.

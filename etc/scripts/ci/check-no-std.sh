@@ -8,7 +8,7 @@ no_std_packages=(
   # alloy crates (ported from op-alloy)
   base-alloy-consensus
   base-alloy-evm
-  base-alloy-upgrades
+  base-alloy-chains
   base-alloy-rpc-types
   base-alloy-rpc-types-engine
 
