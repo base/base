@@ -83,8 +83,9 @@ impl BaseUpgrade {
 
 #[cfg(test)]
 mod tests {
-    use alloy_chains::Chain;
     use core::str::FromStr;
+
+    use alloy_chains::Chain;
 
     use super::*;
 
