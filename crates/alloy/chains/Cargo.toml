@@ -18,7 +18,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 # alloy
-alloy-chains.workspace = true
 alloy-primitives.workspace = true
 alloy-hardforks.workspace = true
 
@@ -26,9 +25,11 @@ alloy-hardforks.workspace = true
 auto_impl.workspace = true
 serde = { workspace = true, optional = true }
 
+[dev-dependencies]
+alloy-chains.workspace = true
+
 [features]
 serde = [
-	"alloy-chains/serde",
 	"alloy-hardforks/serde",
 	"alloy-primitives/serde",
 	"dep:serde",
