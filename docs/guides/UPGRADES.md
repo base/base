@@ -212,8 +212,7 @@ fn is_base_v1_active_at_timestamp(&self, timestamp: u64) -> bool {
 **Files:**
 - [`crates/alloy/chains/src/hardfork.rs`](../../crates/alloy/chains/src/hardfork.rs) (mainnet, sepolia, devnet constants)
 - [`crates/alloy/chains/src/lib.rs`](../../crates/alloy/chains/src/lib.rs)
-- [`crates/consensus/registry/src/test_utils/base_mainnet.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/base_mainnet.rs)
-- [`crates/consensus/registry/src/test_utils/base_sepolia.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/base_sepolia.rs)
+- [`crates/consensus/registry/src/test_utils/mod.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/mod.rs)
 
 Add named constants once an activation timestamp is confirmed:
 
@@ -245,7 +244,7 @@ Until an activation timestamp is confirmed, leave `base: None` and the chain arr
 
 ### 7. Update the default rollup config
 
-**File:** [`crates/consensus/registry/src/test_utils/base_sepolia.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/base_sepolia.rs)
+**File:** [`crates/consensus/registry/src/test_utils/mod.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/mod.rs)
 
 The `default_rollup_config()` function sets all upgrades active at genesis for dev use. Add the new upgrade:
 
