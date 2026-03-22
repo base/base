@@ -215,7 +215,11 @@ impl Server {
             let first = &proposals[0];
             let last = proposals.last().unwrap();
 
-            let interval = boot_info.intermediate_block_interval.max(1) as usize;
+            let interval = boot_info.intermediate_block_interval;
+            if interval == 0 {
+                return Err(ProposalError::EmptyProposals.into());
+            }
+            let interval = interval as usize;
             let count = proposals.len() / interval;
             let intermediate_roots: Vec<B256> =
                 (1..=count).map(|i| proposals[i * interval - 1].output_root).collect();

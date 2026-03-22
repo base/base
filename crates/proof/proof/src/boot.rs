@@ -294,9 +294,9 @@ impl BootInfo {
             .get(PreimageKey::new_local(INTERMEDIATE_BLOCK_INTERVAL_KEY.to()))
             .await
         {
-            Ok(bytes) if bytes.len() == 8 => u64::from_be_bytes(
-                bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?,
-            ),
+            Ok(bytes) if bytes.len() == 8 => {
+                u64::from_be_bytes(bytes.as_slice().try_into().expect("length checked"))
+            }
             Ok(bytes) => {
                 warn!(
                     target: "boot_loader",
