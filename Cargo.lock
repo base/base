@@ -3450,7 +3450,6 @@ dependencies = [
  "arbtest",
  "base-alloy-chains",
  "base-consensus-genesis",
- "base-consensus-registry",
  "derive_more",
  "dirs",
  "discv5",

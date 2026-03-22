@@ -92,12 +92,12 @@ mod tests {
 
     #[test]
     fn test_peer_id_node_record() {
-        let raw = crate::OP_RAW_BOOTNODES[8];
+        let raw = "enode://87a32fd13bd596b2ffca97020e31aef4ddcc1bbd4b95bb633d16c1329f654f34049ed240a36b449fda5e5225d70fe40bc667f53c304b71f8e68fc9d448690b51@3.231.138.188:30301";
         let record = NodeRecord::from_str(raw).unwrap();
         let any_node = AnyNode::from(record);
         let peer_id = any_node.peer_id();
         let expected = b512!(
-            "ca2774c3c401325850b2477fd7d0f27911efbf79b1e8b335066516e2bd8c4c9e0ba9696a94b1cb030a88eac582305ff55e905e64fb77fe0edcd70a4e5296d3ec"
+            "87a32fd13bd596b2ffca97020e31aef4ddcc1bbd4b95bb633d16c1329f654f34049ed240a36b449fda5e5225d70fe40bc667f53c304b71f8e68fc9d448690b51"
         );
         assert_eq!(peer_id, expected);
     }

@@ -440,8 +440,8 @@ mod tests {
         )
         .await;
         assert!(
-            discovery.disc.table_entries_enr().len() >= 5,
-            "Discovery table should have at least 5 ENRs"
+            discovery.disc.table_entries_enr().len() >= 2,
+            "Discovery table should have at least 2 ENRs"
         );
 
         // Filter out testnet ENRs that are not valid.
@@ -465,8 +465,8 @@ mod tests {
             })
             .collect();
 
-        // There should be 8 valid boot nodes for the testnet (all enodes).
-        assert_eq!(testnet.len(), 8);
+        // There should be 2 valid boot nodes for the testnet (all enodes).
+        assert_eq!(testnet.len(), 2);
 
         // Those ENRs should be in the testnet bootnodes.
         let disc_enrs = discovery.disc.table_entries_enr();
@@ -508,9 +508,9 @@ mod tests {
             })
             .collect();
 
-        // There should be 21 valid boot nodes for the mainnet:
-        // 5 Base Mainnet ENRs + 16 enodes.
-        assert_eq!(mainnet.len(), 21);
+        // There should be 10 valid boot nodes for the mainnet:
+        // 5 Base Mainnet ENRs + 5 Base enodes.
+        assert_eq!(mainnet.len(), 10);
 
         let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 

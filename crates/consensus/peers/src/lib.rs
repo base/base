@@ -14,7 +14,7 @@ mod id;
 pub use id::PeerId;
 
 mod nodes;
-pub use nodes::{BootNodes, OP_RAW_BOOTNODES, OP_RAW_TESTNET_BOOTNODES};
+pub use nodes::BootNodes;
 
 mod store;
 pub use store::{BootStore, BootStoreFile};
