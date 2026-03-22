@@ -28,11 +28,5 @@ pub use payload::{
     OpExecutionPayloadEnvelopeV5, OpExecutionPayloadV4, OpPayloadError,
 };
 
-mod flashblock;
-pub use flashblock::{
-    OpFlashblockError, OpFlashblockPayload, OpFlashblockPayloadBase, OpFlashblockPayloadDelta,
-    OpFlashblockPayloadMetadata,
-};
-
 #[cfg(feature = "reth")]
 mod reth;

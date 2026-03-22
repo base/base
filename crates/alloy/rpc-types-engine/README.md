@@ -7,7 +7,7 @@ Base chain RPC types for the `engine` namespace.
 Defines execution engine payload types for the consensus-to-execution Engine API. Includes
 `OpPayloadAttributes` for block building requests, versioned payload envelopes
 (`OpExecutionPayloadEnvelope`, `OpNetworkPayloadEnvelope`), `OpExecutionPayloadV4`, and
-`OpFlashblockPayload` for flashblock-specific payloads. These types are exchanged between the
+versioned sidecars (`OpExecutionPayloadSidecar`). These types are exchanged between the
 consensus client and the execution node via the Engine API.
 
 ## Usage
