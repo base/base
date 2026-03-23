@@ -120,6 +120,11 @@ impl ProposerConfig {
             ));
         }
 
+        // Validate health port (health server is always started)
+        if cli.health.port == 0 {
+            return Err(ConfigError::Rpc("health server port must be non-zero".to_string()));
+        }
+
         // Validate admin port when admin is enabled
         if cli.admin.enabled && cli.admin.port == 0 {
             return Err(ConfigError::Rpc(
@@ -285,6 +290,14 @@ mod tests {
         // Should be fine since metrics are disabled
         let result = ProposerConfig::from_cli(cli);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_health_port_zero_rejected() {
+        let mut cli = minimal_cli();
+        cli.health.port = 0;
+        let result = ProposerConfig::from_cli(cli);
+        assert!(matches!(result, Err(ConfigError::Rpc(_))));
     }
 
     #[test]

@@ -272,6 +272,10 @@ impl Cli {
             ));
         }
 
+        if self.health.port == 0 {
+            return Err(RegistrarError::Config("health server port must be non-zero".into()));
+        }
+
         let health_addr = self.health.socket_addr();
 
         Ok(RegistrarConfig {
@@ -607,6 +611,14 @@ mod tests {
         let mut args = boundless_args();
         args.extend([flag, value]);
         let result = Cli::try_parse_from(args).expect("clap should parse these args").into_config();
+        assert!(result.is_err());
+    }
+
+    #[rstest]
+    fn health_port_zero_rejected() {
+        let mut args = boundless_args();
+        args.extend(["--health.port", "0"]);
+        let result = Cli::parse_from(args).into_config();
         assert!(result.is_err());
     }
 

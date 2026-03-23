@@ -190,6 +190,15 @@ impl ChallengerConfig {
             });
         }
 
+        // Validate health port (health server is always started)
+        if cli.health.port == 0 {
+            return Err(ConfigError::OutOfRange {
+                field: "health.port",
+                constraint: "greater than 0",
+                value: "0".to_string(),
+            });
+        }
+
         // Validate metrics port when enabled
         if cli.metrics.enabled && cli.metrics.port == 0 {
             return Err(ConfigError::Metrics(
@@ -301,6 +310,14 @@ mod tests {
         let cli = cli_from_args(&all_args);
         let result = ChallengerConfig::from_cli(cli);
         assert!(matches!(result, Err(ConfigError::OutOfRange { field: f, .. }) if f == field));
+    }
+
+    #[test]
+    fn test_health_port_zero_rejected() {
+        let all_args = [&SIGNER_ARGS[..], &["--health.port", "0"]].concat();
+        let cli = cli_from_args(&all_args);
+        let result = ChallengerConfig::from_cli(cli);
+        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "health.port", .. })));
     }
 
     #[rstest]
