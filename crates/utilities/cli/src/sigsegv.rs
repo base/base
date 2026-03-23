@@ -38,7 +38,7 @@ impl SigsegvHandler {
 /// `libc::getauxval`, which is a glibc extension unavailable on musl.
 #[cfg(unix)]
 mod unix_impl {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(target_os = "linux")]
     use std::io::Read;
     use std::{
         alloc::{Layout, alloc},
@@ -214,7 +214,7 @@ mod unix_impl {
     /// Modern kernels on modern hardware can have dynamic signal stack sizes.
     /// Reads `AT_MINSIGSTKSZ` from `/proc/self/auxv` instead of using
     /// `libc::getauxval`, which is a glibc extension unavailable on musl.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(target_os = "linux")]
     fn min_sigstack_size() -> usize {
         read_at_minsigstksz().unwrap_or(libc::MINSIGSTKSZ)
     }
@@ -224,7 +224,7 @@ mod unix_impl {
     /// The auxiliary vector is a sequence of `(key, value)` pairs where both
     /// key and value are native-width unsigned integers. The vector is
     /// terminated by an `AT_NULL` (0) entry.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(target_os = "linux")]
     fn read_at_minsigstksz() -> Option<usize> {
         const AT_NULL: usize = 0;
         const AT_MINSIGSTKSZ: usize = 51;
@@ -247,7 +247,7 @@ mod unix_impl {
     }
 
     /// Not all OS support hardware where this is needed.
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    #[cfg(not(target_os = "linux"))]
     const fn min_sigstack_size() -> usize {
         libc::MINSIGSTKSZ
     }
