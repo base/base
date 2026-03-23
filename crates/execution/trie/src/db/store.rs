@@ -486,6 +486,8 @@ impl MdbxProofsStorage {
 
         let storage_trie_len = sorted_trie_updates.storage_tries_ref().len();
         let hashed_storage_len = sorted_post_state.storages.len();
+        let has_previous_block = block_number > 0;
+        let previous_block_number = block_number.saturating_sub(1);
 
         let account_trie_keys = self.persist_history_batch(
             tx,
@@ -504,9 +506,13 @@ impl MdbxProofsStorage {
         for (hashed_address, nodes) in sorted_trie_updates.storage_tries_ref() {
             // Handle wiped - mark all storage trie as deleted at the current block number
             if nodes.is_deleted && append_mode {
+                // There is no previous block before block 0.
+                if !has_previous_block {
+                    continue;
+                }
                 // Yet to have any update for the current block number - So just using up to
                 // previous block number
-                let mut ro = self.storage_trie_cursor(*hashed_address, block_number - 1)?;
+                let mut ro = self.storage_trie_cursor(*hashed_address, previous_block_number)?;
                 let keys =
                     self.wipe_storage(tx, block_number, *hashed_address, || Ok(ro.next()?))?;
 
@@ -533,9 +539,13 @@ impl MdbxProofsStorage {
         for (hashed_address, storage) in sorted_post_state.storages {
             // Handle wiped - mark all storage slots as deleted at the current block number
             if append_mode && storage.is_wiped() {
+                // There is no previous block before block 0.
+                if !has_previous_block {
+                    continue;
+                }
                 // Yet to have any update for the current block number - So just using up to
                 // previous block number
-                let mut ro = self.storage_hashed_cursor(hashed_address, block_number - 1)?;
+                let mut ro = self.storage_hashed_cursor(hashed_address, previous_block_number)?;
                 let keys =
                     self.wipe_storage(tx, block_number, hashed_address, || Ok(ro.next()?))?;
                 hashed_storage_keys.extend(keys);
@@ -2998,6 +3008,40 @@ mod tests {
     }
 
     #[test]
+    fn store_trie_updates_wiped_storage_trie_at_block_zero_has_no_previous_window() {
+        let dir = TempDir::new().unwrap();
+        let store = MdbxProofsStorage::new(dir.path()).expect("env");
+
+        let addr = B256::from([0x66; 32]);
+        let p1 = Nibbles::from_nibbles_unchecked([0x01, 0x02]);
+        let p2 = Nibbles::from_nibbles_unchecked([0x0A, 0x0B, 0x0C]);
+        store
+            .store_storage_branches(
+                addr,
+                vec![
+                    (p1, Some(BranchNodeCompact::default())),
+                    (p2, Some(BranchNodeCompact::default())),
+                ],
+            )
+            .expect("seed");
+
+        const BLOCK: BlockWithParent =
+            BlockWithParent::new(B256::ZERO, NumHash::new(0, B256::ZERO));
+        let mut diff_trie_updates = TrieUpdates::default();
+        let mut wiped_updates = StorageTrieUpdates::default();
+        wiped_updates.set_deleted(true);
+        diff_trie_updates.storage_tries.insert(addr, wiped_updates);
+
+        let diff = BlockStateDiff {
+            sorted_trie_updates: diff_trie_updates.into_sorted(),
+            sorted_post_state: HashedPostStateSorted::default(),
+        };
+        let counts = store.store_trie_updates(BLOCK, diff).expect("store");
+
+        assert_eq!(counts.storage_trie_updates_written_total, 0);
+    }
+
+    #[test]
     fn store_trie_updates_wiped_storage() {
         let dir = TempDir::new().unwrap();
         let store = MdbxProofsStorage::new(dir.path()).expect("env");
@@ -3046,6 +3090,32 @@ mod tests {
                 BLOCK.block.number,
             );
         }
+    }
+
+    #[test]
+    fn store_trie_updates_wiped_storage_at_block_zero_has_no_previous_window() {
+        let dir = TempDir::new().unwrap();
+        let store = MdbxProofsStorage::new(dir.path()).expect("env");
+
+        let addr = B256::from([0x77; 32]);
+        let s1 = B256::from([0x01; 32]);
+        let s2 = B256::from([0x02; 32]);
+        store
+            .store_hashed_storages(addr, vec![(s1, U256::from(111u64)), (s2, U256::from(222u64))])
+            .expect("seed");
+
+        const BLOCK: BlockWithParent =
+            BlockWithParent::new(B256::ZERO, NumHash::new(0, B256::ZERO));
+        let mut diff_post_state = HashedPostState::default();
+        diff_post_state.storages.insert(addr, reth_trie::HashedStorage::new(true));
+
+        let diff = BlockStateDiff {
+            sorted_trie_updates: TrieUpdatesSorted::default(),
+            sorted_post_state: diff_post_state.into_sorted(),
+        };
+        let counts = store.store_trie_updates(BLOCK, diff).expect("store");
+
+        assert_eq!(counts.hashed_storages_written_total, 0);
     }
 
     #[test]
