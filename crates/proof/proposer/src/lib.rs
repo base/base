@@ -24,7 +24,10 @@ pub use output_proposer::{
 };
 
 mod driver;
-pub use driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl, RecoveredState};
+pub use driver::{
+    DriverConfig, PipelineConfig, PipelineHandle, ProposerDriverControl, ProvingPipeline,
+    RecoveredState,
+};
 
 mod error;
 pub use error::*;

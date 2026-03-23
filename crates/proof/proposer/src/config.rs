@@ -90,6 +90,9 @@ pub struct ProposerConfig {
     /// Transaction manager configuration.
     /// `None` when running in dry-run mode.
     pub tx_manager: Option<base_tx_manager::TxManagerConfig>,
+    /// Maximum number of concurrent proof tasks.
+    /// When > 1, uses the parallel proving pipeline instead of the sequential driver.
+    pub max_parallel_proofs: usize,
 }
 
 impl ProposerConfig {
@@ -101,6 +104,14 @@ impl ProposerConfig {
         validate_url(&cli.proposer.l2_eth_rpc, "l2-eth-rpc")?;
 
         validate_url(&cli.proposer.rollup_rpc, "rollup-rpc")?;
+
+        if cli.proposer.max_parallel_proofs == 0 {
+            return Err(ConfigError::OutOfRange {
+                field: "max-parallel-proofs",
+                constraint: "at least 1",
+                value: "0".to_string(),
+            });
+        }
 
         // Validate poll_interval > 0
         if cli.proposer.poll_interval.is_zero() {
@@ -156,6 +167,7 @@ impl ProposerConfig {
             rollup_rpc: cli.proposer.rollup_rpc,
             skip_tls_verify: cli.proposer.skip_tls_verify,
             wait_node_sync: cli.proposer.wait_node_sync,
+            max_parallel_proofs: cli.proposer.max_parallel_proofs,
             log: LogConfig::from(cli.logging),
             metrics: cli.metrics.into(),
             rpc: RpcServerConfig::from(cli.rpc),
@@ -248,6 +260,7 @@ mod tests {
                     signer_endpoint: None,
                     signer_address: None,
                 },
+                max_parallel_proofs: 1,
                 tx_manager: TxManagerCli::default(),
             },
             logging: LogArgs {
@@ -454,5 +467,31 @@ mod tests {
         assert_eq!(config.retry.max_attempts, 5);
         assert_eq!(config.retry.initial_delay, Duration::from_millis(100));
         assert_eq!(config.retry.max_delay, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn test_max_parallel_proofs_zero_rejected() {
+        let mut cli = minimal_cli();
+        cli.proposer.max_parallel_proofs = 0;
+        let result = ProposerConfig::from_cli(cli);
+        assert!(matches!(
+            result,
+            Err(ConfigError::OutOfRange { field: "max-parallel-proofs", .. })
+        ));
+    }
+
+    #[test]
+    fn test_max_parallel_proofs_default() {
+        let cli = minimal_cli();
+        let config = ProposerConfig::from_cli(cli).unwrap();
+        assert_eq!(config.max_parallel_proofs, 1);
+    }
+
+    #[test]
+    fn test_max_parallel_proofs_custom() {
+        let mut cli = minimal_cli();
+        cli.proposer.max_parallel_proofs = 8;
+        let config = ProposerConfig::from_cli(cli).unwrap();
+        assert_eq!(config.max_parallel_proofs, 8);
     }
 }

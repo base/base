@@ -30,7 +30,9 @@ use tracing::{info, warn};
 use crate::{
     balance::balance_monitor,
     config::ProposerConfig,
-    driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl},
+    driver::{
+        DriverConfig, PipelineConfig, PipelineHandle, ProposerDriverControl, ProvingPipeline,
+    },
     health::serve,
     metrics::record_startup_metrics,
     output_proposer::ProposalSubmitter,
@@ -200,18 +202,22 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         };
     info!("Output proposer initialized");
 
-    // ── 6. Create driver ───────────────────────────────────────────────────
-    let driver_config = DriverConfig {
-        poll_interval: config.poll_interval,
-        block_interval,
-        intermediate_block_interval,
-        init_bond,
-        game_type: config.game_type,
-        allow_non_finalized: config.allow_non_finalized,
-        proposer_address: proposer_address.unwrap_or_default(),
+    // ── 6. Create proving pipeline ─────────────────────────────────────────
+    let pipeline_config = PipelineConfig {
+        max_parallel_proofs: config.max_parallel_proofs,
+        driver: DriverConfig {
+            poll_interval: config.poll_interval,
+            block_interval,
+            intermediate_block_interval,
+            init_bond,
+            game_type: config.game_type,
+            allow_non_finalized: config.allow_non_finalized,
+            proposer_address: proposer_address.unwrap_or_default(),
+        },
+        ..Default::default()
     };
-    let driver = Driver::new(
-        driver_config,
+    let pipeline = ProvingPipeline::new(
+        pipeline_config,
         prover_client,
         Arc::clone(&l1_client),
         l2_client,
@@ -222,9 +228,12 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         output_proposer,
         cancel.child_token(),
     );
-
+    info!(
+        max_parallel_proofs = config.max_parallel_proofs,
+        "Proving pipeline initialized"
+    );
     let driver_handle: Arc<dyn ProposerDriverControl> =
-        Arc::new(DriverHandle::new(driver, cancel.clone()));
+        Arc::new(PipelineHandle::new(pipeline, cancel.clone()));
 
     // ── 7. Start health / admin HTTP server ──────────────────────────────
     let ready = Arc::new(AtomicBool::new(false));

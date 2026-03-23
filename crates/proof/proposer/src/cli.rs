@@ -140,6 +140,15 @@ pub struct ProposerArgs {
     #[command(flatten)]
     pub signer: SignerCli,
 
+    /// Maximum number of concurrent proof tasks in parallel pipeline mode.
+    /// Set to 1 for sequential proving (default driver behavior).
+    #[arg(
+        long = "max-parallel-proofs",
+        env = cli_env!("MAX_PARALLEL_PROOFS"),
+        default_value = "1"
+    )]
+    pub max_parallel_proofs: usize,
+
     /// Transaction manager configuration.
     #[command(flatten)]
     pub tx_manager: TxManagerCli,
@@ -216,6 +225,7 @@ mod tests {
         assert!(!cli.proposer.skip_tls_verify);
         assert!(!cli.proposer.wait_node_sync);
         assert_eq!(cli.proposer.game_type, 1);
+        assert_eq!(cli.proposer.max_parallel_proofs, 1);
 
         assert_eq!(cli.logging.level, 3);
         assert_eq!(cli.logging.stdout_format, LogFormat::Full);
