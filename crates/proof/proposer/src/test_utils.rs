@@ -13,7 +13,6 @@ use base_proof_rpc::{
     RollupProvider, RpcError, RpcResult, SyncStatus,
 };
 
-
 use crate::{error::ProposerError, output_proposer::OutputProposer};
 
 /// Mock L1 client with configurable `block_number()` return.

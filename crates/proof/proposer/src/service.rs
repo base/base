@@ -228,10 +228,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         output_proposer,
         cancel.child_token(),
     );
-    info!(
-        max_parallel_proofs = config.max_parallel_proofs,
-        "Proving pipeline initialized"
-    );
+    info!(max_parallel_proofs = config.max_parallel_proofs, "Proving pipeline initialized");
     let driver_handle: Arc<dyn ProposerDriverControl> =
         Arc::new(PipelineHandle::new(pipeline, cancel.clone()));
 

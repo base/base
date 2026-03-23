@@ -29,11 +29,11 @@ use base_proof_contracts::{
 use base_proof_primitives::{ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use eyre::Result;
-use tokio::task::JoinSet;
-use tokio::time::sleep;
+use tokio::{task::JoinSet, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+use super::core::{DriverConfig, RecoveredState};
 use crate::{
     constants::{NO_PARENT_INDEX, PROPOSAL_TIMEOUT},
     error::ProposerError,
@@ -41,10 +41,8 @@ use crate::{
     output_proposer::{OutputProposer, is_game_already_exists},
 };
 
-use super::core::{DriverConfig, RecoveredState};
-
 /// Default maximum number of concurrent proof tasks.
-const DEFAULT_MAX_PARALLEL_PROOFS: usize = 4;
+const DEFAULT_MAX_PARALLEL_PROOFS: usize = 1;
 
 /// Default maximum number of retries for a failed proof before resetting.
 const DEFAULT_MAX_RETRIES: u32 = 3;
@@ -56,7 +54,7 @@ pub struct PipelineConfig {
     pub max_parallel_proofs: usize,
     /// Maximum number of retries for a single proof range before full reset.
     pub max_retries: u32,
-    /// Base driver configuration (poll_interval, block_interval, etc.).
+    /// Base driver configuration (`poll_interval`, `block_interval`, etc.).
     pub driver: DriverConfig,
 }
 
@@ -70,10 +68,29 @@ impl Default for PipelineConfig {
     }
 }
 
-/// A completed proof ready for submission.
-#[derive(Debug, Clone)]
-struct ProvedRange {
-    proof_result: ProofResult,
+struct PipelineState {
+    prove_tasks: JoinSet<(u64, Result<ProofResult, ProposerError>)>,
+    proved: BTreeMap<u64, ProofResult>,
+    inflight: BTreeSet<u64>,
+    retry_counts: BTreeMap<u64, u32>,
+}
+
+impl PipelineState {
+    fn new() -> Self {
+        Self {
+            prove_tasks: JoinSet::new(),
+            proved: BTreeMap::new(),
+            inflight: BTreeSet::new(),
+            retry_counts: BTreeMap::new(),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.prove_tasks.abort_all();
+        self.inflight.clear();
+        self.proved.clear();
+        self.retry_counts.clear();
+    }
 }
 
 /// The parallel proving pipeline.
@@ -109,9 +126,7 @@ where
     F: DisputeGameFactoryClient,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProvingPipeline")
-            .field("config", &self.config)
-            .finish_non_exhaustive()
+        f.debug_struct("ProvingPipeline").field("config", &self.config).finish_non_exhaustive()
     }
 }
 
@@ -160,8 +175,6 @@ where
     }
 
     /// Runs the parallel proving pipeline until cancelled.
-    ///
-    /// This is the main entry point — runs until cancelled.
     pub async fn run(&self) -> Result<()> {
         info!(
             max_parallel_proofs = self.config.max_parallel_proofs,
@@ -169,177 +182,23 @@ where
             "Starting parallel proving pipeline"
         );
 
-        let mut prove_tasks: JoinSet<(u64, Result<ProofResult, ProposerError>)> = JoinSet::new();
-
-        // Completed proofs waiting for sequential submission, keyed by target block.
-        let mut proved: BTreeMap<u64, ProvedRange> = BTreeMap::new();
-
-        // Target blocks currently being proved.
-        let mut inflight: BTreeSet<u64> = BTreeSet::new();
-
-        // Track retry counts for ranges that have failed.
-        let mut retry_counts: BTreeMap<u64, u32> = BTreeMap::new();
+        let mut state = PipelineState::new();
 
         loop {
-            // ── 0. Recover latest on-chain state ──────────────────────────
-            let state = match self.recover_latest_state().await {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!(error = %e, "Failed to recover on-chain state, retrying next tick");
-                    tokio::select! {
-                        () = self.cancel.cancelled() => break,
-                        () = sleep(self.config.driver.poll_interval) => continue,
-                    }
-                }
-            };
-
-            let next_to_submit = state
-                .l2_block_number
-                .checked_add(self.config.driver.block_interval)
-                .expect("overflow computing next submission target");
-            let parent_index = state.game_index;
-
-            // ── 1. Plan: build proof requests up to safe head ─────────────
-            let safe_head = match self.latest_safe_block_number().await {
-                Ok(n) => n,
-                Err(e) => {
-                    warn!(error = %e, "Failed to fetch safe head, retrying next tick");
-                    tokio::select! {
-                        () = self.cancel.cancelled() => break,
-                        () = sleep(self.config.driver.poll_interval) => continue,
-                    }
-                }
-            };
-
-            // Plan from the next submission target forward.
-            let mut cursor = next_to_submit;
-            while cursor <= safe_head
-                && !inflight.contains(&cursor)
-                && !proved.contains_key(&cursor)
-                && inflight.len() < self.config.max_parallel_proofs
-            {
-                match self.build_proof_request_for(state.l2_block_number, state.output_root, cursor).await {
-                    Ok(request) => {
-                        let prover = Arc::clone(&self.prover);
-                        let target = cursor;
-                        let cancel = self.cancel.child_token();
-
-                        inflight.insert(target);
-                        prove_tasks.spawn(async move {
-                            if cancel.is_cancelled() {
-                                return (target, Err(ProposerError::Internal("cancelled".into())));
-                            }
-                            let result = prover
-                                .prove(request)
-                                .await
-                                .map_err(|e| ProposerError::Prover(e.to_string()));
-                            (target, result)
-                        });
-
-                        debug!(target_block = target, "Dispatched proof task");
-                    }
-                    Err(e) => {
-                        warn!(error = %e, target_block = cursor, "Failed to build proof request");
-                        break;
-                    }
-                }
-                cursor = cursor.saturating_add(self.config.driver.block_interval);
+            if let Some((recovered, safe_head)) = self.try_recover_and_plan().await {
+                self.dispatch_proofs(&recovered, safe_head, &mut state).await;
+                self.try_submit(&mut state).await;
             }
 
-            // ── 2. Select: wait for proof completion or poll tick ──────────
             tokio::select! {
+                Some(result) = state.prove_tasks.join_next(), if !state.prove_tasks.is_empty() => {
+                    self.handle_proof_result(result, &mut state);
+                }
                 () = self.cancel.cancelled() => {
-                    info!("Pipeline received shutdown signal, aborting in-flight proofs");
-                    prove_tasks.abort_all();
+                    state.prove_tasks.abort_all();
                     break;
                 }
-
-                Some(join_result) = prove_tasks.join_next(), if !prove_tasks.is_empty() => {
-                    match join_result {
-                        Ok((target, Ok(proof_result))) => {
-                            inflight.remove(&target);
-                            retry_counts.remove(&target);
-                            proved.insert(target, ProvedRange { proof_result });
-                            info!(target_block = target, "Proof completed successfully");
-                        }
-                        Ok((target, Err(e))) => {
-                            inflight.remove(&target);
-                            let count = retry_counts.entry(target).or_insert(0);
-                            *count += 1;
-                            if *count >= self.config.max_retries {
-                                error!(
-                                    target_block = target,
-                                    attempts = *count,
-                                    error = %e,
-                                    "Proof failed after max retries, resetting pipeline"
-                                );
-                                // Full reset: cancel all, clear everything.
-                                prove_tasks.abort_all();
-                                inflight.clear();
-                                proved.clear();
-                                retry_counts.clear();
-                            } else {
-                                warn!(
-                                    target_block = target,
-                                    attempt = *count,
-                                    error = %e,
-                                    "Proof failed, will retry next tick"
-                                );
-                            }
-                        }
-                        Err(join_err) => {
-                            // Task panicked or was cancelled.
-                            warn!(error = %join_err, "Proof task panicked or was cancelled");
-                            // We can't identify the target block from a JoinError without
-                            // wrapping, so do a full reset to be safe.
-                            prove_tasks.abort_all();
-                            inflight.clear();
-                            proved.clear();
-                            retry_counts.clear();
-                        }
-                    }
-                }
-
-                () = sleep(self.config.driver.poll_interval) => {
-                    debug!("Poll tick — replanning");
-                }
-            }
-
-            // ── 3. Submit: drain proved results in order ──────────────────
-            // We can only submit `next_to_submit` (the first unsubmitted range).
-            // If it's in `proved`, validate and submit. Otherwise, wait.
-            if let Some(range) = proved.remove(&next_to_submit) {
-                match self.validate_and_submit(
-                    &range.proof_result,
-                    next_to_submit,
-                    parent_index,
-                ).await {
-                    Ok(()) => {
-                        info!(target_block = next_to_submit, "Submission successful");
-                        // Clear retry count for this range.
-                        retry_counts.remove(&next_to_submit);
-                        // The next loop iteration will recover fresh state from L1.
-                    }
-                    Err(SubmitAction::Reorg) => {
-                        warn!(
-                            target_block = next_to_submit,
-                            "Reorg detected at submit time, resetting pipeline"
-                        );
-                        prove_tasks.abort_all();
-                        inflight.clear();
-                        proved.clear();
-                        retry_counts.clear();
-                    }
-                    Err(SubmitAction::Failed(e)) => {
-                        warn!(
-                            error = %e,
-                            target_block = next_to_submit,
-                            "Submission failed, will retry next tick"
-                        );
-                        // Put it back for retry next tick.
-                        proved.insert(next_to_submit, range);
-                    }
-                }
+                () = sleep(self.config.driver.poll_interval) => {}
             }
         }
 
@@ -347,7 +206,185 @@ where
         Ok(())
     }
 
-    // ── Internal helpers ───────────────────────────────────────────────────
+    async fn dispatch_proofs(
+        &self,
+        recovered: &RecoveredState,
+        safe_head: u64,
+        state: &mut PipelineState,
+    ) {
+        let mut cursor =
+            match recovered.l2_block_number.checked_add(self.config.driver.block_interval) {
+                Some(c) => c,
+                None => {
+                    warn!(
+                        l2_block_number = recovered.l2_block_number,
+                        block_interval = self.config.driver.block_interval,
+                        "Overflow computing next proof target"
+                    );
+                    return;
+                }
+            };
+
+        let mut start_block = recovered.l2_block_number;
+        let mut start_output = recovered.output_root;
+
+        while cursor <= safe_head
+            && !state.inflight.contains(&cursor)
+            && !state.proved.contains_key(&cursor)
+            && state.inflight.len() < self.config.max_parallel_proofs
+        {
+            match self.build_proof_request_for(start_block, start_output, cursor).await {
+                Ok(request) => {
+                    let claimed_output = request.claimed_l2_output_root;
+                    let prover = Arc::clone(&self.prover);
+                    let target = cursor;
+                    let cancel = self.cancel.child_token();
+
+                    info!(request = ?request, "Dispatching proof task");
+                    state.inflight.insert(target);
+                    state.prove_tasks.spawn(async move {
+                        tokio::select! {
+                            () = cancel.cancelled() => {
+                                (target, Err(ProposerError::Internal("cancelled".into())))
+                            }
+                            result = prover.prove(request) => {
+                                (target, result.map_err(|e| ProposerError::Prover(e.to_string())))
+                            }
+                        }
+                    });
+
+                    start_block = cursor;
+                    start_output = claimed_output;
+                }
+                Err(e) => {
+                    warn!(error = %e, target_block = cursor, "Failed to build proof request");
+                    break;
+                }
+            }
+            cursor = cursor.saturating_add(self.config.driver.block_interval);
+        }
+    }
+
+    async fn try_submit(&self, state: &mut PipelineState) {
+        loop {
+            let recovered = match self.recover_latest_state().await {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(error = %e, "Failed to recover state during submission drain");
+                    return;
+                }
+            };
+
+            let next_to_submit =
+                match recovered.l2_block_number.checked_add(self.config.driver.block_interval) {
+                    Some(n) => n,
+                    None => {
+                        warn!(
+                            l2_block_number = recovered.l2_block_number,
+                            block_interval = self.config.driver.block_interval,
+                            "Overflow computing next submission target"
+                        );
+                        return;
+                    }
+                };
+
+            let proof_result = match state.proved.remove(&next_to_submit) {
+                Some(r) => r,
+                None => return,
+            };
+
+            match self
+                .validate_and_submit(&proof_result, next_to_submit, recovered.game_index)
+                .await
+            {
+                Ok(()) => {
+                    info!(target_block = next_to_submit, "Submission successful");
+                    state.retry_counts.remove(&next_to_submit);
+                }
+                Err(SubmitAction::Reorg) => {
+                    warn!(
+                        target_block = next_to_submit,
+                        "Reorg detected at submit time, resetting pipeline"
+                    );
+                    state.reset();
+                    return;
+                }
+                Err(SubmitAction::Failed(e)) => {
+                    warn!(
+                        error = %e,
+                        target_block = next_to_submit,
+                        "Submission failed, will retry next tick"
+                    );
+                    state.proved.insert(next_to_submit, proof_result);
+                    return;
+                }
+            }
+        }
+    }
+
+    fn handle_proof_result(
+        &self,
+        join_result: Result<(u64, Result<ProofResult, ProposerError>), tokio::task::JoinError>,
+        state: &mut PipelineState,
+    ) {
+        match join_result {
+            Ok((target, Ok(proof_result))) => {
+                state.inflight.remove(&target);
+                state.retry_counts.remove(&target);
+                state.proved.insert(target, proof_result);
+                info!(target_block = target, "Proof completed successfully");
+            }
+            Ok((target, Err(e))) => {
+                state.inflight.remove(&target);
+                let count = state.retry_counts.entry(target).or_insert(0);
+                *count += 1;
+                if *count >= self.config.max_retries {
+                    error!(
+                        target_block = target,
+                        attempts = *count,
+                        error = %e,
+                        "Proof failed after max retries, resetting pipeline"
+                    );
+                    state.reset();
+                } else {
+                    warn!(
+                        target_block = target,
+                        attempt = *count,
+                        error = %e,
+                        "Proof failed, will retry next tick"
+                    );
+                }
+            }
+            Err(join_err) => {
+                warn!(error = %join_err, "Proof task panicked or was cancelled");
+                state.reset();
+            }
+        }
+    }
+
+    /// Attempts to recover on-chain state and fetch the safe head.
+    ///
+    /// Returns `None` if either step fails (logged as warnings), allowing the
+    /// caller to fall through to the poll-tick sleep.
+    async fn try_recover_and_plan(&self) -> Option<(RecoveredState, u64)> {
+        let state = match self.recover_latest_state().await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(error = %e, "Failed to recover on-chain state, retrying next tick");
+                return None;
+            }
+        };
+
+        let safe_head = match self.latest_safe_block_number().await {
+            Ok(n) => n,
+            Err(e) => {
+                warn!(error = %e, "Failed to fetch safe head, retrying next tick");
+                return None;
+            }
+        };
+
+        Some((state, safe_head))
+    }
 
     /// Recovers the latest on-chain state.
     ///
@@ -430,12 +467,6 @@ where
         }
     }
 
-    /// Builds a proof request for the given target block.
-    ///
-    /// The `starting_block_number` and `agreed_output_root` come from the
-    /// recovered on-chain state. For the first range after recovery they match
-    /// the on-chain parent; for subsequent planned ranges within the same tick,
-    /// they chain from the previous range's claimed output.
     async fn build_proof_request_for(
         &self,
         starting_block_number: u64,
@@ -448,11 +479,8 @@ where
             .await
             .map_err(ProposerError::Rpc)?;
 
-        let claimed_output = self
-            .rollup_client
-            .output_at_block(target_block)
-            .await
-            .map_err(ProposerError::Rpc)?;
+        let claimed_output =
+            self.rollup_client.output_at_block(target_block).await.map_err(ProposerError::Rpc)?;
 
         let l1_head = self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc)?;
 
@@ -471,11 +499,6 @@ where
         Ok(request)
     }
 
-    /// Validates a proof result against the canonical chain and submits it.
-    ///
-    /// Returns `Ok(())` on success, `Err(SubmitAction::Reorg)` if the output
-    /// root no longer matches canonical, or `Err(SubmitAction::Failed)` for
-    /// transient errors.
     async fn validate_and_submit(
         &self,
         proof_result: &ProofResult,
@@ -509,8 +532,12 @@ where
         }
 
         // Extract intermediate roots.
-        let starting_block_number =
-            target_block.saturating_sub(self.config.driver.block_interval);
+        let starting_block_number = target_block.checked_sub(self.config.driver.block_interval).ok_or_else(|| {
+            SubmitAction::Failed(ProposerError::Internal(format!(
+                "target_block {target_block} < block_interval {}",
+                self.config.driver.block_interval
+            )))
+        })?;
         let intermediate_roots = self
             .extract_intermediate_roots(starting_block_number, proposals)
             .map_err(SubmitAction::Failed)?;
@@ -671,9 +698,8 @@ mod tests {
 
             // Generate per-block proposals.
             let start = block_number.saturating_sub(512);
-            let proposals: Vec<Proposal> = ((start + 1)..=block_number)
-                .map(test_proposal)
-                .collect();
+            let proposals: Vec<Proposal> =
+                ((start + 1)..=block_number).map(test_proposal).collect();
 
             Ok(ProofResult::Tee { aggregate_proposal, proposals })
         }
@@ -683,11 +709,17 @@ mod tests {
         pipeline_config: PipelineConfig,
         safe_block_number: u64,
         cancel: CancellationToken,
-    ) -> ProvingPipeline<MockL1, MockL2, MockRollupClient, MockAnchorStateRegistry, MockDisputeGameFactory>
-    {
+    ) -> ProvingPipeline<
+        MockL1,
+        MockL2,
+        MockRollupClient,
+        MockAnchorStateRegistry,
+        MockDisputeGameFactory,
+    > {
         let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver { delay: Duration::from_millis(10) });
+        let prover: Arc<dyn ProverClient> =
+            Arc::new(MockProver { delay: Duration::from_millis(10) });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_block_number, B256::ZERO),
         });

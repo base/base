@@ -154,8 +154,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        driver::core::DriverConfig,
-        driver::pipeline::PipelineConfig,
+        driver::{core::DriverConfig, pipeline::PipelineConfig},
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
@@ -183,10 +182,7 @@ mod tests {
             };
             let start = n.saturating_sub(512);
             let proposals: Vec<Proposal> = ((start + 1)..=n)
-                .map(|b| Proposal {
-                    output_root: B256::repeat_byte(b as u8),
-                    ..proposal.clone()
-                })
+                .map(|b| Proposal { output_root: B256::repeat_byte(b as u8), ..proposal.clone() })
                 .collect();
             Ok(ProofResult::Tee { aggregate_proposal: proposal, proposals })
         }
@@ -204,9 +200,7 @@ mod tests {
         let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
         let prover: Arc<dyn ProverClient> = Arc::new(InstantMockProver);
-        let rollup = Arc::new(MockRollupClient {
-            sync_status: test_sync_status(200, B256::ZERO),
-        });
+        let rollup = Arc::new(MockRollupClient { sync_status: test_sync_status(200, B256::ZERO) });
         let anchor_registry =
             Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
         let factory = Arc::new(MockDisputeGameFactory { game_count: 0 });
