@@ -108,13 +108,15 @@ async fn admin_rpc(
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Returns an [`axum::Router`] with the admin JSON-RPC endpoint at `POST /`.
-///
-/// The returned router has its own state applied and is served on a
-/// dedicated listener, separate from the health server.
-pub fn router(driver: Arc<dyn ProposerDriverControl>) -> Router {
-    let state = AdminState { driver };
-    Router::new().route("/", post(admin_rpc)).with_state(state)
+impl AdminState {
+    /// Returns an [`axum::Router`] with the admin JSON-RPC endpoint at `POST /`.
+    ///
+    /// The returned router has its own state applied and is served on a
+    /// dedicated listener, separate from the health server.
+    pub fn router(driver: Arc<dyn ProposerDriverControl>) -> Router {
+        let state = Self { driver };
+        Router::new().route("/", post(admin_rpc)).with_state(state)
+    }
 }
 
 #[cfg(test)]
@@ -169,7 +171,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let app = router(driver);
+        let app = AdminState::router(driver);
 
         let cancel_clone = cancel.clone();
         tokio::spawn(async move {

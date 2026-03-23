@@ -34,18 +34,6 @@ use crate::{
 };
 
 /// Runs the full proposer service lifecycle.
-///
-/// Steps:
-/// 1. Initialise logging, TLS, and metrics
-/// 2. Create RPC clients (L1, L2, rollup, prover)
-/// 3. Read onchain config (`BLOCK_INTERVAL`, `initBond`)
-/// 4–6. Create prover, output proposer, and driver
-/// 7. Start health HTTP server
-/// 8. Start admin RPC server (if enabled, on a separate listener)
-/// 9. Start balance monitor (if metrics enabled)
-/// 10. Start the driver loop
-/// 11. Wait for SIGTERM or SIGINT
-/// 12. Graceful shutdown in reverse order
 pub async fn run(config: ProposerConfig) -> Result<()> {
     config.log.init_tracing_subscriber()?;
 
@@ -239,7 +227,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         let driver = Arc::clone(&driver_handle);
         let admin_cancel = cancel.clone();
         tokio::spawn(async move {
-            let app = crate::admin::router(driver);
+            let app = crate::admin::AdminState::router(driver);
             let listener = tokio::net::TcpListener::bind(admin_addr).await?;
             info!(%admin_addr, "Admin RPC server started");
             axum::serve(listener, app)

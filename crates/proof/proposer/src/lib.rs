@@ -32,7 +32,7 @@ mod error;
 pub use error::*;
 
 mod admin;
-pub use admin::{AdminState, router as admin_router};
+pub use admin::AdminState;
 
 mod metrics;
 pub use metrics::{
