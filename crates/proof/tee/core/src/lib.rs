@@ -9,5 +9,5 @@ pub use proof::{PROOF_TYPE_TEE, ProofEncoder};
 mod types;
 pub use types::{
     AccountResult, BlockId, Genesis, GenesisSystemConfig, PerChainConfig, RollupConfig,
-    StorageProof, output_root_v0, output_root_v0_with_hash,
+    StorageProof,
 };

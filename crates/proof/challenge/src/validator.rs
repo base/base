@@ -3,15 +3,14 @@
 //! The [`OutputValidator`] verifies both the final output root and intermediate
 //! output roots for each [`CandidateGame`]. It fetches L2 block headers and
 //! `L2ToL1MessagePasser` storage proofs, recomputes expected output roots using
-//! [`output_root_v0`](base_enclave::output_root_v0), and compares them against
-//! the onchain claims.
+//! [`OutputRoot`](base_protocol::OutputRoot), and compares them against the
+//! onchain claims.
 
 use std::{sync::Arc, time::Instant};
 
 use alloy_primitives::{Address, B256};
-use base_enclave::output_root_v0_with_hash;
 use base_proof_rpc::{L2Provider, RpcError};
-use base_protocol::Predeploys;
+use base_protocol::{OutputRoot, Predeploys};
 use futures::stream::{self, StreamExt};
 use thiserror::Error;
 use tracing::{info, warn};
@@ -169,7 +168,7 @@ impl<L2: L2Provider> OutputValidator<L2> {
     /// Computes the expected output root for a given L2 block number.
     ///
     /// Fetches the block header and `L2ToL1MessagePasser` storage proof, then
-    /// passes them to [`output_root_v0`]. Verifies that the RPC-provided header
+    /// passes them to [`OutputRoot`]. Verifies that the RPC-provided header
     /// hash matches the hash computed from the consensus header as a
     /// defense-in-depth check against compromised or buggy RPC nodes.
     pub async fn compute_output_root(&self, block_number: u64) -> Result<B256, ValidatorError> {
@@ -217,7 +216,8 @@ impl<L2: L2Provider> OutputValidator<L2> {
         })?;
 
         let storage_root = account_result.storage_hash;
-        let output_root = output_root_v0_with_hash(&consensus_header, storage_root, computed_hash);
+        let output_root =
+            OutputRoot::from_parts(consensus_header.state_root, storage_root, computed_hash).hash();
 
         Ok((computed_hash, output_root))
     }
@@ -403,7 +403,6 @@ mod tests {
     use alloy_consensus::Header as ConsensusHeader;
     use alloy_primitives::{Address, B256};
     use alloy_rpc_types_eth::Header as RpcHeader;
-    use base_enclave::output_root_v0;
     use rstest::rstest;
 
     use super::*;
@@ -418,7 +417,8 @@ mod tests {
         for &block_number in block_numbers {
             let storage_hash = B256::repeat_byte(0xBB);
             let (header, account) = build_test_header_and_account(block_number, storage_hash);
-            let expected_root = output_root_v0(&header, storage_hash);
+            let expected_root =
+                OutputRoot::from_parts(header.state_root, storage_hash, header.hash_slow()).hash();
 
             provider.insert_block(block_number, header, account);
             roots.push(expected_root);
@@ -716,7 +716,9 @@ mod tests {
         // Block 100: header only, no proof -> RPC error
         let storage_hash = B256::repeat_byte(0xBB);
         let (header_95, account_95) = build_test_header_and_account(95, storage_hash);
-        let root_95 = base_enclave::output_root_v0(&header_95, storage_hash);
+        let root_95 =
+            OutputRoot::from_parts(header_95.state_root, storage_hash, header_95.hash_slow())
+                .hash();
 
         let (header_100, _) = build_test_header_and_account(100, storage_hash);
         let hash_100 = header_100.hash_slow();

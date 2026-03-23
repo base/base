@@ -16,9 +16,9 @@ use base_challenger::{
         build_test_header_and_account, factory_game, mock_state, receipt_with_status,
     },
 };
-use base_enclave::output_root_v0;
 use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex};
 use base_proof_primitives::{ProofResult, Proposal, ProverClient};
+use base_protocol::OutputRoot;
 use base_tx_manager::TxManagerError;
 use base_zk_client::{ProofJobStatus, ProofType, ProveBlockRequest};
 use tokio_util::sync::CancellationToken;
@@ -97,7 +97,8 @@ fn invalid_game_mocks()
 -> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, Arc<MockAggregateVerifier>) {
     let storage_hash = B256::repeat_byte(0xBB);
     let (header_15, account_15) = build_test_header_and_account(15, storage_hash);
-    let root_15 = output_root_v0(&header_15, storage_hash);
+    let root_15 =
+        OutputRoot::from_parts(header_15.state_root, storage_hash, header_15.hash_slow()).hash();
     let (header_20, account_20) = build_test_header_and_account(20, storage_hash);
 
     let mut l2 = MockL2Provider::new();
@@ -610,7 +611,8 @@ fn invalid_game_mocks_with_tee()
 -> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, Arc<MockAggregateVerifier>) {
     let storage_hash = B256::repeat_byte(0xBB);
     let (header_15, account_15) = build_test_header_and_account(15, storage_hash);
-    let root_15 = output_root_v0(&header_15, storage_hash);
+    let root_15 =
+        OutputRoot::from_parts(header_15.state_root, storage_hash, header_15.hash_slow()).hash();
     let (header_20, account_20) = build_test_header_and_account(20, storage_hash);
 
     let mut l2 = MockL2Provider::new();
@@ -791,9 +793,11 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
     // should submit the TEE proof directly without initiating a ZK session.
     let storage_hash = B256::repeat_byte(0xBB);
     let (header_15, account_15) = build_test_header_and_account(15, storage_hash);
-    let root_15 = output_root_v0(&header_15, storage_hash);
+    let root_15 =
+        OutputRoot::from_parts(header_15.state_root, storage_hash, header_15.hash_slow()).hash();
     let (header_20, account_20) = build_test_header_and_account(20, storage_hash);
-    let root_20 = output_root_v0(&header_20, storage_hash);
+    let root_20 =
+        OutputRoot::from_parts(header_20.state_root, storage_hash, header_20.hash_slow()).hash();
 
     let mut l2 = MockL2Provider::new();
     l2.insert_block(15, header_15, account_15);

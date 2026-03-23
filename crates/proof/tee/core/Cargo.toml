@@ -13,7 +13,6 @@ alloy-rlp.workspace = true
 alloy-chains.workspace = true
 alloy-trie = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["serde"] }
-alloy-consensus = { workspace = true, features = ["serde"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 
 # Proof
