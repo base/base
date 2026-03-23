@@ -1,6 +1,6 @@
 //! CLI argument definitions for proposer.
 
-use std::{net::IpAddr, time::Duration};
+use std::time::Duration;
 
 use alloy_primitives::{Address, B256};
 use base_cli_utils::CliStyles;
@@ -10,6 +10,7 @@ use url::Url;
 base_cli_utils::define_cli_env!("BASE_PROPOSER");
 base_cli_utils::define_log_args!("BASE_PROPOSER");
 base_cli_utils::define_metrics_args!("BASE_PROPOSER", 7300);
+base_cli_utils::define_health_args!("BASE_PROPOSER", 8080);
 base_tx_manager::define_signer_cli!("BASE_PROPOSER");
 base_tx_manager::define_tx_manager_cli!("BASE_PROPOSER");
 
@@ -31,9 +32,13 @@ pub struct Cli {
     #[command(flatten)]
     pub metrics: MetricsArgs,
 
-    /// RPC server configuration arguments.
+    /// Health server configuration arguments.
     #[command(flatten)]
-    pub rpc: RpcServerArgs,
+    pub health: HealthArgs,
+
+    /// Admin RPC configuration arguments.
+    #[command(flatten)]
+    pub admin: AdminArgs,
 }
 
 /// Core proposer configuration arguments.
@@ -145,40 +150,59 @@ pub struct ProposerArgs {
     pub tx_manager: TxManagerCli,
 }
 
-/// RPC server configuration arguments.
+/// Admin RPC server configuration arguments.
 #[derive(Debug, Clone, Parser)]
-#[command(next_help_heading = "RPC Server")]
-pub struct RpcServerArgs {
-    /// Enable admin RPC methods.
+#[command(next_help_heading = "Admin RPC")]
+pub struct AdminArgs {
+    /// Enable the admin RPC server.
     #[arg(
         id = "rpc_enable_admin",
         long = "rpc.enable-admin",
         env = cli_env!("RPC_ENABLE_ADMIN"),
         default_value = "false"
     )]
-    pub enable_admin: bool,
+    pub enabled: bool,
 
-    /// RPC server bind address.
+    /// Admin RPC server bind address.
     #[arg(
         id = "rpc_addr",
         long = "rpc.addr",
-        env = cli_env!("RPC_ADDR"),
-        default_value = "127.0.0.1"
+        default_value = "127.0.0.1",
+        env = cli_env!("RPC_ADDR")
     )]
-    pub addr: IpAddr,
+    pub addr: std::net::IpAddr,
 
-    /// RPC server port.
+    /// Admin RPC server port.
     #[arg(
         id = "rpc_port",
         long = "rpc.port",
-        env = cli_env!("RPC_PORT"),
-        default_value = "8545"
+        default_value = "8545",
+        env = cli_env!("RPC_PORT")
     )]
     pub port: u16,
 }
 
+impl Default for AdminArgs {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            addr: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            port: 8545,
+        }
+    }
+}
+
+impl AdminArgs {
+    /// Returns the configured socket address.
+    pub const fn socket_addr(&self) -> std::net::SocketAddr {
+        std::net::SocketAddr::new(self.addr, self.port)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::net::IpAddr;
+
     use base_cli_utils::LogFormat;
 
     use super::*;
@@ -225,9 +249,11 @@ mod tests {
         assert_eq!(cli.metrics.addr, "0.0.0.0".parse::<IpAddr>().unwrap());
         assert_eq!(cli.metrics.port, 7300);
 
-        assert!(!cli.rpc.enable_admin);
-        assert_eq!(cli.rpc.addr, "127.0.0.1".parse::<IpAddr>().unwrap());
-        assert_eq!(cli.rpc.port, 8545);
+        assert!(!cli.admin.enabled);
+        assert_eq!(cli.admin.addr, "127.0.0.1".parse::<IpAddr>().unwrap());
+        assert_eq!(cli.admin.port, 8545);
+        assert_eq!(cli.health.addr, "0.0.0.0".parse::<IpAddr>().unwrap());
+        assert_eq!(cli.health.port, 8080);
 
         // Check retry defaults
         assert_eq!(cli.proposer.rpc_max_retries, 5);

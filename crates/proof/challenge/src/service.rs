@@ -7,6 +7,7 @@ use std::sync::{
 
 use alloy_provider::{Provider, RootProvider};
 use base_cli_utils::RuntimeManager;
+use base_health::HealthServer;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryContractClient,
 };
@@ -148,9 +149,7 @@ impl ChallengerService {
             let addr = config.health_addr;
             let ready_flag = Arc::clone(&ready);
             let health_cancel = cancel.clone();
-            tokio::spawn(async move {
-                crate::HealthServer::serve(addr, ready_flag, health_cancel).await
-            })
+            tokio::spawn(async move { HealthServer::serve(addr, ready_flag, health_cancel).await })
         };
 
         // ── 9. Run driver ────────────────────────────────────────────────────

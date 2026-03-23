@@ -13,9 +13,6 @@ pub use driver::{DriverConfig, RegistrationDriver};
 mod error;
 pub use error::{RegistrarError, Result};
 
-mod health;
-pub use health::HealthServer;
-
 mod metrics;
 pub use metrics::RegistrarMetrics;
 

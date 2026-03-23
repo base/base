@@ -12,3 +12,8 @@ pub use middleware::{EthHealthCheckLayer, EthHealthCheckService};
 
 mod rpc;
 pub use rpc::{HealthzApiServer, HealthzResponse, HealthzRpc};
+
+#[cfg(feature = "axum-server")]
+mod server;
+#[cfg(feature = "axum-server")]
+pub use server::HealthServer;

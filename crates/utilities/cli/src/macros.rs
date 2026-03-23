@@ -183,6 +183,66 @@ macro_rules! define_log_args {
     };
 }
 
+/// Generates a `HealthArgs` struct with health server configuration,
+/// parameterized by env var prefix and default port at compile time.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// base_cli_utils::define_health_args!("BASE_CHALLENGER", 8080);
+/// base_cli_utils::define_health_args!("BASE_PROPOSER", 8080);
+/// ```
+///
+/// The generated struct has two fields: `addr` and `port`.
+/// Each field's env var is formed by appending `_HEALTH_ADDR` or `_HEALTH_PORT`
+/// to the given prefix.
+///
+/// A convenience method `socket_addr()` returns a `SocketAddr` from the two fields.
+#[rustfmt::skip]
+#[macro_export]
+macro_rules! define_health_args {
+    ($prefix:literal, $default_port:literal) => {
+        /// Configuration for the health-check HTTP server.
+        #[derive(Debug, Clone, ::clap::Parser)]
+        #[command(next_help_heading = "Health Server")]
+        pub struct HealthArgs {
+            /// Health server bind address.
+            #[arg(
+                id = "health_addr",
+                long = "health.addr",
+                default_value = "0.0.0.0",
+                env = concat!($prefix, "_HEALTH_ADDR")
+            )]
+            pub addr: ::std::net::IpAddr,
+
+            /// Health server port.
+            #[arg(
+                id = "health_port",
+                long = "health.port",
+                default_value = stringify!($default_port),
+                env = concat!($prefix, "_HEALTH_PORT")
+            )]
+            pub port: u16,
+        }
+
+        impl Default for HealthArgs {
+            fn default() -> Self {
+                Self {
+                    addr: ::std::net::IpAddr::V4(::std::net::Ipv4Addr::UNSPECIFIED),
+                    port: $default_port,
+                }
+            }
+        }
+
+        impl HealthArgs {
+            /// Returns the configured socket address.
+            pub const fn socket_addr(&self) -> ::std::net::SocketAddr {
+                ::std::net::SocketAddr::new(self.addr, self.port)
+            }
+        }
+    };
+}
+
 /// Generates a local `cli_env!` macro that prepends a fixed component prefix to
 /// every env-var suffix, so you can write `env = cli_env!("L1_ETH_RPC")` instead
 /// of `env = "BASE_CHALLENGER_L1_ETH_RPC"`.

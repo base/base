@@ -1,16 +1,14 @@
 //! Full proposer service lifecycle.
 
-use std::{
-    net::SocketAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use base_cli_utils::RuntimeManager;
+use base_health::HealthServer;
 use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient,
@@ -31,7 +29,6 @@ use crate::{
     balance::balance_monitor,
     config::ProposerConfig,
     driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl},
-    health::serve,
     metrics::record_startup_metrics,
     output_proposer::ProposalSubmitter,
 };
@@ -42,12 +39,13 @@ use crate::{
 /// 1. Initialise logging, TLS, and metrics
 /// 2. Create RPC clients (L1, L2, rollup, prover)
 /// 3. Read onchain config (`BLOCK_INTERVAL`, `initBond`)
-/// 4. Create prover, output proposer, and driver
-/// 5. Start health / admin HTTP server
-/// 6. Start balance monitor (if metrics enabled)
-/// 7. Start the driver loop
-/// 8. Wait for SIGTERM or SIGINT
-/// 9. Graceful shutdown in reverse order
+/// 4–6. Create prover, output proposer, and driver
+/// 7. Start health HTTP server
+/// 8. Start admin RPC server (if enabled, on a separate listener)
+/// 9. Start balance monitor (if metrics enabled)
+/// 10. Start the driver loop
+/// 11. Wait for SIGTERM or SIGINT
+/// 12. Graceful shutdown in reverse order
 pub async fn run(config: ProposerConfig) -> Result<()> {
     config.log.init_tracing_subscriber()?;
 
@@ -226,22 +224,33 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let driver_handle: Arc<dyn ProposerDriverControl> =
         Arc::new(DriverHandle::new(driver, cancel.clone()));
 
-    // ── 7. Start health / admin HTTP server ──────────────────────────────
+    // ── 7. Start health HTTP server ─────────────────────────────────────
     let ready = Arc::new(AtomicBool::new(false));
-    let admin_driver = if config.rpc.enable_admin {
-        info!("Admin RPC enabled");
-        Some(Arc::clone(&driver_handle))
-    } else {
-        None
-    };
     let health_handle: JoinHandle<Result<()>> = {
-        let addr = SocketAddr::new(config.rpc.addr, config.rpc.port);
-        let ready_flag = Arc::clone(&ready);
+        let ready = Arc::clone(&ready);
+        let addr = config.health_addr;
         let health_cancel = cancel.clone();
-        tokio::spawn(async move { serve(addr, ready_flag, admin_driver, health_cancel).await })
+        tokio::spawn(async move { HealthServer::serve(addr, ready, health_cancel).await })
     };
 
-    // ── 8. Start balance monitor (if metrics enabled and not dry-run) ───
+    // ── 8. Start admin RPC server (separate listener, localhost-only) ───
+    let admin_handle: Option<JoinHandle<Result<()>>> = config.admin_addr.map(|admin_addr| {
+        info!("Admin RPC enabled");
+        let driver = Arc::clone(&driver_handle);
+        let admin_cancel = cancel.clone();
+        tokio::spawn(async move {
+            let app = crate::admin::router(driver);
+            let listener = tokio::net::TcpListener::bind(admin_addr).await?;
+            info!(%admin_addr, "Admin RPC server started");
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move { admin_cancel.cancelled().await })
+                .await?;
+            info!("Admin RPC server stopped");
+            Ok(())
+        })
+    });
+
+    // ── 9. Start balance monitor (if metrics enabled and not dry-run) ───
     let balance_handle: Option<JoinHandle<()>> = if config.metrics.enabled
         && let Some(addr) = proposer_address
     {
@@ -252,7 +261,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         None
     };
 
-    // ── 9. Start the driver loop ─────────────────────────────────────────
+    // ── 10. Start the driver loop ────────────────────────────────────────
     driver_handle.start_proposer().await.map_err(|e| eyre::eyre!(e))?;
 
     ready.store(true, Ordering::SeqCst);
@@ -263,11 +272,11 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         "Service is ready"
     );
 
-    // ── 10. Wait for shutdown signal ─────────────────────────────────────
+    // ── 11. Wait for shutdown signal ─────────────────────────────────────
     cancel.cancelled().await;
     info!("Shutdown signal received, stopping service...");
 
-    // ── 11. Graceful shutdown (reverse initialisation order) ─────────────
+    // ── 12. Graceful shutdown (reverse initialisation order) ─────────────
     ready.store(false, Ordering::SeqCst);
 
     if driver_handle.is_running()
@@ -278,6 +287,14 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
 
     if let Some(handle) = balance_handle {
         let _ = handle.await;
+    }
+
+    if let Some(handle) = admin_handle {
+        match handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => warn!(error = %e, "Admin RPC server error during shutdown"),
+            Err(e) => warn!(error = %e, "Admin RPC server task panicked"),
+        }
     }
 
     match health_handle.await {

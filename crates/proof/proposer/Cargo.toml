@@ -74,6 +74,9 @@ metrics-exporter-prometheus.workspace = true
 # TLS
 rustls = { workspace = true, features = ["ring"] }
 
+# Health
+base-health = { workspace = true, features = ["axum-server"] }
+
 # Misc
 hex.workspace = true
 url.workspace = true

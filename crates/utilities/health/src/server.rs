@@ -1,8 +1,11 @@
-//! Health-check HTTP server.
+//! Standalone health-check HTTP server.
 //!
 //! Provides:
 //! - `GET /healthz` — liveness probe (always 200 while the process is alive)
 //! - `GET /readyz`  — readiness probe (200 when the service is fully initialised)
+//!
+//! This is a lightweight axum-based server intended for services that need
+//! standard Kubernetes-style health probes without a full JSON-RPC stack.
 
 use std::{
     net::SocketAddr,
@@ -16,8 +19,6 @@ use axum::{Router, extract::State, http::StatusCode, routing::get};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
-
-use crate::RegistrarError;
 
 // ---------------------------------------------------------------------------
 // Shared state
@@ -44,13 +45,6 @@ impl ServerState {
             StatusCode::SERVICE_UNAVAILABLE
         }
     }
-
-    fn router(self) -> Router {
-        Router::new()
-            .route("/healthz", get(Self::liveness))
-            .route("/readyz", get(Self::readiness))
-            .with_state(self)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -58,10 +52,26 @@ impl ServerState {
 // ---------------------------------------------------------------------------
 
 /// Health-check HTTP server.
+///
+/// Exposes `GET /healthz` (liveness) and `GET /readyz` (readiness) endpoints
+/// on a dedicated HTTP port.
 #[derive(Debug)]
 pub struct HealthServer;
 
 impl HealthServer {
+    /// Returns an [`axum::Router`] with `/healthz` and `/readyz` routes.
+    ///
+    /// Use this when you need a custom listener setup or want to compose
+    /// health routes with other middleware. For the common case of a
+    /// standalone health server, prefer [`serve`](Self::serve) instead.
+    pub fn router(ready: Arc<AtomicBool>) -> Router {
+        let state = ServerState { ready };
+        Router::new()
+            .route("/healthz", get(ServerState::liveness))
+            .route("/readyz", get(ServerState::readiness))
+            .with_state(state)
+    }
+
     /// Starts the health HTTP server.
     ///
     /// The server binds to `addr` and runs until the cancellation token is
@@ -80,16 +90,15 @@ impl HealthServer {
         addr: SocketAddr,
         ready: Arc<AtomicBool>,
         cancel: CancellationToken,
-    ) -> crate::Result<()> {
-        let app = ServerState { ready }.router();
+    ) -> eyre::Result<()> {
+        let app = Self::router(ready);
 
-        let listener = TcpListener::bind(addr).await.map_err(RegistrarError::HealthServer)?;
+        let listener = TcpListener::bind(addr).await?;
         info!(%addr, "Health server started");
 
         axum::serve(listener, app)
             .with_graceful_shutdown(async move { cancel.cancelled().await })
-            .await
-            .map_err(RegistrarError::HealthServer)?;
+            .await?;
 
         info!("Health server stopped");
         Ok(())
@@ -120,7 +129,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let app = ServerState { ready }.router();
+        let app = HealthServer::router(ready);
         let cancel = CancellationToken::new();
         let cancel_for_shutdown = cancel.clone();
 

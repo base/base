@@ -10,10 +10,12 @@ mod balance;
 pub use balance::{BALANCE_POLL_INTERVAL, balance_monitor};
 
 mod cli;
-pub use cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, RpcServerArgs, SignerCli, TxManagerCli};
+pub use cli::{
+    AdminArgs, Cli, HealthArgs, LogArgs, MetricsArgs, ProposerArgs, SignerCli, TxManagerCli,
+};
 
 mod config;
-pub use config::{ConfigError, ProposerConfig, RpcServerConfig};
+pub use config::{ConfigError, ProposerConfig};
 
 mod constants;
 pub use constants::*;
@@ -29,8 +31,8 @@ pub use driver::{Driver, DriverConfig, DriverHandle, ProposerDriverControl, Reco
 mod error;
 pub use error::*;
 
-mod health;
-pub use health::serve;
+mod admin;
+pub use admin::{AdminState, router as admin_router};
 
 mod metrics;
 pub use metrics::{

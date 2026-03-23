@@ -1,6 +1,6 @@
 //! Configuration types and validation for the proposer.
 
-use std::{net::IpAddr, time::Duration};
+use std::{net::SocketAddr, time::Duration};
 
 use alloy_primitives::{Address, B256};
 use base_cli_utils::{LogConfig, MetricsConfig};
@@ -8,7 +8,7 @@ use base_proof_rpc::RetryConfig;
 use thiserror::Error;
 use url::Url;
 
-use crate::cli::{Cli, ProposerArgs, RpcServerArgs};
+use crate::cli::{Cli, ProposerArgs};
 
 /// Errors that can occur during configuration validation.
 #[derive(Debug, Error)]
@@ -80,8 +80,10 @@ pub struct ProposerConfig {
     pub log: LogConfig,
     /// Metrics server configuration.
     pub metrics: MetricsConfig,
-    /// RPC server configuration.
-    pub rpc: RpcServerConfig,
+    /// Health server socket address.
+    pub health_addr: SocketAddr,
+    /// Admin RPC server socket address. `None` when admin is disabled.
+    pub admin_addr: Option<SocketAddr>,
     /// RPC retry configuration.
     pub retry: RetryConfig,
     /// Signing configuration for L1 transaction submission.
@@ -118,10 +120,10 @@ impl ProposerConfig {
             ));
         }
 
-        // Validate RPC port when admin is enabled
-        if cli.rpc.enable_admin && cli.rpc.port == 0 {
+        // Validate admin port when admin is enabled
+        if cli.admin.enabled && cli.admin.port == 0 {
             return Err(ConfigError::Rpc(
-                "RPC port must be non-zero when admin is enabled".to_string(),
+                "admin RPC port must be non-zero when admin is enabled".to_string(),
             ));
         }
 
@@ -158,7 +160,8 @@ impl ProposerConfig {
             wait_node_sync: cli.proposer.wait_node_sync,
             log: LogConfig::from(cli.logging),
             metrics: cli.metrics.into(),
-            rpc: RpcServerConfig::from(cli.rpc),
+            health_addr: cli.health.socket_addr(),
+            admin_addr: cli.admin.enabled.then(|| cli.admin.socket_addr()),
         })
     }
 }
@@ -176,29 +179,6 @@ fn validate_url(url: &Url, field: &'static str) -> Result<(), ConfigError> {
     Ok(())
 }
 
-/// Validated RPC server configuration.
-#[derive(Debug, Clone)]
-pub struct RpcServerConfig {
-    /// Whether admin RPC methods are enabled.
-    pub enable_admin: bool,
-    /// RPC server bind address.
-    pub addr: IpAddr,
-    /// RPC server port.
-    pub port: u16,
-}
-
-impl From<RpcServerArgs> for RpcServerConfig {
-    fn from(args: RpcServerArgs) -> Self {
-        Self { enable_admin: args.enable_admin, addr: args.addr, port: args.port }
-    }
-}
-
-impl Default for RpcServerConfig {
-    fn default() -> Self {
-        Self { enable_admin: false, addr: "127.0.0.1".parse().unwrap(), port: 8545 }
-    }
-}
-
 impl From<&ProposerArgs> for RetryConfig {
     fn from(args: &ProposerArgs) -> Self {
         Self {
@@ -214,7 +194,9 @@ mod tests {
     use base_cli_utils::LogFormat;
 
     use super::*;
-    use crate::cli::{Cli, LogArgs, MetricsArgs, ProposerArgs, SignerCli, TxManagerCli};
+    use crate::cli::{
+        AdminArgs, Cli, HealthArgs, LogArgs, MetricsArgs, ProposerArgs, SignerCli, TxManagerCli,
+    };
 
     fn minimal_cli() -> Cli {
         Cli {
@@ -262,11 +244,8 @@ mod tests {
                 port: 7300,
                 ..Default::default()
             },
-            rpc: RpcServerArgs {
-                enable_admin: false,
-                addr: "127.0.0.1".parse().unwrap(),
-                port: 8545,
-            },
+            health: HealthArgs::default(),
+            admin: AdminArgs::default(),
         }
     }
 
@@ -309,22 +288,41 @@ mod tests {
     }
 
     #[test]
-    fn test_rpc_port_zero_when_admin_enabled() {
+    fn test_admin_port_zero_when_admin_enabled() {
         let mut cli = minimal_cli();
-        cli.rpc.enable_admin = true;
-        cli.rpc.port = 0;
+        cli.admin.enabled = true;
+        cli.admin.port = 0;
         let result = ProposerConfig::from_cli(cli);
         assert!(matches!(result, Err(ConfigError::Rpc(_))));
     }
 
     #[test]
-    fn test_rpc_port_zero_when_admin_disabled() {
+    fn test_admin_port_zero_when_admin_disabled() {
         let mut cli = minimal_cli();
-        cli.rpc.enable_admin = false;
-        cli.rpc.port = 0;
+        cli.admin.enabled = false;
+        cli.admin.port = 0;
         // Should be fine since admin is disabled
         let result = ProposerConfig::from_cli(cli);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_admin_addr_some_when_enabled() {
+        let mut cli = minimal_cli();
+        cli.admin.enabled = true;
+        let config = ProposerConfig::from_cli(cli).unwrap();
+        assert!(config.admin_addr.is_some());
+        let addr = config.admin_addr.unwrap();
+        assert_eq!(addr.ip(), "127.0.0.1".parse::<std::net::IpAddr>().unwrap());
+        assert_eq!(addr.port(), 8545);
+    }
+
+    #[test]
+    fn test_admin_addr_none_when_disabled() {
+        let mut cli = minimal_cli();
+        cli.admin.enabled = false;
+        let config = ProposerConfig::from_cli(cli).unwrap();
+        assert!(config.admin_addr.is_none());
     }
 
     #[test]
@@ -365,15 +363,6 @@ mod tests {
         let config = MetricsConfig::from(args);
         assert!(config.enabled);
         assert_eq!(config.port, 9090);
-    }
-
-    #[test]
-    fn test_rpc_server_config_from_args() {
-        let args =
-            RpcServerArgs { enable_admin: true, addr: "0.0.0.0".parse().unwrap(), port: 8080 };
-        let config = RpcServerConfig::from(args);
-        assert!(config.enable_admin);
-        assert_eq!(config.port, 8080);
     }
 
     #[test]

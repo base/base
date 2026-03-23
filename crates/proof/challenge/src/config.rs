@@ -204,7 +204,7 @@ impl ChallengerConfig {
         let tx_manager =
             TxManagerConfig::try_from(cli.challenger.tx_manager).map_err(ConfigError::TxManager)?;
 
-        let health_addr = SocketAddr::new(cli.challenger.health_addr, cli.challenger.health_port);
+        let health_addr = cli.health.socket_addr();
 
         let tee_request_timeout = tee_rpc_url.as_ref().map(|_| cli.challenger.tee_request_timeout);
 

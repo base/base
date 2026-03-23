@@ -4,7 +4,7 @@
 //! (e.g. `BASE_CHALLENGER_L1_ETH_RPC`). The default metrics port is **7310**
 //! (distinct from the proposer's 7300).
 
-use std::{net::IpAddr, time::Duration};
+use std::time::Duration;
 
 use alloy_primitives::Address;
 use base_cli_utils::CliStyles;
@@ -14,6 +14,7 @@ use url::Url;
 base_cli_utils::define_cli_env!("BASE_CHALLENGER");
 base_cli_utils::define_log_args!("BASE_CHALLENGER");
 base_cli_utils::define_metrics_args!("BASE_CHALLENGER", 7310);
+base_cli_utils::define_health_args!("BASE_CHALLENGER", 8080);
 base_tx_manager::define_signer_cli!("BASE_CHALLENGER");
 base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER");
 
@@ -34,6 +35,10 @@ pub struct Cli {
     /// Metrics configuration arguments.
     #[command(flatten)]
     pub metrics: MetricsArgs,
+
+    /// Health server configuration arguments.
+    #[command(flatten)]
+    pub health: HealthArgs,
 }
 
 impl std::fmt::Debug for Cli {
@@ -42,6 +47,7 @@ impl std::fmt::Debug for Cli {
             .field("challenger", &self.challenger)
             .field("logging", &self.logging)
             .field("metrics", &self.metrics)
+            .field("health", &self.health)
             .finish()
     }
 }
@@ -119,14 +125,6 @@ pub struct ChallengerArgs {
     /// Number of past games to scan on startup.
     #[arg(long = "lookback-games", env = cli_env!("LOOKBACK_GAMES"), default_value = "1000")]
     pub lookback_games: u64,
-
-    /// Health server bind address.
-    #[arg(long = "health.addr", env = cli_env!("HEALTH_ADDR"), default_value = "0.0.0.0")]
-    pub health_addr: IpAddr,
-
-    /// Health server port.
-    #[arg(long = "health.port", env = cli_env!("HEALTH_PORT"), default_value = "8080")]
-    pub health_port: u16,
 }
 
 impl std::fmt::Debug for ChallengerArgs {
@@ -144,8 +142,6 @@ impl std::fmt::Debug for ChallengerArgs {
             .field("signer", &self.signer)
             .field("tx_manager", &self.tx_manager)
             .field("lookback_games", &self.lookback_games)
-            .field("health_addr", &self.health_addr)
-            .field("health_port", &self.health_port)
             .finish()
     }
 }

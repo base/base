@@ -50,9 +50,6 @@ metrics.workspace = true
 # Tracing
 tracing.workspace = true
 
-# HTTP (health server)
-axum = { workspace = true, features = ["http1", "tokio"] }
-
 # Misc
 url.workspace = true
 

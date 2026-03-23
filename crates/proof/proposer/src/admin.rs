@@ -1,65 +1,31 @@
-//! Combined health-check and optional admin JSON-RPC HTTP server.
+//! Optional admin JSON-RPC handler.
 //!
-//! Provides:
-//! - `GET /healthz` — liveness probe (always 200 while the process is alive)
-//! - `GET /readyz`  — readiness probe (200 when the service is fully initialised)
-//! - `POST /`       — JSON-RPC admin methods (only when admin is enabled)
-//!
-//! The admin JSON-RPC methods mirror the Go `op-proposer` admin API:
-//! - `admin_startProposer`  — start the driver loop
-//! - `admin_stopProposer`   — stop the driver loop
+//! Provides `POST /` JSON-RPC admin methods mirroring the Go `op-proposer` API:
+//! - `admin_startProposer`   — start the driver loop
+//! - `admin_stopProposer`    — stop the driver loop
 //! - `admin_proposerRunning` — query whether the driver is running
 
-use std::{
-    net::SocketAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::{fmt, sync::Arc};
 
-use axum::{
-    Json, Router,
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::{get, post},
-};
+use axum::{Json, Router, extract::State, response::IntoResponse, routing::post};
 use serde::{Deserialize, Serialize};
-use tokio::net::TcpListener;
-use tokio_util::sync::CancellationToken;
-use tracing::info;
 
 use crate::driver::ProposerDriverControl;
 
 // ---------------------------------------------------------------------------
-// Shared state
+// State
 // ---------------------------------------------------------------------------
 
-/// State shared across all HTTP handlers.
+/// State shared across admin JSON-RPC handlers.
 #[derive(Clone)]
-struct ServerState {
-    /// Set to `true` once the service has completed initialisation.
-    ready: Arc<AtomicBool>,
-    /// If present, admin JSON-RPC methods are enabled.
-    driver: Option<Arc<dyn ProposerDriverControl>>,
+pub struct AdminState {
+    /// Handle to the proposer driver for start/stop/query.
+    pub driver: Arc<dyn ProposerDriverControl>,
 }
 
-// ---------------------------------------------------------------------------
-// Health endpoints
-// ---------------------------------------------------------------------------
-
-/// `GET /healthz` — liveness probe.
-async fn liveness() -> StatusCode {
-    StatusCode::OK
-}
-
-/// `GET /readyz` — readiness probe.
-async fn readiness(State(state): State<ServerState>) -> StatusCode {
-    if state.ready.load(Ordering::Relaxed) {
-        StatusCode::OK
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
+impl fmt::Debug for AdminState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AdminState").field("driver", &"<dyn ProposerDriverControl>").finish()
     }
 }
 
@@ -111,36 +77,25 @@ impl JsonRpcResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Admin JSON-RPC handler
+// Handler
 // ---------------------------------------------------------------------------
 
 /// `POST /` — dispatches JSON-RPC admin methods.
 async fn admin_rpc(
-    State(state): State<ServerState>,
+    State(state): State<AdminState>,
     Json(request): Json<JsonRpcRequest>,
 ) -> impl IntoResponse {
-    let driver = match &state.driver {
-        Some(d) => d,
-        None => {
-            return Json(JsonRpcResponse::error(
-                request.id,
-                -32601,
-                "admin methods are not enabled".into(),
-            ));
-        }
-    };
-
     let response = match request.method.as_str() {
-        "admin_startProposer" => match driver.start_proposer().await {
+        "admin_startProposer" => match state.driver.start_proposer().await {
             Ok(()) => JsonRpcResponse::success(request.id, serde_json::Value::Null),
             Err(e) => JsonRpcResponse::error(request.id, -32000, e),
         },
-        "admin_stopProposer" => match driver.stop_proposer().await {
+        "admin_stopProposer" => match state.driver.stop_proposer().await {
             Ok(()) => JsonRpcResponse::success(request.id, serde_json::Value::Null),
             Err(e) => JsonRpcResponse::error(request.id, -32000, e),
         },
         "admin_proposerRunning" => {
-            let running = driver.is_running();
+            let running = state.driver.is_running();
             JsonRpcResponse::success(request.id, serde_json::json!(running))
         }
         other => JsonRpcResponse::error(request.id, -32601, format!("method not found: {other}")),
@@ -153,63 +108,24 @@ async fn admin_rpc(
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Starts the combined health and admin HTTP server.
+/// Returns an [`axum::Router`] with the admin JSON-RPC endpoint at `POST /`.
 ///
-/// The server binds to `addr` and runs until `cancel` is triggered.
-///
-/// # Arguments
-///
-/// * `addr`   — socket address to listen on (e.g. `127.0.0.1:8545`)
-/// * `ready`  — shared flag; `/readyz` returns 200 when this is `true`
-/// * `driver` — if `Some`, admin JSON-RPC methods are mounted on `POST /`
-/// * `cancel` — cancellation token for graceful shutdown
-///
-/// # Errors
-///
-/// Returns an error if the TCP listener cannot bind to `addr`.
-pub async fn serve(
-    addr: SocketAddr,
-    ready: Arc<AtomicBool>,
-    driver: Option<Arc<dyn ProposerDriverControl>>,
-    cancel: CancellationToken,
-) -> eyre::Result<()> {
-    let has_admin = driver.is_some();
-    let state = ServerState { ready, driver };
-
-    let mut app = Router::new().route("/healthz", get(liveness)).route("/readyz", get(readiness));
-
-    if has_admin {
-        app = app.route("/", post(admin_rpc));
-    }
-
-    let app = app.with_state(state);
-
-    let listener = TcpListener::bind(addr).await?;
-    info!(%addr, admin = has_admin, "Health server started");
-
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move { cancel.cancelled().await })
-        .await?;
-
-    info!("Health server stopped");
-    Ok(())
+/// The returned router has its own state applied and is served on a
+/// dedicated listener, separate from the health server.
+pub fn router(driver: Arc<dyn ProposerDriverControl>) -> Router {
+    let state = AdminState { driver };
+    Router::new().route("/", post(admin_rpc)).with_state(state)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        net::SocketAddr,
-        sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering},
-        },
-    };
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use async_trait::async_trait;
+    use tokio::net::TcpListener;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::driver::ProposerDriverControl;
 
     /// Mock driver control that tracks start/stop calls.
     struct MockDriverControl {
@@ -245,25 +161,15 @@ mod tests {
         }
     }
 
-    /// Starts the health server on an ephemeral port and returns its address.
+    /// Starts the admin server on an ephemeral port and returns its address.
     async fn start_test_server(
-        ready: Arc<AtomicBool>,
-        driver: Option<Arc<dyn ProposerDriverControl>>,
-    ) -> (SocketAddr, CancellationToken) {
+        driver: Arc<dyn ProposerDriverControl>,
+    ) -> (std::net::SocketAddr, CancellationToken) {
         let cancel = CancellationToken::new();
-        // Bind to port 0 to get an ephemeral port.
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let has_admin = driver.is_some();
-        let state = ServerState { ready, driver };
-
-        let mut app =
-            Router::new().route("/healthz", get(liveness)).route("/readyz", get(readiness));
-        if has_admin {
-            app = app.route("/", post(admin_rpc));
-        }
-        let app = app.with_state(state);
+        let app = router(driver);
 
         let cancel_clone = cancel.clone();
         tokio::spawn(async move {
@@ -277,67 +183,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_liveness_always_ok() {
-        let ready = Arc::new(AtomicBool::new(false));
-        let (addr, cancel) = start_test_server(ready, None).await;
-
-        let resp = reqwest::get(format!("http://{addr}/healthz")).await.unwrap();
-        assert_eq!(resp.status(), 200);
-
-        cancel.cancel();
-    }
-
-    #[tokio::test]
-    async fn test_readiness_not_ready() {
-        let ready = Arc::new(AtomicBool::new(false));
-        let (addr, cancel) = start_test_server(ready, None).await;
-
-        let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
-        assert_eq!(resp.status(), 503);
-
-        cancel.cancel();
-    }
-
-    #[tokio::test]
-    async fn test_readiness_ready() {
-        let ready = Arc::new(AtomicBool::new(true));
-        let (addr, cancel) = start_test_server(ready, None).await;
-
-        let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
-        assert_eq!(resp.status(), 200);
-
-        cancel.cancel();
-    }
-
-    #[tokio::test]
-    async fn test_readiness_transitions() {
-        let ready = Arc::new(AtomicBool::new(false));
-        let (addr, cancel) = start_test_server(Arc::clone(&ready), None).await;
-
-        // Initially not ready
-        let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
-        assert_eq!(resp.status(), 503);
-
-        // Mark as ready
-        ready.store(true, Ordering::SeqCst);
-
-        let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
-        assert_eq!(resp.status(), 200);
-
-        // Mark as not ready (shutdown)
-        ready.store(false, Ordering::SeqCst);
-
-        let resp = reqwest::get(format!("http://{addr}/readyz")).await.unwrap();
-        assert_eq!(resp.status(), 503);
-
-        cancel.cancel();
-    }
-
-    #[tokio::test]
     async fn test_admin_start_stop() {
-        let ready = Arc::new(AtomicBool::new(true));
         let driver: Arc<dyn ProposerDriverControl> = Arc::new(MockDriverControl::new());
-        let (addr, cancel) = start_test_server(ready, Some(Arc::clone(&driver))).await;
+        let (addr, cancel) = start_test_server(Arc::clone(&driver)).await;
 
         let client = reqwest::Client::new();
 
@@ -391,9 +239,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_admin_unknown_method() {
-        let ready = Arc::new(AtomicBool::new(true));
         let driver: Arc<dyn ProposerDriverControl> = Arc::new(MockDriverControl::new());
-        let (addr, cancel) = start_test_server(ready, Some(driver)).await;
+        let (addr, cancel) = start_test_server(driver).await;
 
         let client = reqwest::Client::new();
         let resp = client
