@@ -3,20 +3,13 @@
 use core::convert::Infallible;
 
 use alloy_consensus::{SignableTransaction, error::ValueError};
-use alloy_evm::{
-    EvmEnv,
-    env::BlockEnvironment,
-    rpc::{EthTxEnvError, TryIntoTxEnv},
-};
 use alloy_network::TxSigner;
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::Address;
 use alloy_signer::Signature;
 use base_alloy_consensus::{OpTransaction, OpTransactionInfo, OpTxEnvelope};
-use base_revm::OpTransaction as OpRevm;
 use reth_rpc_convert::{
     SignTxRequestError, SignableTxRequest, TryIntoSimTx, transaction::FromConsensusTx,
 };
-use revm::context::TxEnv;
 
 use crate::{OpTransactionRequest, Transaction};
 
@@ -33,21 +26,6 @@ impl<T: OpTransaction + alloy_consensus::Transaction> FromConsensusTx<T> for Tra
             alloy_consensus::transaction::Recovered::new_unchecked(tx, signer),
             tx_info,
         ))
-    }
-}
-
-impl<Block: BlockEnvironment> TryIntoTxEnv<OpRevm<TxEnv>, Block> for OpTransactionRequest {
-    type Err = EthTxEnvError;
-
-    fn try_into_tx_env<Spec>(
-        self,
-        evm_env: &EvmEnv<Spec, Block>,
-    ) -> Result<OpRevm<TxEnv>, Self::Err> {
-        Ok(OpRevm {
-            base: self.as_ref().clone().try_into_tx_env(evm_env)?,
-            enveloped_tx: Some(Bytes::new()),
-            deposit: Default::default(),
-        })
     }
 }
 

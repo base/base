@@ -28,9 +28,8 @@ base-execution-chainspec.workspace = true
 # revm
 revm-database.workspace = true
 
-# base-revm
-base-revm = { workspace = true, features = ["execution"] }
-base-alloy-evm = { workspace = true, features = ["execution"] }
+# base-evm
+base-evm = { workspace = true, features = ["reth"] }
 
 # alloy
 alloy-primitives.workspace = true

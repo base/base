@@ -16,7 +16,7 @@
 //!     rpc::{EthApiBuilder, EthApiCtx},
 //! };
 //! use base_execution_chainspec::BASE_SEPOLIA;
-//! use base_revm::OpEvmConfig;
+//! use base_evm::OpEvmConfig;
 //! use base_node_core::{OpExecutorBuilder, OpNetworkPrimitives, OpNode};
 //! use base_execution_rpc::OpEthApiBuilder;
 //! use base_txpool::BasePooledTransaction;

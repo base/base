@@ -6,7 +6,7 @@ use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode};
 use alloy_transport::{RpcError, TransportErrorKind};
-use base_revm::{OpBlockExecutionError, OpHaltReason, OpTransactionError};
+use base_evm::{OpBlockExecutionError, OpHaltReason, OpL1BlockError, OpTransactionError};
 use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
 use reth_evm::execute::ProviderError;
 use reth_rpc_eth_api::{AsEthApiError, EthTxEnvError, TransactionConversionError};
@@ -26,6 +26,9 @@ pub enum OpEthApiError {
     /// EVM error originating from invalid Base data.
     #[error(transparent)]
     Evm(#[from] OpBlockExecutionError),
+    /// Error originating from L1 block info parsing.
+    #[error(transparent)]
+    L1Block(#[from] OpL1BlockError),
     /// Thrown when calculating L1 gas fee.
     #[error("failed to calculate l1 gas fee")]
     L1BlockFeeError,
@@ -55,6 +58,7 @@ impl From<OpEthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
             OpEthApiError::Eth(err) => err.into(),
             OpEthApiError::InvalidTransaction(err) => err.into(),
             OpEthApiError::Evm(_)
+            | OpEthApiError::L1Block(_)
             | OpEthApiError::L1BlockFeeError
             | OpEthApiError::L1BlockGasError => internal_rpc_err(err.to_string()),
             OpEthApiError::Sequencer(err) => err.into(),

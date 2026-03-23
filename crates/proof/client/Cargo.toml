@@ -16,10 +16,9 @@ tracing.workspace = true
 alloy-evm.workspace = true
 base-proof.workspace = true
 thiserror.workspace = true
-base-revm.workspace = true
 base-protocol.workspace = true
 alloy-consensus.workspace = true
-base-alloy-evm.workspace = true
+base-evm = { workspace = true, features = ["alloy"] }
 alloy-primitives.workspace = true
 base-proof-driver.workspace = true
 base-proof-executor.workspace = true
@@ -38,14 +37,13 @@ std = [
 	"alloy-evm/std",
 	"alloy-primitives/std",
 	"base-alloy-consensus/std",
-	"base-alloy-evm/std",
 	"base-consensus-genesis/std",
+	"base-evm/std",
 	"base-proof-driver/std",
 	"base-proof-executor/std",
 	"base-proof-preimage/std",
 	"base-proof/std",
 	"base-protocol/std",
-	"base-revm/std",
 	"spin/std",
 	"thiserror/std",
 	"tracing/std",

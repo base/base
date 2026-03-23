@@ -2,7 +2,7 @@ use core::ops::{Deref, DerefMut};
 
 use alloy_evm::{Database, Evm, EvmEnv};
 use alloy_primitives::{Address, Bytes};
-use base_revm::{
+use crate::{
     BasePrecompiles, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
 };
 use revm::{
@@ -17,11 +17,11 @@ use revm::{
 ///
 /// This is a wrapper type around the `revm` evm with optional [`Inspector`] (tracing)
 /// support. [`Inspector`] support is configurable at runtime because it's part of the underlying
-/// [`OpEvm`](base_revm::OpEvm) type.
+/// [`OpRevmEvm`](crate::OpRevmEvm) type.
 #[allow(missing_debug_implementations)] // missing revm::OpContext Debug impl
 pub struct OpEvm<DB: Database, I, P = BasePrecompiles> {
     pub(crate) inner:
-        base_revm::OpEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
+        crate::OpRevmEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
     pub(crate) inspect: bool,
 }
 
@@ -41,9 +41,9 @@ impl<DB: Database, I, P> OpEvm<DB, I, P> {
     /// Creates a new OP EVM instance.
     ///
     /// The `inspect` argument determines whether the configured [`Inspector`] of the given
-    /// [`OpEvm`](base_revm::OpEvm) should be invoked on [`Evm::transact`].
+    /// [`OpRevmEvm`](crate::OpRevmEvm) should be invoked on [`Evm::transact`].
     pub const fn new(
-        evm: base_revm::OpEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
+        evm: crate::OpRevmEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
         inspect: bool,
     ) -> Self {
         Self { inner: evm, inspect }
@@ -142,7 +142,7 @@ mod tests {
         precompiles::{Precompile, PrecompileInput},
     };
     use alloy_primitives::{Address, U256};
-    use base_revm::{bls12_381, bn254_pair};
+    use crate::{bls12_381, bn254_pair};
     use revm::{context::CfgEnv, database::EmptyDB};
     use rstest::rstest;
 

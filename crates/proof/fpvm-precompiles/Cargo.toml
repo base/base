@@ -14,8 +14,7 @@ workspace = true
 revm.workspace = true
 alloy-evm.workspace = true
 base-proof.workspace = true
-base-revm.workspace = true
-base-alloy-evm.workspace = true
+base-evm = { workspace = true, features = ["alloy"] }
 alloy-primitives.workspace = true
 base-proof-preimage.workspace = true
 
@@ -30,9 +29,8 @@ base-proof-preimage = { workspace = true, features = ["std"] }
 std = [
 	"alloy-evm/std",
 	"alloy-primitives/std",
-	"base-alloy-evm/std",
+	"base-evm/std",
 	"base-proof-preimage/std",
 	"base-proof/std",
-	"base-revm/std",
 	"revm/std",
 ]

@@ -28,7 +28,7 @@ reth-primitives-traits.workspace = true
 reth-transaction-pool.workspace = true
 
 # revm
-base-revm = { workspace = true, features = ["execution"] }
+base-evm = { workspace = true, features = ["reth"] }
 
 base-metrics.workspace = true
 base-alloy-flz.workspace = true
@@ -52,7 +52,7 @@ jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
 
 [dev-dependencies]
 alloy-eips.workspace = true
-base-alloy-evm = { workspace = true, features = ["execution"] }
+base-evm = { workspace = true, features = ["reth"] }
 base-test-utils.workspace = true
 base-execution-chainspec.workspace = true
 reth-primitives-traits.workspace = true

@@ -1,5 +1,6 @@
 [package]
-name = "base-revm"
+name = "base-evm"
+description = "Base EVM implementation"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,28 +18,38 @@ revm = { workspace = true, default-features = false }
 
 # misc
 auto_impl.workspace = true
-base-consensus-genesis.workspace = true
+base-alloy-chains = { workspace = true, features = ["revm"] }
 base-alloy-flz = { workspace = true, default-features = false }
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
 
-# compat (optional)
-reth-evm = { workspace = true, optional = true }
+# alloy (optional)
 alloy-evm = { workspace = true, optional = true }
-
-# execution (optional)
 thiserror = { workspace = true, optional = true }
 alloy-eips = { workspace = true, optional = true }
 alloy-consensus = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
-reth-rpc-eth-api = { workspace = true, optional = true }
-base-alloy-chains = { workspace = true, optional = true }
 base-alloy-consensus = { workspace = true, optional = true }
+
+# reth (optional)
+reth-evm = { workspace = true, optional = true }
+reth-chainspec = { workspace = true, optional = true }
+reth-storage-errors = { workspace = true, optional = true }
+reth-execution-types = { workspace = true, optional = true }
 reth-execution-errors = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
+base-execution-chainspec = { workspace = true, optional = true }
+base-execution-consensus = { workspace = true, optional = true }
+base-execution-primitives = { workspace = true, optional = true }
+base-alloy-rpc-types-engine = { workspace = true, optional = true }
+
+# rpc (optional)
+reth-rpc-eth-api = { workspace = true, optional = true }
+base-alloy-rpc-types = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
 alloy-genesis.workspace = true
+alloy-hardforks.workspace = true
 sha2 = { workspace = true, default-features = false }
 serde = { workspace = true, features = ["derive", "rc"] }
 alloy-consensus.workspace = true
@@ -52,7 +63,6 @@ base-execution-chainspec.workspace = true
 reth-evm = { workspace = true, features = ["test-utils"] }
 reth-revm = { workspace = true, features = ["test-utils"] }
 serde_json = { workspace = true, default-features = false, features = ["alloc", "preserve_order"] }
-base-alloy-evm = { workspace = true, features = ["std", "reth", "execution"] }
 base-execution-primitives = { workspace = true, features = ["arbitrary"] }
 
 [features]
@@ -61,18 +71,22 @@ std = [
 	"alloy-consensus?/std",
 	"alloy-eips?/std",
 	"alloy-evm?/std",
-	"alloy-primitives/std",
-	"alloy-sol-types/std",
+	"alloy-primitives?/std",
 	"base-alloy-consensus?/std",
 	"base-alloy-flz/std",
-	"base-consensus-genesis/std",
+	"base-alloy-rpc-types?/std",
+	"base-alloy-rpc-types-engine?/std",
+	"base-execution-chainspec?/std",
+	"base-execution-consensus?/std",
+	"base-execution-primitives?/std",
+	"reth-chainspec?/std",
 	"reth-evm?/std",
 	"reth-execution-errors?/std",
+	"reth-execution-types?/std",
 	"reth-primitives-traits?/std",
+	"reth-storage-errors?/std",
 	"revm/std",
 	"serde?/std",
-	"serde_json/std",
-	"sha2/std",
 	"thiserror?/std",
 ]
 dev = [
@@ -83,23 +97,32 @@ dev = [
 	"optional_eip3607",
 	"optional_no_base_fee",
 ]
-serde = [ "alloy-primitives/serde", "dep:serde", "revm/serde" ]
-alloy = [ "dep:alloy-evm" ]
-reth = [ "alloy", "dep:reth-evm" ]
-execution = [
-	"base-alloy-consensus?/evm",
+serde = [ "alloy-primitives?/serde", "dep:serde", "revm/serde" ]
+alloy = [
+	"base-alloy-consensus/evm",
 	"dep:alloy-consensus",
 	"dep:alloy-eips",
+	"dep:alloy-evm",
 	"dep:alloy-primitives",
-	"dep:base-alloy-chains",
 	"dep:base-alloy-consensus",
-	"dep:reth-execution-errors",
-	"dep:reth-primitives-traits",
 	"dep:thiserror",
-	"reth",
+]
+reth = [
+	"alloy",
+	"base-alloy-consensus/reth",
+	"dep:base-alloy-rpc-types-engine",
+	"dep:base-execution-chainspec",
+	"dep:base-execution-consensus",
+	"dep:base-execution-primitives",
+	"dep:reth-chainspec",
+	"dep:reth-evm",
+	"dep:reth-execution-errors",
+	"dep:reth-execution-types",
+	"dep:reth-primitives-traits",
+	"dep:reth-storage-errors",
 	"std",
 ]
-rpc = [ "alloy-evm?/rpc", "dep:reth-rpc-eth-api", "execution" ]
+rpc = [ "alloy-evm?/rpc", "dep:base-alloy-rpc-types", "dep:reth-rpc-eth-api", "reth" ]
 bn = [ "revm/bn" ]
 blst = [ "revm/blst" ]
 c-kzg = [ "revm/c-kzg" ]

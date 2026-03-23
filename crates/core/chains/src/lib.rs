@@ -16,3 +16,6 @@ pub use hardforks::BaseUpgrades;
 
 mod chain;
 pub use chain::BaseChainUpgrades;
+
+mod spec;
+pub use spec::{OpSpecId, UnknownOpHardfork};

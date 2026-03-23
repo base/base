@@ -1,4 +1,4 @@
-//! Contains the `[OpEvm]` type and its implementation of the execution EVM traits.
+//! Contains the `[OpRevmEvm]` type and its implementation of the execution EVM traits.
 use revm::{
     Database, Inspector,
     context::{Cfg, ContextError, ContextSetters, Evm, FrameStack},
@@ -16,7 +16,7 @@ use crate::{OpSpecId, precompiles::BasePrecompiles};
 
 /// Base EVM extends the [`Evm`] type with Base-specific types and logic.
 #[derive(Debug, Clone)]
-pub struct OpEvm<
+pub struct OpRevmEvm<
     CTX,
     INSP,
     I = EthInstructions<EthInterpreter, CTX>,
@@ -28,7 +28,7 @@ pub struct OpEvm<
 );
 
 impl<CTX: ContextTr<Cfg: Cfg<Spec: Into<OpSpecId> + Clone>>, INSP>
-    OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, BasePrecompiles>
+    OpRevmEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, BasePrecompiles>
 {
     /// Create a new Base EVM.
     pub fn new(ctx: CTX, inspector: INSP) -> Self {
@@ -48,15 +48,15 @@ impl<CTX: ContextTr<Cfg: Cfg<Spec: Into<OpSpecId> + Clone>>, INSP>
     }
 }
 
-impl<CTX, INSP, I, P> OpEvm<CTX, INSP, I, P> {
+impl<CTX, INSP, I, P> OpRevmEvm<CTX, INSP, I, P> {
     /// Consumed self and returns a new Evm type with given Inspector.
-    pub fn with_inspector<OINSP>(self, inspector: OINSP) -> OpEvm<CTX, OINSP, I, P> {
-        OpEvm(self.0.with_inspector(inspector))
+    pub fn with_inspector<OINSP>(self, inspector: OINSP) -> OpRevmEvm<CTX, OINSP, I, P> {
+        OpRevmEvm(self.0.with_inspector(inspector))
     }
 
     /// Consumes self and returns a new Evm type with given Precompiles.
-    pub fn with_precompiles<OP>(self, precompiles: OP) -> OpEvm<CTX, INSP, I, OP> {
-        OpEvm(self.0.with_precompiles(precompiles))
+    pub fn with_precompiles<OP>(self, precompiles: OP) -> OpRevmEvm<CTX, INSP, I, OP> {
+        OpRevmEvm(self.0.with_precompiles(precompiles))
     }
 
     /// Consumes self and returns the inner Inspector.
@@ -65,7 +65,7 @@ impl<CTX, INSP, I, P> OpEvm<CTX, INSP, I, P> {
     }
 }
 
-impl<CTX, INSP, I, P> InspectorEvmTr for OpEvm<CTX, INSP, I, P>
+impl<CTX, INSP, I, P> InspectorEvmTr for OpRevmEvm<CTX, INSP, I, P>
 where
     CTX: ContextTr<Journal: JournalExt> + ContextSetters,
     I: InstructionProvider<Context = CTX, InterpreterTypes = EthInterpreter>,
@@ -101,7 +101,7 @@ where
     }
 }
 
-impl<CTX, INSP, I, P> EvmTr for OpEvm<CTX, INSP, I, P, EthFrame<EthInterpreter>>
+impl<CTX, INSP, I, P> EvmTr for OpRevmEvm<CTX, INSP, I, P, EthFrame<EthInterpreter>>
 where
     CTX: ContextTr,
     I: InstructionProvider<Context = CTX, InterpreterTypes = EthInterpreter>,

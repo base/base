@@ -34,8 +34,7 @@ base-alloy-rpc-types-engine.workspace = true
 
 # Execution
 alloy-evm.workspace = true
-base-revm.workspace = true
-base-alloy-evm.workspace = true
+base-evm = { workspace = true, features = ["alloy"] }
 
 # General
 lru.workspace = true
@@ -74,18 +73,15 @@ std = [
 	"ark-bls12-381/std",
 	"ark-ff/std",
 	"base-alloy-consensus/std",
-	"base-alloy-evm/std",
 	"base-alloy-rpc-types-engine/std",
 	"base-consensus-genesis/std",
 	"base-consensus-registry/std",
+	"base-evm/std",
 	"base-proof-driver/std",
 	"base-proof-executor/std",
 	"base-proof-mpt/std",
 	"base-proof-preimage/std",
 	"base-protocol/std",
-	"base-revm/std",
-	"c-kzg?/std",
-	"dep:c-kzg",
 	"dep:tokio",
 	"serde/std",
 	"serde_json/std",

@@ -34,7 +34,7 @@ pub mod proof_history;
 #[cfg(feature = "test-utils")]
 pub mod utils;
 
-use base_revm as _;
+use base_evm as _;
 #[cfg(feature = "test-utils")]
 use reth_tasks as _;
 use revm as _;

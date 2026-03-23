@@ -1,4 +1,4 @@
-//! Base builder trait [`OpBuilder`] used to build [`OpEvm`].
+//! Base builder trait [`OpBuilder`] used to build [`OpRevmEvm`].
 use revm::{
     Context, Database,
     context::Cfg,
@@ -8,13 +8,13 @@ use revm::{
     state::EvmState,
 };
 
-use crate::{L1BlockInfo, OpSpecId, evm::OpEvm, precompiles::BasePrecompiles, transaction::OpTxTr};
+use crate::{L1BlockInfo, OpSpecId, core_evm::OpRevmEvm, precompiles::BasePrecompiles, transaction::OpTxTr};
 
-/// Type alias for default `OpEvm`
+/// Type alias for default `OpRevmEvm`
 pub type DefaultOpEvm<CTX, INSP = ()> =
-    OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, BasePrecompiles>;
+    OpRevmEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, BasePrecompiles>;
 
-/// Trait that allows for Base `OpEvm` to be built.
+/// Trait that allows for Base `OpRevmEvm` to be built.
 pub trait OpBuilder: Sized {
     /// Type of the context.
     type Context;
@@ -37,10 +37,10 @@ where
     type Context = Self;
 
     fn build_op(self) -> DefaultOpEvm<Self::Context> {
-        OpEvm::new(self, ())
+        OpRevmEvm::new(self, ())
     }
 
     fn build_op_with_inspector<INSP>(self, inspector: INSP) -> DefaultOpEvm<Self::Context, INSP> {
-        OpEvm::new(self, inspector)
+        OpRevmEvm::new(self, inspector)
     }
 }

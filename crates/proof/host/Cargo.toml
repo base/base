@@ -14,7 +14,7 @@ workspace = true
 # base
 base-protocol.workspace = true
 base-proof-mpt.workspace = true
-base-alloy-evm.workspace = true
+base-evm = { workspace = true, features = ["alloy"] }
 base-alloy-network.workspace = true
 base-consensus-providers.workspace = true
 base-proof = { workspace = true, features = ["std"] }

@@ -26,7 +26,7 @@ mod alloy_compat {
     }
 }
 
-#[cfg(feature = "execution")]
+#[cfg(feature = "alloy")]
 mod consensus_compat {
     use alloy_eips::Encodable2718;
     use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
@@ -112,6 +112,35 @@ mod reth_compat {
 
         fn set_access_list(&mut self, access_list: AccessList) {
             self.base.set_access_list(access_list);
+        }
+    }
+}
+
+#[cfg(feature = "rpc")]
+mod rpc_compat {
+    use alloy_evm::{
+        EvmEnv,
+        env::BlockEnvironment,
+        rpc::{EthTxEnvError, TryIntoTxEnv},
+    };
+    use alloy_primitives::Bytes;
+    use base_alloy_rpc_types::OpTransactionRequest;
+    use revm::context::TxEnv;
+
+    use crate::OpTransaction;
+
+    impl<Block: BlockEnvironment> TryIntoTxEnv<OpTransaction<TxEnv>, Block> for OpTransactionRequest {
+        type Err = EthTxEnvError;
+
+        fn try_into_tx_env<Spec>(
+            self,
+            evm_env: &EvmEnv<Spec, Block>,
+        ) -> Result<OpTransaction<TxEnv>, Self::Err> {
+            Ok(OpTransaction {
+                base: self.as_ref().clone().try_into_tx_env(evm_env)?,
+                enveloped_tx: Some(Bytes::new()),
+                deposit: Default::default(),
+            })
         }
     }
 }

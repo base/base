@@ -26,7 +26,7 @@ base-alloy-consensus.workspace = true
 
 [dev-dependencies]
 revm.workspace = true
-base-revm.workspace = true
+base-evm.workspace = true
 rstest.workspace = true
 alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 

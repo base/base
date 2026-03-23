@@ -44,7 +44,7 @@ revm.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-serde.workspace = true
-base-revm = { workspace = true, features = ["execution"] }
+base-evm = { workspace = true, features = ["reth"] }
 alloy-json-rpc.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-client.workspace = true

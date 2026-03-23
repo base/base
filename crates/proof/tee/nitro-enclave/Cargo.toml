@@ -12,9 +12,11 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# base
-base-alloy-evm.workspace = true
-base-proof-client = { workspace = true, features = ["std"] }
+# Core
+base-evm = { workspace = true, features = ["alloy"] }
+base-proof-client.workspace = true
+base-health = { workspace = true, optional = true }
+base-proof-host = { workspace = true, optional = true }
 base-proof-preimage = { workspace = true, features = ["serde"] }
 base-proof-primitives = { workspace = true, features = ["serde"] }
 base-consensus-genesis = { workspace = true, features = ["serde"] }

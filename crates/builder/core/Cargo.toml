@@ -112,7 +112,7 @@ base-execution-rpc = { workspace = true, features = ["client"] }
 
 # revm
 revm.workspace = true
-base-revm = { workspace = true, features = ["execution"] }
+base-evm = { workspace = true, features = ["reth"] }
 
 # alloy
 alloy-evm.workspace = true
@@ -141,7 +141,6 @@ base-alloy-network.workspace = true
 base-alloy-consensus.workspace = true
 base-alloy-rpc-types.workspace = true
 base-alloy-rpc-types-engine.workspace = true
-base-alloy-evm = { workspace = true, features = ["execution"] }
 
 # tokio
 tokio.workspace = true

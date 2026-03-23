@@ -1,5 +1,5 @@
 use alloy_evm::{Database, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
-use base_revm::{
+use crate::{
     BasePrecompiles, DefaultOp, OpBuilder, OpContext, OpHaltReason, OpSpecId, OpTransaction,
     OpTransactionError,
 };

@@ -14,12 +14,12 @@ use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::{OpReceipt, OpTxEnvelope};
-use base_alloy_evm::ensure_create2_deployer;
+use base_evm::ensure_create2_deployer;
 use base_alloy_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use base_execution_primitives::OpPrimitives;
 use base_execution_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
-use base_revm::{L1_BLOCK_CONTRACT, L1BlockInfo, OpHaltReason};
+use base_evm::{L1_BLOCK_CONTRACT, L1BlockInfo, OpHaltReason};
 use reth_evm::{Evm, FromRecoveredTx};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use revm::{
@@ -155,7 +155,7 @@ where
     /// Applies EIP-4788, EIP-2935, and Canyon create2 deployer pre-execution changes to the EVM.
     ///
     /// Must be called once per block, before executing any transactions. This mirrors the
-    /// `apply_pre_execution_changes` behavior of [`base_alloy_evm::OpBlockExecutor`] to ensure
+    /// `apply_pre_execution_changes` behavior of [`base_evm::OpBlockExecutor`] to ensure
     /// that the cached execution results match what the validator computes.
     pub fn apply_pre_execution_changes(
         &mut self,
@@ -397,12 +397,11 @@ mod tests {
     use alloy_primitives::{Address, B256, TxKind, U256, address};
     use alloy_rpc_types_engine::PayloadId;
     use base_alloy_consensus::OpTxEnvelope;
-    use base_alloy_evm::OpEvmConfig;
     use base_alloy_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
     use base_execution_chainspec::OpChainSpecBuilder;
-    use base_revm::L1BlockInfo;
+    use base_evm::{L1BlockInfo, OpEvmConfig};
     use reth_evm::ConfigureEvm;
     use reth_revm::State;
     use revm::{

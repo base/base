@@ -4,7 +4,7 @@ use core::fmt::Debug;
 use alloy_consensus::Sealed;
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded, revm::context::BlockEnv};
 use alloy_primitives::B256;
-use base_alloy_evm::OpTxEnv;
+use base_evm::OpTxEnv;
 use base_consensus_derive::EthereumDataSource;
 pub use base_proof::{BootInfo, HintType, OracleProviderError};
 use base_proof::{
@@ -13,7 +13,7 @@ use base_proof::{
 };
 use base_proof_executor::TrieDBProvider;
 use base_proof_preimage::{CommsClient, HintWriterClient, PreimageKey, PreimageOracleClient};
-use base_revm::OpSpecId;
+use base_evm::OpSpecId;
 
 use crate::{FaultProofDriver, FaultProofProgramError};
 

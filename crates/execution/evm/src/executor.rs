@@ -1,4 +1,4 @@
-use alloc::{borrow::Cow, boxed::Box, vec::Vec};
+use std::{borrow::Cow, boxed::Box, vec::Vec};
 
 use alloy_consensus::{Eip658Value, Header, Transaction, TransactionEnvelope, TxReceipt};
 use alloy_eips::{Encodable2718, Typed2718};
@@ -16,7 +16,7 @@ use alloy_primitives::Address;
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::OpDepositReceipt;
 use base_alloy_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
-use base_revm::{DEPOSIT_TRANSACTION_TYPE, L1_BLOCK_CONTRACT, L1BlockInfo};
+use crate::{DEPOSIT_TRANSACTION_TYPE, L1_BLOCK_CONTRACT, L1BlockInfo};
 use revm::{
     Database as _, DatabaseCommit,
     context::{Block, result::ResultAndState},
@@ -316,8 +316,11 @@ where
             })
         })?;
 
-        let legacy_gas_used =
-            self.receipts.last().map(|r| r.cumulative_gas_used()).unwrap_or_default();
+        let legacy_gas_used = self
+            .receipts
+            .last()
+            .map(|r: &R::Receipt| r.cumulative_gas_used())
+            .unwrap_or_default();
 
         Ok((
             self.evm,
@@ -349,7 +352,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloc::{string::ToString, vec};
+    use std::{string::ToString, vec};
 
     use alloy_consensus::{SignableTransaction, TxLegacy, transaction::Recovered};
     use alloy_eips::eip2718::WithEncoded;
@@ -358,7 +361,7 @@ mod tests {
     use alloy_primitives::{Address, Signature, U256, uint};
     use base_alloy_chains::{BaseChainUpgrades, BaseUpgrade};
     use base_alloy_consensus::OpTxEnvelope;
-    use base_revm::{
+    use crate::{
         BASE_FEE_SCALAR_OFFSET, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
         ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, L1BlockInfo,
         OPERATOR_FEE_SCALARS_SLOT, OpBuilder, OpSpecId,

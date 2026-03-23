@@ -128,6 +128,38 @@ impl Default for RollupConfig {
 }
 
 impl RollupConfig {
+    /// Returns the active [`base_alloy_chains::OpSpecId`] for the executor.
+    ///
+    /// ## Takes
+    /// - `timestamp`: The timestamp of the executing block.
+    ///
+    /// ## Returns
+    /// The active [`base_alloy_chains::OpSpecId`] for the executor.
+    pub fn spec_id(&self, timestamp: u64) -> base_alloy_chains::OpSpecId {
+        if self.is_base_v1_active(timestamp) {
+            base_alloy_chains::OpSpecId::BASE_V1
+        } else if self.is_jovian_active(timestamp) {
+            base_alloy_chains::OpSpecId::JOVIAN
+        } else if self.is_isthmus_active(timestamp) {
+            base_alloy_chains::OpSpecId::ISTHMUS
+        } else if self.is_holocene_active(timestamp) {
+            base_alloy_chains::OpSpecId::HOLOCENE
+        } else if self.is_fjord_active(timestamp) {
+            base_alloy_chains::OpSpecId::FJORD
+        } else if self.is_ecotone_active(timestamp) {
+            base_alloy_chains::OpSpecId::ECOTONE
+        } else if self.is_canyon_active(timestamp) {
+            base_alloy_chains::OpSpecId::CANYON
+        } else if self.is_regolith_active(timestamp) {
+            base_alloy_chains::OpSpecId::REGOLITH
+        } else {
+            base_alloy_chains::OpSpecId::BEDROCK
+        }
+    }
+}
+
+
+impl RollupConfig {
     /// Returns true if Regolith is active at the given timestamp.
     pub fn is_regolith_active(&self, timestamp: u64) -> bool {
         self.hardforks.regolith_time.is_some_and(|t| timestamp >= t)
@@ -437,6 +469,34 @@ mod tests {
         let mut bytes = [0u8; 1024];
         rand::rng().fill(bytes.as_mut_slice());
         RollupConfig::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap();
+    }
+
+    #[test]
+    fn test_spec_id() {
+        // By default, the spec ID should be BEDROCK.
+        let mut config = RollupConfig {
+            hardforks: HardForkConfig { regolith_time: Some(10), ..Default::default() },
+            ..Default::default()
+        };
+        assert_eq!(config.spec_id(0), base_alloy_chains::OpSpecId::BEDROCK);
+        assert_eq!(config.spec_id(10), base_alloy_chains::OpSpecId::REGOLITH);
+        config.hardforks.canyon_time = Some(20);
+        assert_eq!(config.spec_id(20), base_alloy_chains::OpSpecId::CANYON);
+        config.hardforks.ecotone_time = Some(30);
+        assert_eq!(config.spec_id(30), base_alloy_chains::OpSpecId::ECOTONE);
+        config.hardforks.fjord_time = Some(40);
+        assert_eq!(config.spec_id(40), base_alloy_chains::OpSpecId::FJORD);
+        config.hardforks.holocene_time = Some(50);
+        assert_eq!(config.spec_id(50), base_alloy_chains::OpSpecId::HOLOCENE);
+        config.hardforks.isthmus_time = Some(60);
+        assert_eq!(config.spec_id(60), base_alloy_chains::OpSpecId::ISTHMUS);
+        config.hardforks.jovian_time = Some(65);
+        assert_eq!(config.spec_id(65), base_alloy_chains::OpSpecId::JOVIAN);
+        config.hardforks.base = crate::BaseHardforkConfig { v1: Some(70) };
+        assert_eq!(config.spec_id(70), base_alloy_chains::OpSpecId::BASE_V1);
+        // V1 takes precedence over Jovian when both are active at the same timestamp
+        config.hardforks.base = crate::BaseHardforkConfig { v1: Some(65) };
+        assert_eq!(config.spec_id(65), base_alloy_chains::OpSpecId::BASE_V1);
     }
 
     #[test]

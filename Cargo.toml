@@ -182,7 +182,6 @@ base-alloy-rpc-types = { path = "crates/core/rpc-types" }
 base-access-lists = { path = "crates/core/access-lists" }
 base-alloy-flashblocks = { path = "crates/core/flashblocks" }
 base-alloy-rpc-jsonrpsee = { path = "crates/core/rpc-jsonrpsee" }
-base-alloy-evm = { path = "crates/core/evm", default-features = false }
 base-alloy-flz = { path = "crates/core/flz", default-features = false }
 base-alloy-consensus = { path = "crates/core/consensus", default-features = false }
 base-alloy-rpc-types-engine = { path = "crates/core/rpc-types-engine", default-features = false }
@@ -233,7 +232,7 @@ base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-consensus = { path = "crates/execution/consensus" }
 base-execution-primitives = { path = "crates/execution/primitives" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
-base-revm = { path = "crates/execution/revm", default-features = false }
+base-evm = { path = "crates/execution/evm", default-features = false }
 
 # Txpool
 base-txpool = { path = "crates/txpool" }

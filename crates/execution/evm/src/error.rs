@@ -1,4 +1,4 @@
-use alloc::boxed::Box;
+use std::boxed::Box;
 
 /// Custom errors that can occur during OP block execution.
 #[derive(Debug, thiserror::Error)]

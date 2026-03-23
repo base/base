@@ -21,7 +21,7 @@ use base_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV5, OpExecutionPayloadV4,
 };
 use base_execution_primitives::OpPrimitives;
-use base_revm::OpNextBlockEnvAttributes;
+use base_evm::OpNextBlockEnvAttributes;
 use reth_chainspec::EthChainSpec;
 use reth_payload_builder::{EthPayloadBuilderAttributes, PayloadBuilderError};
 use reth_payload_primitives::{

@@ -9,7 +9,7 @@ use alloy_rlp::Decodable;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::PayloadAttributes;
 use alloy_transport_http::{Client, Http};
-use base_alloy_evm::OpEvmFactory;
+use base_evm::OpEvmFactory;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_consensus_genesis::RollupConfig;
 use base_consensus_registry::Registry;

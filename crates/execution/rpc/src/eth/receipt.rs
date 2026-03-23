@@ -9,7 +9,7 @@ use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::{OpReceipt, OpTransaction};
 use base_alloy_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_alloy_rpc_types::{L1BlockInfo, OpTransactionReceipt, OpTransactionReceiptFields};
-use base_revm::RethL1BlockInfo;
+use base_evm::RethL1BlockInfo;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_node_api::NodePrimitives;
 use reth_primitives_traits::SealedBlock;
@@ -75,7 +75,7 @@ where
         inputs: Vec<ConvertReceiptInput<'_, N>>,
         block: &SealedBlock<N::Block>,
     ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
-        let mut l1_block_info = match base_revm::extract_l1_info(block.body()) {
+        let mut l1_block_info = match base_evm::extract_l1_info(block.body()) {
             Ok(l1_block_info) => l1_block_info,
             Err(err) => {
                 let genesis_number =
@@ -168,12 +168,12 @@ impl OpReceiptFieldsBuilder {
         }
     }
 
-    /// Applies [`L1BlockInfo`](base_revm::L1BlockInfo).
+    /// Applies [`L1BlockInfo`](base_evm::L1BlockInfo).
     pub fn l1_block_info<T: Encodable2718 + OpTransaction>(
         mut self,
         chain_spec: &impl BaseUpgrades,
         tx: &T,
-        l1_block_info: &mut base_revm::L1BlockInfo,
+        l1_block_info: &mut base_evm::L1BlockInfo,
     ) -> Result<Self, OpEthApiError> {
         let raw_tx = tx.encoded_2718();
         let timestamp = self.block_timestamp;
@@ -285,7 +285,7 @@ impl OpReceiptBuilder {
     pub fn new<N>(
         chain_spec: &impl BaseUpgrades,
         input: ConvertReceiptInput<'_, N>,
-        l1_block_info: &mut base_revm::L1BlockInfo,
+        l1_block_info: &mut base_evm::L1BlockInfo,
     ) -> Result<Self, OpEthApiError>
     where
         N: NodePrimitives<SignedTx: OpTransaction, Receipt = OpReceipt>,
@@ -413,7 +413,7 @@ mod tests {
         };
 
         let mut l1_block_info =
-            base_revm::extract_l1_info(&block.body).expect("should extract l1 info");
+            base_evm::extract_l1_info(&block.body).expect("should extract l1 info");
 
         // test
         assert!(BaseUpgrades::is_fjord_active_at_timestamp(
@@ -493,7 +493,7 @@ mod tests {
             OpTransactionSigned::decode_2718(&mut TX_1_BASE_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
 
-        let mut l1_block_info = base_revm::L1BlockInfo {
+        let mut l1_block_info = base_evm::L1BlockInfo {
             operator_fee_scalar: Some(U256::ZERO),
             operator_fee_constant: Some(U256::from(2)),
             ..Default::default()
@@ -517,7 +517,7 @@ mod tests {
             OpTransactionSigned::decode_2718(&mut TX_1_BASE_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
 
-        let mut l1_block_info = base_revm::L1BlockInfo {
+        let mut l1_block_info = base_evm::L1BlockInfo {
             operator_fee_scalar: Some(U256::ZERO),
             operator_fee_constant: Some(U256::ZERO),
             ..Default::default()
@@ -549,7 +549,7 @@ mod tests {
             ..Default::default()
         };
         let mut l1_block_info =
-            base_revm::extract_l1_info(&block.body).expect("should extract l1 info");
+            base_evm::extract_l1_info(&block.body).expect("should extract l1 info");
 
         // https://basescan.org/tx/0xf9420cbaf66a2dda75a015488d37262cbfd4abd0aad7bb2be8a63e14b1fa7a94
         let tx = hex!(
@@ -608,7 +608,7 @@ mod tests {
 
         let tx = OpTransactionSigned::new_unhashed(OpTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = base_revm::L1BlockInfo {
+        let mut l1_block_info = base_evm::L1BlockInfo {
             da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
             ..Default::default()
         };
@@ -644,7 +644,7 @@ mod tests {
 
         let tx = OpTransactionSigned::new_unhashed(OpTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = base_revm::L1BlockInfo {
+        let mut l1_block_info = base_evm::L1BlockInfo {
             da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
             ..Default::default()
         };
@@ -698,7 +698,7 @@ mod tests {
 
         let tx = OpTransactionSigned::new_unhashed(OpTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = base_revm::L1BlockInfo {
+        let mut l1_block_info = base_evm::L1BlockInfo {
             da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
             ..Default::default()
         };

@@ -16,7 +16,7 @@ reth-evm.workspace = true
 reth-errors.workspace = true
 reth-revm.workspace = true
 reth-trie.workspace = true
-base-revm = { workspace = true, features = ["execution"] }
+base-evm = { workspace = true, features = ["reth"] }
 reth-tasks.workspace = true
 reth-provider.workspace = true
 reth-consensus.workspace = true
@@ -38,7 +38,6 @@ revm.workspace = true
 revm-primitives.workspace = true
 
 base-alloy-rpc-types-engine.workspace = true
-base-alloy-evm = { workspace = true, features = ["execution"] }
 
 alloy-evm.workspace = true
 alloy-eips.workspace = true

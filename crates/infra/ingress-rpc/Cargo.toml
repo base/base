@@ -18,7 +18,7 @@ base-bundles.workspace = true
 async-trait.workspace = true
 metrics-derive.workspace = true
 alloy-signer-local.workspace = true
-base-revm = { workspace = true, features = ["execution"] }
+base-evm = { workspace = true, features = ["reth"] }
 base-alloy-network.workspace = true
 audit-archiver-lib.workspace = true
 reth-rpc-eth-types.workspace = true

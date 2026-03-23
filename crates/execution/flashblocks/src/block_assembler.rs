@@ -15,7 +15,7 @@ use base_alloy_flashblocks::{ExecutionPayloadBaseV1, Flashblock};
 use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadSidecar, OpExecutionPayloadV4,
 };
-use base_revm::L1BlockInfo;
+use base_evm::L1BlockInfo;
 
 use crate::{ExecutionError, ProtocolError, Result};
 
@@ -38,7 +38,7 @@ impl AssembledBlock {
     /// This extracts the L1 attributes deposited transaction data from the
     /// block body, which contains information about the L1 origin.
     pub fn l1_block_info(&self) -> Result<L1BlockInfo> {
-        base_revm::extract_l1_info(&self.block.body)
+        base_evm::extract_l1_info(&self.block.body)
             .map_err(|e| ExecutionError::L1BlockInfo(e.to_string()).into())
     }
 }

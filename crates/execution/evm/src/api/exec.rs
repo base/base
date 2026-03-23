@@ -1,4 +1,4 @@
-//! Implementation of the [`ExecuteEvm`] trait for the [`OpEvm`].
+//! Implementation of the [`ExecuteEvm`] trait for the [`OpRevmEvm`].
 use revm::{
     DatabaseCommit, ExecuteCommitEvm, ExecuteEvm,
     context::{ContextSetters, result::ExecResultAndState},
@@ -19,7 +19,7 @@ use revm::{
 };
 
 use crate::{
-    L1BlockInfo, OpHaltReason, OpSpecId, OpTransactionError, evm::OpEvm, handler::OpHandler,
+    L1BlockInfo, OpHaltReason, OpSpecId, OpTransactionError, core_evm::OpRevmEvm, handler::OpHandler,
     transaction::OpTxTr,
 };
 
@@ -44,11 +44,11 @@ impl<T> OpContextTr for T where
 {
 }
 
-/// Type alias for the error type of the `OpEvm`.
+/// Type alias for the error type of the `OpRevmEvm`.
 pub type OpError<CTX> = EVMError<<<CTX as ContextTr>::Db as Database>::Error, OpTransactionError>;
 
 impl<CTX, INSP, PRECOMPILE> ExecuteEvm
-    for OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
+    for OpRevmEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
 where
     CTX: OpContextTr + ContextSetters,
     PRECOMPILE: PrecompileProvider<CTX, Output = InterpreterResult>,
@@ -85,7 +85,7 @@ where
 }
 
 impl<CTX, INSP, PRECOMPILE> ExecuteCommitEvm
-    for OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
+    for OpRevmEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
 where
     CTX: OpContextTr<Db: DatabaseCommit> + ContextSetters,
     PRECOMPILE: PrecompileProvider<CTX, Output = InterpreterResult>,
@@ -96,7 +96,7 @@ where
 }
 
 impl<CTX, INSP, PRECOMPILE> InspectEvm
-    for OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
+    for OpRevmEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
 where
     CTX: OpContextTr<Journal: JournalExt> + ContextSetters,
     INSP: Inspector<CTX, EthInterpreter>,
@@ -116,7 +116,7 @@ where
 }
 
 impl<CTX, INSP, PRECOMPILE> InspectCommitEvm
-    for OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
+    for OpRevmEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
 where
     CTX: OpContextTr<Journal: JournalExt, Db: DatabaseCommit> + ContextSetters,
     INSP: Inspector<CTX, EthInterpreter>,
@@ -125,7 +125,7 @@ where
 }
 
 impl<CTX, INSP, PRECOMPILE> SystemCallEvm
-    for OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
+    for OpRevmEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
 where
     CTX: OpContextTr<Tx: SystemCallTx> + ContextSetters,
     PRECOMPILE: PrecompileProvider<CTX, Output = InterpreterResult>,
@@ -152,7 +152,7 @@ where
 }
 
 impl<CTX, INSP, PRECOMPILE> InspectSystemCallEvm
-    for OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
+    for OpRevmEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
 where
     CTX: OpContextTr<Journal: JournalExt, Tx: SystemCallTx> + ContextSetters,
     INSP: Inspector<CTX, EthInterpreter>,

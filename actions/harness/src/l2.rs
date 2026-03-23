@@ -12,12 +12,12 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{EMPTY_ROOT_HASH, TrieAccount, root::state_root_unhashed};
 use base_alloy_chains::BaseUpgrade;
 use base_alloy_consensus::{EIP1559ParamError, OpBlock, OpTxEnvelope};
-use base_alloy_evm::OpEvmConfig;
+use base_evm::OpEvmConfig;
 use base_alloy_rpc_types_engine::{OpExecutionPayload, OpNetworkPayloadEnvelope, PayloadHash};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_execution_chainspec::OpChainSpecBuilder;
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo, OpAttributesWithParent};
-use base_revm::OpTransaction;
+use base_evm::OpTransaction;
 use reth_evm::{ConfigureEvm, Evm as _, FromRecoveredTx};
 use revm::{
     DatabaseCommit,

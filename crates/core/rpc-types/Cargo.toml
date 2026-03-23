@@ -30,9 +30,6 @@ serde_json = { workspace = true, features = ["alloc"] }
 serde = { workspace = true, features = ["derive", "alloc"] }
 
 # reth
-revm = { workspace = true, optional = true }
-alloy-evm = { workspace = true, optional = true }
-base-revm = { workspace = true, optional = true }
 reth-rpc-convert = { workspace = true, optional = true }
 
 # signing
@@ -59,15 +56,12 @@ default = [ "std" ]
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",
-	"alloy-evm?/std",
 	"alloy-network-primitives/std",
 	"alloy-primitives/std",
 	"alloy-rpc-types-eth/std",
 	"alloy-serde/std",
 	"base-alloy-consensus/std",
-	"base-revm?/std",
 	"derive_more/std",
-	"revm?/std",
 	"serde/std",
 	"serde_json/std",
 ]
@@ -79,7 +73,6 @@ arbitrary = [
 	"alloy-serde/arbitrary",
 	"base-alloy-consensus/arbitrary",
 	"dep:arbitrary",
-	"revm?/arbitrary",
 	"std",
 ]
 k256 = [ "alloy-rpc-types-eth/k256", "base-alloy-consensus/k256" ]
@@ -90,15 +83,10 @@ serde = [
 	"alloy-primitives/serde",
 	"alloy-rpc-types-eth/serde",
 	"base-alloy-consensus/serde",
-	"base-revm?/serde",
-	"revm?/serde",
 ]
 reth = [
-	"dep:alloy-evm",
 	"dep:alloy-network",
 	"dep:alloy-signer",
-	"dep:base-revm",
 	"dep:reth-rpc-convert",
-	"dep:revm",
 	"std",
 ]
