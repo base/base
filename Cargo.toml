@@ -10,7 +10,21 @@ exclude = [".github/"]
 [workspace]
 resolver = "2"
 members = [
-  "bin/*",
+  "bin/audit-archiver",
+  "bin/basectl",
+  "bin/based",
+  "bin/batcher",
+  "bin/builder",
+  "bin/challenger",
+  "bin/consensus",
+  "bin/ingress-rpc",
+  "bin/mempool-rebroadcaster",
+  "bin/node",
+  "bin/proposer",
+  "bin/prover/nitro",
+  "bin/prover/zk",
+  "bin/prover-registrar",
+  "bin/websocket-proxy",
   "crates/client/*",
   "crates/consensus/*",
   "crates/proof/mpt",
@@ -46,7 +60,7 @@ members = [
   "crates/infra/ingress-rpc",
   "crates/infra/mempool-rebroadcaster",
   "crates/infra/websocket-proxy",
-  "crates/infra/load-tests/*",
+  "crates/infra/load-tests",
   "crates/alloy/*",
   "crates/execution/*",
   "crates/txpool",
@@ -65,7 +79,8 @@ default-members = [
   "bin/audit-archiver",
   "bin/mempool-rebroadcaster",
   "bin/proposer",
-  "bin/prover",
+  "bin/prover/nitro",
+  "bin/prover/zk",
   "bin/prover-registrar",
 ]
 
@@ -271,10 +286,11 @@ base-comp = { path = "crates/batcher/comp", default-features = false }
 base-jwt = { path = "crates/utilities/jwt" }
 base-health = { path = "crates/utilities/health" }
 base-cli-utils = { path = "crates/utilities/cli" }
-base-runtime = { path = "crates/utilities/runtime", default-features = false }
+base-reth-cli = { path = "crates/utilities/reth-cli" }
 base-test-utils = { path = "crates/utilities/test-utils" }
 base-tx-manager = { path = "crates/utilities/tx-manager" }
 base-macros = { path = "crates/utilities/macros", default-features = false }
+base-runtime = { path = "crates/utilities/runtime", default-features = false }
 
 # revm
 revm = { version = "34.0.0", default-features = false }

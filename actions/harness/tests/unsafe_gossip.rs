@@ -33,15 +33,15 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
         blocks.push(sequencer.build_next_block_with_single_transaction());
     }
 
-    // Create the verifier before any mining so chain updates are visible.
-    let (mut verifier, chain) = h.create_verifier_from_sequencer(
-        &sequencer,
+    // Create the node before any mining so chain updates are visible.
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    // --- Phase 2 (setup): Batch + mine so the verifier can later derive. ---
+    // --- Phase 2 (setup): Batch + mine so the node can later derive. ---
     // All 5 blocks are encoded into one batcher transaction and mined into
-    // a single L1 block before the verifier is used for derivation.
+    // a single L1 block before the node is used for derivation.
     let mut source = ActionL2Source::new();
     for block in &blocks {
         source.push(block.clone());
@@ -53,37 +53,33 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
 
     // Initialize: seed the genesis SystemConfig and drain the empty genesis
     // L1 block so IndexedTraversal is ready for new block signals.
-    verifier.initialize().await;
+    node.initialize().await;
 
-    // --- Phase 2: Gossip each block into the verifier. ---
+    // --- Phase 2: Gossip each block into the node. ---
     for block in &blocks {
-        verifier.act_l2_unsafe_gossip_receive(block);
+        node.act_l2_unsafe_gossip_receive(block);
     }
 
     assert_eq!(
-        verifier.l2_unsafe_number(),
+        node.l2_unsafe_number(),
         L2_BLOCK_COUNT,
         "unsafe_head should have advanced to block {L2_BLOCK_COUNT} after gossip"
     );
-    assert_eq!(
-        verifier.l2_safe_number(),
-        0,
-        "safe_head should still be at genesis before derivation"
-    );
+    assert_eq!(node.l2_safe_number(), 0, "safe_head should still be at genesis before derivation");
 
     // --- Phase 3+4: Signal L1 head and run derivation. ---
-    verifier.act_l1_head_signal(l1_block_1).await;
-    let derived = verifier.act_l2_pipeline_full().await;
+    node.act_l1_head_signal(l1_block_1).await;
+    let derived = node.run_until_idle().await;
 
     assert_eq!(derived, L2_BLOCK_COUNT as usize, "expected {L2_BLOCK_COUNT} L2 blocks derived");
     assert_eq!(
-        verifier.l2_safe_number(),
+        node.l2_safe_number(),
         L2_BLOCK_COUNT,
         "safe_head should have caught up to block {L2_BLOCK_COUNT}"
     );
     assert_eq!(
-        verifier.l2_unsafe_number(),
-        verifier.l2_safe_number(),
+        node.l2_unsafe_number(),
+        node.l2_safe_number(),
         "unsafe_head and safe_head should be equal after safe chain caught up"
     );
 }
@@ -107,32 +103,32 @@ async fn test_out_of_order_gossip_is_dropped() {
     let _block2 = sequencer.build_next_block_with_single_transaction();
     let block3 = sequencer.build_next_block_with_single_transaction();
 
-    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
-        &sequencer,
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await;
+    node.initialize().await;
 
     // Inject block 3 first — gap-jump; must be dropped.
-    verifier.act_l2_unsafe_gossip_receive(&block3);
+    node.act_l2_unsafe_gossip_receive(&block3);
     assert_eq!(
-        verifier.l2_unsafe_number(),
+        node.l2_unsafe_number(),
         0,
         "unsafe_head must not advance when block 3 arrives before blocks 1 and 2"
     );
 
     // Inject block 1 — sequential; must advance.
-    verifier.act_l2_unsafe_gossip_receive(&block1);
+    node.act_l2_unsafe_gossip_receive(&block1);
     assert_eq!(
-        verifier.l2_unsafe_number(),
+        node.l2_unsafe_number(),
         1,
         "unsafe_head should advance to 1 after sequential gossip of block 1"
     );
 
     // Inject block 3 again — still a gap (unsafe_head=1, next expected=2); must be dropped.
-    verifier.act_l2_unsafe_gossip_receive(&block3);
+    node.act_l2_unsafe_gossip_receive(&block3);
     assert_eq!(
-        verifier.l2_unsafe_number(),
+        node.l2_unsafe_number(),
         1,
         "unsafe_head must stay at 1 when block 3 arrives before block 2"
     );

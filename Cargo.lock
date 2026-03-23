@@ -2879,6 +2879,7 @@ dependencies = [
  "base-execution-cli",
  "base-node-core",
  "base-node-runner",
+ "base-reth-cli",
  "base-txpool-rpc",
  "clap",
  "eyre",
@@ -3138,7 +3139,6 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "metrics-process",
- "reth-node-core",
  "rstest",
  "serde",
  "serde_json",
@@ -4147,7 +4147,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-load-tests-core"
+name = "base-load-tests"
 version = "0.0.0"
 dependencies = [
  "alloy-network",
@@ -4156,6 +4156,8 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-signer-local",
  "alloy-sol-types",
+ "base-alloy-network",
+ "base-alloy-rpc-types",
  "base-cli-utils",
  "base-tx-manager",
  "eyre",
@@ -4791,7 +4793,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-client",
- "alloy-rpc-types",
  "alloy-rpc-types-eth",
  "alloy-signer-local",
  "alloy-sol-types",
@@ -4878,13 +4879,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-prover"
+name = "base-prover-nitro"
 version = "0.0.0"
 dependencies = [
  "base-cli-utils",
  "base-consensus-registry",
  "base-proof-host",
  "base-proof-tee-nitro",
+ "clap",
+ "eyre",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-prover-zk"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
  "base-zk-client",
  "base-zk-db",
  "base-zk-outbox",
@@ -4896,6 +4909,13 @@ dependencies = [
  "tokio",
  "tonic",
  "tracing",
+]
+
+[[package]]
+name = "base-reth-cli"
+version = "0.0.0"
+dependencies = [
+ "reth-node-core",
 ]
 
 [[package]]
@@ -4911,6 +4931,7 @@ dependencies = [
  "base-node-core",
  "base-node-runner",
  "base-proofs-extension",
+ "base-reth-cli",
  "base-tx-forwarding",
  "base-txpool-rpc",
  "base-txpool-tracing",

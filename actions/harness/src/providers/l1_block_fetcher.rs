@@ -36,7 +36,8 @@ impl ActionL1BlockFetcher {
     }
 }
 
-fn l1_block_to_rpc(b: L1Block) -> Block {
+/// Convert an [`L1Block`] into an RPC [`Block`] suitable for provider impls.
+pub fn l1_block_to_rpc(b: L1Block) -> Block {
     let hash = b.hash();
     Block { header: Header { inner: b.header, hash, ..Default::default() }, ..Default::default() }
 }

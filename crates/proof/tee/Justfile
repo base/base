@@ -10,17 +10,17 @@ default:
 # Run the nitro JSON-RPC server on the host
 nitro-server *args:
     RUST_LOG=info \
-        cargo run --package base-prover --bin base-prover -- nitro server {{ args }}
+        cargo run --package base-prover-nitro --bin base-prover-nitro -- server {{ args }}
 
 # Run the nitro enclave (Linux only)
 nitro-enclave *args:
     RUST_LOG=info \
-        cargo run --package base-prover --bin base-prover -- nitro enclave {{ args }}
+        cargo run --package base-prover-nitro --bin base-prover-nitro -- enclave {{ args }}
 
 # Run server and enclave in a single process for local development
 nitro-local *args:
     RUST_LOG=info RUST_BACKTRACE=1 \
-        cargo run --package base-prover --bin base-prover --features local -- nitro local \
+        cargo run --package base-prover-nitro --bin base-prover-nitro --features local -- local \
         --l1-eth-url "${L1_ETH_URL:-http://localhost:8545}" \
         --l2-eth-url "${L2_ETH_URL:-http://localhost:9545}" \
         --l1-beacon-url "${L1_BEACON_URL:-http://localhost:5052}" \
@@ -47,9 +47,9 @@ build-eif:
 # Local musl release build (requires musl toolchain)
 musl-release:
     OPENSSL_STATIC=1 CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-static -C link-self-contained=yes" \
-        cargo build --release --target x86_64-unknown-linux-musl --package base-prover --bin prover
-    @echo "Binary built at: target/x86_64-unknown-linux-musl/release/prover"
-    @ls -lh target/x86_64-unknown-linux-musl/release/prover
+        cargo build --release --target x86_64-unknown-linux-musl --package base-prover-nitro --bin base-prover-nitro
+    @echo "Binary built at: target/x86_64-unknown-linux-musl/release/base-prover-nitro"
+    @ls -lh target/x86_64-unknown-linux-musl/release/base-prover-nitro
 
 # Show PCR0 for built EIF (requires nitro-cli)
 verify-pcr0:

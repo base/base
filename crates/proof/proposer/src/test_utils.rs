@@ -1,6 +1,4 @@
-//! Shared test utilities: reusable mock stubs for L1/L2 clients and a `test_prover` helper.
-
-use std::sync::Arc;
+//! Shared test utilities: reusable mock stubs for L1/L2 clients, contract clients, and proposer.
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use async_trait::async_trait;
@@ -9,12 +7,11 @@ use base_proof_contracts::{
     AggregateVerifierClient, AnchorRoot, AnchorStateRegistryClient, ContractError,
     DisputeGameFactoryClient, GameAtIndex, GameInfo,
 };
-use base_proof_primitives::{Proposal, ProverClient};
+use base_proof_primitives::Proposal;
 use base_proof_rpc::{
     L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OpBlock, OutputAtBlock,
     RollupProvider, RpcError, RpcResult, SyncStatus,
 };
-use jsonrpsee::http_client::HttpClientBuilder;
 
 use crate::{error::ProposerError, output_proposer::OutputProposer};
 
@@ -201,11 +198,6 @@ pub(crate) fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus 
 
 pub(crate) fn test_anchor_root(block_number: u64) -> AnchorRoot {
     AnchorRoot { root: B256::ZERO, l2_block_number: block_number }
-}
-
-pub(crate) fn test_prover() -> Arc<dyn ProverClient> {
-    let client = HttpClientBuilder::default().build("http://localhost:19999").expect("valid URL");
-    Arc::new(client)
 }
 
 /// Mock output proposer that does nothing (returns `Ok(())`).

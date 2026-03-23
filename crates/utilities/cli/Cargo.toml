@@ -12,9 +12,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# reth
-reth-node-core.workspace = true
-
 # cli
 clap = { workspace = true, features = ["derive"] }
 
@@ -42,3 +39,4 @@ serde_json = { workspace = true, features = ["std"] }
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 backtrace.workspace = true
+

@@ -28,19 +28,19 @@ async fn batcher_blob_da_end_to_end() {
         batcher.advance(&mut h.l1).await;
     }
 
-    let (mut verifier, _chain) = h.create_blob_verifier_from_sequencer(
-        &sequencer,
+    let (mut node, _chain) = h.create_blob_test_rollup_node_from_sequencer(
+        &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await;
+    node.initialize().await;
 
     for i in 1..=3u64 {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block via blob DA");
     }
 
-    assert_eq!(verifier.l2_safe_number(), 3, "safe head should reach L2 block 3");
+    assert_eq!(node.l2_safe_number(), 3, "safe head should reach L2 block 3");
 }
 
 // ---------------------------------------------------------------------------
@@ -75,17 +75,17 @@ async fn batcher_multi_blob_packing() {
         h.l1.tip().blob_sidecars.len()
     );
 
-    let (mut verifier, _chain) = h.create_blob_verifier_from_sequencer(
-        &sequencer,
+    let (mut node, _chain) = h.create_blob_test_rollup_node_from_sequencer(
+        &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await;
+    node.initialize().await;
 
-    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    let derived = verifier.act_l2_pipeline_full().await;
+    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
+    let derived = node.run_until_idle().await;
 
     assert_eq!(derived, 1, "expected 1 L2 block derived from multi-blob channel");
-    assert_eq!(verifier.l2_safe_number(), 1, "safe head should reach L2 block 1");
+    assert_eq!(node.l2_safe_number(), 1, "safe head should reach L2 block 1");
 }
 
 // ---------------------------------------------------------------------------
@@ -113,19 +113,19 @@ async fn batcher_calldata_da() {
         batcher.advance(&mut h.l1).await;
     }
 
-    let (mut verifier, _chain) = h.create_verifier_from_sequencer(
-        &sequencer,
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await;
+    node.initialize().await;
 
     for i in 1..=3u64 {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block via calldata DA");
     }
 
-    assert_eq!(verifier.l2_safe_number(), 3, "safe head should reach L2 block 3");
+    assert_eq!(node.l2_safe_number(), 3, "safe head should reach L2 block 3");
 }
 
 // ---------------------------------------------------------------------------
@@ -163,20 +163,20 @@ async fn batcher_da_switching() {
         blob_batcher.advance(&mut h.l1).await;
     }
 
-    let (mut verifier, _chain) = h.create_blob_verifier_from_sequencer(
-        &sequencer,
+    let (mut node, _chain) = h.create_blob_test_rollup_node_from_sequencer(
+        &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    verifier.initialize().await;
+    node.initialize().await;
 
     let mut total_derived = 0;
     for i in 1..=6u64 {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        total_derived += verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        total_derived += node.run_until_idle().await;
     }
 
     assert_eq!(total_derived, 6, "expected 6 L2 blocks derived (3 calldata + 3 blob)");
-    assert_eq!(verifier.l2_safe_number(), 6, "safe head should reach L2 block 6");
+    assert_eq!(node.l2_safe_number(), 6, "safe head should reach L2 block 6");
 }
 
 // ---------------------------------------------------------------------------
@@ -229,8 +229,8 @@ async fn blob_da_channel_timeout() {
     // Submit ONLY frame 0 as a blob sidecar in L1 block 1.
     batcher.stage_n_frames(&mut h.l1, 1);
 
-    let (mut verifier, chain) = h.create_blob_verifier_from_sequencer(
-        &sequencer,
+    let (mut node, chain) = h.create_blob_test_rollup_node_from_sequencer(
+        &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
@@ -238,23 +238,19 @@ async fn blob_da_channel_timeout() {
     batcher.confirm_staged(block_1_num).await;
     chain.push(h.l1.tip().clone()); // L1 block 1: blob with frame 0 only
 
-    verifier.initialize().await;
-    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    verifier.act_l2_pipeline_full().await;
+    node.initialize().await;
+    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
+    node.run_until_idle().await;
 
-    assert_eq!(
-        verifier.l2_safe_number(),
-        0,
-        "incomplete blob channel should not advance safe head"
-    );
+    assert_eq!(node.l2_safe_number(), 0, "incomplete blob channel should not advance safe head");
 
     // Mine channel_timeout + 1 = 3 empty L1 blocks to expire the channel.
     for _ in 0..3 {
         h.mine_and_push(&chain);
     }
     for i in 2..=4 {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        node.run_until_idle().await;
     }
 
     // Submit remaining frames as blobs — channel already timed out; silently dropped.
@@ -263,8 +259,8 @@ async fn blob_da_channel_timeout() {
     batcher.confirm_staged(block_5_num).await;
     chain.push(h.l1.tip().clone()); // L1 block 5: late blob frames
 
-    verifier.act_l1_head_signal(h.l1.block_info_at(5)).await;
-    let derived = verifier.act_l2_pipeline_full().await;
+    node.act_l1_head_signal(h.l1.block_info_at(5)).await;
+    let derived = node.run_until_idle().await;
     assert_eq!(derived, 0, "late blob frames after channel timeout must be silently dropped");
 
     // Recovery: resubmit all frames as blobs in a fresh channel.
@@ -273,9 +269,9 @@ async fn blob_da_channel_timeout() {
     Batcher::new(source2, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone()); // L1 block 6: fresh blob channel with all frames
 
-    verifier.act_l1_head_signal(h.l1.block_info_at(6)).await;
-    let recovered = verifier.act_l2_pipeline_full().await;
+    node.act_l1_head_signal(h.l1.block_info_at(6)).await;
+    let recovered = node.run_until_idle().await;
 
     assert_eq!(recovered, 1, "resubmitted blob channel should derive L2 block 1");
-    assert_eq!(verifier.l2_safe_number(), 1, "safe head should recover to 1");
+    assert_eq!(node.l2_safe_number(), 1, "safe head should recover to 1");
 }

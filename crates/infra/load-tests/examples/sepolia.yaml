@@ -1,0 +1,23 @@
+# Load Test Configuration - Base Sepolia
+#
+# Requires FUNDER_KEY environment variable with a funded private key
+
+rpc: https://sepolia.base.org
+
+sender_count: 10
+target_gps: 2100000
+duration: "30s"
+seed: 12345
+
+# 2 ETH per account
+funding_amount: "2000000000000000000"
+
+transactions:
+  - weight: 70
+    type: transfer
+  - weight: 20
+    type: calldata
+    max_size: 256
+  - weight: 10
+    type: precompile
+    target: sha256

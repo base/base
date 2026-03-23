@@ -73,16 +73,24 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
     //
     // Blocks 1-6 have user transactions. Blocks 7-8 also have user txs
     // (sequencer doesn't enforce drift), but the pipeline should drop them.
-    let (mut verifier, chain) = h.create_verifier_from_sequencer(
-        &sequencer,
-        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
-    );
 
     // Collect all 8 blocks and batch them in one L1 block.
     let mut source = ActionL2Source::new();
     for _ in 1u64..=8 {
         source.push(sequencer.build_next_block_with_single_transaction());
     }
+
+    // Create the node from a separate sequencer that has an empty block-hash
+    // registry. Blocks 7-8 are dropped by the pipeline (over-drift) and
+    // replaced with deposit-only default blocks whose state roots differ from
+    // the sequencer's. Using a fresh sequencer avoids a false state-root
+    // mismatch for those slots.
+    let mut node_sequencer =
+        h.create_l2_sequencer(SharedL1Chain::from_blocks(h.l1.chain().to_vec()));
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut node_sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
@@ -94,13 +102,13 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
     h.mine_and_push(&chain);
     h.mine_and_push(&chain);
 
-    verifier.initialize().await;
+    node.initialize().await;
 
     // Drive derivation through all L1 blocks.
     let mut total_derived = 0;
     for i in 1..=h.l1.latest_number() {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        total_derived += verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        total_derived += node.run_until_idle().await;
     }
 
     // The pipeline should derive blocks for all L2 slots. Blocks 1-6 use the
@@ -108,7 +116,7 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
     // default blocks because the non-empty batches are dropped for exceeding
     // max_sequencer_drift.
     assert_eq!(
-        verifier.l2_safe_number(),
+        node.l2_safe_number(),
         8,
         "all 8 L2 blocks must be derived (blocks 7-8 as deposit-only over-drift blocks)"
     );
@@ -116,7 +124,7 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
 
     // Verify deposit-only behaviour: blocks 1-6 carry 2 txs each (deposit +
     // user tx), blocks 7-8 must carry exactly 1 tx (L1 info deposit only).
-    let tx_counts = verifier.derived_tx_counts();
+    let tx_counts = node.derived_tx_counts();
     for &(number, count) in tx_counts {
         if number <= 6 {
             assert_eq!(count, 2, "block {number} should have deposit + user tx");
@@ -158,8 +166,8 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
     let l1_genesis = h.l1.block_info_at(0);
     sequencer.pin_l1_origin(l1_genesis);
 
-    let (mut verifier, chain) = h.create_verifier_from_sequencer(
-        &sequencer,
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
@@ -180,19 +188,19 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
     batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
-    verifier.initialize().await;
+    node.initialize().await;
 
     let mut total_derived = 0;
     for i in 1..=h.l1.latest_number() {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        total_derived += verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        total_derived += node.run_until_idle().await;
     }
 
     // All 8 blocks should be derived: 6 normal + 2 empty (pipeline-generated
     // deposit-only blocks for the over-drift slots).
     assert!(total_derived >= 6, "at least the 6 within-drift blocks should be derived");
     assert_eq!(
-        verifier.l2_safe_number(),
+        node.l2_safe_number(),
         total_derived as u64,
         "safe head should match number of derived blocks"
     );

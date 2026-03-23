@@ -1,5 +1,6 @@
 //! Action tests for batch format transitions across hardfork boundaries.
 
+use alloy_primitives::B256;
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DerivedBlock, L1MinerConfig,
     SharedL1Chain, TestRollupConfigBuilder,
@@ -66,8 +67,8 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     let block3_invalid = builder.build_next_block_with_single_transaction(); // ts=6
     let block4 = builder.build_next_block_with_single_transaction(); // ts=8
 
-    let (mut verifier, chain) = h.create_verifier_from_sequencer(
-        &builder,
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
@@ -83,16 +84,22 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     }
     chain.push(h.l1.tip().clone()); // L1 block 1: span batch with invalid block 3
 
-    verifier.initialize().await;
-    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    verifier.act_l2_pipeline_full().await;
+    // The sequencer registered state roots for blocks 3 and 4 that will not match
+    // what derivation produces (block 3 becomes deposit-only; block 4 has a different
+    // parent). Clear the state root entries so the engine skips validation for these.
+    node.register_block_hash(3, B256::ZERO);
+    node.register_block_hash(4, B256::ZERO);
+
+    node.initialize().await;
+    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
+    node.run_until_idle().await;
 
     // Under Holocene, when the pipeline reaches block 3 in the span batch and
     // detects a user tx in the upgrade block, it sends FlushChannel (via
     // BatchStream::flush), discarding the channel entirely. Blocks 1 and 2 were
     // already emitted as individual batches before the failure, so safe head is 2.
     assert_eq!(
-        verifier.l2_safe_number(),
+        node.l2_safe_number(),
         2,
         "blocks 1 and 2 should derive before span batch fails on block 3"
     );
@@ -124,14 +131,10 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: recovery span batch (blocks 3–4)
 
-    verifier.act_l1_head_signal(h.l1.block_info_at(2)).await;
-    verifier.act_l2_pipeline_full().await;
+    node.act_l1_head_signal(h.l1.block_info_at(2)).await;
+    node.run_until_idle().await;
 
-    assert_eq!(
-        verifier.l2_safe_number(),
-        4,
-        "after recovery submission, safe head must reach block 4"
-    );
+    assert_eq!(node.l2_safe_number(), 4, "after recovery submission, safe head must reach block 4");
 }
 
 // ---------------------------------------------------------------------------
@@ -164,8 +167,8 @@ async fn mixed_singular_and_span_batches_after_delta() {
     let block1 = builder.build_next_block_with_single_transaction();
     let block2 = builder.build_next_block_with_single_transaction();
 
-    let (mut verifier, chain) = h.create_verifier_from_sequencer(
-        &builder,
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
@@ -187,18 +190,18 @@ async fn mixed_singular_and_span_batches_after_delta() {
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: span batch for L2 block 2
 
-    verifier.initialize().await;
+    node.initialize().await;
 
     // Drive derivation L1 block by block. The first batch (singular) derives
     // L2 block 1; the second (span) derives L2 block 2.
     for i in 1..=2u64 {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
 
     assert_eq!(
-        verifier.l2_safe_number(),
+        node.l2_safe_number(),
         2,
         "mixed singular + span batches must both derive; safe head should reach 2"
     );
@@ -268,8 +271,8 @@ async fn granite_channel_timeout_enforced() {
     let mut sequencer = h.create_l2_sequencer(l1_chain);
     let block = sequencer.build_next_block_with_single_transaction();
 
-    let (mut verifier, chain) = h.create_verifier_from_sequencer(
-        &sequencer,
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
@@ -291,11 +294,11 @@ async fn granite_channel_timeout_enforced() {
     chain.push(h.l1.tip().clone());
     batcher.confirm_staged(block_1_num).await;
 
-    verifier.initialize().await;
-    verifier.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    verifier.act_l2_pipeline_full().await;
+    node.initialize().await;
+    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
+    node.run_until_idle().await;
 
-    assert_eq!(verifier.l2_safe_number(), 0, "incomplete channel should not advance safe head");
+    assert_eq!(node.l2_safe_number(), 0, "incomplete channel should not advance safe head");
 
     // Mine 51 empty L1 blocks (blocks 2..=52). After block 52, the channel
     // opened at block 1 has been open for 51 blocks: 1 + 50 = 51 < 52,
@@ -306,12 +309,12 @@ async fn granite_channel_timeout_enforced() {
 
     // Signal all empty blocks to the verifier.
     for i in 2..=52u64 {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        node.run_until_idle().await;
     }
 
     assert_eq!(
-        verifier.l2_safe_number(),
+        node.l2_safe_number(),
         0,
         "channel must have timed out under Granite's 50-block limit; safe head stays at 0"
     );
@@ -327,14 +330,14 @@ async fn granite_channel_timeout_enforced() {
     chain.push(h.l1.tip().clone());
     batcher.confirm_staged(late_block_num).await;
 
-    verifier.act_l1_head_signal(h.l1.block_info_at(late_block_num)).await;
-    let derived = verifier.act_l2_pipeline_full().await;
+    node.act_l1_head_signal(h.l1.block_info_at(late_block_num)).await;
+    let derived = node.run_until_idle().await;
     assert_eq!(
         derived, 0,
         "late non-zero frames after timeout create an incomplete channel; no L2 block derived"
     );
     assert_eq!(
-        verifier.l2_safe_number(),
+        node.l2_safe_number(),
         0,
         "safe head must still be at genesis before recovery; channel timed out"
     );
@@ -346,11 +349,11 @@ async fn granite_channel_timeout_enforced() {
     chain.push(h.l1.tip().clone());
 
     let recovery_num = h.l1.latest_number();
-    verifier.act_l1_head_signal(h.l1.block_info_at(recovery_num)).await;
-    let recovered = verifier.act_l2_pipeline_full().await;
+    node.act_l1_head_signal(h.l1.block_info_at(recovery_num)).await;
+    let recovered = node.run_until_idle().await;
 
     assert_eq!(recovered, 1, "recovery channel should derive L2 block 1");
-    assert_eq!(verifier.l2_safe_number(), 1, "safe head should recover to 1");
+    assert_eq!(node.l2_safe_number(), 1, "safe head should recover to 1");
 }
 
 // ---------------------------------------------------------------------------
@@ -431,8 +434,8 @@ async fn jovian_single_batch_transition_block_deposit_only() {
         block3_invalid.body.transactions.len(),
     );
 
-    let (mut verifier, chain) = h.create_verifier_from_sequencer(
-        &builder,
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
@@ -456,13 +459,19 @@ async fn jovian_single_batch_transition_block_deposit_only() {
         h.mine_and_push(&chain);
     }
 
-    verifier.initialize().await;
+    // The sequencer registered state roots for blocks 3 and 4 that will not match
+    // what derivation produces (block 3 becomes deposit-only; block 4 has a different
+    // parent). Clear the state root entries so the engine skips validation for these.
+    node.register_block_hash(3, B256::ZERO);
+    node.register_block_hash(4, B256::ZERO);
 
-    // Signal all L1 blocks to the verifier and drive derivation.
+    node.initialize().await;
+
+    // Signal all L1 blocks to the node and drive derivation.
     let tip = h.l1.latest_number();
     for i in 1..=tip {
-        verifier.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        verifier.act_l2_pipeline_full().await;
+        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+        node.run_until_idle().await;
     }
 
     // With singular batches and the Holocene batch validator: the pipeline
@@ -471,7 +480,7 @@ async fn jovian_single_batch_transition_block_deposit_only() {
     // user txs); force-generates a deposit-only block 3 once the sequencer
     // window expires; then derives block 4 from its submitted batch.
     assert_eq!(
-        verifier.l2_safe_number(),
+        node.l2_safe_number(),
         4,
         "singular batches: safe head must reach 4 (block 3 replaced with deposit-only)"
     );
@@ -480,9 +489,8 @@ async fn jovian_single_batch_transition_block_deposit_only() {
     // accepted the invalid batch and derived a normal block. Without this
     // assertion, removing the NonEmptyTransitionBlock validation would still
     // produce safe_head == 4.
-    let block3: DerivedBlock = verifier
-        .derived_block(3)
-        .expect("block 3 must have been derived before safe head reached 4");
+    let block3: DerivedBlock =
+        node.derived_block(3).expect("block 3 must have been derived before safe head reached 4");
     assert!(
         block3.is_deposit_only(),
         "block 3 must be deposit-only (NonEmptyTransitionBlock batch dropped); \

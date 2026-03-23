@@ -1,0 +1,34 @@
+# Load Test Configuration - Local Devnet
+#
+# Runs against a locally running devnet (just devnet up)
+# Requires FUNDER_KEY env var (for devnet, use Anvil Account #1):
+#   FUNDER_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+
+# RPC endpoint for local devnet
+rpc: http://localhost:8545
+
+# Number of sender accounts
+sender_count: 10
+
+# Target gas per second (~100 simple transfers)
+target_gps: 2100000
+
+# Test duration
+duration: "30s"
+
+# Fixed seed for reproducible account generation
+seed: 12345
+
+# 2 ETH per account (covers ~300 txs at 0.005 ETH avg value + gas)
+funding_amount: "2000000000000000000"
+
+# Transaction mix
+transactions:
+  - weight: 70
+    type: transfer
+  - weight: 20
+    type: calldata
+    max_size: 256
+  - weight: 10
+    type: precompile
+    target: sha256

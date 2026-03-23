@@ -1,4 +1,4 @@
-//! Lifecycle management for the proposer driver.
+//! Lifecycle management for the proving pipeline.
 
 use std::sync::{
     Arc,
@@ -13,28 +13,25 @@ use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use super::core::Driver;
+use super::pipeline::ProvingPipeline;
 
-/// Trait for controlling the proposer driver at runtime.
+/// Trait for controlling the proposer at runtime.
 ///
 /// This is the type-erased interface consumed by the admin JSON-RPC server.
-/// [`DriverHandle`] is the concrete implementation.
+/// [`PipelineHandle`] is the concrete implementation.
 #[async_trait]
 pub trait ProposerDriverControl: Send + Sync {
-    /// Start the proposer driver loop.
+    /// Start the proving pipeline.
     async fn start_proposer(&self) -> Result<(), String>;
-    /// Stop the proposer driver loop.
+    /// Stop the proving pipeline.
     async fn stop_proposer(&self) -> Result<(), String>;
-    /// Returns whether the proposer driver is currently running.
+    /// Returns whether the proving pipeline is currently running.
     fn is_running(&self) -> bool;
 }
 
-/// Manages the lifecycle of a [`Driver`], allowing it to be started and
-/// stopped at runtime (e.g. via the admin RPC).
-///
-/// Internally the driver is placed behind a [`TokioMutex`] so it can be moved
-/// into a spawned task for the duration of a session.
-pub struct DriverHandle<L1, L2, R, ASR, F>
+/// Manages the lifecycle of a [`ProvingPipeline`], allowing it to be started
+/// and stopped at runtime (e.g. via the admin RPC).
+pub struct PipelineHandle<L1, L2, R, ASR, F>
 where
     L1: L1Provider + 'static,
     L2: L2Provider + 'static,
@@ -43,14 +40,14 @@ where
     F: DisputeGameFactoryClient + 'static,
 {
     #[allow(clippy::type_complexity)]
-    driver: Arc<TokioMutex<Driver<L1, L2, R, ASR, F>>>,
+    pipeline: Arc<TokioMutex<ProvingPipeline<L1, L2, R, ASR, F>>>,
     session_cancel: TokioMutex<CancellationToken>,
     global_cancel: CancellationToken,
     task: TokioMutex<Option<JoinHandle<Result<()>>>>,
     running: Arc<AtomicBool>,
 }
 
-impl<L1, L2, R, ASR, F> std::fmt::Debug for DriverHandle<L1, L2, R, ASR, F>
+impl<L1, L2, R, ASR, F> std::fmt::Debug for PipelineHandle<L1, L2, R, ASR, F>
 where
     L1: L1Provider + 'static,
     L2: L2Provider + 'static,
@@ -59,13 +56,13 @@ where
     F: DisputeGameFactoryClient + 'static,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DriverHandle")
+        f.debug_struct("PipelineHandle")
             .field("running", &self.running.load(Ordering::Relaxed))
             .finish_non_exhaustive()
     }
 }
 
-impl<L1, L2, R, ASR, F> DriverHandle<L1, L2, R, ASR, F>
+impl<L1, L2, R, ASR, F> PipelineHandle<L1, L2, R, ASR, F>
 where
     L1: L1Provider + 'static,
     L2: L2Provider + 'static,
@@ -73,15 +70,14 @@ where
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
-    /// Wraps a [`Driver`] in a lifecycle-managed handle.
-    ///
-    /// The driver is **not** started automatically — call
-    /// [`start_proposer`](ProposerDriverControl::start_proposer) to begin the
-    /// polling loop.
-    pub fn new(driver: Driver<L1, L2, R, ASR, F>, global_cancel: CancellationToken) -> Self {
+    /// Creates a new [`PipelineHandle`] wrapping the given proving pipeline.
+    pub fn new(
+        pipeline: ProvingPipeline<L1, L2, R, ASR, F>,
+        global_cancel: CancellationToken,
+    ) -> Self {
         let session_cancel = global_cancel.child_token();
         Self {
-            driver: Arc::new(TokioMutex::new(driver)),
+            pipeline: Arc::new(TokioMutex::new(pipeline)),
             session_cancel: TokioMutex::new(session_cancel),
             global_cancel,
             task: TokioMutex::new(None),
@@ -91,7 +87,7 @@ where
 }
 
 #[async_trait]
-impl<L1, L2, R, ASR, F> ProposerDriverControl for DriverHandle<L1, L2, R, ASR, F>
+impl<L1, L2, R, ASR, F> ProposerDriverControl for PipelineHandle<L1, L2, R, ASR, F>
 where
     L1: L1Provider + 'static,
     L2: L2Provider + 'static,
@@ -106,24 +102,24 @@ where
 
         let cancel = self.global_cancel.child_token();
         {
-            let mut driver = self.driver.lock().await;
-            driver.set_cancel(cancel.clone());
+            let mut pipeline = self.pipeline.lock().await;
+            pipeline.set_cancel(cancel.clone());
         }
         *self.session_cancel.lock().await = cancel;
 
-        let driver = Arc::clone(&self.driver);
+        let pipeline = Arc::clone(&self.pipeline);
         let running = Arc::clone(&self.running);
         running.store(true, Ordering::SeqCst);
 
         let handle = tokio::spawn(async move {
-            let guard = driver.lock().await;
+            let guard = pipeline.lock().await;
             let result = guard.run().await;
             running.store(false, Ordering::SeqCst);
             result
         });
 
         *self.task.lock().await = Some(handle);
-        info!("Proposer driver started");
+        info!("Proving pipeline started");
         Ok(())
     }
 
@@ -138,7 +134,7 @@ where
             let _ = task.await;
         }
 
-        info!("Proposer driver stopped");
+        info!("Proving pipeline stopped");
         Ok(())
     }
 
@@ -151,37 +147,74 @@ where
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use alloy_primitives::B256;
-    use base_proof_rpc::SyncStatus;
+    use alloy_primitives::{B256, Bytes, U256};
+    use async_trait::async_trait;
+    use base_proof_primitives::{ProofResult, Proposal, ProverClient};
     use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::{
-        driver::core::{Driver, DriverConfig},
+        driver::{core::DriverConfig, pipeline::PipelineConfig},
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-            MockOutputProposer, MockRollupClient, test_anchor_root, test_prover, test_sync_status,
+            MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
         },
     };
 
-    fn test_driver(
-        sync_status: SyncStatus,
-        cancel: CancellationToken,
-    ) -> Driver<MockL1, MockL2, MockRollupClient, MockAnchorStateRegistry, MockDisputeGameFactory>
-    {
+    #[derive(Debug)]
+    struct InstantMockProver;
+
+    #[async_trait]
+    impl ProverClient for InstantMockProver {
+        async fn prove(
+            &self,
+            request: base_proof_primitives::ProofRequest,
+        ) -> Result<ProofResult, Box<dyn std::error::Error + Send + Sync>> {
+            let n = request.claimed_l2_block_number;
+            let proposal = Proposal {
+                output_root: B256::repeat_byte(n as u8),
+                signature: Bytes::from(vec![0xab; 65]),
+                l1_origin_hash: B256::repeat_byte(0x02),
+                l1_origin_number: U256::from(100 + n),
+                l2_block_number: U256::from(n),
+                prev_output_root: B256::repeat_byte(0x03),
+                config_hash: B256::repeat_byte(0x04),
+            };
+            let start = n.saturating_sub(512);
+            let proposals: Vec<Proposal> = ((start + 1)..=n)
+                .map(|b| Proposal { output_root: B256::repeat_byte(b as u8), ..proposal.clone() })
+                .collect();
+            Ok(ProofResult::Tee { aggregate_proposal: proposal, proposals })
+        }
+    }
+
+    fn test_pipeline_handle(
+        global_cancel: CancellationToken,
+    ) -> PipelineHandle<
+        MockL1,
+        MockL2,
+        MockRollupClient,
+        MockAnchorStateRegistry,
+        MockDisputeGameFactory,
+    > {
         let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover = test_prover();
-        let rollup = Arc::new(MockRollupClient { sync_status });
+        let prover: Arc<dyn ProverClient> = Arc::new(InstantMockProver);
+        let rollup = Arc::new(MockRollupClient { sync_status: test_sync_status(200, B256::ZERO) });
         let anchor_registry =
             Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
-        let factory = Arc::new(MockDisputeGameFactory { game_count: 1 });
+        let factory = Arc::new(MockDisputeGameFactory { game_count: 0 });
 
-        Driver::new(
-            DriverConfig {
-                poll_interval: Duration::from_secs(3600),
-                block_interval: 10,
-                ..Default::default()
+        let pipeline = ProvingPipeline::new(
+            PipelineConfig {
+                max_parallel_proofs: 2,
+                max_retries: 3,
+                driver: DriverConfig {
+                    poll_interval: Duration::from_secs(3600),
+                    block_interval: 512,
+                    intermediate_block_interval: 512,
+                    ..Default::default()
+                },
             },
             prover,
             l1,
@@ -191,27 +224,15 @@ mod tests {
             factory,
             Arc::new(MockAggregateVerifier),
             Arc::new(MockOutputProposer),
-            cancel,
-        )
-    }
-
-    fn test_driver_handle(
-        global_cancel: CancellationToken,
-    ) -> DriverHandle<
-        MockL1,
-        MockL2,
-        MockRollupClient,
-        MockAnchorStateRegistry,
-        MockDisputeGameFactory,
-    > {
-        let driver = test_driver(test_sync_status(200, B256::ZERO), global_cancel.child_token());
-        DriverHandle::new(driver, global_cancel)
+            global_cancel.child_token(),
+        );
+        PipelineHandle::new(pipeline, global_cancel)
     }
 
     #[tokio::test]
-    async fn test_driver_handle_start_stop() {
+    async fn test_pipeline_handle_start_stop() {
         let cancel = CancellationToken::new();
-        let handle = test_driver_handle(cancel);
+        let handle = test_pipeline_handle(cancel);
 
         assert!(!handle.is_running());
         handle.start_proposer().await.unwrap();
@@ -221,9 +242,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_driver_handle_double_start_errors() {
+    async fn test_pipeline_handle_double_start_errors() {
         let cancel = CancellationToken::new();
-        let handle = test_driver_handle(cancel);
+        let handle = test_pipeline_handle(cancel);
 
         handle.start_proposer().await.unwrap();
         let result = handle.start_proposer().await;
@@ -233,9 +254,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_driver_handle_stop_when_not_running() {
+    async fn test_pipeline_handle_stop_when_not_running() {
         let cancel = CancellationToken::new();
-        let handle = test_driver_handle(cancel);
+        let handle = test_pipeline_handle(cancel);
 
         let result = handle.stop_proposer().await;
         assert!(result.is_err());
@@ -243,9 +264,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_driver_handle_restart() {
+    async fn test_pipeline_handle_restart() {
         let cancel = CancellationToken::new();
-        let handle = test_driver_handle(cancel);
+        let handle = test_pipeline_handle(cancel);
 
         handle.start_proposer().await.unwrap();
         handle.stop_proposer().await.unwrap();
@@ -256,9 +277,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_driver_handle_global_cancel_stops_driver() {
+    async fn test_pipeline_handle_global_cancel_stops_pipeline() {
         let cancel = CancellationToken::new();
-        let handle = test_driver_handle(cancel.clone());
+        let handle = test_pipeline_handle(cancel.clone());
 
         handle.start_proposer().await.unwrap();
         assert!(handle.is_running());
@@ -269,12 +290,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_driver_handle_debug() {
+    async fn test_pipeline_handle_debug() {
         let cancel = CancellationToken::new();
-        let handle = test_driver_handle(cancel);
+        let handle = test_pipeline_handle(cancel);
 
         let debug = format!("{handle:?}");
-        assert!(debug.contains("DriverHandle"));
+        assert!(debug.contains("PipelineHandle"));
         assert!(debug.contains("running"));
     }
 }

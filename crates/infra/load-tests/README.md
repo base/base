@@ -45,8 +45,9 @@ Example minimal config (`devnet.yaml`):
 
 ```yaml
 rpc: http://localhost:8545
-funder_key: "0x..."
 sender_count: 10
 target_gps: 2100000
 duration: "30s"
 ```
+
+Note: Set `FUNDER_KEY` environment variable with a funded private key (0x-prefixed hex).

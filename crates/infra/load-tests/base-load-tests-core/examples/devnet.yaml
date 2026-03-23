@@ -1,9 +1,0 @@
-rpc: http://localhost:8545
-funder_key: "<your key here>"
-sender_count: 10
-target_gps: 2100000
-duration: "30s"
-seed: 12345
-
-# 2 ETH per account (covers ~300 txs × 0.005 ETH avg value + gas)
-funding_amount: "2000000000000000000"

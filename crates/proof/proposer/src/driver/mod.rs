@@ -1,17 +1,19 @@
-//! Driver loop for the proposer.
+//! Proving pipeline for the proposer.
 //!
-//! The driver coordinates between RPC clients, the prover server, and contract
-//! interactions to generate and submit output proposals as dispute games.
+//! The [`ProvingPipeline`] coordinates between RPC clients, the prover server,
+//! and contract interactions to generate and submit output proposals as dispute
+//! games. It runs multiple proofs concurrently (plan → prove → submit) while
+//! maintaining strictly sequential on-chain submission.
 //!
-//! # Lifecycle control
-//!
-//! The [`Driver`] itself runs a single polling loop via [`Driver::run`].
-//! [`DriverHandle`] wraps a `Driver` and exposes start/stop/is-running
+//! [`PipelineHandle`] wraps a pipeline and exposes start/stop/is-running
 //! semantics through the [`ProposerDriverControl`] trait, which is consumed
 //! by the admin JSON-RPC server.
 
 mod core;
-pub use self::core::{Driver, DriverConfig, RecoveredState};
+pub use self::core::{DriverConfig, RecoveredState};
 
 mod handle;
-pub use handle::{DriverHandle, ProposerDriverControl};
+pub use handle::{PipelineHandle, ProposerDriverControl};
+
+mod pipeline;
+pub use pipeline::{PipelineConfig, ProvingPipeline};
