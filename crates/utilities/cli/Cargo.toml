@@ -39,5 +39,6 @@ serde = { workspace = true, features = ["derive", "std"] }
 rstest.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 
-[target.'cfg(all(unix, not(target_env = "musl")))'.dependencies]
+[target.'cfg(unix)'.dependencies]
 libc.workspace = true
+backtrace.workspace = true

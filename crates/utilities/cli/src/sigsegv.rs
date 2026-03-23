@@ -1,5 +1,10 @@
 //! Signal handler to extract a backtrace from stack overflows and segfaults.
 //!
+//! Uses the [`backtrace`] crate for stack unwinding and symbol resolution,
+//! which works on both glibc and musl targets via `libunwind`. This replaces
+//! the previous glibc-specific `libc::backtrace` / `backtrace_symbols_fd`
+//! approach that was unavailable on musl.
+//!
 //! Implementation modified from [reth](https://github.com/paradigmxyz/reth/blob/main/crates/cli/util/src/sigsegv_handler.rs#L120).
 //!
 //! Implementation modified from [`rustc`](https://github.com/rust-lang/rust/blob/3dee9775a8c94e701a08f7b2df2c444f353d8699/compiler/rustc_driver_impl/src/signal_handler.rs).
@@ -8,35 +13,36 @@
 #[derive(Debug, Clone, Copy)]
 pub struct SigsegvHandler;
 
-#[cfg(all(unix, not(target_env = "musl")))]
+#[cfg(unix)]
 impl SigsegvHandler {
     /// Installs a SIGSEGV handler.
     ///
     /// When SIGSEGV is delivered to the process, print a stack trace and then exit.
     pub fn install() {
-        glibc_impl::install();
+        unix_impl::install();
     }
 }
 
-#[cfg(not(all(unix, not(target_env = "musl"))))]
+#[cfg(not(unix))]
 impl SigsegvHandler {
-    /// No-op on musl and non-unix targets because `libc::backtrace`
-    /// and `backtrace_symbols_fd` are glibc extensions.
+    /// No-op on non-unix targets.
     pub const fn install() {}
 }
 
-/// All platform-specific implementation lives behind a single `#[cfg]` gate.
+/// All platform-specific implementation lives behind a single `#[cfg(unix)]` gate.
 ///
-/// The functions used here (`libc::backtrace`, `backtrace_symbols_fd`) are
-/// glibc/libSystem extensions not available in musl libc, and `libc::getauxval`
-/// is a glibc extension gated separately for Linux/Android only.
-/// Gating the module on `not(target_env = "musl")` avoids linker errors when
-/// building for musl targets (e.g. the Nitro Enclave `x86_64-unknown-linux-musl`
-/// build) while preserving the handler on macOS and other unix platforms.
-#[cfg(all(unix, not(target_env = "musl")))]
-mod glibc_impl {
+/// Uses the [`backtrace`] crate for stack unwinding and symbol resolution,
+/// which works on both glibc and musl via `libunwind`. POSIX-standard APIs
+/// (`sigaltstack`, `sigaction`) are used for signal handling setup.
+/// On Linux, `AT_MINSIGSTKSZ` is read from `/proc/self/auxv` instead of
+/// `libc::getauxval`, which is a glibc extension unavailable on musl.
+#[cfg(unix)]
+mod unix_impl {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    use std::io::Read;
     use std::{
         alloc::{Layout, alloc},
+        fmt::Write,
         mem, ptr,
     };
 
@@ -60,26 +66,44 @@ mod glibc_impl {
         }
     }
 
-    unsafe extern "C" {
-        fn backtrace_symbols_fd(
-            buffer: *const *mut libc::c_void,
-            size: libc::c_int,
-            fd: libc::c_int,
-        );
-    }
-
+    /// Resolve a slice of instruction pointers to symbols and write them to stderr.
+    ///
+    /// Uses `backtrace::resolve_unsynchronized` which works on both glibc and musl.
     fn backtrace_stderr(buffer: &[*mut libc::c_void]) {
-        let size = buffer.len().try_into().unwrap_or_default();
-        // SAFETY: backtrace_symbols_fd is a standard libc function that writes symbol
-        // information to the given file descriptor. The buffer contains valid pointers
-        // from libc::backtrace, and STDERR_FILENO is always valid.
-        unsafe { backtrace_symbols_fd(buffer.as_ptr(), size, libc::STDERR_FILENO) };
+        for (i, &addr) in buffer.iter().enumerate() {
+            let mut resolved = false;
+            // SAFETY: `resolve_unsynchronized` is not strictly async-signal-safe but
+            // we are in a crashing signal handler on a dedicated stack. Best-effort
+            // diagnostics are acceptable here because the process will terminate
+            // immediately after.
+            unsafe {
+                backtrace::resolve_unsynchronized(addr, |symbol| {
+                    resolved = true;
+                    let _ = write!(RawStderr, "  {i:>4}: {addr:?} - ");
+                    if let Some(name) = symbol.name() {
+                        let _ = write!(RawStderr, "{name}");
+                    } else {
+                        let _ = write!(RawStderr, "<unknown>");
+                    }
+                    if let Some(file) = symbol.filename() {
+                        let _ = write!(RawStderr, "\n             at {}", file.display());
+                        if let Some(line) = symbol.lineno() {
+                            let _ = write!(RawStderr, ":{line}");
+                        }
+                    }
+                    let _ = writeln!(RawStderr);
+                });
+            }
+            if !resolved {
+                let _ = writeln!(RawStderr, "  {i:>4}: {addr:?} - <unresolved>");
+            }
+        }
     }
 
     /// Unbuffered, unsynchronized writer to stderr.
     ///
     /// Only acceptable because everything will end soon anyways.
-    struct RawStderr(());
+    struct RawStderr;
 
     impl std::fmt::Write for RawStderr {
         fn write_str(&mut self, s: &str) -> Result<(), std::fmt::Error> {
@@ -94,8 +118,8 @@ mod glibc_impl {
     /// Splash stderr with letters of our own blood to warn our friends about the monster.
     macro_rules! raw_errln {
         ($tokens:tt) => {
-            let _ = ::core::fmt::Write::write_fmt(&mut RawStderr(()), format_args!($tokens));
-            let _ = ::core::fmt::Write::write_char(&mut RawStderr(()), '\n');
+            let _ = ::core::fmt::Write::write_fmt(&mut RawStderr, format_args!($tokens));
+            let _ = ::core::fmt::Write::write_char(&mut RawStderr, '\n');
         };
     }
 
@@ -103,16 +127,28 @@ mod glibc_impl {
     extern "C" fn print_stack_trace(_: libc::c_int) {
         const MAX_FRAMES: usize = 256;
         let mut stack_trace: [*mut libc::c_void; MAX_FRAMES] = [ptr::null_mut(); MAX_FRAMES];
-        // SAFETY: libc::backtrace fills the provided buffer with return addresses
-        // from the call stack. The buffer is valid and properly sized.
-        let stack = unsafe {
-            // Collect return addresses
-            let depth = libc::backtrace(stack_trace.as_mut_ptr(), MAX_FRAMES as i32);
-            if depth == 0 {
-                return;
-            }
-            &stack_trace[0..depth as usize]
-        };
+        let mut depth = 0usize;
+
+        // SAFETY: `trace_unsynchronized` is not synchronized but we are in a signal
+        // handler where only this thread is executing. The function walks the stack
+        // and provides frame instruction pointers via the callback. This works on
+        // both glibc (via `_Unwind_Backtrace`) and musl (via `libunwind`).
+        unsafe {
+            backtrace::trace_unsynchronized(|frame| {
+                if depth >= MAX_FRAMES {
+                    return false;
+                }
+                stack_trace[depth] = frame.ip();
+                depth += 1;
+                true
+            });
+        }
+
+        if depth == 0 {
+            return;
+        }
+
+        let stack = &stack_trace[..depth];
 
         // Just a stack trace is cryptic. Explain what we're doing.
         raw_errln!("error: process interrupted by SIGSEGV, printing backtrace\n");
@@ -175,17 +211,38 @@ mod glibc_impl {
     }
 
     /// Modern kernels on modern hardware can have dynamic signal stack sizes.
+    /// Reads `AT_MINSIGSTKSZ` from `/proc/self/auxv` instead of using
+    /// `libc::getauxval`, which is a glibc extension unavailable on musl.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn min_sigstack_size() -> usize {
-        const AT_MINSIGSTKSZ: core::ffi::c_ulong = 51;
-        // SAFETY: `getauxval` is a standard libc function that retrieves values from
-        // the auxiliary vector. AT_MINSIGSTKSZ is a valid key, and the function
-        // returns 0 if the key is not found, which is handled below.
-        let dynamic_sigstksz = unsafe { libc::getauxval(AT_MINSIGSTKSZ) };
-        // If getauxval couldn't find the entry, it returns 0,
-        // so take the higher of the "constant" and auxval.
-        // This transparently supports older kernels which don't provide AT_MINSIGSTKSZ
-        libc::MINSIGSTKSZ.max(dynamic_sigstksz as _)
+        read_at_minsigstksz().unwrap_or(libc::MINSIGSTKSZ)
+    }
+
+    /// Read the `AT_MINSIGSTKSZ` value from `/proc/self/auxv`.
+    ///
+    /// The auxiliary vector is a sequence of `(key, value)` pairs where both
+    /// key and value are native-width unsigned integers. The vector is
+    /// terminated by an `AT_NULL` (0) entry.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn read_at_minsigstksz() -> Option<usize> {
+        const AT_NULL: usize = 0;
+        const AT_MINSIGSTKSZ: usize = 51;
+        const ENTRY_SIZE: usize = 2 * std::mem::size_of::<usize>();
+
+        let mut file = std::fs::File::open("/proc/self/auxv").ok()?;
+        let mut buf = [0u8; ENTRY_SIZE];
+        loop {
+            file.read_exact(&mut buf).ok()?;
+            let (key_bytes, val_bytes) = buf.split_at(std::mem::size_of::<usize>());
+            let key = usize::from_ne_bytes(key_bytes.try_into().ok()?);
+            let val = usize::from_ne_bytes(val_bytes.try_into().ok()?);
+            if key == AT_NULL {
+                return None;
+            }
+            if key == AT_MINSIGSTKSZ {
+                return Some(libc::MINSIGSTKSZ.max(val));
+            }
+        }
     }
 
     /// Not all OS support hardware where this is needed.

@@ -3119,6 +3119,7 @@ dependencies = [
 name = "base-cli-utils"
 version = "0.0.0"
 dependencies = [
+ "backtrace",
  "clap",
  "dirs-next",
  "eyre",
