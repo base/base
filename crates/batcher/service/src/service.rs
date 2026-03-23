@@ -23,8 +23,9 @@ use tracing::{info, warn};
 use url::Url;
 
 use crate::{
-    BatcherConfig, NullL1HeadSubscription, NullSubscription, RpcL1HeadPollingSource,
-    RpcPollingSource, RpcThrottleClient, SafeHeadPoller, WsBlockSubscription, WsL1HeadSubscription,
+    BatcherConfig, MAX_CHECK_RECENT_TXS_DEPTH, NullL1HeadSubscription, NullSubscription,
+    RecentTxScanner, RpcL1HeadPollingSource, RpcPollingSource, RpcThrottleClient, SafeHeadPoller,
+    WsBlockSubscription, WsL1HeadSubscription,
 };
 
 /// Service-internal throttle client variant: either a no-op or an RPC client.
@@ -306,21 +307,66 @@ impl BatcherService {
         let safe_l2_number = sync_status.safe_l2.block_info.number;
         info!(safe_l2 = %safe_l2_number, "fetched safe L2 head");
 
+        // Validate the recent-tx scan depth against the maximum. Do this early so
+        // the error surfaces before any network I/O for the scan.
+        if self.config.check_recent_txs_depth > MAX_CHECK_RECENT_TXS_DEPTH {
+            return Err(eyre::eyre!(
+                "check_recent_txs_depth {} exceeds maximum of {}",
+                self.config.check_recent_txs_depth,
+                MAX_CHECK_RECENT_TXS_DEPTH,
+            ));
+        }
+
+        // Connect to L1 early so it is available for the optional recent-tx scan.
+        let l1_provider: RootProvider = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .connect(self.config.l1_rpc_url.as_str())
+            .await
+            .map_err(|e| eyre::eyre!("failed to connect to L1: {e}"))?;
+
+        // Optionally scan recent L1 blocks to find the highest L2 block already
+        // submitted but not yet reflected in the safe head, preventing re-submissions
+        // after an unclean restart. Peek at the batcher address from the private key
+        // (without consuming it) only when the scan is requested.
+        let scanned_highest = if self.config.check_recent_txs_depth > 0 {
+            let batcher_address = self
+                .config
+                .batcher_private_key
+                .as_ref()
+                .ok_or_else(|| eyre::eyre!("batcher_private_key must be set before starting"))?
+                .address();
+            RecentTxScanner::highest_submitted_l2_block(
+                &l1_provider,
+                batcher_address,
+                rollup_config.batch_inbox_address,
+                self.config.check_recent_txs_depth,
+                &rollup_config,
+            )
+            .await?
+        } else {
+            None
+        };
+
         // Get the current L2 latest block to decide whether historical backfill is needed.
         let latest_l2 = l2_provider
             .get_block_number()
             .await
             .map_err(|e| eyre::eyre!("failed to fetch L2 latest block number: {e}"))?;
 
-        // Build the L2 polling source. If blocks between safe_head+1 and latest
+        // Advance the cursor past any L2 blocks that are already on L1 but not yet safe.
+        // Use the higher of the safe head and the scan result as the backfill start.
+        let cursor_start = safe_l2_number.max(scanned_highest.unwrap_or(0));
+
+        // Build the L2 polling source. If blocks between cursor_start+1 and latest
         // were not yet submitted, use sequential catchup mode to avoid skipping them.
-        let poller = if safe_l2_number < latest_l2 {
+        let poller = if cursor_start < latest_l2 {
             info!(
                 safe_l2 = %safe_l2_number,
+                cursor_start = %cursor_start,
                 latest_l2 = %latest_l2,
-                "starting sequential backfill from safe L2 head"
+                "starting sequential backfill from cursor"
             );
-            RpcPollingSource::new_from(Arc::clone(&l2_provider), safe_l2_number + 1)
+            RpcPollingSource::new_from(Arc::clone(&l2_provider), cursor_start + 1)
         } else {
             RpcPollingSource::new(Arc::clone(&l2_provider))
         };
@@ -349,13 +395,6 @@ impl BatcherService {
             |cfg| (cfg, ThrottleStrategy::Linear),
         );
         let throttle = ThrottleController::new(throttle_config, throttle_strategy);
-
-        // Connect to the L1 RPC endpoint for transaction submission.
-        let l1_provider: RootProvider = ProviderBuilder::new()
-            .disable_recommended_fillers()
-            .connect(self.config.l1_rpc_url.as_str())
-            .await
-            .map_err(|e| eyre::eyre!("failed to connect to L1: {e}"))?;
 
         // Build the L1 head source: a hybrid of optional WS subscription + polling.
         let l1_head_subscription =

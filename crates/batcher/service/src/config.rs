@@ -50,6 +50,16 @@ pub struct BatcherConfig {
     pub resubmission_timeout: Duration,
     /// Throttle configuration (optional).
     pub throttle: Option<ThrottleConfig>,
+    /// Number of recent L1 blocks to scan on startup for already-submitted batcher frames.
+    ///
+    /// When nonzero, the service walks back this many blocks from the current L1 head
+    /// on startup, decodes any calldata batcher frames it finds, and advances the L2
+    /// block cursor past data already pending on L1. This avoids re-submitting frames
+    /// that were posted but not yet reflected in the safe head after an unclean shutdown.
+    ///
+    /// Must be at most [`MAX_CHECK_RECENT_TXS_DEPTH`](crate::MAX_CHECK_RECENT_TXS_DEPTH)
+    /// (128). A value of 0 disables the scan (default).
+    pub check_recent_txs_depth: u64,
     /// Socket address for the admin JSON-RPC API.
     ///
     /// When set, the batcher exposes the `admin_*` RPC namespace on this address.
@@ -72,6 +82,7 @@ impl Default for BatcherConfig {
             num_confirmations: 1,
             resubmission_timeout: Duration::from_secs(48),
             throttle: Some(ThrottleConfig::default()),
+            check_recent_txs_depth: 0,
             admin_addr: None,
         }
     }

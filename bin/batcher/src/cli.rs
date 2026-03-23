@@ -147,6 +147,23 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "no-throttle", env = "BATCHER_NO_THROTTLE")]
     pub no_throttle: bool,
 
+    /// Number of recent L1 blocks to scan on startup for already-submitted batcher frames.
+    ///
+    /// When set to a nonzero value N, the batcher walks back N L1 blocks from the
+    /// current head on startup, decodes any calldata batcher frames it finds, and
+    /// advances the L2 block cursor past data already pending on L1. This avoids
+    /// re-submitting frames after an unclean shutdown. Maximum value is 128.
+    ///
+    /// A value of 0 (default) disables the scan. Matches op-batcher's
+    /// `--check-recent-txs-depth` flag.
+    #[arg(
+        long = "check-recent-txs-depth",
+        default_value = "0",
+        value_parser = clap::value_parser!(u64).range(0..=128),
+        env = "BATCHER_CHECK_RECENT_TXS_DEPTH"
+    )]
+    pub check_recent_txs_depth: u64,
+
     /// Bind address for the admin JSON-RPC API (default: 127.0.0.1).
     ///
     /// Only takes effect when `--admin-port` is also set.
@@ -204,6 +221,7 @@ impl BatcherArgs {
                     ..Default::default()
                 })
             },
+            check_recent_txs_depth: self.check_recent_txs_depth,
             admin_addr: self.admin_port.map(|port| SocketAddr::new(self.admin_addr, port)),
         })
     }
