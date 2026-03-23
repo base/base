@@ -84,7 +84,6 @@ serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
-reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["test-util"] }
 base-challenger = { path = ".", features = ["test-utils"] }
 
