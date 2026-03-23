@@ -24,7 +24,7 @@ const KEYBINDINGS: &[Keybinding] = &[
 /// HA conductor cluster status view.
 ///
 /// Renders a fixed grid with one column per conductor node and rows for
-/// role (leader / follower / offline), unsafe L2 block, and P2P peer count.
+/// role (leader / follower / offline), unsafe/safe/finalized L2 block, and P2P peer count.
 /// The user can navigate columns with `←`/`→` and trigger leadership transfers
 /// with `t` (any peer) or `Enter` (selected node). A footer bar always shows
 /// the available key bindings. When no conductor configuration is present
@@ -256,6 +256,40 @@ fn render_cluster_table(
     }
     let l2_row = Row::new(l2_cells).height(1);
 
+    // ── Safe L2 row ────────────────────────────────────────────────────────
+    let mut safe_l2_cells = vec![
+        Cell::from("Safe L2")
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
+    for node in nodes {
+        let (label, style) = match node.safe_l2_block {
+            Some(n) if node.is_leader == Some(true) => {
+                (format!("   #{n}"), Style::default().fg(Color::Yellow))
+            }
+            Some(n) => (format!("   #{n}"), Style::default().fg(Color::White)),
+            None => ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+        };
+        safe_l2_cells.push(Cell::from(label).style(style));
+    }
+    let safe_l2_row = Row::new(safe_l2_cells).height(1);
+
+    // ── Finalized L2 row ───────────────────────────────────────────────────
+    let mut finalized_l2_cells = vec![
+        Cell::from("Finalized L2")
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
+    for node in nodes {
+        let (label, style) = match node.finalized_l2_block {
+            Some(n) if node.is_leader == Some(true) => {
+                (format!("   #{n}"), Style::default().fg(Color::Yellow))
+            }
+            Some(n) => (format!("   #{n}"), Style::default().fg(Color::White)),
+            None => ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+        };
+        finalized_l2_cells.push(Cell::from(label).style(style));
+    }
+    let finalized_l2_row = Row::new(finalized_l2_cells).height(1);
+
     // ── P2P peers row ──────────────────────────────────────────────────────
     let mut peers_cells = vec![
         Cell::from("P2P Peers")
@@ -271,7 +305,7 @@ fn render_cluster_table(
     }
     let peers_row = Row::new(peers_cells).height(1);
 
-    let rows = vec![role_row, l2_row, peers_row];
+    let rows = vec![role_row, l2_row, safe_l2_row, finalized_l2_row, peers_row];
     let table = Table::new(rows, constraints).header(header).row_highlight_style(Style::default());
 
     f.render_stateful_widget(table, inner, &mut TableState::default());

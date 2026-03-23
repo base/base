@@ -626,6 +626,10 @@ pub(crate) struct ConductorNodeStatus {
     pub is_leader: Option<bool>,
     /// Unsafe L2 block number from `optimism_syncStatus`. `None` means unreachable.
     pub unsafe_l2_block: Option<u64>,
+    /// Safe L2 block number from `optimism_syncStatus`. `None` means unreachable.
+    pub safe_l2_block: Option<u64>,
+    /// Finalized L2 block number from `optimism_syncStatus`. `None` means unreachable.
+    pub finalized_l2_block: Option<u64>,
     /// Number of connected P2P peers from `opp2p_peerStats`. `None` means unreachable.
     pub peer_count: Option<u32>,
 }
@@ -734,13 +738,20 @@ pub(crate) async fn run_conductor_poller(
         let statuses = futures::future::join_all(clients.iter().map(
             |(name, conductor_client, cl_client)| async move {
                 let is_leader = ConductorApiClient::conductor_leader(conductor_client).await.ok();
-                let unsafe_l2_block = RollupNodeApiClient::op_sync_status(cl_client)
-                    .await
-                    .ok()
-                    .map(|s| s.unsafe_l2.block_info.number);
+                let sync = RollupNodeApiClient::op_sync_status(cl_client).await.ok();
+                let unsafe_l2_block = sync.as_ref().map(|s| s.unsafe_l2.block_info.number);
+                let safe_l2_block = sync.as_ref().map(|s| s.safe_l2.block_info.number);
+                let finalized_l2_block = sync.as_ref().map(|s| s.finalized_l2.block_info.number);
                 let peer_count =
                     OpP2PApiClient::opp2p_peer_stats(cl_client).await.ok().map(|s| s.connected);
-                ConductorNodeStatus { name: name.clone(), is_leader, unsafe_l2_block, peer_count }
+                ConductorNodeStatus {
+                    name: name.clone(),
+                    is_leader,
+                    unsafe_l2_block,
+                    safe_l2_block,
+                    finalized_l2_block,
+                    peer_count,
+                }
             },
         ))
         .await;
