@@ -273,7 +273,7 @@ const ALPHA: BaseChainConfig = BaseChainConfig {
     pectra_blob_schedule_timestamp: Some(1_742_486_400),
     isthmus_timestamp: 1_744_300_800,
     jovian_timestamp: 1_762_185_600,
-    base_v1_timestamp: None,
+    base_v1_timestamp: Some(1_774_890_000),
 
     genesis_l1_hash: b256!("86252c512dc5bd7201d0532b31d50696ba84344a7cda545e04a98073a8e13d87"),
     genesis_l1_number: 4_344_216,
