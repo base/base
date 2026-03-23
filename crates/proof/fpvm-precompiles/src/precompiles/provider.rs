@@ -36,7 +36,7 @@ where
     O: PreimageOracleClient + Clone + Send + Sync + 'static,
 {
     #[cfg(test)]
-    fn precompiles(&self) -> &'static Precompiles {
+    const fn precompiles(&self) -> &'static Precompiles {
         self.inner.precompiles
     }
 
@@ -304,10 +304,8 @@ mod tests {
     use super::*;
 
     fn make_hw_or() -> (HintWriter<NativeChannel>, OracleReader<NativeChannel>) {
-        let (hint_chan, preimage_chan) = (
-            BidirectionalChannel::new().unwrap(),
-            BidirectionalChannel::new().unwrap(),
-        );
+        let (hint_chan, preimage_chan) =
+            (BidirectionalChannel::new().unwrap(), BidirectionalChannel::new().unwrap());
         (HintWriter::new(hint_chan.client), OracleReader::new(preimage_chan.client))
     }
 
