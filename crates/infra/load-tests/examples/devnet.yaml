@@ -1,12 +1,11 @@
 # Load Test Configuration - Local Devnet
 #
 # Runs against a locally running devnet (just devnet up)
+# Requires FUNDER_KEY env var (for devnet, use Anvil Account #1):
+#   FUNDER_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
 
 # RPC endpoint for local devnet
 rpc: http://localhost:8545
-
-# Pre-funded Anvil dev key (Account #1 - Account #0 is used as deployer and has depleted funds)
-funder_key: "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 
 # Number of sender accounts
 sender_count: 10

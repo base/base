@@ -2,7 +2,6 @@
 
 use std::path::PathBuf;
 
-use alloy_signer_local::PrivateKeySigner;
 use base_load_tests::{LoadRunner, RpcClient, TestConfig, init_tracing};
 use eyre::{Result, bail};
 
@@ -26,8 +25,7 @@ async fn main() -> Result<()> {
 
     let test_config = TestConfig::load(&config_path)?;
 
-    let rpc_url = test_config.rpc.parse()?;
-    let client = RpcClient::new(rpc_url);
+    let client = RpcClient::new(test_config.rpc.clone());
     let rpc_chain_id =
         if test_config.chain_id.is_none() { Some(client.chain_id().await?) } else { None };
 
@@ -48,8 +46,7 @@ async fn main() -> Result<()> {
     let mut runner = LoadRunner::new(load_config)?;
 
     println!("Funding test accounts...");
-    let funder_key = test_config.resolve_funder_key()?;
-    let funding_key: PrivateKeySigner = funder_key.parse()?;
+    let funding_key = TestConfig::funder_key()?;
     let funding_amount = test_config.parse_funding_amount()?;
     runner.fund_accounts(funding_key, funding_amount).await?;
     println!("Accounts funded.");

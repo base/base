@@ -1,8 +1,10 @@
 use std::{fmt, path::Path, time::Duration};
 
 use alloy_primitives::Address;
+use alloy_signer_local::PrivateKeySigner;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 use crate::{
     runner::{TxConfig, TxType},
@@ -15,16 +17,12 @@ use crate::{
 #[serde(default)]
 pub struct TestConfig {
     /// RPC endpoint URL.
-    pub rpc: String,
+    pub rpc: Url,
 
     /// Mnemonic phrase for deriving sender accounts.
     /// If not provided, accounts are generated from seed.
     #[serde(skip_serializing)]
     pub mnemonic: Option<String>,
-
-    /// Private key for the funder account (hex with 0x prefix).
-    #[serde(skip_serializing)]
-    pub funder_key: String,
 
     /// Amount to fund each sender account (in wei, as string).
     pub funding_amount: String,
@@ -57,9 +55,8 @@ pub struct TestConfig {
 impl Default for TestConfig {
     fn default() -> Self {
         Self {
-            rpc: String::new(),
+            rpc: Url::parse("http://localhost:8545").expect("valid URL"),
             mnemonic: None,
-            funder_key: String::new(),
             funding_amount: "100000000000000000".to_string(),
             sender_count: 10,
             sender_offset: 0,
@@ -78,7 +75,6 @@ impl fmt::Debug for TestConfig {
         f.debug_struct("TestConfig")
             .field("rpc", &self.rpc)
             .field("mnemonic", &self.mnemonic.as_ref().map(|_| "[REDACTED]"))
-            .field("funder_key", &"[REDACTED]")
             .field("funding_amount", &self.funding_amount)
             .field("sender_count", &self.sender_count)
             .field("sender_offset", &self.sender_offset)
@@ -166,33 +162,20 @@ impl TestConfig {
 
     /// Validates that all required fields are set and values are sensible.
     pub fn validate(&self) -> Result<()> {
-        if self.rpc.is_empty() {
-            return Err(BaselineError::Config("rpc endpoint is required".into()));
-        }
-        if self.funder_key.is_empty() {
-            return Err(BaselineError::Config("funder_key is required".into()));
-        }
         if self.sender_count == 0 {
             return Err(BaselineError::Config("sender_count must be > 0".into()));
         }
         Ok(())
     }
 
-    /// Resolves the funder key, checking the `FUNDER_KEY` environment variable
-    /// first, then falling back to the config value. Returns an error if the
-    /// key is a placeholder or env var reference that cannot be resolved.
-    pub fn resolve_funder_key(&self) -> Result<String> {
-        if let Ok(env_key) = std::env::var("FUNDER_KEY") {
-            return Ok(env_key);
-        }
-
-        if self.funder_key.starts_with("${") || self.funder_key == "<your key here>" {
-            return Err(BaselineError::Config(
-                "FUNDER_KEY environment variable is required for this config".into(),
-            ));
-        }
-
-        Ok(self.funder_key.clone())
+    /// Returns the funder key from the `FUNDER_KEY` environment variable.
+    pub fn funder_key() -> Result<PrivateKeySigner> {
+        let key = std::env::var("FUNDER_KEY").map_err(|_| {
+            BaselineError::Config("FUNDER_KEY environment variable is required".into())
+        })?;
+        key.parse().map_err(|e| {
+            BaselineError::Config(format!("invalid FUNDER_KEY (expected 0x-prefixed hex): {e}"))
+        })
     }
 
     /// Parses the duration string into a Duration.
@@ -222,10 +205,7 @@ impl TestConfig {
             BaselineError::Config("chain_id must be provided in config or fetched from RPC".into())
         })?;
 
-        let rpc_url = self
-            .rpc
-            .parse()
-            .map_err(|e| BaselineError::Config(format!("invalid rpc url '{}': {}", self.rpc, e)))?;
+        let rpc_url = self.rpc.clone();
 
         let duration = self.parse_duration()?.unwrap_or_else(|| Duration::from_secs(30));
 
@@ -286,7 +266,7 @@ rpc: http://localhost:8545
 funder_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.rpc, "http://localhost:8545");
+        assert_eq!(config.rpc.host_str(), Some("localhost"));
         assert_eq!(config.sender_count, 10);
         assert!(config.mnemonic.is_none());
     }
@@ -296,7 +276,6 @@ funder_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
         let yaml = r#"
 rpc: https://sepolia.base.org
 mnemonic: "test test test test test test test test test test test junk"
-funder_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 funding_amount: "500000000000000000"
 sender_count: 20
 sender_offset: 5
@@ -327,7 +306,6 @@ transactions:
     fn parse_duration_formats() {
         let yaml = r#"
 rpc: http://localhost:8545
-funder_key: "0x1234"
 duration: "30s"
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
@@ -335,7 +313,6 @@ duration: "30s"
 
         let yaml2 = r#"
 rpc: http://localhost:8545
-funder_key: "0x1234"
 duration: "1h 30m"
 "#;
         let config2 = TestConfig::from_yaml(yaml2).unwrap();

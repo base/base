@@ -4,9 +4,6 @@
 
 rpc: https://base-sepolia-alpha.cbhq.net
 
-# Loaded from FUNDER_KEY environment variable
-funder_key: "${FUNDER_KEY}"
-
 sender_count: 10
 target_gps: 2100000
 duration: "30s"
