@@ -37,7 +37,6 @@ reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
 base-txpool.workspace = true
 base-protocol.workspace = true
 base-execution-rpc.workspace = true
-base-execution-forks.workspace = true
 base-execution-storage.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-payload-builder.workspace = true

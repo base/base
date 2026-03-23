@@ -25,7 +25,6 @@ reth-trie-common.workspace = true
 base-execution-evm.workspace = true
 reth-primitives-traits.workspace = true
 base-execution-chainspec.workspace = true
-base-execution-primitives.workspace = true
 
 # revm
 revm-database.workspace = true
@@ -72,6 +71,7 @@ base-node-runner = { workspace = true, features = ["test-utils"] }
 # reth
 base-node-core.workspace = true
 reth-db-common.workspace = true
+base-execution-primitives.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
