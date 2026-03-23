@@ -1,0 +1,85 @@
+scenarios:
+  # Blake2f scenarios with different round counts
+  blake2f_light:
+    precompile: blake2f
+    rounds: 1000
+
+  blake2f_medium:
+    precompile: blake2f
+    rounds: 50000
+
+  blake2f_heavy:
+    precompile: blake2f
+    rounds: 200000
+
+  # zkSNARK verification scenarios
+  groth16_verify:
+    precompile: bn254_pairing
+    pairs: 4
+    description: "Groth16 proof verification (4 pairing checks)"
+
+  plonk_verify:
+    precompile: bn254_pairing
+    pairs: 2
+    description: "PLONK proof verification (2 pairing checks)"
+
+  # RSA signature verification
+  rsa_2048:
+    precompile: modexp
+    base_len: 256
+    exp_len: 256
+    mod_len: 256
+    description: "RSA-2048 signature verification"
+
+  rsa_4096:
+    precompile: modexp
+    base_len: 512
+    exp_len: 512
+    mod_len: 512
+    description: "RSA-4096 signature verification"
+
+  # Batch signature verification
+  multisig_10:
+    precompile: ecrecover
+    iterations: 10
+    description: "10-of-N multisig verification"
+
+  multisig_50:
+    precompile: ecrecover
+    iterations: 50
+    description: "50-of-N multisig verification"
+
+  multisig_100:
+    precompile: ecrecover
+    iterations: 100
+    description: "100-of-N multisig verification"
+
+  # Bitcoin/cross-chain scenarios
+  bitcoin_header:
+    precompile: sha256
+    input_size: 80
+    description: "Bitcoin block header hash (80 bytes)"
+
+  bitcoin_spv_6conf:
+    precompile: sha256
+    input_size: 80
+    iterations: 12
+    description: "Bitcoin SPV with 6 confirmations (6 headers × double-SHA256)"
+
+  # Hash function scenarios
+  sha256_small:
+    precompile: sha256
+    input_size: 64
+
+  sha256_large:
+    precompile: sha256
+    input_size: 1024
+
+  identity_small:
+    precompile: identity
+    input_size: 128
+
+  identity_large:
+    precompile: identity
+    input_size: 10000
+    description: "Large memory copy (10KB)"

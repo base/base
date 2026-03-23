@@ -148,9 +148,14 @@ impl LoadRunner {
                         weight_pct,
                     );
                 }
-                TxType::Precompile { target } => {
-                    generator =
-                        generator.with_payload(PrecompilePayload::new(target.clone()), weight_pct);
+                TxType::Precompile { target, blake2f_rounds, iterations, looper_contract } => {
+                    let payload = PrecompilePayload::with_options(
+                        target.clone(),
+                        *blake2f_rounds,
+                        *iterations,
+                        *looper_contract,
+                    );
+                    generator = generator.with_payload(payload, weight_pct);
                 }
             }
         }
@@ -170,7 +175,7 @@ impl LoadRunner {
                 TxType::Transfer => 21_000,
                 TxType::Calldata { max_size, .. } => 21_000 + (*max_size as u64 * 16),
                 TxType::Erc20 { .. } => 65_000,
-                TxType::Precompile { .. } => 100_000,
+                TxType::Precompile { iterations, .. } => 50_000 + 100_000 * (*iterations as u64),
             };
             weighted_gas += gas_estimate * tx_config.weight as u64;
         }

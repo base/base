@@ -3,13 +3,13 @@ use std::{fmt, path::Path, time::Duration};
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use rand::Rng;
+use revm::precompile::PrecompileId;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
-    workload::parse_precompile_id,
 };
 
 /// Configuration for a load test, loadable from YAML.
@@ -50,6 +50,10 @@ pub struct TestConfig {
 
     /// Transaction types with weights.
     pub transactions: Vec<WeightedTxType>,
+
+    /// Address of the precompile looper contract (required when using iterations > 1).
+    #[serde(default)]
+    pub looper_contract: Option<String>,
 }
 
 impl Default for TestConfig {
@@ -84,6 +88,7 @@ impl fmt::Debug for TestConfig {
             .field("seed", &self.seed)
             .field("chain_id", &self.chain_id)
             .field("transactions", &self.transactions)
+            .field("looper_contract", &self.looper_contract)
             .finish()
     }
 }
@@ -124,9 +129,12 @@ pub enum TxTypeConfig {
 
     /// Precompile call.
     Precompile {
-        /// Target precompile (sha256, identity, ecrecover, etc.).
-        #[serde(default = "default_precompile")]
-        target: String,
+        /// Target precompile configuration.
+        #[serde(flatten)]
+        target: PrecompileTarget,
+        /// Number of iterations per transaction. Requires `looper_contract` when > 1.
+        #[serde(default = "default_iterations")]
+        iterations: u32,
     },
 }
 
@@ -246,9 +254,28 @@ impl TestConfig {
                 })?;
                 TxType::Erc20 { contract: address }
             }
-            TxTypeConfig::Precompile { target } => {
-                let id = parse_precompile_id(target).map_err(BaselineError::Config)?;
-                TxType::Precompile { target: id }
+            TxTypeConfig::Precompile { target, iterations } => {
+                let looper_contract = if *iterations > 1 {
+                    let addr_str = self.looper_contract.as_ref().ok_or_else(|| {
+                        BaselineError::Config(
+                            "looper_contract required when precompile iterations > 1".into(),
+                        )
+                    })?;
+                    let addr = addr_str.parse::<Address>().map_err(|e| {
+                        BaselineError::Config(format!(
+                            "invalid looper_contract address '{addr_str}': {e}"
+                        ))
+                    })?;
+                    Some(addr)
+                } else {
+                    None
+                };
+                TxType::Precompile {
+                    target: target.to_precompile_id(),
+                    blake2f_rounds: target.blake2f_rounds(),
+                    iterations: *iterations,
+                    looper_contract,
+                }
             }
         };
         Ok(TxConfig { weight: weighted.weight, tx_type })
@@ -316,5 +343,87 @@ duration: "1h 30m"
 "#;
         let config2 = TestConfig::from_yaml(yaml2).unwrap();
         assert_eq!(config2.parse_duration().unwrap().unwrap(), Duration::from_secs(5400));
+    }
+
+    #[test]
+    fn parse_precompile_targets() {
+        let yaml = r#"
+rpc: http://localhost:8545
+funder_key: "0x1234"
+transactions:
+  - weight: 10
+    type: precompile
+    target: sha256
+  - weight: 10
+    type: precompile
+    target: blake2f
+  - weight: 10
+    type: precompile
+    target: blake2f
+    rounds: 1000
+  - weight: 10
+    type: precompile
+    target: ecrecover
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        assert_eq!(config.transactions.len(), 4);
+
+        match &config.transactions[0].tx_type {
+            TxTypeConfig::Precompile { target, iterations } => {
+                assert!(matches!(target, PrecompileTarget::Sha256));
+                assert_eq!(*iterations, 1);
+            }
+            _ => panic!("expected Precompile"),
+        }
+
+        match &config.transactions[1].tx_type {
+            TxTypeConfig::Precompile { target, iterations } => {
+                assert!(matches!(target, PrecompileTarget::Blake2f { rounds: None }));
+                assert_eq!(*iterations, 1);
+            }
+            _ => panic!("expected Precompile"),
+        }
+
+        match &config.transactions[2].tx_type {
+            TxTypeConfig::Precompile { target, iterations } => {
+                assert!(matches!(target, PrecompileTarget::Blake2f { rounds: Some(1000) }));
+                assert_eq!(*iterations, 1);
+            }
+            _ => panic!("expected Precompile"),
+        }
+
+        match &config.transactions[3].tx_type {
+            TxTypeConfig::Precompile { target, iterations } => {
+                assert!(matches!(target, PrecompileTarget::Ecrecover));
+                assert_eq!(*iterations, 1);
+            }
+            _ => panic!("expected Precompile"),
+        }
+    }
+
+    #[test]
+    fn parse_precompile_with_iterations() {
+        let yaml = r#"
+rpc: http://localhost:8545
+funder_key: "0x1234"
+looper_contract: "0x1234567890123456789012345678901234567890"
+transactions:
+  - weight: 10
+    type: precompile
+    target: sha256
+    iterations: 50
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        assert_eq!(config.transactions.len(), 1);
+
+        match &config.transactions[0].tx_type {
+            TxTypeConfig::Precompile { target, iterations } => {
+                assert!(matches!(target, PrecompileTarget::Sha256));
+                assert_eq!(*iterations, 50);
+            }
+            _ => panic!("expected Precompile"),
+        }
+
+        assert!(config.looper_contract.is_some());
     }
 }
