@@ -208,13 +208,13 @@ mod tests {
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
                 max_parallel_proofs: 2,
+                max_retries: 3,
                 driver: DriverConfig {
                     poll_interval: Duration::from_secs(3600),
                     block_interval: 512,
                     intermediate_block_interval: 512,
                     ..Default::default()
                 },
-                ..Default::default()
             },
             prover,
             l1,
