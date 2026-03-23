@@ -273,10 +273,12 @@ mod tests {
         let devnet_forks = BaseChainUpgrades::devnet();
         assert!(devnet_forks.is_base_v1_active_at_timestamp(0));
 
-        // V1 is not scheduled on devnet-0-sepolia-dev-0 yet
+        // V1 is scheduled on devnet-0-sepolia-dev-0 at 1774890000
         let devnet0_forks = BaseChainUpgrades::base_devnet_0_sepolia_dev_0();
         assert!(!devnet0_forks.is_base_v1_active_at_timestamp(0));
-        assert!(!devnet0_forks.is_base_v1_active_at_timestamp(u64::MAX));
+        assert!(!devnet0_forks.is_base_v1_active_at_timestamp(1_774_889_999));
+        assert!(devnet0_forks.is_base_v1_active_at_timestamp(1_774_890_000));
+        assert!(devnet0_forks.is_base_v1_active_at_timestamp(u64::MAX));
     }
 
     #[test]
@@ -296,7 +298,7 @@ mod tests {
         let devnet0_forks = BaseChainUpgrades::base_devnet_0_sepolia_dev_0();
         assert_eq!(
             devnet0_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
-            ForkCondition::Never
+            ForkCondition::Timestamp(1_774_890_000)
         );
     }
 
