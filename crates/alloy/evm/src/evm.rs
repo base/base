@@ -3,7 +3,7 @@ use core::ops::{Deref, DerefMut};
 use alloy_evm::{Database, Evm, EvmEnv};
 use alloy_primitives::{Address, Bytes};
 use base_revm::{
-    OpContext, OpHaltReason, BasePrecompiles, OpSpecId, OpTransaction, OpTransactionError,
+    BasePrecompiles, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
 };
 use revm::{
     ExecuteEvm, InspectEvm, Inspector, SystemCallEvm,

@@ -9,7 +9,7 @@ use base_execution_evm::{OpBlockExecutorFactory, OpEvm, OpEvmFactory, OpRethRece
 use base_execution_primitives::OpPrimitives;
 use base_node_core::{OpEvmConfig, OpExecutorBuilder, OpNode, args::RollupArgs};
 use base_revm::{
-    OpContext, OpHaltReason, BasePrecompiles, OpSpecId, OpTransaction, OpTransactionError,
+    BasePrecompiles, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
 };
 use reth_db::test_utils::create_test_rw_db;
 use reth_evm::{Database, Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
