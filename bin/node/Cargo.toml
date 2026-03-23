@@ -18,7 +18,6 @@ workspace = true
 [dependencies]
 # workspace
 base-metering.workspace = true
-base-cli-utils = { workspace = true, features = ["reth"] }
 base-txpool-rpc.workspace = true
 base-flashblocks.workspace = true
 base-node-runner.workspace = true
@@ -27,6 +26,7 @@ base-txpool-tracing.workspace = true
 base-flashblocks-node.workspace = true
 base-proofs-extension.workspace = true
 base-bundle-extension.workspace = true
+base-cli-utils = { workspace = true, features = ["reth"] }
 
 # reth
 base-node-core.workspace = true
