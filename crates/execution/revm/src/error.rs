@@ -1,4 +1,4 @@
-//! Error types for the Base EVM module.
+//! Error types for the Base EVM execution module.
 
 use reth_evm::execute::BlockExecutionError;
 

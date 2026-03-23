@@ -34,3 +34,18 @@ pub use executor::{OpBlockExecutor, OpTxResult};
 
 mod executor_factory;
 pub use executor_factory::OpBlockExecutorFactory;
+
+#[cfg(feature = "execution")]
+mod receipts;
+#[cfg(feature = "execution")]
+pub use receipts::OpRethReceiptBuilder;
+
+#[cfg(feature = "execution")]
+mod build;
+#[cfg(feature = "execution")]
+pub use build::OpBlockAssembler;
+
+#[cfg(feature = "execution")]
+mod evm_config;
+#[cfg(feature = "execution")]
+pub use evm_config::{OpEvmConfig, OpExecutorProvider};

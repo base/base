@@ -9,7 +9,7 @@ use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_alloy_network::Base;
 use base_bundles::Bundle;
-use base_execution_evm::extract_l1_info_from_tx;
+use base_revm::extract_l1_info_from_tx;
 use base_revm::L1BlockInfo;
 use jsonrpsee::core::RpcResult;
 use reth_rpc_eth_types::{EthApiError, SignError};

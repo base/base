@@ -9,7 +9,7 @@ use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::{OpReceipt, OpTransaction};
 use base_alloy_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_alloy_rpc_types::{L1BlockInfo, OpTransactionReceipt, OpTransactionReceiptFields};
-use base_execution_evm::RethL1BlockInfo;
+use base_revm::RethL1BlockInfo;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_node_api::NodePrimitives;
 use reth_primitives_traits::SealedBlock;
@@ -75,7 +75,7 @@ where
         inputs: Vec<ConvertReceiptInput<'_, N>>,
         block: &SealedBlock<N::Block>,
     ) -> Result<Vec<Self::RpcReceipt>, Self::Error> {
-        let mut l1_block_info = match base_execution_evm::extract_l1_info(block.body()) {
+        let mut l1_block_info = match base_revm::extract_l1_info(block.body()) {
             Ok(l1_block_info) => l1_block_info,
             Err(err) => {
                 let genesis_number =
@@ -413,7 +413,7 @@ mod tests {
         };
 
         let mut l1_block_info =
-            base_execution_evm::extract_l1_info(&block.body).expect("should extract l1 info");
+            base_revm::extract_l1_info(&block.body).expect("should extract l1 info");
 
         // test
         assert!(BaseUpgrades::is_fjord_active_at_timestamp(
@@ -549,7 +549,7 @@ mod tests {
             ..Default::default()
         };
         let mut l1_block_info =
-            base_execution_evm::extract_l1_info(&block.body).expect("should extract l1 info");
+            base_revm::extract_l1_info(&block.body).expect("should extract l1 info");
 
         // https://basescan.org/tx/0xf9420cbaf66a2dda75a015488d37262cbfd4abd0aad7bb2be8a63e14b1fa7a94
         let tx = hex!(

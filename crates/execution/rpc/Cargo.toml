@@ -35,7 +35,6 @@ reth-tasks = { workspace = true, features = ["rayon"] }
 
 # op-reth
 base-txpool.workspace = true
-base-execution-evm.workspace = true
 base-execution-trie.workspace = true
 base-execution-payload-builder.workspace = true
 base-execution-primitives = { workspace = true, features = ["reth-codec", "serde-bincode-compat", "serde"] }
@@ -45,7 +44,7 @@ revm.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-serde.workspace = true
-base-revm.workspace = true
+base-revm = { workspace = true, features = ["execution"] }
 alloy-json-rpc.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-client.workspace = true

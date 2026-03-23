@@ -16,7 +16,7 @@ workspace = true
 reth-evm = { workspace = true, features = ["std"] }
 
 # revm
-base-revm = { workspace = true, features = ["std"] }
+base-revm = { workspace = true, features = ["std", "execution"] }
 revm.workspace = true
 
 # alloy
@@ -55,7 +55,6 @@ base-consensus-engine.workspace = true
 base-batcher-encoder.workspace = true
 base-consensus-node.workspace = true
 base-batcher-source.workspace = true
-base-execution-evm.workspace = true
 base-batcher-core.workspace = true
 base-tx-manager.workspace = true
 base-runtime.workspace = true

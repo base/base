@@ -401,7 +401,7 @@ mod tests {
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
     use base_execution_chainspec::OpChainSpecBuilder;
-    use base_execution_evm::OpEvmConfig;
+    use base_alloy_evm::OpEvmConfig;
     use base_revm::L1BlockInfo;
     use reth_evm::ConfigureEvm;
     use reth_revm::State;

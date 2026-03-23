@@ -38,7 +38,7 @@ impl AssembledBlock {
     /// This extracts the L1 attributes deposited transaction data from the
     /// block body, which contains information about the L1 origin.
     pub fn l1_block_info(&self) -> Result<L1BlockInfo> {
-        base_execution_evm::extract_l1_info(&self.block.body)
+        base_revm::extract_l1_info(&self.block.body)
             .map_err(|e| ExecutionError::L1BlockInfo(e.to_string()).into())
     }
 }

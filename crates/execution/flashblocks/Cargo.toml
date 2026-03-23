@@ -15,7 +15,7 @@ workspace = true
 # workspace
 base-alloy-flashblocks.workspace = true
 alloy-evm = { workspace = true, features = ["std"] }
-base-alloy-evm = { workspace = true, features = ["std"] }
+base-alloy-evm = { workspace = true, features = ["execution"] }
 
 # reth
 reth-rpc.workspace = true
@@ -27,14 +27,13 @@ reth-primitives.workspace = true
 reth-rpc-convert.workspace = true
 reth-rpc-eth-api.workspace = true
 reth-trie-common.workspace = true
-base-execution-evm.workspace = true
 base-execution-rpc.workspace = true
 reth-rpc-eth-types.workspace = true
 base-execution-primitives.workspace = true
 
 # revm
 revm.workspace = true
-base-revm.workspace = true
+base-revm = { workspace = true, features = ["execution"] }
 revm-database.workspace = true
 
 # alloy

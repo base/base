@@ -39,3 +39,22 @@ pub use transaction::{
 };
 
 mod compat;
+
+#[cfg(feature = "execution")]
+mod error;
+#[cfg(feature = "execution")]
+pub use error::{L1BlockInfoError, OpBlockExecutionError};
+
+#[cfg(feature = "execution")]
+mod next_block;
+#[cfg(feature = "execution")]
+pub use next_block::OpNextBlockEnvAttributes;
+
+#[cfg(feature = "execution")]
+mod l1_reth;
+#[cfg(feature = "execution")]
+pub use l1_reth::{
+    RethL1BlockInfo, extract_l1_info, extract_l1_info_from_tx,
+    parse_l1_info, parse_l1_info_tx_bedrock, parse_l1_info_tx_ecotone,
+    parse_l1_info_tx_isthmus, parse_l1_info_tx_jovian,
+};

@@ -90,7 +90,6 @@ reth-payload-util.workspace = true
 reth-node-builder.workspace = true
 reth-network-peers.workspace = true
 reth-tracing-otlp.workspace = true
-base-execution-evm.workspace = true
 reth-node-ethereum.workspace = true
 base-execution-forks.workspace = true
 reth-cli-commands.workspace = true
@@ -113,7 +112,7 @@ base-execution-rpc = { workspace = true, features = ["client"] }
 
 # revm
 revm.workspace = true
-base-revm.workspace = true
+base-revm = { workspace = true, features = ["execution"] }
 
 # alloy
 alloy-evm.workspace = true
@@ -142,7 +141,7 @@ base-alloy-network.workspace = true
 base-alloy-consensus.workspace = true
 base-alloy-rpc-types.workspace = true
 base-alloy-rpc-types-engine.workspace = true
-base-alloy-evm = { workspace = true, features = ["std"] }
+base-alloy-evm = { workspace = true, features = ["execution"] }
 
 # tokio
 tokio.workspace = true

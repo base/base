@@ -220,7 +220,6 @@ base-consensus-providers = { path = "crates/consensus/providers-alloy", default-
 # Execution
 base-node-core = { path = "crates/execution/node" }
 base-execution-cli = { path = "crates/execution/cli" }
-base-execution-evm = { path = "crates/execution/evm" }
 base-execution-rpc = { path = "crates/execution/rpc" }
 base-node-runner = { path = "crates/execution/runner" }
 base-execution-exex = { path = "crates/execution/exex" }

@@ -32,11 +32,11 @@ base-test-utils.workspace = true
 
 # reth
 reth-evm.workspace = true
-base-execution-evm.workspace = true
 base-execution-chainspec.workspace = true
 
 # revm
-base-revm.workspace = true
+base-revm = { workspace = true, features = ["execution"] }
+base-alloy-evm = { workspace = true, features = ["execution"] }
 
 # alloy
 alloy-contract.workspace = true

@@ -20,7 +20,8 @@ use base_alloy_flashblocks::{
 };
 use base_builder_publish::WebSocketPublisher;
 use base_execution_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
-use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use base_alloy_evm::OpEvmConfig;
+use base_revm::OpNextBlockEnvAttributes;
 use base_execution_payload_builder::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use base_execution_primitives::OpTransactionSigned;
 use either::Either;

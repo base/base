@@ -1,32 +1,19 @@
-#![doc = include_str!("../README.md")]
-#![doc(
-    html_logo_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4",
-    html_favicon_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4",
-    issue_tracker_base_url = "https://github.com/base/base/issues/"
-)]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+//! Base EVM configuration: OpEvmConfig and OpExecutorProvider.
 
-extern crate alloc;
-
-use alloc::sync::Arc;
+use std::sync::Arc;
 use core::fmt::Debug;
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::EIP1559ParamError;
-use base_alloy_evm::{
-    OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvmFactory, OpReceiptBuilder, OpTxEnv,
-};
+use base_revm::{OpSpecId, OpTransaction};
 use base_execution_chainspec::OpChainSpec;
 use base_execution_primitives::{DepositReceipt, OpPrimitives};
-use base_revm::{OpSpecId, OpTransaction};
 use reth_chainspec::EthChainSpec;
+use reth_evm::{ConfigureEvm, EvmEnv, TransactionEnv, precompiles::PrecompilesMap};
 #[cfg(feature = "std")]
 use reth_evm::{ConfigureEngineEvm, ExecutableTxIterator};
-use reth_evm::{ConfigureEvm, EvmEnv, TransactionEnv, precompiles::PrecompilesMap};
 use reth_primitives_traits::{NodePrimitives, SealedBlock, SealedHeader, SignedTransaction};
 use revm::context::{BlockEnv, TxEnv};
 #[allow(unused_imports)]
@@ -43,21 +30,12 @@ use {
     },
 };
 
-mod config;
-pub use config::{OpNextBlockEnvAttributes, revm_spec, revm_spec_by_timestamp_after_bedrock};
-mod execute;
-pub use execute::*;
-pub mod l1;
-pub use l1::*;
-mod receipts;
-pub use receipts::*;
-mod build;
-pub use build::OpBlockAssembler;
+use crate::{
+    OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvmFactory, OpReceiptBuilder, OpTxEnv,
+    OpRethReceiptBuilder, spec_by_timestamp_after_bedrock as revm_spec_by_timestamp_after_bedrock,
+};
 
-mod error;
-pub use error::{L1BlockInfoError, OpBlockExecutionError};
-
-/// Builds an [`EvmEnv`] for a given block header using [`base_alloy_evm`]'s spec resolution.
+/// Builds an [`EvmEnv`] for a given block header using [`crate`]'s spec resolution.
 fn op_evm_env(
     header: &Header,
     chain_spec: &(impl BaseUpgrades + EthChainSpec),
@@ -90,7 +68,7 @@ fn op_evm_env(
 /// Builds an [`EvmEnv`] for the next block given a parent header.
 fn op_next_evm_env(
     parent: &Header,
-    attributes: &OpNextBlockEnvAttributes,
+    attributes: &base_revm::OpNextBlockEnvAttributes,
     base_fee_per_gas: u64,
     chain_spec: &(impl BaseUpgrades + EthChainSpec),
 ) -> EvmEnv<OpSpecId> {
@@ -130,7 +108,7 @@ pub struct OpEvmConfig<
     /// Inner [`OpBlockExecutorFactory`].
     pub executor_factory: OpBlockExecutorFactory<R, Arc<ChainSpec>, EvmFactory>,
     /// Base block assembler.
-    pub block_assembler: OpBlockAssembler<ChainSpec>,
+    pub block_assembler: crate::OpBlockAssembler<ChainSpec>,
     #[doc(hidden)]
     pub _pd: core::marker::PhantomData<N>,
 }
@@ -158,7 +136,7 @@ impl<ChainSpec: BaseUpgrades, N: NodePrimitives, R> OpEvmConfig<ChainSpec, N, R>
     /// Creates a new [`OpEvmConfig`] with the given chain spec.
     pub fn new(chain_spec: Arc<ChainSpec>, receipt_builder: R) -> Self {
         Self {
-            block_assembler: OpBlockAssembler::new(Arc::clone(&chain_spec)),
+            block_assembler: crate::OpBlockAssembler::new(Arc::clone(&chain_spec)),
             executor_factory: OpBlockExecutorFactory::new(
                 receipt_builder,
                 chain_spec,
@@ -205,9 +183,9 @@ where
 {
     type Primitives = N;
     type Error = EIP1559ParamError;
-    type NextBlockEnvCtx = OpNextBlockEnvAttributes;
+    type NextBlockEnvCtx = base_revm::OpNextBlockEnvAttributes;
     type BlockExecutorFactory = OpBlockExecutorFactory<R, Arc<ChainSpec>, EvmF>;
-    type BlockAssembler = OpBlockAssembler<ChainSpec>;
+    type BlockAssembler = crate::OpBlockAssembler<ChainSpec>;
 
     fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
         &self.executor_factory
@@ -336,29 +314,34 @@ where
     }
 }
 
+/// Helper type with backwards compatible methods to obtain executor providers.
+pub type OpExecutorProvider = OpEvmConfig;
+
 #[cfg(test)]
 mod tests {
-    use alloc::collections::BTreeMap;
+    use std::{collections::HashMap, str::FromStr};
+    use std::collections::BTreeMap;
     use std::sync::Arc;
 
-    use alloy_consensus::{Header, Receipt};
+    use alloy_consensus::{Block, BlockBody, Header, Receipt, SignableTransaction, TxEip1559};
     use alloy_eips::eip7685::Requests;
     use alloy_genesis::Genesis;
     use alloy_primitives::{
-        Address, B256, LogData, bytes,
-        map::{AddressMap, B256Map, HashMap},
+        Address, B256, LogData, Signature, StorageKey, StorageValue, U256, b256, bytes,
+        map::{AddressMap, B256Map},
     };
-    use base_alloy_consensus::{OpBlock, OpReceipt};
+    use base_alloy_consensus::{OpBlock, OpReceipt, TxDeposit};
     use base_execution_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
-    use base_execution_primitives::OpPrimitives;
-    use base_revm::OpSpecId;
-    use reth_chainspec::ChainSpec;
-    use reth_evm::execute::ProviderError;
+    use base_execution_primitives::{OpPrimitives, OpTransactionSigned};
+    use reth_chainspec::{ChainSpec, MIN_TRANSACTION_GAS};
+    use reth_evm::{ConfigureEvm, EvmEnv, execute::{BasicBlockExecutor, Executor, ProviderError}};
     use reth_execution_types::{
         AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
     };
     use reth_primitives_traits::{Account, RecoveredBlock};
+    use reth_revm::{database::StateProviderDatabase, test_utils::StateProviderTest};
     use revm::{
+        context::{BlockEnv, CfgEnv},
         database::{BundleState, CacheDB},
         database_interface::EmptyDBTyped,
         inspector::NoOpInspector,
@@ -366,10 +349,188 @@ mod tests {
         state::AccountInfo,
     };
 
-    use super::*;
+    use base_revm::{L1_BLOCK_CONTRACT, OpSpecId};
+    use crate::{OpEvmConfig, OpRethReceiptBuilder};
+
+    fn create_op_state_provider() -> StateProviderTest {
+        let mut db = StateProviderTest::default();
+
+        let l1_block_contract_account =
+            Account { balance: U256::ZERO, bytecode_hash: None, nonce: 1 };
+
+        let mut l1_block_storage = HashMap::default();
+        // base fee
+        l1_block_storage.insert(StorageKey::with_last_byte(1), StorageValue::from(1000000000));
+        // l1 fee overhead
+        l1_block_storage.insert(StorageKey::with_last_byte(5), StorageValue::from(188));
+        // l1 fee scalar
+        l1_block_storage.insert(StorageKey::with_last_byte(6), StorageValue::from(684000));
+        // l1 free scalars post ecotone
+        l1_block_storage.insert(
+            StorageKey::with_last_byte(3),
+            StorageValue::from_str(
+                "0x0000000000000000000000000000000000001db0000d27300000000000000005",
+            )
+            .unwrap(),
+        );
+
+        db.insert_account(L1_BLOCK_CONTRACT, l1_block_contract_account, None, l1_block_storage);
+
+        db
+    }
+
+    fn evm_config(chain_spec: Arc<OpChainSpec>) -> OpEvmConfig {
+        OpEvmConfig::new(chain_spec, OpRethReceiptBuilder::default())
+    }
 
     fn test_evm_config() -> OpEvmConfig {
         OpEvmConfig::optimism(BASE_MAINNET.clone())
+    }
+
+    #[test]
+    fn op_deposit_fields_pre_canyon() {
+        let header = Header {
+            timestamp: 1,
+            number: 1,
+            gas_limit: 1_000_000,
+            gas_used: 42_000,
+            receipts_root: b256!(
+                "0x83465d1e7d01578c0d609be33570f91242f013e9e295b0879905346abbd63731"
+            ),
+            ..Default::default()
+        };
+
+        let mut db = create_op_state_provider();
+
+        let addr = Address::ZERO;
+        let account = Account { balance: U256::MAX, ..Account::default() };
+        db.insert_account(addr, account, None, HashMap::default());
+
+        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().regolith_activated().build());
+
+        let tx: OpTransactionSigned = TxEip1559 {
+            chain_id: chain_spec.chain.id(),
+            nonce: 0,
+            gas_limit: MIN_TRANSACTION_GAS,
+            to: addr.into(),
+            ..Default::default()
+        }
+        .into_signed(Signature::test_signature())
+        .into();
+
+        let tx_deposit: OpTransactionSigned = TxDeposit {
+            from: addr,
+            to: addr.into(),
+            gas_limit: MIN_TRANSACTION_GAS,
+            ..Default::default()
+        }
+        .into();
+
+        let provider = evm_config(chain_spec);
+        let mut executor = BasicBlockExecutor::new(provider, StateProviderDatabase::new(&db));
+
+        // make sure the L1 block contract state is preloaded.
+        executor.with_state_mut(|state| {
+            state.load_cache_account(L1_BLOCK_CONTRACT).unwrap();
+        });
+
+        // Attempt to execute a block with one deposit and one non-deposit transaction
+        let output = executor
+            .execute(&RecoveredBlock::new_unhashed(
+                Block {
+                    header,
+                    body: BlockBody { transactions: vec![tx, tx_deposit], ..Default::default() },
+                },
+                vec![addr, addr],
+            ))
+            .unwrap();
+
+        let receipts = &output.receipts;
+        let tx_receipt = &receipts[0];
+        let deposit_receipt = &receipts[1];
+
+        assert!(!matches!(tx_receipt, OpReceipt::Deposit(_)));
+        // deposit_nonce is present only in deposit transactions
+        let OpReceipt::Deposit(deposit_receipt) = deposit_receipt else {
+            panic!("expected deposit")
+        };
+        assert!(deposit_receipt.deposit_nonce.is_some());
+        // deposit_receipt_version is not present in pre canyon transactions
+        assert!(deposit_receipt.deposit_receipt_version.is_none());
+    }
+
+    #[test]
+    fn op_deposit_fields_post_canyon() {
+        // ensure_create2_deployer will fail if timestamp is set to less than 2
+        let header = Header {
+            timestamp: 2,
+            number: 1,
+            gas_limit: 1_000_000,
+            gas_used: 42_000,
+            receipts_root: b256!(
+                "0xfffc85c4004fd03c7bfbe5491fae98a7473126c099ac11e8286fd0013f15f908"
+            ),
+            ..Default::default()
+        };
+
+        let mut db = create_op_state_provider();
+        let addr = Address::ZERO;
+        let account = Account { balance: U256::MAX, ..Account::default() };
+
+        db.insert_account(addr, account, None, HashMap::default());
+
+        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().canyon_activated().build());
+
+        let tx: OpTransactionSigned = TxEip1559 {
+            chain_id: chain_spec.chain.id(),
+            nonce: 0,
+            gas_limit: MIN_TRANSACTION_GAS,
+            to: addr.into(),
+            ..Default::default()
+        }
+        .into_signed(Signature::test_signature())
+        .into();
+
+        let tx_deposit: OpTransactionSigned = TxDeposit {
+            from: addr,
+            to: addr.into(),
+            gas_limit: MIN_TRANSACTION_GAS,
+            ..Default::default()
+        }
+        .into();
+
+        let provider = evm_config(chain_spec);
+        let mut executor = BasicBlockExecutor::new(provider, StateProviderDatabase::new(&db));
+
+        // make sure the L1 block contract state is preloaded.
+        executor.with_state_mut(|state| {
+            state.load_cache_account(L1_BLOCK_CONTRACT).unwrap();
+        });
+
+        // attempt to execute an empty block with parent beacon block root, this should not fail
+        let output = executor
+            .execute(&RecoveredBlock::new_unhashed(
+                Block {
+                    header,
+                    body: BlockBody { transactions: vec![tx, tx_deposit], ..Default::default() },
+                },
+                vec![addr, addr],
+            ))
+            .expect("Executing a block while canyon is active should not fail");
+
+        let receipts = &output.receipts;
+        let tx_receipt = &receipts[0];
+        let deposit_receipt = &receipts[1];
+
+        // deposit_receipt_version is set to 1 for post canyon deposit transactions
+        assert!(!matches!(tx_receipt, OpReceipt::Deposit(_)));
+        let OpReceipt::Deposit(deposit_receipt) = deposit_receipt else {
+            panic!("expected deposit")
+        };
+        assert_eq!(deposit_receipt.deposit_receipt_version, Some(1));
+
+        // deposit_nonce is present only in deposit transactions
+        assert!(deposit_receipt.deposit_nonce.is_some());
     }
 
     #[test]

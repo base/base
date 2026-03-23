@@ -29,9 +29,8 @@ reth-revm = { workspace = true, features = ["witness"] }
 
 # op-reth
 base-txpool.workspace = true
-base-revm.workspace = true
 base-protocol.workspace = true
-base-execution-evm.workspace = true
+base-revm = { workspace = true, features = ["execution"] }
 base-execution-primitives.workspace = true
 
 # ethereum
