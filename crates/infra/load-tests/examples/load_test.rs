@@ -93,10 +93,7 @@ async fn main() -> Result<()> {
         summary.latency.p99,
         summary.latency.max
     );
-    println!(
-        "Gas: total={}  avg/tx={}",
-        summary.gas.total_gas, summary.gas.avg_gas
-    );
+    println!("Gas: total={}  avg/tx={}", summary.gas.total_gas, summary.gas.avg_gas);
 
     Ok(())
 }

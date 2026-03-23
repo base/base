@@ -441,14 +441,7 @@ impl LoadRunner {
                 let confirmed = self.collector.confirmed_count();
                 let failed = self.collector.failed_count();
                 let in_flight = confirmer_handle.total_in_flight();
-                info!(
-                    elapsed_secs,
-                    submitted,
-                    confirmed,
-                    failed,
-                    in_flight,
-                    "progress"
-                );
+                info!(elapsed_secs, submitted, confirmed, failed, in_flight, "progress");
                 last_progress_report = Instant::now();
             }
         }
