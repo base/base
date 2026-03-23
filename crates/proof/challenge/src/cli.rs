@@ -1,8 +1,7 @@
 //! CLI argument definitions for the challenger.
 //!
 //! All flags use the `BASE_CHALLENGER_` environment-variable prefix
-//! (e.g. `BASE_CHALLENGER_L1_ETH_RPC`). The default metrics port is **7310**
-//! (distinct from the proposer's 7300).
+//! (e.g. `BASE_CHALLENGER_L1_ETH_RPC`). The default metrics port is **7300**.
 
 use std::time::Duration;
 
@@ -13,7 +12,7 @@ use url::Url;
 
 base_cli_utils::define_cli_env!("BASE_CHALLENGER");
 base_cli_utils::define_log_args!("BASE_CHALLENGER");
-base_cli_utils::define_metrics_args!("BASE_CHALLENGER", 7310);
+base_cli_utils::define_metrics_args!("BASE_CHALLENGER", 7300);
 base_cli_utils::define_health_args!("BASE_CHALLENGER", 8080);
 base_tx_manager::define_signer_cli!("BASE_CHALLENGER");
 base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER");
