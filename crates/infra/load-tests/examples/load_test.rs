@@ -6,18 +6,6 @@ use alloy_signer_local::PrivateKeySigner;
 use base_load_tests::{LoadRunner, RpcClient, TestConfig, init_tracing};
 use eyre::{Result, bail};
 
-fn resolve_funder_key(config_key: &str) -> Result<String> {
-    if let Ok(env_key) = std::env::var("FUNDER_KEY") {
-        return Ok(env_key);
-    }
-
-    if config_key.starts_with("${") || config_key == "<your key here>" {
-        bail!("FUNDER_KEY environment variable required for this config");
-    }
-
-    Ok(config_key.to_string())
-}
-
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     init_tracing();
@@ -60,7 +48,7 @@ async fn main() -> Result<()> {
     let mut runner = LoadRunner::new(load_config)?;
 
     println!("Funding test accounts...");
-    let funder_key = resolve_funder_key(&test_config.funder_key)?;
+    let funder_key = test_config.resolve_funder_key()?;
     let funding_key: PrivateKeySigner = funder_key.parse()?;
     let funding_amount = test_config.parse_funding_amount()?;
     runner.fund_accounts(funding_key, funding_amount).await?;

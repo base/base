@@ -1,9 +1,9 @@
 # Load test runner - transaction spamming for network load testing
 #
 # Usage:
-#   just load-test devnet              - Load test local devnet (uses pre-funded key)
-#   just load-test sepolia-alpha <key> - Load test sepolia-alpha (requires private key)
-#   just load-test sepolia <key>       - Load test sepolia (requires private key)
+#   just load-test devnet                    - Load test local devnet (uses pre-funded key)
+#   FUNDER_KEY=0x... just load-test sepolia-alpha - Load test sepolia-alpha
+#   FUNDER_KEY=0x... just load-test sepolia       - Load test sepolia
 
 set positional-arguments := true
 set working-directory := '../../..'
@@ -16,16 +16,10 @@ default:
 devnet:
     cargo run -p base-load-tests --example load_test -- crates/infra/load-tests/examples/devnet.yaml
 
-# Run load test against sepolia-alpha network
-sepolia-alpha private_key:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    export FUNDER_KEY="{{ private_key }}"
+# Run load test against sepolia-alpha network (requires FUNDER_KEY env var)
+sepolia-alpha:
     cargo run -p base-load-tests --example load_test -- crates/infra/load-tests/examples/sepolia-alpha.yaml
 
-# Run load test against sepolia network
-sepolia private_key:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    export FUNDER_KEY="{{ private_key }}"
+# Run load test against sepolia network (requires FUNDER_KEY env var)
+sepolia:
     cargo run -p base-load-tests --example load_test -- crates/infra/load-tests/examples/sepolia.yaml

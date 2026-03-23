@@ -117,6 +117,8 @@ impl PrecompilePayload {
         }
         data[212] = 1;
 
+        // blake2f costs exactly `rounds` gas. The 30k base covers the 21k intrinsic
+        // gas plus calldata costs for the 213-byte input.
         let gas_limit = 30_000 + u64::from(rounds);
         (Bytes::from(data), gas_limit)
     }

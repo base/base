@@ -7,6 +7,7 @@ use crate::workload::SeededRng;
 
 const GAS_PER_ZERO_BYTE: u64 = 4;
 const GAS_PER_NONZERO_BYTE: u64 = 16;
+const TOKENS_PER_NONZERO_BYTE: u64 = GAS_PER_NONZERO_BYTE / GAS_PER_ZERO_BYTE;
 
 /// EIP-7623 floor cost per calldata token (active on Prague / OP Stack Isthmus+).
 const EIP7623_FLOOR_COST_PER_TOKEN: u64 = 10;
@@ -73,7 +74,7 @@ impl Payload for CalldataPayload {
         let intrinsic_gas =
             21_000 + zero_bytes * GAS_PER_ZERO_BYTE + nonzero_bytes * GAS_PER_NONZERO_BYTE;
 
-        let tokens = zero_bytes + nonzero_bytes * (GAS_PER_NONZERO_BYTE / GAS_PER_ZERO_BYTE);
+        let tokens = zero_bytes + nonzero_bytes * TOKENS_PER_NONZERO_BYTE;
         let floor_gas = 21_000 + tokens * EIP7623_FLOOR_COST_PER_TOKEN;
 
         let gas_limit = intrinsic_gas.max(floor_gas);

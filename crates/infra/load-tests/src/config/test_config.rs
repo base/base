@@ -178,6 +178,23 @@ impl TestConfig {
         Ok(())
     }
 
+    /// Resolves the funder key, checking the `FUNDER_KEY` environment variable
+    /// first, then falling back to the config value. Returns an error if the
+    /// key is a placeholder or env var reference that cannot be resolved.
+    pub fn resolve_funder_key(&self) -> Result<String> {
+        if let Ok(env_key) = std::env::var("FUNDER_KEY") {
+            return Ok(env_key);
+        }
+
+        if self.funder_key.starts_with("${") || self.funder_key == "<your key here>" {
+            return Err(BaselineError::Config(
+                "FUNDER_KEY environment variable is required for this config".into(),
+            ));
+        }
+
+        Ok(self.funder_key.clone())
+    }
+
     /// Parses the duration string into a Duration.
     pub fn parse_duration(&self) -> Result<Option<Duration>> {
         self.duration
