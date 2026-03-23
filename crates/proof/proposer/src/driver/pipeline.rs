@@ -532,12 +532,13 @@ where
         }
 
         // Extract intermediate roots.
-        let starting_block_number = target_block.checked_sub(self.config.driver.block_interval).ok_or_else(|| {
-            SubmitAction::Failed(ProposerError::Internal(format!(
-                "target_block {target_block} < block_interval {}",
-                self.config.driver.block_interval
-            )))
-        })?;
+        let starting_block_number =
+            target_block.checked_sub(self.config.driver.block_interval).ok_or_else(|| {
+                SubmitAction::Failed(ProposerError::Internal(format!(
+                    "target_block {target_block} < block_interval {}",
+                    self.config.driver.block_interval
+                )))
+            })?;
         let intermediate_roots = self
             .extract_intermediate_roots(starting_block_number, proposals)
             .map_err(SubmitAction::Failed)?;
