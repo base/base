@@ -143,8 +143,8 @@ async fn test_flashblock_metadata_post_base_v1() -> eyre::Result<()> {
             "post-V1 flashblock metadata must not contain new_account_balances"
         );
         assert!(
-            fb.metadata.get("access_list").is_some(),
-            "post-V1 flashblock metadata must contain access_list"
+            fb.metadata.get("access_list").is_none(),
+            "post-V1 flashblock metadata must not contain access_list"
         );
     }
 
