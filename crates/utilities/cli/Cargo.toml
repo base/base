@@ -44,4 +44,4 @@ libc.workspace = true
 backtrace.workspace = true
 
 [features]
-reth = ["dep:reth-node-core"]
+reth = [ "dep:reth-node-core" ]
