@@ -42,7 +42,7 @@ mod unix_impl {
     use std::io::Read;
     use std::{
         alloc::{Layout, alloc},
-        fmt::Write,
+        fmt::{Error, Result, Write},
         mem, ptr,
     };
 
@@ -107,11 +107,11 @@ mod unix_impl {
     struct RawStderr;
 
     impl Write for RawStderr {
-        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        fn write_str(&mut self, s: &str) -> Result {
             // SAFETY: libc::write is a standard syscall. STDERR_FILENO is always valid,
             // and we pass a valid pointer and length from the string slice.
             let ret = unsafe { libc::write(libc::STDERR_FILENO, s.as_ptr().cast(), s.len()) };
-            if ret == -1 { Err(std::fmt::Error) } else { Ok(()) }
+            if ret == -1 { Err(Error) } else { Ok(()) }
         }
     }
 
@@ -130,10 +130,10 @@ mod unix_impl {
         let mut stack_trace: [*mut libc::c_void; MAX_FRAMES] = [ptr::null_mut(); MAX_FRAMES];
         let mut depth = 0usize;
 
-        // SAFETY: `trace_unsynchronized` is not synchronized but we are in a signal
-        // handler where only this thread is executing. The function walks the stack
-        // and provides frame instruction pointers via the callback. This works on
-        // both glibc (via `_Unwind_Backtrace`) and musl (via `libunwind`).
+        // SAFETY: `trace_unsynchronized` is the non-thread-safe variant, but we are
+        // in a crashing signal handler on a dedicated alt-stack. Best-effort
+        // diagnostics are acceptable because the process will terminate shortly.
+        // This works on both glibc (via `_Unwind_Backtrace`) and musl (via `libunwind`).
         unsafe {
             backtrace::trace_unsynchronized(|frame| {
                 if depth >= MAX_FRAMES {
