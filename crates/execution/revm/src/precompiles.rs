@@ -17,14 +17,14 @@ use crate::OpSpecId;
 
 /// Base precompile provider
 #[derive(Debug, Clone)]
-pub struct OpPrecompiles {
+pub struct BasePrecompiles {
     /// Inner precompile provider is same as Ethereums.
     inner: EthPrecompiles,
     /// Spec id of the precompile provider.
     spec: OpSpecId,
 }
 
-impl OpPrecompiles {
+impl BasePrecompiles {
     /// Create a new precompile provider with the given `OpSpec`.
     #[inline]
     pub fn new_with_spec(spec: OpSpecId) -> Self {
@@ -33,11 +33,11 @@ impl OpPrecompiles {
             | OpSpecId::REGOLITH
             | OpSpecId::CANYON
             | OpSpecId::ECOTONE) => Precompiles::new(spec.into_eth_spec().into()),
-            OpSpecId::FJORD => fjord(),
-            OpSpecId::GRANITE | OpSpecId::HOLOCENE => granite(),
-            OpSpecId::ISTHMUS => isthmus(),
-            OpSpecId::JOVIAN => jovian(),
-            OpSpecId::BASE_V1 => base_v1(),
+            OpSpecId::FJORD => Self::fjord(),
+            OpSpecId::GRANITE | OpSpecId::HOLOCENE => Self::granite(),
+            OpSpecId::ISTHMUS => Self::isthmus(),
+            OpSpecId::JOVIAN => Self::jovian(),
+            OpSpecId::BASE_V1 => Self::base_v1(),
         };
 
         Self { inner: EthPrecompiles { precompiles, spec: SpecId::default() }, spec }
@@ -48,89 +48,89 @@ impl OpPrecompiles {
     pub const fn precompiles(&self) -> &'static Precompiles {
         self.inner.precompiles
     }
+
+    /// Returns precompiles for Fjord spec.
+    pub fn fjord() -> &'static Precompiles {
+        static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
+        INSTANCE.get_or_init(|| {
+            let mut precompiles = Precompiles::cancun().clone();
+            // RIP-7212: secp256r1 P256verify
+            precompiles.extend([secp256r1::P256VERIFY]);
+            precompiles
+        })
+    }
+
+    /// Returns precompiles for Granite spec.
+    pub fn granite() -> &'static Precompiles {
+        static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
+        INSTANCE.get_or_init(|| {
+            let mut precompiles = Self::fjord().clone();
+            // Restrict bn254Pairing input size
+            precompiles.extend([bn254_pair::GRANITE]);
+            precompiles
+        })
+    }
+
+    /// Returns precompiles for Isthmus spec.
+    pub fn isthmus() -> &'static Precompiles {
+        static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
+        INSTANCE.get_or_init(|| {
+            let mut precompiles = Self::granite().clone();
+            // Prague bls12 precompiles
+            precompiles.extend(precompile::bls12_381::precompiles());
+            // Isthmus bls12 precompile modifications
+            precompiles.extend([
+                bls12_381::ISTHMUS_G1_MSM,
+                bls12_381::ISTHMUS_G2_MSM,
+                bls12_381::ISTHMUS_PAIRING,
+            ]);
+            precompiles
+        })
+    }
+
+    /// Returns precompiles for Jovian spec.
+    pub fn jovian() -> &'static Precompiles {
+        static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
+        INSTANCE.get_or_init(|| {
+            let mut precompiles = Self::isthmus().clone();
+
+            let mut to_remove = Precompiles::default();
+            to_remove.extend([
+                bn254::pair::ISTANBUL,
+                bls12_381::ISTHMUS_G1_MSM,
+                bls12_381::ISTHMUS_G2_MSM,
+                bls12_381::ISTHMUS_PAIRING,
+            ]);
+
+            // Replace the 4 variable-input precompiles with Jovian versions (reduced limits)
+            precompiles.difference(&to_remove);
+
+            precompiles.extend([
+                bn254_pair::JOVIAN,
+                bls12_381::JOVIAN_G1_MSM,
+                bls12_381::JOVIAN_G2_MSM,
+                bls12_381::JOVIAN_PAIRING,
+            ]);
+
+            precompiles
+        })
+    }
+
+    /// Returns precompiles for the Base V1 spec.
+    pub fn base_v1() -> &'static Precompiles {
+        static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
+        INSTANCE.get_or_init(|| {
+            let mut precompiles = Self::jovian().clone();
+
+            // Base V1 adopts Osaka pricing and bounds for MODEXP and P256VERIFY.
+            precompiles.extend([modexp::OSAKA, secp256r1::P256VERIFY_OSAKA]);
+
+            precompiles
+        })
+    }
 }
 
-/// Returns precompiles for Fjord spec.
-pub fn fjord() -> &'static Precompiles {
-    static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
-    INSTANCE.get_or_init(|| {
-        let mut precompiles = Precompiles::cancun().clone();
-        // RIP-7212: secp256r1 P256verify
-        precompiles.extend([secp256r1::P256VERIFY]);
-        precompiles
-    })
-}
-
-/// Returns precompiles for Granite spec.
-pub fn granite() -> &'static Precompiles {
-    static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
-    INSTANCE.get_or_init(|| {
-        let mut precompiles = fjord().clone();
-        // Restrict bn254Pairing input size
-        precompiles.extend([bn254_pair::GRANITE]);
-        precompiles
-    })
-}
-
-/// Returns precompiles for isthmus spec.
-pub fn isthmus() -> &'static Precompiles {
-    static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
-    INSTANCE.get_or_init(|| {
-        let mut precompiles = granite().clone();
-        // Prague bls12 precompiles
-        precompiles.extend(precompile::bls12_381::precompiles());
-        // Isthmus bls12 precompile modifications
-        precompiles.extend([
-            bls12_381::ISTHMUS_G1_MSM,
-            bls12_381::ISTHMUS_G2_MSM,
-            bls12_381::ISTHMUS_PAIRING,
-        ]);
-        precompiles
-    })
-}
-
-/// Returns precompiles for jovian spec.
-pub fn jovian() -> &'static Precompiles {
-    static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
-    INSTANCE.get_or_init(|| {
-        let mut precompiles = isthmus().clone();
-
-        let mut to_remove = Precompiles::default();
-        to_remove.extend([
-            bn254::pair::ISTANBUL,
-            bls12_381::ISTHMUS_G1_MSM,
-            bls12_381::ISTHMUS_G2_MSM,
-            bls12_381::ISTHMUS_PAIRING,
-        ]);
-
-        // Replace the 4 variable-input precompiles with Jovian versions (reduced limits)
-        precompiles.difference(&to_remove);
-
-        precompiles.extend([
-            bn254_pair::JOVIAN,
-            bls12_381::JOVIAN_G1_MSM,
-            bls12_381::JOVIAN_G2_MSM,
-            bls12_381::JOVIAN_PAIRING,
-        ]);
-
-        precompiles
-    })
-}
-
-/// Returns precompiles for the Base V1 spec.
-pub fn base_v1() -> &'static Precompiles {
-    static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
-    INSTANCE.get_or_init(|| {
-        let mut precompiles = jovian().clone();
-
-        // Base V1 adopts Osaka pricing and bounds for MODEXP and P256VERIFY.
-        precompiles.extend([modexp::OSAKA, secp256r1::P256VERIFY_OSAKA]);
-
-        precompiles
-    })
-}
-
-impl<CTX> PrecompileProvider<CTX> for OpPrecompiles
+impl<CTX> PrecompileProvider<CTX> for BasePrecompiles
 where
     CTX: ContextTr<Cfg: Cfg<Spec = OpSpecId>>,
 {
@@ -165,7 +165,7 @@ where
     }
 }
 
-impl Default for OpPrecompiles {
+impl Default for BasePrecompiles {
     fn default() -> Self {
         Self::new_with_spec(OpSpecId::JOVIAN)
     }
@@ -360,7 +360,7 @@ mod tests {
     }
 
     fn assert_jovian_input_limits(spec: OpSpecId) {
-        let precompiles = OpPrecompiles::new_with_spec(spec);
+        let precompiles = BasePrecompiles::new_with_spec(spec);
         let bn254_pair_precompile = precompiles.precompiles().get(&bn254::pair::ADDRESS).unwrap();
 
         let mut bad_input_len = bn254_pair::JOVIAN_MAX_INPUT_SIZE + 1;
@@ -480,8 +480,8 @@ mod tests {
 
     #[test]
     fn test_get_base_v1_precompile_with_osaka_rules() {
-        let jovian_precompiles = OpPrecompiles::new_with_spec(OpSpecId::JOVIAN);
-        let base_v1_precompiles = OpPrecompiles::new_with_spec(OpSpecId::BASE_V1);
+        let jovian_precompiles = BasePrecompiles::new_with_spec(OpSpecId::JOVIAN);
+        let base_v1_precompiles = BasePrecompiles::new_with_spec(OpSpecId::BASE_V1);
 
         let jovian_p256 =
             jovian_precompiles.precompiles().get(secp256r1::P256VERIFY.address()).unwrap();
@@ -509,14 +509,14 @@ mod tests {
     #[test]
     fn test_cancun_precompiles_in_fjord() {
         // additional to cancun, fjord has p256verify
-        assert_eq!(fjord().difference(Precompiles::cancun()).len(), 1)
+        assert_eq!(BasePrecompiles::fjord().difference(Precompiles::cancun()).len(), 1)
     }
 
     #[test]
     fn test_cancun_precompiles_in_granite() {
         // granite has p256verify (fjord)
         // granite has modification of cancun's bn254 pair (doesn't count as new precompile)
-        assert_eq!(granite().difference(Precompiles::cancun()).len(), 1)
+        assert_eq!(BasePrecompiles::granite().difference(Precompiles::cancun()).len(), 1)
     }
 
     #[test]
@@ -524,7 +524,7 @@ mod tests {
         let new_prague_precompiles = Precompiles::prague().difference(Precompiles::cancun());
 
         // isthmus contains all precompiles that were new in prague, without modifications
-        assert!(new_prague_precompiles.difference(isthmus()).is_empty())
+        assert!(new_prague_precompiles.difference(BasePrecompiles::isthmus()).is_empty())
     }
 
     #[test]
@@ -532,22 +532,22 @@ mod tests {
         let new_prague_precompiles = Precompiles::prague().difference(Precompiles::cancun());
 
         // jovian contains all precompiles that were new in prague, without modifications
-        assert!(new_prague_precompiles.difference(jovian()).is_empty())
+        assert!(new_prague_precompiles.difference(BasePrecompiles::jovian()).is_empty())
     }
 
     /// All the addresses of the precompiles in isthmus should be in jovian
     #[test]
     fn test_isthmus_precompiles_in_jovian() {
-        let new_isthmus_precompiles = isthmus().difference(Precompiles::cancun());
+        let new_isthmus_precompiles = BasePrecompiles::isthmus().difference(Precompiles::cancun());
 
         // jovian contains all precompiles that were new in isthmus, without modifications
-        assert!(new_isthmus_precompiles.difference(jovian()).is_empty())
+        assert!(new_isthmus_precompiles.difference(BasePrecompiles::jovian()).is_empty())
     }
 
     #[test]
     fn test_default_precompiles_matches_jovian() {
-        let jovian = OpPrecompiles::new_with_spec(OpSpecId::JOVIAN).inner.precompiles;
-        let default = OpPrecompiles::default().inner.precompiles;
+        let jovian = BasePrecompiles::new_with_spec(OpSpecId::JOVIAN).inner.precompiles;
+        let default = BasePrecompiles::default().inner.precompiles;
         assert_eq!(jovian.len(), default.len());
 
         let intersection = default.intersection(jovian);

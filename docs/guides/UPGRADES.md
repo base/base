@@ -12,7 +12,7 @@ Upgrade activation flows through three layers:
 
 1. **Config layer** — `HardForkConfig` stores an optional activation timestamp per upgrade. `RollupConfig` embeds it and exposes `is_X_active(timestamp)` helpers.
 2. **Trait layer** — `BaseUpgrade` (enum) and `BaseUpgrades` (trait) provide typed, generic activation checks used by both the consensus and execution layers.
-3. **Execution layer** — `OpSpecId` maps the active upgrade to an EVM spec. `spec_by_timestamp_after_bedrock` and `RollupConfig::spec_id` resolve which spec to use. `OpPrecompiles` routes to the correct precompile set.
+3. **Execution layer** — `OpSpecId` maps the active upgrade to an EVM spec. `spec_by_timestamp_after_bedrock` and `RollupConfig::spec_id` resolve which spec to use. `BasePrecompiles` routes to the correct precompile set.
 
 ---
 
@@ -316,17 +316,15 @@ OpSpecId::BASE_V1 => name::BASE_V1,
 
 **File:** [`crates/execution/revm/src/precompiles.rs`](https://github.com/base/base/blob/main/crates/execution/revm/src/precompiles.rs)
 
-If the upgrade introduces new precompiles, create a new `base_v1()` function. If it reuses the previous set, extend the existing arm:
+If the upgrade introduces new precompiles, add a new `pub fn base_v1()` method on `BasePrecompiles`. If it reuses the previous set, extend the existing arm in `new_with_spec`:
 
 ```rust
 // Reuse previous precompile set
-OpSpecId::JOVIAN | OpSpecId::BASE_V1 => jovian(),
+OpSpecId::JOVIAN | OpSpecId::BASE_V1 => Self::jovian(),
 
 // Or add a new set
-OpSpecId::BASE_V1 => base_v1(),
+OpSpecId::BASE_V1 => Self::base_v1(),
 ```
-
-Export any new precompile module from `lib.rs`.
 
 ---
 

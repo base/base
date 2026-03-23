@@ -4,7 +4,7 @@ use alloc::{boxed::Box, string::String, vec, vec::Vec};
 
 use alloy_primitives::{Address, Bytes};
 use base_proof_preimage::{HintWriterClient, PreimageOracleClient};
-use base_revm::{OpSpecId, fjord, granite, isthmus, jovian};
+use base_revm::{BasePrecompiles, OpSpecId};
 use revm::{
     context::{Cfg, ContextTr, LocalContextTr},
     handler::{EthPrecompiles, PrecompileProvider},
@@ -43,10 +43,10 @@ where
             | OpSpecId::REGOLITH
             | OpSpecId::CANYON
             | OpSpecId::ECOTONE) => Precompiles::new(spec.into_eth_spec().into()),
-            OpSpecId::FJORD => fjord(),
-            OpSpecId::GRANITE | OpSpecId::HOLOCENE => granite(),
-            OpSpecId::ISTHMUS => isthmus(),
-            OpSpecId::JOVIAN | OpSpecId::BASE_V1 => jovian(),
+            OpSpecId::FJORD => BasePrecompiles::fjord(),
+            OpSpecId::GRANITE | OpSpecId::HOLOCENE => BasePrecompiles::granite(),
+            OpSpecId::ISTHMUS => BasePrecompiles::isthmus(),
+            OpSpecId::JOVIAN | OpSpecId::BASE_V1 => BasePrecompiles::jovian(),
         };
 
         let accelerated_precompiles = match spec {

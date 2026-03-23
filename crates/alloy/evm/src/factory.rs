@@ -1,6 +1,6 @@
 use alloy_evm::{Database, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use base_revm::{
-    DefaultOp, OpBuilder, OpContext, OpHaltReason, OpPrecompiles, OpSpecId, OpTransaction,
+    DefaultOp, OpBuilder, OpContext, OpHaltReason, BasePrecompiles, OpSpecId, OpTransaction,
     OpTransactionError,
 };
 use revm::{
@@ -41,7 +41,7 @@ impl EvmFactory for OpEvmFactory {
                 .with_cfg(input.cfg_env)
                 .build_op_with_inspector(NoOpInspector {})
                 .with_precompiles(PrecompilesMap::from_static(
-                    OpPrecompiles::new_with_spec(spec_id).precompiles(),
+                    BasePrecompiles::new_with_spec(spec_id).precompiles(),
                 )),
             inspect: false,
         }
@@ -61,7 +61,7 @@ impl EvmFactory for OpEvmFactory {
                 .with_cfg(input.cfg_env)
                 .build_op_with_inspector(inspector)
                 .with_precompiles(PrecompilesMap::from_static(
-                    OpPrecompiles::new_with_spec(spec_id).precompiles(),
+                    BasePrecompiles::new_with_spec(spec_id).precompiles(),
                 )),
             inspect: true,
         }

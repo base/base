@@ -12,7 +12,7 @@ use revm::{
     interpreter::{InterpreterResult, interpreter::EthInterpreter},
 };
 
-use crate::{OpSpecId, precompiles::OpPrecompiles};
+use crate::{OpSpecId, precompiles::BasePrecompiles};
 
 /// Base EVM extends the [`Evm`] type with Base-specific types and logic.
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ pub struct OpEvm<
     CTX,
     INSP,
     I = EthInstructions<EthInterpreter, CTX>,
-    P = OpPrecompiles,
+    P = BasePrecompiles,
     F = EthFrame<EthInterpreter>,
 >(
     /// Inner EVM type.
@@ -28,7 +28,7 @@ pub struct OpEvm<
 );
 
 impl<CTX: ContextTr<Cfg: Cfg<Spec: Into<OpSpecId> + Clone>>, INSP>
-    OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, OpPrecompiles>
+    OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, BasePrecompiles>
 {
     /// Create a new Base EVM.
     pub fn new(ctx: CTX, inspector: INSP) -> Self {
@@ -37,7 +37,7 @@ impl<CTX: ContextTr<Cfg: Cfg<Spec: Into<OpSpecId> + Clone>>, INSP>
             ctx,
             inspector,
             instruction: EthInstructions::new_mainnet_with_spec(spec.into()),
-            precompiles: OpPrecompiles::new_with_spec(spec),
+            precompiles: BasePrecompiles::new_with_spec(spec),
             frame_stack: FrameStack::new_prealloc(8),
         })
     }

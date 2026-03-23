@@ -8,11 +8,11 @@ use revm::{
     state::EvmState,
 };
 
-use crate::{L1BlockInfo, OpSpecId, evm::OpEvm, precompiles::OpPrecompiles, transaction::OpTxTr};
+use crate::{L1BlockInfo, OpSpecId, evm::OpEvm, precompiles::BasePrecompiles, transaction::OpTxTr};
 
 /// Type alias for default `OpEvm`
 pub type DefaultOpEvm<CTX, INSP = ()> =
-    OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, OpPrecompiles>;
+    OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, BasePrecompiles>;
 
 /// Trait that allows for Base `OpEvm` to be built.
 pub trait OpBuilder: Sized {

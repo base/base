@@ -3,7 +3,7 @@ use core::ops::{Deref, DerefMut};
 use alloy_evm::{Database, Evm, EvmEnv};
 use alloy_primitives::{Address, Bytes};
 use base_revm::{
-    OpContext, OpHaltReason, OpPrecompiles, OpSpecId, OpTransaction, OpTransactionError,
+    OpContext, OpHaltReason, BasePrecompiles, OpSpecId, OpTransaction, OpTransactionError,
 };
 use revm::{
     ExecuteEvm, InspectEvm, Inspector, SystemCallEvm,
@@ -19,7 +19,7 @@ use revm::{
 /// support. [`Inspector`] support is configurable at runtime because it's part of the underlying
 /// [`OpEvm`](base_revm::OpEvm) type.
 #[allow(missing_debug_implementations)] // missing revm::OpContext Debug impl
-pub struct OpEvm<DB: Database, I, P = OpPrecompiles> {
+pub struct OpEvm<DB: Database, I, P = BasePrecompiles> {
     pub(crate) inner:
         base_revm::OpEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
     pub(crate) inspect: bool,

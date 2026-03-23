@@ -9,7 +9,7 @@ use base_execution_evm::{OpBlockExecutorFactory, OpEvm, OpEvmFactory, OpRethRece
 use base_execution_primitives::OpPrimitives;
 use base_node_core::{OpEvmConfig, OpExecutorBuilder, OpNode, args::RollupArgs};
 use base_revm::{
-    OpContext, OpHaltReason, OpPrecompiles, OpSpecId, OpTransaction, OpTransactionError,
+    OpContext, OpHaltReason, BasePrecompiles, OpSpecId, OpTransaction, OpTransactionError,
 };
 use reth_db::test_utils::create_test_rw_db;
 use reth_evm::{Database, Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
@@ -69,7 +69,7 @@ fn test_setup_custom_precompiles() {
             static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
 
             PrecompilesMap::from_static(INSTANCE.get_or_init(|| {
-                let mut precompiles = OpPrecompiles::new_with_spec(spec_id).precompiles().clone();
+                let mut precompiles = BasePrecompiles::new_with_spec(spec_id).precompiles().clone();
                 // Custom precompile.
                 let precompile = Precompile::new(
                     PrecompileId::custom("custom"),
