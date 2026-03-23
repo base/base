@@ -304,7 +304,7 @@ between the L1 and L2 components of a withdrawal we introduce the following term
 
 ### Relayer
 
-[relayer]: glossary.md#withdrawals
+[relayer]: glossary.md#relayer
 
 An EOA on L1 which finalizes a withdrawal by submitting the data necessary to verify its inclusion on L2.
 
