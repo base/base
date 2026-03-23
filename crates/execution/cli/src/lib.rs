@@ -37,7 +37,7 @@ use reth_node_core::{
 use reth_node_metrics as _;
 use reth_rpc_server_types::{DefaultRpcModuleValidator, RpcModuleValidator};
 
-/// The main op-reth cli interface.
+/// The main base-reth cli interface.
 ///
 /// This is the entrypoint to the executable.
 #[derive(Debug, Parser)]
@@ -122,7 +122,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use base_execution_chainspec::{BASE_MAINNET, OP_DEV};
+    use base_execution_chainspec::{BASE_DEV, BASE_MAINNET};
     use base_node_core::args::RollupArgs;
     use clap::Parser;
     use reth_cli_commands::{NodeCommand, node::NoArgs};
@@ -131,8 +131,8 @@ mod test {
 
     #[test]
     fn parse_dev() {
-        let cmd = NodeCommand::<OpChainSpecParser, NoArgs>::parse_from(["op-reth", "--dev"]);
-        let chain = OP_DEV.clone();
+        let cmd = NodeCommand::<OpChainSpecParser, NoArgs>::parse_from(["base-reth", "--dev"]);
+        let chain = BASE_DEV.clone();
         assert_eq!(cmd.chain.chain, chain.chain);
         assert_eq!(cmd.chain.genesis_hash(), chain.genesis_hash());
         assert_eq!(
@@ -155,7 +155,7 @@ mod test {
         // SAFETY: this is a single-test context; no other thread concurrently reads this var.
         unsafe { std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "http") };
         let cmd = Cli::<OpChainSpecParser, RollupArgs>::parse_from([
-            "op-reth",
+            "base-reth",
             "node",
             "--chain",
             "base",

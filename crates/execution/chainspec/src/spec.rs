@@ -19,7 +19,7 @@ use reth_network_peers::NodeRecord;
 use reth_primitives_traits::SealedHeader;
 
 use crate::{
-    BASE_DEVNET_0_SEPOLIA_DEV_0, BASE_MAINNET, BASE_SEPOLIA, OP_DEV, compute_jovian_base_fee,
+    BASE_DEV, BASE_DEVNET_0_SEPOLIA_DEV_0, BASE_MAINNET, BASE_SEPOLIA, compute_jovian_base_fee,
     decode_holocene_base_fee,
 };
 
@@ -115,7 +115,7 @@ impl OpChainSpec {
     /// Parses a chain name into an [`OpChainSpec`], if recognized.
     pub fn parse_chain(s: &str) -> Option<Arc<Self>> {
         match s {
-            "dev" => Some(OP_DEV.clone()),
+            "dev" => Some(BASE_DEV.clone()),
             "base" => Some(BASE_MAINNET.clone()),
             "base_sepolia" | "base-sepolia" => Some(BASE_SEPOLIA.clone()),
             "base-devnet-0-sepolia-dev-0" => Some(BASE_DEVNET_0_SEPOLIA_DEV_0.clone()),

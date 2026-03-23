@@ -26,7 +26,7 @@ mod builder;
 pub use builder::OpChainSpecBuilder;
 
 mod dev;
-pub use dev::OP_DEV;
+pub use dev::BASE_DEV;
 
 mod spec;
 pub use spec::{OpChainSpec, OpGenesisInfo, SUPPORTED_CHAINS};

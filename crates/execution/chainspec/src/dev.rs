@@ -11,11 +11,11 @@ use reth_primitives_traits::{SealedHeader, sync::LazyLock};
 
 use crate::OpChainSpec;
 
-/// OP dev testnet specification
+/// Base dev testnet specification
 ///
 /// Includes 20 prefunded accounts with `10_000` ETH each derived from mnemonic "test test test test
 /// test test test test test test test junk".
-pub static OP_DEV: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
+pub static BASE_DEV: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
     let genesis = serde_json::from_str(BaseChainConfig::devnet().genesis_json)
         .expect("Can't deserialize Dev testnet genesis json");
     let hardforks = DEV_HARDFORKS.clone();

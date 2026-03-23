@@ -15,7 +15,7 @@ hardfork schedule:
 
 - `BASE_MAINNET` - Base Mainnet (chain ID 8453), with London and Canyon variable base fee params.
 - `BASE_SEPOLIA` - Base Sepolia testnet (chain ID 84532), with equivalent hardfork schedule.
-- `OP_DEV` - Local dev chain with all hardforks active at genesis, prefunded test accounts.
+- `BASE_DEV` - Local dev chain with all hardforks active at genesis, prefunded test accounts.
 
 The genesis header is derived at startup from the genesis JSON using `make_op_genesis_header`,
 which computes the correct state root, storage root, and other fields for Base.
@@ -48,7 +48,7 @@ base-execution-chainspec = { workspace = true }
 Access the pre-built chain specs:
 
 ```rust,ignore
-use base_execution_chainspec::{BASE_MAINNET, BASE_SEPOLIA, OP_DEV};
+use base_execution_chainspec::{BASE_DEV, BASE_MAINNET, BASE_SEPOLIA};
 
 let spec = BASE_MAINNET.clone();
 println!("chain: {}", spec.chain());

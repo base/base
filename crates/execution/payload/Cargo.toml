@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "A payload builder for op-reth that builds optimistic payloads."
+description = "A payload builder for base-reth that builds Base payloads."
 
 [lints]
 workspace = true
