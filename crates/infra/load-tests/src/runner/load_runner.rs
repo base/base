@@ -10,11 +10,14 @@ use std::{
 use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types::TransactionRequest as AlloyTxRequest;
+use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::NonceManager;
 
-type HttpProvider = RootProvider<Ethereum>;
+/// Provider type for nonce management. Uses Ethereum network type because
+/// `NonceManager` only calls `get_transaction_count`, which returns the same
+/// response for both Ethereum and Base networks.
+type NonceProvider = RootProvider<Ethereum>;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -48,7 +51,7 @@ pub struct LoadRunner {
     generator: WorkloadGenerator,
     collector: MetricsCollector,
     stop_flag: Arc<AtomicBool>,
-    nonce_managers: HashMap<Address, NonceManager<HttpProvider>>,
+    nonce_managers: HashMap<Address, NonceManager<NonceProvider>>,
     providers: HashMap<Address, WalletProvider>,
     gas_price: u128,
 }
@@ -224,7 +227,7 @@ impl LoadRunner {
 
         let mut pending_txs = Vec::new();
         for (address, deficit) in &accounts_to_fund {
-            let tx = AlloyTxRequest::default()
+            let tx = TransactionRequest::default()
                 .with_to(*address)
                 .with_value(*deficit)
                 .with_nonce(nonce)
@@ -288,7 +291,7 @@ impl LoadRunner {
             let account_nonce = self.client.get_nonce(account.address).await?;
             account.nonce = account_nonce;
 
-            let provider = RootProvider::new_http(self.config.rpc_url.clone());
+            let provider = NonceProvider::new_http(self.config.rpc_url.clone());
             let nonce_manager = NonceManager::new(provider, account.address, NONCE_RPC_TIMEOUT);
             self.nonce_managers.insert(account.address, nonce_manager);
 
@@ -311,7 +314,7 @@ impl LoadRunner {
 
         for account in self.accounts.accounts() {
             if !self.nonce_managers.contains_key(&account.address) {
-                let provider = RootProvider::new_http(self.config.rpc_url.clone());
+                let provider = NonceProvider::new_http(self.config.rpc_url.clone());
                 let nonce_manager = NonceManager::new(provider, account.address, NONCE_RPC_TIMEOUT);
                 self.nonce_managers.insert(account.address, nonce_manager);
             }
@@ -528,7 +531,7 @@ impl LoadRunner {
             let nonce = nonce_guard.nonce();
 
             let max_fee = self.gas_price.saturating_mul(2).min(self.config.max_gas_price);
-            let tx = AlloyTxRequest::default()
+            let tx = TransactionRequest::default()
                 .with_from(prepared.from)
                 .with_to(prepared.to)
                 .with_value(prepared.value)

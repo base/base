@@ -37,9 +37,9 @@ pub trait ReceiptProvider: Send + Sync {
 
 /// Provider type with wallet signing capability for sending transactions.
 ///
-/// Uses only `ChainIdFiller` and `WalletFiller`. `GasFiller` and `NonceFiller`
-/// are intentionally omitted since nonce and gas are explicitly managed by
-/// the load runner to avoid redundant RPC calls.
+/// Uses Ethereum network type because `send_transaction` works identically
+/// for both Ethereum and Base networks. Only `RpcClient` uses the Base network
+/// type since it needs `OpTransactionReceipt` for receipt handling.
 pub type WalletProvider = FillProvider<
     JoinFill<JoinFill<Identity, ChainIdFiller>, WalletFiller<EthereumWallet>>,
     RootProvider<Ethereum>,

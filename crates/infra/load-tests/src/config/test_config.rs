@@ -263,7 +263,6 @@ mod tests {
     fn parse_minimal_config() {
         let yaml = r#"
 rpc: http://localhost:8545
-funder_key: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.rpc.host_str(), Some("localhost"));
