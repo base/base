@@ -4871,13 +4871,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-prover"
+name = "base-prover-nitro"
 version = "0.0.0"
 dependencies = [
  "base-cli-utils",
  "base-consensus-registry",
  "base-proof-host",
  "base-proof-tee-nitro",
+ "clap",
+ "eyre",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-prover-zk"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
  "base-zk-client",
  "base-zk-db",
  "base-zk-outbox",

@@ -1,7 +1,8 @@
-//! CLI definition for the ZK prover subcommand.
+//! CLI definition for the ZK prover binary.
 
 use std::sync::Arc;
 
+use base_cli_utils::{LogConfig, RuntimeManager};
 use base_zk_client::prover_service_server::ProverServiceServer as ProtoProverServiceServer;
 use base_zk_db::{DatabaseConfig, ProofRequestRepo};
 use base_zk_outbox::{DatabaseOutboxReader, OutboxProcessor};
@@ -15,9 +16,28 @@ use eyre::eyre;
 use tonic::transport::Server;
 use tracing::info;
 
+base_cli_utils::define_log_args!("BASE_PROVER_ZK");
+base_cli_utils::define_metrics_args!("BASE_PROVER_ZK", 7301);
+
+/// ZK prover service binary.
+#[derive(Parser)]
+#[command(author, version)]
+pub(crate) struct Cli {
+    #[command(flatten)]
+    args: ZkArgs,
+
+    /// Logging arguments.
+    #[command(flatten)]
+    logging: LogArgs,
+
+    /// Metrics arguments.
+    #[command(flatten)]
+    metrics: MetricsArgs,
+}
+
 /// ZK prover service for proving Base blocks.
 #[derive(Parser, Debug)]
-pub(crate) struct ZkArgs {
+struct ZkArgs {
     #[arg(long, env = "OP_NODE_ADDRESS")]
     op_node_address: String,
 
@@ -97,9 +117,21 @@ pub(crate) struct ZkArgs {
     grpc_listen_addr: String,
 }
 
+impl Cli {
+    /// Run the ZK prover service.
+    pub(crate) fn run(self) -> eyre::Result<()> {
+        let Self { args, logging, metrics } = self;
+        LogConfig::from(logging).init_tracing_subscriber()?;
+        base_cli_utils::MetricsConfig::from(metrics).init_with(|| {
+            base_cli_utils::register_version_metrics!();
+        })?;
+        RuntimeManager::run_until_ctrl_c(async move { args.run().await })
+    }
+}
+
 impl ZkArgs {
     /// Runs the ZK prover service.
-    pub(crate) async fn run(self) -> eyre::Result<()> {
+    async fn run(self) -> eyre::Result<()> {
         self.validate_config()?;
 
         info!("initializing database connection");

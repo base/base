@@ -1,6 +1,6 @@
 [package]
-name = "base-prover"
-description = "Prover server (TEE + ZK)"
+name = "base-prover-nitro"
+description = "TEE prover server (AWS Nitro Enclaves)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "base-prover"
+name = "base-prover-nitro"
 path = "src/main.rs"
 
 [lints]
@@ -21,12 +21,6 @@ base-consensus-registry.workspace = true
 base-proof-host = { workspace = true, features = ["metrics"] }
 base-proof-tee-nitro = { workspace = true, features = ["host"] }
 
-# Workspace – ZK
-base-zk-db.workspace = true
-base-zk-outbox.workspace = true
-base-zk-service.workspace = true
-base-zk-client = { workspace = true, features = ["server"] }
-
 # CLI
 eyre.workspace = true
 base-cli-utils.workspace = true
@@ -34,11 +28,7 @@ clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }
 
 # Async
-futures.workspace = true
 tokio = { workspace = true, features = ["full"] }
-
-# gRPC
-tonic.workspace = true
 
 # Tracing
 tracing.workspace = true

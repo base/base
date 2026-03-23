@@ -10,7 +10,21 @@ exclude = [".github/"]
 [workspace]
 resolver = "2"
 members = [
-  "bin/*",
+  "bin/audit-archiver",
+  "bin/basectl",
+  "bin/based",
+  "bin/batcher",
+  "bin/builder",
+  "bin/challenger",
+  "bin/consensus",
+  "bin/ingress-rpc",
+  "bin/mempool-rebroadcaster",
+  "bin/node",
+  "bin/proposer",
+  "bin/prover/nitro",
+  "bin/prover/zk",
+  "bin/prover-registrar",
+  "bin/websocket-proxy",
   "crates/client/*",
   "crates/consensus/*",
   "crates/proof/mpt",
@@ -65,7 +79,8 @@ default-members = [
   "bin/audit-archiver",
   "bin/mempool-rebroadcaster",
   "bin/proposer",
-  "bin/prover",
+  "bin/prover/nitro",
+  "bin/prover/zk",
   "bin/prover-registrar",
 ]
 

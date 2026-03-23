@@ -12,9 +12,11 @@ use base_consensus_registry as _;
 use base_proof_tee_nitro as _;
 use clap::Parser as _;
 use serde as _;
+use tokio as _;
+#[cfg(not(any(target_os = "linux", feature = "local")))]
+use tracing as _;
 
 mod cli;
-mod zk;
 
 fn main() {
     base_cli_utils::init_common!();

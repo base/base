@@ -1,4 +1,4 @@
-//! CLI definition for the prover binary (TEE + ZK backends).
+//! CLI definition for the Nitro TEE prover binary.
 
 use std::net::SocketAddr;
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -21,12 +21,10 @@ use eyre::eyre;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use tracing::info;
 
-use crate::zk;
+base_cli_utils::define_log_args!("BASE_PROVER_NITRO");
+base_cli_utils::define_metrics_args!("BASE_PROVER_NITRO", 7300);
 
-base_cli_utils::define_log_args!("BASE_PROVER");
-base_cli_utils::define_metrics_args!("BASE_PROVER", 7300);
-
-/// Prover binary (TEE + ZK backends).
+/// Nitro TEE prover binary.
 #[derive(Parser)]
 #[command(author, version)]
 pub(crate) struct Cli {
@@ -42,32 +40,15 @@ pub(crate) struct Cli {
     metrics: MetricsArgs,
 }
 
-/// Proving backend.
-#[derive(Subcommand)]
-enum Command {
-    /// AWS Nitro Enclave proving backend.
-    Nitro(NitroArgs),
-
-    /// ZK prover service.
-    Zk(Box<zk::ZkArgs>),
-}
-
-/// Arguments for the `nitro` subcommand.
-#[derive(Parser)]
-struct NitroArgs {
-    #[command(subcommand)]
-    command: NitroCommand,
-}
-
 /// Nitro subcommands.
 #[derive(Subcommand)]
-enum NitroCommand {
+enum Command {
     /// Run the JSON-RPC server on the EC2 host.
     ///
     /// Accepts proving requests over JSON-RPC and forwards them to the Nitro
     /// Enclave over vsock.
     #[cfg(target_os = "linux")]
-    Server(NitroServerArgs),
+    Server(ServerArgs),
 
     /// Run the proving process inside the Nitro Enclave.
     ///
@@ -77,7 +58,7 @@ enum NitroCommand {
 
     /// Run server and enclave in a single process for local development.
     #[cfg(feature = "local")]
-    Local(NitroLocalArgs),
+    Local(LocalArgs),
 }
 
 /// Shared arguments for subcommands that run the JSON-RPC prover server.
@@ -108,10 +89,10 @@ struct ProverServerArgs {
     enable_experimental_witness_endpoint: bool,
 }
 
-/// Arguments for the `nitro server` subcommand.
+/// Arguments for the `server` subcommand.
 #[cfg(target_os = "linux")]
 #[derive(Parser)]
-struct NitroServerArgs {
+struct ServerArgs {
     #[command(flatten)]
     server: ProverServerArgs,
 
@@ -131,28 +112,19 @@ impl Cli {
         })?;
         RuntimeManager::run_until_ctrl_c(async move {
             match command {
-                Command::Nitro(args) => args.run().await,
-                Command::Zk(args) => (*args).run().await,
+                #[cfg(target_os = "linux")]
+                Command::Server(args) => args.run().await,
+                #[cfg(target_os = "linux")]
+                Command::Enclave => NitroEnclave::new()?.run().await,
+                #[cfg(feature = "local")]
+                Command::Local(args) => args.run().await,
             }
         })
     }
 }
 
-impl NitroArgs {
-    async fn run(self) -> eyre::Result<()> {
-        match self.command {
-            #[cfg(target_os = "linux")]
-            NitroCommand::Server(args) => args.run().await,
-            #[cfg(target_os = "linux")]
-            NitroCommand::Enclave => NitroEnclave::new()?.run().await,
-            #[cfg(feature = "local")]
-            NitroCommand::Local(args) => args.run().await,
-        }
-    }
-}
-
 #[cfg(target_os = "linux")]
-impl NitroServerArgs {
+impl ServerArgs {
     async fn run(self) -> eyre::Result<()> {
         let rollup_config = Registry::rollup_config(self.server.l2_chain_id)
             .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.server.l2_chain_id))?
@@ -182,16 +154,16 @@ impl NitroServerArgs {
     }
 }
 
-/// Arguments for the `nitro local` subcommand.
+/// Arguments for the `local` subcommand.
 #[cfg(feature = "local")]
 #[derive(Parser)]
-struct NitroLocalArgs {
+struct LocalArgs {
     #[command(flatten)]
     server: ProverServerArgs,
 }
 
 #[cfg(feature = "local")]
-impl NitroLocalArgs {
+impl LocalArgs {
     async fn run(self) -> eyre::Result<()> {
         let rollup_config = Registry::rollup_config(self.server.l2_chain_id)
             .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.server.l2_chain_id))?
