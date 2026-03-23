@@ -80,6 +80,12 @@ impl PipelineState {
         self.proved.clear();
         self.retry_counts.clear();
     }
+
+    fn prune_stale(&mut self, recovered_block: u64) {
+        self.proved.retain(|&target, _| target > recovered_block);
+        self.inflight.retain(|&target| target > recovered_block);
+        self.retry_counts.retain(|&target, _| target > recovered_block);
+    }
 }
 
 /// The parallel proving pipeline.
@@ -182,14 +188,17 @@ where
                     break;
                 }
                 result = self.tick(&mut state) => {
-                    result?;
+                    if let Err(e) = result {
+                        error!(error = ?e, "Pipeline failed, retrying next interval");
+                    }
                 }
             }
 
+            while let Some(result) = state.prove_tasks.try_join_next() {
+                self.handle_proof_result(result, &mut state);
+            }
+
             tokio::select! {
-                Some(result) = state.prove_tasks.join_next(), if !state.prove_tasks.is_empty() => {
-                    self.handle_proof_result(result, &mut state);
-                }
                 () = self.cancel.cancelled() => {
                     state.prove_tasks.abort_all();
                     break;
@@ -206,6 +215,7 @@ where
     /// completed results.
     async fn tick(&self, state: &mut PipelineState) -> Result<()> {
         if let Some((recovered, safe_head)) = self.try_recover_and_plan().await {
+            state.prune_stale(recovered.l2_block_number);
             self.dispatch_proofs(&recovered, safe_head, state).await?;
             self.try_submit(recovered, state).await?;
         }
@@ -619,7 +629,11 @@ where
                     ProposerError::Internal("overflow computing intermediate root target".into())
                 })?;
 
-            let idx = target_block.saturating_sub(starting_block_number).saturating_sub(1);
+            let idx = target_block.checked_sub(starting_block_number + 1).ok_or_else(|| {
+                ProposerError::Internal(format!(
+                    "underflow computing proposal index for block {target_block}"
+                ))
+            })?;
             if let Some(p) = proposals.get(idx as usize) {
                 roots.push(p.output_root);
             } else {
