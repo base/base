@@ -69,8 +69,9 @@ mod unix_impl {
     /// Resolve a slice of instruction pointers to symbols and write them to stderr.
     ///
     /// Uses `backtrace::resolve_unsynchronized` which works on both glibc and musl.
-    fn backtrace_stderr(buffer: &[*mut libc::c_void]) {
-        for (i, &addr) in buffer.iter().enumerate() {
+    fn backtrace_stderr(buffer: &[*mut libc::c_void], start_index: usize) {
+        for (idx, &addr) in buffer.iter().enumerate() {
+            let frame = start_index + idx;
             let mut resolved = false;
             // SAFETY: `resolve_unsynchronized` is not strictly async-signal-safe but
             // we are in a crashing signal handler on a dedicated stack. Best-effort
@@ -79,7 +80,7 @@ mod unix_impl {
             unsafe {
                 backtrace::resolve_unsynchronized(addr, |symbol| {
                     resolved = true;
-                    let _ = write!(RawStderr, "  {i:>4}: {addr:?} - ");
+                    let _ = write!(RawStderr, "  {frame:>4}: {addr:?} - ");
                     if let Some(name) = symbol.name() {
                         let _ = write!(RawStderr, "{name}");
                     } else {
@@ -95,7 +96,7 @@ mod unix_impl {
                 });
             }
             if !resolved {
-                let _ = writeln!(RawStderr, "  {i:>4}: {addr:?} - <unresolved>");
+                let _ = writeln!(RawStderr, "  {frame:>4}: {addr:?} - <unresolved>");
             }
         }
     }
@@ -105,8 +106,8 @@ mod unix_impl {
     /// Only acceptable because everything will end soon anyways.
     struct RawStderr;
 
-    impl std::fmt::Write for RawStderr {
-        fn write_str(&mut self, s: &str) -> Result<(), std::fmt::Error> {
+    impl Write for RawStderr {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
             // SAFETY: libc::write is a standard syscall. STDERR_FILENO is always valid,
             // and we pass a valid pointer and length from the string slice.
             let ret = unsafe { libc::write(libc::STDERR_FILENO, s.as_ptr().cast(), s.len()) };
@@ -173,12 +174,12 @@ mod unix_impl {
                 .zip(stack[offset..].chunks_exact(period))
                 .filter(|(next, prev)| next == prev)
                 .count();
-            backtrace_stderr(&stack[..offset]);
+            backtrace_stderr(&stack[..offset], consumed);
             written += offset;
             consumed += offset;
             if cycles > 1 {
                 raw_errln!("\n### cycle encountered after {offset} frames with period {period}");
-                backtrace_stderr(&stack[consumed..consumed + period]);
+                backtrace_stderr(&stack[consumed..consumed + period], consumed);
                 raw_errln!("### recursed {cycles} times\n");
                 written += period + 4;
                 consumed += period * cycles;
@@ -186,7 +187,7 @@ mod unix_impl {
             };
         }
         let rem = &stack[consumed..];
-        backtrace_stderr(rem);
+        backtrace_stderr(rem, consumed);
         raw_errln!("");
         written += rem.len() + 1;
 
