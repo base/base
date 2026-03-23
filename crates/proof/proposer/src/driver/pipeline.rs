@@ -41,31 +41,15 @@ use crate::{
     output_proposer::{OutputProposer, is_game_already_exists},
 };
 
-/// Default maximum number of concurrent proof tasks.
-const DEFAULT_MAX_PARALLEL_PROOFS: usize = 1;
-
-/// Default maximum number of retries for a failed proof before resetting.
-const DEFAULT_MAX_RETRIES: u32 = 3;
-
 /// Configuration for the parallel proving pipeline.
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
     /// Maximum number of concurrent proof tasks.
     pub max_parallel_proofs: usize,
-    /// Maximum number of retries for a single proof range before full reset.
+    /// Maximum retries for a single proof range before full pipeline reset.
     pub max_retries: u32,
-    /// Base driver configuration (`poll_interval`, `block_interval`, etc.).
+    /// Base driver configuration.
     pub driver: DriverConfig,
-}
-
-impl Default for PipelineConfig {
-    fn default() -> Self {
-        Self {
-            max_parallel_proofs: DEFAULT_MAX_PARALLEL_PROOFS,
-            max_retries: DEFAULT_MAX_RETRIES,
-            driver: DriverConfig::default(),
-        }
-    }
 }
 
 struct PipelineState {
@@ -186,8 +170,8 @@ where
 
         loop {
             if let Some((recovered, safe_head)) = self.try_recover_and_plan().await {
-                self.dispatch_proofs(&recovered, safe_head, &mut state).await;
-                self.try_submit(&mut state).await;
+                self.dispatch_proofs(&recovered, safe_head, &mut state).await?;
+                self.try_submit(&mut state).await?;
             }
 
             tokio::select! {
@@ -211,19 +195,17 @@ where
         recovered: &RecoveredState,
         safe_head: u64,
         state: &mut PipelineState,
-    ) {
-        let mut cursor =
-            match recovered.l2_block_number.checked_add(self.config.driver.block_interval) {
-                Some(c) => c,
-                None => {
-                    warn!(
-                        l2_block_number = recovered.l2_block_number,
-                        block_interval = self.config.driver.block_interval,
-                        "Overflow computing next proof target"
-                    );
-                    return;
-                }
-            };
+    ) -> Result<()> {
+        let mut cursor = recovered
+            .l2_block_number
+            .checked_add(self.config.driver.block_interval)
+            .ok_or_else(|| {
+            eyre::eyre!(
+                "overflow: l2_block_number {} + block_interval {}",
+                recovered.l2_block_number,
+                self.config.driver.block_interval
+            )
+        })?;
 
         let mut start_block = recovered.l2_block_number;
         let mut start_output = recovered.output_root;
@@ -263,34 +245,33 @@ where
             }
             cursor = cursor.saturating_add(self.config.driver.block_interval);
         }
+        Ok(())
     }
 
-    async fn try_submit(&self, state: &mut PipelineState) {
+    async fn try_submit(&self, state: &mut PipelineState) -> Result<()> {
         loop {
             let recovered = match self.recover_latest_state().await {
                 Ok(r) => r,
                 Err(e) => {
                     warn!(error = %e, "Failed to recover state during submission drain");
-                    return;
+                    return Ok(());
                 }
             };
 
-            let next_to_submit =
-                match recovered.l2_block_number.checked_add(self.config.driver.block_interval) {
-                    Some(n) => n,
-                    None => {
-                        warn!(
-                            l2_block_number = recovered.l2_block_number,
-                            block_interval = self.config.driver.block_interval,
-                            "Overflow computing next submission target"
-                        );
-                        return;
-                    }
-                };
+            let next_to_submit = recovered
+                .l2_block_number
+                .checked_add(self.config.driver.block_interval)
+                .ok_or_else(|| {
+                    eyre::eyre!(
+                        "overflow: l2_block_number {} + block_interval {}",
+                        recovered.l2_block_number,
+                        self.config.driver.block_interval
+                    )
+                })?;
 
             let proof_result = match state.proved.remove(&next_to_submit) {
                 Some(r) => r,
-                None => return,
+                None => return Ok(()),
             };
 
             match self
@@ -307,7 +288,7 @@ where
                         "Reorg detected at submit time, resetting pipeline"
                     );
                     state.reset();
-                    return;
+                    return Ok(());
                 }
                 Err(SubmitAction::Failed(e)) => {
                     warn!(
@@ -316,7 +297,7 @@ where
                         "Submission failed, will retry next tick"
                     );
                     state.proved.insert(next_to_submit, proof_result);
-                    return;
+                    return Ok(());
                 }
             }
         }
