@@ -2879,6 +2879,7 @@ dependencies = [
  "base-execution-cli",
  "base-node-core",
  "base-node-runner",
+ "base-reth-cli",
  "base-txpool-rpc",
  "clap",
  "eyre",
@@ -3138,7 +3139,6 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "metrics-process",
- "reth-node-core",
  "rstest",
  "serde",
  "serde_json",
@@ -4904,6 +4904,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-reth-cli"
+version = "0.0.0"
+dependencies = [
+ "reth-node-core",
+]
+
+[[package]]
 name = "base-reth-node"
 version = "0.0.0"
 dependencies = [
@@ -4916,6 +4923,7 @@ dependencies = [
  "base-node-core",
  "base-node-runner",
  "base-proofs-extension",
+ "base-reth-cli",
  "base-tx-forwarding",
  "base-txpool-rpc",
  "base-txpool-tracing",
