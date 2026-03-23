@@ -258,8 +258,7 @@ fn render_cluster_table(
 
     // ── Safe L2 row ────────────────────────────────────────────────────────
     let mut safe_l2_cells = vec![
-        Cell::from("Safe L2")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Cell::from("Safe L2").style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
     ];
     for node in nodes {
         let (label, style) = match node.safe_l2_block {
