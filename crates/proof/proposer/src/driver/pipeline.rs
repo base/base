@@ -52,10 +52,15 @@ pub struct PipelineConfig {
     pub driver: DriverConfig,
 }
 
+/// Mutable state for the coordinator loop.
 struct PipelineState {
+    /// Running proof tasks, each yielding `(target_block, result)`.
     prove_tasks: JoinSet<(u64, Result<ProofResult, ProposerError>)>,
+    /// Completed proofs waiting for sequential submission, keyed by target block.
     proved: BTreeMap<u64, ProofResult>,
+    /// Target blocks currently being proved.
     inflight: BTreeSet<u64>,
+    /// Per-target-block retry counts; exceeding `max_retries` triggers a full reset.
     retry_counts: BTreeMap<u64, u32>,
 }
 
@@ -169,9 +174,16 @@ where
         let mut state = PipelineState::new();
 
         loop {
-            if let Some((recovered, safe_head)) = self.try_recover_and_plan().await {
-                self.dispatch_proofs(&recovered, safe_head, &mut state).await?;
-                self.try_submit(&mut state).await?;
+            tokio::select! {
+                biased;
+
+                () = self.cancel.cancelled() => {
+                    state.prove_tasks.abort_all();
+                    break;
+                }
+                result = self.tick(&mut state) => {
+                    result?;
+                }
             }
 
             tokio::select! {
@@ -187,6 +199,16 @@ where
         }
 
         info!("Parallel proving pipeline stopped");
+        Ok(())
+    }
+
+    /// Executes one pipeline tick: recover state, dispatch new proofs, submit
+    /// completed results.
+    async fn tick(&self, state: &mut PipelineState) -> Result<()> {
+        if let Some((recovered, safe_head)) = self.try_recover_and_plan().await {
+            self.dispatch_proofs(&recovered, safe_head, state).await?;
+            self.try_submit(recovered, state).await?;
+        }
         Ok(())
     }
 
@@ -243,21 +265,17 @@ where
                     break;
                 }
             }
-            cursor = cursor.saturating_add(self.config.driver.block_interval);
+            cursor = match cursor.checked_add(self.config.driver.block_interval) {
+                Some(c) => c,
+                None => break,
+            };
         }
         Ok(())
     }
 
-    async fn try_submit(&self, state: &mut PipelineState) -> Result<()> {
+    async fn try_submit(&self, initial: RecoveredState, state: &mut PipelineState) -> Result<()> {
+        let mut recovered = initial;
         loop {
-            let recovered = match self.recover_latest_state().await {
-                Ok(r) => r,
-                Err(e) => {
-                    warn!(error = %e, "Failed to recover state during submission drain");
-                    return Ok(());
-                }
-            };
-
             let next_to_submit = recovered
                 .l2_block_number
                 .checked_add(self.config.driver.block_interval)
@@ -281,6 +299,13 @@ where
                 Ok(()) => {
                     info!(target_block = next_to_submit, "Submission successful");
                     state.retry_counts.remove(&next_to_submit);
+                    recovered = match self.recover_latest_state().await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            warn!(error = %e, "Failed to recover state after submission");
+                            return Ok(());
+                        }
+                    };
                 }
                 Err(SubmitAction::Reorg) => {
                     warn!(
