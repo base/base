@@ -1,9 +1,6 @@
 //! Contains node versioning info.
 
 use metrics::gauge;
-use reth_node_core::version::{
-    RethCliVersionConsts, default_reth_version_metadata, try_init_version_metadata,
-};
 
 /// Encapsulates versioning utilities for Base binaries.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -18,7 +15,12 @@ impl Version {
     /// ### Panics
     ///
     /// Panics if unable to initialize version metadata.
+    #[cfg(feature = "reth")]
     pub fn init_reth(version: &'static str, pkg_name: &'static str) {
+        use reth_node_core::version::{
+            RethCliVersionConsts, default_reth_version_metadata, try_init_version_metadata,
+        };
+
         let default = default_reth_version_metadata();
         let client_version = format!("base/v{version}");
 
@@ -46,6 +48,7 @@ impl Version {
 /// Reth's global version metadata initialized for P2P identification and logging.
 ///
 /// This macro must be called from the binary crate to capture the correct package metadata.
+#[cfg(feature = "reth")]
 #[macro_export]
 macro_rules! init_reth {
     () => {

@@ -17,7 +17,7 @@ workspace = true
 
 [dependencies]
 # workspace
-base-cli-utils.workspace = true
+base-cli-utils = { workspace = true, features = ["reth"] }
 base-txpool-rpc.workspace = true
 base-node-runner.workspace = true
 base-builder-core.workspace = true
