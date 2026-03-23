@@ -1,6 +1,7 @@
 //! Contains the [`SystemConfig`] type.
 
 use alloc::vec::Vec;
+
 use alloy_consensus::{Eip658Value, Receipt};
 #[cfg(feature = "serde")]
 use alloy_primitives::B256;
