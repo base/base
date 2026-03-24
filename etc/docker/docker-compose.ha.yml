@@ -382,7 +382,7 @@ services:
       - ../../.devnet/conductor-0:/data
       - ../../.devnet/l2/configs:/genesis/l2:ro
     command:
-      - --rollup.config=/genesis/l2/rollup.json
+      - --rollup.config=/genesis/l2/rollup-conductor.json
       - --raft.server.id=sequencer-0
       - --raft.storage.dir=/data/raft
       - --raft.bootstrap=true
@@ -418,7 +418,7 @@ services:
       - ../../.devnet/conductor-1:/data
       - ../../.devnet/l2/configs:/genesis/l2:ro
     command:
-      - --rollup.config=/genesis/l2/rollup.json
+      - --rollup.config=/genesis/l2/rollup-conductor.json
       - --raft.server.id=sequencer-1
       - --raft.storage.dir=/data/raft
       - --raft.bootstrap=false
@@ -454,7 +454,7 @@ services:
       - ../../.devnet/conductor-2:/data
       - ../../.devnet/l2/configs:/genesis/l2:ro
     command:
-      - --rollup.config=/genesis/l2/rollup.json
+      - --rollup.config=/genesis/l2/rollup-conductor.json
       - --raft.server.id=sequencer-2
       - --raft.storage.dir=/data/raft
       - --raft.bootstrap=false

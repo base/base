@@ -167,6 +167,10 @@ else
   echo "Base V1 activation block is unset; leaving base.v1 and osakaTime unchanged"
 fi
 
+echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."
+jq 'del(.base)' "$OUTPUT_DIR/rollup.json" >"$OUTPUT_DIR/rollup-conductor.json"
+echo "rollup-conductor.json written to $OUTPUT_DIR/rollup-conductor.json"
+
 echo "Extracting L1 addresses..."
 op-deployer inspect l1 \
   --workdir "$OP_DEPLOYER_WORKDIR" \
@@ -213,6 +217,7 @@ echo ""
 echo "Files generated:"
 echo "  L2 genesis: $OUTPUT_DIR/genesis.json"
 echo "  Rollup config: $OUTPUT_DIR/rollup.json"
+echo "  Rollup config (conductor): $OUTPUT_DIR/rollup-conductor.json"
 echo "  L1 addresses: $OUTPUT_DIR/l1-addresses.json"
 echo "  Builder P2P key: $OUTPUT_DIR/builder-p2p-key.txt"
 echo ""
