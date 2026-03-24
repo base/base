@@ -382,6 +382,7 @@ services:
       - --txpool.nolocals
       - --rpc.txfeecap=0
       - --rpc.gascap=600000000
+      - --rpc.eth-proof-window=1209600
       - --flashblocks-url=ws://base-builder:${L2_BUILDER_FLASHBLOCKS_PORT}
       - --trusted-peers=enode://${BUILDER_ENODE_ID}@base-builder:${L2_BUILDER_P2P_PORT}
       - --rollup.sequencer=http://base-builder:${L2_BUILDER_HTTP_PORT}
