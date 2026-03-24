@@ -39,11 +39,9 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"], optional = true }
 [dev-dependencies]
 rstest.workspace = true
 async-trait.workspace = true
-base-protocol = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["test-utils"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
-base-alloy-consensus = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
 
 [[test]]
