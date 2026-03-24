@@ -22,7 +22,7 @@ Nitro hardware to on-chain signer registration:
 
 ### What the ZK proof does (offchain, inside the RISC Zero guest)
 
-1. **Parses the COSE_Sign1 envelope** — decodes the CBOR-encoded attestation
+1. **Parses the `COSE_Sign1` envelope** — decodes the CBOR-encoded attestation
    document from the raw bytes returned by the Nitro Secure Module (NSM).
 2. **Validates attestation content** — checks that the document is well-formed:
    non-empty `module_id`, non-zero `timestamp`, `digest == "SHA384"`, valid
@@ -40,7 +40,7 @@ Nitro hardware to on-chain signer registration:
    These are *proven outputs* — the ZK proof guarantees they were
    extracted from a genuine, unmodified attestation document.
 
-### What the on-chain contract does (TEEProverRegistry)
+### What the on-chain contract does (`TEEProverRegistry`)
 
 The contract calls `NitroEnclaveVerifier.verify()` to check the ZK proof,
 then applies policy checks on the proven journal:
