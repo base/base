@@ -31,6 +31,10 @@ pub enum EngineClientError {
     /// An error occurred performing the reset.
     #[error("An error occurred performing the reset: {0}.")]
     ResetForkchoiceError(String),
+
+    /// The EL is still syncing; the reset cannot proceed yet. Retry after a delay.
+    #[error("EL sync in progress; reset deferred")]
+    ELSyncing,
 }
 
 /// Inbound requests that the [`crate::EngineActor`] can process.

@@ -49,11 +49,17 @@ pub struct SynchronizeTask<EngineClient_: EngineClient> {
 impl<EngineClient_: EngineClient> SynchronizeTask<EngineClient_> {
     /// Checks the response of the `engine_forkchoiceUpdated` call, and updates the sync status if
     /// necessary.
+    ///
+    /// Returns `true` if the EL confirmed the forkchoice (`Valid`), meaning the caller
+    /// should apply the proposed sync-state update.  Returns `false` for `Syncing`,
+    /// indicating the EL accepted the hint but has **not** canonicalised the head — the
+    /// caller must leave `state.sync_state` unchanged so that the node's view of the
+    /// chain does not advance beyond what the EL can actually serve.
     fn check_forkchoice_updated_status(
         &self,
         state: &mut EngineState,
         status: &PayloadStatusEnum,
-    ) -> Result<(), SynchronizeTaskError> {
+    ) -> Result<bool, SynchronizeTaskError> {
         match status {
             PayloadStatusEnum::Valid => {
                 if !state.el_sync_finished {
@@ -64,12 +70,17 @@ impl<EngineClient_: EngineClient> SynchronizeTask<EngineClient_> {
                     state.el_sync_finished = true;
                 }
 
-                Ok(())
+                Ok(true)
             }
             PayloadStatusEnum::Syncing => {
-                // If we're not building a new payload, we're driving EL sync.
-                debug!(target: "engine", "Attempting to update forkchoice state while EL syncing");
-                Ok(())
+                // The EL stored the block but cannot validate it yet (e.g. missing
+                // parent).  We intentionally do NOT apply the sync-state update so
+                // that unsafe_head stays at the last *confirmed* value.  This
+                // prevents a gap between the node's logical unsafe head and what the
+                // EL can actually serve, which would cause derivation consolidation
+                // to fail with `MissingUnsafeL2Block` and trigger a reset loop.
+                debug!(target: "engine", "Forkchoice update returned Syncing; state not advanced");
+                Ok(false)
             }
             s => {
                 // Other codes are not expected.
@@ -139,16 +150,23 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
             error
         })?;
 
-        self.check_forkchoice_updated_status(state, &valid_response.payload_status.status)?;
+        let confirmed =
+            self.check_forkchoice_updated_status(state, &valid_response.payload_status.status)?;
 
-        // Apply the new sync state to the engine state.
-        state.sync_state = new_sync_state;
+        // Only apply the sync-state update when the EL confirmed the forkchoice
+        // (`Valid`).  When the EL returns `Syncing` the block is merely stored —
+        // advancing `sync_state` here would move `unsafe_head` beyond what the EL
+        // can serve, creating a gap that breaks derivation consolidation.
+        if confirmed {
+            state.sync_state = new_sync_state;
+        }
 
         let fcu_duration = fcu_time_start.elapsed();
         debug!(
             target: "engine",
             fcu_duration = ?fcu_duration,
             forkchoice = ?forkchoice,
+            ?confirmed,
             response = ?valid_response,
             "Forkchoice updated"
         );

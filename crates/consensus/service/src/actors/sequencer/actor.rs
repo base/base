@@ -122,14 +122,33 @@ where
     }
 
     /// Schedules the initial engine reset request and waits for the unsafe head to be updated.
+    ///
+    /// If the EL is still syncing (snap sync in progress), the engine will defer the reset and
+    /// return [`EngineClientError::ELSyncing`]. In that case we wait one block time and retry,
+    /// so we never send a forkchoice_updated that would abort reth's in-progress EL sync.
     async fn schedule_initial_reset(&self) -> Result<(), SequencerActorError> {
-        // Reset the engine, in order to initialize the engine state.
-        // NB: this call waits for confirmation that the reset succeeded and we can proceed with
-        // post-reset logic.
-        self.engine_client.reset_engine_forkchoice().await.map_err(|err| {
-            error!(target: "sequencer", ?err, "Failed to send reset request to engine");
-            err.into()
-        })
+        loop {
+            select! {
+                biased;
+                _ = self.cancellation_token.cancelled() => return Ok(()),
+                result = self.engine_client.reset_engine_forkchoice() => match result {
+                    Ok(()) => return Ok(()),
+                    Err(EngineClientError::ELSyncing) => {
+                        info!(target: "sequencer", "EL sync in progress; deferring initial engine reset");
+                    }
+                    Err(err) => {
+                        error!(target: "sequencer", error = ?err, "Failed to send reset request to engine");
+                        return Err(err.into());
+                    }
+                },
+            }
+            // Wait one block time before retrying, but honour cancellation.
+            select! {
+                biased;
+                _ = self.cancellation_token.cancelled() => return Ok(()),
+                _ = tokio::time::sleep(Duration::from_secs(self.rollup_config.block_time)) => {}
+            }
+        }
     }
 }
 

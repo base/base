@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use alloy_eips::BlockNumberOrTag;
 use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
@@ -240,31 +241,55 @@ where
         mut request_channel: mpsc::Receiver<EngineProcessingRequest>,
     ) -> JoinHandle<Result<(), EngineError>> {
         tokio::spawn(async move {
-            // Bootstrap: pre-populate the engine watch channels by performing an initial reset.
-            // Without this, external callers (op_syncStatus, admin_startSequencer) would always
-            // observe a zero unsafe head until the first engine task completes. On nodes where
-            // the sequencer starts stopped (e.g. devnet), no tasks arrive until after
-            // admin_startSequencer is called — creating a deadlock.
+            // Bootstrap: pre-populate the unsafe_head_tx watch channel so that external callers
+            // (admin_startSequencer, op_syncStatus) never observe a zero hash.
             //
-            // We call engine.reset() directly (bypassing EngineProcessor::reset() and
-            // mark_el_sync_complete_and_notify_derivation_actor) so that we do NOT start
-            // derivation here. The el_sync_finished / el_sync_complete gate is preserved:
-            // if the EL responds with Valid, el_sync_finished is set to true and the first
-            // drain() iteration will trigger mark_el_sync_complete_and_notify_derivation_actor
-            // normally. If the EL is still syncing (Syncing response), el_sync_finished stays
-            // false and derivation waits — exactly the same as before.
-            match self.engine.reset(Arc::clone(&self.client), Arc::clone(&self.rollup)).await {
-                Ok(_) => {
-                    if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
-                        let new_head = self.engine.state().sync_state.unsafe_head();
-                        unsafe_head_tx.send_if_modified(|val| {
-                            (*val != new_head).then(|| *val = new_head).is_some()
-                        });
+            // We gate on whether reth's current head is at the rollup genesis:
+            //
+            //   • At genesis — reth has no snap-synced canonical chain, so engine.reset() is
+            //     safe: it FCUs to the genesis block and sets up derivation normally. The
+            //     el_sync_finished / el_sync_complete gate is preserved as before.
+            //
+            //   • Beyond genesis — reth already has a canonical chain (e.g. after snap sync).
+            //     Sending a FCU to the sync-start block would reorg reth below its state pivot,
+            //     causing every subsequent engine_newPayload to return Syncing and the node to
+            //     enter an infinite reset loop. Instead we seed the watch channel from reth's
+            //     current head directly; derivation will issue its own FCU once the first Reset
+            //     task arrives.
+            let reth_head = self.client.l2_block_info_by_label(BlockNumberOrTag::Latest).await;
+            let at_genesis = match &reth_head {
+                Ok(Some(head)) => head.block_info.hash == self.rollup.genesis.l2.hash,
+                Ok(None) => true,
+                Err(err) => {
+                    warn!(target: "engine", ?err, "Bootstrap: failed to query reth head, falling back to reset");
+                    true
+                }
+            };
+
+            if at_genesis {
+                match self.engine.reset(Arc::clone(&self.client), Arc::clone(&self.rollup)).await {
+                    Ok(_) => {
+                        if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
+                            let new_head = self.engine.state().sync_state.unsafe_head();
+                            unsafe_head_tx.send_if_modified(|val| {
+                                (*val != new_head).then(|| *val = new_head).is_some()
+                            });
+                        }
+                    }
+                    Err(err) => {
+                        warn!(target: "engine", ?err, "Engine startup bootstrap failed; will initialize on first task");
                     }
                 }
-                Err(err) => {
-                    warn!(target: "engine", ?err, "Engine startup bootstrap failed; will initialize on first task");
-                }
+            } else if let (Ok(Some(head)), Some(unsafe_head_tx)) =
+                (reth_head, self.unsafe_head_tx.as_ref())
+            {
+                unsafe_head_tx
+                    .send_if_modified(|val| (*val != head).then(|| *val = head).is_some());
+                info!(
+                    target: "engine",
+                    head = %head.block_info.number,
+                    "Bootstrap: skipped reset (beyond genesis), seeded unsafe head from reth"
+                );
             }
 
             loop {
@@ -342,6 +367,23 @@ where
                         self.engine.enqueue(task);
                     }
                     EngineProcessingRequest::Reset(reset_request) => {
+                        // Do not reset the engine while the EL is still syncing. A Reset sends a
+                        // forkchoice_updated to reth pointing at the sync-start block, which will
+                        // return Valid and cause reth to set that stale block as canonical,
+                        // aborting any in-progress snap sync. Defer until el_sync_finished=true.
+                        if !self.engine.state().el_sync_finished {
+                            warn!(target: "engine", "Deferring engine reset: EL sync not yet complete");
+                            if reset_request
+                                .result_tx
+                                .send(Err(EngineClientError::ELSyncing))
+                                .await
+                                .is_err()
+                            {
+                                warn!(target: "engine", "Sending ELSyncing response failed");
+                            }
+                            continue;
+                        }
+
                         warn!(target: "engine", "Received reset request");
 
                         let reset_res = self.reset().await;
