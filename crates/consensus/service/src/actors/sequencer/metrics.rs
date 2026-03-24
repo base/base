@@ -117,3 +117,8 @@ pub(super) fn inc_recovery_mode_block() {
 pub(super) fn inc_drift_empty_block() {
     base_macros::inc!(counter, crate::Metrics::SEQUENCER_DRIFT_EMPTY_BLOCKS_TOTAL);
 }
+
+#[inline]
+pub(super) fn inc_stale_build_discarded() {
+    base_macros::inc!(counter, crate::Metrics::SEQUENCER_STALE_BUILD_DISCARDED_TOTAL);
+}

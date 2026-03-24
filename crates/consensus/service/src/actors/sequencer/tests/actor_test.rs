@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ExecutionPayloadV1;
@@ -7,15 +7,19 @@ use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadEnvelope, OpPayloadAttributes,
 };
 use base_consensus_derive::{BuilderError, PipelineErrorKind, test_utils::TestAttributesBuilder};
+#[cfg(test)]
+use base_consensus_engine::SealTaskError;
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
 use rstest::rstest;
 
 #[cfg(test)]
 use crate::{
-    ConductorError, SealState, SealStepError, SequencerActorError, UnsealedPayloadHandle,
+    ConductorError, SealState, SealStepError, SequencerActorError, UnsafePayloadGossipClientError,
+    UnsealedPayloadHandle,
     actors::{
         MockConductor, MockOriginSelector, MockSequencerEngineClient,
         MockUnsafePayloadGossipClient,
+        engine::EngineClientError,
         sequencer::{PayloadSealer, tests::test_util::test_actor},
     },
 };
@@ -48,6 +52,147 @@ fn conductor_rpc_error() -> ConductorError {
 
 fn dummy_attributes_with_parent() -> OpAttributesWithParent {
     OpAttributesWithParent::new(OpPayloadAttributes::default(), L2BlockInfo::default(), None, false)
+}
+
+fn handle_with_parent_number(number: u64) -> UnsealedPayloadHandle {
+    handle_with_parent(number, B256::ZERO)
+}
+
+fn handle_with_parent(number: u64, hash: B256) -> UnsealedPayloadHandle {
+    let parent = L2BlockInfo {
+        block_info: BlockInfo { number, hash, ..Default::default() },
+        ..Default::default()
+    };
+    UnsealedPayloadHandle {
+        payload_id: Default::default(),
+        attributes_with_parent: OpAttributesWithParent::new(
+            OpPayloadAttributes::default(),
+            parent,
+            None,
+            false,
+        ),
+    }
+}
+
+fn head_at(number: u64) -> L2BlockInfo {
+    head_at_with_hash(number, B256::ZERO)
+}
+
+fn head_at_with_hash(number: u64, hash: B256) -> L2BlockInfo {
+    L2BlockInfo {
+        block_info: BlockInfo { number, hash, ..Default::default() },
+        ..Default::default()
+    }
+}
+
+// --- try_seal_handle tests ---
+
+#[tokio::test]
+async fn test_try_seal_handle_current_head_equals_parent_seals() {
+    // head.number == parent.number AND head.hash == parent.hash → not stale; seal proceeds.
+    // Use a distinct non-zero hash so the hash equality check is actually exercised.
+    let hash = B256::from([0xcc; 32]);
+
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_get_unsafe_head().times(1).return_once(move || Ok(head_at_with_hash(5, hash)));
+    client.expect_get_sealed_payload().times(1).return_once(|_, _| Ok(dummy_envelope()));
+
+    let mut actor = test_actor();
+    actor.engine_client = Arc::new(client);
+
+    let (sealer, dur) = actor.try_seal_handle(handle_with_parent(5, hash)).await.unwrap().unwrap();
+    assert_eq!(sealer.state, SealState::Sealed);
+    assert!(dur < Duration::from_secs(10));
+}
+
+#[tokio::test]
+async fn test_try_seal_handle_current_head_ahead_of_parent_discards() {
+    // head > parent → stale; seal_payload must NOT be called.
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_get_unsafe_head().times(1).return_once(|| Ok(head_at(6)));
+    client.expect_get_sealed_payload().times(0);
+
+    let mut actor = test_actor();
+    actor.engine_client = Arc::new(client);
+
+    let result = actor.try_seal_handle(handle_with_parent_number(5)).await;
+
+    assert!(result.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn test_try_seal_handle_same_height_reorg_discards() {
+    // head.number == parent.number but head.hash != parent.hash → same-height reorg; discard.
+    let parent_hash = B256::from([0xaa; 32]);
+    let reorged_hash = B256::from([0xbb; 32]);
+
+    let mut client = MockSequencerEngineClient::new();
+    client
+        .expect_get_unsafe_head()
+        .times(1)
+        .return_once(move || Ok(head_at_with_hash(5, reorged_hash)));
+    client.expect_get_sealed_payload().times(0);
+
+    let mut actor = test_actor();
+    actor.engine_client = Arc::new(client);
+
+    let result = actor.try_seal_handle(handle_with_parent(5, parent_hash)).await;
+
+    assert!(result.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn test_try_seal_handle_get_unsafe_head_error_propagates() {
+    let mut client = MockSequencerEngineClient::new();
+    client
+        .expect_get_unsafe_head()
+        .times(1)
+        .return_once(|| Err(EngineClientError::RequestError("channel closed".to_string())));
+    client.expect_get_sealed_payload().times(0);
+
+    let mut actor = test_actor();
+    actor.engine_client = Arc::new(client);
+
+    let result = actor.try_seal_handle(handle_with_parent_number(5)).await;
+
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_try_seal_handle_fatal_seal_error_cancels_and_propagates() {
+    // A fatal seal error must cancel the token and return Err.
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_get_unsafe_head().times(1).return_once(|| Ok(head_at(5)));
+    client.expect_get_sealed_payload().times(1).return_once(|_, _| {
+        Err(EngineClientError::SealError(SealTaskError::DepositOnlyPayloadFailed))
+    });
+
+    let mut actor = test_actor();
+    actor.engine_client = Arc::new(client);
+
+    let result = actor.try_seal_handle(handle_with_parent_number(5)).await;
+
+    assert!(result.is_err());
+    assert!(actor.cancellation_token.is_cancelled());
+}
+
+#[tokio::test]
+async fn test_try_seal_handle_non_fatal_seal_error_returns_none() {
+    // A non-fatal seal error must return Ok(None) and leave the token uncancelled.
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_get_unsafe_head().times(1).return_once(|| Ok(head_at(5)));
+    client
+        .expect_get_sealed_payload()
+        .times(1)
+        .return_once(|_, _| Err(EngineClientError::SealError(SealTaskError::HoloceneInvalidFlush)));
+
+    let mut actor = test_actor();
+    actor.engine_client = Arc::new(client);
+
+    let result = actor.try_seal_handle(handle_with_parent_number(5)).await;
+
+    assert!(result.unwrap().is_none());
+    assert!(!actor.cancellation_token.is_cancelled());
 }
 
 // --- build tests ---
@@ -117,8 +262,6 @@ async fn test_seal_payload_success_returns_sealer() {
 
 #[tokio::test]
 async fn test_seal_payload_failure_propagates() {
-    use crate::actors::engine::EngineClientError;
-
     let mut client = MockSequencerEngineClient::new();
     client
         .expect_get_sealed_payload()
@@ -215,8 +358,6 @@ async fn test_sealer_conductor_failure_stays_sealed() {
 
 #[tokio::test]
 async fn test_sealer_gossip_failure_stays_committed() {
-    use crate::UnsafePayloadGossipClientError;
-
     let envelope = dummy_envelope();
 
     let mut gossip = MockUnsafePayloadGossipClient::new();
@@ -239,8 +380,6 @@ async fn test_sealer_gossip_failure_stays_committed() {
 
 #[tokio::test]
 async fn test_sealer_insert_failure_stays_gossiped() {
-    use crate::actors::engine::EngineClientError;
-
     let envelope = dummy_envelope();
 
     let mut gossip = MockUnsafePayloadGossipClient::new();

@@ -54,6 +54,10 @@ impl Metrics {
     /// Counter for empty blocks produced due to sequencer drift threshold.
     pub const SEQUENCER_DRIFT_EMPTY_BLOCKS_TOTAL: &str =
         "base_node_sequencer_drift_empty_blocks_total";
+    /// Counter for pre-built payloads discarded because the unsafe head advanced past their
+    /// parent before sealing (stale build detection).
+    pub const SEQUENCER_STALE_BUILD_DISCARDED_TOTAL: &str =
+        "base_node_sequencer_stale_build_discarded_total";
 
     /// Initializes metrics for the node service.
     ///
@@ -141,6 +145,10 @@ impl Metrics {
             Self::SEQUENCER_DRIFT_EMPTY_BLOCKS_TOTAL,
             "Empty blocks produced due to sequencer drift threshold"
         );
+        metrics::describe_counter!(
+            Self::SEQUENCER_STALE_BUILD_DISCARDED_TOTAL,
+            "Pre-built payloads discarded because the unsafe head advanced past their parent"
+        );
     }
 
     /// Initializes metrics to `0` so they can be queried immediately by consumers of prometheus
@@ -172,5 +180,6 @@ impl Metrics {
         base_macros::set!(counter, Self::SEQUENCER_STOP_DEFERRED_TOTAL, 0);
         base_macros::set!(counter, Self::SEQUENCER_RECOVERY_MODE_BLOCKS_TOTAL, 0);
         base_macros::set!(counter, Self::SEQUENCER_DRIFT_EMPTY_BLOCKS_TOTAL, 0);
+        base_macros::set!(counter, Self::SEQUENCER_STALE_BUILD_DISCARDED_TOTAL, 0);
     }
 }

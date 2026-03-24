@@ -27,7 +27,8 @@ use crate::{
             conductor::Conductor,
             error::SequencerActorError,
             metrics::{
-                inc_seal_error, update_seal_duration_metrics, update_total_transactions_sequenced,
+                inc_seal_error, inc_stale_build_discarded, update_seal_duration_metrics,
+                update_total_transactions_sequenced,
             },
             origin_selector::OriginSelector,
             recovery::RecoveryModeGuard,
@@ -127,6 +128,74 @@ where
         update_total_transactions_sequenced(handle.attributes_with_parent.count_transactions());
 
         Ok(PayloadSealer::new(envelope))
+    }
+
+    /// Attempts to seal a pre-built payload, first checking whether it is still fresh.
+    ///
+    /// If the unsafe head has advanced past the handle's parent since build time (a P2P block
+    /// arrived while the build was in-flight), the handle is discarded and `Ok(None)` is
+    /// returned so the caller can restart with [`PayloadBuilder::build`].
+    ///
+    /// On success returns the new [`PayloadSealer`] together with the elapsed seal duration so
+    /// the caller can reschedule the ticker accurately. On a non-fatal seal error returns
+    /// `Ok(None)`. On a fatal error the cancellation token is triggered and `Err` is returned.
+    pub(super) async fn try_seal_handle(
+        &self,
+        handle: UnsealedPayloadHandle,
+    ) -> Result<Option<(PayloadSealer, Duration)>, SequencerActorError> {
+        let current_head = self.engine_client.get_unsafe_head().await?;
+        let build_parent = handle.attributes_with_parent.parent().block_info;
+
+        if current_head.block_info.number > build_parent.number {
+            warn!(
+                target: "sequencer",
+                parent_num = build_parent.number,
+                current_head_num = current_head.block_info.number,
+                "Stale build detected: unsafe head advanced past build parent, discarding"
+            );
+            inc_stale_build_discarded();
+            return Ok(None);
+        }
+
+        if current_head.block_info.number == build_parent.number
+            && current_head.block_info.hash != build_parent.hash
+        {
+            warn!(
+                target: "sequencer",
+                parent_num = build_parent.number,
+                expected_hash = %build_parent.hash,
+                actual_hash = %current_head.block_info.hash,
+                "Stale build detected: unsafe head reorged at same height, discarding"
+            );
+            inc_stale_build_discarded();
+            return Ok(None);
+        }
+
+        // Staleness check above is best-effort: if the unsafe head advances between the
+        // get_unsafe_head() call and seal_payload() below, the EL's own validation is
+        // the final safety gate.
+        let seal_start = Instant::now();
+        match self.seal_payload(&handle).await {
+            Ok(sealer) => Ok(Some((sealer, seal_start.elapsed()))),
+            Err(SequencerActorError::EngineError(EngineClientError::SealError(err))) => {
+                if err.is_fatal() {
+                    error!(target: "sequencer", error = ?err, "Critical seal task error occurred");
+                    inc_seal_error(true);
+                    self.cancellation_token.cancel();
+                    return Err(SequencerActorError::EngineError(EngineClientError::SealError(
+                        err,
+                    )));
+                }
+                warn!(target: "sequencer", error = ?err, "Non-fatal seal error, dropping block");
+                inc_seal_error(false);
+                Ok(None)
+            }
+            Err(other_err) => {
+                error!(target: "sequencer", error = ?other_err, "Unexpected error sealing payload");
+                self.cancellation_token.cancel();
+                Err(other_err)
+            }
+        }
     }
 
     /// Schedules the initial engine reset request and waits for the unsafe head to be updated.
@@ -294,16 +363,26 @@ where
                 // next block starts, so the canonical head actually advances.
                 _ = build_ticker.tick(), if self.is_active && self.sealer.is_none() => {
                     if let Some(handle) = next_payload_to_seal.take() {
-                        let seal_start = Instant::now();
-                        match self.seal_payload(&handle).await {
-                            Ok(new_sealer) => {
-                                last_seal_duration = seal_start.elapsed();
+                        // Extract data needed after try_seal_handle consumes the handle.
+                        let parent_beacon_root = handle
+                            .attributes_with_parent
+                            .attributes()
+                            .payload_attributes
+                            .parent_beacon_block_root;
+                        let handle_timestamp = handle
+                            .attributes_with_parent
+                            .attributes()
+                            .payload_attributes
+                            .timestamp;
+                        match self.try_seal_handle(handle).await? {
+                            Some((new_sealer, dur)) => {
+                                last_seal_duration = dur;
                                 // Stash the expected parent for the next build. This is consumed
                                 // in the Ok(true) arm after insert_unsafe_payload is queued,
                                 // ensuring BuildTask is enqueued after InsertTask in the engine.
                                 self.next_build_parent = match L2BlockInfo::from_payload_and_genesis(
                                     new_sealer.envelope.execution_payload.clone(),
-                                    handle.attributes_with_parent.attributes().payload_attributes.parent_beacon_block_root,
+                                    parent_beacon_root,
                                     &self.rollup_config.genesis,
                                 ) {
                                     Ok(parent) => Some(parent),
@@ -321,12 +400,8 @@ where
                                 // Schedule the next tick for the next block's target seal time.
                                 // Use the just-sealed block's timestamp; the next block's
                                 // timestamp is one block_time later.
-                                let next_block_seconds = handle
-                                    .attributes_with_parent
-                                    .attributes()
-                                    .payload_attributes
-                                    .timestamp
-                                    .saturating_add(self.rollup_config.block_time);
+                                let next_block_seconds =
+                                    handle_timestamp.saturating_add(self.rollup_config.block_time);
                                 let next_block_time = UNIX_EPOCH
                                     + Duration::from_secs(next_block_seconds)
                                     - last_seal_duration;
@@ -338,16 +413,9 @@ where
                                 // Ok(true) arm after insert_unsafe_payload has been queued,
                                 // so InsertTask always precedes BuildTask in the engine queue.
                             }
-                            Err(SequencerActorError::EngineError(EngineClientError::SealError(err))) => {
-                                if err.is_fatal() {
-                                    error!(target: "sequencer", error = ?err, "Critical seal task error occurred");
-                                    inc_seal_error(true);
-                                    self.cancellation_token.cancel();
-                                    return Err(SequencerActorError::EngineError(EngineClientError::SealError(err)));
-                                }
-                                warn!(target: "sequencer", error = ?err, "Non-fatal seal error, dropping block");
-                                inc_seal_error(false);
-                                // Rebuild immediately on the current unsafe head.
+                            None => {
+                                // Stale build or non-fatal seal error: rebuild immediately on
+                                // the current unsafe head.
                                 next_payload_to_seal = self.builder.build().await?;
                                 if let Some(ref payload) = next_payload_to_seal {
                                     let next_block_seconds = payload
@@ -366,11 +434,6 @@ where
                                 } else {
                                     build_ticker.reset_immediately();
                                 }
-                            }
-                            Err(other_err) => {
-                                error!(target: "sequencer", error = ?other_err, "Unexpected error sealing payload");
-                                self.cancellation_token.cancel();
-                                return Err(other_err);
                             }
                         }
                     } else {
