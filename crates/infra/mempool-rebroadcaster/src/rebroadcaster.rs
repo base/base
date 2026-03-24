@@ -194,11 +194,13 @@ impl Rebroadcaster {
         for (account, nonce_txns) in &content.pending {
             for (nonce, txn) in nonce_txns {
                 if self.is_underpriced(txn, base_fee, gas_price) {
-                    filtered_content.pending.get_mut(account).unwrap().remove(nonce);
+                    if let Some(pending_account) = filtered_content.pending.get_mut(account) {
+                        pending_account.remove(nonce);
+                    }
                 }
             }
 
-            if filtered_content.pending.get(account).unwrap().is_empty() {
+            if filtered_content.pending.get(account).map_or(true, |txns| txns.is_empty()) {
                 filtered_content.pending.remove(account);
             }
         }
@@ -206,11 +208,13 @@ impl Rebroadcaster {
         for (account, nonce_txns) in &content.queued {
             for (nonce, txn) in nonce_txns {
                 if self.is_underpriced(txn, base_fee, gas_price) {
-                    filtered_content.queued.get_mut(account).unwrap().remove(nonce);
+                    if let Some(queued_account) = filtered_content.queued.get_mut(account) {
+                        queued_account.remove(nonce);
+                    }
                 }
             }
 
-            if filtered_content.queued.get(account).unwrap().is_empty() {
+            if filtered_content.queued.get(account).map_or(true, |txns| txns.is_empty()) {
                 filtered_content.queued.remove(account);
             }
         }
