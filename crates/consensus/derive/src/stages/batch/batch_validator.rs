@@ -145,6 +145,10 @@ where
         &mut self,
         parent: &L2BlockInfo,
     ) -> PipelineResult<SingleBatch> {
+        // Ensure we have at least one L1 block to derive from.
+        if self.l1_blocks.is_empty() {
+            return Err(PipelineError::MissingOrigin.crit());
+        }
         let epoch = self.l1_blocks[0];
 
         // If the current epoch is too old compared to the L1 block we are at,
