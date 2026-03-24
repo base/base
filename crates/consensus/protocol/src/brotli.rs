@@ -57,7 +57,7 @@ pub fn decompress_brotli(
         // Resize the output buffer to double the size, following standard
         // practice for buffer resizing in streams.
         let old_len = output.len();
-        let new_len = old_len * 2;
+        let new_len = old_len.checked_mul(2).ok_or(BrotliDecompressionError::BatchTooLarge)?;
 
         if new_len > max_rlp_bytes_per_channel {
             return Err(BrotliDecompressionError::BatchTooLarge);
