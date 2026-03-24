@@ -10,7 +10,7 @@ use base_batcher_core::ThrottleConfig;
 use base_batcher_service::{BatcherConfig, BatcherService};
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_runtime::TokioRuntime;
-use clap::{Args, Parser};
+use clap::{Args, Parser, ValueEnum};
 use tracing::info;
 use url::Url;
 
@@ -100,6 +100,13 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "target-num-frames", default_value = "1", env = "BATCHER_TARGET_NUM_FRAMES")]
     pub target_num_frames: usize,
 
+    /// Batch encoding mode.
+    ///
+    /// Accepts `single` / `0` and `span` / `1`. Span batches require Fjord
+    /// to be active for the next L2 block at startup.
+    #[arg(long = "batch-type", default_value = "single", env = "BATCHER_BATCH_TYPE")]
+    batch_type: BatchTypeArg,
+
     /// Approximate compression ratio used for span batch size estimation.
     ///
     /// Only relevant when `--batch-type=span`. Should be slightly below the
@@ -179,6 +186,7 @@ impl BatcherArgs {
             max_channel_duration: self.max_channel_duration,
             sub_safety_margin: self.sub_safety_margin,
             target_num_frames: self.target_num_frames,
+            batch_type: self.batch_type.into(),
             approx_compr_ratio: self.approx_compr_ratio,
             ..base_batcher_encoder::EncoderConfig::default()
         };
@@ -222,5 +230,65 @@ impl BatcherArgs {
 
         let service = BatcherService::new(config);
         service.setup(rt).await?.run().await
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum BatchTypeArg {
+    #[value(alias = "0")]
+    Single,
+    #[value(alias = "1")]
+    Span,
+}
+
+impl From<BatchTypeArg> for base_batcher_encoder::BatchType {
+    fn from(value: BatchTypeArg) -> Self {
+        match value {
+            BatchTypeArg::Single => Self::Single,
+            BatchTypeArg::Span => Self::Span,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    fn base_args() -> Vec<&'static str> {
+        vec![
+            "base-batcher",
+            "--l1-rpc-url",
+            "http://localhost:8545",
+            "--l2-rpc-url",
+            "http://localhost:9545",
+            "--rollup-rpc-url",
+            "http://localhost:7545",
+            "--private-key",
+            "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        ]
+    }
+
+    fn parse_cli(extra: &[&'static str]) -> Cli {
+        let mut args = base_args();
+        args.extend_from_slice(extra);
+        Cli::try_parse_from(args).expect("CLI should parse")
+    }
+
+    #[test]
+    fn into_config_defaults_to_single_batches_and_blobs() {
+        let cli = parse_cli(&[]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.encoder_config.batch_type, base_batcher_encoder::BatchType::Single);
+    }
+
+    #[test]
+    fn into_config_accepts_numeric_span_alias() {
+        let cli = parse_cli(&["--batch-type", "1"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.encoder_config.batch_type, base_batcher_encoder::BatchType::Span);
     }
 }

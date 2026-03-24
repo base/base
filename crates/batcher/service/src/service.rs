@@ -304,6 +304,9 @@ impl BatcherService {
             .await
             .map_err(|e| eyre::eyre!("optimism_syncStatus RPC failed: {e}"))?;
         let safe_l2_number = sync_status.safe_l2.block_info.number;
+        let next_l2_timestamp =
+            sync_status.safe_l2.block_info.timestamp.saturating_add(rollup_config.block_time);
+        self.config.encoder_config.validate_for_rollup_config(&rollup_config, next_l2_timestamp)?;
         info!(safe_l2 = %safe_l2_number, "fetched safe L2 head");
 
         // Get the current L2 latest block to decide whether historical backfill is needed.
