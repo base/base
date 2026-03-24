@@ -22,4 +22,3 @@ base-builder-core.workspace = true
 base-node-runner.workspace = true
 
 [dev-dependencies]
-alloy-primitives.workspace = true
