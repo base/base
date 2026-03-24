@@ -17,8 +17,8 @@ pub enum DriverEvent {
     Flush,
     /// L2 reorganisation; new safe head provided.
     Reorg(L2BlockInfo),
-    /// An in-flight L1 transaction settled.
-    Receipt(SubmissionId, TxOutcome),
+    /// An in-flight L1 transaction settled, carrying one or more packed submissions.
+    Receipt(Vec<SubmissionId>, TxOutcome),
     /// L1 chain head advanced.
     L1Head(u64),
     /// Safe L2 head advanced (from watch channel).

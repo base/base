@@ -38,10 +38,34 @@ impl BlobEncoder {
     /// Number of encoding rounds (one per group of 4 field elements).
     pub const BLOB_ENCODING_ROUNDS: usize = 1024;
 
+    /// Per-frame encoding overhead: 16 (`channel_id`) + 2 (`frame_number`) + 4 (`data_len`) + 1 (`is_last`).
+    ///
+    /// The blob payload for N frames is:
+    /// `1 (DERIVATION_VERSION_0) + N * FRAME_OVERHEAD + sum(frame.data.len())`.
+    pub const FRAME_OVERHEAD: usize = 23;
+
+    /// Pack multiple frames into a single blob payload.
+    ///
+    /// Encodes `[DERIVATION_VERSION_0] ++ frame0.encode() ++ frame1.encode() ++ …`
+    /// into one blob. The derivation pipeline's `Frame::parse_frames` uses a
+    /// `while offset < len` loop, so all packed frames are decoded correctly.
+    pub fn encode_packed(frames: &[Arc<Frame>]) -> Result<Blob, BlobEncodeError> {
+        let encoded_size: usize = frames.iter().map(|f| Self::FRAME_OVERHEAD + f.data.len()).sum();
+        let mut data = Vec::with_capacity(1 + encoded_size);
+        data.push(DERIVATION_VERSION_0);
+        for frame in frames {
+            data.extend_from_slice(&frame.encode());
+        }
+        Self::encode(&data).map(|b| *b)
+    }
+
     /// Encode each [`Frame`] into its own EIP-4844 [`Blob`].
     ///
     /// Each frame is prefixed with [`DERIVATION_VERSION_0`] before encoding.
     /// Returns a blob per frame in the same order.
+    ///
+    /// Kept for compatibility with the action-test harness
+    /// (`actions/harness/src/miner.rs`). New code should use [`encode_packed`](Self::encode_packed).
     pub fn encode_frames(frames: &[Arc<Frame>]) -> Result<Vec<Blob>, BlobEncodeError> {
         let mut blobs = Vec::with_capacity(frames.len());
         for frame in frames {

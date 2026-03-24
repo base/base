@@ -86,4 +86,8 @@ impl PollingSource for RpcPollingSource {
     fn reset_catchup(&self, start_from: u64) {
         *self.next_sequential.lock().unwrap() = Some(start_from);
     }
+
+    fn is_catching_up(&self) -> bool {
+        self.next_sequential.lock().unwrap().is_some()
+    }
 }

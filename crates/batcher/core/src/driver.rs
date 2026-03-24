@@ -161,12 +161,20 @@ where
                     debug!("flush signal received, force-closed channel");
                 }
                 DriverEvent::Reorg(head) => {
-                    warn!(head = %head.block_info.number, "L2 reorg detected, resetting pipeline");
+                    let safe_head = self.safe_head_rx.as_ref().map(|rx| *rx.borrow()).unwrap_or(0);
+                    let catchup_from = safe_head + 1;
+                    warn!(
+                        reorg_head = %head.block_info.number,
+                        safe_head = %safe_head,
+                        catchup_from = %catchup_from,
+                        "L2 reorg detected, resetting pipeline and catching up from safe head"
+                    );
                     self.submissions.discard();
                     self.pipeline.reset();
+                    self.source.reset_catchup(catchup_from);
                 }
-                DriverEvent::Receipt(id, o) => {
-                    self.submissions.handle_outcome(&mut self.pipeline, id, o);
+                DriverEvent::Receipt(ids, o) => {
+                    self.submissions.handle_outcome(&mut self.pipeline, ids, o);
                 }
                 DriverEvent::L1Head(n) => {
                     self.pipeline.advance_l1_head(n);
@@ -215,29 +223,29 @@ where
 
     /// Ingest a new L2 block into the pipeline.
     ///
-    /// If the pipeline signals a reorg via `add_block`, discards in-flight
-    /// submissions, resets the pipeline, and re-adds the triggering block so
-    /// it is not permanently lost.
+    /// If the pipeline signals a reorg via `add_block` (parent-hash mismatch),
+    /// discards in-flight submissions, resets the pipeline, and restarts
+    /// sequential catchup from `safe_head + 1`. The triggering block will be
+    /// re-delivered by the sequential poller.
     fn on_block(&mut self, block: Box<OpBlock>) {
         let number = block.header.number;
         match self.pipeline.add_block(*block) {
             Ok(()) => {
                 debug!(block = %number, "added unsafe block to pipeline");
             }
-            Err((e, block)) => {
+            Err((e, _block)) => {
+                let safe_head = self.safe_head_rx.as_ref().map(|rx| *rx.borrow()).unwrap_or(0);
+                let catchup_from = safe_head + 1;
                 warn!(
                     block = %number,
+                    safe_head = %safe_head,
+                    catchup_from = %catchup_from,
                     error = %e,
-                    "reorg detected during block ingestion, resetting pipeline"
+                    "reorg detected during block ingestion, resetting pipeline and catching up from safe head"
                 );
                 self.submissions.discard();
                 self.pipeline.reset();
-                // Re-add the triggering block. After reset the block queue is
-                // empty, so the parent-hash check is skipped and the block is
-                // always accepted. This prevents the block from being silently
-                // lost when the source won't re-deliver it (e.g. HybridBlockSource
-                // deduplication).
-                let _ = self.pipeline.add_block(*block);
+                self.source.reset_catchup(catchup_from);
             }
         }
     }
@@ -326,8 +334,8 @@ where
                     Err(e) => return Err(e.into()),
                 },
 
-                Some((id, outcome)) = self.submissions.next_settled() => {
-                    DriverEvent::Receipt(id, outcome)
+                Some((ids, outcome)) = self.submissions.next_settled() => {
+                    DriverEvent::Receipt(ids, outcome)
                 }
 
                 l1_event = async {
@@ -394,6 +402,7 @@ mod tests {
     };
 
     use base_batcher_encoder::{BatchSubmission, DaType, SubmissionId};
+    use base_blobs::BlobEncoder;
     use base_protocol::{ChannelId, Frame};
     use base_runtime::{
         Cancellation, Clock, Spawner,
@@ -404,6 +413,20 @@ mod tests {
         DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager, NeverConfirmTxManager,
         Recorded, SubmissionStub, TrackingPipeline,
     };
+
+    /// Build a [`BatchSubmission`] whose single frame exactly fills one blob payload,
+    /// leaving no room for any additional frame alongside it.
+    ///
+    /// `payload = 1 (DERIVATION_VERSION_0) + FRAME_OVERHEAD + data.len() = BLOB_MAX_DATA_SIZE`
+    fn blob_filling_submission(id: u64) -> BatchSubmission {
+        let data_len = BlobEncoder::BLOB_MAX_DATA_SIZE - 1 - BlobEncoder::FRAME_OVERHEAD;
+        BatchSubmission {
+            id: SubmissionId(id),
+            channel_id: ChannelId::default(),
+            da_type: DaType::Blob,
+            frames: vec![Arc::new(Frame { data: vec![0u8; data_len], ..Frame::default() })],
+        }
+    }
 
     /// `advance_l1_head` must be called with the confirmed L1 block on every
     /// confirmation so the encoder can detect channel timeouts.
@@ -506,12 +529,11 @@ mod tests {
         });
     }
 
-    /// The submission loop must drain all ready frames in a single pass when
-    /// permits allow. With `max_pending_transactions`=2 and two frames ready,
-    /// both must be submitted and confirmed without waiting for an I/O event
-    /// between them.
+    /// The submission loop must pack small frames together. With `max_pending_transactions`=2
+    /// and two tiny frames ready, both must be packed into a single blob and confirmed in
+    /// one L1 transaction — not submitted as two separate transactions.
     #[test]
-    fn test_submission_loop_drains_multiple_frames_concurrently() {
+    fn test_submission_loop_packs_multiple_frames_into_one_blob() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
@@ -534,21 +556,26 @@ mod tests {
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
             let recorded = recorded.lock().unwrap();
             assert_eq!(recorded.dequeued.len(), 2, "both submissions must be dequeued");
-            assert_eq!(recorded.l1_heads.len(), 2, "both submissions must be confirmed");
+            // Both tiny frames fit in one blob → one L1 tx → one advance_l1_head call.
+            assert_eq!(
+                recorded.l1_heads,
+                vec![10],
+                "both frames packed into one blob; one confirmation"
+            );
         });
     }
 
-    /// The semaphore must prevent more concurrent in-flight submissions than
-    /// `max_pending_transactions`. With max=1 and a tx manager that never
-    /// confirms, exactly one submission must be dequeued; the second must not
-    /// be dequeued because `try_acquire_owned` fails when the slot is occupied.
+    /// The semaphore must prevent more concurrent in-flight L1 txs than
+    /// `max_pending_transactions`. With max=1 and two blob-filling submissions
+    /// (each requiring its own tx), the second submission is peeked and requeued
+    /// (no room in the full blob), and the semaphore blocks any further tx attempt.
     #[test]
     fn test_semaphore_prevents_excess_concurrent_submissions() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(SubmissionStub::with_id(0));
-            pipeline.submissions.push_back(SubmissionStub::with_id(1));
+            pipeline.submissions.push_back(blob_filling_submission(0));
+            pipeline.submissions.push_back(blob_filling_submission(1));
 
             let handle = ctx.spawn(
                 DriverFixture::build_with_max_pending(
@@ -564,24 +591,31 @@ mod tests {
             ctx.cancel();
 
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+            let recorded = recorded.lock().unwrap();
+            // sub(0) fills the blob; sub(1) is peeked, doesn't fit, and is requeued.
             assert_eq!(
-                recorded.lock().unwrap().dequeued,
-                vec![SubmissionId(0)],
-                "only the first submission must be dequeued when the semaphore slot is occupied"
+                recorded.requeued,
+                vec![SubmissionId(1)],
+                "second submission requeued: blob full"
             );
+            // The semaphore (max=1) is occupied by blob 1 — no second tx was submitted.
+            assert!(recorded.l1_heads.is_empty(), "no confirmation while semaphore is full");
         });
     }
 
-    /// With `max_pending_transactions`=1, the second submission must only be
-    /// dequeued and confirmed after the first is confirmed (freeing the permit).
-    /// Both must ultimately be confirmed.
+    /// With `max_pending_transactions`=1 and blob-filling submissions, the second
+    /// blob tx is only submitted once the first is confirmed (freeing the permit).
+    /// Uses 3 submissions so sub(1) (requeued from blob 1) gives way to sub(2) for blob 2.
     #[test]
-    fn test_second_submission_sent_after_permit_freed() {
+    fn test_second_blob_tx_submitted_after_permit_freed() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            pipeline.submissions.push_back(SubmissionStub::with_id(0));
-            pipeline.submissions.push_back(SubmissionStub::with_id(1));
+            // sub(0) fills blob 1; sub(1) is peeked and requeued (doesn't fit);
+            // sub(2) is available as the first candidate for blob 2.
+            pipeline.submissions.push_back(blob_filling_submission(0));
+            pipeline.submissions.push_back(blob_filling_submission(1));
+            pipeline.submissions.push_back(blob_filling_submission(2));
 
             let handle = ctx.spawn(
                 DriverFixture::build_with_max_pending(
@@ -597,12 +631,10 @@ mod tests {
             ctx.cancel();
 
             assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
-            let recorded = recorded.lock().unwrap();
-            assert_eq!(recorded.dequeued.len(), 2, "both submissions must eventually be dequeued");
             assert_eq!(
-                recorded.l1_heads,
+                recorded.lock().unwrap().l1_heads,
                 vec![7, 7],
-                "both submissions must be confirmed once the permit is freed between them"
+                "blob 2 must be confirmed once blob 1 frees the permit"
             );
         });
     }

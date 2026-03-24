@@ -22,7 +22,9 @@ pub struct SubmissionId(pub u64);
 /// frames should be packed into EIP-4844 blobs or sent as transaction calldata.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DaType {
-    /// Frames are packed into EIP-4844 blobs, one blob per frame (default).
+    /// Frames are packed into EIP-4844 blobs (default).
+    ///
+    /// Multiple submissions may be packed into a single blob payload per L1 transaction.
     #[default]
     Blob,
     /// Each frame is sent as a single calldata transaction

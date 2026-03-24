@@ -47,8 +47,9 @@ async fn batcher_blob_da_end_to_end() {
 // Multi-blob packing (many frames → many blob sidecars in one L1 block)
 // ---------------------------------------------------------------------------
 
-/// Force channel fragmentation via a tiny `max_frame_size`, then submit all
-/// resulting frames as separate blob sidecars in a single L1 block.
+/// Force channel fragmentation via a tiny `max_frame_size`, then verify that
+/// all resulting frames are packed into a single blob sidecar in one L1 block
+/// and that the derivation pipeline can reconstruct the L2 block from it.
 #[tokio::test]
 async fn batcher_multi_blob_packing() {
     let batcher_cfg = BatcherConfig {
@@ -67,11 +68,12 @@ async fn batcher_multi_blob_packing() {
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.advance(&mut h.l1).await;
 
-    // With max_frame_size=80, the block must have been fragmented into multiple
-    // blob sidecars in the mined L1 block.
-    assert!(
-        h.l1.tip().blob_sidecars.len() >= 2,
-        "expected multiple blob sidecars with max_frame_size=80, got {}",
+    // With frame packing, all frames from the fragmented channel are packed
+    // into a single blob payload in one L1 transaction — exactly one blob sidecar.
+    assert_eq!(
+        h.l1.tip().blob_sidecars.len(),
+        1,
+        "expected all frames packed into one blob sidecar, got {}",
         h.l1.tip().blob_sidecars.len()
     );
 
@@ -84,7 +86,7 @@ async fn batcher_multi_blob_packing() {
     node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let derived = node.run_until_idle().await;
 
-    assert_eq!(derived, 1, "expected 1 L2 block derived from multi-blob channel");
+    assert_eq!(derived, 1, "expected 1 L2 block derived from packed multi-frame blob");
     assert_eq!(node.l2_safe_number(), 1, "safe head should reach L2 block 1");
 }
 

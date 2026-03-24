@@ -10,10 +10,12 @@ use thiserror::Error;
 use tokio::{select, sync::mpsc};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
+#[cfg(feature = "metrics")]
+use crate::Metrics;
 use crate::{
     CancellableContext, DerivationActorRequest, DerivationEngineClient, DerivationState,
-    DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate, Metrics,
-    NodeActor, actors::derivation::L2Finalizer,
+    DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate, NodeActor,
+    actors::derivation::L2Finalizer,
 };
 
 /// The [`NodeActor`] for the derivation sub-routine.
@@ -78,8 +80,8 @@ where
 
     /// Handles a [`Signal`] received over the derivation signal receiver channel.
     async fn signal(&mut self, signal: Signal) {
-        if let Signal::Reset(ResetSignal { l1_origin, .. }) = signal {
-            base_macros::set!(counter, Metrics::DERIVATION_L1_ORIGIN, l1_origin.number);
+        if let Signal::Reset(ResetSignal { l1_origin: _l1_origin, .. }) = signal {
+            base_macros::set!(counter, Metrics::DERIVATION_L1_ORIGIN, _l1_origin.number);
             // Clear the finalization queue on reset.
             self.finalizer.clear();
         }

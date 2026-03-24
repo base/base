@@ -21,11 +21,11 @@ use base_runtime::{
 };
 
 /// When `add_block` returns `ReorgError`, the driver must reset the pipeline and
-/// then re-add the triggering block so it is not permanently lost. The block
-/// queue in the encoder is empty after reset, so the parent-hash check is
-/// skipped and the re-add always succeeds.
+/// call `reset_catchup` on the source so it re-delivers all post-reorg blocks
+/// sequentially. The triggering block must NOT be re-added directly — the source
+/// will re-deliver it via sequential catchup.
 #[test]
-fn test_reorg_block_is_readded_after_reset() {
+fn test_reorg_triggers_pipeline_reset_and_catchup() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let blocks_accepted = Arc::new(Mutex::new(0usize));
         let resets = Arc::new(Mutex::new(0usize));
@@ -51,10 +51,12 @@ fn test_reorg_block_is_readded_after_reset() {
 
         assert!(handle.await.unwrap().is_ok());
         assert_eq!(*resets.lock().unwrap(), 1, "pipeline must be reset on reorg");
+        // The triggering block is NOT re-added directly; the source re-delivers it
+        // via reset_catchup. In this test OneBlockSource is a no-op so blocks_accepted stays 0.
         assert_eq!(
             *blocks_accepted.lock().unwrap(),
-            1,
-            "the triggering block must be re-added after reset"
+            0,
+            "block must not be re-added directly; source will re-deliver via catchup"
         );
     });
 }

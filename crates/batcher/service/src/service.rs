@@ -88,7 +88,7 @@ impl base_batcher_source::L1HeadSubscription for L1Subscription {
 type ServiceDriver = BatchDriver<
     TokioRuntime,
     BatchEncoder,
-    HybridBlockSource<Subscription, RpcPollingSource>,
+    HybridBlockSource<Subscription, RpcPollingSource, TokioRuntime>,
     SimpleTxManager,
     ServiceThrottle,
     HybridL1HeadSource<L1Subscription, RpcL1HeadPollingSource>,

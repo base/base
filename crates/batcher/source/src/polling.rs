@@ -20,4 +20,16 @@ pub trait PollingSource: Send + Sync {
     /// The default implementation is a no-op, suitable for sources that
     /// do not support positional reset (e.g. test stubs).
     fn reset_catchup(&self, _start_from: u64) {}
+
+    /// Returns `true` while the source is delivering blocks sequentially from a fixed
+    /// start position, rather than from the live chain tip.
+    ///
+    /// Used by [`HybridBlockSource`](crate::HybridBlockSource) to suppress live
+    /// subscription events during backfill so that out-of-order future blocks do not
+    /// interrupt sequential delivery and discard catchup progress.
+    ///
+    /// The default implementation always returns `false` (no catchup in progress).
+    fn is_catching_up(&self) -> bool {
+        false
+    }
 }

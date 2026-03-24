@@ -11,12 +11,15 @@ use futures::{StreamExt, stream::BoxStream};
 
 use crate::{BlockSubscription, L2BlockEvent, PollingSource, SourceError, UnsafeBlockSource};
 
+/// Delay between sequential catchup poll retries on transient provider errors.
+const CATCHUP_RETRY_DELAY: Duration = Duration::from_millis(100);
+
 /// A block source that races a subscription stream against an interval-based poller.
 ///
 /// Deduplicates blocks by hash and detects reorgs when the same block number
 /// yields different hashes from different sources.
 #[derive(derive_more::Debug)]
-pub struct HybridBlockSource<S, P> {
+pub struct HybridBlockSource<S, P, C> {
     /// The block stream returned by `S::take_stream`.
     ///
     /// Declared before `_subscription` so it is dropped first, ensuring the
@@ -29,6 +32,9 @@ pub struct HybridBlockSource<S, P> {
     /// Polling source for fetching the unsafe head.
     #[debug(skip)]
     poller: P,
+    /// Clock used for the polling interval and catchup retry sleep.
+    #[debug(skip)]
+    clock: C,
     /// Polling interval stream, yielding `()` every `poll_interval`.
     #[debug(skip)]
     interval: BoxStream<'static, ()>,
@@ -37,24 +43,23 @@ pub struct HybridBlockSource<S, P> {
     seen: HashMap<u64, B256>,
 }
 
-impl<S, P> HybridBlockSource<S, P>
+impl<S, P, C> HybridBlockSource<S, P, C>
 where
     S: BlockSubscription,
     P: PollingSource,
+    C: Clock,
 {
     /// Create a new hybrid block source.
     ///
     /// Calls [`BlockSubscription::take_stream`] once to obtain the live block
     /// stream, then retains the subscription to keep any underlying resources
     /// (e.g. a WebSocket provider) alive. Combines the stream with a poller
-    /// that fires at `poll_interval` according to `clock`.
-    ///
-    /// The `clock` is consumed only to create the interval stream and is not
-    /// retained — the interval drives itself from that point forward.
-    pub fn new(clock: impl Clock, mut subscription: S, poller: P, poll_interval: Duration) -> Self {
+    /// that fires at `poll_interval` according to `clock`. The clock is also
+    /// retained for use in the sequential catchup retry sleep path.
+    pub fn new(clock: C, mut subscription: S, poller: P, poll_interval: Duration) -> Self {
         let sub = subscription.take_stream();
         let interval = clock.interval(poll_interval);
-        Self { sub, _subscription: subscription, poller, interval, seen: HashMap::new() }
+        Self { sub, _subscription: subscription, poller, clock, interval, seen: HashMap::new() }
     }
 
     /// Process a received block, returning an event if the block is new or a reorg.
@@ -106,11 +111,8 @@ where
                         L2BlockInfo::new(block_info, Default::default(), 0)
                     });
                 // Note: we intentionally do not emit a Block event for the reorg block itself.
-                // The reorg block (at `number`) is the new safe head — already confirmed on-chain
-                // — so the batcher does not need to encode it. After the consumer resets,
-                // BatchEncoder.add_block skips the parent-hash check when its block queue is
-                // empty, so the first post-reorg unsafe block (number+1) is accepted as the
-                // new chain tip without needing block `number` to be re-ingested.
+                // The driver calls reset_catchup(safe_head + 1) after receiving the Reorg event,
+                // so the poller will re-deliver all post-reorg blocks sequentially.
                 // Removing `number` from `seen` here would cause an infinite reorg loop if the
                 // subscription re-delivers the same block.
                 Some(L2BlockEvent::Reorg { new_safe_head })
@@ -120,10 +122,11 @@ where
 }
 
 #[async_trait]
-impl<S, P> UnsafeBlockSource for HybridBlockSource<S, P>
+impl<S, P, C> UnsafeBlockSource for HybridBlockSource<S, P, C>
 where
     S: BlockSubscription,
     P: PollingSource,
+    C: Clock,
 {
     /// Reset the source for sequential catchup from `start_from`.
     ///
@@ -136,6 +139,26 @@ where
 
     async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
         loop {
+            // During sequential catchup, bypass the live subscription arm entirely.
+            // Racing WS events against the poller would deliver future blocks out of order,
+            // triggering pipeline resets that discard catchup progress.
+            if self.poller.is_catching_up() {
+                match self.poller.unsafe_head().await {
+                    Ok(b) => {
+                        if let Some(event) = self.process(b) {
+                            return Ok(event);
+                        }
+                        // Duplicate — continue sequential polling.
+                    }
+                    Err(SourceError::Provider(msg)) => {
+                        tracing::warn!(error = %msg, "sequential catchup poll error, retrying");
+                        self.clock.sleep(CATCHUP_RETRY_DELAY).await;
+                    }
+                    Err(e) => return Err(e),
+                }
+                continue;
+            }
+
             tokio::select! {
                 block = self.sub.next() => {
                     match block {
@@ -409,6 +432,118 @@ mod tests {
             };
             assert_eq!(new_safe_head.l1_origin.number, l1_number);
             assert_eq!(new_safe_head.l1_origin.hash, l1_hash);
+        });
+    }
+
+    // --- Sequential catchup path tests ---
+
+    /// A polling source in sequential catchup mode.
+    ///
+    /// Delivers blocks `start..=until` on successive `unsafe_head()` calls,
+    /// reporting `is_catching_up() == true` while blocks remain, then switches
+    /// to returning `latest` for all subsequent calls.
+    struct CatchupPoller {
+        state: Arc<Mutex<u64>>,
+        until: u64,
+        latest: OpBlock,
+    }
+
+    impl CatchupPoller {
+        fn new(start: u64, until: u64, latest: OpBlock) -> Self {
+            Self { state: Arc::new(Mutex::new(start)), until, latest }
+        }
+    }
+
+    #[async_trait]
+    impl PollingSource for CatchupPoller {
+        async fn unsafe_head(&self) -> Result<OpBlock, SourceError> {
+            let mut n = self.state.lock().unwrap();
+            if *n <= self.until {
+                let block = make_block(*n, B256::ZERO);
+                *n += 1;
+                Ok(block)
+            } else {
+                Ok(self.latest.clone())
+            }
+        }
+
+        fn is_catching_up(&self) -> bool {
+            *self.state.lock().unwrap() <= self.until
+        }
+    }
+
+    /// A catchup poller that fails with a transient error on its first call,
+    /// then succeeds with a fixed block on all subsequent calls.
+    struct FallibleCatchupPoller {
+        calls: Arc<Mutex<u32>>,
+        block: OpBlock,
+    }
+
+    impl FallibleCatchupPoller {
+        fn new(block: OpBlock) -> Self {
+            Self { calls: Arc::new(Mutex::new(0)), block }
+        }
+    }
+
+    #[async_trait]
+    impl PollingSource for FallibleCatchupPoller {
+        async fn unsafe_head(&self) -> Result<OpBlock, SourceError> {
+            let mut c = self.calls.lock().unwrap();
+            *c += 1;
+            if *c == 1 {
+                Err(SourceError::Provider("transient rpc error".into()))
+            } else {
+                Ok(self.block.clone())
+            }
+        }
+
+        fn is_catching_up(&self) -> bool {
+            // Still catching up until the block has been successfully delivered.
+            *self.calls.lock().unwrap() < 2
+        }
+    }
+
+    #[test]
+    fn test_catchup_delivers_blocks_sequentially_ignoring_subscription() {
+        // Subscription carries a future block (#10) that would appear out-of-order
+        // during catchup. The catchup path must bypass the subscription entirely
+        // so blocks 1, 2, 3 are delivered in order before block #10 is considered.
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let future_block = make_block(10, B256::ZERO);
+            let stream = futures::stream::iter(vec![Ok(future_block)]);
+            let latest = make_block(10, B256::ZERO);
+            let poller = CatchupPoller::new(1, 3, latest);
+            let mut source = HybridBlockSource::new(
+                ctx,
+                StreamSub(stream.boxed()),
+                poller,
+                Duration::from_secs(100),
+            );
+
+            for expected in 1..=3u64 {
+                let event = source.next().await.unwrap();
+                let L2BlockEvent::Block(b) = event else { panic!("expected Block event") };
+                assert_eq!(b.header.number, expected);
+            }
+        });
+    }
+
+    #[test]
+    fn test_catchup_transient_error_retries_via_clock_sleep() {
+        // The first unsafe_head() call during catchup returns a transient error.
+        // The source must sleep via the Clock (not tokio::time::sleep) so that
+        // the deterministic executor can advance virtual time and unblock the retry.
+        // Under the deterministic Runner, tokio::time::sleep would never resolve
+        // (no tokio timer driver), causing this test to stall — confirming the fix.
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let block = make_block(1, B256::ZERO);
+            let poller = FallibleCatchupPoller::new(block);
+            let mut source =
+                HybridBlockSource::new(ctx, pending_sub(), poller, Duration::from_secs(100));
+            // First call fails (transient); clock.sleep fires after virtual time advances;
+            // second call succeeds and delivers block #1.
+            let event = source.next().await.unwrap();
+            assert!(matches!(event, L2BlockEvent::Block(ref b) if b.header.number == 1));
         });
     }
 
