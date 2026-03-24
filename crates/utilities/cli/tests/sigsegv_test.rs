@@ -113,10 +113,15 @@ fn segfault_produces_backtrace() {
 
 /// On macOS, stack overflows are caught by the Rust runtime via Mach exception ports,
 /// which preempt POSIX signal handlers. The SIGSEGV handler's cycle detection logic
-/// is only exercised on Linux, where stack guard page faults deliver SIGSEGV through
-/// the standard signal path.
+/// is only exercised on Linux with glibc, where stack guard page faults deliver
+/// SIGSEGV through the standard signal path and `_Unwind_Backtrace` can walk back
+/// through the overflowed stack frames.
+///
+/// Under musl, `libunwind` cannot unwind past the signal trampoline into the
+/// overflowed stack, so the backtrace is too shallow for cycle detection.
+/// See [`stack_overflow_handled_on_musl`] for the musl-specific variant.
 #[test]
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 fn stack_overflow_detects_cycle() {
     dispatch();
 
@@ -133,5 +138,25 @@ fn stack_overflow_detects_cycle() {
     assert!(
         stderr.contains("unexpectedly overflowed its stack"),
         "stderr should contain stack overflow note.\nstderr:\n{stderr}"
+    );
+}
+
+/// Under musl, `libunwind` cannot unwind through the corrupted stack after a guard
+/// page fault, so the captured backtrace is too shallow for cycle detection. This
+/// test verifies the handler still catches the signal, runs on the alternate stack,
+/// and produces the SIGSEGV diagnostic banner.
+#[test]
+#[cfg(all(target_os = "linux", target_env = "musl"))]
+fn stack_overflow_handled_on_musl() {
+    dispatch();
+
+    let output = run_child("stack_overflow_handled_on_musl", "stack_overflow");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_killed_by_sigsegv(&output, &stderr);
+
+    assert!(
+        stderr.contains("we would appreciate a bug report"),
+        "stderr should contain bug report notice.\nstderr:\n{stderr}"
     );
 }
