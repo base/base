@@ -14,7 +14,7 @@ use crate::{
     EngineActorRequest, EngineConfig, EngineProcessor, EngineRpcProcessor, L1Config,
     L1WatcherActor, NodeActor, QueuedDerivationEngineClient, QueuedEngineDerivationClient,
     QueuedEngineRpcClient, QueuedL1WatcherDerivationClient, RpcActor, RpcContext,
-    service::node::{FINALIZED_STREAM_POLL_INTERVAL, HEAD_STREAM_POLL_INTERVAL},
+    service::node::HEAD_STREAM_POLL_INTERVAL,
 };
 
 /// A lightweight node that follows another L2 node by polling its execution
@@ -168,7 +168,7 @@ impl FollowNode {
         let finalized_stream = BlockStream::new_as_stream(
             self.l1_config.engine_provider.clone(),
             BlockNumberOrTag::Finalized,
-            Duration::from_secs(FINALIZED_STREAM_POLL_INTERVAL),
+            self.l1_config.finalized_poll_interval,
         )?;
 
         let (l1_head_updates_tx, _l1_head_updates_rx) = watch::channel(None);

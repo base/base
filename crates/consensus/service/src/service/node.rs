@@ -3,6 +3,7 @@ use std::{ops::Not as _, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
+use base_alloy_chains::BaseChainConfig;
 use base_alloy_network::Base;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
 use base_consensus_engine::{Engine, EngineClient, EngineState};
@@ -30,7 +31,6 @@ use crate::{
 
 const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
 pub(crate) const HEAD_STREAM_POLL_INTERVAL: u64 = 4;
-pub(crate) const FINALIZED_STREAM_POLL_INTERVAL: u64 = 60;
 
 /// The configuration for the L1 chain.
 #[derive(Debug, Clone)]
@@ -43,6 +43,30 @@ pub struct L1Config {
     pub beacon_client: OnlineBeaconClient,
     /// The L1 engine provider.
     pub engine_provider: RootProvider,
+    /// How frequently to poll L1 for a new finalized block.
+    ///
+    /// The right value depends on the L1 finality cadence:
+    /// - Ethereum mainnet/Sepolia: one epoch (~384 s = 32 slots × 12 s)
+    /// - Devnet local L1: near-instant finality, poll aggressively (~2 s)
+    pub finalized_poll_interval: Duration,
+}
+
+impl L1Config {
+    /// Returns the recommended finalized-block poll interval for the given L1 chain.
+    pub const fn default_finalized_poll_interval(l1_chain_id: u64) -> Duration {
+        const ETH_MAINNET_L1: u64 = BaseChainConfig::mainnet().l1_chain_id;
+        const ETH_SEPOLIA_L1: u64 = BaseChainConfig::sepolia().l1_chain_id;
+        const DEVNET_L1: u64 = BaseChainConfig::devnet().l1_chain_id;
+
+        match l1_chain_id {
+            // Ethereum mainnet and Sepolia: poll once per L1 epoch (32 slots × 12 s).
+            ETH_MAINNET_L1 | ETH_SEPOLIA_L1 => Duration::from_secs(384),
+            // Devnet local L1: near-instant finality, poll aggressively.
+            DEVNET_L1 => Duration::from_secs(2),
+            // Unknown chains: fall back to a conservative default.
+            _ => Duration::from_secs(60),
+        }
+    }
 }
 
 /// The standard implementation of the [`RollupNode`] service, using the governance approved Base
@@ -361,7 +385,7 @@ impl RollupNode {
         let finalized_stream = BlockStream::new_as_stream(
             self.l1_config.engine_provider.clone(),
             BlockNumberOrTag::Finalized,
-            Duration::from_secs(FINALIZED_STREAM_POLL_INTERVAL),
+            self.l1_config.finalized_poll_interval,
         )?;
 
         // Create the [`L1WatcherActor`]. Previously known as the DA watcher actor.

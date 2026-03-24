@@ -3409,6 +3409,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "backon",
+ "base-alloy-chains",
  "base-alloy-consensus",
  "base-alloy-network",
  "base-alloy-provider",

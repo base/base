@@ -40,6 +40,7 @@ alloy-provider = { workspace = true, features = ["reqwest", "reqwest-rustls-tls"
 alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth"] }
 
 # base-alloy
+base-alloy-chains.workspace = true
 base-alloy-provider.workspace = true
 base-alloy-network.workspace = true
 base-alloy-consensus.workspace = true

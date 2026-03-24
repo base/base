@@ -1,6 +1,6 @@
 //! Contains the builder for the [`RollupNode`].
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Bytes;
 use alloy_provider::RootProvider;
@@ -72,6 +72,11 @@ pub struct RollupNodeBuilder {
     /// Optional configuration for Derivation Delegate mode.
     /// When present, the node does not run derivation, instead trusting the configured delegate.
     pub derivation_delegate_config: Option<DerivationDelegateConfig>,
+    /// Override for the finalized-block poll interval.
+    ///
+    /// When `None`, [`L1Config::default_finalized_poll_interval`] is used to select a
+    /// chain-appropriate default derived from `config.l1_chain_id`.
+    pub finalized_poll_interval: Option<Duration>,
 }
 
 impl RollupNodeBuilder {
@@ -93,6 +98,7 @@ impl RollupNodeBuilder {
             rpc_config,
             sequencer_config: None,
             derivation_delegate_config: None,
+            finalized_poll_interval: None,
         }
     }
 
@@ -109,6 +115,15 @@ impl RollupNodeBuilder {
     /// Appends the [`SequencerConfig`] to the builder.
     pub fn with_sequencer_config(self, sequencer_config: SequencerConfig) -> Self {
         Self { sequencer_config: Some(sequencer_config), ..self }
+    }
+
+    /// Overrides the finalized-block poll interval.
+    ///
+    /// By default the interval is derived from `config.l1_chain_id` via
+    /// [`L1Config::default_finalized_poll_interval`]. Use this method when you need a
+    /// specific interval regardless of chain (e.g. in integration tests).
+    pub fn with_finalized_poll_interval(self, interval: Duration) -> Self {
+        Self { finalized_poll_interval: Some(interval), ..self }
     }
 
     /// Sets the Derivation Delegate configuration, trusting the configured delegate for safe head
@@ -138,11 +153,16 @@ impl RollupNodeBuilder {
             l1_beacon = l1_beacon.with_l1_slot_duration_override(l1_slot_duration);
         }
 
+        let finalized_poll_interval = self
+            .finalized_poll_interval
+            .unwrap_or_else(|| L1Config::default_finalized_poll_interval(self.config.l1_chain_id));
+
         let l1_config = L1Config {
             chain_config: Arc::new(self.l1_config_builder.chain_config),
             trust_rpc: self.l1_config_builder.trust_rpc,
             beacon_client: l1_beacon,
             engine_provider: RootProvider::new_http(self.l1_config_builder.rpc_url.clone()),
+            finalized_poll_interval,
         };
 
         let jwt_secret = self.engine_config.l2_jwt_secret;
