@@ -174,10 +174,10 @@ impl Server {
         let mut proposals = Vec::with_capacity(block_results.len());
         let mut prev_output_root = agreed_l2_output_root;
 
+        let l1_origin_hash = boot_info.l1_head;
+        let l1_origin_number = boot_info.l1_head_number;
         for (l2_info, output_root) in &block_results {
             let l2_block_number = U256::from(l2_info.block_info.number);
-            let l1_origin_hash = l2_info.l1_origin.hash;
-            let l1_origin_number = U256::from(l2_info.l1_origin.number);
 
             let journal = ProofJournal {
                 proposer: boot_info.proposer,
@@ -200,7 +200,7 @@ impl Server {
                 output_root: *output_root,
                 signature: Bytes::from(signature.to_vec()),
                 l1_origin_hash,
-                l1_origin_number,
+                l1_origin_number: U256::from(l1_origin_number),
                 l2_block_number,
                 prev_output_root,
                 config_hash,
@@ -226,7 +226,7 @@ impl Server {
 
             let journal = ProofJournal {
                 proposer: boot_info.proposer,
-                l1_origin_hash: last.l1_origin_hash,
+                l1_origin_hash,
                 prev_output_root: agreed_l2_output_root,
                 starting_l2_block: first
                     .l2_block_number
@@ -245,8 +245,8 @@ impl Server {
             Proposal {
                 output_root: last.output_root,
                 signature: Bytes::from(signature.to_vec()),
-                l1_origin_hash: last.l1_origin_hash,
-                l1_origin_number: last.l1_origin_number,
+                l1_origin_hash,
+                l1_origin_number: U256::from(l1_origin_number),
                 l2_block_number: last.l2_block_number,
                 prev_output_root: agreed_l2_output_root,
                 config_hash,
