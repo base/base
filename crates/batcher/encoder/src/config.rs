@@ -131,14 +131,12 @@ impl EncoderConfig {
         if matches!(self.batch_type, BatchType::Span)
             && !rollup_config.is_fjord_active(next_l2_timestamp)
         {
-            return match rollup_config.hardforks.fjord_time {
-                Some(fjord_time) => {
+            return rollup_config.hardforks.fjord_time.map_or(
+                Err(EncoderConfigError::SpanBatchRequiresScheduledFjord { next_l2_timestamp }),
+                |fjord_time| {
                     Err(EncoderConfigError::SpanBatchBeforeFjord { next_l2_timestamp, fjord_time })
-                }
-                None => {
-                    Err(EncoderConfigError::SpanBatchRequiresScheduledFjord { next_l2_timestamp })
-                }
-            };
+                },
+            );
         }
 
         Ok(())
