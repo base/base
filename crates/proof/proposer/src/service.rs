@@ -19,7 +19,7 @@ use base_proof_rpc::{
     RollupProvider,
 };
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxManager};
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -50,7 +50,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
 
     // ── 2. Metrics recorder and HTTP server (if enabled) ─────────────────
-    config.metrics.init().map_err(|e| eyre::eyre!("failed to install Prometheus recorder: {e}"))?;
+    config.metrics.init().wrap_err("failed to install Prometheus recorder")?;
 
     // Record startup metrics (no-ops if no recorder installed).
     record_startup_metrics(env!("CARGO_PKG_VERSION"));
