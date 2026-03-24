@@ -28,4 +28,3 @@ thiserror = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 rstest.workspace = true
-alloy-primitives = { workspace = true, features = ["serde"] }
