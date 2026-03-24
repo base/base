@@ -298,9 +298,23 @@ impl BootInfo {
         };
 
         // Load intermediate block interval (optional — defaults to 0 for backwards compatibility).
-        let intermediate_block_interval = match oracle
-            .get(PreimageKey::new_local(INTERMEDIATE_BLOCK_INTERVAL_KEY.to()))
-            .await
+        let intermediate_block_interval =
+            match oracle.get(PreimageKey::new_local(INTERMEDIATE_BLOCK_INTERVAL_KEY.to())).await {
+                Ok(bytes) => u64::from_be_bytes(
+                    bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?,
+                ),
+                Err(e) => {
+                    debug!(
+                        target: "boot_loader",
+                        error = %e,
+                        "Intermediate block interval preimage not found, defaulting to 0"
+                    );
+                    0
+                }
+            };
+
+        // Load L1 head block number (optional — defaults to 0 for backwards compatibility).
+        let l1_head_number = match oracle.get(PreimageKey::new_local(L1_HEAD_NUMBER_KEY.to())).await
         {
             Ok(bytes) => u64::from_be_bytes(
                 bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?,
@@ -309,27 +323,11 @@ impl BootInfo {
                 debug!(
                     target: "boot_loader",
                     error = %e,
-                    "Intermediate block interval preimage not found, defaulting to 0"
+                    "L1 head number preimage not found, defaulting to 0"
                 );
                 0
             }
         };
-
-        // Load L1 head block number (optional — defaults to 0 for backwards compatibility).
-        let l1_head_number =
-            match oracle.get(PreimageKey::new_local(L1_HEAD_NUMBER_KEY.to())).await {
-                Ok(bytes) => u64::from_be_bytes(
-                    bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?,
-                ),
-                Err(e) => {
-                    debug!(
-                        target: "boot_loader",
-                        error = %e,
-                        "L1 head number preimage not found, defaulting to 0"
-                    );
-                    0
-                }
-            };
 
         Ok(Self {
             l1_head,
