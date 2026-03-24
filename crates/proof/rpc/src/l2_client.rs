@@ -6,11 +6,10 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
-use alloy_rpc_types_eth::{BlockId, Header};
+use alloy_rpc_types_eth::{BlockId, EIP1186AccountProofResponse, Header};
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
-use base_enclave::AccountResult;
 use url::Url;
 
 use super::{
@@ -108,7 +107,7 @@ pub struct L2Client {
     /// Cache for headers by hash.
     headers_cache: MeteredCache<B256, Header>,
     /// Cache for account proofs.
-    proofs_cache: MeteredCache<ProofCacheKey, AccountResult>,
+    proofs_cache: MeteredCache<ProofCacheKey, EIP1186AccountProofResponse>,
     /// Retry configuration.
     retry_config: RetryConfig,
 }
@@ -174,7 +173,7 @@ impl L2Client {
     }
 
     /// Returns the proofs cache.
-    pub const fn proofs_cache(&self) -> &MeteredCache<ProofCacheKey, AccountResult> {
+    pub const fn proofs_cache(&self) -> &MeteredCache<ProofCacheKey, EIP1186AccountProofResponse> {
         &self.proofs_cache
     }
 
@@ -208,19 +207,21 @@ impl L2Provider for L2Client {
         .await
     }
 
-    async fn get_proof(&self, address: Address, block_hash: B256) -> RpcResult<AccountResult> {
+    async fn get_proof(
+        &self,
+        address: Address,
+        block_hash: B256,
+    ) -> RpcResult<EIP1186AccountProofResponse> {
         let cache_key = ProofCacheKey::new(address, block_hash);
 
-        // Check cache first
         if let Some(proof) = self.proofs_cache.get(&cache_key).await {
             return Ok(proof);
         }
 
-        // Make the RPC call with empty storage keys
         let empty_keys: Vec<B256> = vec![];
         let backoff = self.retry_config.to_backoff_builder();
 
-        let proof: AccountResult = (|| async {
+        let proof: EIP1186AccountProofResponse = (|| async {
             self.provider
                 .raw_request("eth_getProof".into(), (address, empty_keys.clone(), block_hash))
                 .await

@@ -41,5 +41,8 @@ pub use validator::{
     IntermediateValidationParams, OutputValidator, ValidationResult, ValidatorError,
 };
 
+mod verify;
+pub use verify::{AccountProofError, verify_account_proof};
+
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

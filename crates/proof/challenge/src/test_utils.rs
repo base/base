@@ -11,10 +11,9 @@ use alloy_consensus::{
 };
 use alloy_primitives::{Address, B256, Bloom, Bytes, U256, keccak256};
 use alloy_rlp::Encodable;
-use alloy_rpc_types_eth::{Header as RpcHeader, TransactionReceipt};
-use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
+use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header as RpcHeader, TransactionReceipt};
+use alloy_trie::{HashBuilder, Nibbles, TrieAccount, proof::ProofRetainer};
 use async_trait::async_trait;
-use base_enclave::AccountResult;
 use base_proof_contracts::{
     AggregateVerifierClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
 };
@@ -220,7 +219,7 @@ pub struct MockL2Provider {
     /// Headers keyed by block number.
     pub headers: HashMap<u64, RpcHeader>,
     /// Account proofs keyed by block hash.
-    pub proofs: HashMap<B256, AccountResult>,
+    pub proofs: HashMap<B256, EIP1186AccountProofResponse>,
     /// Block numbers that should return an error (simulating missing blocks).
     pub error_blocks: Vec<u64>,
 }
@@ -239,7 +238,7 @@ impl MockL2Provider {
         &mut self,
         block_number: u64,
         consensus_header: ConsensusHeader,
-        account_result: AccountResult,
+        account_result: EIP1186AccountProofResponse,
     ) {
         let block_hash = consensus_header.hash_slow();
         let rpc_header =
@@ -261,7 +260,11 @@ impl L2Provider for MockL2Provider {
         Ok(serde_json::Value::Null)
     }
 
-    async fn get_proof(&self, _address: Address, block_hash: B256) -> RpcResult<AccountResult> {
+    async fn get_proof(
+        &self,
+        _address: Address,
+        block_hash: B256,
+    ) -> RpcResult<EIP1186AccountProofResponse> {
         self.proofs
             .get(&block_hash)
             .cloned()
@@ -439,51 +442,13 @@ pub const fn receipt_with_status(success: bool, tx_hash: B256) -> TransactionRec
     }
 }
 
-/// Account structure for RLP encoding in tests.
-#[derive(Debug)]
-pub struct TrieAccount {
-    /// Account nonce.
-    pub nonce: u64,
-    /// Account balance.
-    pub balance: U256,
-    /// Storage root hash.
-    pub storage_root: B256,
-    /// Code hash.
-    pub code_hash: B256,
-}
-
-impl Encodable for TrieAccount {
-    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
-        let header = alloy_rlp::Header {
-            list: true,
-            payload_length: self.nonce.length()
-                + self.balance.length()
-                + self.storage_root.length()
-                + self.code_hash.length(),
-        };
-        header.encode(out);
-        self.nonce.encode(out);
-        self.balance.encode(out);
-        self.storage_root.encode(out);
-        self.code_hash.encode(out);
-    }
-
-    fn length(&self) -> usize {
-        let payload_length = self.nonce.length()
-            + self.balance.length()
-            + self.storage_root.length()
-            + self.code_hash.length();
-        alloy_rlp::length_of_length(payload_length) + payload_length
-    }
-}
-
-/// Builds a consensus header and account result pair with a valid Merkle
-/// proof. The returned header's `state_root` is the trie root that the
-/// account proof verifies against.
+/// Builds a consensus header and account proof response pair with a valid
+/// Merkle proof. The returned header's `state_root` is the trie root that
+/// the account proof verifies against.
 pub fn build_test_header_and_account(
     block_number: u64,
     storage_hash: B256,
-) -> (ConsensusHeader, AccountResult) {
+) -> (ConsensusHeader, EIP1186AccountProofResponse) {
     let account = TrieAccount {
         nonce: 0,
         balance: U256::ZERO,
@@ -502,12 +467,12 @@ pub fn build_test_header_and_account(
         proof_nodes.into_nodes_sorted().into_iter().map(|(_, v)| v).collect();
 
     let header = ConsensusHeader { number: block_number, state_root, ..Default::default() };
-    let account_result = AccountResult {
+    let account_result = EIP1186AccountProofResponse {
         address: Predeploys::L2_TO_L1_MESSAGE_PASSER,
         account_proof,
         balance: U256::ZERO,
         code_hash: B256::ZERO,
-        nonce: U256::ZERO,
+        nonce: 0,
         storage_hash,
         storage_proof: vec![],
     };

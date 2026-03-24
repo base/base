@@ -15,7 +15,7 @@ use futures::stream::{self, StreamExt};
 use thiserror::Error;
 use tracing::{info, warn};
 
-use crate::ChallengerMetrics;
+use crate::{ChallengerMetrics, verify_account_proof};
 
 /// Errors that can occur during output root validation.
 #[derive(Debug, Error)]
@@ -211,7 +211,7 @@ impl<L2: L2Provider> OutputValidator<L2> {
         let account_result =
             self.l2_provider.get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, rpc_hash).await?;
 
-        account_result.verify(consensus_header.state_root).map_err(|e| {
+        verify_account_proof(&account_result, consensus_header.state_root).map_err(|e| {
             ValidatorError::AccountProofFailed { block_number, reason: e.to_string() }
         })?;
 

@@ -1,8 +1,9 @@
 //! Shared test utilities: reusable mock stubs for L1/L2 clients, contract clients, and proposer.
 
 use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use async_trait::async_trait;
-use base_enclave::{AccountResult, RollupConfig};
+use base_consensus_genesis::RollupConfig;
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorRoot, AnchorStateRegistryClient, ContractError,
     DisputeGameFactoryClient, GameAtIndex, GameInfo,
@@ -61,7 +62,7 @@ impl L2Provider for MockL2 {
     async fn chain_config(&self) -> RpcResult<serde_json::Value> {
         unimplemented!()
     }
-    async fn get_proof(&self, _: Address, _: B256) -> RpcResult<AccountResult> {
+    async fn get_proof(&self, _: Address, _: B256) -> RpcResult<EIP1186AccountProofResponse> {
         unimplemented!()
     }
     async fn header_by_number(&self, _: Option<u64>) -> RpcResult<alloy_rpc_types_eth::Header> {

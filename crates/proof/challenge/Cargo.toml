@@ -13,11 +13,13 @@ workspace = true
 
 [dependencies]
 # Alloy
+alloy-rlp.workspace = true
 alloy-provider.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 alloy-rpc-types-eth.workspace = true
+alloy-trie = { workspace = true, features = ["std"] }
 
 # Async
 tokio.workspace = true
@@ -78,8 +80,6 @@ humantime.workspace = true
 uuid = { workspace = true, features = ["v5"] }
 
 # Test utilities (optional)
-alloy-rlp = { workspace = true, optional = true }
-alloy-trie = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -88,9 +88,4 @@ tokio = { workspace = true, features = ["test-util"] }
 base-challenger = { path = ".", features = ["test-utils"] }
 
 [features]
-test-utils = [
-	"alloy-rlp",
-	"alloy-trie",
-	"base-protocol/test-utils",
-	"serde_json",
-]
+test-utils = [ "base-protocol/test-utils", "serde_json" ]

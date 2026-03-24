@@ -26,8 +26,8 @@ alloy-transport-http.workspace = true
 base-alloy-network.workspace = true
 base-alloy-rpc-types.workspace = true
 
-# Enclave
-base-enclave.workspace = true
+# Consensus
+base-consensus-genesis = { workspace = true, features = ["serde"] }
 
 # Async
 async-trait.workspace = true

@@ -1,9 +1,9 @@
 //! Async trait definitions for RPC clients.
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_rpc_types_eth::{Header, TransactionReceipt};
+use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header, TransactionReceipt};
 use async_trait::async_trait;
-use base_enclave::{AccountResult, RollupConfig};
+use base_consensus_genesis::RollupConfig;
 
 use super::{
     error::RpcResult,
@@ -50,7 +50,11 @@ pub trait L2Provider: Send + Sync {
     async fn chain_config(&self) -> RpcResult<serde_json::Value>;
 
     /// Gets an account proof via `eth_getProof`.
-    async fn get_proof(&self, address: Address, block_hash: B256) -> RpcResult<AccountResult>;
+    async fn get_proof(
+        &self,
+        address: Address,
+        block_hash: B256,
+    ) -> RpcResult<EIP1186AccountProofResponse>;
 
     /// Gets a header by block number.
     /// If `number` is `None`, returns the latest header.

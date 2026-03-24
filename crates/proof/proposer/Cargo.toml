@@ -38,6 +38,9 @@ base-proof-rpc.workspace = true
 base-proof-contracts.workspace = true
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
+# Consensus
+base-consensus-genesis = { workspace = true, features = ["serde"] }
+
 # Enclave
 base-enclave.workspace = true
 
