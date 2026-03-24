@@ -282,14 +282,10 @@ impl BootInfo {
 
         // Load proposer address (optional — defaults to zero for backwards compatibility).
         let proposer = match oracle.get(PreimageKey::new_local(PROPOSER_KEY.to())).await {
-            Ok(bytes) if bytes.len() == 20 => Address::from_slice(&bytes),
             Ok(bytes) => {
-                warn!(
-                    target: "boot_loader",
-                    len = bytes.len(),
-                    "Proposer preimage has unexpected length, defaulting to Address::ZERO"
-                );
-                Address::ZERO
+                let buf: [u8; 20] =
+                    bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?;
+                Address::from(buf)
             }
             Err(e) => {
                 debug!(
@@ -306,17 +302,9 @@ impl BootInfo {
             .get(PreimageKey::new_local(INTERMEDIATE_BLOCK_INTERVAL_KEY.to()))
             .await
         {
-            Ok(bytes) if bytes.len() == 8 => {
-                u64::from_be_bytes(bytes.as_slice().try_into().expect("length checked"))
-            }
-            Ok(bytes) => {
-                warn!(
-                    target: "boot_loader",
-                    len = bytes.len(),
-                    "Intermediate block interval preimage has unexpected length, defaulting to 0"
-                );
-                0
-            }
+            Ok(bytes) => u64::from_be_bytes(
+                bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?,
+            ),
             Err(e) => {
                 debug!(
                     target: "boot_loader",
@@ -328,28 +316,20 @@ impl BootInfo {
         };
 
         // Load L1 head block number (optional — defaults to 0 for backwards compatibility).
-        let l1_head_number = match oracle.get(PreimageKey::new_local(L1_HEAD_NUMBER_KEY.to())).await
-        {
-            Ok(bytes) if bytes.len() == 8 => {
-                u64::from_be_bytes(bytes.as_slice().try_into().expect("length checked"))
-            }
-            Ok(bytes) => {
-                warn!(
-                    target: "boot_loader",
-                    len = bytes.len(),
-                    "L1 head number preimage has unexpected length, defaulting to 0"
-                );
-                0
-            }
-            Err(e) => {
-                debug!(
-                    target: "boot_loader",
-                    error = %e,
-                    "L1 head number preimage not found, defaulting to 0"
-                );
-                0
-            }
-        };
+        let l1_head_number =
+            match oracle.get(PreimageKey::new_local(L1_HEAD_NUMBER_KEY.to())).await {
+                Ok(bytes) => u64::from_be_bytes(
+                    bytes.as_slice().try_into().map_err(OracleProviderError::SliceConversion)?,
+                ),
+                Err(e) => {
+                    debug!(
+                        target: "boot_loader",
+                        error = %e,
+                        "L1 head number preimage not found, defaulting to 0"
+                    );
+                    0
+                }
+            };
 
         Ok(Self {
             l1_head,
