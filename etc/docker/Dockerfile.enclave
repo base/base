@@ -19,17 +19,19 @@ ENV OPENSSL_STATIC=1
 ENV OPENSSL_LIB_DIR=/usr/lib
 ENV OPENSSL_INCLUDE_DIR=/usr/include
 
-# Install build dependencies for musl static builds
+# Install build dependencies for musl static builds.
+# Versions are pinned to ensure reproducible EIF builds (PCR0 stability).
+# Use real package names (pkgconf, clang19) instead of virtual aliases for pinning.
 RUN apk add --no-cache \
-    musl-dev \
-    openssl-dev \
-    openssl-libs-static \
-    pkgconfig \
-    perl \
-    make \
-    clang \
-    git \
-    go
+    go=1.23.9-r0 \
+    git=2.47.3-r0 \
+    perl=5.40.3-r0 \
+    make=4.4.1-r2 \
+    clang19=19.1.4-r0 \
+    musl-dev=1.2.5-r9 \
+    pkgconf=2.3.0-r0 \
+    openssl-dev=3.3.6-r0 \
+    openssl-libs-static=3.3.6-r0
 
 # Install linuxkit (needed for ramdisk assembly)
 RUN go install github.com/linuxkit/linuxkit/src/cmd/linuxkit@270fd1c5aa1986977b31af6c743c6a2681f67a29
