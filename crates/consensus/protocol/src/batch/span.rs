@@ -360,13 +360,13 @@ impl SpanBatch {
             seq_num == 0
         } else {
             // If there is more than one batch, set the epoch bit based on the last two batches.
-            self.peek(1).epoch_num < self.peek(0).epoch_num
+            self.batches[self.batches.len() - 2].epoch_num < self.batches[self.batches.len() - 1].epoch_num
         };
 
         // Set the respective bit in the origin bits.
         self.origin_bits.set_bit(self.batches.len() - 1, epoch_bit);
 
-        let new_txs = self.peek(0).transactions.clone();
+        let new_txs = self.batches[self.batches.len() - 1].transactions.clone();
 
         // Update the block tx counts cache with the latest batch's transaction count.
         self.block_tx_counts.push(new_txs.len() as u64);
