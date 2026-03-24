@@ -34,10 +34,11 @@ Nitro hardware to on-chain signer registration:
    signed by the leaf certificate's P384 key, proving it came from genuine
    AWS Nitro hardware and was not tampered with.
 5. **Outputs the verified data as a `VerifierJournal`** — the journal
-   contains the attestation's PCR0 (enclave image hash), public key
-   (signer identity), timestamp, and certificate chain. These are
-   *proven outputs* — the ZK proof guarantees they were extracted from
-   a genuine, unmodified attestation document.
+   contains all Platform Configuration Registers (PCRs, including
+   PCR0 — the enclave image hash), public key (from the attestation
+   document's optional field), timestamp, and certificate chain hashes.
+   These are *proven outputs* — the ZK proof guarantees they were
+   extracted from a genuine, unmodified attestation document.
 
 ### What the on-chain contract does (TEEProverRegistry)
 
