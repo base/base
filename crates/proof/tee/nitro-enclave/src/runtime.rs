@@ -1,3 +1,5 @@
+//! Enclave runtime and vsock listener.
+
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
 
@@ -9,25 +11,7 @@ use tokio_vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener};
 use tracing::{debug, info, warn};
 
 #[cfg(target_os = "linux")]
-use crate::transport::Frame;
-
-mod attestation;
-pub use attestation::{
-    AttestationDocument, AwsCaRoot, DEFAULT_CA_ROOTS, DEFAULT_CA_ROOTS_SHA256, VerificationResult,
-    get_default_ca_root, verify_attestation,
-};
-
-mod crypto;
-pub use crypto::{Ecdsa, Signing};
-
-mod nsm;
-pub use nsm::{NsmRng, NsmSession};
-
-mod protocol;
-pub use protocol::{EnclaveRequest, EnclaveResponse};
-
-mod server;
-pub use server::Server;
+use crate::{EnclaveRequest, EnclaveResponse, Frame, Server};
 
 /// Fixed vsock port the enclave listens on.
 pub const VSOCK_PORT: u32 = 8000;

@@ -165,10 +165,6 @@ pub enum NitroError {
     /// Unsupported chain ID.
     #[error("unsupported chain ID: {0}")]
     UnsupportedChain(u64),
-    /// Proof transport failed.
-    #[cfg(feature = "host")]
-    #[error("transport error: {0}")]
-    Transport(String),
 }
 
 /// A specialized Result type for nitro enclave operations.

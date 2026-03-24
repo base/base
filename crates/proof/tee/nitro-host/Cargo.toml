@@ -1,0 +1,37 @@
+[package]
+name = "base-proof-tee-nitro-host"
+description = "Host-side TEE proving backend for AWS Nitro Enclaves."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-health.workspace = true
+base-proof-host.workspace = true
+base-proof-tee-nitro-enclave.workspace = true
+base-proof-primitives = { workspace = true, features = ["std", "serde", "rpc-server"] }
+jsonrpsee = { workspace = true, features = ["server", "macros"] }
+
+# async
+async-trait.workspace = true
+tokio = { workspace = true, features = ["rt", "time", "io-util", "net"] }
+
+# misc
+eyre.workspace = true
+tower.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio-vsock.workspace = true
+
+[dev-dependencies]
+base-proof-preimage.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }

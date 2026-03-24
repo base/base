@@ -1,6 +1,9 @@
+//! Typed request/response protocol for host ↔ enclave communication over vsock.
+
 use base_proof_preimage::PreimageKey;
-use base_proof_primitives::ProofResult;
 use serde::{Deserialize, Serialize};
+
+use crate::TeeProofResult;
 
 /// Typed request sent from the host to the enclave over vsock.
 #[derive(Debug, Serialize, Deserialize)]
@@ -22,7 +25,7 @@ pub enum EnclaveRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum EnclaveResponse {
     /// Proof result for a [`EnclaveRequest::Prove`] request.
-    Prove(Box<ProofResult>),
+    Prove(Box<TeeProofResult>),
     /// 65-byte uncompressed ECDSA public key for [`EnclaveRequest::SignerPublicKey`].
     SignerPublicKey(Vec<u8>),
     /// Raw Nitro attestation document (`COSE_Sign1` bytes) for [`EnclaveRequest::SignerAttestation`].

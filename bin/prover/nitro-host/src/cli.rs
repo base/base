@@ -1,4 +1,4 @@
-//! CLI definition for the Nitro TEE prover binary.
+//! CLI definition for the Nitro TEE prover host binary.
 
 use std::net::SocketAddr;
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -10,21 +10,21 @@ use base_consensus_registry::Registry;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_host::ProverConfig;
 #[cfg(feature = "local")]
-use base_proof_tee_nitro::Server;
+use base_proof_tee_nitro_enclave::Server;
 #[cfg(target_os = "linux")]
-use base_proof_tee_nitro::{NitroEnclave, VSOCK_PORT};
+use base_proof_tee_nitro_enclave::VSOCK_PORT;
 #[cfg(any(target_os = "linux", feature = "local"))]
-use base_proof_tee_nitro::{NitroProverServer, NitroTransport};
+use base_proof_tee_nitro_host::{NitroProverServer, NitroTransport};
 use clap::{Parser, Subcommand};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use eyre::eyre;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use tracing::info;
 
-base_cli_utils::define_log_args!("BASE_PROVER_NITRO");
-base_cli_utils::define_metrics_args!("BASE_PROVER_NITRO", 7300);
+base_cli_utils::define_log_args!("BASE_PROVER_NITRO_HOST");
+base_cli_utils::define_metrics_args!("BASE_PROVER_NITRO_HOST", 7300);
 
-/// Nitro TEE prover binary.
+/// Nitro TEE prover host binary.
 #[derive(Parser)]
 #[command(author, version)]
 pub(crate) struct Cli {
@@ -40,7 +40,7 @@ pub(crate) struct Cli {
     metrics: MetricsArgs,
 }
 
-/// Nitro subcommands.
+/// Nitro host subcommands.
 #[derive(Subcommand)]
 enum Command {
     /// Run the JSON-RPC server on the EC2 host.
@@ -49,12 +49,6 @@ enum Command {
     /// Enclave over vsock.
     #[cfg(target_os = "linux")]
     Server(ServerArgs),
-
-    /// Run the proving process inside the Nitro Enclave.
-    ///
-    /// Listens on vsock for proving requests from the host server.
-    #[cfg(target_os = "linux")]
-    Enclave,
 
     /// Run server and enclave in a single process for local development.
     #[cfg(feature = "local")]
@@ -114,8 +108,6 @@ impl Cli {
             match command {
                 #[cfg(target_os = "linux")]
                 Command::Server(args) => args.run().await,
-                #[cfg(target_os = "linux")]
-                Command::Enclave => NitroEnclave::new()?.run().await,
                 #[cfg(feature = "local")]
                 Command::Local(args) => args.run().await,
             }
@@ -147,7 +139,7 @@ impl ServerArgs {
         let transport = Arc::new(NitroTransport::vsock(self.vsock_cid, VSOCK_PORT));
         let server = NitroProverServer::new(config, transport);
 
-        info!(addr = %self.server.listen_addr, "starting nitro prover server");
+        info!(addr = %self.server.listen_addr, "starting nitro prover host server");
         let handle = server.run(self.server.listen_addr).await?;
         handle.stopped().await;
         Ok(())

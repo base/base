@@ -117,9 +117,9 @@ impl EnclaveApiServer for NitroSignerRpc {
 #[cfg(test)]
 mod tests {
     use base_proof_primitives::EnclaveApiServer;
+    use base_proof_tee_nitro_enclave::Server as EnclaveServer;
 
     use super::*;
-    use crate::enclave::Server as EnclaveServer;
 
     #[tokio::test]
     async fn signer_public_key_routed_to_transport() {

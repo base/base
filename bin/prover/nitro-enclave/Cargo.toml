@@ -1,0 +1,22 @@
+[package]
+name = "base-prover-nitro-enclave"
+description = "TEE prover enclave binary (AWS Nitro Enclaves)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-prover-nitro-enclave"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+eyre.workspace = true
+base-proof-tee-nitro-enclave.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+

@@ -1,6 +1,6 @@
 [package]
-name = "base-prover-nitro"
-description = "TEE prover server (AWS Nitro Enclaves)"
+name = "base-prover-nitro-host"
+description = "TEE prover host server (AWS Nitro Enclaves)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,29 +9,23 @@ homepage.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "base-prover-nitro"
+name = "base-prover-nitro-host"
 path = "src/main.rs"
 
 [lints]
 workspace = true
 
 [dependencies]
-# Workspace – TEE
-base-consensus-registry.workspace = true
-base-proof-host = { workspace = true, features = ["metrics"] }
-base-proof-tee-nitro = { workspace = true, features = ["host"] }
-
-# CLI
 eyre.workspace = true
+tracing.workspace = true
 base-cli-utils.workspace = true
+base-proof-tee-nitro-host.workspace = true
+base-consensus-registry.workspace = true
+base-proof-tee-nitro-enclave.workspace = true
+tokio = { workspace = true, features = ["full"] }
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }
-
-# Async
-tokio = { workspace = true, features = ["full"] }
-
-# Tracing
-tracing.workspace = true
+base-proof-host = { workspace = true, features = ["metrics"] }
 
 [features]
 local = []

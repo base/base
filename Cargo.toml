@@ -21,7 +21,8 @@ members = [
   "bin/mempool-rebroadcaster",
   "bin/node",
   "bin/proposer",
-  "bin/prover/nitro",
+  "bin/prover/nitro-host",
+  "bin/prover/nitro-enclave",
   "bin/prover/zk",
   "bin/prover-registrar",
   "bin/websocket-proxy",
@@ -39,7 +40,8 @@ members = [
   "crates/proof/std-fpvm",
   "crates/proof/std-fpvm-proc",
   "crates/proof/tee/core",
-  "crates/proof/tee/nitro",
+  "crates/proof/tee/nitro-host",
+  "crates/proof/tee/nitro-enclave",
   "crates/proof/tee/registrar",
   "crates/proof/tee/nitro-verifier",
   "crates/proof/tee/nitro-attestation-prover",
@@ -79,7 +81,8 @@ default-members = [
   "bin/audit-archiver",
   "bin/mempool-rebroadcaster",
   "bin/proposer",
-  "bin/prover/nitro",
+  "bin/prover/nitro-host",
+  "bin/prover/nitro-enclave",
   "bin/prover/zk",
   "bin/prover-registrar",
 ]
@@ -254,7 +257,8 @@ base-zk-outbox = { path = "crates/proof/zk/outbox" }
 base-challenger = { path = "crates/proof/challenge" }
 base-zk-service = { path = "crates/proof/zk/service" }
 base-proof-contracts = { path = "crates/proof/contracts" }
-base-proof-tee-nitro = { path = "crates/proof/tee/nitro" }
+base-proof-tee-nitro-host = { path = "crates/proof/tee/nitro-host" }
+base-proof-tee-nitro-enclave = { path = "crates/proof/tee/nitro-enclave" }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
 base-proof = { path = "crates/proof/proof", default-features = false }
 base-proof-mpt = { path = "crates/proof/mpt", default-features = false }

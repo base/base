@@ -4,15 +4,10 @@ use alloy_signer_local::PrivateKeySigner;
 use base_alloy_evm::OpEvmFactory;
 use base_proof_client::{BootInfo, Prologue};
 use base_proof_preimage::PreimageKey;
-use base_proof_primitives::{ProofJournal, ProofResult, Proposal};
 use tracing::info;
 
 use crate::{
-    Oracle,
-    enclave::{
-        crypto::{Ecdsa, Signing},
-        nsm::{NsmRng, NsmSession},
-    },
+    Ecdsa, NsmRng, NsmSession, Oracle, ProofJournal, Proposal, Signing, TeeProofResult,
     error::{NitroError, NsmError, ProposalError, Result},
 };
 
@@ -149,7 +144,7 @@ impl Server {
     pub async fn prove(
         &self,
         preimages: impl IntoIterator<Item = (PreimageKey, Vec<u8>)>,
-    ) -> Result<ProofResult> {
+    ) -> Result<TeeProofResult> {
         let oracle = Oracle::new(preimages);
 
         let boot_info =
@@ -253,7 +248,7 @@ impl Server {
             }
         };
 
-        Ok(ProofResult::Tee { aggregate_proposal, proposals })
+        Ok(TeeProofResult { aggregate_proposal, proposals })
     }
 }
 

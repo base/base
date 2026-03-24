@@ -3,9 +3,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base_proof_primitives::{ProofResult, ProverBackend};
+use base_proof_tee_nitro_enclave::Oracle;
 
 use super::transport::NitroTransport;
-use crate::{NitroError, Oracle};
+use crate::NitroHostError;
 
 /// TEE proof backend that dispatches to a Nitro Enclave via [`NitroTransport`].
 pub struct NitroBackend {
@@ -28,31 +29,30 @@ impl NitroBackend {
 #[async_trait]
 impl ProverBackend for NitroBackend {
     type Oracle = Oracle;
-    type Error = NitroError;
+    type Error = NitroHostError;
 
     fn create_oracle(&self) -> Oracle {
         Oracle::empty()
     }
 
-    async fn prove(&self, witness: Oracle) -> Result<ProofResult, NitroError> {
-        let preimages = witness.into_preimages()?;
+    async fn prove(&self, witness: Oracle) -> Result<ProofResult, NitroHostError> {
+        let preimages = witness.into_preimages().map_err(NitroHostError::Enclave)?;
         self.transport.prove(preimages).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use base_proof_preimage::{PreimageKey, WitnessOracle};
-    use base_proof_primitives::ProverBackend;
+    use base_proof_preimage::{PreimageKey, PreimageKeyType, WitnessOracle};
+    use base_proof_tee_nitro_enclave::Server;
 
     use super::*;
-    use crate::enclave::Server;
 
     #[tokio::test]
     async fn into_preimages_extracts_all_entries() {
         let oracle = Oracle::empty();
 
-        let key = PreimageKey::new([2u8; 32], base_proof_preimage::PreimageKeyType::Local);
+        let key = PreimageKey::new([2u8; 32], PreimageKeyType::Local);
         oracle.insert_preimage(key, b"hello").unwrap();
 
         let preimages = oracle.into_preimages().unwrap();

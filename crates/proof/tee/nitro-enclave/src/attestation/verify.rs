@@ -13,10 +13,8 @@ use openssl::{
 use serde::Deserialize;
 use x509_cert::{Certificate, der::Decode};
 
-use crate::{
-    enclave::attestation::ca_roots::get_default_ca_root,
-    error::{AttestationError, Result},
-};
+use super::ca_roots::get_default_ca_root;
+use crate::error::{AttestationError, Result};
 
 /// An attestation document from a Nitro Enclave.
 #[derive(Debug, Clone, Deserialize)]

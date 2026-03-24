@@ -4630,45 +4630,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-tee-nitro"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-signer",
- "alloy-signer-local",
- "async-trait",
- "aws-nitro-enclaves-cose",
- "aws-nitro-enclaves-nsm-api",
- "base-alloy-evm",
- "base-consensus-registry",
- "base-enclave",
- "base-health",
- "base-proof-client",
- "base-proof-host",
- "base-proof-preimage",
- "base-proof-primitives",
- "base64 0.22.1",
- "bincode 2.0.1",
- "ciborium",
- "eyre",
- "jsonrpsee",
- "k256",
- "openssl",
- "parking_lot",
- "rand 0.8.5",
- "serde",
- "serde_bytes",
- "sha2 0.10.9",
- "thiserror 2.0.18",
- "tokio",
- "tokio-vsock",
- "tower",
- "tracing",
- "x509-cert",
- "zip 8.3.1",
-]
-
-[[package]]
 name = "base-proof-tee-nitro-attestation-prover"
 version = "0.0.0"
 dependencies = [
@@ -4684,6 +4645,59 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "base-proof-tee-nitro-enclave"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
+ "async-trait",
+ "aws-nitro-enclaves-cose",
+ "aws-nitro-enclaves-nsm-api",
+ "base-alloy-evm",
+ "base-consensus-registry",
+ "base-enclave",
+ "base-proof-client",
+ "base-proof-preimage",
+ "base64 0.22.1",
+ "bincode 2.0.1",
+ "ciborium",
+ "eyre",
+ "k256",
+ "openssl",
+ "parking_lot",
+ "rand 0.8.5",
+ "serde",
+ "serde_bytes",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-vsock",
+ "tracing",
+ "x509-cert",
+ "zip 8.3.1",
+]
+
+[[package]]
+name = "base-proof-tee-nitro-host"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "base-health",
+ "base-proof-host",
+ "base-proof-preimage",
+ "base-proof-primitives",
+ "base-proof-tee-nitro-enclave",
+ "eyre",
+ "jsonrpsee",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-vsock",
+ "tower",
+ "tracing",
 ]
 
 [[package]]
@@ -4875,13 +4889,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-prover-nitro"
+name = "base-prover-nitro-enclave"
+version = "0.0.0"
+dependencies = [
+ "base-proof-tee-nitro-enclave",
+ "eyre",
+ "tokio",
+]
+
+[[package]]
+name = "base-prover-nitro-host"
 version = "0.0.0"
 dependencies = [
  "base-cli-utils",
  "base-consensus-registry",
  "base-proof-host",
- "base-proof-tee-nitro",
+ "base-proof-tee-nitro-enclave",
+ "base-proof-tee-nitro-host",
  "clap",
  "eyre",
  "serde",

@@ -1,6 +1,6 @@
 [package]
-name = "base-proof-tee-nitro"
-description = "TEE proving backend for AWS Nitro Enclaves."
+name = "base-proof-tee-nitro-enclave"
+description = "Nitro Enclave runtime, types, and proving logic."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,31 +12,27 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Core
+# base
 base-alloy-evm.workspace = true
 base-proof-client.workspace = true
-base-health = { workspace = true, optional = true }
-base-proof-host = { workspace = true, optional = true }
 base-proof-preimage = { workspace = true, features = ["serde"] }
-base-proof-primitives = { workspace = true, features = ["std", "serde"] }
-jsonrpsee = { workspace = true, optional = true, features = ["server", "macros"] }
 
-# Alloy
+# alloy
 alloy-signer.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 
-# Crypto
+# crypto
 sha2.workspace = true
 k256 = { workspace = true, features = ["ecdsa", "arithmetic"] }
 
-# NSM / Attestation
+# nsm / attestation
 openssl.workspace = true
 x509-cert.workspace = true
 aws-nitro-enclaves-cose.workspace = true
 aws-nitro-enclaves-nsm-api.workspace = true
 
-# Encoding
+# encoding
 base64.workspace = true
 ciborium.workspace = true
 serde_bytes.workspace = true
@@ -44,19 +40,16 @@ zip = { workspace = true, features = ["deflate"] }
 serde = { workspace = true, features = ["derive"] }
 bincode = { workspace = true, features = ["serde"] }
 
-# Async
+# async
 async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "io-util"] }
 
-# Error
+# misc
 eyre.workspace = true
-thiserror.workspace = true
-
-# Misc
 tracing.workspace = true
 rand_08.workspace = true
+thiserror.workspace = true
 parking_lot.workspace = true
-tower = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-vsock.workspace = true
@@ -67,16 +60,6 @@ rand_08.workspace = true
 base-enclave.workspace = true
 base-consensus-registry.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
-
-[features]
-host = [
-	"base-proof-primitives/rpc-server",
-	"dep:base-health",
-	"dep:base-proof-host",
-	"dep:jsonrpsee",
-	"dep:tower",
-	"tokio/net",
-]
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["aws-nitro-enclaves-nsm-api"]

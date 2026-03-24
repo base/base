@@ -1,3 +1,5 @@
+//! Length-prefixed bincode codec over `AsyncRead`/`AsyncWrite`.
+
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::debug;

@@ -1,3 +1,5 @@
+//! HashMap-backed preimage oracle for in-enclave stateless execution.
+
 use std::{collections::HashMap, fmt, sync::Arc};
 
 use async_trait::async_trait;

@@ -1,5 +1,12 @@
+#![doc = include_str!("../README.md")]
+
+mod error;
+pub use error::NitroHostError;
+
 mod backend;
 pub use backend::NitroBackend;
+
+mod convert;
 
 mod server;
 pub use server::NitroProverServer;

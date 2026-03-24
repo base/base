@@ -1,15 +1,12 @@
 use std::{io, time::Duration};
 
-use base_proof_preimage::PreimageKey;
-use base_proof_primitives::ProofResult;
+use base_proof_tee_nitro_enclave::{
+    EnclaveRequest, EnclaveResponse, Frame, PreimageKey, TeeProofResult,
+};
 use tokio_vsock::{VsockAddr, VsockStream};
 use tracing::info;
 
-use crate::{
-    NitroError,
-    enclave::{EnclaveRequest, EnclaveResponse},
-    transport::Frame,
-};
+use crate::NitroHostError;
 
 const PROVE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -33,23 +30,23 @@ impl VsockTransport {
         Self { cid, port }
     }
 
-    async fn connect(&self) -> Result<VsockStream, NitroError> {
+    async fn connect(&self) -> Result<VsockStream, NitroHostError> {
         let addr = VsockAddr::new(self.cid, self.port);
         tokio::time::timeout(CONNECT_TIMEOUT, VsockStream::connect(addr))
             .await
             .map_err(|_| {
-                NitroError::Transport(
+                NitroHostError::Transport(
                     io::Error::new(io::ErrorKind::TimedOut, "connect timed out").to_string(),
                 )
             })?
-            .map_err(|e| NitroError::Transport(e.to_string()))
+            .map_err(|e| NitroHostError::Transport(e.to_string()))
     }
 
     /// Send preimages to the enclave and return the proof result.
     pub async fn prove(
         &self,
         preimages: Vec<(PreimageKey, Vec<u8>)>,
-    ) -> Result<ProofResult, NitroError> {
+    ) -> Result<TeeProofResult, NitroHostError> {
         let preimage_count = preimages.len();
         let total_value_bytes: usize = preimages.iter().map(|(_, v)| v.len()).sum();
         info!(
@@ -64,59 +61,59 @@ impl VsockTransport {
 
         Frame::write(&mut stream, &EnclaveRequest::Prove(preimages))
             .await
-            .map_err(|e| NitroError::Transport(e.to_string()))?;
+            .map_err(|e| NitroHostError::Transport(e.to_string()))?;
 
         let response: EnclaveResponse =
             tokio::time::timeout(PROVE_TIMEOUT, Frame::read(&mut stream))
                 .await
                 .map_err(|_| {
-                    NitroError::Transport(
+                    NitroHostError::Transport(
                         io::Error::new(io::ErrorKind::TimedOut, "prove timed out").to_string(),
                     )
                 })?
-                .map_err(|e| NitroError::Transport(e.to_string()))?;
+                .map_err(|e| NitroHostError::Transport(e.to_string()))?;
 
         match response {
             EnclaveResponse::Prove(result) => Ok(*result),
-            EnclaveResponse::Error(e) => Err(NitroError::Transport(e)),
+            EnclaveResponse::Error(e) => Err(NitroHostError::Transport(e)),
             EnclaveResponse::SignerPublicKey(_) | EnclaveResponse::SignerAttestation(_) => {
-                Err(NitroError::Transport("unexpected response type for prove".into()))
+                Err(NitroHostError::Transport("unexpected response type for prove".into()))
             }
         }
     }
 
     /// Return the 65-byte uncompressed ECDSA public key of the enclave signer.
-    pub async fn signer_public_key(&self) -> Result<Vec<u8>, NitroError> {
+    pub async fn signer_public_key(&self) -> Result<Vec<u8>, NitroHostError> {
         let mut stream = self.connect().await?;
 
         Frame::write(&mut stream, &EnclaveRequest::SignerPublicKey)
             .await
-            .map_err(|e| NitroError::Transport(e.to_string()))?;
+            .map_err(|e| NitroHostError::Transport(e.to_string()))?;
 
         let response: EnclaveResponse =
             tokio::time::timeout(SIGNER_TIMEOUT, Frame::read(&mut stream))
                 .await
                 .map_err(|_| {
-                    NitroError::Transport(
+                    NitroHostError::Transport(
                         io::Error::new(io::ErrorKind::TimedOut, "signer_public_key timed out")
                             .to_string(),
                     )
                 })?
-                .map_err(|e| NitroError::Transport(e.to_string()))?;
+                .map_err(|e| NitroHostError::Transport(e.to_string()))?;
 
         match response {
             EnclaveResponse::SignerPublicKey(key) => {
                 if key.len() != 65 || key[0] != 0x04 {
-                    return Err(NitroError::Transport(
+                    return Err(NitroHostError::Transport(
                         "invalid signer public key: expected 65-byte uncompressed SEC1 key".into(),
                     ));
                 }
                 Ok(key)
             }
-            EnclaveResponse::Error(e) => Err(NitroError::Transport(e)),
-            EnclaveResponse::Prove(_) | EnclaveResponse::SignerAttestation(_) => {
-                Err(NitroError::Transport("unexpected response type for signer_public_key".into()))
-            }
+            EnclaveResponse::Error(e) => Err(NitroHostError::Transport(e)),
+            EnclaveResponse::Prove(_) | EnclaveResponse::SignerAttestation(_) => Err(
+                NitroHostError::Transport("unexpected response type for signer_public_key".into()),
+            ),
         }
     }
 
@@ -125,30 +122,30 @@ impl VsockTransport {
         &self,
         user_data: Option<Vec<u8>>,
         nonce: Option<Vec<u8>>,
-    ) -> Result<Vec<u8>, NitroError> {
+    ) -> Result<Vec<u8>, NitroHostError> {
         let mut stream = self.connect().await?;
 
         Frame::write(&mut stream, &EnclaveRequest::SignerAttestation { user_data, nonce })
             .await
-            .map_err(|e| NitroError::Transport(e.to_string()))?;
+            .map_err(|e| NitroHostError::Transport(e.to_string()))?;
 
         let response: EnclaveResponse =
             tokio::time::timeout(SIGNER_TIMEOUT, Frame::read(&mut stream))
                 .await
                 .map_err(|_| {
-                    NitroError::Transport(
+                    NitroHostError::Transport(
                         io::Error::new(io::ErrorKind::TimedOut, "signer_attestation timed out")
                             .to_string(),
                     )
                 })?
-                .map_err(|e| NitroError::Transport(e.to_string()))?;
+                .map_err(|e| NitroHostError::Transport(e.to_string()))?;
 
         match response {
             EnclaveResponse::SignerAttestation(doc) => Ok(doc),
-            EnclaveResponse::Error(e) => Err(NitroError::Transport(e)),
-            EnclaveResponse::Prove(_) | EnclaveResponse::SignerPublicKey(_) => {
-                Err(NitroError::Transport("unexpected response type for signer_attestation".into()))
-            }
+            EnclaveResponse::Error(e) => Err(NitroHostError::Transport(e)),
+            EnclaveResponse::Prove(_) | EnclaveResponse::SignerPublicKey(_) => Err(
+                NitroHostError::Transport("unexpected response type for signer_attestation".into()),
+            ),
         }
     }
 }
