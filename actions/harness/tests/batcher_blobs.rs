@@ -1,10 +1,12 @@
 //! Action tests for blob DA submission and mixed calldata/blob derivation.
 
+use std::sync::Arc;
+
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,
 };
-use base_batcher_encoder::{DaType, EncoderConfig};
+use base_batcher_encoder::{BatchEncoder, BatchPipeline, DaType, EncoderConfig};
 
 // ---------------------------------------------------------------------------
 // Blob DA end-to-end
@@ -218,26 +220,28 @@ async fn blob_da_channel_timeout() {
     let block = sequencer.build_next_block_with_single_transaction();
 
     // Encode the L2 block into multiple frames (tiny max_frame_size).
-    let mut source = ActionL2Source::new();
-    source.push(block.clone());
-    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
-    batcher.encode_only().await;
-    let frame_count = batcher.pending_count();
+    // Use BatchEncoder directly so we can control exactly which frames go into
+    // which L1 block — blob packing in the Batcher actor packs all frames into
+    // one blob, which would make partial submission impossible.
+    let mut encoder =
+        BatchEncoder::new(Arc::new(h.rollup_config.clone()), batcher_cfg.encoder.clone());
+    encoder.add_block(block.clone()).expect("add_block should succeed");
+    let frames = encoder.encode_and_drain().expect("encode_and_drain should succeed");
+    let frame_count = frames.len();
     assert!(
         frame_count >= 2,
         "expected multi-frame channel with max_frame_size=80, got {frame_count} frames"
     );
 
     // Submit ONLY frame 0 as a blob sidecar in L1 block 1.
-    batcher.stage_n_frames(&mut h.l1, 1);
+    h.l1.submit_blob_frames(&frames[..1]);
 
     let (mut node, chain) = h.create_blob_test_rollup_node_from_sequencer(
         &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
 
-    let block_1_num = h.l1.mine_block().number();
-    batcher.confirm_staged(block_1_num).await;
+    h.l1.mine_block();
     chain.push(h.l1.tip().clone()); // L1 block 1: blob with frame 0 only
 
     node.initialize().await;
@@ -256,19 +260,21 @@ async fn blob_da_channel_timeout() {
     }
 
     // Submit remaining frames as blobs — channel already timed out; silently dropped.
-    batcher.stage_n_frames(&mut h.l1, frame_count - 1);
-    let block_5_num = h.l1.mine_block().number();
-    batcher.confirm_staged(block_5_num).await;
+    h.l1.submit_blob_frames(&frames[1..]);
+    h.l1.mine_block();
     chain.push(h.l1.tip().clone()); // L1 block 5: late blob frames
 
     node.act_l1_head_signal(h.l1.block_info_at(5)).await;
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 0, "late blob frames after channel timeout must be silently dropped");
 
-    // Recovery: resubmit all frames as blobs in a fresh channel.
-    let mut source2 = ActionL2Source::new();
-    source2.push(block);
-    Batcher::new(source2, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
+    // Recovery: resubmit all frames as blobs in a fresh channel (new channel ID).
+    let mut encoder2 =
+        BatchEncoder::new(Arc::new(h.rollup_config.clone()), batcher_cfg.encoder.clone());
+    encoder2.add_block(block).expect("add_block should succeed");
+    let fresh_frames = encoder2.encode_and_drain().expect("encode_and_drain should succeed");
+    h.l1.submit_blob_frames(&fresh_frames);
+    h.l1.mine_block();
     chain.push(h.l1.tip().clone()); // L1 block 6: fresh blob channel with all frames
 
     node.act_l1_head_signal(h.l1.block_info_at(6)).await;
