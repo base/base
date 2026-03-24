@@ -207,7 +207,6 @@ base-builder-core = { path = ".", features = ["test-utils"] }
 
 # reth
 reth-ipc.workspace = true
-base-execution-rpc = { workspace = true, features = ["client"] }
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 
 # alloy
