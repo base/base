@@ -336,10 +336,10 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
 
         // Fetch L1 finalized head and compute agreed L2 state concurrently.
         let (l1_head_result, output_root_result) = tokio::join!(
-            tee.l1_head_provider.finalized_head_hash(),
+            tee.l1_head_provider.finalized_head(),
             self.validator.compute_output_root_with_hash(start_block_number),
         );
-        let l1_head = l1_head_result?;
+        let (l1_head, l1_head_number) = l1_head_result?;
         let (agreed_l2_head_hash, agreed_l2_output_root) = output_root_result?;
 
         // The claimed root is the (wrong) on-chain root at the invalid index.
@@ -360,6 +360,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             claimed_l2_block_number,
             proposer: self.submitter.sender_address(),
             intermediate_block_interval: candidate.intermediate_block_interval,
+            l1_head_number,
         };
 
         let result = tee.provider.prove(request).await.map_err(|e| eyre::eyre!(e))?;

@@ -538,6 +538,7 @@ where
             claimed_l2_block_number: target_block,
             proposer: self.config.driver.proposer_address,
             intermediate_block_interval: self.config.driver.intermediate_block_interval,
+            l1_head_number: l1_head.number,
         };
 
         info!(request = ?request, "Built proof request for parallel proving");

@@ -354,15 +354,15 @@ impl ProverClient for MockTeeProofProvider {
 /// Mock L1 head provider for testing the driver.
 #[derive(Debug)]
 pub struct MockL1HeadProvider {
-    /// Queue of results returned by [`finalized_head_hash`](L1HeadProvider::finalized_head_hash).
-    pub results: Mutex<VecDeque<eyre::Result<B256>>>,
+    /// Queue of results returned by [`finalized_head`](L1HeadProvider::finalized_head).
+    pub results: Mutex<VecDeque<eyre::Result<(B256, u64)>>>,
 }
 
 impl MockL1HeadProvider {
-    /// Creates a mock that returns a single successful hash.
-    pub fn success(hash: B256) -> Self {
+    /// Creates a mock that returns a single successful hash and block number.
+    pub fn success(hash: B256, number: u64) -> Self {
         let mut q = VecDeque::new();
-        q.push_back(Ok(hash));
+        q.push_back(Ok((hash, number)));
         Self { results: Mutex::new(q) }
     }
 
@@ -376,7 +376,7 @@ impl MockL1HeadProvider {
 
 #[async_trait]
 impl L1HeadProvider for MockL1HeadProvider {
-    async fn finalized_head_hash(&self) -> eyre::Result<B256> {
+    async fn finalized_head(&self) -> eyre::Result<(B256, u64)> {
         self.results.lock().unwrap().pop_front().expect("MockL1HeadProvider has no more results")
     }
 }

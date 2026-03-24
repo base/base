@@ -1,8 +1,8 @@
 use alloy_primitives::B256;
 use base_proof::{
-    INTERMEDIATE_BLOCK_INTERVAL_KEY, L1_CONFIG_KEY, L1_HEAD_KEY, L2_CHAIN_ID_KEY,
-    L2_CLAIM_BLOCK_NUMBER_KEY, L2_CLAIM_KEY, L2_OUTPUT_ROOT_KEY, L2_ROLLUP_CONFIG_KEY,
-    PROPOSER_KEY,
+    INTERMEDIATE_BLOCK_INTERVAL_KEY, L1_CONFIG_KEY, L1_HEAD_KEY, L1_HEAD_NUMBER_KEY,
+    L2_CHAIN_ID_KEY, L2_CLAIM_BLOCK_NUMBER_KEY, L2_CLAIM_KEY, L2_OUTPUT_ROOT_KEY,
+    L2_ROLLUP_CONFIG_KEY, PROPOSER_KEY,
 };
 use base_proof_preimage::PreimageKey;
 
@@ -44,6 +44,7 @@ impl KeyValueStore for BootKeyValueStore {
             INTERMEDIATE_BLOCK_INTERVAL_KEY => {
                 Some(self.cfg.request.intermediate_block_interval.to_be_bytes().to_vec())
             }
+            L1_HEAD_NUMBER_KEY => Some(self.cfg.request.l1_head_number.to_be_bytes().to_vec()),
             _ => None,
         }
     }

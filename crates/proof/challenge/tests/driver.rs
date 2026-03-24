@@ -826,7 +826,7 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
     let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
     let l1_hash = B256::repeat_byte(0xAA);
-    let l1_head = Arc::new(MockL1HeadProvider::success(l1_hash));
+    let l1_head = Arc::new(MockL1HeadProvider::success(l1_hash, 100));
 
     let aggregate_proposal = Proposal {
         output_root: root_20,

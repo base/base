@@ -63,6 +63,12 @@ pub struct ProofRequest {
     /// constructing the aggregate proof journal.
     #[cfg_attr(feature = "serde", serde(default))]
     pub intermediate_block_interval: u64,
+    /// Block number of the L1 head.
+    ///
+    /// Stored alongside `l1_head` (the hash) so the enclave can reference the
+    /// L1 head block number without an extra lookup.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub l1_head_number: u64,
 }
 
 /// A proof request bundled with the witness data needed to fulfill it.

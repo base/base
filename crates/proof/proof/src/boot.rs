@@ -73,6 +73,12 @@ pub const PROPOSER_KEY: U256 = U256::from_be_slice(&[8]);
 /// `AggregateVerifier`'s `INTERMEDIATE_BLOCK_INTERVAL`.
 pub const INTERMEDIATE_BLOCK_INTERVAL_KEY: U256 = U256::from_be_slice(&[9]);
 
+/// The local key identifier for the L1 head block number.
+///
+/// This key retrieves the block number corresponding to `L1_HEAD_KEY`, allowing
+/// the enclave to reference the L1 head number without an extra lookup.
+pub const L1_HEAD_NUMBER_KEY: U256 = U256::from_be_slice(&[10]);
+
 /// The boot information for the client program.
 ///
 /// [`BootInfo`] contains all the essential parameters needed to initialize the fault proof
@@ -162,6 +168,12 @@ pub struct BootInfo {
     /// constructing the aggregate proof journal. Defaults to 0 when not set.
     #[serde(default)]
     pub intermediate_block_interval: u64,
+    /// The block number of the L1 head.
+    ///
+    /// Stored alongside `l1_head` so the enclave can reference the L1 head
+    /// block number without an extra lookup. Defaults to 0 when not set.
+    #[serde(default)]
+    pub l1_head_number: u64,
 }
 
 impl BootInfo {
@@ -315,6 +327,30 @@ impl BootInfo {
             }
         };
 
+        // Load L1 head block number (optional — defaults to 0 for backwards compatibility).
+        let l1_head_number = match oracle.get(PreimageKey::new_local(L1_HEAD_NUMBER_KEY.to())).await
+        {
+            Ok(bytes) if bytes.len() == 8 => {
+                u64::from_be_bytes(bytes.as_slice().try_into().expect("length checked"))
+            }
+            Ok(bytes) => {
+                warn!(
+                    target: "boot_loader",
+                    len = bytes.len(),
+                    "L1 head number preimage has unexpected length, defaulting to 0"
+                );
+                0
+            }
+            Err(e) => {
+                debug!(
+                    target: "boot_loader",
+                    error = %e,
+                    "L1 head number preimage not found, defaulting to 0"
+                );
+                0
+            }
+        };
+
         Ok(Self {
             l1_head,
             agreed_l2_output_root: l2_output_root,
@@ -325,6 +361,7 @@ impl BootInfo {
             l1_config,
             proposer,
             intermediate_block_interval,
+            l1_head_number,
         })
     }
 }
