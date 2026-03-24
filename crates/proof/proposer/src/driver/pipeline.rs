@@ -177,6 +177,12 @@ where
     /// Returns `true` if the V1 hardfork is active based on the current wall
     /// clock time, or if no hardfork timestamp is configured (i.e. the gate
     /// is disabled).
+    ///
+    /// NOTE: This intentionally uses [`SystemTime`] (real wall clock) rather
+    /// than `tokio::time::Instant`, because hardfork activation is anchored to
+    /// a Unix timestamp and must reflect real-world time regardless of the
+    /// tokio runtime's clock state.  Tests that assert on this method use
+    /// extreme sentinel values (0 / `u64::MAX`) so they are wall-clock safe.
     fn is_v1_hardfork_active(&self) -> bool {
         self.config.v1_hardfork_timestamp.is_none_or(|ts| {
             let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
@@ -832,15 +838,13 @@ mod tests {
             cancel.clone(),
         );
 
-        let cancel_clone = cancel.clone();
-        let handle = tokio::spawn(async move {
-            // Let the pipeline run for a bit, then cancel.
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            cancel_clone.cancel();
-            pipeline.run().await
-        });
+        // Spawn the pipeline so it starts processing ticks, then cancel
+        // from this task after giving it time to run.
+        let handle = tokio::spawn(async move { pipeline.run().await });
 
-        // Start the pipeline run and wait for it to complete.
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        cancel.cancel();
+
         let result = handle.await.expect("task should not panic");
         assert!(result.is_ok());
     }
@@ -951,12 +955,12 @@ mod tests {
             cancel.clone(),
         );
 
-        let cancel_clone = cancel.clone();
-        let handle = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            cancel_clone.cancel();
-            pipeline.run().await
-        });
+        // Spawn the pipeline so it starts processing ticks with the hardfork
+        // gate active, then cancel from this task after giving it time to run.
+        let handle = tokio::spawn(async move { pipeline.run().await });
+
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        cancel.cancel();
 
         let result = handle.await.expect("task should not panic");
         assert!(result.is_ok(), "pipeline should run normally with a past hardfork timestamp");
