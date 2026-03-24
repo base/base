@@ -99,7 +99,12 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     // Fetch chain configuration from op-node
     info!("Fetching chain configuration from rollup RPC...");
     let chain_config = rollup_client.rollup_config().await?;
-    info!(chain_id = %chain_config.l2_chain_id.id(), "Chain configuration loaded");
+    let v1_hardfork_timestamp = chain_config.hardforks.base.v1;
+    info!(
+        chain_id = %chain_config.l2_chain_id.id(),
+        v1_hardfork_timestamp,
+        "Chain configuration loaded"
+    );
 
     let prover_client = HttpClientBuilder::default()
         .request_timeout(crate::constants::PROVER_TIMEOUT)
@@ -206,6 +211,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let pipeline_config = PipelineConfig {
         max_parallel_proofs: config.max_parallel_proofs,
         max_retries: 3,
+        v1_hardfork_timestamp,
         driver: DriverConfig {
             poll_interval: config.poll_interval,
             block_interval,

@@ -209,6 +209,7 @@ mod tests {
             PipelineConfig {
                 max_parallel_proofs: 2,
                 max_retries: 3,
+                v1_hardfork_timestamp: None,
                 driver: DriverConfig {
                     poll_interval: Duration::from_secs(3600),
                     block_interval: 512,
