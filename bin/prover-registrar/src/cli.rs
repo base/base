@@ -317,7 +317,7 @@ impl Cli {
         metrics_config
             .init_with(|| {
                 base_cli_utils::register_version_metrics!();
-                RegistrarMetrics::record_startup();
+                RegistrarMetrics::record_startup(env!("CARGO_PKG_VERSION"));
             })
             .wrap_err("failed to install Prometheus recorder")?;
 

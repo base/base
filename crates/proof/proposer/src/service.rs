@@ -50,7 +50,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
 
     // ── 2. Metrics recorder and HTTP server (if enabled) ─────────────────
-    config.metrics.init().expect("failed to install Prometheus recorder");
+    config.metrics.init().map_err(|e| eyre::eyre!("failed to install Prometheus recorder: {e}"))?;
 
     // Record startup metrics (no-ops if no recorder installed).
     record_startup_metrics(env!("CARGO_PKG_VERSION"));
