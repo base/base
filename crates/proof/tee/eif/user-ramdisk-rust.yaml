@@ -35,11 +35,11 @@ files:
               ff02::2 ip6-allrouters
               "
     mode: "0755"
-  - path: rootfs/bin/base-prover-nitro
-    source: target/x86_64-unknown-linux-musl/release/base-prover-nitro
+  - path: rootfs/bin/base-prover-nitro-enclave
+    source: target/x86_64-unknown-linux-musl/release/base-prover-nitro-enclave
     mode: "0755"
   - path: cmd
-    contents: "/bin/base-prover-nitro"
+    contents: "/bin/base-prover-nitro-enclave"
     mode: "0644"
   - path: env
     contents: ""

@@ -41,8 +41,10 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/app/target,id=enclave-target,sharing=locked \
-    cargo build --release --target x86_64-unknown-linux-musl --package base-prover-nitro --bin base-prover-nitro && \
-    cp /app/target/x86_64-unknown-linux-musl/release/base-prover-nitro /app/base-prover
+    cargo build --release --target x86_64-unknown-linux-musl --package base-prover-nitro-enclave --bin base-prover-nitro-enclave && \
+    cargo build --release --target x86_64-unknown-linux-musl --package base-prover-nitro-host --bin base-prover-nitro-host && \
+    cp /app/target/x86_64-unknown-linux-musl/release/base-prover-nitro-enclave /app/base-prover-enclave && \
+    cp /app/target/x86_64-unknown-linux-musl/release/base-prover-nitro-host /app/base-prover-host
 
 # Build ramdisks
 COPY --from=bootstrap /build/out bootstrap
@@ -89,4 +91,4 @@ FROM busybox@sha256:70ce0a747f09cd7c09c2d6eaeab69d60adb0398f569296e8c0e844599388
 WORKDIR /build
 
 COPY --from=eif /build/eif.bin .
-COPY --from=builder /app/base-prover .
+COPY --from=builder /app/base-prover-host .
