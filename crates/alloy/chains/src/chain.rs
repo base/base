@@ -60,6 +60,11 @@ impl BaseChainUpgrades {
     pub fn base_devnet_0_sepolia_dev_0() -> Self {
         Self::new(BaseUpgrade::base_devnet_0_sepolia_dev_0())
     }
+
+    /// Creates a new [`BaseChainUpgrades`] with Base Zeronet configuration.
+    pub fn zeronet() -> Self {
+        Self::new(BaseUpgrade::zeronet())
+    }
 }
 
 impl EthereumHardforks for BaseChainUpgrades {

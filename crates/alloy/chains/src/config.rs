@@ -123,9 +123,14 @@ impl BaseChainConfig {
         &DEVNET
     }
 
+    /// Base Zeronet chain configuration.
+    pub const fn zeronet() -> &'static Self {
+        &ZERONET
+    }
+
     /// Returns all known chain configurations, including devnet.
-    pub const fn all() -> [&'static Self; 4] {
-        [&MAINNET, &SEPOLIA, &ALPHA, &DEVNET]
+    pub const fn all() -> [&'static Self; 5] {
+        [&MAINNET, &SEPOLIA, &ALPHA, &DEVNET, &ZERONET]
     }
 
     /// Looks up a chain config by L2 chain ID.
@@ -134,6 +139,7 @@ impl BaseChainConfig {
             8453 => Some(&MAINNET),
             84532 => Some(&SEPOLIA),
             11763072 => Some(&ALPHA),
+            763360 => Some(&ZERONET),
             _ => None,
         }
     }
@@ -351,4 +357,54 @@ const DEVNET: BaseChainConfig = BaseChainConfig {
     bootnodes: &[],
 
     genesis_json: include_str!("../res/genesis/dev.json"),
+};
+
+const ZERONET: BaseChainConfig = BaseChainConfig {
+    chain_id: 763360,
+    l1_chain_id: 560048,
+
+    block_time: 2,
+    seq_window_size: 3600,
+    max_sequencer_drift: 600,
+    channel_timeout: 300,
+
+    bedrock_block: 0,
+    regolith_timestamp: 0,
+    canyon_timestamp: 0,
+    delta_timestamp: 0,
+    ecotone_timestamp: 0,
+    fjord_timestamp: 0,
+    granite_timestamp: 0,
+    holocene_timestamp: 0,
+    pectra_blob_schedule_timestamp: None,
+    isthmus_timestamp: 0,
+    jovian_timestamp: 0,
+    base_v1_timestamp: None,
+
+    genesis_l1_hash: b256!("b7d4b69971ff31d5179be5e1b83f5a4f438f4cd1db886a6630623b7047f32cfd"),
+    genesis_l1_number: 2_450_277,
+    genesis_l2_hash: b256!("1842d6ef4c40e2a4794458e167f6d327269df919b626979111c37ad3a96047bf"),
+    genesis_l2_number: 0,
+    genesis_l2_time: 1_773_959_340,
+    genesis_batcher_address: address!("4c810fec547f6c143db51953af51a1de79bead21"),
+    genesis_overhead: U256::ZERO,
+    genesis_scalar: uint!(0x010000000000000000000000000000000000000000000000000c3c9d00000558_U256),
+    genesis_gas_limit: 25_000_000,
+
+    eip1559_elasticity: 6,
+    eip1559_denominator: 50,
+    eip1559_denominator_canyon: 250,
+
+    batch_inbox_address: address!("00975f9c430b216f84ec52374d7f5eb8eec3139a"),
+    deposit_contract_address: address!("7b9fb81a8e041814903c9385b22d88ac303df699"),
+    system_config_address: address!("cc7c76564bea74a963a0bd75e0bc9bce3ff0ea80"),
+    protocol_versions_address: address!("646c8604cf62b23e0cf094f2e790c6c75547ff85"),
+
+    unsafe_block_signer: Some(address!("cf17274338d3128f6C96d9af54511a17e8b38a08")),
+
+    max_gas_limit: 25_000_000,
+
+    bootnodes: &[],
+
+    genesis_json: include_str!("../res/genesis/zeronet_base.json"),
 };

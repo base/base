@@ -75,6 +75,11 @@ impl BaseUpgrade {
         Self::forks_for(BaseChainConfig::alpha())
     }
 
+    /// Base Zeronet list of hardforks.
+    pub const fn zeronet() -> [(Self, ForkCondition); 10] {
+        Self::forks_for(BaseChainConfig::zeronet())
+    }
+
     /// Returns index of `self` in sorted canonical array.
     pub const fn idx(&self) -> usize {
         *self as usize

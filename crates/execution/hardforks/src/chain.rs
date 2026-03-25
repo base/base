@@ -93,6 +93,10 @@ pub static BASE_MAINNET_HARDFORKS: Lazy<ChainHardforks> =
 pub static BASE_DEVNET_0_SEPOLIA_DEV_0_HARDFORKS: Lazy<ChainHardforks> =
     Lazy::new(|| BaseChainUpgrades::base_devnet_0_sepolia_dev_0().to_chain_hardforks());
 
+/// Base Zeronet list of hardforks.
+pub static BASE_ZERONET_HARDFORKS: Lazy<ChainHardforks> =
+    Lazy::new(|| BaseChainUpgrades::zeronet().to_chain_hardforks());
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -13,5 +13,5 @@ extern crate alloc;
 mod chain;
 pub use chain::{
     BASE_DEVNET_0_SEPOLIA_DEV_0_HARDFORKS, BASE_MAINNET_HARDFORKS, BASE_SEPOLIA_HARDFORKS,
-    BaseChainUpgradesExt, DEV_HARDFORKS,
+    BASE_ZERONET_HARDFORKS, BaseChainUpgradesExt, DEV_HARDFORKS,
 };
