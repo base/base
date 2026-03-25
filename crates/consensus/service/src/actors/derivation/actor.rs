@@ -102,6 +102,9 @@ where
             base_macros::set!(counter, Metrics::DERIVATION_L1_ORIGIN, _l1_origin.number);
             // Clear the finalization queue on reset.
             self.finalizer.clear();
+            // Discard any in-flight derived_from so that a stale pre-reset L1 inclusion
+            // block is never recorded for a post-reset safe head confirmation.
+            self.pending_derived_from = None;
 
             // Reset the SafeDB on pipeline reset.
             //

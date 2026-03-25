@@ -313,7 +313,7 @@ impl RollupNode {
         //
         // In delegate mode the local derivation actor is replaced by a `DelegateDerivationActor`
         // that never calls `safe_head_updated`, so opening a real SafeDB would leave it
-        // permanently empty and cause the RPC to return `NotFound` instead of `Disabled`.
+        // permanently empty and cause the RPC to return `Disabled` for every query.
         // Force `DisabledSafeDB` in that case regardless of `safedb_path`.
         let (safe_head_listener, safe_db_reader): (
             Arc<dyn SafeHeadListener>,

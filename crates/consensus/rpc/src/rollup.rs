@@ -99,7 +99,13 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
 
         let number = match block_num {
             BlockNumberOrTag::Number(n) => n,
-            _ => return Err(ErrorObject::owned(-32602, "expected block number", None::<()>)),
+            _ => {
+                return Err(ErrorObject::owned(
+                    -32602,
+                    "optimism_safeHeadAtL1Block requires an explicit block number, not latest/earliest/pending",
+                    None::<()>,
+                ));
+            }
         };
 
         self.safe_db_reader.safe_head_at_l1(number).await.map_err(|e| match e {
