@@ -14,3 +14,28 @@ pub trait InstanceDiscovery: Send + Sync {
     /// Return the current set of prover instances with their health status.
     async fn discover_instances(&self) -> Result<Vec<ProverInstance>>;
 }
+
+/// Fetches signer identity data from a prover instance endpoint.
+///
+/// The primary implementation is [`ProverClient`](crate::ProverClient), which
+/// makes JSON-RPC calls to the prover's `enclave_signerPublicKey` and
+/// `enclave_signerAttestation` endpoints. Test code can substitute a mock
+/// to avoid real HTTP calls.
+///
+/// The `endpoint` parameter is a `host:port` string (e.g. `"10.0.1.5:8000"`).
+#[async_trait]
+pub trait SignerClient: Send + Sync {
+    /// Fetches the signer's SEC1-encoded public key from the given endpoint.
+    async fn signer_public_key(&self, endpoint: &str) -> Result<Vec<u8>>;
+
+    /// Fetches the raw Nitro attestation document from the given endpoint.
+    ///
+    /// Optional `user_data` and `nonce` bind the attestation to a specific
+    /// request (e.g. a random nonce for replay protection).
+    async fn signer_attestation(
+        &self,
+        endpoint: &str,
+        user_data: Option<Vec<u8>>,
+        nonce: Option<Vec<u8>>,
+    ) -> Result<Vec<u8>>;
+}

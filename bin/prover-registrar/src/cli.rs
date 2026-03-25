@@ -18,8 +18,9 @@ use base_proof_tee_nitro_attestation_prover::{
     AttestationProofProvider, BoundlessProver, DirectProver,
 };
 use base_proof_tee_registrar::{
-    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, DriverConfig, ProvingConfig,
-    RegistrarConfig, RegistrarError, RegistrarMetrics, RegistrationDriver, RegistryContractClient,
+    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, DriverConfig, ProverClient,
+    ProvingConfig, RegistrarConfig, RegistrarError, RegistrarMetrics, RegistrationDriver,
+    RegistryContractClient,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use clap::{Args, Parser, ValueEnum};
@@ -387,10 +388,10 @@ impl Cli {
         ));
 
         // ── 8. Build and run driver ──────────────────────────────────────────
+        let signer_client = ProverClient::new(config.prover_timeout);
         let driver_config = DriverConfig {
             registry_address: config.tee_prover_registry_address,
             poll_interval: config.poll_interval,
-            prover_timeout: config.prover_timeout,
             cancel: cancel.clone(),
         };
 
@@ -401,10 +402,16 @@ impl Cli {
         ready.store(true, Ordering::SeqCst);
 
         let cancel_guard = cancel.clone().drop_guard();
-        let driver_result =
-            RegistrationDriver::new(discovery, proof_provider, registry, tx_manager, driver_config)
-                .run()
-                .await;
+        let driver_result = RegistrationDriver::new(
+            discovery,
+            proof_provider,
+            registry,
+            tx_manager,
+            signer_client,
+            driver_config,
+        )
+        .run()
+        .await;
         drop(cancel_guard);
 
         // ── 9. Graceful shutdown (always runs, even on driver error) ─────────

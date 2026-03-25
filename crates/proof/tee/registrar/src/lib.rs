@@ -23,7 +23,7 @@ mod registry;
 pub use registry::{RegistryClient, RegistryContractClient};
 
 mod traits;
-pub use traits::InstanceDiscovery;
+pub use traits::{InstanceDiscovery, SignerClient};
 
 mod types;
 pub use types::{InstanceHealthStatus, ProverInstance, RegisteredSigner};
