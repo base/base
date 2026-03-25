@@ -59,7 +59,7 @@ flowchart TD
     H -->|Other error| J[Log, next tick retries]
 ```
 
-`recover_latest_game()` walks backwards through the `DisputeGameFactory` (up to `MAX_GAME_RECOVERY_LOOKBACK` entries) to find the most recent game matching the configured `game_type`. Because state is always loaded from chain, the proposer naturally chains off games created by any proposer, handles `GameAlreadyExists` without special recovery logic, and cannot enter stale-state livelocks.
+`recover_latest_game()` walks backwards through the `DisputeGameFactory` (up to `--max-game-recovery-lookback` entries, default 5000) to find the most recent game matching the configured `game_type`. Because state is always loaded from chain, the proposer naturally chains off games created by any proposer, handles `GameAlreadyExists` without special recovery logic, and cannot enter stale-state livelocks.
 
 #### Data Sources
 

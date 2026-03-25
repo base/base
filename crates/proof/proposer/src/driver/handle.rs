@@ -208,6 +208,7 @@ mod tests {
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
                 max_parallel_proofs: 2,
+                max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: None,
                 driver: DriverConfig {
