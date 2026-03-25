@@ -10,9 +10,9 @@ use base_consensus_registry::Registry;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_host::ProverConfig;
 #[cfg(feature = "local")]
-use base_proof_tee_nitro_enclave::Server;
+use base_proof_tee_nitro_host::EnclaveServer;
 #[cfg(target_os = "linux")]
-use base_proof_tee_nitro_enclave::VSOCK_PORT;
+use base_proof_tee_nitro_host::VSOCK_PORT;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_tee_nitro_host::{NitroProverServer, NitroTransport};
 use clap::{Parser, Subcommand};
@@ -175,7 +175,7 @@ impl LocalArgs {
             enable_experimental_witness_endpoint: self.server.enable_experimental_witness_endpoint,
         };
 
-        let enclave_server = Arc::new(Server::new_local()?);
+        let enclave_server = Arc::new(EnclaveServer::new_local()?);
         let transport = Arc::new(NitroTransport::local(enclave_server));
         let server = NitroProverServer::new(prover_config, transport);
 

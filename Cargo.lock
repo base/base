@@ -4686,6 +4686,7 @@ dependencies = [
 name = "base-proof-tee-nitro-host"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "async-trait",
  "base-health",
  "base-proof-host",
@@ -4905,7 +4906,6 @@ dependencies = [
  "base-cli-utils",
  "base-consensus-registry",
  "base-proof-host",
- "base-proof-tee-nitro-enclave",
  "base-proof-tee-nitro-host",
  "clap",
  "eyre",

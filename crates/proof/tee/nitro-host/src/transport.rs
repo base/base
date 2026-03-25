@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
+use base_proof_preimage::PreimageKey;
 use base_proof_primitives::ProofResult;
-use base_proof_tee_nitro_enclave::{PreimageKey, Server};
+use base_proof_tee_nitro_enclave::Server;
 
-use super::convert::proof_result_from_enclave;
+use super::convert::Convert;
 #[cfg(target_os = "linux")]
 use super::vsock::VsockTransport;
 use crate::NitroHostError;
@@ -42,7 +43,7 @@ impl NitroTransport {
             Self::Vsock(t) => t.prove(preimages).await?,
             Self::Local(s) => Box::pin(s.prove(preimages)).await?,
         };
-        Ok(proof_result_from_enclave(tee_result))
+        Ok(Convert::proof_result(tee_result))
     }
 
     /// Return the 65-byte uncompressed ECDSA public key of the enclave signer.
