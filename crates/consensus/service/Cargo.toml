@@ -74,10 +74,8 @@ jsonrpsee = { workspace = true, features = ["server", "http-client"] }
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
-http.workspace = true
 rand.workspace = true
 rstest.workspace = true
-backon.workspace = true
 anyhow.workspace = true
 mockall.workspace = true
 arbitrary.workspace = true
