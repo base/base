@@ -35,7 +35,7 @@ pub enum PrecompileTarget {
     Bn254Mul,
     /// BN254 pairing check (`bn254_pairing`, address `0x08`).
     Bn254Pairing,
-    /// BLAKE2f compression (`blake2f`, address `0x09`).
+    /// `BLAKE2f` compression (`blake2f`, address `0x09`).
     Blake2f {
         /// Fixed number of compression rounds. Random if `None`.
         #[serde(default)]

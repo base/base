@@ -79,7 +79,37 @@ transactions:
   - weight: 20
     type: calldata
     max_size: 256
+    repeat_count: 1  # Optional: repeat for compressible data
   - weight: 10
     type: precompile
     target: sha256
 ```
+
+#### Precompile Testing
+
+All EVM precompiles are supported for load testing:
+
+**Cryptographic**: `ecrecover`, `sha256`, `ripemd160`, `blake2f`
+**Elliptic Curve**: `bn254_add`, `bn254_mul`, `bn254_pairing`
+**Other**: `identity`, `modexp`, `kzg_point_evaluation`
+
+```yaml
+# Simple precompile call
+- type: precompile
+  target: sha256
+
+# Blake2f with custom rounds
+- type: precompile
+  target: blake2f
+  rounds: 50000
+
+# Multiple calls per transaction (requires looper_contract)
+- type: precompile
+  target: ecrecover
+  iterations: 50
+
+# When using iterations > 1, specify looper contract address:
+looper_contract: "0x..."  # Deployed PrecompileLooper contract
+```
+
+The `PrecompileLooper` contract enables batch testing by calling a precompile multiple times in a single transaction, useful for scenarios like multi-signature verification or repeated hash operations.

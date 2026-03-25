@@ -203,9 +203,10 @@ impl Payload for PrecompilePayload {
 
         let precompile_addr = precompile_address(&self.id);
 
-        if self.iterations > 1 && let Some(looper) = self.looper_contract {
-            let data =
-                Self::encode_looper_call(precompile_addr, &precompile_data, self.iterations);
+        if self.iterations > 1
+            && let Some(looper) = self.looper_contract
+        {
+            let data = Self::encode_looper_call(precompile_addr, &precompile_data, self.iterations);
             // Gas: base cost + (per-iteration cost * iterations) + some overhead for looper
             let gas_limit = 50_000 + single_gas * u64::from(self.iterations);
             return TransactionRequest::default()

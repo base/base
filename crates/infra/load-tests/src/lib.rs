@@ -3,10 +3,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod config;
-pub use config::{
-    PrecompileTarget, ScenarioConfig, ScenariosRegistry, TestConfig, TxTypeConfig, WeightedTxType,
-    WorkloadConfig,
-};
+pub use config::{PrecompileTarget, TestConfig, TxTypeConfig, WeightedTxType, WorkloadConfig};
 
 mod utils;
 pub use utils::{BaselineError, Result, init_tracing};
