@@ -9,7 +9,7 @@ pub enum NitroHostError {
     /// Enclave error (propagated from the enclave crate).
     #[error(transparent)]
     Enclave(#[from] NitroError),
-    /// Proof transport failed.
-    #[error("transport error: {0}")]
+    /// Transport or protocol error on the vsock channel.
+    #[error("transport: {0}")]
     Transport(String),
 }
