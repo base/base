@@ -1,7 +1,7 @@
 //! [`NodeActor`] implementation for an L1 chain watcher that polls for L1 block updates over HTTP
 //! RPC.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy_eips::BlockId;
 use alloy_primitives::Address;
@@ -132,12 +132,55 @@ where
                         // Build the [`SystemConfigUpdate`] from the log.
                         // If the update is an Unsafe block signer update, send the address
                         // to the block signer sender.
-                        let filter_address =  self.rollup_config.l1_system_config_address;
-                        let logs = self.l1_provider.get_logs(
-                            alloy_rpc_types_eth::Filter::new()
-                                .address(filter_address)
-                                .select(head_block_info.hash),
-                        ).await.map_err(|e| L1WatcherActorError::Fetcher(e.to_string()))?;
+                        let filter_address = self.rollup_config.l1_system_config_address;
+                        let filter = alloy_rpc_types_eth::Filter::new()
+                            .address(filter_address)
+                            .select(head_block_info.hash);
+
+                        // Retry `get_logs` up to 10 times with exponential backoff
+                        // to tolerate transient L1 RPC errors (e.g. "unknown block"
+                        // when the EL hasn't fully synced the announced head yet).
+                        const MAX_RETRIES: u32 = 10;
+                        const INITIAL_BACKOFF: Duration = Duration::from_millis(100);
+                        const MAX_BACKOFF: Duration = Duration::from_secs(2);
+
+                        let mut logs = None;
+                        let mut backoff = INITIAL_BACKOFF;
+                        for attempt in 1..=MAX_RETRIES {
+                            match self.l1_provider.get_logs(filter.clone()).await {
+                                Ok(l) => {
+                                    logs = Some(l);
+                                    break;
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        target: "l1_watcher",
+                                        error = %e,
+                                        block_hash = %head_block_info.hash,
+                                        block_number = head_block_info.number,
+                                        attempt,
+                                        "Failed to fetch logs for L1 head"
+                                    );
+                                    if attempt < MAX_RETRIES {
+                                        select! {
+                                            _ = cancel.cancelled() => return Ok(()),
+                                            _ = tokio::time::sleep(backoff) => {}
+                                        }
+                                        backoff = (backoff * 2).min(MAX_BACKOFF);
+                                    }
+                                }
+                            }
+                        }
+
+                        let Some(logs) = logs else {
+                            error!(
+                                target: "l1_watcher",
+                                block_hash = %head_block_info.hash,
+                                block_number = head_block_info.number,
+                                "Exhausted retries fetching logs for L1 head; skipping block"
+                            );
+                            continue;
+                        };
                         let ecotone_active = self.rollup_config.is_ecotone_active(head_block_info.timestamp);
                         for log in logs {
                             let sys_cfg_log = SystemConfigLog::new(log.into(), ecotone_active);
