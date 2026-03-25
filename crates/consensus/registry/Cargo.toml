@@ -30,7 +30,6 @@ spin.workspace = true
 derive_more = { workspace = true, features = ["from", "deref"] }
 
 [dev-dependencies]
-alloy-eips.workspace = true
 
 [[test]]
 name = "hardfork_consistency"
