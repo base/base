@@ -1,12 +1,13 @@
 use alloy_primitives::{Address, B256};
+use url::Url;
 
 /// A prover instance discovered from the infrastructure layer.
 #[derive(Debug, Clone)]
 pub struct ProverInstance {
     /// EC2 instance ID (e.g. `i-0abc123def456`).
     pub instance_id: String,
-    /// Private IP and port for HTTP connection (e.g. `10.0.1.5:8000`).
-    pub endpoint: String,
+    /// HTTP endpoint URL for the prover (e.g. `http://10.0.1.5:8000/`).
+    pub endpoint: Url,
     /// Current health status of the instance.
     pub health_status: InstanceHealthStatus,
 }

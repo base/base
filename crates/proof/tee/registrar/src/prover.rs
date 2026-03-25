@@ -8,6 +8,7 @@ use base_proof_primitives::EnclaveApiClient;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use tracing::debug;
+use url::Url;
 
 use crate::{RegistrarError, Result, SignerClient};
 
@@ -25,8 +26,8 @@ use crate::{RegistrarError, Result, SignerClient};
 pub struct ProverClient {
     /// Timeout applied to all JSON-RPC requests.
     timeout: Duration,
-    /// Cached HTTP clients keyed by endpoint (`host:port`).
-    clients: Mutex<HashMap<String, HttpClient>>,
+    /// Cached HTTP clients keyed by endpoint URL.
+    clients: Mutex<HashMap<Url, HttpClient>>,
 }
 
 impl std::fmt::Debug for ProverClient {
@@ -47,22 +48,20 @@ impl ProverClient {
     /// Returns a cached `jsonrpsee` HTTP client for `endpoint`, building one
     /// on first access.
     ///
-    /// `endpoint` is a `host:port` string (e.g. `"10.0.1.5:8000"`).
-    /// An `http://` scheme is prepended automatically.
-    fn get_or_build_client(&self, endpoint: &str) -> Result<HttpClient> {
+    /// The URL must include a scheme (e.g. `http://10.0.1.5:8000`).
+    fn get_or_build_client(&self, endpoint: &Url) -> Result<HttpClient> {
         let mut cache = self.clients.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(client) = cache.get(endpoint) {
             return Ok(client.clone());
         }
-        let url = format!("http://{endpoint}");
         let client = HttpClientBuilder::default()
             .request_timeout(self.timeout)
-            .build(&url)
+            .build(endpoint.as_str())
             .map_err(|e| RegistrarError::ProverClient {
                 instance: endpoint.to_string(),
                 source: Box::new(e),
             })?;
-        cache.insert(endpoint.to_string(), client.clone());
+        cache.insert(endpoint.clone(), client.clone());
         Ok(client)
     }
 
@@ -84,7 +83,7 @@ impl ProverClient {
 
 #[async_trait]
 impl SignerClient for ProverClient {
-    async fn signer_public_key(&self, endpoint: &str) -> Result<Vec<u8>> {
+    async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<u8>> {
         debug!(endpoint = %endpoint, "fetching signer public key");
         let client = self.get_or_build_client(endpoint)?;
         client.signer_public_key().await.map_err(|e| RegistrarError::ProverClient {
@@ -95,7 +94,7 @@ impl SignerClient for ProverClient {
 
     async fn signer_attestation(
         &self,
-        endpoint: &str,
+        endpoint: &Url,
         user_data: Option<Vec<u8>>,
         nonce: Option<Vec<u8>>,
     ) -> Result<Vec<u8>> {

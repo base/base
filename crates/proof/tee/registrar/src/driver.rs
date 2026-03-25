@@ -395,6 +395,8 @@ mod tests {
     use rstest::rstest;
     use tokio_util::sync::CancellationToken;
 
+    use url::Url;
+
     use super::*;
     use crate::{
         InstanceHealthStatus, RegistryClient, Result, SignerClient, registry::ITEEProverRegistry,
@@ -462,11 +464,14 @@ mod tests {
         }
     }
 
-    /// Builds a [`ProverInstance`] with the given endpoint and health status.
-    fn instance(endpoint: &str, status: InstanceHealthStatus) -> ProverInstance {
+    /// Builds a [`ProverInstance`] with the given host:port and health status.
+    ///
+    /// Prepends `http://` to form a valid URL automatically.
+    fn instance(host_port: &str, status: InstanceHealthStatus) -> ProverInstance {
+        let endpoint = Url::parse(&format!("http://{host_port}")).unwrap();
         ProverInstance {
-            instance_id: format!("i-{endpoint}"),
-            endpoint: endpoint.to_string(),
+            instance_id: format!("i-{host_port}"),
+            endpoint,
             health_status: status,
         }
     }
@@ -509,17 +514,21 @@ mod tests {
     /// an unreachable instance).
     #[derive(Debug)]
     struct MockSignerClient {
-        /// Maps endpoint → uncompressed public key bytes.
-        keys: HashMap<String, Vec<u8>>,
+        /// Maps endpoint URL → uncompressed public key bytes.
+        keys: HashMap<Url, Vec<u8>>,
     }
 
     impl MockSignerClient {
-        /// Creates a mock with the given endpoint-to-private-key mappings.
+        /// Creates a mock with the given host:port-to-private-key mappings.
         /// The public key is derived automatically from each private key.
+        /// An `http://` scheme is prepended to each host:port string.
         fn from_keys(entries: &[(&str, &[u8; 32])]) -> Self {
             let keys = entries
                 .iter()
-                .map(|(ep, pk)| ((*ep).to_string(), public_key_from_private(pk)))
+                .map(|(ep, pk)| {
+                    let url = Url::parse(&format!("http://{ep}")).unwrap();
+                    (url, public_key_from_private(pk))
+                })
                 .collect();
             Self { keys }
         }
@@ -527,7 +536,7 @@ mod tests {
 
     #[async_trait]
     impl SignerClient for MockSignerClient {
-        async fn signer_public_key(&self, endpoint: &str) -> Result<Vec<u8>> {
+        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<u8>> {
             self.keys.get(endpoint).cloned().ok_or_else(|| RegistrarError::ProverClient {
                 instance: endpoint.to_string(),
                 source: "unreachable".into(),
@@ -536,7 +545,7 @@ mod tests {
 
         async fn signer_attestation(
             &self,
-            _endpoint: &str,
+            _endpoint: &Url,
             _user_data: Option<Vec<u8>>,
             _nonce: Option<Vec<u8>>,
         ) -> Result<Vec<u8>> {
@@ -611,13 +620,13 @@ mod tests {
 
     #[async_trait]
     impl SignerClient for StubSignerClient {
-        async fn signer_public_key(&self, _endpoint: &str) -> Result<Vec<u8>> {
+        async fn signer_public_key(&self, _endpoint: &Url) -> Result<Vec<u8>> {
             unimplemented!("not used in deregister_orphans tests")
         }
 
         async fn signer_attestation(
             &self,
-            _endpoint: &str,
+            _endpoint: &Url,
             _user_data: Option<Vec<u8>>,
             _nonce: Option<Vec<u8>>,
         ) -> Result<Vec<u8>> {
