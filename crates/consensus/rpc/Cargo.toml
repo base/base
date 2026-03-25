@@ -16,6 +16,7 @@ workspace = true
 base-macros.workspace = true
 base-consensus-gossip.workspace = true
 base-consensus-engine.workspace = true
+base-consensus-safedb.workspace = true
 base-protocol = { workspace = true, features = ["serde", "std"] }
 base-consensus-genesis = { workspace = true, features = ["serde", "std"] }
 

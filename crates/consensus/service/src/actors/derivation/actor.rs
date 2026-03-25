@@ -1,11 +1,15 @@
 //! [`NodeActor`] implementation for the derivation sub-routine.
 
+use std::sync::Arc;
+
+use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_consensus_derive::{
     ActivationSignal, Pipeline, PipelineError, PipelineErrorKind, ResetError, ResetSignal, Signal,
     SignalReceiver, StepResult,
 };
-use base_protocol::OpAttributesWithParent;
+use base_consensus_safedb::SafeHeadListener;
+use base_protocol::{BlockInfo, OpAttributesWithParent};
 use thiserror::Error;
 use tokio::{select, sync::mpsc};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
@@ -42,6 +46,8 @@ where
     derivation_state_machine: DerivationStateMachine,
     /// The [`L2Finalizer`] tracks derived L2 blocks awaiting finalization.
     pub(crate) finalizer: L2Finalizer,
+    /// The safe head database listener for recording L1→L2 safe head mappings.
+    safe_head_listener: Arc<dyn SafeHeadListener>,
 }
 
 impl<DerivationEngineClient_, PipelineSignalReceiver> CancellableContext
@@ -67,6 +73,7 @@ where
         cancellation_token: CancellationToken,
         inbound_request_rx: mpsc::Receiver<DerivationActorRequest>,
         pipeline: PipelineSignalReceiver,
+        safe_head_listener: Arc<dyn SafeHeadListener>,
     ) -> Self {
         Self {
             cancellation_token,
@@ -75,6 +82,7 @@ where
             engine_client,
             derivation_state_machine: DerivationStateMachine::default(),
             finalizer: L2Finalizer::default(),
+            safe_head_listener,
         }
     }
 
@@ -84,6 +92,22 @@ where
             base_macros::set!(counter, Metrics::DERIVATION_L1_ORIGIN, _l1_origin.number);
             // Clear the finalization queue on reset.
             self.finalizer.clear();
+
+            // Reset the SafeDB on pipeline reset.
+            //
+            // On the very first reset (before any block is confirmed),
+            // `last_confirmed_safe_head()` returns `L2BlockInfo::default()` (genesis / all
+            // zeros), which causes the DB to wipe all entries and re-anchor at L1=0. This
+            // is the correct full-truncation behaviour for a genesis reset.
+            //
+            // If this fails (disk full, corrupted DB), derivation continues but the DB may
+            // be in an inconsistent state — subsequent RPC queries could return stale data.
+            if let Err(e) = self
+                .safe_head_listener
+                .safe_head_reset(self.derivation_state_machine.last_confirmed_safe_head())
+            {
+                error!(target: "derivation", error = %e, "failed to reset safe head db — DB may be inconsistent");
+            }
         }
 
         match self.pipeline.signal(signal).await {
@@ -219,6 +243,22 @@ where
             }
             DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(safe_head) => {
                 info!(target: "derivation", safe_head = ?*safe_head, "Received safe head from engine.");
+
+                // Record the confirmed safe head in the SafeDB.
+                // `L2BlockInfo.l1_origin` is a `BlockNumHash` — only hash and number are
+                // available here. `parent_hash` and `timestamp` are not carried in the
+                // engine's safe-head notification, so they are zeroed. SafeDB only stores
+                // the hash and number, so the zeroed fields have no effect.
+                let l1_origin = BlockInfo {
+                    number: safe_head.l1_origin.number,
+                    hash: safe_head.l1_origin.hash,
+                    parent_hash: B256::ZERO,
+                    timestamp: 0,
+                };
+                if let Err(e) = self.safe_head_listener.safe_head_updated(*safe_head, l1_origin) {
+                    error!(target: "derivation", error = %e, "failed to record safe head update");
+                }
+
                 self.derivation_state_machine
                     .update(&DerivationStateUpdate::NewAttributesConfirmed(safe_head))?;
 
@@ -226,6 +266,20 @@ where
             }
             DerivationActorRequest::ProcessEngineSyncCompletionRequest(safe_head) => {
                 info!(target: "derivation", "Engine finished syncing, starting derivation.");
+
+                // Reset SafeDB when EL sync completes — the safe head may have advanced
+                // without derivation, making prior SafeDB entries inaccurate.
+                //
+                // Note: this only deletes entries at or after the reset point and re-anchors
+                // there. It does NOT backfill entries for L1 blocks between genesis and the
+                // reset's L1 origin. Queries for those earlier L1 blocks will return
+                // `NotFound` until derivation populates them incrementally.
+                if let Err(e) = self.safe_head_listener.safe_head_reset(*safe_head) {
+                    error!(target: "derivation", error = %e, "failed to reset safe head db on EL sync completion");
+                } else {
+                    debug!(target: "derivation", l1_origin = safe_head.l1_origin.number, "reset safedb on EL sync; entries before this L1 origin are not backfilled");
+                }
+
                 self.derivation_state_machine
                     .update(&DerivationStateUpdate::ELSyncCompleted(safe_head))?;
 

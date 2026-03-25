@@ -21,6 +21,7 @@ base-consensus-gossip.workspace = true
 base-consensus-engine.workspace = true
 base-consensus-sources.workspace = true
 base-consensus-derive.workspace = true
+base-consensus-safedb.workspace = true
 base-consensus-genesis.workspace = true
 base-consensus-providers.workspace = true
 base-consensus-rpc = { workspace = true, features = ["client"] }

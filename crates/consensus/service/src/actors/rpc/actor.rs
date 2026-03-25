@@ -1,6 +1,6 @@
 //! RPC Server Actor
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use base_consensus_gossip::P2pRpcRequest;
@@ -9,6 +9,7 @@ use base_consensus_rpc::{
     HealthzRpc, L1WatcherQueries, NetworkAdminQuery, OpP2PApiServer, P2pRpc, RollupNodeApiServer,
     RollupRpc, RpcBuilder, SequencerAdminAPIClient, WsRPC, WsServer,
 };
+use base_consensus_safedb::SafeDBReader;
 use base_health::EthHealthCheckLayer;
 use derive_more::Constructor;
 use jsonrpsee::{
@@ -32,6 +33,7 @@ where
 
     engine_rpc_client: EngineRpcClient_,
     sequencer_admin_rpc_client: Option<SequencerAdminApiClient_>,
+    safe_db_reader: Arc<dyn SafeDBReader>,
 }
 
 /// The communication context used by the RPC actor.
@@ -117,7 +119,11 @@ where
         }
 
         // Create context for communication between actors.
-        let rollup_rpc = RollupRpc::new(self.engine_rpc_client.clone(), l1_watcher_queries);
+        let rollup_rpc = RollupRpc::new(
+            self.engine_rpc_client.clone(),
+            l1_watcher_queries,
+            Arc::clone(&self.safe_db_reader),
+        );
         modules.merge(rollup_rpc.into_rpc())?;
 
         // Add development RPC module for engine state introspection if enabled
