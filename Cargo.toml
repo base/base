@@ -214,6 +214,7 @@ base-consensus-gossip = { path = "crates/consensus/gossip", default-features = f
 base-consensus-sources = { path = "crates/consensus/sources", default-features = false }
 base-consensus-genesis = { path = "crates/consensus/genesis", default-features = false }
 base-consensus-registry = { path = "crates/consensus/registry", default-features = false }
+base-consensus-safedb = { path = "crates/consensus/safedb" }
 base-consensus-upgrades = { path = "crates/consensus/upgrades", default-features = false }
 base-consensus-providers = { path = "crates/consensus/providers-alloy", default-features = false }
 
@@ -560,6 +561,7 @@ rand_08 = { package = "rand", version = "0.8" }
 zip = { version = "8.1", default-features = false }
 hashbrown = { version = "0.16", features = ["rayon"] }
 brotli = { version = "8.0.2", default-features = false }
+redb = "2"
 rocksdb = { version = "0.24", default-features = false }
 rdkafka = { version = "0.39", default-features = false }
 thiserror = { version = "2.0", default-features = false }

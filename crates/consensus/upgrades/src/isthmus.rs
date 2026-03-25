@@ -11,7 +11,7 @@ use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
 use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
 use base_protocol::{Deployers, Predeploys, SystemAddresses};
 
-use crate::Hardfork;
+use crate::{Hardfork, UpgradeCalldata};
 
 /// The Isthmus network upgrade transactions.
 #[derive(Debug, Default, Clone, Copy)]
@@ -173,7 +173,7 @@ impl Isthmus {
                 value: U256::ZERO,
                 gas_limit: 50_000,
                 is_system_transaction: false,
-                input: super::upgrade_to_calldata(Self::NEW_L1_BLOCK),
+                input: UpgradeCalldata::build(Self::NEW_L1_BLOCK),
             },
             TxDeposit {
                 source_hash: Self::update_gas_price_oracle_source(),
@@ -183,7 +183,7 @@ impl Isthmus {
                 value: U256::ZERO,
                 gas_limit: 50_000,
                 is_system_transaction: false,
-                input: super::upgrade_to_calldata(Self::GAS_PRICE_ORACLE),
+                input: UpgradeCalldata::build(Self::GAS_PRICE_ORACLE),
             },
             TxDeposit {
                 source_hash: Self::update_operator_fee_vault_source(),
@@ -193,7 +193,7 @@ impl Isthmus {
                 value: U256::ZERO,
                 gas_limit: 50_000,
                 is_system_transaction: false,
-                input: super::upgrade_to_calldata(Self::OPERATOR_FEE_VAULT),
+                input: UpgradeCalldata::build(Self::OPERATOR_FEE_VAULT),
             },
             TxDeposit {
                 source_hash: Self::enable_isthmus_source(),

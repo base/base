@@ -20,6 +20,9 @@ pub use storage::StoragePayload;
 mod precompile;
 pub use precompile::{PrecompilePayload, parse_precompile_id};
 
+mod looper;
+pub use looper::PrecompileLooper;
+
 mod uniswap;
 pub use uniswap::{UniswapV2Payload, UniswapV3Payload};
 

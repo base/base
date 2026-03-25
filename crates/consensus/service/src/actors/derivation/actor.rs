@@ -1,11 +1,15 @@
 //! [`NodeActor`] implementation for the derivation sub-routine.
 
+use std::sync::Arc;
+
+use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_consensus_derive::{
     ActivationSignal, Pipeline, PipelineError, PipelineErrorKind, ResetError, ResetSignal, Signal,
     SignalReceiver, StepResult,
 };
-use base_protocol::OpAttributesWithParent;
+use base_consensus_safedb::SafeHeadListener;
+use base_protocol::{BlockInfo, OpAttributesWithParent};
 use thiserror::Error;
 use tokio::{select, sync::mpsc};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
@@ -42,6 +46,17 @@ where
     derivation_state_machine: DerivationStateMachine,
     /// The [`L2Finalizer`] tracks derived L2 blocks awaiting finalization.
     pub(crate) finalizer: L2Finalizer,
+    /// The safe head database listener for recording L1→L2 safe head mappings.
+    safe_head_listener: Arc<dyn SafeHeadListener>,
+    /// The L1 inclusion block for the most recently sent (unconfirmed) payload attributes.
+    ///
+    /// Set in [`attempt_derivation`] when attributes are dispatched to the engine; consumed in
+    /// [`ProcessEngineSafeHeadUpdateRequest`] to key the `SafeDB` entry by inclusion block rather
+    /// than epoch origin. `None` until the first derivation step, or after the value is consumed.
+    ///
+    /// [`attempt_derivation`]: Self::attempt_derivation
+    /// [`ProcessEngineSafeHeadUpdateRequest`]: DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest
+    pending_derived_from: Option<BlockInfo>,
 }
 
 impl<DerivationEngineClient_, PipelineSignalReceiver> CancellableContext
@@ -67,6 +82,7 @@ where
         cancellation_token: CancellationToken,
         inbound_request_rx: mpsc::Receiver<DerivationActorRequest>,
         pipeline: PipelineSignalReceiver,
+        safe_head_listener: Arc<dyn SafeHeadListener>,
     ) -> Self {
         Self {
             cancellation_token,
@@ -75,6 +91,8 @@ where
             engine_client,
             derivation_state_machine: DerivationStateMachine::default(),
             finalizer: L2Finalizer::default(),
+            safe_head_listener,
+            pending_derived_from: None,
         }
     }
 
@@ -84,6 +102,26 @@ where
             base_macros::set!(counter, Metrics::DERIVATION_L1_ORIGIN, _l1_origin.number);
             // Clear the finalization queue on reset.
             self.finalizer.clear();
+            // Discard any in-flight derived_from so that a stale pre-reset L1 inclusion
+            // block is never recorded for a post-reset safe head confirmation.
+            self.pending_derived_from = None;
+
+            // Reset the SafeDB on pipeline reset.
+            //
+            // On the very first reset (before any block is confirmed),
+            // `last_confirmed_safe_head()` returns `L2BlockInfo::default()` (genesis / all
+            // zeros), which causes the DB to wipe all entries and re-anchor at L1=0. This
+            // is the correct full-truncation behaviour for a genesis reset.
+            //
+            // If this fails (disk full, corrupted DB), derivation continues but the DB may
+            // be in an inconsistent state — subsequent RPC queries could return stale data.
+            if let Err(e) = self
+                .safe_head_listener
+                .safe_head_reset(self.derivation_state_machine.last_confirmed_safe_head())
+                .await
+            {
+                error!(target: "derivation", error = %e, "failed to reset safe head db — DB may be inconsistent");
+            }
         }
 
         match self.pipeline.signal(signal).await {
@@ -219,6 +257,26 @@ where
             }
             DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(safe_head) => {
                 info!(target: "derivation", safe_head = ?*safe_head, "Received safe head from engine.");
+
+                // Key the SafeDB entry by the L1 inclusion block (the L1 block whose data
+                // contained the batch), not the L2 block's epoch origin. This gives finer
+                // granularity: each batch's outcome is tracked at the L1 block where it landed.
+                //
+                // `pending_derived_from` is set in `attempt_derivation` just before the attrs
+                // are sent to the engine. It is `None` only for EL-sync safe heads that were
+                // not produced by local derivation; in that case fall back to epoch origin.
+                let l1_block = self.pending_derived_from.take().unwrap_or(BlockInfo {
+                    number: safe_head.l1_origin.number,
+                    hash: safe_head.l1_origin.hash,
+                    parent_hash: B256::ZERO,
+                    timestamp: 0,
+                });
+                if let Err(e) =
+                    self.safe_head_listener.safe_head_updated(*safe_head, l1_block).await
+                {
+                    error!(target: "derivation", error = %e, "failed to record safe head update");
+                }
+
                 self.derivation_state_machine
                     .update(&DerivationStateUpdate::NewAttributesConfirmed(safe_head))?;
 
@@ -226,6 +284,23 @@ where
             }
             DerivationActorRequest::ProcessEngineSyncCompletionRequest(safe_head) => {
                 info!(target: "derivation", "Engine finished syncing, starting derivation.");
+
+                // Reset SafeDB when EL sync completes — the safe head may have advanced
+                // without derivation, making prior SafeDB entries inaccurate.
+                //
+                // Note: this only deletes entries at or after reset_safe_head.l1_origin and
+                // re-anchors there. Entries written by prior derivation runs at L1 blocks
+                // *before* l1_origin are preserved. If those earlier entries were produced on a
+                // now-diverged chain (e.g. a reorg that triggered EL sync), they are stale;
+                // derivation will overwrite them incrementally as it re-derives from genesis.
+                // Queries for L1 blocks before l1_origin may return stale data until
+                // derivation catches up to those blocks.
+                if let Err(e) = self.safe_head_listener.safe_head_reset(*safe_head).await {
+                    error!(target: "derivation", error = %e, "failed to reset safe head db on EL sync completion");
+                } else {
+                    debug!(target: "derivation", l1_origin = safe_head.l1_origin.number, "reset safedb on EL sync; entries before this L1 origin are not backfilled");
+                }
+
                 self.derivation_state_machine
                     .update(&DerivationStateUpdate::ELSyncCompleted(safe_head))?;
 
@@ -267,6 +342,10 @@ where
 
         // Enqueue the payload attributes for finalization tracking.
         self.finalizer.enqueue_for_finalization(&payload_attributes);
+
+        // Remember the L1 inclusion block so that when the engine confirms this safe head we
+        // can key the SafeDB entry by inclusion block rather than epoch origin.
+        self.pending_derived_from = payload_attributes.derived_from;
 
         // Send payload attributes out for processing.
         self.engine_client

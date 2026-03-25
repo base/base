@@ -13,6 +13,5 @@ async fn main() -> eyre::Result<()> {
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
-    eprintln!("base-prover-nitro-enclave requires Linux (AWS Nitro Enclaves)");
-    std::process::exit(1);
+    panic!("base-prover-nitro-enclave only supports Linux (AWS Nitro Enclaves)");
 }

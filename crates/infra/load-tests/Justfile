@@ -1,4 +1,4 @@
-# Load test runner - transaction spamming for network load testing
+# Load test runner - transaction submission for network load testing
 #
 # Usage:
 #   just load-test devnet                         - Load test local devnet (uses Anvil Account #1)

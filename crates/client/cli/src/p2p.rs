@@ -347,7 +347,22 @@ impl P2PArgs {
 
             let mut provider = AlloyChainProvider::new_http(l1_eth_rpc, 1024);
             let latest_block_num = provider.latest_block_number().await?;
-            let block_info = provider.block_info_by_number(latest_block_num).await?;
+
+            // The L1 EL may report a latest block number that it has not fully executed
+            // yet (race between header sync and execution). Retry once with the previous
+            // block to avoid a fatal startup crash on transient L1 RPC errors.
+            let block_info = match provider.block_info_by_number(latest_block_num).await {
+                Ok(info) => info,
+                Err(err) => {
+                    warn!(
+                        target: "p2p::flags",
+                        block_number = latest_block_num,
+                        error = %err,
+                        "Failed to fetch latest L1 block info, retrying with previous block"
+                    );
+                    provider.block_info_by_number(latest_block_num.saturating_sub(1)).await?
+                }
+            };
 
             // Fetch the unsafe block signer address from the system config.
             let unsafe_block_signer_address = provider

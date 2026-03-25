@@ -38,7 +38,7 @@ base-consensus-providers = { workspace = true, features = ["metrics"] }
 
 # cli
 strum.workspace = true
-clap.workspace = true
+clap = { workspace = true, features = ["env"] }
 
 # tracing
 tracing = { workspace = true, features = ["std"] }

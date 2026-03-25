@@ -1,5 +1,5 @@
 //! Contains the [`RollupNode`] implementation.
-use std::{ops::Not as _, sync::Arc, time::Duration};
+use std::{ops::Not as _, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
@@ -13,6 +13,7 @@ use base_consensus_providers::{
     OnlinePipeline,
 };
 use base_consensus_rpc::RpcBuilder;
+use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
 use base_protocol::L2BlockInfo;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -91,6 +92,15 @@ pub struct RollupNode {
     pub(crate) sequencer_config: SequencerConfig,
     /// Optional derivation delegate provider.
     pub(crate) derivation_delegate_provider: Option<DerivationDelegateClient>,
+    /// Optional path to the safe head database.
+    ///
+    /// When set, the node records L1→L2 safe head mappings to a persistent redb database and
+    /// serves them via the `optimism_safeHeadAtL1Block` RPC endpoint. When `None`, safe head
+    /// tracking is disabled and that RPC method returns an error.
+    ///
+    /// If the path is set but the database cannot be opened (e.g., bad permissions, disk
+    /// error, or corrupted file), the node **fails to start** with an error.
+    pub(crate) safedb_path: Option<PathBuf>,
 }
 
 /// A RollupNode-level derivation actor wrapper.
@@ -299,6 +309,31 @@ impl RollupNode {
     {
         let cancellation = CancellationToken::new();
 
+        // Build the safe head DB pair. Both actors share the same underlying DB via Arc.
+        //
+        // In delegate mode the local derivation actor is replaced by a `DelegateDerivationActor`
+        // that never calls `safe_head_updated`, so opening a real SafeDB would leave it
+        // permanently empty and cause the RPC to return `Disabled` for every query.
+        // Force `DisabledSafeDB` in that case regardless of `safedb_path`.
+        let (safe_head_listener, safe_db_reader): (
+            Arc<dyn SafeHeadListener>,
+            Arc<dyn SafeDBReader>,
+        ) = if self.derivation_delegate_provider.is_none() {
+            if let Some(path) = &self.safedb_path {
+                let db = Arc::new(
+                    SafeDB::open(path)
+                        .map_err(|e| format!("failed to open safe head database: {e}"))?,
+                );
+                (Arc::clone(&db) as Arc<dyn SafeHeadListener>, db as Arc<dyn SafeDBReader>)
+            } else {
+                let db = Arc::new(DisabledSafeDB);
+                (Arc::clone(&db) as Arc<dyn SafeHeadListener>, db as Arc<dyn SafeDBReader>)
+            }
+        } else {
+            let db = Arc::new(DisabledSafeDB);
+            (Arc::clone(&db) as Arc<dyn SafeHeadListener>, db as Arc<dyn SafeDBReader>)
+        };
+
         let (derivation_actor_request_tx, derivation_actor_request_rx) = mpsc::channel(1024);
 
         let (engine_actor_request_tx, engine_actor_request_rx) = mpsc::channel(1024);
@@ -338,6 +373,7 @@ impl RollupNode {
                     cancellation.clone(),
                     derivation_actor_request_rx,
                     pipeline,
+                    safe_head_listener,
                 )))
             };
 
@@ -448,6 +484,7 @@ impl RollupNode {
                 b,
                 QueuedEngineRpcClient::new(engine_actor_request_tx.clone()),
                 sequencer_admin_client,
+                safe_db_reader,
             )
         });
 

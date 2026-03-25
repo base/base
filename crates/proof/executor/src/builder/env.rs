@@ -7,7 +7,7 @@ use alloy_primitives::U256;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_consensus_genesis::RollupConfig;
 use base_proof_mpt::TrieHinter;
-use base_revm::OpSpecId;
+use base_revm::{OpSpecId, RollupConfigExt};
 use revm::{
     context::{BlockEnv, CfgEnv},
     context_interface::block::BlobExcessGasAndPrice,

@@ -95,6 +95,8 @@ pub struct ProposerConfig {
     /// Maximum number of concurrent proof tasks.
     /// When > 1, uses the parallel proving pipeline instead of the sequential driver.
     pub max_parallel_proofs: usize,
+    /// Maximum number of games to scan backwards when recovering state on startup.
+    pub max_game_recovery_lookback: u64,
 }
 
 impl ProposerConfig {
@@ -110,6 +112,14 @@ impl ProposerConfig {
         if cli.proposer.max_parallel_proofs == 0 {
             return Err(ConfigError::OutOfRange {
                 field: "max-parallel-proofs",
+                constraint: "at least 1",
+                value: "0".to_string(),
+            });
+        }
+
+        if cli.proposer.max_game_recovery_lookback == 0 {
+            return Err(ConfigError::OutOfRange {
+                field: "max-game-recovery-lookback",
                 constraint: "at least 1",
                 value: "0".to_string(),
             });
@@ -175,6 +185,7 @@ impl ProposerConfig {
             skip_tls_verify: cli.proposer.skip_tls_verify,
             wait_node_sync: cli.proposer.wait_node_sync,
             max_parallel_proofs: cli.proposer.max_parallel_proofs,
+            max_game_recovery_lookback: cli.proposer.max_game_recovery_lookback,
             log: LogConfig::from(cli.logging),
             metrics: cli.metrics.into(),
             health_addr: cli.health.socket_addr(),
@@ -248,6 +259,7 @@ mod tests {
                     signer_address: None,
                 },
                 max_parallel_proofs: 1,
+                max_game_recovery_lookback: 5000,
                 tx_manager: TxManagerCli::default(),
             },
             logging: LogArgs {
@@ -495,5 +507,31 @@ mod tests {
         cli.proposer.max_parallel_proofs = 8;
         let config = ProposerConfig::from_cli(cli).unwrap();
         assert_eq!(config.max_parallel_proofs, 8);
+    }
+
+    #[test]
+    fn test_max_game_recovery_lookback_zero_rejected() {
+        let mut cli = minimal_cli();
+        cli.proposer.max_game_recovery_lookback = 0;
+        let result = ProposerConfig::from_cli(cli);
+        assert!(matches!(
+            result,
+            Err(ConfigError::OutOfRange { field: "max-game-recovery-lookback", .. })
+        ));
+    }
+
+    #[test]
+    fn test_max_game_recovery_lookback_default() {
+        let cli = minimal_cli();
+        let config = ProposerConfig::from_cli(cli).unwrap();
+        assert_eq!(config.max_game_recovery_lookback, 5000);
+    }
+
+    #[test]
+    fn test_max_game_recovery_lookback_custom() {
+        let mut cli = minimal_cli();
+        cli.proposer.max_game_recovery_lookback = 10000;
+        let config = ProposerConfig::from_cli(cli).unwrap();
+        assert_eq!(config.max_game_recovery_lookback, 10000);
     }
 }

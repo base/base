@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use alloy_primitives::utils::format_ether;
 use base_load_tests::{LoadRunner, RpcClient, TestConfig, init_tracing};
 use eyre::{Result, bail};
 
@@ -13,7 +14,7 @@ async fn main() -> Result<()> {
         Some(path) => PathBuf::from(path),
         None => match option_env!("CARGO_MANIFEST_DIR") {
             Some(dir) => PathBuf::from(dir).join("examples/devnet.yaml"),
-            None => bail!("usage: spam <config.yaml>"),
+            None => bail!("usage: load_test <config.yaml>"),
         },
     };
 
@@ -21,7 +22,7 @@ async fn main() -> Result<()> {
         bail!("config file not found: {}", config_path.display());
     }
 
-    println!("=== Baseline Transaction Spammer ===");
+    println!("=== Base Load Test Runner ===");
 
     let test_config = TestConfig::load(&config_path)?;
 
@@ -45,10 +46,11 @@ async fn main() -> Result<()> {
 
     let mut runner = LoadRunner::new(load_config)?;
 
-    println!("Funding test accounts...");
     let funding_key = TestConfig::funder_key()?;
     let funding_amount = test_config.parse_funding_amount()?;
-    runner.fund_accounts(funding_key, funding_amount).await?;
+
+    println!("Funding test accounts...");
+    runner.fund_accounts(funding_key.clone(), funding_amount).await?;
     println!("Accounts funded.");
     println!();
 
@@ -79,6 +81,11 @@ async fn main() -> Result<()> {
         summary.latency.max
     );
     println!("Gas: total={}  avg/tx={}", summary.gas.total_gas, summary.gas.avg_gas);
+    println!();
+
+    println!("Draining accounts back to funder...");
+    let drained = runner.drain_accounts(funding_key).await?;
+    println!("Drained {} ETH back to funder.", format_ether(drained));
 
     Ok(())
 }

@@ -20,6 +20,9 @@ pub enum L1WatcherActorError<T> {
     /// Stream ended unexpectedly.
     #[error("Stream ended unexpectedly")]
     StreamEnded,
+    /// All retries were exhausted fetching logs for a block.
+    #[error("retries exhausted fetching logs")]
+    RetriesExhausted,
     /// Derivation client error.
     #[error("derivation client error: {0}")]
     DerivationClientError(#[from] DerivationClientError),

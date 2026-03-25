@@ -196,6 +196,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     // ── 6. Create proving pipeline ─────────────────────────────────────────
     let pipeline_config = PipelineConfig {
         max_parallel_proofs: config.max_parallel_proofs,
+        max_game_recovery_lookback: config.max_game_recovery_lookback,
         max_retries: 3,
         v1_hardfork_timestamp,
         driver: DriverConfig {
