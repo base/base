@@ -46,7 +46,7 @@ impl Default for DriverConfig {
 ///
 /// This is either a game found in the `DisputeGameFactory` or the
 /// anchor root from the `AnchorStateRegistry` when no games exist.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct RecoveredState {
     /// Factory index of the game, or [`crate::NO_PARENT_INDEX`] for anchor state.
     pub game_index: u32,

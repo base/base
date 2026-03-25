@@ -114,18 +114,47 @@ impl AnchorStateRegistryClient for MockAnchorStateRegistry {
     }
 }
 
-/// Mock dispute game factory with configurable game count.
+/// Mock dispute game factory with configurable per-index game data.
+///
+/// When `games` is empty, the factory reports `game_count_override` (defaulting
+/// to 0).  When `games` is populated, `game_count` returns the length of the
+/// vector and `game_at_index` returns the corresponding entry.
+///
+/// `game_count_override` can be set to a value different from `games.len()` to
+/// simulate scenarios where new games appear between successive calls (e.g.
+/// caching tests).
 pub(crate) struct MockDisputeGameFactory {
-    pub game_count: u64,
+    pub games: Vec<GameAtIndex>,
+    pub game_count_override: Option<u64>,
+}
+
+impl MockDisputeGameFactory {
+    /// Creates a factory with no games and the given game count.
+    ///
+    /// All `game_at_index` calls return a dummy game with `game_type = u32::MAX`.
+    pub(crate) fn with_count(game_count: u64) -> Self {
+        Self { games: Vec::new(), game_count_override: Some(game_count) }
+    }
+
+    /// Creates a factory backed by an explicit list of games.
+    pub(crate) fn with_games(games: Vec<GameAtIndex>) -> Self {
+        Self { games, game_count_override: None }
+    }
 }
 
 #[async_trait]
 impl DisputeGameFactoryClient for MockDisputeGameFactory {
     async fn game_count(&self) -> Result<u64, ContractError> {
-        Ok(self.game_count)
+        Ok(self.game_count_override.unwrap_or(self.games.len() as u64))
     }
-    async fn game_at_index(&self, _: u64) -> Result<GameAtIndex, ContractError> {
-        Ok(GameAtIndex { game_type: u32::MAX, timestamp: 0, proxy: Address::ZERO })
+    async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
+        if self.games.is_empty() {
+            return Ok(GameAtIndex { game_type: u32::MAX, timestamp: 0, proxy: Address::ZERO });
+        }
+        self.games
+            .get(index as usize)
+            .cloned()
+            .ok_or_else(|| ContractError::Validation(format!("index {index} out of bounds")))
     }
     async fn init_bonds(&self, _: u32) -> Result<U256, ContractError> {
         Ok(U256::ZERO)
@@ -135,13 +164,34 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
     }
 }
 
-/// Mock aggregate verifier that returns fixed values.
-pub(crate) struct MockAggregateVerifier;
+/// Mock aggregate verifier with configurable per-address game info.
+///
+/// When `game_info_map` is empty, all queries return a default `GameInfo`.
+/// When populated, `game_info` looks up the address in the map.
+pub(crate) struct MockAggregateVerifier {
+    pub game_info_map: std::collections::HashMap<Address, GameInfo>,
+}
+
+impl MockAggregateVerifier {
+    /// Creates a verifier that returns default values for all addresses.
+    pub(crate) fn empty() -> Self {
+        Self { game_info_map: std::collections::HashMap::new() }
+    }
+
+    /// Creates a verifier backed by an explicit address-to-info map.
+    pub(crate) fn with_game_info(map: std::collections::HashMap<Address, GameInfo>) -> Self {
+        Self { game_info_map: map }
+    }
+}
 
 #[async_trait]
 impl AggregateVerifierClient for MockAggregateVerifier {
-    async fn game_info(&self, _: Address) -> Result<GameInfo, ContractError> {
-        Ok(GameInfo { root_claim: B256::ZERO, l2_block_number: 0, parent_index: 0 })
+    async fn game_info(&self, addr: Address) -> Result<GameInfo, ContractError> {
+        if let Some(info) = self.game_info_map.get(&addr) {
+            Ok(info.clone())
+        } else {
+            Ok(GameInfo { root_claim: B256::ZERO, l2_block_number: 0, parent_index: 0 })
+        }
     }
     async fn status(&self, _: Address) -> Result<u8, ContractError> {
         Ok(0)

@@ -18,6 +18,7 @@
 //!   and submits on-chain.
 
 use std::{
+    cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -30,13 +31,16 @@ use base_proof_contracts::{
 use base_proof_primitives::{ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use eyre::Result;
+use futures::{StreamExt, stream};
 use tokio::{task::JoinSet, time::sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use super::core::{DriverConfig, RecoveredState};
 use crate::{
-    constants::{NO_PARENT_INDEX, PROPOSAL_TIMEOUT},
+    constants::{
+        MAX_GAME_RECOVERY_LOOKBACK, NO_PARENT_INDEX, PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY,
+    },
     error::ProposerError,
     metrics as proposer_metrics,
     output_proposer::{OutputProposer, is_game_already_exists},
@@ -57,6 +61,15 @@ pub struct PipelineConfig {
     pub v1_hardfork_timestamp: Option<u64>,
 }
 
+/// Snapshot of the last successful recovery, used to avoid re-scanning the
+/// entire `DisputeGameFactory` on every tick.
+#[derive(Debug, Clone, Copy)]
+struct CachedRecovery {
+    /// The factory `game_count` at the time of recovery.
+    game_count: u64,
+    state: RecoveredState,
+}
+
 /// Mutable state for the coordinator loop.
 struct PipelineState {
     /// Running proof tasks, each yielding `(target_block, result)`.
@@ -67,6 +80,8 @@ struct PipelineState {
     inflight: BTreeSet<u64>,
     /// Per-target-block retry counts; exceeding `max_retries` triggers a full reset.
     retry_counts: BTreeMap<u64, u32>,
+    /// Cached result from the last successful recovery scan.
+    cached_recovery: Option<CachedRecovery>,
 }
 
 impl PipelineState {
@@ -76,6 +91,7 @@ impl PipelineState {
             proved: BTreeMap::new(),
             inflight: BTreeSet::new(),
             retry_counts: BTreeMap::new(),
+            cached_recovery: None,
         }
     }
 
@@ -84,6 +100,7 @@ impl PipelineState {
         self.inflight.clear();
         self.proved.clear();
         self.retry_counts.clear();
+        self.cached_recovery = None;
     }
 
     fn prune_stale(&mut self, recovered_block: u64) {
@@ -244,7 +261,9 @@ where
             return Ok(());
         }
 
-        if let Some((recovered, safe_head)) = self.try_recover_and_plan().await {
+        if let Some((recovered, safe_head)) =
+            self.try_recover_and_plan(&mut state.cached_recovery).await
+        {
             state.prune_stale(recovered.l2_block_number);
             self.dispatch_proofs(&recovered, safe_head, state).await?;
             self.try_submit(recovered, state).await?;
@@ -339,7 +358,7 @@ where
                 Ok(()) => {
                     info!(target_block = next_to_submit, "Submission successful");
                     state.retry_counts.remove(&next_to_submit);
-                    recovered = match self.recover_latest_state().await {
+                    recovered = match self.recover_latest_state(&mut state.cached_recovery).await {
                         Ok(r) => r,
                         Err(e) => {
                             warn!(error = %e, "Failed to recover state after submission");
@@ -412,8 +431,11 @@ where
     ///
     /// Returns `None` if either step fails (logged as warnings), allowing the
     /// caller to fall through to the poll-tick sleep.
-    async fn try_recover_and_plan(&self) -> Option<(RecoveredState, u64)> {
-        let state = match self.recover_latest_state().await {
+    async fn try_recover_and_plan(
+        &self,
+        cache: &mut Option<CachedRecovery>,
+    ) -> Option<(RecoveredState, u64)> {
+        let state = match self.recover_latest_state(cache).await {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to recover on-chain state, retrying next tick");
@@ -434,33 +456,158 @@ where
 
     /// Recovers the latest on-chain state.
     ///
-    /// Walks the `DisputeGameFactory` backwards, falls back to anchor registry.
-    async fn recover_latest_state(&self) -> Result<RecoveredState, ProposerError> {
+    /// Uses a two-tier strategy to minimise RPC fan-out:
+    ///
+    /// 1. **Incremental scan** – If a cached recovery exists, only the games
+    ///    added since the last scan are checked.  When no new matching game is
+    ///    found the cached state is returned without any additional
+    ///    `game_info` calls.
+    /// 2. **Concurrent full scan** – On cold-start (or when the cache is
+    ///    cleared after a pipeline reset) the factory is scanned with
+    ///    [`futures::stream::StreamExt::buffered`] to fetch up to
+    ///    [`RECOVERY_SCAN_CONCURRENCY`]
+    ///    `game_at_index` results concurrently.
+    ///
+    /// Falls back to the anchor state registry when no matching game is found.
+    async fn recover_latest_state(
+        &self,
+        cache: &mut Option<CachedRecovery>,
+    ) -> Result<RecoveredState, ProposerError> {
         let count = self
             .factory_client
             .game_count()
             .await
             .map_err(|e| ProposerError::Contract(format!("recovery game_count failed: {e}")))?;
 
-        let search_count = count.min(crate::constants::MAX_GAME_RECOVERY_LOOKBACK);
-        for i in 0..search_count {
-            let game_index = count - 1 - i;
-            let game = match self.factory_client.game_at_index(game_index).await {
-                Ok(g) => g,
-                Err(e) => {
-                    warn!(error = %e, game_index, "Failed to read game at index during recovery");
-                    continue;
+        if let Some(cached) = cache.as_mut() {
+            match count.cmp(&cached.game_count) {
+                Ordering::Equal => {
+                    debug!(
+                        game_count = count,
+                        "No new games since last recovery, returning cached state"
+                    );
+                    return Ok(cached.state);
                 }
-            };
+                Ordering::Less => {
+                    warn!(
+                        cached_count = cached.game_count,
+                        current_count = count,
+                        "Game count decreased, invalidating recovery cache"
+                    );
+                    *cache = None;
+                }
+                Ordering::Greater => {
+                    let new_games = count - cached.game_count;
 
-            if game.game_type != self.config.driver.game_type {
-                continue;
+                    if new_games > MAX_GAME_RECOVERY_LOOKBACK {
+                        warn!(
+                            new_games,
+                            max = MAX_GAME_RECOVERY_LOOKBACK,
+                            "Incremental delta exceeds lookback, falling back to full scan"
+                        );
+                        *cache = None;
+                    } else {
+                        debug!(
+                            new_games,
+                            cached_count = cached.game_count,
+                            current_count = count,
+                            "Incremental recovery scan"
+                        );
+
+                        if let Some(state) = self.scan_range_for_recovery(count, new_games).await? {
+                            *cache = Some(CachedRecovery { game_count: count, state });
+                            return Ok(state);
+                        }
+
+                        cached.game_count = count;
+                        return Ok(cached.state);
+                    }
+                }
             }
+        }
+        let search_count = count.min(MAX_GAME_RECOVERY_LOOKBACK);
+        debug!(search_count, "Full concurrent recovery scan");
+        if let Some(state) = self.scan_range_for_recovery(count, search_count).await? {
+            *cache = Some(CachedRecovery { game_count: count, state });
+            return Ok(state);
+        }
 
+        debug!(
+            game_type = self.config.driver.game_type,
+            searched = search_count,
+            "No games found for our game type, falling back to anchor state registry"
+        );
+
+        let anchor = self.anchor_registry.get_anchor_root().await?;
+        debug!(
+            l2_block_number = anchor.l2_block_number,
+            root = ?anchor.root,
+            "Recovered state from anchor state registry"
+        );
+        let state = RecoveredState {
+            game_index: NO_PARENT_INDEX,
+            output_root: anchor.root,
+            l2_block_number: anchor.l2_block_number,
+        };
+        // Do NOT cache the anchor fallback — we want to re-scan when new games
+        // appear so we can pick up a real parent game.
+        Ok(state)
+    }
+
+    /// Scans a range of factory indices for the most recent game matching our
+    /// `game_type`, using concurrent RPC calls.
+    ///
+    /// Indices are scanned most-recent-first: starting at `count - 1` and
+    /// walking backwards for `len` entries.  Uses order-preserving
+    /// [`futures::stream::StreamExt::buffered`] with a concurrency limit of
+    /// [`RECOVERY_SCAN_CONCURRENCY`], so up to that many `game_at_index` RPCs
+    /// are in-flight simultaneously.  Once a type-match is found the stream is
+    /// dropped, cancelling any not-yet-started futures — however, RPCs already
+    /// dispatched (up to the concurrency limit) will have been sent to the
+    /// network even if their results are unused.
+    async fn scan_range_for_recovery(
+        &self,
+        count: u64,
+        len: u64,
+    ) -> Result<Option<RecoveredState>, ProposerError> {
+        if len == 0 {
+            return Ok(None);
+        }
+
+        let game_type = self.config.driver.game_type;
+
+        // Fetch game_at_index concurrently with order-preserving buffering.
+        // Because indices are emitted highest-first, the first type-match is
+        // the best — stop consuming the stream immediately.
+        let mut stream = std::pin::pin!(stream::iter(0..len)
+            .map(|i| {
+                let factory = &self.factory_client;
+                async move {
+                    let game_index = count - 1 - i;
+                    let result = factory.game_at_index(game_index).await;
+                    (game_index, result)
+                }
+            })
+            .buffered(RECOVERY_SCAN_CONCURRENCY)
+            .filter_map(|(idx, result)| async move {
+                match result {
+                    Ok(game) if game.game_type == game_type => Some((idx, game)),
+                    Ok(_) => None,
+                    Err(e) => {
+                        warn!(error = %e, game_index = idx, "Failed to read game at index during recovery");
+                        None
+                    }
+                }
+            }));
+
+        // Try each matching game in order (most-recent first). If
+        // `game_info` fails for one match, fall through to the next rather
+        // than giving up entirely.
+        while let Some((game_index, game)) = stream.next().await {
             let game_info = match self.verifier_client.game_info(game.proxy).await {
                 Ok(info) => info,
                 Err(e) => {
-                    warn!(error = %e, game_index, "Failed to read game_info during recovery");
+                    warn!(error = %e, game_index, "Failed to read game_info during recovery, trying next match");
                     continue;
                 }
             };
@@ -477,30 +624,14 @@ where
                 "Recovered parent game state from on-chain"
             );
 
-            return Ok(RecoveredState {
+            return Ok(Some(RecoveredState {
                 game_index: idx,
                 output_root: game_info.root_claim,
                 l2_block_number: game_info.l2_block_number,
-            });
+            }));
         }
 
-        debug!(
-            game_type = self.config.driver.game_type,
-            searched = search_count,
-            "No games found for our game type, falling back to anchor state registry"
-        );
-
-        let anchor = self.anchor_registry.get_anchor_root().await?;
-        debug!(
-            l2_block_number = anchor.l2_block_number,
-            root = ?anchor.root,
-            "Recovered state from anchor state registry"
-        );
-        Ok(RecoveredState {
-            game_index: NO_PARENT_INDEX,
-            output_root: anchor.root,
-            l2_block_number: anchor.l2_block_number,
-        })
+        Ok(None)
     }
 
     /// Returns the latest safe L2 block number.
@@ -698,17 +829,21 @@ impl std::fmt::Display for SubmitAction {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
+    use std::{collections::HashMap, sync::Arc, time::Duration};
 
-    use alloy_primitives::{B256, Bytes, U256};
+    use alloy_primitives::{Address, B256, Bytes, U256};
     use async_trait::async_trait;
+    use base_proof_contracts::{GameAtIndex, GameInfo};
     use base_proof_primitives::{ProofResult, Proposal, ProverClient};
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::test_utils::{
-        MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-        MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
+    use crate::{
+        constants::NO_PARENT_INDEX,
+        test_utils::{
+            MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
+            MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
+        },
     };
 
     fn test_proposal(block_number: u64) -> Proposal {
@@ -777,7 +912,7 @@ mod tests {
         });
         let anchor_registry =
             Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
-        let factory = Arc::new(MockDisputeGameFactory { game_count: 0 });
+        let factory = Arc::new(MockDisputeGameFactory::with_count(0));
 
         ProvingPipeline::new(
             pipeline_config,
@@ -787,7 +922,7 @@ mod tests {
             rollup,
             anchor_registry,
             factory,
-            Arc::new(MockAggregateVerifier),
+            Arc::new(MockAggregateVerifier::empty()),
             Arc::new(MockOutputProposer),
             cancel,
         )
@@ -965,5 +1100,463 @@ mod tests {
 
         let result = handle.await.expect("task should not panic");
         assert!(result.is_ok(), "pipeline should run normally with a past hardfork timestamp");
+    }
+
+    // ---- Recovery / caching tests ----
+
+    /// Helper: unique proxy address derived from an index.
+    fn proxy_addr(index: u64) -> Address {
+        let mut bytes = [0u8; 20];
+        bytes[12..20].copy_from_slice(&index.to_be_bytes());
+        Address::new(bytes)
+    }
+
+    /// Builds a pipeline with configurable factory games and verifier game-info.
+    fn recovery_pipeline(
+        game_type: u32,
+        factory: MockDisputeGameFactory,
+        verifier: MockAggregateVerifier,
+    ) -> ProvingPipeline<
+        MockL1,
+        MockL2,
+        MockRollupClient,
+        MockAnchorStateRegistry,
+        MockDisputeGameFactory,
+    > {
+        let cancel = CancellationToken::new();
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let prover: Arc<dyn ProverClient> =
+            Arc::new(MockProver { delay: Duration::from_millis(1) });
+        let rollup = Arc::new(MockRollupClient { sync_status: test_sync_status(0, B256::ZERO) });
+        let anchor_registry =
+            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
+
+        ProvingPipeline::new(
+            PipelineConfig {
+                max_parallel_proofs: 1,
+                max_retries: 1,
+                v1_hardfork_timestamp: None,
+                driver: DriverConfig { game_type, ..Default::default() },
+            },
+            prover,
+            l1,
+            l2,
+            rollup,
+            anchor_registry,
+            Arc::new(factory),
+            Arc::new(verifier),
+            Arc::new(MockOutputProposer),
+            cancel,
+        )
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_scan_range_for_recovery_zero_length() {
+        let pipeline = recovery_pipeline(
+            42,
+            MockDisputeGameFactory::with_count(0),
+            MockAggregateVerifier::empty(),
+        );
+        let result = pipeline.scan_range_for_recovery(0, 0).await.unwrap();
+        assert!(result.is_none(), "zero-length scan should return None");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_scan_range_finds_matching_game() {
+        let target_game_type = 42u32;
+        let matching_proxy = proxy_addr(2);
+
+        // 3 games: indices 0, 1 have wrong type; index 2 matches.
+        let games = vec![
+            GameAtIndex { game_type: 99, timestamp: 1, proxy: proxy_addr(0) },
+            GameAtIndex { game_type: 99, timestamp: 2, proxy: proxy_addr(1) },
+            GameAtIndex { game_type: target_game_type, timestamp: 3, proxy: matching_proxy },
+        ];
+
+        let mut info_map = HashMap::new();
+        info_map.insert(
+            matching_proxy,
+            GameInfo { root_claim: B256::repeat_byte(0xAA), l2_block_number: 512, parent_index: 0 },
+        );
+
+        let pipeline = recovery_pipeline(
+            target_game_type,
+            MockDisputeGameFactory::with_games(games),
+            MockAggregateVerifier::with_game_info(info_map),
+        );
+
+        let result = pipeline.scan_range_for_recovery(3, 3).await.unwrap();
+        let state = result.expect("should find the matching game");
+        assert_eq!(state.game_index, 2);
+        assert_eq!(state.l2_block_number, 512);
+        assert_eq!(state.output_root, B256::repeat_byte(0xAA));
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_scan_range_returns_most_recent_match() {
+        let target_game_type = 42u32;
+
+        // Two matching games: index 1 and index 3.  Scan should return index 3
+        // (most recent) because indices are walked highest-first.
+        let games = vec![
+            GameAtIndex { game_type: 99, timestamp: 1, proxy: proxy_addr(0) },
+            GameAtIndex { game_type: target_game_type, timestamp: 2, proxy: proxy_addr(1) },
+            GameAtIndex { game_type: 99, timestamp: 3, proxy: proxy_addr(2) },
+            GameAtIndex { game_type: target_game_type, timestamp: 4, proxy: proxy_addr(3) },
+        ];
+
+        let mut info_map = HashMap::new();
+        info_map.insert(
+            proxy_addr(1),
+            GameInfo { root_claim: B256::repeat_byte(0x01), l2_block_number: 100, parent_index: 0 },
+        );
+        info_map.insert(
+            proxy_addr(3),
+            GameInfo { root_claim: B256::repeat_byte(0x03), l2_block_number: 300, parent_index: 1 },
+        );
+
+        let pipeline = recovery_pipeline(
+            target_game_type,
+            MockDisputeGameFactory::with_games(games),
+            MockAggregateVerifier::with_game_info(info_map),
+        );
+
+        let result = pipeline.scan_range_for_recovery(4, 4).await.unwrap();
+        let state = result.expect("should find a match");
+        assert_eq!(state.game_index, 3, "should return the highest-index match");
+        assert_eq!(state.l2_block_number, 300);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_scan_range_no_matching_game() {
+        let target_game_type = 42u32;
+
+        let games = vec![
+            GameAtIndex { game_type: 99, timestamp: 1, proxy: proxy_addr(0) },
+            GameAtIndex { game_type: 100, timestamp: 2, proxy: proxy_addr(1) },
+        ];
+
+        let pipeline = recovery_pipeline(
+            target_game_type,
+            MockDisputeGameFactory::with_games(games),
+            MockAggregateVerifier::empty(),
+        );
+
+        let result = pipeline.scan_range_for_recovery(2, 2).await.unwrap();
+        assert!(result.is_none(), "should return None when no game matches");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_cache_hit_equal_game_count() {
+        let target_game_type = 42u32;
+        let matching_proxy = proxy_addr(0);
+
+        let games =
+            vec![GameAtIndex { game_type: target_game_type, timestamp: 1, proxy: matching_proxy }];
+
+        let mut info_map = HashMap::new();
+        info_map.insert(
+            matching_proxy,
+            GameInfo { root_claim: B256::repeat_byte(0xBB), l2_block_number: 256, parent_index: 0 },
+        );
+
+        let pipeline = recovery_pipeline(
+            target_game_type,
+            MockDisputeGameFactory::with_games(games),
+            MockAggregateVerifier::with_game_info(info_map),
+        );
+
+        // First call: cold start, populates the cache.
+        let mut cache: Option<CachedRecovery> = None;
+        let state1 = pipeline.recover_latest_state(&mut cache).await.unwrap();
+        assert!(cache.is_some(), "cache should be populated after first call");
+        assert_eq!(state1.game_index, 0);
+        assert_eq!(state1.l2_block_number, 256);
+        assert_eq!(cache.as_ref().unwrap().game_count, 1);
+
+        // Second call: same game_count, should return cached state without
+        // additional game_at_index calls.
+        let state2 = pipeline.recover_latest_state(&mut cache).await.unwrap();
+        assert_eq!(state2.game_index, state1.game_index);
+        assert_eq!(state2.l2_block_number, state1.l2_block_number);
+        assert_eq!(state2.output_root, state1.output_root);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_incremental_new_matching_game() {
+        let target_game_type = 42u32;
+
+        // Start with one matching game.
+        let games = vec![
+            GameAtIndex { game_type: target_game_type, timestamp: 1, proxy: proxy_addr(0) },
+            // Index 1 will be the new matching game added after the first scan.
+            GameAtIndex { game_type: target_game_type, timestamp: 2, proxy: proxy_addr(1) },
+        ];
+
+        let mut info_map = HashMap::new();
+        info_map.insert(
+            proxy_addr(0),
+            GameInfo { root_claim: B256::repeat_byte(0x01), l2_block_number: 100, parent_index: 0 },
+        );
+        info_map.insert(
+            proxy_addr(1),
+            GameInfo { root_claim: B256::repeat_byte(0x02), l2_block_number: 200, parent_index: 0 },
+        );
+
+        // Build factory with override: first call sees count=1, but the full
+        // Vec has 2 entries so game_at_index(1) works.
+        let factory = MockDisputeGameFactory { games: games.clone(), game_count_override: Some(1) };
+
+        let pipeline = recovery_pipeline(
+            target_game_type,
+            factory,
+            MockAggregateVerifier::with_game_info(info_map),
+        );
+
+        // First call: cold start with count=1, finds game at index 0.
+        let mut cache: Option<CachedRecovery> = None;
+        let state1 = pipeline.recover_latest_state(&mut cache).await.unwrap();
+        assert_eq!(state1.game_index, 0);
+        assert_eq!(state1.l2_block_number, 100);
+        assert_eq!(cache.as_ref().unwrap().game_count, 1);
+
+        // Simulate game_count increasing to 2 by updating the override.
+        // Since MockDisputeGameFactory is behind Arc and we can't mutate it,
+        // we manually set the cache to simulate the first-call state, then
+        // build a new pipeline with game_count_override=2.
+        let factory2 = MockDisputeGameFactory { games, game_count_override: Some(2) };
+
+        let pipeline2 = recovery_pipeline(
+            target_game_type,
+            factory2,
+            MockAggregateVerifier::with_game_info({
+                let mut m = HashMap::new();
+                m.insert(
+                    proxy_addr(0),
+                    GameInfo {
+                        root_claim: B256::repeat_byte(0x01),
+                        l2_block_number: 100,
+                        parent_index: 0,
+                    },
+                );
+                m.insert(
+                    proxy_addr(1),
+                    GameInfo {
+                        root_claim: B256::repeat_byte(0x02),
+                        l2_block_number: 200,
+                        parent_index: 0,
+                    },
+                );
+                m
+            }),
+        );
+
+        // Incremental scan: cache says count was 1, now it's 2.  The new game
+        // at index 1 matches, so the cache is updated.
+        let state2 = pipeline2.recover_latest_state(&mut cache).await.unwrap();
+        assert_eq!(state2.game_index, 1, "should find the new matching game");
+        assert_eq!(state2.l2_block_number, 200);
+        assert_eq!(cache.as_ref().unwrap().game_count, 2);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_incremental_no_new_match_returns_cached() {
+        let target_game_type = 42u32;
+
+        // Game at index 0 matches, game at index 1 does NOT match.
+        let games = vec![
+            GameAtIndex { game_type: target_game_type, timestamp: 1, proxy: proxy_addr(0) },
+            GameAtIndex { game_type: 99, timestamp: 2, proxy: proxy_addr(1) },
+        ];
+
+        let mut info_map = HashMap::new();
+        info_map.insert(
+            proxy_addr(0),
+            GameInfo { root_claim: B256::repeat_byte(0xCC), l2_block_number: 512, parent_index: 0 },
+        );
+
+        // First call: factory reports count=1, finds game at index 0.
+        let factory1 =
+            MockDisputeGameFactory { games: games.clone(), game_count_override: Some(1) };
+        let pipeline1 = recovery_pipeline(
+            target_game_type,
+            factory1,
+            MockAggregateVerifier::with_game_info(info_map.clone()),
+        );
+
+        let mut cache: Option<CachedRecovery> = None;
+        let state1 = pipeline1.recover_latest_state(&mut cache).await.unwrap();
+        assert_eq!(state1.game_index, 0);
+
+        // Second call: factory reports count=2, but the new game (index 1) has
+        // a different type.  Should return cached state.
+        let factory2 = MockDisputeGameFactory { games, game_count_override: Some(2) };
+        let pipeline2 = recovery_pipeline(
+            target_game_type,
+            factory2,
+            MockAggregateVerifier::with_game_info(info_map),
+        );
+
+        let state2 = pipeline2.recover_latest_state(&mut cache).await.unwrap();
+        assert_eq!(state2.game_index, state1.game_index, "should return cached game_index");
+        assert_eq!(state2.l2_block_number, state1.l2_block_number);
+        assert_eq!(state2.output_root, state1.output_root);
+        // Cache game_count should be updated to 2 even though no new match was
+        // found, to avoid re-scanning the same index next tick.
+        assert_eq!(cache.as_ref().unwrap().game_count, 2);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_cache_invalidation_count_decreased() {
+        let target_game_type = 42u32;
+
+        // Seed the cache as if count was 5 and we found a game.
+        let mut cache = Some(CachedRecovery {
+            game_count: 5,
+            state: RecoveredState {
+                game_index: 4,
+                output_root: B256::repeat_byte(0xDD),
+                l2_block_number: 1024,
+            },
+        });
+
+        // Factory now reports count=3 (e.g. reorg removed games).  The cache
+        // should be invalidated and a full scan should occur.
+        let games = vec![
+            GameAtIndex { game_type: target_game_type, timestamp: 1, proxy: proxy_addr(0) },
+            GameAtIndex { game_type: 99, timestamp: 2, proxy: proxy_addr(1) },
+            GameAtIndex { game_type: target_game_type, timestamp: 3, proxy: proxy_addr(2) },
+        ];
+
+        let mut info_map = HashMap::new();
+        info_map.insert(
+            proxy_addr(0),
+            GameInfo { root_claim: B256::repeat_byte(0x10), l2_block_number: 100, parent_index: 0 },
+        );
+        info_map.insert(
+            proxy_addr(2),
+            GameInfo { root_claim: B256::repeat_byte(0x30), l2_block_number: 300, parent_index: 0 },
+        );
+
+        let pipeline = recovery_pipeline(
+            target_game_type,
+            MockDisputeGameFactory::with_games(games),
+            MockAggregateVerifier::with_game_info(info_map),
+        );
+
+        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
+
+        // Should find game at index 2 (most recent match) via full scan.
+        assert_eq!(state.game_index, 2);
+        assert_eq!(state.l2_block_number, 300);
+        // Cache should be repopulated with the new count.
+        assert_eq!(cache.as_ref().unwrap().game_count, 3);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_falls_back_to_anchor_when_no_games() {
+        let target_game_type = 42u32;
+
+        let pipeline = recovery_pipeline(
+            target_game_type,
+            MockDisputeGameFactory::with_count(0),
+            MockAggregateVerifier::empty(),
+        );
+
+        let mut cache: Option<CachedRecovery> = None;
+        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
+
+        assert_eq!(state.game_index, NO_PARENT_INDEX);
+        assert_eq!(state.l2_block_number, 0);
+        assert!(cache.is_none(), "anchor fallback should not be cached");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_falls_back_to_anchor_when_no_type_match() {
+        let target_game_type = 42u32;
+
+        // Factory has games, but none match target game type.
+        let games = vec![
+            GameAtIndex { game_type: 99, timestamp: 1, proxy: proxy_addr(0) },
+            GameAtIndex { game_type: 100, timestamp: 2, proxy: proxy_addr(1) },
+        ];
+
+        let pipeline = recovery_pipeline(
+            target_game_type,
+            MockDisputeGameFactory::with_games(games),
+            MockAggregateVerifier::empty(),
+        );
+
+        let mut cache: Option<CachedRecovery> = None;
+        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
+
+        assert_eq!(state.game_index, NO_PARENT_INDEX);
+        assert!(cache.is_none(), "anchor fallback should not be cached");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_incremental_delta_exceeds_lookback_triggers_full_scan() {
+        let target_game_type = 42u32;
+
+        // Seed the cache as if count was 1.
+        let mut cache = Some(CachedRecovery {
+            game_count: 1,
+            state: RecoveredState {
+                game_index: 0,
+                output_root: B256::repeat_byte(0xEE),
+                l2_block_number: 100,
+            },
+        });
+
+        // Factory now reports count = 1 + MAX_GAME_RECOVERY_LOOKBACK + 1,
+        // which exceeds the lookback limit.  The cache should be invalidated
+        // and a full scan should start.
+        let new_count = 1 + MAX_GAME_RECOVERY_LOOKBACK + 1;
+        // We only need to populate the most recent game for the full scan to
+        // find it (scan walks backwards from count-1).
+        let last_idx = (new_count - 1) as usize;
+        let mut games = Vec::with_capacity(new_count as usize);
+        for i in 0..new_count {
+            let gt = if i as usize == last_idx { target_game_type } else { 99 };
+            games.push(GameAtIndex { game_type: gt, timestamp: i, proxy: proxy_addr(i) });
+        }
+
+        let mut info_map = HashMap::new();
+        info_map.insert(
+            proxy_addr(last_idx as u64),
+            GameInfo {
+                root_claim: B256::repeat_byte(0xFF),
+                l2_block_number: 9999,
+                parent_index: 0,
+            },
+        );
+
+        let pipeline = recovery_pipeline(
+            target_game_type,
+            MockDisputeGameFactory::with_games(games),
+            MockAggregateVerifier::with_game_info(info_map),
+        );
+
+        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
+        assert_eq!(state.game_index, last_idx as u32);
+        assert_eq!(state.l2_block_number, 9999);
+        assert_eq!(cache.as_ref().unwrap().game_count, new_count);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_pipeline_state_reset_clears_cache() {
+        let mut state = PipelineState::new();
+        state.cached_recovery = Some(CachedRecovery {
+            game_count: 10,
+            state: RecoveredState {
+                game_index: 5,
+                output_root: B256::repeat_byte(0x11),
+                l2_block_number: 512,
+            },
+        });
+
+        state.reset();
+        assert!(state.cached_recovery.is_none(), "reset() should clear cached_recovery");
     }
 }

@@ -203,7 +203,7 @@ mod tests {
         let rollup = Arc::new(MockRollupClient { sync_status: test_sync_status(200, B256::ZERO) });
         let anchor_registry =
             Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
-        let factory = Arc::new(MockDisputeGameFactory { game_count: 0 });
+        let factory = Arc::new(MockDisputeGameFactory::with_count(0));
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
@@ -223,7 +223,7 @@ mod tests {
             rollup,
             anchor_registry,
             factory,
-            Arc::new(MockAggregateVerifier),
+            Arc::new(MockAggregateVerifier::empty()),
             Arc::new(MockOutputProposer),
             global_cancel.child_token(),
         );

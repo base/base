@@ -4419,6 +4419,7 @@ dependencies = [
  "alloy-provider",
  "alloy-sol-types",
  "async-trait",
+ "futures",
  "thiserror 2.0.18",
  "tracing",
  "url",

@@ -19,6 +19,7 @@ alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 
 # Async
+futures.workspace = true
 async-trait.workspace = true
 
 # Tracing

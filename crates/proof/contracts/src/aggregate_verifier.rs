@@ -132,25 +132,30 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        let root_claim: B256 = contract
-            .rootClaim()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call { context: "rootClaim failed".into(), source: e })?;
-
-        let l2_seq: U256 = contract.l2SequenceNumber().call().await.map_err(|e| {
-            ContractError::Call { context: "l2SequenceNumber failed".into(), source: e }
-        })?;
+        let (root_claim, l2_seq, parent_index) = futures::try_join!(
+            async {
+                contract.rootClaim().call().await.map_err(|e| ContractError::Call {
+                    context: "rootClaim failed".into(),
+                    source: e,
+                })
+            },
+            async {
+                contract.l2SequenceNumber().call().await.map_err(|e| ContractError::Call {
+                    context: "l2SequenceNumber failed".into(),
+                    source: e,
+                })
+            },
+            async {
+                contract.parentIndex().call().await.map_err(|e| ContractError::Call {
+                    context: "parentIndex failed".into(),
+                    source: e,
+                })
+            },
+        )?;
 
         let l2_block_number: u64 = l2_seq
             .try_into()
             .map_err(|_| ContractError::Validation("l2SequenceNumber overflows u64".into()))?;
-
-        let parent_index: u32 = contract
-            .parentIndex()
-            .call()
-            .await
-            .map_err(|e| ContractError::Call { context: "parentIndex failed".into(), source: e })?;
 
         Ok(GameInfo { root_claim, l2_block_number, parent_index })
     }
