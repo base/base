@@ -23,10 +23,7 @@ fn syncing_fcu() -> ForkchoiceUpdated {
 
 fn valid_fcu() -> ForkchoiceUpdated {
     ForkchoiceUpdated {
-        payload_status: PayloadStatus {
-            status: PayloadStatusEnum::Valid,
-            latest_valid_hash: None,
-        },
+        payload_status: PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: None },
         payload_id: None,
     }
 }
@@ -36,9 +33,7 @@ async fn valid_response_advances_sync_state() {
     let head = test_block_info(100);
     let cfg = Arc::new(RollupConfig::default());
     let client = Arc::new(
-        test_engine_client_builder()
-            .with_fork_choice_updated_v3_response(valid_fcu())
-            .build(),
+        test_engine_client_builder().with_fork_choice_updated_v3_response(valid_fcu()).build(),
     );
 
     let mut state = TestEngineStateBuilder::new().build();
@@ -46,10 +41,7 @@ async fn valid_response_advances_sync_state() {
     let task = SynchronizeTask::new(
         client,
         cfg,
-        EngineSyncStateUpdate {
-            unsafe_head: Some(head),
-            ..Default::default()
-        },
+        EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() },
     );
 
     task.execute(&mut state).await.expect("should succeed");
@@ -67,23 +59,16 @@ async fn syncing_response_does_not_advance_sync_state() {
     let head = test_block_info(100);
     let cfg = Arc::new(RollupConfig::default());
     let client = Arc::new(
-        test_engine_client_builder()
-            .with_fork_choice_updated_v3_response(syncing_fcu())
-            .build(),
+        test_engine_client_builder().with_fork_choice_updated_v3_response(syncing_fcu()).build(),
     );
 
-    let mut state = TestEngineStateBuilder::new()
-        .with_el_sync_finished(false)
-        .build();
+    let mut state = TestEngineStateBuilder::new().with_el_sync_finished(false).build();
     let original_unsafe = state.sync_state.unsafe_head();
 
     let task = SynchronizeTask::new(
         client,
         cfg,
-        EngineSyncStateUpdate {
-            unsafe_head: Some(head),
-            ..Default::default()
-        },
+        EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() },
     );
 
     task.execute(&mut state).await.expect("should succeed");
@@ -93,10 +78,7 @@ async fn syncing_response_does_not_advance_sync_state() {
         original_unsafe,
         "unsafe_head must NOT advance on Syncing response"
     );
-    assert!(
-        !state.el_sync_finished,
-        "el_sync_finished must remain false after Syncing"
-    );
+    assert!(!state.el_sync_finished, "el_sync_finished must remain false after Syncing");
 }
 
 #[tokio::test]
@@ -106,23 +88,16 @@ async fn syncing_then_valid_advances_state_on_second_call() {
     let cfg = Arc::new(RollupConfig::default());
 
     let client = Arc::new(
-        test_engine_client_builder()
-            .with_fork_choice_updated_v3_response(syncing_fcu())
-            .build(),
+        test_engine_client_builder().with_fork_choice_updated_v3_response(syncing_fcu()).build(),
     );
 
-    let mut state = TestEngineStateBuilder::new()
-        .with_el_sync_finished(false)
-        .build();
+    let mut state = TestEngineStateBuilder::new().with_el_sync_finished(false).build();
 
     // First call: EL returns Syncing → state stays put.
     let task = SynchronizeTask::new(
         Arc::clone(&client),
         Arc::clone(&cfg),
-        EngineSyncStateUpdate {
-            unsafe_head: Some(head_a),
-            ..Default::default()
-        },
+        EngineSyncStateUpdate { unsafe_head: Some(head_a), ..Default::default() },
     );
     task.execute(&mut state).await.expect("should succeed");
     assert_eq!(state.sync_state.unsafe_head().block_info.number, 0);
@@ -135,10 +110,7 @@ async fn syncing_then_valid_advances_state_on_second_call() {
     let task = SynchronizeTask::new(
         Arc::clone(&client),
         Arc::clone(&cfg),
-        EngineSyncStateUpdate {
-            unsafe_head: Some(head_b),
-            ..Default::default()
-        },
+        EngineSyncStateUpdate { unsafe_head: Some(head_b), ..Default::default() },
     );
     task.execute(&mut state).await.expect("should succeed");
     assert_eq!(

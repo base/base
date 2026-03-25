@@ -125,7 +125,7 @@ where
     ///
     /// If the EL is still syncing (snap sync in progress), the engine will defer the reset and
     /// return [`EngineClientError::ELSyncing`]. In that case we wait one block time and retry,
-    /// so we never send a forkchoice_updated that would abort reth's in-progress EL sync.
+    /// so we never send a `forkchoice_updated` that would abort reth's in-progress EL sync.
     async fn schedule_initial_reset(&self) -> Result<(), SequencerActorError> {
         loop {
             select! {
