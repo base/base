@@ -15,7 +15,8 @@ use std::{
     env,
     hint::black_box,
     os::unix::process::ExitStatusExt,
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
+    time::{Duration, Instant},
 };
 
 use base_cli_utils::SigsegvHandler;
@@ -59,18 +60,45 @@ fn dispatch() {
     }
 }
 
+/// Maximum time to wait for the child process before killing it.
+///
+/// Generous enough for backtrace resolution under debug builds, but prevents
+/// CI from hanging indefinitely if the backtrace resolver deadlocks (e.g.
+/// musl allocator contention inside `dl_iterate_phdr` during symbol resolution).
+const CHILD_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Spawn the current test binary as a child process in crash mode.
 ///
 /// Re-invokes the current executable targeting `test_name` with `mode` set
-/// in the environment. Returns the child's captured output.
+/// in the environment. Returns the child's captured output. Panics if the
+/// child does not exit within [`CHILD_TIMEOUT`].
 fn run_child(test_name: &str, mode: &str) -> Output {
-    Command::new(env::current_exe().expect("current_exe"))
+    let mut child = Command::new(env::current_exe().expect("current_exe"))
         .arg("--exact")
         .arg(test_name)
         .arg("--nocapture")
         .env(MODE_ENV, mode)
-        .output()
-        .expect("failed to spawn child process")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn child process");
+
+    let deadline = Instant::now() + CHILD_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().expect("failed to collect output"),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    panic!(
+                        "child process for test '{test_name}' timed out after {CHILD_TIMEOUT:?}"
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => panic!("failed to wait on child process: {e}"),
+        }
+    }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
