@@ -42,9 +42,6 @@ impl Metrics {
         "base_node_sequencer_seal_step_retries_total";
     /// Gauge for seal pipeline step duration, labeled by step.
     pub const SEQUENCER_SEAL_STEP_DURATION: &str = "base_node_sequencer_seal_step_duration";
-    /// Counter for seal pipeline overlaps (previous not complete when next block tick fires).
-    pub const SEQUENCER_SEAL_PIPELINE_OVERLAP_TOTAL: &str =
-        "base_node_sequencer_seal_pipeline_overlap_total";
     /// Counter for seal errors labeled by fatal ("true"|"false").
     pub const SEQUENCER_SEAL_ERROR_TOTAL: &str = "base_node_sequencer_seal_errors_total";
     /// Counter for sequencer start rejections labeled by reason.
@@ -127,10 +124,6 @@ impl Metrics {
             metrics::Unit::Seconds,
             "Sequencer seal step duration by step"
         );
-        metrics::describe_counter!(
-            Self::SEQUENCER_SEAL_PIPELINE_OVERLAP_TOTAL,
-            "Seal pipeline overlaps: pipeline not complete before next block tick"
-        );
         metrics::describe_counter!(Self::SEQUENCER_SEAL_ERROR_TOTAL, "Seal errors by fatality");
         metrics::describe_counter!(
             Self::SEQUENCER_START_REJECTED_TOTAL,
@@ -168,7 +161,6 @@ impl Metrics {
         base_macros::set!(counter, Self::SEQUENCER_SEAL_STEP_RETRIES_TOTAL, "step", "insert", 0);
         base_macros::set!(counter, Self::SEQUENCER_SEAL_ERROR_TOTAL, "fatal", "true", 0);
         base_macros::set!(counter, Self::SEQUENCER_SEAL_ERROR_TOTAL, "fatal", "false", 0);
-        base_macros::set!(counter, Self::SEQUENCER_SEAL_PIPELINE_OVERLAP_TOTAL, 0);
         base_macros::set!(counter, Self::SEQUENCER_START_REJECTED_TOTAL, "reason", "not_leader", 0);
         base_macros::set!(
             counter,

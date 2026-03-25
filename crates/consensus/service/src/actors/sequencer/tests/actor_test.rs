@@ -66,9 +66,9 @@ async fn test_build_unsealed_payload_prepare_payload_attributes_error(
     let unsafe_head = L2BlockInfo::default();
     client.expect_get_unsafe_head().times(1).return_once(move || Ok(unsafe_head));
     client.expect_start_build_block().times(0);
-    if let PipelineErrorKind::Reset(_) = &forced_error {
-        client.expect_reset_engine_forkchoice().times(1).return_once(move || Ok(()));
-    }
+    // Reset pipeline errors no longer trigger engine reset — the attributes builder is stateless
+    // so resetting the engine would only rewind the unsafe head without aiding recovery.
+    client.expect_reset_engine_forkchoice().times(0);
 
     let l1_origin = BlockInfo::default();
     let mut origin_selector = MockOriginSelector::new();

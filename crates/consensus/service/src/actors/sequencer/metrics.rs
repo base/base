@@ -93,11 +93,6 @@ pub(super) fn update_seal_step_duration(_step: &'static str, _duration: Duration
 }
 
 #[inline]
-pub(super) fn inc_seal_pipeline_overlap() {
-    base_macros::inc!(counter, crate::Metrics::SEQUENCER_SEAL_PIPELINE_OVERLAP_TOTAL);
-}
-
-#[inline]
 pub(super) fn inc_seal_error(fatal: bool) {
     let _label = if fatal { "true" } else { "false" };
     base_macros::inc!(counter, crate::Metrics::SEQUENCER_SEAL_ERROR_TOTAL, "fatal" => _label);

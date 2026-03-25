@@ -5,6 +5,7 @@ use tokio::sync::oneshot;
 
 use super::{
     SequencerActor,
+    build::UnsealedPayloadHandle,
     metrics::{inc_start_rejected, inc_stop_deferred},
 };
 use crate::{Conductor, OriginSelector, SequencerEngineClient, UnsafePayloadGossipClient};
@@ -54,7 +55,11 @@ where
 {
     /// Handles the provided [`SequencerAdminQuery`], sending the response via the provided sender.
     /// This function is used to decouple admin API logic from the response mechanism (channels).
-    pub(super) async fn handle_admin_query(&mut self, query: SequencerAdminQuery) {
+    pub(super) async fn handle_admin_query(
+        &mut self,
+        next_payload: &mut Option<UnsealedPayloadHandle>,
+        query: SequencerAdminQuery,
+    ) {
         match query {
             SequencerAdminQuery::SequencerActive(tx) => {
                 if tx.send(self.is_sequencer_active().await).is_err() {
@@ -67,7 +72,7 @@ where
                 }
             }
             SequencerAdminQuery::StopSequencer(tx) => {
-                self.stop_sequencer(tx).await;
+                self.stop_sequencer(next_payload, tx).await;
             }
             SequencerAdminQuery::ConductorEnabled(tx) => {
                 if tx.send(self.is_conductor_enabled().await).is_err() {
@@ -178,12 +183,18 @@ where
 
     /// Stops the sequencer. If a seal pipeline is in-flight, the response is deferred
     /// until the pipeline completes so the returned hash reflects the fully inserted head.
+    ///
+    /// Any pre-built payload that has not yet been sealed is discarded so that a subsequent
+    /// restart always builds on a fresh, accurate head rather than a potentially stale one.
     pub(super) async fn stop_sequencer(
         &mut self,
+        next_payload: &mut Option<UnsealedPayloadHandle>,
         tx: oneshot::Sender<Result<B256, SequencerAdminAPIError>>,
     ) {
         info!(target: "sequencer", "Stopping sequencer");
         self.is_active = false;
+        // Discard any pre-built payload so a subsequent start_sequencer always builds fresh.
+        next_payload.take();
         self.update_metrics();
 
         if self.sealer.is_some() {

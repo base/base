@@ -58,26 +58,41 @@ pub struct PayloadBuilder<A: AttributesBuilder, O: OriginSelector, E: SequencerE
 impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadBuilder<A, O, E> {
     /// Starts building the next L2 block, returning a handle to the in-flight payload.
     ///
+    /// Uses the engine's current unsafe head (from the watch channel) as the parent.
     /// Returns `Ok(None)` for temporary or reset conditions that should be retried on the
     /// next tick.
     pub async fn build(&mut self) -> Result<Option<UnsealedPayloadHandle>, SequencerActorError> {
         let unsafe_head = self.engine_client.get_unsafe_head().await?;
+        self.build_on(unsafe_head).await
+    }
 
-        let Some(l1_origin) = self.get_next_payload_l1_origin(unsafe_head).await? else {
+    /// Starts building the next L2 block on top of an explicit `parent`, returning a handle to
+    /// the in-flight payload.
+    ///
+    /// Unlike [`Self::build`], this bypasses the watch channel and uses the provided
+    /// `parent` directly. Call this when the correct parent is already known (e.g., the
+    /// block just sealed) to avoid racing against the engine's internal state update.
+    ///
+    /// Returns `Ok(None)` for temporary or reset conditions that should be retried on the
+    /// next tick.
+    pub async fn build_on(
+        &mut self,
+        parent: L2BlockInfo,
+    ) -> Result<Option<UnsealedPayloadHandle>, SequencerActorError> {
+        let Some(l1_origin) = self.get_next_payload_l1_origin(parent).await? else {
             return Ok(None);
         };
 
         info!(
             target: "sequencer",
-            parent_num = unsafe_head.block_info.number,
+            parent_num = parent.block_info.number,
             l1_origin_num = l1_origin.number,
             "Started sequencing new block"
         );
 
         let attributes_build_start = Instant::now();
 
-        let Some(attributes_with_parent) = self.build_attributes(unsafe_head, l1_origin).await?
-        else {
+        let Some(attributes_with_parent) = self.build_attributes(parent, l1_origin).await? else {
             return Ok(None);
         };
 
@@ -149,15 +164,26 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         {
             Ok(attrs) => attrs,
             Err(PipelineErrorKind::Temporary(_)) => return Ok(None),
-            Err(PipelineErrorKind::Reset(_)) => {
-                if let Err(err) = self.engine_client.reset_engine_forkchoice().await {
-                    error!(target: "sequencer", ?err, "Failed to reset engine");
-                    return Err(SequencerActorError::ChannelClosed);
-                }
-
+            Err(PipelineErrorKind::Reset(err)) => {
+                // The attributes builder returned a reset error. These errors fall into two
+                // categories, neither of which requires an engine reset here:
+                //
+                // 1. L1 origin inconsistency (BlockMismatch / BlockMismatchEpochReset):
+                //    `get_next_payload_l1_origin` already validates L1 origin consistency and
+                //    calls `reset_engine_forkchoice` if it detects a mismatch. If execution
+                //    reaches `build_attributes`, the L1 origin passed in was already validated.
+                //    Any residual mismatch is a transient provider race that resolves on retry.
+                //
+                // 2. BrokenTimeInvariant: the next L2 timestamp would precede the selected L1
+                //    block's timestamp. This is a timing condition — the origin selector will
+                //    pick a different L1 block on the next tick. Engine reset would rewind the
+                //    unsafe head to the safe head, discarding sequenced progress unnecessarily.
+                //
+                // Return Ok(None) and let the ticker retry on the next block interval.
                 warn!(
                     target: "sequencer",
-                    "Resetting engine due to pipeline error while preparing payload attributes"
+                    error = ?err,
+                    "Pipeline reset error while preparing payload attributes, retrying on next tick"
                 );
                 return Ok(None);
             }

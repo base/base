@@ -46,5 +46,6 @@ pub(crate) fn test_actor() -> SequencerActor<
         unsafe_payload_gossip_client: MockUnsafePayloadGossipClient::new(),
         sealer: None,
         pending_stop: None,
+        next_build_parent: None,
     }
 }
