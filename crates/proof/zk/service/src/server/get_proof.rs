@@ -56,33 +56,21 @@ impl ProverServiceServer {
             .ok_or_else(|| Status::not_found("Proof request not found"))?;
 
         // Map database status to proto status
-        let (proto_status, receipt_bytes) = match proof_req.status {
-            ProofStatus::Created => {
-                // Task created but not yet claimed by a worker
-                (ProofJobStatus::Created, vec![])
-            }
-            ProofStatus::Pending => {
-                // Task claimed by worker, waiting for backend to start
-                (ProofJobStatus::Pending, vec![])
-            }
-            ProofStatus::Running => {
-                // Return current status from database. The StatusPoller background
-                // task handles periodic syncing with the backend, avoiding write
-                // amplification on every poll.
-                (ProofJobStatus::Running, vec![])
-            }
+        let (proto_status, receipt_bytes, error_message) = match proof_req.status {
+            ProofStatus::Created => (ProofJobStatus::Created, vec![], None),
+            ProofStatus::Pending => (ProofJobStatus::Pending, vec![], None),
+            // StatusPoller handles periodic syncing with the backend,
+            // avoiding write amplification on every poll.
+            ProofStatus::Running => (ProofJobStatus::Running, vec![], None),
             ProofStatus::Succeeded => {
-                // Already completed, return appropriate receipt based on requested type
                 let receipt_buf = get_receipt_by_type(&proof_req, requested_receipt_type)?;
-                (ProofJobStatus::Succeeded, receipt_buf)
+                (ProofJobStatus::Succeeded, receipt_buf, None)
             }
-            ProofStatus::Failed => {
-                // Failed
-                (ProofJobStatus::Failed, vec![])
-            }
+            ProofStatus::Failed => (ProofJobStatus::Failed, vec![], proof_req.error_message),
         };
 
-        let response = GetProofResponse { status: proto_status.into(), receipt: receipt_bytes };
+        let response =
+            GetProofResponse { status: proto_status.into(), receipt: receipt_bytes, error_message };
 
         Ok(Response::new(response))
     }

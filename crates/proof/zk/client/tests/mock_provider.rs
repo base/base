@@ -24,6 +24,7 @@ impl ZkProofProvider for MockZkProvider {
         Ok(GetProofResponse {
             status: ProofJobStatus::Succeeded.into(),
             receipt: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            error_message: None,
         })
     }
 }

@@ -223,6 +223,7 @@ impl PendingProofs {
                 ProofUpdate::Ready(proof_bytes)
             }
             ProofJobStatus::Failed => {
+                warn!(game = %game, error_message = ?response.error_message, "proof job failed");
                 pending.retry_count += 1;
                 pending.phase = ProofPhase::NeedsRetry;
                 ProofUpdate::NeedsRetry

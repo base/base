@@ -292,7 +292,7 @@ impl L2Provider for MockL2Provider {
 }
 
 /// Mock ZK proof provider for testing the driver.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MockZkProofProvider {
     /// Session ID returned by [`prove_block`](ZkProofProvider::prove_block).
     pub session_id: String,
@@ -300,6 +300,8 @@ pub struct MockZkProofProvider {
     pub proof_status: Mutex<i32>,
     /// Proof receipt bytes returned when status is `Succeeded`.
     pub receipt: Mutex<Vec<u8>>,
+    /// Error message returned when status is `Failed`.
+    pub error_message: Mutex<Option<String>>,
 }
 
 #[async_trait]
@@ -314,7 +316,8 @@ impl ZkProofProvider for MockZkProofProvider {
     async fn get_proof(&self, _request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
         let status = *self.proof_status.lock().unwrap();
         let receipt = self.receipt.lock().unwrap().clone();
-        Ok(GetProofResponse { status, receipt })
+        let error_message = self.error_message.lock().unwrap().clone();
+        Ok(GetProofResponse { status, receipt, error_message })
     }
 }
 
