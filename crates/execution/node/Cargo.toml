@@ -87,7 +87,6 @@ reth-e2e-test-utils = { workspace = true, optional = true }
 
 [dev-dependencies]
 reth-rpc.workspace = true
-reth-tasks.workspace = true
 reth-trie-db.workspace = true
 reth-payload-util.workspace = true
 reth-stages-types.workspace = true
@@ -98,7 +97,6 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 base-node-core = { workspace = true, features = ["test-utils"] }
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 
-futures.workspace = true
 alloy-eips.workspace = true
 alloy-network.workspace = true
 base-alloy-evm.workspace = true
