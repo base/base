@@ -1,12 +1,9 @@
 #![doc = include_str!("../README.md")]
 
-extern crate alloc;
-
 mod error;
 pub use error::{AttestationError, CryptoError, NitroError, NsmError, ProposalError, Result};
 
 mod oracle;
-pub use base_proof_preimage::PreimageKey;
 pub use oracle::Oracle;
 
 mod transport;

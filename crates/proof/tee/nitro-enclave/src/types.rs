@@ -5,8 +5,6 @@
 //! adding fields to `ProofRequest`) do not alter the enclave binary and
 //! therefore do not change the PCR0 measurement.
 
-use alloc::vec::Vec;
-
 use alloy_primitives::{Address, B256, Bytes, U256};
 
 /// ECDSA signature length in bytes (r: 32 + s: 32 + v: 1).
@@ -103,8 +101,6 @@ pub struct TeeProofResult {
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
-
     use alloy_primitives::{address, b256};
 
     use super::*;

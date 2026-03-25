@@ -1,7 +1,5 @@
-/// ECDSA secp256k1 operations.
-///
-/// Provides key generation, parsing, and address derivation using
-/// `alloy-signer-local::PrivateKeySigner`.
+//! ECDSA secp256k1 key generation, signing, and verification.
+
 use alloy_primitives::{Address, Bytes, keccak256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
