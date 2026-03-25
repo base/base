@@ -25,5 +25,4 @@ alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-tracing = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
