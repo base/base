@@ -55,13 +55,11 @@ metrics = { workspace = true, optional = true }
 tempfile.workspace = true
 multihash.workspace = true
 serde_json = { workspace = true, features = ["std"] }
-alloy-eips = { workspace = true, features = ["std"] }
 alloy-chains = { workspace = true, features = ["std"] }
 
 rand = { workspace = true, features = ["thread_rng"] }
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 base-alloy-consensus = { workspace = true, features = ["arbitrary", "k256"] }
 alloy-consensus = { workspace = true, features = ["arbitrary", "k256", "std"] }
 
