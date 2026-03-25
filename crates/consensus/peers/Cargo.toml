@@ -46,7 +46,6 @@ rstest.workspace = true
 arbtest.workspace = true
 tempfile.workspace = true
 multihash.workspace = true
-serde_json = { workspace = true, features = ["std"] }
 
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
