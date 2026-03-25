@@ -148,9 +148,14 @@ impl LoadRunner {
                         weight_pct,
                     );
                 }
-                TxType::Precompile { target } => {
-                    generator =
-                        generator.with_payload(PrecompilePayload::new(target.clone()), weight_pct);
+                TxType::Precompile { target, blake2f_rounds, iterations, looper_contract } => {
+                    let payload = PrecompilePayload::with_options(
+                        target.clone(),
+                        *blake2f_rounds,
+                        *iterations,
+                        *looper_contract,
+                    );
+                    generator = generator.with_payload(payload, weight_pct);
                 }
             }
         }
@@ -170,7 +175,7 @@ impl LoadRunner {
                 TxType::Transfer => 21_000,
                 TxType::Calldata { max_size, .. } => 21_000 + (*max_size as u64 * 16),
                 TxType::Erc20 { .. } => 65_000,
-                TxType::Precompile { .. } => 100_000,
+                TxType::Precompile { iterations, .. } => 50_000 + 100_000 * (*iterations as u64),
             };
             weighted_gas += gas_estimate * tx_config.weight as u64;
         }
@@ -225,6 +230,9 @@ impl LoadRunner {
         let max_fee = gas_price.saturating_mul(2).min(self.config.max_gas_price);
         let max_priority_fee = (gas_price / 10).max(1);
 
+        let replacement_max_fee = max_fee.saturating_mul(3);
+        let replacement_priority_fee = max_priority_fee.saturating_mul(3);
+
         let mut pending_txs = Vec::new();
         for (address, deficit) in &accounts_to_fund {
             let tx = TransactionRequest::default()
@@ -244,6 +252,31 @@ impl LoadRunner {
                     nonce += 1;
                 }
                 Err(e) => {
+                    let error_str = e.to_string();
+                    if error_str.contains("already known") {
+                        warn!(to = %address, nonce, "funding tx already in mempool, replacing with higher gas price");
+                        let replacement = TransactionRequest::default()
+                            .with_to(*address)
+                            .with_value(*deficit)
+                            .with_nonce(nonce)
+                            .with_chain_id(self.config.chain_id)
+                            .with_gas_limit(21_000)
+                            .with_max_fee_per_gas(replacement_max_fee)
+                            .with_max_priority_fee_per_gas(replacement_priority_fee);
+
+                        match funder_provider.send_transaction(replacement).await {
+                            Ok(pending) => {
+                                let tx_hash = *pending.tx_hash();
+                                info!(to = %address, nonce, tx_hash = %tx_hash, "replacement funding tx sent");
+                                pending_txs.push((tx_hash, *address));
+                            }
+                            Err(replace_err) => {
+                                warn!(to = %address, nonce, error = %replace_err, "replacement tx also failed, proceeding");
+                            }
+                        }
+                        nonce += 1;
+                        continue;
+                    }
                     error!(to = %address, error = %e, "failed to fund account");
                     return Err(BaselineError::Transaction(format!(
                         "failed to fund {address}: {e}",
@@ -614,6 +647,111 @@ impl LoadRunner {
         }
 
         submitted_count
+    }
+
+    /// Drains all test account balances back to the funder address.
+    ///
+    /// Each account sends its entire balance minus gas costs back to the funder.
+    /// Transactions that fail (e.g. zero balance) are skipped with a warning.
+    #[instrument(skip(self, funding_key), fields(accounts = self.accounts.len()))]
+    pub async fn drain_accounts(&self, funding_key: PrivateKeySigner) -> Result<U256> {
+        let funder_address = funding_key.address();
+        let gas_price = self.client.get_gas_price().await?;
+        let max_fee = gas_price.saturating_mul(2).min(self.config.max_gas_price);
+        let max_priority_fee = (gas_price / 10).max(1);
+        let drain_gas_limit = 21_000u128;
+        // Use gas_limit * max_fee + buffer to ensure the tx value + gas cost never exceeds balance.
+        // The buffer covers any rounding in the node's cost validation.
+        let drain_gas_cost = U256::from(drain_gas_limit * max_fee + 10_000);
+
+        let mut pending_txs = Vec::new();
+        let mut total_drained = U256::ZERO;
+
+        for account in self.accounts.accounts() {
+            let balance = self.client.get_balance(account.address).await?;
+            if balance <= drain_gas_cost {
+                debug!(
+                    address = %account.address,
+                    balance = %balance,
+                    "skipping drain, balance too low to cover gas"
+                );
+                continue;
+            }
+
+            let send_amount = balance.saturating_sub(drain_gas_cost);
+            let wallet = EthereumWallet::from(account.signer.clone());
+            let provider = create_wallet_provider(self.config.rpc_url.clone(), wallet);
+            let nonce = provider
+                .get_transaction_count(account.address)
+                .pending()
+                .await
+                .map_err(|e| BaselineError::Rpc(e.to_string()))?;
+
+            let tx = TransactionRequest::default()
+                .with_to(funder_address)
+                .with_value(send_amount)
+                .with_nonce(nonce)
+                .with_chain_id(self.config.chain_id)
+                .with_gas_limit(drain_gas_limit as u64)
+                .with_max_fee_per_gas(max_fee)
+                .with_max_priority_fee_per_gas(max_priority_fee);
+
+            match provider.send_transaction(tx).await {
+                Ok(pending) => {
+                    let tx_hash = *pending.tx_hash();
+                    debug!(
+                        from = %account.address,
+                        amount = %send_amount,
+                        tx_hash = %tx_hash,
+                        "drain tx sent"
+                    );
+                    pending_txs.push((tx_hash, account.address));
+                    total_drained = total_drained.saturating_add(send_amount);
+                }
+                Err(e) => {
+                    warn!(from = %account.address, error = %e, "drain tx failed, skipping");
+                }
+            }
+        }
+
+        if pending_txs.is_empty() {
+            info!("no accounts to drain");
+            return Ok(U256::ZERO);
+        }
+
+        info!(count = pending_txs.len(), total = %total_drained, "waiting for drain txs to confirm");
+        let timeout = Duration::from_secs(60);
+        let poll_interval = Duration::from_millis(500);
+        let start = Instant::now();
+
+        while !pending_txs.is_empty() && start.elapsed() < timeout {
+            tokio::time::sleep(poll_interval).await;
+
+            let mut still_pending = Vec::new();
+            for (tx_hash, address) in pending_txs {
+                match self.client.get_transaction_receipt(tx_hash).await {
+                    Ok(Some(_)) => {
+                        debug!(tx_hash = %tx_hash, from = %address, "drain tx confirmed");
+                    }
+                    Ok(None) => {
+                        still_pending.push((tx_hash, address));
+                    }
+                    Err(e) => {
+                        warn!(tx_hash = %tx_hash, error = %e, "failed to get drain receipt");
+                        still_pending.push((tx_hash, address));
+                    }
+                }
+            }
+            pending_txs = still_pending;
+        }
+
+        if !pending_txs.is_empty() {
+            let unconfirmed: Vec<_> = pending_txs.iter().map(|(_, addr)| addr).collect();
+            warn!(accounts = ?unconfirmed, "some drain txs did not confirm within timeout");
+        }
+
+        info!(total = %total_drained, "drain complete");
+        Ok(total_drained)
     }
 
     /// Signals the load test to stop.

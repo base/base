@@ -7,6 +7,7 @@ use base_proof_primitives::EnclaveApiClient;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use k256::elliptic_curve::sec1::ToEncodedPoint;
 use tracing::debug;
+use url::Url;
 
 use crate::{RegistrarError, Result};
 
@@ -18,24 +19,25 @@ use crate::{RegistrarError, Result};
 /// Ethereum address from the uncompressed public key.
 #[derive(Debug)]
 pub struct ProverClient {
-    /// The raw endpoint string (host:port, without scheme).
-    endpoint: String,
+    /// The prover endpoint URL, used for logging and error messages.
+    endpoint: Url,
     /// The underlying `jsonrpsee` HTTP client.
     inner: HttpClient,
 }
 
 impl ProverClient {
-    /// Creates a new client for the prover at the given endpoint.
+    /// Creates a new client for the prover at the given endpoint URL.
     ///
-    /// `endpoint` is a `host:port` string (e.g. `"10.0.1.5:8000"`).
-    /// An `http://` scheme is prepended automatically.
-    pub fn new(endpoint: &str, timeout: Duration) -> Result<Self> {
-        let url = format!("http://{endpoint}");
-        let inner =
-            HttpClientBuilder::default().request_timeout(timeout).build(&url).map_err(|e| {
-                RegistrarError::ProverClient { instance: endpoint.to_string(), source: Box::new(e) }
+    /// The URL must include a scheme (e.g. `http://10.0.1.5:8000`).
+    pub fn new(endpoint: &Url, timeout: Duration) -> Result<Self> {
+        let inner = HttpClientBuilder::default()
+            .request_timeout(timeout)
+            .build(endpoint.as_str())
+            .map_err(|e| RegistrarError::ProverClient {
+                instance: endpoint.to_string(),
+                source: Box::new(e),
             })?;
-        Ok(Self { endpoint: endpoint.to_string(), inner })
+        Ok(Self { endpoint: endpoint.clone(), inner })
     }
 
     /// Fetches the signer's 65-byte uncompressed public key via `enclave_signerPublicKey`.
@@ -46,7 +48,7 @@ impl ProverClient {
     pub async fn signer_public_key(&self) -> Result<Vec<u8>> {
         debug!(endpoint = %self.endpoint, "fetching signer public key");
         self.inner.signer_public_key().await.map_err(|e| RegistrarError::ProverClient {
-            instance: self.endpoint.clone(),
+            instance: self.endpoint.to_string(),
             source: Box::new(e),
         })
     }
@@ -61,7 +63,10 @@ impl ProverClient {
     ) -> Result<Vec<u8>> {
         debug!(endpoint = %self.endpoint, "fetching signer attestation");
         self.inner.signer_attestation(user_data, nonce).await.map_err(|e| {
-            RegistrarError::ProverClient { instance: self.endpoint.clone(), source: Box::new(e) }
+            RegistrarError::ProverClient {
+                instance: self.endpoint.to_string(),
+                source: Box::new(e),
+            }
         })
     }
 

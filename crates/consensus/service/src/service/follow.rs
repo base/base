@@ -6,6 +6,7 @@ use base_alloy_network::Base;
 use base_consensus_engine::{Engine, EngineClient, EngineState};
 use base_consensus_genesis::RollupConfig;
 use base_consensus_rpc::RpcBuilder;
+use base_consensus_safedb::{DisabledSafeDB, SafeDBReader};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -151,10 +152,14 @@ impl FollowNode {
 
         // Create the RPC server actor if configured.
         let rpc = self.rpc_builder.clone().map(|b| {
+            // Follow nodes do not run derivation, so they never produce confirmed safe
+            // heads to record. Safe head tracking is disabled; the RPC endpoint returns
+            // an error if queried.
             RpcActor::new(
                 b,
                 QueuedEngineRpcClient::new(engine_actor_request_tx.clone()),
                 None::<crate::QueuedSequencerAdminAPIClient>,
+                Arc::new(DisabledSafeDB) as Arc<dyn SafeDBReader>,
             )
         });
 

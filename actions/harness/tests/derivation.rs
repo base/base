@@ -55,6 +55,11 @@ async fn single_l2_block_derived_from_batcher_frame() {
 
     assert_eq!(derived, 1, "expected exactly one L2 block to be derived");
     assert_eq!(node.l2_safe_number(), 1, "safe head should be L2 block 1");
+
+    // SafeDB: L2 safe head at L1 block 1 (where the batch landed) should be L2 block 1.
+    let safe = node.safe_head_at_l1(1).await.unwrap();
+    assert_eq!(safe.safe_head.number, 1, "safedb: safe head at L1#1 should be L2#1");
+    assert_eq!(safe.l1_block.number, 1, "safedb: l1_block at L1#1 should be 1");
 }
 
 /// Mine several L1 blocks, each containing one batch, and verify the safe head
@@ -100,6 +105,14 @@ async fn multiple_l1_blocks_each_derive_one_l2_block() {
     }
 
     assert_eq!(node.l2_safe_number(), L2_BLOCK_COUNT);
+
+    // SafeDB: each L2 block was derived from its own L1 block. Verify every
+    // individual L1→L2 mapping, not just the last one.
+    for i in 1..=L2_BLOCK_COUNT {
+        let safe = node.safe_head_at_l1(i).await.unwrap();
+        assert_eq!(safe.safe_head.number, i, "safedb: safe head at L1#{i} should be L2#{i}");
+        assert_eq!(safe.l1_block.number, i, "safedb: l1_block at L1#{i} should be {i}");
+    }
 }
 
 /// A batcher frame that lands in an L1 block which is subsequently reorged out

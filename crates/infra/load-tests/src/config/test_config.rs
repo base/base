@@ -3,14 +3,74 @@ use std::{fmt, path::Path, time::Duration};
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
 use rand::Rng;
+use revm::precompile::PrecompileId;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
-    workload::parse_precompile_id,
 };
+
+/// Typed precompile target for load test configuration.
+///
+/// Deserializes from a `target` string field with optional precompile-specific
+/// parameters (e.g. `rounds` for blake2f).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "target", rename_all = "snake_case")]
+pub enum PrecompileTarget {
+    /// ECDSA public key recovery (`ecrecover`, address `0x01`).
+    Ecrecover,
+    /// SHA-256 hash (`sha256`, address `0x02`).
+    Sha256,
+    /// RIPEMD-160 hash (`ripemd160`, address `0x03`).
+    Ripemd160,
+    /// Identity / data copy (`identity`, address `0x04`).
+    Identity,
+    /// Modular exponentiation (`modexp`, address `0x05`).
+    Modexp,
+    /// BN254 elliptic curve addition (`bn254_add`, address `0x06`).
+    Bn254Add,
+    /// BN254 scalar multiplication (`bn254_mul`, address `0x07`).
+    Bn254Mul,
+    /// BN254 pairing check (`bn254_pairing`, address `0x08`).
+    Bn254Pairing,
+    /// `BLAKE2f` compression (`blake2f`, address `0x09`).
+    Blake2f {
+        /// Fixed number of compression rounds. Random if `None`.
+        #[serde(default)]
+        rounds: Option<u32>,
+    },
+    /// KZG point evaluation (`kzg_point_evaluation`, address `0x0a`).
+    #[serde(rename = "kzg_point_evaluation")]
+    KzgPointEvaluation,
+}
+
+impl PrecompileTarget {
+    /// Converts to the corresponding `revm` [`PrecompileId`].
+    pub const fn to_precompile_id(&self) -> PrecompileId {
+        match self {
+            Self::Ecrecover => PrecompileId::EcRec,
+            Self::Sha256 => PrecompileId::Sha256,
+            Self::Ripemd160 => PrecompileId::Ripemd160,
+            Self::Identity => PrecompileId::Identity,
+            Self::Modexp => PrecompileId::ModExp,
+            Self::Bn254Add => PrecompileId::Bn254Add,
+            Self::Bn254Mul => PrecompileId::Bn254Mul,
+            Self::Bn254Pairing => PrecompileId::Bn254Pairing,
+            Self::Blake2f { .. } => PrecompileId::Blake2F,
+            Self::KzgPointEvaluation => PrecompileId::KzgPointEvaluation,
+        }
+    }
+
+    /// Returns the fixed blake2f round count, if configured.
+    pub const fn blake2f_rounds(&self) -> Option<u32> {
+        match self {
+            Self::Blake2f { rounds } => *rounds,
+            _ => None,
+        }
+    }
+}
 
 /// Configuration for a load test, loadable from YAML.
 #[derive(Clone, Serialize, Deserialize)]
@@ -50,6 +110,10 @@ pub struct TestConfig {
 
     /// Transaction types with weights.
     pub transactions: Vec<WeightedTxType>,
+
+    /// Address of the precompile looper contract (required when using iterations > 1).
+    #[serde(default)]
+    pub looper_contract: Option<String>,
 }
 
 impl Default for TestConfig {
@@ -57,7 +121,7 @@ impl Default for TestConfig {
         Self {
             rpc: Url::parse("http://localhost:8545").expect("valid URL"),
             mnemonic: None,
-            funding_amount: "100000000000000000".to_string(),
+            funding_amount: "10000000000000000".to_string(),
             sender_count: 10,
             sender_offset: 0,
             in_flight_per_sender: 16,
@@ -66,6 +130,7 @@ impl Default for TestConfig {
             seed: rand::rng().random(),
             chain_id: None,
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
+            looper_contract: None,
         }
     }
 }
@@ -84,6 +149,7 @@ impl fmt::Debug for TestConfig {
             .field("seed", &self.seed)
             .field("chain_id", &self.chain_id)
             .field("transactions", &self.transactions)
+            .field("looper_contract", &self.looper_contract)
             .finish()
     }
 }
@@ -124,9 +190,12 @@ pub enum TxTypeConfig {
 
     /// Precompile call.
     Precompile {
-        /// Target precompile (sha256, identity, ecrecover, etc.).
-        #[serde(default = "default_precompile")]
-        target: String,
+        /// Target precompile configuration.
+        #[serde(flatten)]
+        target: PrecompileTarget,
+        /// Number of iterations per transaction. Requires `looper_contract` when > 1.
+        #[serde(default = "default_iterations")]
+        iterations: u32,
     },
 }
 
@@ -138,8 +207,8 @@ const fn default_repeat_count() -> usize {
     1
 }
 
-fn default_precompile() -> String {
-    "sha256".to_string()
+const fn default_iterations() -> u32 {
+    1
 }
 
 impl TestConfig {
@@ -246,9 +315,28 @@ impl TestConfig {
                 })?;
                 TxType::Erc20 { contract: address }
             }
-            TxTypeConfig::Precompile { target } => {
-                let id = parse_precompile_id(target).map_err(BaselineError::Config)?;
-                TxType::Precompile { target: id }
+            TxTypeConfig::Precompile { target, iterations } => {
+                let looper_contract = if *iterations > 1 {
+                    let addr_str = self.looper_contract.as_ref().ok_or_else(|| {
+                        BaselineError::Config(
+                            "looper_contract required when precompile iterations > 1".into(),
+                        )
+                    })?;
+                    let addr = addr_str.parse::<Address>().map_err(|e| {
+                        BaselineError::Config(format!(
+                            "invalid looper_contract address '{addr_str}': {e}"
+                        ))
+                    })?;
+                    Some(addr)
+                } else {
+                    None
+                };
+                TxType::Precompile {
+                    target: target.to_precompile_id(),
+                    blake2f_rounds: target.blake2f_rounds(),
+                    iterations: *iterations,
+                    looper_contract,
+                }
             }
         };
         Ok(TxConfig { weight: weighted.weight, tx_type })
@@ -316,5 +404,87 @@ duration: "1h 30m"
 "#;
         let config2 = TestConfig::from_yaml(yaml2).unwrap();
         assert_eq!(config2.parse_duration().unwrap().unwrap(), Duration::from_secs(5400));
+    }
+
+    #[test]
+    fn parse_precompile_targets() {
+        let yaml = r#"
+rpc: http://localhost:8545
+funder_key: "0x1234"
+transactions:
+  - weight: 10
+    type: precompile
+    target: sha256
+  - weight: 10
+    type: precompile
+    target: blake2f
+  - weight: 10
+    type: precompile
+    target: blake2f
+    rounds: 1000
+  - weight: 10
+    type: precompile
+    target: ecrecover
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        assert_eq!(config.transactions.len(), 4);
+
+        match &config.transactions[0].tx_type {
+            TxTypeConfig::Precompile { target, iterations } => {
+                assert!(matches!(target, PrecompileTarget::Sha256));
+                assert_eq!(*iterations, 1);
+            }
+            _ => panic!("expected Precompile"),
+        }
+
+        match &config.transactions[1].tx_type {
+            TxTypeConfig::Precompile { target, iterations } => {
+                assert!(matches!(target, PrecompileTarget::Blake2f { rounds: None }));
+                assert_eq!(*iterations, 1);
+            }
+            _ => panic!("expected Precompile"),
+        }
+
+        match &config.transactions[2].tx_type {
+            TxTypeConfig::Precompile { target, iterations } => {
+                assert!(matches!(target, PrecompileTarget::Blake2f { rounds: Some(1000) }));
+                assert_eq!(*iterations, 1);
+            }
+            _ => panic!("expected Precompile"),
+        }
+
+        match &config.transactions[3].tx_type {
+            TxTypeConfig::Precompile { target, iterations } => {
+                assert!(matches!(target, PrecompileTarget::Ecrecover));
+                assert_eq!(*iterations, 1);
+            }
+            _ => panic!("expected Precompile"),
+        }
+    }
+
+    #[test]
+    fn parse_precompile_with_iterations() {
+        let yaml = r#"
+rpc: http://localhost:8545
+funder_key: "0x1234"
+looper_contract: "0x1234567890123456789012345678901234567890"
+transactions:
+  - weight: 10
+    type: precompile
+    target: sha256
+    iterations: 50
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        assert_eq!(config.transactions.len(), 1);
+
+        match &config.transactions[0].tx_type {
+            TxTypeConfig::Precompile { target, iterations } => {
+                assert!(matches!(target, PrecompileTarget::Sha256));
+                assert_eq!(*iterations, 50);
+            }
+            _ => panic!("expected Precompile"),
+        }
+
+        assert!(config.looper_contract.is_some());
     }
 }

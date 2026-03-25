@@ -65,6 +65,14 @@ async fn finalization_advances_with_multiple_l2_blocks_per_epoch() {
         3,
         "all 3 L2 blocks in epoch 0 should finalize when L1 block 1 is finalized"
     );
+
+    // SafeDB: each batch landed in its own L1 inclusion block (1, 2, 3).
+    // Verify every individual L1→L2 mapping.
+    for i in 1u64..=3 {
+        let safe = node.safe_head_at_l1(i).await.unwrap();
+        assert_eq!(safe.safe_head.number, i, "safedb: safe head at L1#{i} should be L2#{i}");
+        assert_eq!(safe.l1_block.number, i, "safedb: l1_block at L1#{i} should be {i}");
+    }
 }
 
 /// L2 finalization advances incrementally as successive L1 epochs are finalized.
@@ -247,6 +255,11 @@ async fn finalization_reorg_clears_state() {
     }
     assert_eq!(node.l2_safe_number(), 2);
 
+    // SafeDB pre-reset: L2#2 was derived from L1#2.
+    let safe_pre = node.safe_head_at_l1(2).await.unwrap();
+    assert_eq!(safe_pre.safe_head.number, 2, "safedb pre-reset: safe head at L1#2 should be L2#2");
+    assert_eq!(safe_pre.l1_block.number, 2, "safedb pre-reset: l1_block at L1#2 should be 2");
+
     // Finalize L1 block 1 → L2 finalized should advance.
     let l1_block_1 = h.l1.block_info_at(1);
     node.act_l1_finalized_signal(l1_block_1).await;
@@ -293,6 +306,27 @@ async fn finalization_reorg_clears_state() {
     node.run_until_idle().await;
 
     assert_eq!(node.l2_safe_number(), 1, "safe head re-derived to 1");
+
+    // SafeDB post-reset: DB was truncated on reset and re-anchored at genesis.
+    // After re-deriving L2#1 from new L1#1 the DB reflects the new mapping.
+    let safe_post = node.safe_head_at_l1(1).await.unwrap();
+    assert_eq!(
+        safe_post.safe_head.number, 1,
+        "safedb post-reset: safe head at L1#1 should be L2#1"
+    );
+    assert_eq!(safe_post.l1_block.number, 1, "safedb post-reset: l1_block at L1#1 should be 1");
+
+    // The old L1#2 entry must be gone — querying L1#2 should resolve to the
+    // reset anchor (L1#1 → L2#1), not the pre-reset L2#2 entry.
+    let safe_l1_2 = node.safe_head_at_l1(2).await.unwrap();
+    assert_eq!(
+        safe_l1_2.l1_block.number, 1,
+        "safedb post-reset: L1#2 query must resolve to reset anchor at L1#1, not stale pre-reset entry"
+    );
+    assert_eq!(
+        safe_l1_2.safe_head.number, 1,
+        "safedb post-reset: L1#2 query must return reset L2#1, not stale pre-reset L2#2"
+    );
 
     // Finalize the new L1 block 1 → finalization works again.
     node.act_l1_finalized_signal(l1_block_1_new).await;

@@ -11,7 +11,7 @@ use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, keccak256};
 use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
 use base_protocol::{Deployers, Predeploys, SystemAddresses};
 
-use crate::{Hardfork, upgrade_to_calldata};
+use crate::{Hardfork, UpgradeCalldata};
 
 /// The Jovian network upgrade transactions.
 #[derive(Debug, Default, Clone, Copy)]
@@ -104,7 +104,7 @@ impl Jovian {
                 value: U256::ZERO,
                 gas_limit: 50_000,
                 is_system_transaction: false,
-                input: upgrade_to_calldata(Self::l1_block_address()),
+                input: UpgradeCalldata::build(Self::l1_block_address()),
             },
             TxDeposit {
                 source_hash: Self::gas_price_oracle(),
@@ -124,7 +124,7 @@ impl Jovian {
                 value: U256::ZERO,
                 gas_limit: 50_000,
                 is_system_transaction: false,
-                input: upgrade_to_calldata(Self::gas_price_oracle_address()),
+                input: UpgradeCalldata::build(Self::gas_price_oracle_address()),
             },
             TxDeposit {
                 source_hash: Self::gas_price_oracle_enable_jovian(),
@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn test_upgrade_to_calldata_for_gas_price_oracle() {
         assert_eq!(
-            **upgrade_to_calldata(Jovian::gas_price_oracle_address()),
+            **UpgradeCalldata::build(Jovian::gas_price_oracle_address()),
             hex!("0x3659cfe60000000000000000000000004f1db3c6abd250ba86e0928471a8f7db3afd88f1")
         );
     }
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn test_upgrade_to_calldata_for_l1_block_proxy_update() {
         assert_eq!(
-            **upgrade_to_calldata(Jovian::l1_block_address()),
+            **UpgradeCalldata::build(Jovian::l1_block_address()),
             hex!("0x3659cfe60000000000000000000000003ba4007f5c922fbb33c454b41ea7a1f11e83df2c")
         );
     }

@@ -2530,6 +2530,7 @@ dependencies = [
  "base-consensus-gossip",
  "base-consensus-node",
  "base-consensus-registry",
+ "base-consensus-safedb",
  "base-execution-chainspec",
  "base-execution-evm",
  "base-protocol",
@@ -2538,6 +2539,7 @@ dependencies = [
  "base-tx-manager",
  "reth-evm",
  "revm",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
@@ -3340,7 +3342,6 @@ dependencies = [
  "alloy-sol-types",
  "arbitrary",
  "base-alloy-chains",
- "base-revm",
  "derive_more",
  "rand 0.9.2",
  "serde",
@@ -3422,6 +3423,7 @@ dependencies = [
  "base-consensus-peers",
  "base-consensus-providers",
  "base-consensus-rpc",
+ "base-consensus-safedb",
  "base-consensus-sources",
  "base-health",
  "base-macros",
@@ -3540,6 +3542,7 @@ dependencies = [
  "base-consensus-engine",
  "base-consensus-genesis",
  "base-consensus-gossip",
+ "base-consensus-safedb",
  "base-macros",
  "base-protocol",
  "getrandom 0.4.2",
@@ -3549,6 +3552,22 @@ dependencies = [
  "metrics",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-consensus-safedb"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "async-trait",
+ "base-protocol",
+ "redb",
+ "serde",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3586,6 +3605,7 @@ dependencies = [
  "base-protocol",
  "base-revm",
  "revm",
+ "rstest",
 ]
 
 [[package]]
@@ -4971,6 +4991,7 @@ dependencies = [
  "alloy-sol-types",
  "auto_impl",
  "base-alloy-flz",
+ "base-consensus-genesis",
  "reth-evm",
  "revm",
  "rstest",
@@ -13700,6 +13721,15 @@ name = "recvmsg"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
+
+[[package]]
+name = "redb"
+version = "2.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eca1e9d98d5a7e9002d0013e18d5a9b000aee942eb134883a82f06ebffb6c01"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "redox_syscall"

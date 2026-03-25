@@ -29,9 +29,6 @@ tracing.workspace = true
 thiserror.workspace = true
 derive_more = { workspace = true, features = ["display", "from", "try_from"] }
 
-# `revm` feature
-base-revm = { workspace = true, optional = true }
-
 # `arbitrary` feature
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 
@@ -47,7 +44,6 @@ alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 
 [features]
 default = []
-revm = [ "dep:base-revm" ]
 std = [
 	"alloy-chains/std",
 	"alloy-consensus/std",
@@ -55,7 +51,6 @@ std = [
 	"alloy-genesis/std",
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
-	"base-revm?/std",
 	"derive_more/std",
 	"serde?/std",
 	"thiserror/std",
@@ -78,6 +73,5 @@ serde = [
 	"alloy-hardforks/serde",
 	"alloy-primitives/serde",
 	"base-alloy-chains/serde",
-	"base-revm?/serde",
 	"dep:serde",
 ]

@@ -45,12 +45,25 @@ fn precompile_address(id: &PrecompileId) -> Address {
 #[derive(Debug, Clone)]
 pub struct PrecompilePayload {
     id: PrecompileId,
+    blake2f_rounds: Option<u32>,
+    iterations: u32,
+    looper_contract: Option<Address>,
 }
 
 impl PrecompilePayload {
     /// Creates a new precompile payload.
     pub const fn new(id: PrecompileId) -> Self {
-        Self { id }
+        Self { id, blake2f_rounds: None, iterations: 1, looper_contract: None }
+    }
+
+    /// Creates a new precompile payload with all options.
+    pub const fn with_options(
+        id: PrecompileId,
+        blake2f_rounds: Option<u32>,
+        iterations: u32,
+        looper_contract: Option<Address>,
+    ) -> Self {
+        Self { id, blake2f_rounds, iterations, looper_contract }
     }
 
     fn encode_identity_data(rng: &mut SeededRng) -> Bytes {
@@ -107,9 +120,9 @@ impl PrecompilePayload {
         Bytes::new()
     }
 
-    fn encode_blake2f_data(rng: &mut SeededRng) -> (Bytes, u64) {
+    fn encode_blake2f_data(rng: &mut SeededRng, fixed_rounds: Option<u32>) -> (Bytes, u64) {
         let mut data = vec![0u8; 213];
-        let rounds = rng.gen_range(1..=400_000) as u32;
+        let rounds = fixed_rounds.unwrap_or_else(|| rng.gen_range(1..=400_000));
         data[0..4].copy_from_slice(&rounds.to_be_bytes());
 
         for byte in &mut data[4..212] {
@@ -128,14 +141,53 @@ impl PrecompilePayload {
     }
 }
 
+impl PrecompilePayload {
+    fn encode_looper_call(precompile: Address, data: &Bytes, iterations: u32) -> Bytes {
+        // loopCall(address,bytes,uint256) selector: keccak256("loopCall(address,bytes,uint256)")[:4]
+        // = 0x7b395fc2
+        let selector = [0x7b, 0x39, 0x5f, 0xc2];
+
+        // ABI encode: address (32 bytes) + offset to bytes (32) + iterations (32) + bytes length (32) + bytes data (padded)
+        let data_len = data.len();
+        let padded_data_len = data_len.div_ceil(32) * 32;
+
+        let mut encoded = Vec::with_capacity(4 + 32 + 32 + 32 + 32 + padded_data_len);
+        encoded.extend_from_slice(&selector);
+
+        // address precompile (left-padded to 32 bytes)
+        encoded.extend_from_slice(&[0u8; 12]);
+        encoded.extend_from_slice(precompile.as_slice());
+
+        // offset to bytes data (points to position 96 = 0x60)
+        encoded.extend_from_slice(&[0u8; 31]);
+        encoded.push(0x60);
+
+        // uint256 iterations
+        let mut iter_bytes = [0u8; 32];
+        iter_bytes[28..32].copy_from_slice(&iterations.to_be_bytes());
+        encoded.extend_from_slice(&iter_bytes);
+
+        // bytes length
+        let mut len_bytes = [0u8; 32];
+        len_bytes[28..32].copy_from_slice(&(data_len as u32).to_be_bytes());
+        encoded.extend_from_slice(&len_bytes);
+
+        // bytes data (padded to 32 bytes)
+        encoded.extend_from_slice(data);
+        encoded.resize(encoded.len() + padded_data_len - data_len, 0);
+
+        Bytes::from(encoded)
+    }
+}
+
 impl Payload for PrecompilePayload {
     fn name(&self) -> &'static str {
         "precompile"
     }
 
     fn generate(&self, rng: &mut SeededRng, _from: Address, _to: Address) -> TransactionRequest {
-        let (data, gas_limit) = match self.id {
-            PrecompileId::Identity => (Self::encode_identity_data(rng), 100_000),
+        let (precompile_data, single_gas) = match self.id {
+            PrecompileId::Identity => (Self::encode_identity_data(rng), 100_000u64),
             PrecompileId::Sha256 | PrecompileId::Ripemd160 => {
                 (Self::encode_sha256_data(rng), 100_000)
             }
@@ -144,14 +196,28 @@ impl Payload for PrecompilePayload {
             PrecompileId::Bn254Add => (Self::encode_bn254_add_data(), 25_000),
             PrecompileId::Bn254Mul => (Self::encode_bn254_mul_data(), 30_000),
             PrecompileId::Bn254Pairing => (Self::encode_bn254_pairing_data(), 70_000),
-            PrecompileId::Blake2F => Self::encode_blake2f_data(rng),
+            PrecompileId::Blake2F => Self::encode_blake2f_data(rng, self.blake2f_rounds),
             PrecompileId::KzgPointEvaluation => (Self::encode_kzg_data(), 75_000),
             _ => (Bytes::from(rng.gen_bytes::<32>().to_vec()), 100_000),
         };
 
+        let precompile_addr = precompile_address(&self.id);
+
+        if self.iterations > 1
+            && let Some(looper) = self.looper_contract
+        {
+            let data = Self::encode_looper_call(precompile_addr, &precompile_data, self.iterations);
+            // Gas: base cost + (per-iteration cost * iterations) + some overhead for looper
+            let gas_limit = 50_000 + single_gas * u64::from(self.iterations);
+            return TransactionRequest::default()
+                .with_to(looper)
+                .with_input(data)
+                .with_gas_limit(gas_limit);
+        }
+
         TransactionRequest::default()
-            .with_to(precompile_address(&self.id))
-            .with_input(data)
-            .with_gas_limit(gas_limit)
+            .with_to(precompile_addr)
+            .with_input(precompile_data)
+            .with_gas_limit(single_gas)
     }
 }

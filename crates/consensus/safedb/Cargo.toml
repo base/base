@@ -1,0 +1,36 @@
+[package]
+name = "base-consensus-safedb"
+description = "Persistent safe head tracking for Base"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Consensus
+base-protocol = { workspace = true, features = ["std"] }
+
+# Alloy
+alloy-eips = { workspace = true, features = ["serde", "std"] }
+alloy-primitives = { workspace = true, features = ["std"] }
+
+# Storage
+redb.workspace = true
+
+# Async
+async-trait.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+
+# Misc
+serde = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }

@@ -38,9 +38,7 @@ use tracing::{debug, error, info, warn};
 
 use super::core::{DriverConfig, RecoveredState};
 use crate::{
-    constants::{
-        MAX_GAME_RECOVERY_LOOKBACK, NO_PARENT_INDEX, PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY,
-    },
+    constants::{NO_PARENT_INDEX, PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY},
     error::ProposerError,
     metrics as proposer_metrics,
     output_proposer::{OutputProposer, is_game_already_exists},
@@ -53,6 +51,8 @@ pub struct PipelineConfig {
     pub max_parallel_proofs: usize,
     /// Maximum retries for a single proof range before full pipeline reset.
     pub max_retries: u32,
+    /// Maximum number of games to scan backwards when recovering state on startup.
+    pub max_game_recovery_lookback: u64,
     /// Base driver configuration.
     pub driver: DriverConfig,
     /// Optional Unix timestamp at which the V1 hardfork activates.
@@ -499,10 +499,10 @@ where
                 Ordering::Greater => {
                     let new_games = count - cached.game_count;
 
-                    if new_games > MAX_GAME_RECOVERY_LOOKBACK {
+                    if new_games > self.config.max_game_recovery_lookback {
                         warn!(
                             new_games,
-                            max = MAX_GAME_RECOVERY_LOOKBACK,
+                            max = self.config.max_game_recovery_lookback,
                             "Incremental delta exceeds lookback, falling back to full scan"
                         );
                         *cache = None;
@@ -525,7 +525,7 @@ where
                 }
             }
         }
-        let search_count = count.min(MAX_GAME_RECOVERY_LOOKBACK);
+        let search_count = count.min(self.config.max_game_recovery_lookback);
         debug!(search_count, "Full concurrent recovery scan");
         if let Some(state) = self.scan_range_for_recovery(count, search_count).await? {
             *cache = Some(CachedRecovery { game_count: count, state });
@@ -934,6 +934,7 @@ mod tests {
         let pipeline = test_pipeline(
             PipelineConfig {
                 max_parallel_proofs: 2,
+                max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: None,
                 driver: DriverConfig {
@@ -961,6 +962,7 @@ mod tests {
         let pipeline = test_pipeline(
             PipelineConfig {
                 max_parallel_proofs: 2,
+                max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: None,
                 driver: DriverConfig {
@@ -991,6 +993,7 @@ mod tests {
         let pipeline = test_pipeline(
             PipelineConfig {
                 max_parallel_proofs: 2,
+                max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: None,
                 driver: DriverConfig::default(),
@@ -1009,6 +1012,7 @@ mod tests {
         let pipeline = test_pipeline(
             PipelineConfig {
                 max_parallel_proofs: 2,
+                max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: Some(0),
                 driver: DriverConfig::default(),
@@ -1029,6 +1033,7 @@ mod tests {
         let pipeline = test_pipeline(
             PipelineConfig {
                 max_parallel_proofs: 2,
+                max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: Some(u64::MAX),
                 driver: DriverConfig::default(),
@@ -1050,6 +1055,7 @@ mod tests {
         let pipeline = test_pipeline(
             PipelineConfig {
                 max_parallel_proofs: 2,
+                max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: Some(u64::MAX),
                 driver: DriverConfig {
@@ -1078,6 +1084,7 @@ mod tests {
         let pipeline = test_pipeline(
             PipelineConfig {
                 max_parallel_proofs: 2,
+                max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: Some(0),
                 driver: DriverConfig {
@@ -1135,6 +1142,7 @@ mod tests {
         ProvingPipeline::new(
             PipelineConfig {
                 max_parallel_proofs: 1,
+                max_game_recovery_lookback: 5000,
                 max_retries: 1,
                 v1_hardfork_timestamp: None,
                 driver: DriverConfig { game_type, ..Default::default() },
@@ -1509,10 +1517,11 @@ mod tests {
             },
         });
 
-        // Factory now reports count = 1 + MAX_GAME_RECOVERY_LOOKBACK + 1,
+        // Factory now reports count = 1 + max_game_recovery_lookback + 1,
         // which exceeds the lookback limit.  The cache should be invalidated
         // and a full scan should start.
-        let new_count = 1 + MAX_GAME_RECOVERY_LOOKBACK + 1;
+        let max_lookback = 5000u64; // matches recovery_pipeline's config
+        let new_count = 1 + max_lookback + 1;
         // We only need to populate the most recent game for the full scan to
         // find it (scan walks backwards from count-1).
         let last_idx = (new_count - 1) as usize;

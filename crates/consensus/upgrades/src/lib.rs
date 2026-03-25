@@ -28,7 +28,7 @@ mod jovian;
 pub use jovian::Jovian;
 
 mod utils;
-pub(crate) use utils::upgrade_to_calldata;
+pub use utils::UpgradeCalldata;
 
 #[cfg(test)]
 mod test_utils;

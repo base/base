@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use aws_sdk_ec2::Client as Ec2Client;
 use aws_sdk_elasticloadbalancingv2::Client as ElbClient;
 use tracing::{debug, warn};
+use url::Url;
 
 use crate::{InstanceDiscovery, InstanceHealthStatus, ProverInstance, RegistrarError, Result};
 
@@ -54,7 +55,19 @@ impl AwsTargetGroupDiscovery {
             .iter()
             .filter_map(|(instance_id, health_status)| {
                 let private_ip = instance_ips.get(instance_id)?;
-                let endpoint = format!("{private_ip}:{port}");
+                let raw = format!("http://{private_ip}:{port}");
+                let endpoint = match Url::parse(&raw) {
+                    Ok(url) => url,
+                    Err(e) => {
+                        warn!(
+                            instance_id = %instance_id,
+                            url = %raw,
+                            error = %e,
+                            "failed to parse prover endpoint URL, skipping"
+                        );
+                        return None;
+                    }
+                };
                 debug!(
                     instance_id = %instance_id,
                     endpoint = %endpoint,
@@ -175,6 +188,10 @@ mod tests {
         pairs.iter().map(|(id, s)| (id.to_string(), *s)).collect()
     }
 
+    fn expected_url(ip: &str, port: u16) -> Url {
+        Url::parse(&format!("http://{ip}:{port}")).unwrap()
+    }
+
     #[rstest]
     #[case::healthy("i-001", "10.0.0.1", InstanceHealthStatus::Healthy)]
     #[case::initial("i-002", "10.0.0.2", InstanceHealthStatus::Initial)]
@@ -190,7 +207,7 @@ mod tests {
         let instances = AwsTargetGroupDiscovery::assemble_prover_instances(&targets, &ips, 8000);
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0].instance_id, id);
-        assert_eq!(instances[0].endpoint, format!("{ip}:8000"));
+        assert_eq!(instances[0].endpoint, expected_url(ip, 8000));
         assert_eq!(instances[0].health_status, status);
     }
 
@@ -214,7 +231,7 @@ mod tests {
         let targets = make_targets(&[("i-006", InstanceHealthStatus::Healthy)]);
         let ips = make_ips(&[("i-006", "10.0.0.6")]);
         let instances = AwsTargetGroupDiscovery::assemble_prover_instances(&targets, &ips, 9999);
-        assert_eq!(instances[0].endpoint, "10.0.0.6:9999");
+        assert_eq!(instances[0].endpoint, expected_url("10.0.0.6", 9999));
     }
 
     #[test]

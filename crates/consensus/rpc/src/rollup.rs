@@ -2,12 +2,13 @@
 //!
 //! Implemented in the op-node in <https://github.com/ethereum-optimism/optimism/blob/174e55f0a1e73b49b80a561fd3fedd4fea5770c6/op-service/sources/rollupclient.go#L16>
 
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 
 use alloy_eips::BlockNumberOrTag;
 use async_trait::async_trait;
 use base_consensus_engine::EngineState;
 use base_consensus_genesis::RollupConfig;
+use base_consensus_safedb::{SafeDBError, SafeDBReader};
 use base_protocol::SyncStatus;
 use jsonrpsee::{
     core::RpcResult,
@@ -28,6 +29,8 @@ pub struct RollupRpc<EngineRpcClient_> {
     pub engine_client: EngineRpcClient_,
     /// The channel to send [`crate::L1WatcherQueries`]s.
     pub l1_watcher_sender: L1WatcherQuerySender,
+    /// Reader for safe head lookups by L1 block number.
+    pub safe_db_reader: Arc<dyn SafeDBReader>,
 }
 
 impl<EngineRpcClient_: EngineRpcClient> RollupRpc<EngineRpcClient_> {
@@ -35,11 +38,12 @@ impl<EngineRpcClient_: EngineRpcClient> RollupRpc<EngineRpcClient_> {
     pub const RPC_IDENT: &'static str = "rollup_rpc";
 
     /// Constructs a new [`RollupRpc`] given a sender channel.
-    pub const fn new(
+    pub fn new(
         engine_client: EngineRpcClient_,
         l1_watcher_sender: L1WatcherQuerySender,
+        safe_db_reader: Arc<dyn SafeDBReader>,
     ) -> Self {
-        Self { engine_client, l1_watcher_sender }
+        Self { engine_client, l1_watcher_sender, safe_db_reader }
     }
 
     // Important note: we zero-out the fields that can't be derived yet to follow op-node's
@@ -87,14 +91,35 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
         Ok(OutputResponse::from_v0(output_root, sync_status, l2_block_info))
     }
 
-    /// This RPC endpoint is not supported. It is not necessary to track the safe head for every L1
-    /// block anymore so we can remove this method from the rpc interface.
     async fn op_safe_head_at_l1_block(
         &self,
-        _block_num: BlockNumberOrTag,
+        block_num: BlockNumberOrTag,
     ) -> RpcResult<SafeHeadResponse> {
         base_macros::inc!(gauge, Self::RPC_IDENT, "method" => "op_safeHeadAtL1Block");
-        return Err(ErrorObject::from(ErrorCode::MethodNotFound));
+
+        let number = match block_num {
+            BlockNumberOrTag::Number(n) => n,
+            _ => {
+                return Err(ErrorObject::owned(
+                    -32602,
+                    "optimism_safeHeadAtL1Block requires an explicit block number, not latest/earliest/pending",
+                    None::<()>,
+                ));
+            }
+        };
+
+        self.safe_db_reader.safe_head_at_l1(number).await.map_err(|e| match e {
+            SafeDBError::NotFound => ErrorObject::owned(-32000, "safe head not found", None::<()>),
+            SafeDBError::Disabled => ErrorObject::owned(
+                -32000,
+                "safe head tracking is disabled on this node",
+                None::<()>,
+            ),
+            SafeDBError::Database(_) => {
+                error!(target: "rpc", error = %e, "safedb query failed");
+                ErrorObject::from(ErrorCode::InternalError)
+            }
+        })
     }
 
     async fn op_sync_status(&self) -> RpcResult<SyncStatus> {

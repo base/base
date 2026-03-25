@@ -1,6 +1,6 @@
 //! Contains the builder for the [`RollupNode`].
 
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_primitives::Bytes;
 use alloy_provider::RootProvider;
@@ -77,6 +77,11 @@ pub struct RollupNodeBuilder {
     /// When `None`, [`L1Config::default_finalized_poll_interval`] is used to select a
     /// chain-appropriate default derived from `config.l1_chain_id`.
     pub finalized_poll_interval: Option<Duration>,
+    /// Optional path to the safe head database file.
+    ///
+    /// When set, enables persistent safe head tracking via redb and serves
+    /// `optimism_safeHeadAtL1Block` RPC requests from the database.
+    pub safedb_path: Option<PathBuf>,
 }
 
 impl RollupNodeBuilder {
@@ -99,6 +104,7 @@ impl RollupNodeBuilder {
             sequencer_config: None,
             derivation_delegate_config: None,
             finalized_poll_interval: None,
+            safedb_path: None,
         }
     }
 
@@ -133,6 +139,11 @@ impl RollupNodeBuilder {
         derivation_delegate_config: Option<DerivationDelegateConfig>,
     ) -> Self {
         Self { derivation_delegate_config, ..self }
+    }
+
+    /// Enables persistent safe head tracking by setting the path to the redb database file.
+    pub fn with_safedb_path(self, path: PathBuf) -> Self {
+        Self { safedb_path: Some(path), ..self }
     }
 
     /// Assembles the [`RollupNode`] service.
@@ -197,6 +208,7 @@ impl RollupNodeBuilder {
             p2p_config,
             sequencer_config,
             derivation_delegate_provider,
+            safedb_path: self.safedb_path,
         }
     }
 }

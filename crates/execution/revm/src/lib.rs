@@ -26,6 +26,9 @@ pub use precompiles::{BasePrecompiles, bls12_381, bn254_pair};
 mod result;
 pub use result::OpHaltReason;
 
+mod rollup_config;
+pub use rollup_config::RollupConfigExt;
+
 mod spec;
 pub use spec::*;
 

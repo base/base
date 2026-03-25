@@ -38,6 +38,12 @@ pub enum TxType {
     Precompile {
         /// Target precompile.
         target: PrecompileId,
+        /// Fixed number of rounds for Blake2f. If `None`, a random value is used.
+        blake2f_rounds: Option<u32>,
+        /// Number of iterations per transaction (requires looper contract when > 1).
+        iterations: u32,
+        /// Looper contract address (required when iterations > 1).
+        looper_contract: Option<Address>,
     },
 }
 

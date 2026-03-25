@@ -3,7 +3,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod config;
-pub use config::{TestConfig, TxTypeConfig, WeightedTxType, WorkloadConfig};
+pub use config::{PrecompileTarget, TestConfig, TxTypeConfig, WeightedTxType, WorkloadConfig};
 
 mod utils;
 pub use utils::{BaselineError, Result, init_tracing};
@@ -19,9 +19,9 @@ pub use metrics::{
 
 mod workload;
 pub use workload::{
-    AccountPool, CalldataPayload, Erc20Payload, FundedAccount, Payload, PrecompilePayload,
-    SeededRng, StoragePayload, TransferPayload, UniswapV2Payload, UniswapV3Payload,
-    WorkloadGenerator, parse_precompile_id,
+    AccountPool, CalldataPayload, Erc20Payload, FundedAccount, Payload, PrecompileLooper,
+    PrecompilePayload, SeededRng, StoragePayload, TransferPayload, UniswapV2Payload,
+    UniswapV3Payload, WorkloadGenerator, parse_precompile_id,
 };
 
 mod runner;
