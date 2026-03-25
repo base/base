@@ -1,6 +1,6 @@
 //! Contains the CLI entry point for the Base consensus binary.
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use alloy_chains::Chain;
 use alloy_primitives::Address;
@@ -288,6 +288,10 @@ pub struct Node {
     /// SEQUENCER CLI arguments.
     #[command(flatten)]
     pub sequencer_flags: SequencerArgs,
+
+    /// Path to the `SafeDB` directory. If not set, safe head tracking is disabled.
+    #[arg(long = "safedb.path", env = "BASE_NODE_SAFEDB_PATH")]
+    pub safedb_path: Option<PathBuf>,
 }
 
 impl Node {
@@ -391,7 +395,7 @@ impl Node {
             mode: self.node_mode,
         };
 
-        RollupNodeBuilder::new(
+        let mut builder = RollupNodeBuilder::new(
             cfg,
             l1_config,
             self.l2_client_args.l2_trust_rpc,
@@ -399,11 +403,11 @@ impl Node {
             p2p_config,
             rpc_config,
         )
-        .with_sequencer_config(self.sequencer_flags.config())
-        .build()
-        .start()
-        .await
-        .map_err(|e| {
+        .with_sequencer_config(self.sequencer_flags.config());
+        if let Some(path) = self.safedb_path.clone() {
+            builder = builder.with_safedb_path(path);
+        }
+        builder.build().start().await.map_err(|e| {
             error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
             eyre::eyre!("{e}")
         })?;
@@ -438,6 +442,7 @@ mod tests {
             p2p_flags: P2PArgs::default(),
             rpc_flags: RpcArgs::default(),
             sequencer_flags: SequencerArgs::default(),
+            safedb_path: None,
         }
     }
 

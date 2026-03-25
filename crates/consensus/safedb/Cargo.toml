@@ -22,6 +22,10 @@ alloy-primitives = { workspace = true, features = ["std"] }
 # Storage
 redb.workspace = true
 
+# Async
+async-trait.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+
 # Misc
 thiserror = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
@@ -29,3 +33,4 @@ serde = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }

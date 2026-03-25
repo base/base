@@ -102,7 +102,7 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
             _ => return Err(ErrorObject::owned(-32602, "expected block number", None::<()>)),
         };
 
-        self.safe_db_reader.safe_head_at_l1(number).map_err(|e| match e {
+        self.safe_db_reader.safe_head_at_l1(number).await.map_err(|e| match e {
             SafeDBError::NotFound => ErrorObject::owned(-32000, "safe head not found", None::<()>),
             SafeDBError::Disabled => ErrorObject::owned(
                 -32000,

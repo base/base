@@ -3564,11 +3564,13 @@ version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
+ "async-trait",
  "base-protocol",
  "redb",
  "serde",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
 ]
 

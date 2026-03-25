@@ -310,15 +310,25 @@ impl RollupNode {
         let cancellation = CancellationToken::new();
 
         // Build the safe head DB pair. Both actors share the same underlying DB via Arc.
+        //
+        // In delegate mode the local derivation actor is replaced by a `DelegateDerivationActor`
+        // that never calls `safe_head_updated`, so opening a real SafeDB would leave it
+        // permanently empty and cause the RPC to return `NotFound` instead of `Disabled`.
+        // Force `DisabledSafeDB` in that case regardless of `safedb_path`.
         let (safe_head_listener, safe_db_reader): (
             Arc<dyn SafeHeadListener>,
             Arc<dyn SafeDBReader>,
-        ) = if let Some(path) = &self.safedb_path {
-            let db = Arc::new(
-                SafeDB::open(path)
-                    .map_err(|e| format!("failed to open safe head database: {e}"))?,
-            );
-            (Arc::clone(&db) as Arc<dyn SafeHeadListener>, db as Arc<dyn SafeDBReader>)
+        ) = if self.derivation_delegate_provider.is_none() {
+            if let Some(path) = &self.safedb_path {
+                let db = Arc::new(
+                    SafeDB::open(path)
+                        .map_err(|e| format!("failed to open safe head database: {e}"))?,
+                );
+                (Arc::clone(&db) as Arc<dyn SafeHeadListener>, db as Arc<dyn SafeDBReader>)
+            } else {
+                let db = Arc::new(DisabledSafeDB);
+                (Arc::clone(&db) as Arc<dyn SafeHeadListener>, db as Arc<dyn SafeDBReader>)
+            }
         } else {
             let db = Arc::new(DisabledSafeDB);
             (Arc::clone(&db) as Arc<dyn SafeHeadListener>, db as Arc<dyn SafeDBReader>)

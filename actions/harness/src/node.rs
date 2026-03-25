@@ -300,8 +300,11 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     /// if no entry exists (e.g. `NotFound` when no L2 block has been derived yet).
     /// Call `.unwrap()` at the test site when success is expected, or match on
     /// the error to assert specific error conditions.
-    pub fn safe_head_at_l1(&self, l1_block_num: u64) -> Result<SafeHeadResponse, SafeDBError> {
-        self.safe_db.safe_head_at_l1(l1_block_num)
+    pub async fn safe_head_at_l1(
+        &self,
+        l1_block_num: u64,
+    ) -> Result<SafeHeadResponse, SafeDBError> {
+        self.safe_db.safe_head_at_l1(l1_block_num).await
     }
 
     /// Return the total transaction counts for each derived L2 block.
@@ -415,7 +418,10 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         self.derived_tx_counts.clear();
         self.derived_user_tx_counts.clear();
         self.derived_l1_info_txs.clear();
-        self.safe_db.safe_head_reset(l2_safe_head).expect("TestRollupNode: safe_db reset failed");
+        self.safe_db
+            .safe_head_reset(l2_safe_head)
+            .await
+            .expect("TestRollupNode: safe_db reset failed");
         // Replace the engine with a fresh instance: the stateful EVM must restart
         // from genesis to correctly re-execute the new fork's blocks.
         self.engine = ActionEngineClient::new(
@@ -778,6 +784,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         });
         self.safe_db
             .safe_head_updated(self.safe_head, l1_block_for_db)
+            .await
             .expect("TestRollupNode: safe_db update failed");
 
         // If derivation caught up to or past the unsafe head, align them.
