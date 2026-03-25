@@ -16,7 +16,7 @@ mod handler;
 pub use handler::PayloadHandler;
 
 mod context;
-pub use context::{FlashblocksExtraCtx, OpPayloadBuilderCtx};
+pub use context::{FlashblockDiagnostics, FlashblocksExtraCtx, OpPayloadBuilderCtx};
 
 mod payload;
 pub use payload::FlashblocksExecutionInfo;

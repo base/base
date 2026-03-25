@@ -585,7 +585,8 @@ where
             block_state_root_time_limit_us,
             block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
         };
-        ctx.execute_best_transactions(info, state, best_txs, &limits)
+        let diag = ctx
+            .execute_best_transactions(info, state, best_txs, &limits)
             .wrap_err("failed to execute best transactions")?;
         // Extract last transactions
         let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..]
@@ -722,12 +723,30 @@ where
                     target_state_root_time_for_batch_us,
                 );
 
+                let gas_headroom_pct = if limits.block_gas_limit > 0 {
+                    (limits.block_gas_limit.saturating_sub(info.cumulative_gas_used) as f64
+                        / limits.block_gas_limit as f64
+                        * 100.0) as u64
+                } else {
+                    0
+                };
                 info!(
                     target: "payload_builder",
                     message = "Flashblock built",
                     flashblock_index = flashblock_index,
+                    selection_outcome = diag.selection_outcome(),
+                    rejection_reasons = ?diag.rejection_reasons(),
+                    txs_included = diag.txs_included,
+                    txs_rejected = diag.txs_rejected_total(),
+                    min_priority_fee_wei = diag.min_priority_fee.unwrap_or(0),
                     current_gas = info.cumulative_gas_used,
+                    target_gas = limits.block_gas_limit,
+                    gas_headroom_pct = gas_headroom_pct,
                     current_da = info.cumulative_da_bytes_used,
+                    flashblock_exec_time_us = info.flashblock_execution_time_us,
+                    exec_time_limit_us = ?limits.flashblock_execution_time_limit_us,
+                    cumulative_state_root_time_us = info.cumulative_state_root_time_us,
+                    state_root_time_limit_us = ?limits.block_state_root_time_limit_us,
                     target_flashblocks = ctx.target_flashblock_count(),
                 );
 
