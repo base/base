@@ -16,9 +16,10 @@ use base_consensus_derive::{
 };
 use base_consensus_engine::{EngineForkchoiceVersion, EngineNewPayloadVersion};
 use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_consensus_safedb::{
+    SafeDB, SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse,
+};
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo, OpAttributesWithParent};
-
-use base_consensus_safedb::{SafeDB, SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse};
 
 use crate::{
     ActionBlobDataSource, ActionDataSource, ActionEngineClient, ActionL1ChainProvider,
@@ -115,7 +116,7 @@ pub enum NodeStepResult {
 /// [`ActionEngineClient`] (real EVM execution via revm) and
 /// [`TestGossipTransport`] (in-memory P2P gossip). Tests drive it step-by-step:
 ///
-/// # SafeDB
+/// # `SafeDB`
 ///
 /// Each node opens a real [`SafeDB`] backed by a [`tempfile::TempDir`]. This
 /// exercises the actual persistence layer (redb) rather than a mock, so tests
@@ -293,7 +294,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         self.pipeline.origin()
     }
 
-    /// Query the safe head recorded for a given L1 block number from the persistent SafeDB.
+    /// Query the safe head recorded for a given L1 block number from the persistent `SafeDB`.
     ///
     /// Returns the safe head at or before `l1_block_num`, or a [`SafeDBError`]
     /// if no entry exists (e.g. `NotFound` when no L2 block has been derived yet).
@@ -414,9 +415,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         self.derived_tx_counts.clear();
         self.derived_user_tx_counts.clear();
         self.derived_l1_info_txs.clear();
-        self.safe_db
-            .safe_head_reset(l2_safe_head)
-            .expect("TestRollupNode: safe_db reset failed");
+        self.safe_db.safe_head_reset(l2_safe_head).expect("TestRollupNode: safe_db reset failed");
         // Replace the engine with a fresh instance: the stateful EVM must restart
         // from genesis to correctly re-execute the new fork's blocks.
         self.engine = ActionEngineClient::new(

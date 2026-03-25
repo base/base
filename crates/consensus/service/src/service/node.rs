@@ -318,10 +318,10 @@ impl RollupNode {
                 SafeDB::open(path)
                     .map_err(|e| format!("failed to open safe head database: {e}"))?,
             );
-            (db.clone(), db)
+            (Arc::clone(&db) as Arc<dyn SafeHeadListener>, db as Arc<dyn SafeDBReader>)
         } else {
             let db = Arc::new(DisabledSafeDB);
-            (db.clone(), db)
+            (Arc::clone(&db) as Arc<dyn SafeHeadListener>, db as Arc<dyn SafeDBReader>)
         };
 
         let (derivation_actor_request_tx, derivation_actor_request_rx) = mpsc::channel(1024);

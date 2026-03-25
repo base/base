@@ -308,7 +308,10 @@ async fn finalization_reorg_clears_state() {
     // SafeDB post-reset: DB was truncated on reset and re-anchored at genesis.
     // After re-deriving L2#1 from new L1#1 the DB reflects the new mapping.
     let safe_post = node.safe_head_at_l1(1).unwrap();
-    assert_eq!(safe_post.safe_head.number, 1, "safedb post-reset: safe head at L1#1 should be L2#1");
+    assert_eq!(
+        safe_post.safe_head.number, 1,
+        "safedb post-reset: safe head at L1#1 should be L2#1"
+    );
 
     // The old L1#2 entry must be gone — querying L1#2 should resolve to the
     // reset anchor (L1#1 → L2#1), not the pre-reset L2#2 entry.

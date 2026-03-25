@@ -109,10 +109,7 @@ async fn multiple_l1_blocks_each_derive_one_l2_block() {
     // individual L1→L2 mapping, not just the last one.
     for i in 1..=L2_BLOCK_COUNT {
         let safe = node.safe_head_at_l1(i).unwrap();
-        assert_eq!(
-            safe.safe_head.number, i,
-            "safedb: safe head at L1#{i} should be L2#{i}"
-        );
+        assert_eq!(safe.safe_head.number, i, "safedb: safe head at L1#{i} should be L2#{i}");
     }
 }
 

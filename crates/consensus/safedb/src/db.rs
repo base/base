@@ -453,11 +453,8 @@ mod tests {
 
         {
             let db = SafeDB::open(&path).unwrap();
-            db.safe_head_updated(
-                l2_block_info(0xBB, 200, 0x11, 100),
-                block_info(0x11, 100),
-            )
-            .unwrap();
+            db.safe_head_updated(l2_block_info(0xBB, 200, 0x11, 100), block_info(0x11, 100))
+                .unwrap();
         } // db and its redb Database are dropped here
 
         // Reopen and verify the entry is still present.
