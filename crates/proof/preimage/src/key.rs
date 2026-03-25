@@ -2,6 +2,8 @@
 //! the preimage oracle.
 
 use alloy_primitives::{B256, Keccak256, U256};
+#[cfg(feature = "rkyv")]
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 #[cfg(feature = "serde")]
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 
@@ -11,6 +13,8 @@ use crate::errors::PreimageOracleError;
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[repr(u8)]
 #[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
+#[cfg_attr(feature = "rkyv", derive(RkyvSerialize, RkyvDeserialize, Archive))]
+#[cfg_attr(feature = "rkyv", rkyv(derive(Hash, Eq, PartialEq)))]
 pub enum PreimageKeyType {
     /// Local key types are local to a given instance of a fault-proof and context dependent.
     /// Commonly these local keys are mapped to bootstrap data for the fault proof program.
@@ -61,6 +65,8 @@ impl TryFrom<u8> for PreimageKeyType {
 /// | [1, 32) | Data        |
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
+#[cfg_attr(feature = "rkyv", derive(RkyvSerialize, RkyvDeserialize, Archive))]
+#[cfg_attr(feature = "rkyv", rkyv(derive(Hash, Eq, PartialEq)))]
 pub struct PreimageKey {
     data: [u8; 31],
     key_type: PreimageKeyType,
