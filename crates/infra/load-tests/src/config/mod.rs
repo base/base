@@ -8,6 +8,3 @@ pub use scenarios::{ScenarioConfig, ScenariosRegistry};
 
 mod test_config;
 pub use test_config::{PrecompileTarget, TestConfig, TxTypeConfig, WeightedTxType};
-
-mod scenarios;
-pub use scenarios::{ScenarioConfig, ScenariosRegistry};

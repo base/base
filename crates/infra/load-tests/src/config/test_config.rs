@@ -121,7 +121,7 @@ impl Default for TestConfig {
         Self {
             rpc: Url::parse("http://localhost:8545").expect("valid URL"),
             mnemonic: None,
-            funding_amount: "100000000000000000".to_string(),
+            funding_amount: "10000000000000000".to_string(),
             sender_count: 10,
             sender_offset: 0,
             in_flight_per_sender: 16,

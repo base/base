@@ -9,8 +9,8 @@ target_gps: 2100000
 duration: "30s"
 seed: 12345
 
-# 2 ETH per account
-funding_amount: "2000000000000000000"
+# 0.01 ETH per account (covers gas for 30s at 2.1M GPS; drained after test)
+funding_amount: "10000000000000000"
 
 transactions:
   - weight: 70
