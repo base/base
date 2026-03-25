@@ -3586,6 +3586,7 @@ dependencies = [
  "base-protocol",
  "base-revm",
  "revm",
+ "rstest",
 ]
 
 [[package]]
