@@ -29,7 +29,6 @@ alloy-primitives = { workspace = true, optional = true }
 spin.workspace = true
 rstest.workspace = true
 proptest.workspace = true
-alloy-eips.workspace = true
 serde_json.workspace = true
 alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
