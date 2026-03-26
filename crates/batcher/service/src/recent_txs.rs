@@ -93,8 +93,9 @@ impl RecentTxScanner {
                 };
 
                 for frame in frames {
-                    let channel =
-                        channels.entry(frame.id).or_insert_with(|| Channel::new(frame.id, block_info));
+                    let channel = channels
+                        .entry(frame.id)
+                        .or_insert_with(|| Channel::new(frame.id, block_info));
                     let _ = channel.add_frame(frame, block_info);
                 }
             }
@@ -152,7 +153,11 @@ mod tests {
     use super::RecentTxScanner;
 
     /// Build a [`RollupConfig`] with controllable genesis parameters for tests.
-    fn test_rollup_config(genesis_l2_number: u64, genesis_l2_time: u64, block_time: u64) -> RollupConfig {
+    fn test_rollup_config(
+        genesis_l2_number: u64,
+        genesis_l2_time: u64,
+        block_time: u64,
+    ) -> RollupConfig {
         RollupConfig {
             genesis: ChainGenesis {
                 l2: BlockNumHash { number: genesis_l2_number, hash: B256::ZERO },
@@ -166,7 +171,7 @@ mod tests {
 
     /// Encode a `SingleBatch` into the zlib-compressed channel frame data format
     /// that `BatchReader` expects:
-    ///   zlib_compress( rlp_bytes( batch_type_byte ++ rlp_encode(SingleBatch) ) )
+    ///   `zlib_compress`( `rlp_bytes`( `batch_type_byte` ++ `rlp_encode(SingleBatch)` ) )
     fn encode_single_batch(batch: &SingleBatch) -> Vec<u8> {
         // Batch-level encoding: type byte + RLP body.
         let typed_batch = Batch::Single(batch.clone());
