@@ -32,9 +32,9 @@ pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvide
 mod flashblocks;
 pub use flashblocks::{
     BestFlashblocksTxs, BlockCell, BlockPayloadJob, BlockPayloadJobGenerator, BuildArguments,
-    FlashblockDiagnostics, FlashblocksExecutionInfo, FlashblocksExtraCtx,
-    FlashblocksServiceBuilder, OpPayloadBuilderCtx, PayloadBuilder, PayloadHandler, ResolvePayload,
-    WaitForValue,
+    FlashblockDiagnostics, FlashblockSelectionOutcome, FlashblocksExecutionInfo,
+    FlashblocksExtraCtx, FlashblocksServiceBuilder, OpPayloadBuilderCtx, PayloadBuilder,
+    PayloadHandler, ResolvePayload, WaitForValue,
 };
 
 mod extension;

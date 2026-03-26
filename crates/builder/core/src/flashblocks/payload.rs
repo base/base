@@ -735,7 +735,7 @@ where
                     target: "payload_builder",
                     message = "Flashblock built",
                     flashblock_index = flashblock_index,
-                    selection_outcome = diag.selection_outcome(),
+                    selection_outcome = diag.selection_outcome().as_str(),
                     rejection_reasons = ?diag.rejection_reasons(),
                     txs_considered = diag.txs_considered,
                     txs_included = diag.txs_included,

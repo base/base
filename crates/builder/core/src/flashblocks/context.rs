@@ -62,7 +62,11 @@ fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64
                 "block_state_root_time_exceeded"
             }
         },
-        _ => "unknown",
+        TxnExecutionError::SequencerTransaction => "sequencer_transaction",
+        TxnExecutionError::NonceTooLow => "nonce_too_low",
+        TxnExecutionError::InternalError(_) => "internal_error",
+        TxnExecutionError::EvmError => "evm_error",
+        TxnExecutionError::MaxGasUsageExceeded => "max_gas_usage_exceeded",
     };
     reth_metrics::metrics::histogram!("base_builder_rejected_tx_priority_fee", "reason" => r)
         .record(priority_fee);
@@ -72,6 +76,27 @@ fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64
 ///
 /// Tracks how transaction selection ended, what limits were hit, and the
 /// priority fee threshold among included transactions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlashblockSelectionOutcome {
+    /// Transaction selection stopped because the flashblock build was cancelled.
+    Cancelled,
+    /// Transaction selection stopped because no pool transaction was considered.
+    PoolEmpty,
+    /// Transaction selection stopped after draining the candidate pool.
+    PoolDrained,
+}
+
+impl FlashblockSelectionOutcome {
+    /// Returns the label used for logs and metrics.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cancelled => "cancelled",
+            Self::PoolEmpty => "pool_empty",
+            Self::PoolDrained => "pool_drained",
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct FlashblockDiagnostics {
     /// Whether the flashblock timer or block cancel fired during execution.
@@ -92,7 +117,7 @@ pub struct FlashblockDiagnostics {
     pub txs_rejected_state_root_time: u64,
     /// Number rejected by uncompressed size limit.
     pub txs_rejected_uncompressed_size: u64,
-    /// Number rejected by other reasons.
+    /// Number rejected or skipped for other reasons.
     pub txs_rejected_other: u64,
     /// Minimum effective priority fee (tip per gas) among included transactions.
     pub min_priority_fee: Option<u64>,
@@ -100,13 +125,13 @@ pub struct FlashblockDiagnostics {
 
 impl FlashblockDiagnostics {
     /// Returns how transaction selection ended for this flashblock.
-    pub const fn selection_outcome(&self) -> &'static str {
+    pub const fn selection_outcome(&self) -> FlashblockSelectionOutcome {
         if self.cancelled {
-            "cancelled"
+            FlashblockSelectionOutcome::Cancelled
         } else if self.txs_considered == 0 {
-            "pool_empty"
+            FlashblockSelectionOutcome::PoolEmpty
         } else {
-            "pool_drained"
+            FlashblockSelectionOutcome::PoolDrained
         }
     }
 
@@ -168,7 +193,11 @@ impl FlashblockDiagnostics {
                     self.txs_rejected_state_root_time += 1;
                 }
             },
-            _ => {
+            TxnExecutionError::SequencerTransaction
+            | TxnExecutionError::NonceTooLow
+            | TxnExecutionError::InternalError(_)
+            | TxnExecutionError::EvmError
+            | TxnExecutionError::MaxGasUsageExceeded => {
                 self.txs_rejected_other += 1;
             }
         }
@@ -678,7 +707,11 @@ impl OpPayloadBuilderCtx {
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
             if tx.is_eip4844() || tx.is_deposit() {
-                log_txn(Err(TxnExecutionError::SequencerTransaction));
+                let err = TxnExecutionError::SequencerTransaction;
+                diag.record_rejection(&err);
+                let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+                record_rejected_tx_priority_fee(&err, priority_fee);
+                log_txn(Err(err));
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
             }
@@ -699,12 +732,22 @@ impl OpPayloadBuilderCtx {
                     if let Some(err) = err.as_invalid_tx_err() {
                         if err.is_nonce_too_low() {
                             // if the nonce is too low, we can skip this transaction
-                            log_txn(Err(TxnExecutionError::NonceTooLow));
+                            let diag_err = TxnExecutionError::NonceTooLow;
+                            diag.record_rejection(&diag_err);
+                            let priority_fee =
+                                tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+                            record_rejected_tx_priority_fee(&diag_err, priority_fee);
+                            log_txn(Err(diag_err));
                             trace!(target: "payload_builder", %err, ?tx, "skipping nonce too low transaction");
                         } else {
                             // if the transaction is invalid, we can skip it and all of its
                             // descendants
-                            log_txn(Err(TxnExecutionError::InternalError(err.clone())));
+                            let diag_err = TxnExecutionError::InternalError(err.clone());
+                            diag.record_rejection(&diag_err);
+                            let priority_fee =
+                                tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+                            record_rejected_tx_priority_fee(&diag_err, priority_fee);
+                            log_txn(Err(diag_err));
                             trace!(target: "payload_builder", %err, ?tx, "skipping invalid transaction and its descendants");
                             best_txs.mark_invalid(tx.signer(), tx.nonce());
                         }
@@ -748,7 +791,11 @@ impl OpPayloadBuilderCtx {
             if let Some(max_gas_per_txn) = self.builder_config.max_gas_per_txn
                 && gas_used > max_gas_per_txn
             {
-                log_txn(Err(TxnExecutionError::MaxGasUsageExceeded));
+                let err = TxnExecutionError::MaxGasUsageExceeded;
+                diag.record_rejection(&err);
+                let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+                record_rejected_tx_priority_fee(&err, priority_fee);
+                log_txn(Err(err));
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
             }
@@ -819,10 +866,9 @@ impl OpPayloadBuilderCtx {
         }
 
         let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
-        let num_txs_considered_metrics = num_txs_considered.min(u32::MAX as u64) as u32;
         self.metrics.set_payload_builder_metrics(
             payload_transaction_simulation_time,
-            num_txs_considered_metrics,
+            num_txs_considered as f64,
             num_txs_simulated,
             num_txs_simulated_success,
             num_txs_simulated_fail,
@@ -891,14 +937,17 @@ mod tests {
     #[test]
     fn diagnostics_report_selection_outcome() {
         let diag = FlashblockDiagnostics::default();
-        assert_eq!(diag.selection_outcome(), "pool_empty");
+        assert_eq!(diag.selection_outcome(), FlashblockSelectionOutcome::PoolEmpty);
+        assert_eq!(diag.selection_outcome().as_str(), "pool_empty");
 
         let diag =
             FlashblockDiagnostics { txs_considered: 3, txs_included: 1, ..Default::default() };
-        assert_eq!(diag.selection_outcome(), "pool_drained");
+        assert_eq!(diag.selection_outcome(), FlashblockSelectionOutcome::PoolDrained);
+        assert_eq!(diag.selection_outcome().as_str(), "pool_drained");
 
         let diag = FlashblockDiagnostics { cancelled: true, ..Default::default() };
-        assert_eq!(diag.selection_outcome(), "cancelled");
+        assert_eq!(diag.selection_outcome(), FlashblockSelectionOutcome::Cancelled);
+        assert_eq!(diag.selection_outcome().as_str(), "cancelled");
     }
 
     #[test]
@@ -931,6 +980,17 @@ mod tests {
                 ("other", 0),
             ]
         );
+    }
+
+    #[test]
+    fn diagnostics_bucket_other_rejections() {
+        let mut diag = FlashblockDiagnostics::default();
+        diag.record_rejection(&TxnExecutionError::SequencerTransaction);
+        diag.record_rejection(&TxnExecutionError::NonceTooLow);
+        diag.record_rejection(&TxnExecutionError::MaxGasUsageExceeded);
+
+        assert_eq!(diag.txs_rejected_other, 3);
+        assert_eq!(diag.txs_rejected_total(), 3);
     }
 
     #[test]

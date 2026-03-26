@@ -12,7 +12,8 @@ const REASON_LABEL: &str = "reason";
 const THRESHOLD_LABEL: &str = "threshold";
 
 const FLASHBLOCK_SELECTION_TOTAL: &str = "base_builder_flashblock_selection_total";
-const FLASHBLOCK_CONSTRAINED_TOTAL: &str = "base_builder_flashblock_constrained_total";
+const FLASHBLOCK_MIN_PRIORITY_FEE_ABOVE_THRESHOLD_TOTAL: &str =
+    "base_builder_flashblock_min_priority_fee_above_threshold_total";
 const FLASHBLOCK_TXS_CONSIDERED: &str = "base_builder_flashblock_txs_considered";
 const FLASHBLOCK_REJECTIONS_TOTAL: &str = "base_builder_flashblock_rejections_total";
 const FLASHBLOCK_TXS_INCLUDED: &str = "base_builder_flashblock_txs_included";
@@ -28,7 +29,7 @@ const FLASHBLOCK_EXECUTION_TIME_HEADROOM_US: &str =
 const FLASHBLOCK_STATE_ROOT_TIME_USED_US: &str = "base_builder_flashblock_state_root_time_used_us";
 const FLASHBLOCK_STATE_ROOT_TIME_HEADROOM_US: &str =
     "base_builder_flashblock_state_root_time_headroom_us";
-const CONSTRAINT_THRESHOLDS_WEI: [(&str, u64); 3] =
+const PRIORITY_FEE_THRESHOLDS_WEI: [(&str, u64); 3] =
     [("100wei", 100), ("100kwei", 100_000), ("1mwei", 1_000_000)];
 
 /// base-builder metrics
@@ -188,7 +189,7 @@ impl BuilderMetrics {
         counter!(
             FLASHBLOCK_SELECTION_TOTAL,
             FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
-            OUTCOME_LABEL => diag.selection_outcome(),
+            OUTCOME_LABEL => diag.selection_outcome().as_str(),
         )
         .increment(1);
 
@@ -205,10 +206,10 @@ impl BuilderMetrics {
                 FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
             )
             .record(min_priority_fee as f64);
-            for (threshold, threshold_wei) in CONSTRAINT_THRESHOLDS_WEI {
+            for (threshold, threshold_wei) in PRIORITY_FEE_THRESHOLDS_WEI {
                 if min_priority_fee > threshold_wei {
                     counter!(
-                        FLASHBLOCK_CONSTRAINED_TOTAL,
+                        FLASHBLOCK_MIN_PRIORITY_FEE_ABOVE_THRESHOLD_TOTAL,
                         FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
                         THRESHOLD_LABEL => threshold,
                     )
@@ -309,20 +310,14 @@ impl BuilderMetrics {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::OnceLock;
-
-    use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+    use metrics_exporter_prometheus::PrometheusBuilder;
 
     use super::*;
 
-    fn metrics_handle() -> &'static PrometheusHandle {
-        static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
-        HANDLE.get_or_init(|| PrometheusBuilder::new().install_recorder().unwrap())
-    }
-
     #[test]
     fn record_flashblock_diagnostics_emits_labeled_metrics() {
-        let handle = metrics_handle();
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
         let metrics = BuilderMetrics::default();
         let diag = FlashblockDiagnostics {
             txs_considered: 6,
@@ -347,7 +342,9 @@ mod tests {
             ..Default::default()
         };
 
-        metrics.record_flashblock_diagnostics(7, &diag, &info, &limits);
+        metrics::with_local_recorder(&recorder, || {
+            metrics.record_flashblock_diagnostics(7, &diag, &info, &limits);
+        });
 
         let rendered = handle.render();
         assert!(rendered.contains(
@@ -371,7 +368,7 @@ mod tests {
                 .contains("base_builder_flashblock_gas_headroom_sum{flashblock_index=\"7\"} 40")
         );
         assert!(rendered.contains(
-            "base_builder_flashblock_constrained_total{flashblock_index=\"7\",threshold=\"100wei\"} 1"
+            "base_builder_flashblock_min_priority_fee_above_threshold_total{flashblock_index=\"7\",threshold=\"100wei\"} 1"
         ));
     }
 }
