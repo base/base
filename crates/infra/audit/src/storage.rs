@@ -252,7 +252,7 @@ impl S3EventReaderWriter {
 
     async fn idempotent_write<T, F>(&self, key: &str, mut transform_fn: F) -> Result<()>
     where
-        T: for<'de> Deserialize<'de> + Serialize + Clone + Default + Debug,
+        T: for<'de> Deserialize<'de> + Serialize + Default + Debug,
         F: FnMut(T) -> Option<T>,
     {
         const MAX_RETRIES: usize = 5;
@@ -265,7 +265,7 @@ impl S3EventReaderWriter {
 
             let value = current_value.unwrap_or_default();
 
-            match transform_fn(value.clone()) {
+            match transform_fn(value) {
                 Some(new_value) => {
                     let content = serde_json::to_string(&new_value)?;
 
@@ -336,8 +336,7 @@ impl S3EventReaderWriter {
             Ok(response) => {
                 let etag = response.e_tag().map(|s| s.to_string());
                 let body = response.body.collect().await?;
-                let content = String::from_utf8(body.into_bytes().to_vec())?;
-                let value: T = serde_json::from_str(&content)?;
+                let value: T = serde_json::from_slice(&body.into_bytes())?;
                 Ok((Some(value), etag))
             }
             Err(e) => match &e {
