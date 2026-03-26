@@ -27,6 +27,13 @@ pub struct ProverClient {
     /// Timeout applied to all JSON-RPC requests.
     timeout: Duration,
     /// Cached HTTP clients keyed by endpoint URL.
+    ///
+    /// Note: this cache is append-only — entries are never evicted. With
+    /// ephemeral instances (e.g. ASG scale events assigning new IPs), stale
+    /// entries accumulate over the process lifetime. The fleet is small enough
+    /// that this is not a practical concern; if it ever becomes one, a
+    /// `retain_active` method could prune entries not in the current discovered
+    /// set after each poll cycle.
     clients: Mutex<HashMap<Url, HttpClient>>,
 }
 

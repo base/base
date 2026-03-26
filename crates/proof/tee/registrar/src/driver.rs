@@ -394,7 +394,6 @@ mod tests {
     use k256::ecdsa::SigningKey;
     use rstest::rstest;
     use tokio_util::sync::CancellationToken;
-
     use url::Url;
 
     use super::*;
@@ -469,11 +468,7 @@ mod tests {
     /// Prepends `http://` to form a valid URL automatically.
     fn instance(host_port: &str, status: InstanceHealthStatus) -> ProverInstance {
         let endpoint = Url::parse(&format!("http://{host_port}")).unwrap();
-        ProverInstance {
-            instance_id: format!("i-{host_port}"),
-            endpoint,
-            health_status: status,
-        }
+        ProverInstance { instance_id: format!("i-{host_port}"), endpoint, health_status: status }
     }
 
     // ── Mock implementations ────────────────────────────────────────────
