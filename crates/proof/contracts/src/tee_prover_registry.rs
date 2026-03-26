@@ -25,9 +25,6 @@ sol! {
         /// Returns `true` if the signer is currently registered.
         function isValidSigner(address signer) external view returns (bool);
 
-        /// Returns the expected PCR0 image hash that new signers must match.
-        function getExpectedImageHash() external view returns (bytes32);
-
         /// Returns all currently registered signer addresses.
         function getRegisteredSigners() external view returns (address[]);
     }
@@ -41,9 +38,6 @@ pub trait TEEProverRegistryClient: Send + Sync {
 
     /// Fetches the complete set of registered signer addresses.
     async fn get_registered_signers(&self) -> Result<Vec<Address>, ContractError>;
-
-    /// Returns the expected PCR0 image hash from the on-chain registry.
-    async fn get_expected_image_hash(&self) -> Result<[u8; 32], ContractError>;
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -75,13 +69,6 @@ impl TEEProverRegistryClient for TEEProverRegistryContractClient {
             context: "getRegisteredSigners()".into(),
             source: e,
         })
-    }
-
-    async fn get_expected_image_hash(&self) -> Result<[u8; 32], ContractError> {
-        let hash = self.contract.getExpectedImageHash().call().await.map_err(|e| {
-            ContractError::Call { context: "getExpectedImageHash()".into(), source: e }
-        })?;
-        Ok(hash.into())
     }
 }
 
@@ -119,6 +106,5 @@ mod tests {
         assert_ne!(ITEEProverRegistry::deregisterSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::isValidSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::getRegisteredSignersCall::SELECTOR, [0u8; 4]);
-        assert_ne!(ITEEProverRegistry::getExpectedImageHashCall::SELECTOR, [0u8; 4]);
     }
 }

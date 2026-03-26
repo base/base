@@ -26,12 +26,6 @@ pub trait RegistryClient: Send + Sync {
     /// so returning the full array in one call is appropriate. This assumption holds as long
     /// as the ASG is configured with a fixed, small instance count.
     async fn get_registered_signers(&self) -> Result<Vec<Address>>;
-
-    /// Returns the expected PCR0 image hash from the on-chain registry.
-    ///
-    /// Signers whose `keccak256(pcr0)` does not match this value are considered
-    /// stale and should be deregistered.
-    async fn get_expected_image_hash(&self) -> Result<[u8; 32]>;
 }
 
 /// Concrete implementation of [`RegistryClient`] backed by the shared
@@ -61,9 +55,5 @@ impl RegistryClient for RegistryContractClient {
 
     async fn get_registered_signers(&self) -> Result<Vec<Address>> {
         self.inner.get_registered_signers().await.map_err(map_contract_error)
-    }
-
-    async fn get_expected_image_hash(&self) -> Result<[u8; 32]> {
-        self.inner.get_expected_image_hash().await.map_err(map_contract_error)
     }
 }
