@@ -62,7 +62,7 @@ verify-reproducible:
     set -euo pipefail
     cleanup() {
         rm -f eif-first.bin eif-second.bin
-        docker rmi {{ eif_describe_image }}:first {{ eif_describe_image }}:second 2>/dev/null || true
+        docker rmi {{ eif_describe_image }} {{ eif_describe_image }}:first {{ eif_describe_image }}:second 2>/dev/null || true
     }
     trap cleanup EXIT
 
