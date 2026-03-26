@@ -72,6 +72,22 @@ pub struct EncoderConfig {
     ///
     /// Default: `0.6` (matches op-batcher's `--approx-compr-ratio` default).
     pub approx_compr_ratio: f64,
+
+    /// Maximum serialized size of a single L1 calldata transaction in bytes.
+    ///
+    /// When set, the calldata frame packing path accumulates frames until adding
+    /// the next frame would exceed this limit, then cuts the transaction at that point.
+    /// At least one frame is always included regardless of size, so oversized frames
+    /// are still submitted (governed by [`max_frame_size`] instead).
+    ///
+    /// This is a no-op when [`da_type`] is [`DaType::Blob`], since the blob size is
+    /// the binding constraint for blob DA.
+    ///
+    /// Default: `None` (no cap; op-batcher equivalent default is 120,000 bytes).
+    ///
+    /// [`max_frame_size`]: EncoderConfig::max_frame_size
+    /// [`da_type`]: EncoderConfig::da_type
+    pub max_l1_tx_size_bytes: Option<usize>,
 }
 
 impl Default for EncoderConfig {
@@ -85,6 +101,7 @@ impl Default for EncoderConfig {
             batch_type: BatchType::Single,
             da_type: DaType::Blob,
             approx_compr_ratio: 0.6,
+            max_l1_tx_size_bytes: None,
         }
     }
 }

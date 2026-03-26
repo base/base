@@ -180,6 +180,14 @@ pub(crate) struct BatcherArgs {
     )]
     pub check_recent_txs_depth: u64,
 
+    /// Maximum serialized size of a single L1 calldata transaction in bytes.
+    ///
+    /// Safety cap that prevents oversized calldata transactions from being rejected
+    /// by the mempool. No-op for blob DA. Equivalent to op-batcher's
+    /// `--max-l1-tx-size-bytes` (default 120,000 bytes). Omit to disable the cap.
+    #[arg(long = "max-l1-tx-size-bytes", env = "BATCHER_MAX_L1_TX_SIZE_BYTES")]
+    pub max_l1_tx_size_bytes: Option<usize>,
+
     /// Bind address for the admin JSON-RPC API (default: 127.0.0.1).
     ///
     /// Only takes effect when `--admin-port` is also set.
@@ -223,6 +231,7 @@ impl BatcherArgs {
             batch_type: self.batch_type.into(),
             da_type: self.da_type,
             approx_compr_ratio: self.approx_compr_ratio,
+            max_l1_tx_size_bytes: self.max_l1_tx_size_bytes,
         };
         encoder_config.validate()?;
         Ok(BatcherConfig {
