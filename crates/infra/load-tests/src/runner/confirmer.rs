@@ -252,9 +252,8 @@ impl Confirmer {
             return;
         }
 
-        let futures = to_lookup.iter().map(|(tx_hash, _, _, _)| {
-            client.get_transaction_receipt(*tx_hash)
-        });
+        let futures =
+            to_lookup.iter().map(|(tx_hash, _, _, _)| client.get_transaction_receipt(*tx_hash));
         let results = join_all(futures).await;
 
         for ((tx_hash, from, submit_time, included_at), result) in
