@@ -34,6 +34,10 @@ impl RecentTxScanner {
     /// `DERIVATION_VERSION_0`). Blob transactions are identified by their
     /// empty calldata and skipped — their frame data resides in KZG sidecars
     /// that would require a separate fetch not supported by this scanner.
+    ///
+    /// **Limitation:** channels whose opening frame falls before the scan window
+    /// are never completed and will be silently missed. The caller should treat
+    /// the result as a best-effort lower bound, not a guarantee.
     pub async fn highest_submitted_l2_block(
         l1_provider: &RootProvider,
         batcher_address: Address,
@@ -96,7 +100,9 @@ impl RecentTxScanner {
                     let channel = channels
                         .entry(frame.id)
                         .or_insert_with(|| Channel::new(frame.id, block_info));
-                    let _ = channel.add_frame(frame, block_info);
+                    if let Err(e) = channel.add_frame(frame, block_info) {
+                        debug!(error = %e, "ignoring rejected batcher frame during recent tx scan");
+                    }
                 }
             }
 
