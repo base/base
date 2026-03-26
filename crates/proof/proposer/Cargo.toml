@@ -41,9 +41,6 @@ base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 # Consensus
 base-consensus-genesis = { workspace = true, features = ["serde"] }
 
-# Enclave
-base-enclave.workspace = true
-
 # JSON-RPC
 jsonrpsee.workspace = true
 

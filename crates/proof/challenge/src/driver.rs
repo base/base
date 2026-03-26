@@ -13,9 +13,10 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_enclave::ProofEncoder;
 use base_proof_contracts::AggregateVerifierClient;
-use base_proof_primitives::{ProofRequest as TeeProofRequest, ProofResult, ProverClient};
+use base_proof_primitives::{
+    ProofEncoder, ProofRequest as TeeProofRequest, ProofResult, ProverClient,
+};
 use base_proof_rpc::L2Provider;
 use base_tx_manager::TxManager;
 use base_zk_client::{ProofType, ProveBlockRequest, ZkProofProvider};

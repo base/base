@@ -55,8 +55,7 @@ base-zk-client.workspace = true
 # Protocol
 base-protocol.workspace = true
 
-# Enclave
-base-enclave.workspace = true
+# Proof
 base-proof-primitives = { workspace = true, features = ["serde", "std", "rpc-client"] }
 
 # JSON-RPC
