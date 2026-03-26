@@ -805,11 +805,14 @@ where
             {
                 Ok(true) => {}
                 Ok(false) => {
-                    warn!(target_block, "TEE signer is not valid on-chain, skipping submission");
+                    // The proof's signer is not registered on-chain. Returning
+                    // Reorg discards this proof and triggers re-proving — a
+                    // different (registered) enclave may be selected via the
+                    // pcr0 field. Returning Failed would retry the same proof
+                    // indefinitely since the signer signature never changes.
+                    warn!(target_block, "TEE signer is not valid on-chain, discarding proof");
                     metrics::counter!(proposer_metrics::TEE_SIGNER_INVALID_TOTAL).increment(1);
-                    return Err(SubmitAction::Failed(ProposerError::Internal(
-                        "TEE signer not registered on-chain".into(),
-                    )));
+                    return Err(SubmitAction::Reorg);
                 }
                 Err(e) => {
                     // Proceed on RPC failure: if L1 is unreachable, the
