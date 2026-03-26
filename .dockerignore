@@ -21,6 +21,7 @@ rustfmt.toml
 
 # Docker config (dockerfiles are sent separately by compose, not from context)
 etc/docker/
+!etc/docker/nitro-enclave/
 
 # Devnet tooling not needed in container builds
 etc/scripts/devnet/grafana/

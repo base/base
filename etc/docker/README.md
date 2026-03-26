@@ -8,7 +8,7 @@ This directory contains the Dockerfiles and Compose configuration for the Base n
 
 `Dockerfile.devnet` builds a utility image containing genesis generation tools (`eth-genesis-state-generator`, `eth2-val-tools`, `op-deployer`) and setup scripts. This image bootstraps L1 and L2 chain configurations for local development.
 
-`Dockerfile.enclave` and `Dockerfile.proxyd` remain separate because they have different toolchains and runtime requirements.
+`Dockerfile.nitro-enclave` and `Dockerfile.proxyd` remain separate because they have different toolchains and runtime requirements.
 
 ## Docker Compose
 
