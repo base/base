@@ -96,16 +96,13 @@ RUN eif_build \
     --output eif.bin
 
 # Stage 5: Nitro CLI - build aws-nitro-enclaves-cli from source
-FROM --platform=linux/amd64 debian:trixie-slim@sha256:1d3c811171a08a5adaa4a163fbafd96b61b87aa871bbc7aa15431ac275d3d430 AS nitro-cli
+FROM --platform=linux/amd64 rust:1.93@sha256:f7c649bf7cc388826273a4977e8304778b7f8ad2e20838c1d52283cf23e49f7a AS nitro-cli
 
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates git build-essential curl pkg-config libssl-dev && \
+    apt-get install -y --no-install-recommends pkg-config libssl-dev && \
     rm -rf /var/lib/apt/lists/*
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-
-ENV PATH="/root/.cargo/bin:${PATH}"
 
 ENV REPO=https://github.com/aws/aws-nitro-enclaves-cli.git
 # v1.3.3
