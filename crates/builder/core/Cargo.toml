@@ -209,6 +209,9 @@ reth-ipc.workspace = true
 base-execution-rpc = { workspace = true, features = ["client"] }
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 
+# metrics
+metrics-exporter-prometheus.workspace = true
+
 # alloy
 alloy-provider = { workspace = true, default-features = true, features = ["txpool-api"] }
 

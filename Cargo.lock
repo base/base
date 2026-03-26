@@ -2778,6 +2778,7 @@ dependencies = [
  "jsonrpsee-types",
  "k256",
  "metrics",
+ "metrics-exporter-prometheus",
  "moka",
  "nanoid",
  "opentelemetry",

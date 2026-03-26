@@ -1,8 +1,30 @@
-use metrics::IntoF64;
+use metrics::{IntoF64, counter, histogram};
 use reth_metrics::{
     Metrics,
     metrics::{Counter, Gauge, Histogram},
 };
+
+use crate::{ExecutionInfo, FlashblockDiagnostics, ResourceLimits};
+
+const FLASHBLOCK_INDEX_LABEL: &str = "flashblock_index";
+const OUTCOME_LABEL: &str = "outcome";
+const REASON_LABEL: &str = "reason";
+
+const FLASHBLOCK_SELECTION_TOTAL: &str = "base_builder_flashblock_selection_total";
+const FLASHBLOCK_REJECTIONS_TOTAL: &str = "base_builder_flashblock_rejections_total";
+const FLASHBLOCK_TXS_INCLUDED: &str = "base_builder_flashblock_txs_included";
+const FLASHBLOCK_TXS_REJECTED: &str = "base_builder_flashblock_txs_rejected";
+const FLASHBLOCK_MIN_PRIORITY_FEE_WEI: &str = "base_builder_flashblock_min_priority_fee_wei";
+const FLASHBLOCK_GAS_HEADROOM: &str = "base_builder_flashblock_gas_headroom";
+const FLASHBLOCK_GAS_HEADROOM_PCT: &str = "base_builder_flashblock_gas_headroom_pct";
+const FLASHBLOCK_DA_BYTES_USED: &str = "base_builder_flashblock_da_bytes_used";
+const FLASHBLOCK_DA_HEADROOM_BYTES: &str = "base_builder_flashblock_da_headroom_bytes";
+const FLASHBLOCK_EXECUTION_TIME_USED_US: &str = "base_builder_flashblock_execution_time_used_us";
+const FLASHBLOCK_EXECUTION_TIME_HEADROOM_US: &str =
+    "base_builder_flashblock_execution_time_headroom_us";
+const FLASHBLOCK_STATE_ROOT_TIME_USED_US: &str = "base_builder_flashblock_state_root_time_used_us";
+const FLASHBLOCK_STATE_ROOT_TIME_HEADROOM_US: &str =
+    "base_builder_flashblock_state_root_time_headroom_us";
 
 /// base-builder metrics
 #[derive(Metrics, Clone)]
@@ -149,6 +171,102 @@ pub struct BuilderMetrics {
 }
 
 impl BuilderMetrics {
+    /// Records per-flashblock selection diagnostics as labeled metrics.
+    pub fn record_flashblock_diagnostics(
+        &self,
+        flashblock_index: u64,
+        diag: &FlashblockDiagnostics,
+        info: &ExecutionInfo,
+        limits: &ResourceLimits,
+    ) {
+        let flashblock_index = flashblock_index.to_string();
+        counter!(
+            FLASHBLOCK_SELECTION_TOTAL,
+            FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
+            OUTCOME_LABEL => diag.selection_outcome(),
+        )
+        .increment(1);
+
+        histogram!(FLASHBLOCK_TXS_INCLUDED, FLASHBLOCK_INDEX_LABEL => flashblock_index.clone())
+            .record(diag.txs_included as f64);
+        histogram!(FLASHBLOCK_TXS_REJECTED, FLASHBLOCK_INDEX_LABEL => flashblock_index.clone())
+            .record(diag.txs_rejected_total() as f64);
+
+        if let Some(min_priority_fee) = diag.min_priority_fee {
+            histogram!(
+                FLASHBLOCK_MIN_PRIORITY_FEE_WEI,
+                FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
+            )
+            .record(min_priority_fee as f64);
+        }
+
+        let gas_headroom = limits.block_gas_limit.saturating_sub(info.cumulative_gas_used);
+        histogram!(FLASHBLOCK_GAS_HEADROOM, FLASHBLOCK_INDEX_LABEL => flashblock_index.clone())
+            .record(gas_headroom as f64);
+        if limits.block_gas_limit > 0 {
+            histogram!(
+                FLASHBLOCK_GAS_HEADROOM_PCT,
+                FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
+            )
+            .record(gas_headroom as f64 / limits.block_gas_limit as f64 * 100.0);
+        }
+
+        histogram!(FLASHBLOCK_DA_BYTES_USED, FLASHBLOCK_INDEX_LABEL => flashblock_index.clone())
+            .record(info.cumulative_da_bytes_used as f64);
+        if let Some(block_data_limit) = limits.block_data_limit {
+            histogram!(
+                FLASHBLOCK_DA_HEADROOM_BYTES,
+                FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
+            )
+            .record(block_data_limit.saturating_sub(info.cumulative_da_bytes_used) as f64);
+        }
+
+        histogram!(
+            FLASHBLOCK_EXECUTION_TIME_USED_US,
+            FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
+        )
+        .record(info.flashblock_execution_time_us as f64);
+        if let Some(flashblock_execution_time_limit_us) = limits.flashblock_execution_time_limit_us
+        {
+            histogram!(
+                FLASHBLOCK_EXECUTION_TIME_HEADROOM_US,
+                FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
+            )
+            .record(
+                flashblock_execution_time_limit_us.saturating_sub(info.flashblock_execution_time_us)
+                    as f64,
+            );
+        }
+
+        histogram!(
+            FLASHBLOCK_STATE_ROOT_TIME_USED_US,
+            FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
+        )
+        .record(info.cumulative_state_root_time_us as f64);
+        if let Some(block_state_root_time_limit_us) = limits.block_state_root_time_limit_us {
+            histogram!(
+                FLASHBLOCK_STATE_ROOT_TIME_HEADROOM_US,
+                FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
+            )
+            .record(
+                block_state_root_time_limit_us.saturating_sub(info.cumulative_state_root_time_us)
+                    as f64,
+            );
+        }
+
+        for (reason, count) in diag.rejection_counts() {
+            if count == 0 {
+                continue;
+            }
+            counter!(
+                FLASHBLOCK_REJECTIONS_TOTAL,
+                FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
+                REASON_LABEL => reason,
+            )
+            .increment(count);
+        }
+    }
+
     pub fn set_payload_builder_metrics(
         &self,
         payload_transaction_simulation_time: impl IntoF64 + Copy,
@@ -169,5 +287,67 @@ impl BuilderMetrics {
         self.payload_num_tx_simulated_fail.record(num_txs_simulated_fail);
         self.payload_num_tx_simulated_fail_gauge.set(num_txs_simulated_fail);
         self.payload_reverted_tx_gas_used.set(reverted_gas_used);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::OnceLock;
+
+    use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+
+    use super::*;
+
+    fn metrics_handle() -> &'static PrometheusHandle {
+        static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
+        HANDLE.get_or_init(|| PrometheusBuilder::new().install_recorder().unwrap())
+    }
+
+    #[test]
+    fn record_flashblock_diagnostics_emits_labeled_metrics() {
+        let handle = metrics_handle();
+        let metrics = BuilderMetrics::default();
+        let diag = FlashblockDiagnostics {
+            txs_considered: 6,
+            txs_included: 3,
+            txs_rejected_gas: 2,
+            txs_rejected_da: 1,
+            min_priority_fee: Some(42),
+            ..Default::default()
+        };
+        let info = ExecutionInfo {
+            cumulative_gas_used: 60,
+            cumulative_da_bytes_used: 15,
+            flashblock_execution_time_us: 40,
+            cumulative_state_root_time_us: 90,
+            ..Default::default()
+        };
+        let limits = ResourceLimits {
+            block_gas_limit: 100,
+            block_data_limit: Some(20),
+            flashblock_execution_time_limit_us: Some(50),
+            block_state_root_time_limit_us: Some(100),
+            ..Default::default()
+        };
+
+        metrics.record_flashblock_diagnostics(7, &diag, &info, &limits);
+
+        let rendered = handle.render();
+        assert!(rendered.contains(
+            "base_builder_flashblock_selection_total{flashblock_index=\"7\",outcome=\"pool_drained\"} 1"
+        ));
+        assert!(rendered.contains(
+            "base_builder_flashblock_rejections_total{flashblock_index=\"7\",reason=\"gas_limit\"} 2"
+        ));
+        assert!(rendered.contains(
+            "base_builder_flashblock_rejections_total{flashblock_index=\"7\",reason=\"da_size\"} 1"
+        ));
+        assert!(
+            rendered.contains("base_builder_flashblock_txs_included_sum{flashblock_index=\"7\"} 3")
+        );
+        assert!(
+            rendered
+                .contains("base_builder_flashblock_gas_headroom_sum{flashblock_index=\"7\"} 40")
+        );
     }
 }

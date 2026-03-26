@@ -100,7 +100,7 @@ pub struct FlashblockDiagnostics {
 
 impl FlashblockDiagnostics {
     /// Returns how transaction selection ended for this flashblock.
-    pub const fn selection_outcome(&self) -> &str {
+    pub const fn selection_outcome(&self) -> &'static str {
         if self.cancelled {
             "cancelled"
         } else if self.txs_considered == 0 {
@@ -110,31 +110,25 @@ impl FlashblockDiagnostics {
         }
     }
 
+    /// Returns the rejection counts keyed by their metric/log reason labels.
+    pub const fn rejection_counts(&self) -> [(&'static str, u64); 7] {
+        [
+            ("gas_limit", self.txs_rejected_gas),
+            ("da_size", self.txs_rejected_da),
+            ("da_footprint", self.txs_rejected_da_footprint),
+            ("execution_time", self.txs_rejected_execution_time),
+            ("state_root_time", self.txs_rejected_state_root_time),
+            ("uncompressed_size", self.txs_rejected_uncompressed_size),
+            ("other", self.txs_rejected_other),
+        ]
+    }
+
     /// Returns the distinct rejection categories encountered while scanning the pool.
     pub fn rejection_reasons(&self) -> Vec<&'static str> {
-        let mut reasons = Vec::with_capacity(7);
-        if self.txs_rejected_gas > 0 {
-            reasons.push("gas_limit");
-        }
-        if self.txs_rejected_da > 0 {
-            reasons.push("da_size");
-        }
-        if self.txs_rejected_da_footprint > 0 {
-            reasons.push("da_footprint");
-        }
-        if self.txs_rejected_execution_time > 0 {
-            reasons.push("execution_time");
-        }
-        if self.txs_rejected_state_root_time > 0 {
-            reasons.push("state_root_time");
-        }
-        if self.txs_rejected_uncompressed_size > 0 {
-            reasons.push("uncompressed_size");
-        }
-        if self.txs_rejected_other > 0 {
-            reasons.push("other");
-        }
-        reasons
+        self.rejection_counts()
+            .into_iter()
+            .filter_map(|(reason, count)| (count > 0).then_some(reason))
+            .collect()
     }
 
     /// Total number of rejected transactions across all limit types.
@@ -915,6 +909,28 @@ mod tests {
 
         assert_eq!(diag.rejection_reasons(), vec!["gas_limit", "da_size"]);
         assert_eq!(diag.txs_rejected_total(), 3);
+    }
+
+    #[test]
+    fn diagnostics_report_rejection_counts() {
+        let diag = FlashblockDiagnostics {
+            txs_rejected_gas: 2,
+            txs_rejected_state_root_time: 1,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            diag.rejection_counts(),
+            [
+                ("gas_limit", 2),
+                ("da_size", 0),
+                ("da_footprint", 0),
+                ("execution_time", 0),
+                ("state_root_time", 1),
+                ("uncompressed_size", 0),
+                ("other", 0),
+            ]
+        );
     }
 
     #[test]

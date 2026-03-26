@@ -730,6 +730,7 @@ where
                 } else {
                     0
                 };
+                ctx.metrics.record_flashblock_diagnostics(flashblock_index, &diag, info, &limits);
                 info!(
                     target: "payload_builder",
                     message = "Flashblock built",
