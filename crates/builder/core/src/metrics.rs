@@ -9,8 +9,11 @@ use crate::{ExecutionInfo, FlashblockDiagnostics, ResourceLimits};
 const FLASHBLOCK_INDEX_LABEL: &str = "flashblock_index";
 const OUTCOME_LABEL: &str = "outcome";
 const REASON_LABEL: &str = "reason";
+const THRESHOLD_LABEL: &str = "threshold";
 
 const FLASHBLOCK_SELECTION_TOTAL: &str = "base_builder_flashblock_selection_total";
+const FLASHBLOCK_CONSTRAINED_TOTAL: &str = "base_builder_flashblock_constrained_total";
+const FLASHBLOCK_TXS_CONSIDERED: &str = "base_builder_flashblock_txs_considered";
 const FLASHBLOCK_REJECTIONS_TOTAL: &str = "base_builder_flashblock_rejections_total";
 const FLASHBLOCK_TXS_INCLUDED: &str = "base_builder_flashblock_txs_included";
 const FLASHBLOCK_TXS_REJECTED: &str = "base_builder_flashblock_txs_rejected";
@@ -25,6 +28,8 @@ const FLASHBLOCK_EXECUTION_TIME_HEADROOM_US: &str =
 const FLASHBLOCK_STATE_ROOT_TIME_USED_US: &str = "base_builder_flashblock_state_root_time_used_us";
 const FLASHBLOCK_STATE_ROOT_TIME_HEADROOM_US: &str =
     "base_builder_flashblock_state_root_time_headroom_us";
+const CONSTRAINT_THRESHOLDS_WEI: [(&str, u64); 3] =
+    [("100wei", 100), ("100kwei", 100_000), ("1mwei", 1_000_000)];
 
 /// base-builder metrics
 #[derive(Metrics, Clone)]
@@ -187,6 +192,8 @@ impl BuilderMetrics {
         )
         .increment(1);
 
+        histogram!(FLASHBLOCK_TXS_CONSIDERED, FLASHBLOCK_INDEX_LABEL => flashblock_index.clone())
+            .record(diag.txs_considered as f64);
         histogram!(FLASHBLOCK_TXS_INCLUDED, FLASHBLOCK_INDEX_LABEL => flashblock_index.clone())
             .record(diag.txs_included as f64);
         histogram!(FLASHBLOCK_TXS_REJECTED, FLASHBLOCK_INDEX_LABEL => flashblock_index.clone())
@@ -198,6 +205,16 @@ impl BuilderMetrics {
                 FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
             )
             .record(min_priority_fee as f64);
+            for (threshold, threshold_wei) in CONSTRAINT_THRESHOLDS_WEI {
+                if min_priority_fee > threshold_wei {
+                    counter!(
+                        FLASHBLOCK_CONSTRAINED_TOTAL,
+                        FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
+                        THRESHOLD_LABEL => threshold,
+                    )
+                    .increment(1);
+                }
+            }
         }
 
         let gas_headroom = limits.block_gas_limit.saturating_sub(info.cumulative_gas_used);
@@ -312,7 +329,7 @@ mod tests {
             txs_included: 3,
             txs_rejected_gas: 2,
             txs_rejected_da: 1,
-            min_priority_fee: Some(42),
+            min_priority_fee: Some(200_000),
             ..Default::default()
         };
         let info = ExecutionInfo {
@@ -346,8 +363,14 @@ mod tests {
             rendered.contains("base_builder_flashblock_txs_included_sum{flashblock_index=\"7\"} 3")
         );
         assert!(
+            rendered.contains("base_builder_flashblock_txs_considered_sum{flashblock_index=\"7\"} 6")
+        );
+        assert!(
             rendered
                 .contains("base_builder_flashblock_gas_headroom_sum{flashblock_index=\"7\"} 40")
         );
+        assert!(rendered.contains(
+            "base_builder_flashblock_constrained_total{flashblock_index=\"7\",threshold=\"100wei\"} 1"
+        ));
     }
 }

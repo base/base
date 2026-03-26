@@ -737,6 +737,7 @@ where
                     flashblock_index = flashblock_index,
                     selection_outcome = diag.selection_outcome(),
                     rejection_reasons = ?diag.rejection_reasons(),
+                    txs_considered = diag.txs_considered,
                     txs_included = diag.txs_included,
                     txs_rejected = diag.txs_rejected_total(),
                     min_priority_fee_wei = diag.min_priority_fee.unwrap_or(0),
