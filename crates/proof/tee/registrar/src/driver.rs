@@ -214,8 +214,37 @@ where
             return Ok(addresses);
         }
 
+        // Fetch attestations once for all enclaves before the registration
+        // loop. Each signer_attestation RPC hits NSM hardware on the enclave
+        // side, so fetching per-enclave would generate N×N attestation documents
+        // for N enclaves. A single nonce binds the entire batch for freshness.
+        let nonce: [u8; 32] = random();
+        info!(
+            nonce = %hex::encode(nonce),
+            instance = %instance.instance_id,
+            "requesting attestations with nonce"
+        );
+        let all_attestations = self
+            .signer_client
+            .signer_attestation(&instance.endpoint, None, Some(nonce.to_vec()))
+            .await?;
+
+        if all_attestations.len() < addresses.len() {
+            return Err(RegistrarError::ProverClient {
+                instance: instance.endpoint.to_string(),
+                source: format!(
+                    "expected {} attestations but got {}",
+                    addresses.len(),
+                    all_attestations.len()
+                )
+                .into(),
+            });
+        }
+
         for (idx, &signer_address) in addresses.iter().enumerate() {
-            if let Err(e) = self.try_register(instance, signer_address, idx).await {
+            if let Err(e) =
+                self.try_register(instance, signer_address, idx, &all_attestations[idx]).await
+            {
                 warn!(
                     error = %e,
                     signer = %signer_address,
@@ -232,8 +261,8 @@ where
 
     /// Attempts to register a signer on-chain if not already registered.
     ///
-    /// This is the expensive path: checks on-chain status, fetches the NSM
-    /// attestation document, generates a ZK proof, and submits a registration
+    /// This is the expensive path: checks on-chain status, generates a ZK
+    /// proof from the pre-fetched attestation, and submits a registration
     /// transaction.
     ///
     /// Registration is PCR0-agnostic: all legitimate enclaves are registered
@@ -248,6 +277,7 @@ where
         instance: &ProverInstance,
         signer_address: Address,
         enclave_index: usize,
+        attestation_bytes: &[u8],
     ) -> Result<()> {
         if self.registry.is_registered(signer_address).await? {
             debug!(signer = %signer_address, "already registered, skipping");
@@ -267,26 +297,6 @@ where
             instance = %instance.instance_id,
             "generating proof for unregistered signer"
         );
-
-        // Only fetch the full NSM attestation document when registration is needed.
-        // Bind a random nonce into the attestation to prevent replay attacks.
-        // NOTE: The same nonce is sent to all enclaves on this endpoint; true
-        // per-enclave nonce binding would require per-index attestation requests.
-        let nonce: [u8; 32] = random();
-        info!(nonce = %hex::encode(nonce), signer = %signer_address, "requesting attestation with nonce");
-        let all_attestations = self
-            .signer_client
-            .signer_attestation(&instance.endpoint, None, Some(nonce.to_vec()))
-            .await?;
-        let attestation_bytes =
-            all_attestations.get(enclave_index).ok_or_else(|| RegistrarError::ProverClient {
-                instance: instance.endpoint.to_string(),
-                source: format!(
-                    "no attestation at index {enclave_index} (got {} attestations)",
-                    all_attestations.len()
-                )
-                .into(),
-            })?;
 
         let proof = self.proof_provider.generate_proof(attestation_bytes).await?;
 
@@ -1066,9 +1076,9 @@ mod tests {
     // ── Attestation count mismatch test ───────────────────────────────
 
     #[tokio::test]
-    async fn try_register_fails_on_attestation_count_mismatch() {
+    async fn process_instance_fails_on_attestation_count_mismatch() {
         let ep = "10.0.0.1:8000";
-        // Return 2 public keys but only 1 attestation → index 1 should fail.
+        // Return 2 public keys but only 1 attestation → mismatch should error.
         let signer_client = MockSignerClient::multi_enclave(ep, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
         // Default mock returns 2 attestations (one per key), so override
         // to return only 1 attestation.
@@ -1083,13 +1093,11 @@ mod tests {
         );
 
         let inst = instance(ep, InstanceHealthStatus::Healthy);
-        let addrs = driver.process_instance(&inst).await.unwrap();
+        // Attestations are fetched once for all enclaves before registration.
+        // A count mismatch (fewer attestations than keys) fails the entire
+        // instance — no enclaves are registered.
+        let result = driver.process_instance(&inst).await;
 
-        // First enclave (index 0) gets the single attestation → succeeds (proof gen).
-        // Second enclave (index 1) → AttestationParse error → logged, but address
-        // is still returned for the active set.
-        assert_eq!(addrs.len(), 2, "both addresses should be returned despite error");
-        // Only 1 registration tx (for index 0); index 1 failed with error.
-        assert_eq!(tx.sent_calldata().len(), 1);
+        assert!(result.is_err(), "should fail when attestation count < key count");
     }
 }
