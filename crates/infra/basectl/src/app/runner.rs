@@ -12,8 +12,8 @@ use crate::{
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, L1BlockInfo, L1ConnectionMode,
         TimestampedFlashblock, fetch_initial_backlog_with_progress, run_block_fetcher,
-        run_conductor_poller, run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher,
-        run_safe_head_poller,
+        run_conductor_poller, run_flashblock_ws, run_flashblock_ws_timestamped,
+        run_l1_blob_watcher, run_safe_head_poller,
     },
     tui::Toast,
 };

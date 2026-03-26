@@ -22,7 +22,7 @@ const MAX_RECENT_DA_FLASHBLOCK_IDS: usize = 512;
 pub(crate) struct ConductorState {
     /// Most recent status snapshot for each conductor node.
     pub nodes: Vec<ConductorNodeStatus>,
-    /// Original per-node configs, used to look up each node's flashblocks_ws URL.
+    /// Original per-node configs, used to look up each node's `flashblocks_ws` URL.
     nodes_config: Vec<ConductorNodeConfig>,
     rx: Option<mpsc::Receiver<Vec<ConductorNodeStatus>>>,
     /// Sender half of the flashblocks URL watch channel.  When set, `poll`
@@ -65,10 +65,7 @@ impl ConductorState {
 
     /// Returns the safe L2 block number reported by the current Raft leader, if known.
     pub(crate) fn leader_safe_l2_block(&self) -> Option<u64> {
-        self.nodes
-            .iter()
-            .find(|n| n.is_leader == Some(true))
-            .and_then(|n| n.safe_l2_block)
+        self.nodes.iter().find(|n| n.is_leader == Some(true)).and_then(|n| n.safe_l2_block)
     }
 
     /// Derives the leader's flashblocks URL from the current status snapshot
