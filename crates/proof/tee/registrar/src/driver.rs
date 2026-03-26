@@ -106,7 +106,7 @@ where
     }
 
     /// Single registration cycle: discover → resolve addresses → register →
-    /// deregister orphans → deregister stale PCR0 signers.
+    /// deregister orphans.
     async fn step(&self) -> Result<()> {
         let instances = self.discovery.discover_instances().await?;
         metrics::counter!(RegistrarMetrics::DISCOVERY_SUCCESS_TOTAL).increment(1);
@@ -130,6 +130,7 @@ where
         // state management complexity; deferred for now.
         // Registration is only attempted for instances that pass should_register().
         let mut active_signers = HashSet::new();
+        let mut reachable_instances = 0usize;
 
         for instance in &instances {
             if self.config.cancel.is_cancelled() {
@@ -138,6 +139,7 @@ where
 
             match self.process_instance(instance).await {
                 Ok(addresses) => {
+                    reachable_instances += 1;
                     for addr in addresses {
                         active_signers.insert(addr);
                     }
@@ -164,13 +166,15 @@ where
 
         // Guard against mass deregistration from transient failures: require a
         // strict majority (>50%) of discovered instances to be reachable before
-        // proceeding with orphan cleanup. When discovery returns zero instances
-        // (e.g. after ASG scale-down removes them from the target group),
-        // deregistration proceeds normally — scaled-down instances leave the
-        // target group entirely, so they don't inflate `instances.len()`.
-        if !instances.is_empty() && active_signers.len() * 2 <= instances.len() {
+        // proceeding with orphan cleanup. The comparison uses instance counts
+        // (not signer counts) so multi-enclave instances don't inflate the ratio.
+        // When discovery returns zero instances (e.g. after ASG scale-down removes
+        // them from the target group), deregistration proceeds normally — scaled-down
+        // instances leave the target group entirely, so they don't inflate
+        // `instances.len()`.
+        if !instances.is_empty() && reachable_instances * 2 <= instances.len() {
             warn!(
-                active = active_signers.len(),
+                reachable = reachable_instances,
                 total = instances.len(),
                 "majority of instances unreachable, skipping orphan deregistration"
             );
