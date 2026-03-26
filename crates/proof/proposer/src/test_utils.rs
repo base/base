@@ -187,11 +187,11 @@ impl MockAggregateVerifier {
 #[async_trait]
 impl AggregateVerifierClient for MockAggregateVerifier {
     async fn game_info(&self, addr: Address) -> Result<GameInfo, ContractError> {
-        if let Some(info) = self.game_info_map.get(&addr) {
-            Ok(info.clone())
-        } else {
-            Ok(GameInfo { root_claim: B256::ZERO, l2_block_number: 0, parent_index: 0 })
-        }
+        Ok(self.game_info_map.get(&addr).cloned().unwrap_or(GameInfo {
+            root_claim: B256::ZERO,
+            l2_block_number: 0,
+            parent_index: 0,
+        }))
     }
     async fn status(&self, _: Address) -> Result<u8, ContractError> {
         Ok(0)
