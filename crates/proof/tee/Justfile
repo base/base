@@ -44,7 +44,7 @@ build-eif *args="":
     DOCKER_BUILDKIT=1 docker build --platform linux/amd64 {{ args }} -f etc/docker/Dockerfile.nitro-enclave --target describe -t {{ eif_describe_image }} .
     docker rm -f eif-extract 2>/dev/null || true
     docker create --name eif-extract {{ eif_describe_image }}
-    docker cp eif-extract:/app/eif.bin {{ eif_output }}
+    docker cp eif-extract:/app/eif.bin crates/proof/tee/{{ eif_output }}
     docker rm eif-extract
     echo "EIF built successfully: {{ eif_output }}"
     ls -lh {{ eif_output }}
