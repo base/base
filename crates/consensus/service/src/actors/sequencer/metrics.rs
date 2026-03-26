@@ -120,5 +120,5 @@ pub(super) fn inc_drift_empty_block() {
 
 #[inline]
 pub(super) fn inc_stale_build_discarded() {
-    base_macros::inc!(counter, crate::Metrics::SEQUENCER_STALE_BUILD_DISCARDED_TOTAL);
+    base_metrics::inc!(counter, crate::Metrics::SEQUENCER_STALE_BUILD_DISCARDED_TOTAL);
 }
