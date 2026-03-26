@@ -6,6 +6,17 @@
 )]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
+
+mod noop;
+pub use noop::{NoopDropTimer, NoopMetric};
 
 mod metrics;
+
+mod inflight;
+pub use inflight::InflightCounter;
+
+#[cfg(feature = "metrics")]
+mod timer;
+#[cfg(feature = "metrics")]
+pub use timer::DropTimer;

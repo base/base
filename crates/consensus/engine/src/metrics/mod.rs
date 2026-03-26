@@ -128,24 +128,24 @@ impl Metrics {
     #[cfg(feature = "metrics")]
     pub fn zero() {
         // Engine task counts
-        base_macros::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::INSERT_TASK_LABEL, 0);
-        base_macros::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::CONSOLIDATE_TASK_LABEL, 0);
-        base_macros::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::BUILD_TASK_LABEL, 0);
-        base_macros::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::FINALIZE_TASK_LABEL, 0);
-        base_macros::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::SEAL_TASK_LABEL, 0);
-        base_macros::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::GET_PAYLOAD_TASK_LABEL, 0);
+        base_metrics::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::INSERT_TASK_LABEL, 0);
+        base_metrics::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::CONSOLIDATE_TASK_LABEL, 0);
+        base_metrics::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::BUILD_TASK_LABEL, 0);
+        base_metrics::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::FINALIZE_TASK_LABEL, 0);
+        base_metrics::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::SEAL_TASK_LABEL, 0);
+        base_metrics::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::GET_PAYLOAD_TASK_LABEL, 0);
 
-        base_macros::set!(counter, Self::ENGINE_TASK_FAILURE, Self::INSERT_TASK_LABEL, 0);
-        base_macros::set!(counter, Self::ENGINE_TASK_FAILURE, Self::CONSOLIDATE_TASK_LABEL, 0);
-        base_macros::set!(counter, Self::ENGINE_TASK_FAILURE, Self::BUILD_TASK_LABEL, 0);
-        base_macros::set!(counter, Self::ENGINE_TASK_FAILURE, Self::FINALIZE_TASK_LABEL, 0);
-        base_macros::set!(counter, Self::ENGINE_TASK_FAILURE, Self::SEAL_TASK_LABEL, 0);
-        base_macros::set!(counter, Self::ENGINE_TASK_FAILURE, Self::GET_PAYLOAD_TASK_LABEL, 0);
+        base_metrics::set!(counter, Self::ENGINE_TASK_FAILURE, Self::INSERT_TASK_LABEL, 0);
+        base_metrics::set!(counter, Self::ENGINE_TASK_FAILURE, Self::CONSOLIDATE_TASK_LABEL, 0);
+        base_metrics::set!(counter, Self::ENGINE_TASK_FAILURE, Self::BUILD_TASK_LABEL, 0);
+        base_metrics::set!(counter, Self::ENGINE_TASK_FAILURE, Self::FINALIZE_TASK_LABEL, 0);
+        base_metrics::set!(counter, Self::ENGINE_TASK_FAILURE, Self::SEAL_TASK_LABEL, 0);
+        base_metrics::set!(counter, Self::ENGINE_TASK_FAILURE, Self::GET_PAYLOAD_TASK_LABEL, 0);
 
         // Engine reset count
-        base_macros::set!(counter, Self::ENGINE_RESET_COUNT, 0);
+        base_metrics::set!(counter, Self::ENGINE_RESET_COUNT, 0);
 
         // Sequencer unsafe head changed
-        base_macros::set!(counter, Self::SEQUENCER_UNSAFE_HEAD_CHANGED_TOTAL, 0);
+        base_metrics::set!(counter, Self::SEQUENCER_UNSAFE_HEAD_CHANGED_TOTAL, 0);
     }
 }

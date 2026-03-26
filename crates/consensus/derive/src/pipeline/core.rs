@@ -65,7 +65,7 @@ where
     type Item = OpAttributesWithParent;
 
     fn next(&mut self) -> Option<Self::Item> {
-        base_macros::set!(
+        base_metrics::set!(
             gauge,
             crate::metrics::Metrics::PIPELINE_PAYLOAD_ATTRIBUTES_BUFFER,
             self.prepared.len().saturating_sub(1) as f64
@@ -122,7 +122,7 @@ where
                 self.attributes.signal(signal).await?;
             }
         }
-        base_macros::inc!(
+        base_metrics::inc!(
             gauge,
             crate::metrics::Metrics::PIPELINE_SIGNALS,
             "type" => signal.to_string(),
@@ -171,8 +171,8 @@ where
     ///
     /// [`PipelineError`]: crate::errors::PipelineError
     async fn step(&mut self, cursor: L2BlockInfo) -> StepResult {
-        base_macros::inc!(gauge, crate::metrics::Metrics::PIPELINE_STEPS);
-        base_macros::set!(
+        base_metrics::inc!(gauge, crate::metrics::Metrics::PIPELINE_STEPS);
+        base_metrics::set!(
             gauge,
             crate::metrics::Metrics::PIPELINE_STEP_BLOCK,
             cursor.block_info.number as f64
@@ -180,26 +180,26 @@ where
         match self.attributes.next_attributes(cursor).await {
             Ok(a) => {
                 trace!(target: "pipeline", attributes = ?a, "Prepared L2 attributes");
-                base_macros::inc!(
+                base_metrics::inc!(
                     gauge,
                     crate::metrics::Metrics::PIPELINE_PAYLOAD_ATTRIBUTES_BUFFER
                 );
-                base_macros::set!(
+                base_metrics::set!(
                     gauge,
                     crate::metrics::Metrics::PIPELINE_LATEST_PAYLOAD_TX_COUNT,
                     a.attributes.transactions.as_ref().map_or(0.0, |txs| txs.len() as f64)
                 );
                 if !a.is_last_in_span {
-                    base_macros::inc!(gauge, crate::metrics::Metrics::PIPELINE_DERIVED_SPAN_SIZE);
+                    base_metrics::inc!(gauge, crate::metrics::Metrics::PIPELINE_DERIVED_SPAN_SIZE);
                 } else {
-                    base_macros::set!(
+                    base_metrics::set!(
                         gauge,
                         crate::metrics::Metrics::PIPELINE_DERIVED_SPAN_SIZE,
                         0
                     );
                 }
                 self.prepared.push_back(a);
-                base_macros::inc!(gauge, crate::metrics::Metrics::PIPELINE_PREPARED_ATTRIBUTES);
+                base_metrics::inc!(gauge, crate::metrics::Metrics::PIPELINE_PREPARED_ATTRIBUTES);
                 StepResult::PreparedAttributes
             }
             Err(err) => match err {

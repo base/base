@@ -388,7 +388,7 @@ async fn record_call_time<T, Err>(
     #[cfg(feature = "metrics")]
     {
         let duration = start.elapsed();
-        base_macros::record!(
+        base_metrics::record!(
             histogram,
             Metrics::ENGINE_METHOD_REQUEST_DURATION,
             "method",

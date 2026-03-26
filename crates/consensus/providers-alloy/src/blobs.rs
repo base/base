@@ -88,7 +88,7 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
         slot: u64,
         blob_hashes: &[B256],
     ) -> Result<Vec<BoxedBlob>, BlobProviderError> {
-        base_macros::inc!(gauge, Metrics::BLOB_FETCHES);
+        base_metrics::inc!(gauge, Metrics::BLOB_FETCHES);
 
         let result =
             self.beacon_client.filtered_beacon_blobs(slot, blob_hashes).await.map_err(|e| {
@@ -109,7 +109,7 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
 
         #[cfg(feature = "metrics")]
         if result.is_err() {
-            base_macros::inc!(gauge, Metrics::BLOB_FETCH_ERRORS);
+            base_metrics::inc!(gauge, Metrics::BLOB_FETCH_ERRORS);
         }
 
         result

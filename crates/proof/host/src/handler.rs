@@ -61,7 +61,7 @@ pub async fn handle_hint(
 ) -> Result<()> {
     let hint_type_label: &str = hint.ty.into();
 
-    base_macros::inc!(counter, crate::Metrics::HINT_REQUESTS_TOTAL, crate::Metrics::LABEL_HINT_TYPE => hint_type_label);
+    base_metrics::inc!(counter, crate::Metrics::HINT_REQUESTS_TOTAL, crate::Metrics::LABEL_HINT_TYPE => hint_type_label);
     let _timer = timed!(
         crate::Metrics::HINT_DURATION_SECONDS,
         crate::Metrics::LABEL_HINT_TYPE => hint_type_label,
@@ -70,7 +70,7 @@ pub async fn handle_hint(
     let result = Box::pin(handle_hint_inner(hint, cfg, providers, kv)).await;
 
     if result.is_err() {
-        base_macros::inc!(counter, crate::Metrics::HINT_ERRORS_TOTAL, crate::Metrics::LABEL_HINT_TYPE => hint_type_label);
+        base_metrics::inc!(counter, crate::Metrics::HINT_ERRORS_TOTAL, crate::Metrics::LABEL_HINT_TYPE => hint_type_label);
     }
 
     result

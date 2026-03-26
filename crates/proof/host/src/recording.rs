@@ -50,14 +50,14 @@ where
     W: WitnessOracle,
 {
     async fn get(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
-        base_macros::inc!(counter, crate::Metrics::PREIMAGE_ACCESSES_TOTAL);
+        base_metrics::inc!(counter, crate::Metrics::PREIMAGE_ACCESSES_TOTAL);
         let value = self.oracle.get(key).await?;
         self.witness.insert_preimage(key, &value)?;
         Ok(value)
     }
 
     async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()> {
-        base_macros::inc!(counter, crate::Metrics::PREIMAGE_ACCESSES_TOTAL);
+        base_metrics::inc!(counter, crate::Metrics::PREIMAGE_ACCESSES_TOTAL);
         self.oracle.get_exact(key, buf).await?;
         self.witness.insert_preimage(key, buf)?;
         Ok(())

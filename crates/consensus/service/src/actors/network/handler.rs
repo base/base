@@ -54,7 +54,7 @@ impl NetworkHandler {
                     self.gossip.swarm.behaviour().gossipsub.peer_score(peer_id).unwrap_or_default();
 
                 // Record the peer score in the metrics.
-                base_macros::record!(
+                base_metrics::record!(
                     histogram,
                     base_consensus_gossip::Metrics::PEER_SCORES,
                     "peer",
@@ -84,7 +84,7 @@ impl NetworkHandler {
                         // Record the duration of the peer connection.
                         if let Some(start_time) = self.gossip.peer_connection_start.remove(&peer_to_remove) {
                             let _peer_duration = start_time.elapsed();
-                            base_macros::record!(
+                            base_metrics::record!(
                                 histogram,
                                 base_consensus_gossip::Metrics::GOSSIP_PEER_CONNECTION_DURATION_SECONDS,
                                 _peer_duration.as_secs_f64()
@@ -94,7 +94,7 @@ impl NetworkHandler {
                 if let Some(info) = self.gossip.peerstore.remove(&peer_to_remove) {
                     self.gossip.connection_gate.remove_dial(&peer_to_remove);
                     let _score = self.gossip.swarm.behaviour().gossipsub.peer_score(&peer_to_remove).unwrap_or_default();
-                    base_macros::inc!(gauge, base_consensus_gossip::Metrics::BANNED_PEERS, "peer_id" => peer_to_remove.to_string(), "score" => _score.to_string());
+                    base_metrics::inc!(gauge, base_consensus_gossip::Metrics::BANNED_PEERS, "peer_id" => peer_to_remove.to_string(), "score" => _score.to_string());
                     return Some(info.listen_addrs);
                 }
 

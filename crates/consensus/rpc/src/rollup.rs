@@ -72,7 +72,7 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
     for RollupRpc<EngineRpcClient_>
 {
     async fn op_output_at_block(&self, block_num: BlockNumberOrTag) -> RpcResult<OutputResponse> {
-        base_macros::inc!(gauge, Self::RPC_IDENT, "method" => "op_outputAtBlock");
+        base_metrics::inc!(gauge, Self::RPC_IDENT, "method" => "op_outputAtBlock");
 
         let (l1_sync_status_send, l1_sync_status_recv) = tokio::sync::oneshot::channel();
 
@@ -95,7 +95,7 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
         &self,
         block_num: BlockNumberOrTag,
     ) -> RpcResult<SafeHeadResponse> {
-        base_macros::inc!(gauge, Self::RPC_IDENT, "method" => "op_safeHeadAtL1Block");
+        base_metrics::inc!(gauge, Self::RPC_IDENT, "method" => "op_safeHeadAtL1Block");
 
         let number = match block_num {
             BlockNumberOrTag::Number(n) => n,
@@ -123,7 +123,7 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
     }
 
     async fn op_sync_status(&self) -> RpcResult<SyncStatus> {
-        base_macros::inc!(gauge, Self::RPC_IDENT, "method" => "op_syncStatus");
+        base_metrics::inc!(gauge, Self::RPC_IDENT, "method" => "op_syncStatus");
 
         let (l1_sync_status_send, l1_sync_status_recv) = tokio::sync::oneshot::channel();
 
@@ -143,13 +143,13 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
     }
 
     async fn op_rollup_config(&self) -> RpcResult<RollupConfig> {
-        base_macros::inc!(gauge, Self::RPC_IDENT, "method" => "op_rollupConfig");
+        base_metrics::inc!(gauge, Self::RPC_IDENT, "method" => "op_rollupConfig");
 
         self.engine_client.get_config().await
     }
 
     async fn op_version(&self) -> RpcResult<String> {
-        base_macros::inc!(gauge, Self::RPC_IDENT, "method" => "op_version");
+        base_metrics::inc!(gauge, Self::RPC_IDENT, "method" => "op_version");
 
         const RPC_VERSION: &str = env!("CARGO_PKG_VERSION");
 

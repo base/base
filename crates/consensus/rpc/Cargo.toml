@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 # Workspace
-base-macros.workspace = true
+base-metrics.workspace = true
 base-consensus-gossip.workspace = true
 base-consensus-engine.workspace = true
 base-consensus-safedb.workspace = true

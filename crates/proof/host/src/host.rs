@@ -132,7 +132,7 @@ impl Host {
 
         witness.finalize()?;
         let preimage_count = witness.preimage_count()?;
-        base_macros::set!(gauge, crate::Metrics::PREIMAGE_COUNT, preimage_count as f64);
+        base_metrics::set!(gauge, crate::Metrics::PREIMAGE_COUNT, preimage_count as f64);
         info!(preimage_count, "witness capture complete");
 
         Arc::try_unwrap(witness).map_err(|arc| {

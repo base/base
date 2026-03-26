@@ -3254,7 +3254,7 @@ dependencies = [
  "base-consensus-genesis",
  "base-consensus-registry",
  "base-consensus-upgrades",
- "base-macros",
+ "base-metrics",
  "base-protocol",
  "metrics",
  "proptest",
@@ -3277,7 +3277,7 @@ dependencies = [
  "base-cli-utils",
  "base-consensus-genesis",
  "base-consensus-peers",
- "base-macros",
+ "base-metrics",
  "derive_more",
  "discv5",
  "libp2p",
@@ -3313,7 +3313,7 @@ dependencies = [
  "base-alloy-rpc-types-engine",
  "base-consensus-genesis",
  "base-consensus-registry",
- "base-macros",
+ "base-metrics",
  "base-protocol",
  "derive_more",
  "http-body-util",
@@ -3368,7 +3368,7 @@ dependencies = [
  "base-consensus-disc",
  "base-consensus-genesis",
  "base-consensus-peers",
- "base-macros",
+ "base-metrics",
  "derive_more",
  "discv5",
  "futures",
@@ -3427,7 +3427,7 @@ dependencies = [
  "base-consensus-safedb",
  "base-consensus-sources",
  "base-health",
- "base-macros",
+ "base-metrics",
  "base-protocol",
  "bytes",
  "derive_more",
@@ -3499,7 +3499,7 @@ dependencies = [
  "base-alloy-network",
  "base-consensus-derive",
  "base-consensus-genesis",
- "base-macros",
+ "base-metrics",
  "base-protocol",
  "c-kzg",
  "http-body-util",
@@ -3544,7 +3544,7 @@ dependencies = [
  "base-consensus-genesis",
  "base-consensus-gossip",
  "base-consensus-safedb",
- "base-macros",
+ "base-metrics",
  "base-protocol",
  "getrandom 0.4.2",
  "ipnet",
@@ -4193,10 +4193,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-macros"
-version = "0.0.0"
-
-[[package]]
 name = "base-metering"
 version = "0.0.0"
 dependencies = [
@@ -4247,6 +4243,15 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "base-metrics"
+version = "0.0.0"
+dependencies = [
+ "metrics",
+ "metrics-util",
+ "ordered-float 5.2.0",
 ]
 
 [[package]]
@@ -4538,7 +4543,7 @@ dependencies = [
  "base-alloy-rpc-types-engine",
  "base-consensus-genesis",
  "base-consensus-providers",
- "base-macros",
+ "base-metrics",
  "base-proof",
  "base-proof-client",
  "base-proof-mpt",
@@ -11348,7 +11353,9 @@ dependencies = [
  "crossbeam-epoch",
  "crossbeam-utils",
  "hashbrown 0.16.1",
+ "indexmap 2.13.0",
  "metrics",
+ "ordered-float 5.2.0",
  "quanta",
  "rand 0.9.2",
  "rand_xoshiro",
@@ -12400,6 +12407,15 @@ name = "ordered-float"
 version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7bb71e1b3fa6ca1c61f383464aaf2bb0e2f8e772a1f01d486832464de363b951"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "ordered-float"
+version = "5.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0218004a4aae742209bee9c3cef05672f6b2708be36a50add8eb613b1f2a4008"
 dependencies = [
  "num-traits",
 ]
@@ -19281,7 +19297,7 @@ dependencies = [
  "nix 0.29.0",
  "num-derive",
  "num-traits",
- "ordered-float",
+ "ordered-float 4.6.0",
  "pest",
  "pest_derive",
  "phf 0.11.3",
@@ -21005,7 +21021,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f2ab60e120fd6eaa68d9567f3226e876684639d22a4219b313ff69ec0ccd5ac"
 dependencies = [
  "log",
- "ordered-float",
+ "ordered-float 4.6.0",
  "strsim",
  "thiserror 1.0.69",
  "wezterm-dynamic-derive",

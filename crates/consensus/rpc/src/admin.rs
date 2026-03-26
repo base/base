@@ -72,7 +72,7 @@ where
     ) -> RpcResult<()> {
         // Note: intentionally no sequencer guard here. Posting an unsafe payload is a P2P/gossip
         // operation that is valid on both sequencer and validator nodes.
-        base_macros::inc!(gauge, base_consensus_gossip::Metrics::RPC_CALLS, "method" => "admin_postUnsafePayload");
+        base_metrics::inc!(gauge, base_consensus_gossip::Metrics::RPC_CALLS, "method" => "admin_postUnsafePayload");
         self.network_sender
             .send(NetworkAdminQuery::PostUnsafePayload { payload })
             .await

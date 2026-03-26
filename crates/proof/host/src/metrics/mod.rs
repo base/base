@@ -142,7 +142,7 @@ impl ProofGuard {
     /// Creates a new guard. Prefer the [`proof_guard!`] macro.
     #[inline]
     pub fn new(gauge: &'static str, counter: &'static str) -> Self {
-        base_macros::inc!(gauge, gauge);
+        base_metrics::inc!(gauge, gauge);
         Self { gauge, counter, outcome: Metrics::OUTCOME_DROPPED }
     }
 
@@ -172,8 +172,8 @@ impl Drop for ProofGuard {
         let gauge = self.gauge;
         let counter = self.counter;
         let outcome = self.outcome;
-        base_macros::dec!(gauge, gauge);
-        base_macros::inc!(counter, counter, Metrics::LABEL_OUTCOME => outcome);
+        base_metrics::dec!(gauge, gauge);
+        base_metrics::inc!(counter, counter, Metrics::LABEL_OUTCOME => outcome);
     }
 }
 
@@ -381,33 +381,33 @@ impl Metrics {
 
     #[cfg(feature = "metrics")]
     fn zero() {
-        base_macros::set!(gauge, Self::IN_FLIGHT_PROOFS, 0);
-        base_macros::set!(gauge, Self::PREIMAGE_COUNT, 0);
+        base_metrics::set!(gauge, Self::IN_FLIGHT_PROOFS, 0);
+        base_metrics::set!(gauge, Self::PREIMAGE_COUNT, 0);
 
-        base_macros::set!(counter, Self::REQUESTS_TOTAL, Self::LABEL_MODE, Self::MODE_ONLINE, 0);
+        base_metrics::set!(counter, Self::REQUESTS_TOTAL, Self::LABEL_MODE, Self::MODE_ONLINE, 0);
 
-        base_macros::set!(
+        base_metrics::set!(
             counter,
             Self::REQUESTS_RESULT_TOTAL,
             Self::LABEL_OUTCOME,
             Self::OUTCOME_SUCCESS,
             0
         );
-        base_macros::set!(
+        base_metrics::set!(
             counter,
             Self::REQUESTS_RESULT_TOTAL,
             Self::LABEL_OUTCOME,
             Self::OUTCOME_WITNESS_ERROR,
             0
         );
-        base_macros::set!(
+        base_metrics::set!(
             counter,
             Self::REQUESTS_RESULT_TOTAL,
             Self::LABEL_OUTCOME,
             Self::OUTCOME_PROVE_ERROR,
             0
         );
-        base_macros::set!(
+        base_metrics::set!(
             counter,
             Self::REQUESTS_RESULT_TOTAL,
             Self::LABEL_OUTCOME,
@@ -415,9 +415,9 @@ impl Metrics {
             0
         );
 
-        base_macros::set!(counter, Self::KV_COLD_LOOKUPS_TOTAL, 0);
+        base_metrics::set!(counter, Self::KV_COLD_LOOKUPS_TOTAL, 0);
 
-        base_macros::set!(counter, Self::PREIMAGE_ACCESSES_TOTAL, 0);
-        base_macros::set!(counter, Self::OFFLINE_MISSES_TOTAL, 0);
+        base_metrics::set!(counter, Self::PREIMAGE_ACCESSES_TOTAL, 0);
+        base_metrics::set!(counter, Self::OFFLINE_MISSES_TOTAL, 0);
     }
 }
