@@ -7,12 +7,10 @@ use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadEnvelope, OpPayloadAttributes,
 };
 use base_consensus_derive::{BuilderError, PipelineErrorKind, test_utils::TestAttributesBuilder};
-#[cfg(test)]
 use base_consensus_engine::SealTaskError;
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
 use rstest::rstest;
 
-#[cfg(test)]
 use crate::{
     ConductorError, SealState, SealStepError, SequencerActorError, UnsafePayloadGossipClientError,
     UnsealedPayloadHandle,
