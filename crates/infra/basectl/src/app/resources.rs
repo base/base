@@ -2,7 +2,7 @@ use std::collections::{HashSet, VecDeque};
 
 use base_alloy_flashblocks::Flashblock;
 use base_consensus_genesis::SystemConfig;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::{
     commands::common::{DaTracker, FlashblockEntry, LoadingState},
@@ -38,6 +38,14 @@ impl ConductorState {
         while let Ok(statuses) = rx.try_recv() {
             self.nodes = statuses;
         }
+    }
+
+    /// Returns the safe L2 block number reported by the current Raft leader, if known.
+    pub(crate) fn leader_safe_l2_block(&self) -> Option<u64> {
+        self.nodes
+            .iter()
+            .find(|n| n.is_leader == Some(true))
+            .and_then(|n| n.safe_l2_block)
     }
 }
 
@@ -100,6 +108,7 @@ pub(crate) struct FlashState {
     pub paused: bool,
     last_flashblock: Option<(u64, u64)>,
     fb_rx: Option<mpsc::Receiver<TimestampedFlashblock>>,
+    url_rx: Option<watch::Receiver<String>>,
 }
 
 impl Resources {
@@ -185,6 +194,19 @@ impl DaState {
     /// Sets the channel for receiving L1 connection mode updates.
     pub(crate) fn set_l1_mode_channel(&mut self, rx: mpsc::Receiver<L1ConnectionMode>) {
         self.l1_mode_rx = Some(rx);
+    }
+
+    /// Advances the safe head from the conductor leader's sync status.
+    ///
+    /// Called each tick when a conductor cluster is configured so the DA
+    /// tracker does not have to wait for sequencer-0's EL to P2P-sync
+    /// new blocks produced by whichever sequencer currently holds leadership.
+    pub(crate) fn apply_conductor_safe_head(&mut self, safe_block: u64) {
+        if self.loaded {
+            self.tracker.update_safe_head(safe_block);
+        } else {
+            self.buffered_safe_heads.push(safe_block);
+        }
     }
 
     /// Drains all pending messages from background channels and updates state.
@@ -365,6 +387,7 @@ impl FlashState {
             paused: false,
             last_flashblock: None,
             fb_rx: None,
+            url_rx: None,
         }
     }
 
@@ -373,8 +396,31 @@ impl FlashState {
         self.fb_rx = Some(fb_rx);
     }
 
+    /// Sets the watch receiver used to detect flashblocks endpoint changes.
+    ///
+    /// When the watched URL changes (i.e. a new Raft leader is elected and
+    /// `run_conductor_leader_url_tracker` pushes its endpoint), `poll` resets
+    /// `last_flashblock` so the first flashblock from the new leader is not
+    /// compared against the previous leader's index, preventing spurious
+    /// missed-flashblock counts.
+    pub(crate) fn set_url_rx(&mut self, rx: watch::Receiver<String>) {
+        self.url_rx = Some(rx);
+    }
+
     /// Drains pending flashblocks from the channel unless paused.
     pub(crate) fn poll(&mut self) {
+        // Reset missed-flashblock tracking when the flashblocks endpoint changes
+        // (i.e. leadership transferred to a different sequencer).  Each clone of
+        // the watch receiver tracks its own "seen" state independently, so this
+        // fires exactly once per URL change regardless of when the WS tasks
+        // consume their own copies of the notification.
+        if let Some(ref mut rx) = self.url_rx
+            && rx.has_changed().unwrap_or(false)
+        {
+            let _ = rx.borrow_and_update();
+            self.last_flashblock = None;
+        }
+
         if self.paused {
             return;
         }
