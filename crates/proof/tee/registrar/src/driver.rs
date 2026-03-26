@@ -5,7 +5,7 @@
 //! to L1 via the [`TxManager`]. Also detects orphaned on-chain signers (those
 //! no longer backed by a healthy instance) and deregisters them.
 
-use std::{collections::HashSet, fmt, time::Duration};
+use std::{collections::HashSet, error::Error, fmt, time::Duration};
 
 use alloy_primitives::{Address, Bytes, hex};
 use alloy_sol_types::SolCall;
@@ -251,6 +251,8 @@ where
             {
                 warn!(
                     error = %e,
+                    error_source = e.source().map(|s| s.to_string()).unwrap_or_default(),
+                    error_debug = ?e,
                     signer = %signer_address,
                     enclave_index = idx,
                     instance = %instance.instance_id,

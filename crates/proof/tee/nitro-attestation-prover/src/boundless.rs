@@ -14,7 +14,7 @@ use boundless_market::{
     request_builder::{OfferParams, RequestParams, RequirementParams},
 };
 use risc0_zkvm::sha::Digest;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use url::Url;
 
 use crate::{AttestationProof, AttestationProofProvider, ProverError, Result};
@@ -72,6 +72,14 @@ impl AttestationProofProvider for BoundlessProver {
         info!(
             image_id = ?self.image_id,
             input_len = input_bytes.len(),
+            attestation_len = attestation_bytes.len(),
+            rpc_url = %self.rpc_url.origin().unicode_serialization(),
+            signer_address = %self.signer.address(),
+            program_url = %self.verifier_program_url,
+            max_price = self.max_price,
+            timeout = ?self.timeout,
+            poll_interval = ?self.poll_interval,
+            trusted_certs_prefix_len = self.trusted_certs_prefix_len,
             "submitting proof request to Boundless"
         );
 
@@ -80,12 +88,31 @@ impl AttestationProofProvider for BoundlessProver {
             .with_private_key(self.signer.clone())
             .build()
             .await
-            .map_err(|e| ProverError::Boundless(format!("failed to build client: {e}")))?;
+            .map_err(|e| {
+                warn!(
+                    error = %e,
+                    error_debug = ?e,
+                    rpc_url = %self.rpc_url.origin().unicode_serialization(),
+                    signer_address = %self.signer.address(),
+                    "failed to build Boundless client"
+                );
+                ProverError::Boundless(format!("failed to build client: {e}"))
+            })?;
+
+        debug!("Boundless client built successfully");
 
         // Build request parameters: program URL + stdin input + predicate.
         let params = RequestParams::new()
             .with_program_url(self.verifier_program_url.clone())
-            .map_err(|e| ProverError::Boundless(format!("invalid program URL: {e}")))?
+            .map_err(|e| {
+                warn!(
+                    error = %e,
+                    error_debug = ?e,
+                    program_url = %self.verifier_program_url,
+                    "invalid Boundless program URL"
+                );
+                ProverError::Boundless(format!("invalid program URL: {e}"))
+            })?
             .with_stdin(input_bytes)
             .with_image_id(image_id)
             .with_requirements(
@@ -93,12 +120,23 @@ impl AttestationProofProvider for BoundlessProver {
             )
             .with_offer(OfferParams::builder().max_price(U256::from(self.max_price)));
 
-        let (request_id, expires_at) = client
-            .submit_onchain(params)
-            .await
-            .map_err(|e| ProverError::Boundless(format!("failed to submit request: {e}")))?;
+        let (request_id, expires_at) = client.submit_onchain(params).await.map_err(|e| {
+            warn!(
+                error = %e,
+                error_debug = ?e,
+                image_id = ?self.image_id,
+                max_price = self.max_price,
+                signer_address = %self.signer.address(),
+                "failed to submit Boundless proof request on-chain"
+            );
+            ProverError::Boundless(format!("failed to submit request: {e}"))
+        })?;
 
-        info!(request_id = %request_id, "proof request submitted, waiting for fulfillment");
+        info!(
+            request_id = %request_id,
+            expires_at,
+            "proof request submitted, waiting for fulfillment"
+        );
 
         // Compute the expiry from timeout: pick the sooner of expires_at and
         // now + timeout.
@@ -109,25 +147,53 @@ impl AttestationProofProvider for BoundlessProver {
             .saturating_add(self.timeout.as_secs());
         let effective_expiry = expires_at.min(timeout_at);
 
+        debug!(
+            timeout_at,
+            effective_expiry,
+            request_id = %request_id,
+            poll_interval = ?self.poll_interval,
+            "waiting for fulfillment with computed expiry"
+        );
+
         let fulfillment = client
             .wait_for_request_fulfillment(request_id, self.poll_interval, effective_expiry)
             .await
             .map_err(|e| {
-                warn!(error = %e, request_id = %request_id, "proof fulfillment failed");
+                warn!(
+                    error = %e,
+                    error_debug = ?e,
+                    request_id = %request_id,
+                    effective_expiry,
+                    timeout = ?self.timeout,
+                    poll_interval = ?self.poll_interval,
+                    "proof fulfillment failed"
+                );
                 ProverError::Boundless(format!("fulfillment failed: {e}"))
             })?;
 
-        let data = fulfillment
-            .data()
-            .map_err(|e| ProverError::Boundless(format!("failed to decode fulfillment: {e}")))?;
-        let journal = data
-            .journal()
-            .ok_or_else(|| ProverError::Boundless("fulfillment missing journal".into()))?;
+        let data = fulfillment.data().map_err(|e| {
+            warn!(
+                error = %e,
+                error_debug = ?e,
+                request_id = %request_id,
+                seal_len = fulfillment.seal.len(),
+                "failed to decode Boundless fulfillment data"
+            );
+            ProverError::Boundless(format!("failed to decode fulfillment: {e}"))
+        })?;
+        let journal = data.journal().ok_or_else(|| {
+            warn!(
+                request_id = %request_id,
+                "Boundless fulfillment missing journal"
+            );
+            ProverError::Boundless("fulfillment missing journal".into())
+        })?;
 
         let output = Bytes::copy_from_slice(journal);
         let proof_bytes = Bytes::copy_from_slice(&fulfillment.seal);
 
         info!(
+            request_id = %request_id,
             journal_len = output.len(),
             seal_len = proof_bytes.len(),
             "proof fulfilled successfully"
