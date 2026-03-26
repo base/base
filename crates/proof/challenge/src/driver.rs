@@ -361,6 +361,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             proposer: self.submitter.sender_address(),
             intermediate_block_interval: candidate.intermediate_block_interval,
             l1_head_number,
+            ..Default::default()
         };
 
         let result = tee.provider.prove(request).await.map_err(|e| eyre::eyre!(e))?;

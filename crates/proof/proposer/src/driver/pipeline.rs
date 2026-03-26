@@ -388,6 +388,17 @@ where
                     state.proved.insert(next_to_submit, proof_result);
                     return Ok(());
                 }
+                Err(SubmitAction::Discard(e)) => {
+                    warn!(
+                        error = %e,
+                        target_block = next_to_submit,
+                        "Proof discarded, will re-prove next tick"
+                    );
+                    // Don't re-insert the proof — it's permanently invalid.
+                    // The block leaves `proved` and `inflight`, so the next
+                    // tick will re-dispatch a proof task for it.
+                    return Ok(());
+                }
             }
         }
     }
@@ -683,7 +694,7 @@ where
             proposer: self.config.driver.proposer_address,
             intermediate_block_interval: self.config.driver.intermediate_block_interval,
             l1_head_number: l1_head.number,
-            pcr0: self.config.driver.tee_image_hash,
+            image_hash: self.config.driver.tee_image_hash,
         };
 
         info!(request = ?request, "Built proof request for parallel proving");
@@ -805,14 +816,14 @@ where
             {
                 Ok(true) => {}
                 Ok(false) => {
-                    // The proof's signer is not registered on-chain. Returning
-                    // Reorg discards this proof and triggers re-proving — a
-                    // different (registered) enclave may be selected via the
-                    // pcr0 field. Returning Failed would retry the same proof
-                    // indefinitely since the signer signature never changes.
+                    // The proof's signer is not registered on-chain. Discard
+                    // this proof so the pipeline re-proves with a (potentially
+                    // different, registered) enclave on the next attempt.
                     warn!(target_block, "TEE signer is not valid on-chain, discarding proof");
                     metrics::counter!(proposer_metrics::TEE_SIGNER_INVALID_TOTAL).increment(1);
-                    return Err(SubmitAction::Reorg);
+                    return Err(SubmitAction::Discard(ProposerError::Internal(
+                        "TEE signer not registered on-chain".into(),
+                    )));
                 }
                 Err(e) => {
                     // Proceed on RPC failure: if L1 is unreachable, the
@@ -919,15 +930,18 @@ where
 enum SubmitAction {
     /// Chain reorg detected — output root no longer matches canonical.
     Reorg,
-    /// Transient failure — retry later.
+    /// Transient failure — retry later with the same proof.
     Failed(ProposerError),
+    /// Proof is permanently invalid (e.g. signer not registered) — discard
+    /// and re-prove on the next attempt.
+    Discard(ProposerError),
 }
 
 impl std::fmt::Display for SubmitAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Reorg => write!(f, "reorg detected"),
-            Self::Failed(e) => write!(f, "{e}"),
+            Self::Failed(e) | Self::Discard(e) => write!(f, "{e}"),
         }
     }
 }

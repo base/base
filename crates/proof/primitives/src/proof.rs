@@ -75,7 +75,7 @@ pub struct ProofRequest {
     /// matches the on-chain `TEE_IMAGE_HASH`. Single-enclave provers
     /// accept and ignore this field.
     #[cfg_attr(feature = "serde", serde(default))]
-    pub pcr0: B256,
+    pub image_hash: B256,
 }
 
 /// A proof request bundled with the witness data needed to fulfill it.
