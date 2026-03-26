@@ -17352,7 +17352,6 @@ checksum = "1a30e631b7f4a03dee9056b8ef6982e8ba371dd5bedb74d3ec86df4499132c70"
 dependencies = [
  "bytecheck",
  "bytes",
- "hashbrown 0.15.5",
  "hashbrown 0.16.1",
  "indexmap 2.13.0",
  "munge",

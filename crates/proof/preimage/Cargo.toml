@@ -24,7 +24,7 @@ async-channel = { workspace = true, optional = true }
 serde = { workspace = true, optional = true, features = ["derive"] }
 
 # `rkyv` feature dependencies
-rkyv = { workspace = true, optional = true, features = ["hashbrown-0_15"] }
+rkyv = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
