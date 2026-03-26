@@ -12,7 +12,7 @@ use base_alloy_network::Base;
 use base_consensus_rpc::{ConductorApiClient, OpP2PApiClient, RollupNodeApiClient};
 use futures::{StreamExt, stream};
 use jsonrpsee::http_client::HttpClientBuilder;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::connect_async;
 use tracing::warn;
 
@@ -83,8 +83,17 @@ pub(crate) async fn run_safe_head_poller(
     }
 }
 
+/// Connects to the URL in `url_rx`, forwarding decoded flashblocks to `tx`.
+///
+/// Reconnects automatically on disconnection or error (exponential backoff).
+/// If `url_rx` emits a new value while connected, the current connection is
+/// dropped immediately and a fresh connection is opened to the new URL with
+/// no backoff delay.  This is the mechanism used to follow conductor leader
+/// changes: when a new Raft leader is elected, the caller pushes the new
+/// leader's flashblocks endpoint into the watch channel and the loop here
+/// switches over without waiting for the old socket to time out.
 async fn run_flashblock_ws_inner<T: Send + 'static>(
-    url: &str,
+    url_rx: &mut watch::Receiver<String>,
     tx: &mpsc::Sender<T>,
     toast_tx: &mpsc::Sender<Toast>,
     map_fb: impl Fn(Flashblock) -> T,
@@ -92,34 +101,52 @@ async fn run_flashblock_ws_inner<T: Send + 'static>(
     let mut delay = WS_RECONNECT_INITIAL_DELAY;
 
     loop {
-        match connect_async(url).await {
+        let url = url_rx.borrow_and_update().clone();
+
+        match connect_async(url.as_str()).await {
             Ok((ws_stream, _)) => {
                 delay = WS_RECONNECT_INITIAL_DELAY;
                 let (_, mut read) = ws_stream.split();
+                let mut leader_changed = false;
 
-                while let Some(msg) = read.next().await {
-                    let msg = match msg {
-                        Ok(m) => m,
-                        Err(e) => {
-                            warn!(error = %e, "Flashblock WebSocket connection error");
-                            let _ = toast_tx.try_send(Toast::warning("WebSocket disconnected"));
+                loop {
+                    tokio::select! {
+                        msg_opt = read.next() => {
+                            let msg = match msg_opt {
+                                Some(Ok(m)) => m,
+                                Some(Err(e)) => {
+                                    warn!(error = %e, "Flashblock WebSocket connection error");
+                                    let _ = toast_tx.try_send(Toast::warning("WebSocket disconnected"));
+                                    break;
+                                }
+                                None => break,
+                            };
+                            if !msg.is_binary() && !msg.is_text() {
+                                continue;
+                            }
+                            let fb = match Flashblock::try_decode_message(msg.into_data()) {
+                                Ok(fb) => fb,
+                                Err(_) => continue,
+                            };
+                            if tx.send(map_fb(fb)).await.is_err() {
+                                return;
+                            }
+                        }
+                        Ok(()) = url_rx.changed() => {
+                            leader_changed = true;
                             break;
                         }
-                    };
-                    if !msg.is_binary() && !msg.is_text() {
-                        continue;
                     }
-                    let fb = match Flashblock::try_decode_message(msg.into_data()) {
-                        Ok(fb) => fb,
-                        Err(_) => continue,
-                    };
-                    if tx.send(map_fb(fb)).await.is_err() {
-                        return;
-                    }
+                }
+
+                if leader_changed {
+                    // Skip backoff: reconnect immediately to the new leader.
+                    delay = WS_RECONNECT_INITIAL_DELAY;
+                    continue;
                 }
             }
             Err(e) => {
-                warn!(error = %e, "Failed to connect to flashblock WebSocket");
+                warn!(error = %e, url = %url, "Failed to connect to flashblock WebSocket");
                 let _ = toast_tx.try_send(Toast::warning(format!(
                     "WebSocket connection failed, retrying in {}s",
                     delay.as_secs()
@@ -127,18 +154,25 @@ async fn run_flashblock_ws_inner<T: Send + 'static>(
             }
         }
 
-        tokio::time::sleep(delay).await;
-        delay = (delay * 2).min(WS_RECONNECT_MAX_DELAY);
+        // Exponential backoff, but skip the remainder if the URL changes.
+        tokio::select! {
+            _ = tokio::time::sleep(delay) => {
+                delay = (delay * 2).min(WS_RECONNECT_MAX_DELAY);
+            }
+            Ok(()) = url_rx.changed() => {
+                delay = WS_RECONNECT_INITIAL_DELAY;
+            }
+        }
     }
 }
 
 /// Subscribes to flashblocks via WebSocket and forwards raw flashblocks.
 pub(crate) async fn run_flashblock_ws(
-    url: String,
+    mut url_rx: watch::Receiver<String>,
     tx: mpsc::Sender<Flashblock>,
     toast_tx: mpsc::Sender<Toast>,
 ) {
-    run_flashblock_ws_inner(&url, &tx, &toast_tx, |fb| fb).await;
+    run_flashblock_ws_inner(&mut url_rx, &tx, &toast_tx, |fb| fb).await;
 }
 
 /// A flashblock paired with its local receive timestamp.
@@ -152,15 +186,68 @@ pub(crate) struct TimestampedFlashblock {
 
 /// Subscribes to flashblocks via WebSocket and forwards timestamped flashblocks.
 pub(crate) async fn run_flashblock_ws_timestamped(
-    url: String,
+    mut url_rx: watch::Receiver<String>,
     tx: mpsc::Sender<TimestampedFlashblock>,
     toast_tx: mpsc::Sender<Toast>,
 ) {
-    run_flashblock_ws_inner(&url, &tx, &toast_tx, |fb| TimestampedFlashblock {
+    run_flashblock_ws_inner(&mut url_rx, &tx, &toast_tx, |fb| TimestampedFlashblock {
         flashblock: fb,
         received_at: chrono::Local::now(),
     })
     .await;
+}
+
+/// Polls the conductor cluster and pushes the current Raft leader's flashblocks
+/// WebSocket URL into `url_tx` whenever leadership changes.
+///
+/// Only conductor nodes that have a `flashblocks_ws` configured are considered.
+/// The task exits immediately if no such nodes exist.
+pub(crate) async fn run_conductor_leader_url_tracker(
+    nodes: Vec<ConductorNodeConfig>,
+    url_tx: watch::Sender<String>,
+) {
+    const POLL_INTERVAL: Duration = Duration::from_millis(500);
+    const RPC_TIMEOUT: Duration = Duration::from_millis(500);
+
+    // Pre-build one HTTP client per node (only for nodes that have a flashblocks_ws).
+    let clients: Vec<(String, _)> = nodes
+        .into_iter()
+        .filter_map(|node| {
+            let flashblocks_ws = node.flashblocks_ws?.to_string();
+            let client = HttpClientBuilder::default()
+                .request_timeout(RPC_TIMEOUT)
+                .build(node.conductor_rpc.as_str())
+                .inspect_err(|e| {
+                    warn!(error = %e, node = %node.name, "failed to build conductor HTTP client for URL tracker");
+                })
+                .ok()?;
+            Some((flashblocks_ws, client))
+        })
+        .collect();
+
+    if clients.is_empty() {
+        return;
+    }
+
+    let mut interval = tokio::time::interval(POLL_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        interval.tick().await;
+
+        for (flashblocks_ws, conductor_client) in &clients {
+            if ConductorApiClient::conductor_leader(conductor_client).await.unwrap_or(false) {
+                url_tx.send_if_modified(|current| {
+                    if *current == *flashblocks_ws {
+                        return false;
+                    }
+                    *current = flashblocks_ws.clone();
+                    true
+                });
+                break;
+            }
+        }
+    }
 }
 
 /// Summary of the initial DA backlog between safe and latest blocks.

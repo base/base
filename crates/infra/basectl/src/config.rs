@@ -21,6 +21,13 @@ pub struct ConductorNodeConfig {
     pub server_id: String,
     /// Raft peer address (`host:port`) used when targeting this node for leadership transfer.
     pub raft_addr: String,
+    /// Flashblocks WebSocket endpoint for this sequencer's builder node.
+    ///
+    /// When set, the command center will automatically reconnect its flashblocks
+    /// stream to the current Raft leader's endpoint whenever leadership changes,
+    /// rather than staying connected to the original leader's now-idle socket.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flashblocks_ws: Option<Url>,
 }
 
 /// Monitoring configuration for a chain watched by basectl.
@@ -161,6 +168,7 @@ impl ChainConfig {
                     cl_rpc: Url::parse("http://localhost:7549").unwrap(),
                     server_id: "sequencer-0".to_string(),
                     raft_addr: "op-conductor-0:5050".to_string(),
+                    flashblocks_ws: Some(Url::parse("ws://localhost:7111").unwrap()),
                 },
                 ConductorNodeConfig {
                     name: "op-conductor-1".to_string(),
@@ -168,6 +176,7 @@ impl ChainConfig {
                     cl_rpc: Url::parse("http://localhost:10549").unwrap(),
                     server_id: "sequencer-1".to_string(),
                     raft_addr: "op-conductor-1:5051".to_string(),
+                    flashblocks_ws: Some(Url::parse("ws://localhost:10111").unwrap()),
                 },
                 ConductorNodeConfig {
                     name: "op-conductor-2".to_string(),
@@ -175,6 +184,7 @@ impl ChainConfig {
                     cl_rpc: Url::parse("http://localhost:11549").unwrap(),
                     server_id: "sequencer-2".to_string(),
                     raft_addr: "op-conductor-2:5052".to_string(),
+                    flashblocks_ws: Some(Url::parse("ws://localhost:11111").unwrap()),
                 },
             ]),
         }
