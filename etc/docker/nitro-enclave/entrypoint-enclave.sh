@@ -15,8 +15,16 @@ MEMORY_MIB=$(grep memory_mib "$ALLOCATOR_CONFIG" | awk '{print $2}')
 ./nitro-cli run-enclave --cpu-count "$CPU_COUNT" --memory "$MEMORY_MIB" --eif-path ./eif.bin --enclave-cid "$VSOCK_CID"
 
 # nitro-cli run-enclave returns immediately; wait for enclave to reach RUNNING
+TIMEOUT=120
+ELAPSED=0
 until ./nitro-cli describe-enclaves | grep -q '"State": "RUNNING"'; do
     sleep 2
+    ELAPSED=$((ELAPSED + 2))
+    if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
+        echo "Timed out waiting for enclave to reach RUNNING state"
+        ./nitro-cli describe-enclaves
+        exit 1
+    fi
 done
 
 echo "Enclave is running"
