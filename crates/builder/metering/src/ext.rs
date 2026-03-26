@@ -7,6 +7,7 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
+use tracing::info;
 
 /// RPC trait for metering-related operations.
 #[cfg_attr(not(test), rpc(server, namespace = "base"))]
@@ -59,6 +60,10 @@ impl BaseApiExtServer for MeteringStoreExt {
     }
 
     async fn clear_metering_information(&self) -> RpcResult<()> {
+        info!(
+            rpc_method = "base_clearMeteringInformation",
+            "Clearing builder metering information"
+        );
         self.store.clear();
         Ok(())
     }
