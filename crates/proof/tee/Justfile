@@ -1,6 +1,5 @@
 set positional-arguments
 
-eif_image_name := "base-prover-nitro-enclave"
 eif_describe_image := "base-prover-nitro-enclave-describe"
 eif_output := "eif.bin"
 
@@ -46,8 +45,8 @@ build-eif *args="":
     docker create --name eif-extract {{ eif_describe_image }}
     docker cp eif-extract:/app/eif.bin crates/proof/tee/{{ eif_output }}
     docker rm eif-extract
-    echo "EIF built successfully: {{ eif_output }}"
-    ls -lh {{ eif_output }}
+    echo "EIF built successfully: crates/proof/tee/{{ eif_output }}"
+    ls -lh crates/proof/tee/{{ eif_output }}
 
 # Show PCR values for the current EIF image
 describe-eif:
@@ -110,7 +109,7 @@ verify-reproducible:
 # Clean EIF artifacts
 clean-eif:
     rm -f "{{ eif_output }}" eif-first.bin eif-second.bin
-    docker rmi {{ eif_image_name }} {{ eif_describe_image }} {{ eif_describe_image }}:first {{ eif_describe_image }}:second 2>/dev/null || true
+    docker rmi {{ eif_describe_image }} {{ eif_describe_image }}:first {{ eif_describe_image }}:second 2>/dev/null || true
     @echo "EIF artifacts cleaned"
 
 # --- Private helpers ---
