@@ -13,7 +13,7 @@ no_std_packages=(
   base-alloy-rpc-types-engine
 
   # consensus protocol crates
-  base-macros
+  base-metrics
   base-consensus-genesis
   base-consensus-upgrades
   base-consensus-registry

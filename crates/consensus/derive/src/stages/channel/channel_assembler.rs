@@ -109,7 +109,11 @@ where
                 let timeout =
                     channel.open_block_number() + self.cfg.channel_timeout(origin.timestamp);
                 let margin = timeout.saturating_sub(origin.number) as f64;
-                base_metrics::set!(gauge, crate::metrics::Metrics::PIPELINE_CHANNEL_TIMEOUT, margin);
+                base_metrics::set!(
+                    gauge,
+                    crate::metrics::Metrics::PIPELINE_CHANNEL_TIMEOUT,
+                    margin
+                );
             }
 
             // Add the frame to the channel. If this fails, return NotEnoughData and discard the

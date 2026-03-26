@@ -117,7 +117,13 @@ impl Metrics {
         base_metrics::set!(gauge, Self::CHAIN_PROVIDER_CACHE_HITS, "cache", "block_by_number", 0);
 
         base_metrics::set!(gauge, Self::CHAIN_PROVIDER_CACHE_MISSES, "cache", "header_by_hash", 0);
-        base_metrics::set!(gauge, Self::CHAIN_PROVIDER_CACHE_MISSES, "cache", "receipts_by_hash", 0);
+        base_metrics::set!(
+            gauge,
+            Self::CHAIN_PROVIDER_CACHE_MISSES,
+            "cache",
+            "receipts_by_hash",
+            0
+        );
         base_metrics::set!(
             gauge,
             Self::CHAIN_PROVIDER_CACHE_MISSES,

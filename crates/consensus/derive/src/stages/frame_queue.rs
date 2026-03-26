@@ -146,7 +146,11 @@ where
         #[cfg(feature = "metrics")]
         {
             let queue_size = self.queue.iter().map(|f| f.size()).sum::<usize>() as f64;
-            base_metrics::set!(gauge, crate::metrics::Metrics::PIPELINE_FRAME_QUEUE_MEM, queue_size);
+            base_metrics::set!(
+                gauge,
+                crate::metrics::Metrics::PIPELINE_FRAME_QUEUE_MEM,
+                queue_size
+            );
         }
 
         Ok(())

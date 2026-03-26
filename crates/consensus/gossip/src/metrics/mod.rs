@@ -179,7 +179,13 @@ impl Metrics {
         base_metrics::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "timestamp_future", 0);
         base_metrics::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "timestamp_past", 0);
         base_metrics::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "invalid_hash", 0);
-        base_metrics::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "invalid_signature", 0);
+        base_metrics::set!(
+            counter,
+            Self::BLOCK_VALIDATION_FAILED,
+            "reason",
+            "invalid_signature",
+            0
+        );
         base_metrics::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "invalid_signer", 0);
         base_metrics::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "too_many_blocks", 0);
         base_metrics::set!(counter, Self::BLOCK_VALIDATION_FAILED, "reason", "block_seen", 0);

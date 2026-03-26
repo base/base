@@ -164,12 +164,24 @@ impl Metrics {
         // Sequencer: reset total transactions sequenced
         base_metrics::set!(counter, Self::SEQUENCER_TOTAL_TRANSACTIONS_SEQUENCED, 0);
 
-        base_metrics::set!(counter, Self::SEQUENCER_SEAL_STEP_RETRIES_TOTAL, "step", "conductor", 0);
+        base_metrics::set!(
+            counter,
+            Self::SEQUENCER_SEAL_STEP_RETRIES_TOTAL,
+            "step",
+            "conductor",
+            0
+        );
         base_metrics::set!(counter, Self::SEQUENCER_SEAL_STEP_RETRIES_TOTAL, "step", "gossip", 0);
         base_metrics::set!(counter, Self::SEQUENCER_SEAL_STEP_RETRIES_TOTAL, "step", "insert", 0);
         base_metrics::set!(counter, Self::SEQUENCER_SEAL_ERROR_TOTAL, "fatal", "true", 0);
         base_metrics::set!(counter, Self::SEQUENCER_SEAL_ERROR_TOTAL, "fatal", "false", 0);
-        base_metrics::set!(counter, Self::SEQUENCER_START_REJECTED_TOTAL, "reason", "not_leader", 0);
+        base_metrics::set!(
+            counter,
+            Self::SEQUENCER_START_REJECTED_TOTAL,
+            "reason",
+            "not_leader",
+            0
+        );
         base_metrics::set!(
             counter,
             Self::SEQUENCER_START_REJECTED_TOTAL,
