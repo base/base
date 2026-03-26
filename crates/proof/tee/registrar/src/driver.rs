@@ -167,7 +167,7 @@ where
                 break;
             }
 
-            match self.process_instance(instance, expected_image_hash).await {
+            match self.process_instance(instance).await {
                 Ok(addresses) => {
                     for addr in addresses {
                         active_signers.insert(addr);
@@ -235,18 +235,13 @@ where
         Ok(())
     }
 
-    /// Resolves signer addresses from an instance and attempts registration
-    /// for each enclave whose PCR0 matches the expected image hash.
+    /// Resolves signer addresses from an instance and attempts registration.
     ///
     /// Returns the derived signer addresses regardless of whether registration
     /// was needed or succeeded, so the caller can build the active signer set.
     /// Registration failures are logged but do not prevent the addresses from
     /// being returned.
-    async fn process_instance(
-        &self,
-        instance: &ProverInstance,
-        expected_image_hash: B256,
-    ) -> Result<Vec<Address>> {
+    async fn process_instance(&self, instance: &ProverInstance) -> Result<Vec<Address>> {
         let public_keys = self.signer_client.signer_public_key(&instance.endpoint).await?;
         let mut addresses = Vec::with_capacity(public_keys.len());
 
@@ -268,9 +263,7 @@ where
         }
 
         for (idx, &signer_address) in addresses.iter().enumerate() {
-            if let Err(e) =
-                self.try_register(instance, signer_address, idx, expected_image_hash).await
-            {
+            if let Err(e) = self.try_register(instance, signer_address, idx).await {
                 warn!(
                     error = %e,
                     signer = %signer_address,
@@ -288,14 +281,21 @@ where
     /// Attempts to register a signer on-chain if not already registered.
     ///
     /// This is the expensive path: checks on-chain status, fetches the NSM
-    /// attestation document, validates PCR0 against the expected image hash,
-    /// generates a ZK proof, and submits a registration transaction.
+    /// attestation document, generates a ZK proof, and submits a registration
+    /// transaction.
+    ///
+    /// Registration is PCR0-agnostic: all legitimate enclaves are registered
+    /// regardless of their PCR0 measurement. This enables pre-registration of
+    /// new-PCR0 enclaves before a hardfork, eliminating the proof-generation
+    /// delay when the on-chain `TEE_IMAGE_HASH` rotates. The on-chain
+    /// `TEEVerifier` gates proof acceptance on `TEE_IMAGE_HASH` at submission
+    /// time, so pre-registered enclaves cannot produce accepted proposals
+    /// until the hardfork activates.
     async fn try_register(
         &self,
         instance: &ProverInstance,
         signer_address: Address,
         enclave_index: usize,
-        expected_image_hash: B256,
     ) -> Result<()> {
         if self.registry.is_registered(signer_address).await? {
             debug!(signer = %signer_address, "already registered, skipping");
@@ -332,22 +332,6 @@ where
                 all_attestations.len()
             ))
         })?;
-
-        // PCR0 pre-check: parse the attestation to extract PCR0 and compare
-        // against the expected image hash before spending on ZK proof generation.
-        if expected_image_hash != B256::ZERO {
-            let pcr0_hash = extract_pcr0_hash(attestation_bytes)?;
-            if pcr0_hash != expected_image_hash {
-                warn!(
-                    signer = %signer_address,
-                    enclave_index,
-                    pcr0_hash = %pcr0_hash,
-                    expected = %expected_image_hash,
-                    "PCR0 mismatch, skipping proof generation for stale enclave"
-                );
-                return Ok(());
-            }
-        }
 
         let proof = self.proof_provider.generate_proof(attestation_bytes).await?;
 
@@ -1068,7 +1052,7 @@ mod tests {
             step_driver(vec![], signer_client, registry, tx.clone(), CancellationToken::new());
 
         let inst = instance(ep, status);
-        let addrs = driver.process_instance(&inst, B256::ZERO).await.unwrap();
+        let addrs = driver.process_instance(&inst).await.unwrap();
 
         assert_eq!(addrs, vec![HARDHAT_ACCOUNT]);
         assert_eq!(tx.sent_calldata().len(), expected_txs);
@@ -1283,7 +1267,7 @@ mod tests {
         );
 
         let inst = instance(ep, InstanceHealthStatus::Healthy);
-        let addrs = driver.process_instance(&inst, B256::ZERO).await.unwrap();
+        let addrs = driver.process_instance(&inst).await.unwrap();
 
         let expected_addr_0 =
             ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
@@ -1311,82 +1295,10 @@ mod tests {
         );
 
         let inst = instance(ep, InstanceHealthStatus::Draining);
-        let addrs = driver.process_instance(&inst, B256::ZERO).await.unwrap();
+        let addrs = driver.process_instance(&inst).await.unwrap();
 
         assert_eq!(addrs.len(), 2, "both addresses should be returned");
         assert!(tx.sent_calldata().is_empty(), "no registration txs for draining instance");
-    }
-
-    // ── PCR0 pre-check tests ────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn try_register_skips_proof_on_pcr0_mismatch() {
-        let ep = "10.0.0.1:8000";
-        let attestation = real_attestation_bytes();
-        let signer_client = MockSignerClient::from_keys(&[(ep, &HARDHAT_KEY_0)])
-            .with_attestations(ep, vec![attestation]);
-        let tx = SharedTxManager::new();
-        let driver = step_driver(
-            vec![],
-            signer_client,
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
-
-        // Use a non-zero but wrong expected hash.
-        let wrong_hash = B256::repeat_byte(0xFF);
-        let inst = instance(ep, InstanceHealthStatus::Healthy);
-        let addrs = driver.process_instance(&inst, wrong_hash).await.unwrap();
-
-        assert_eq!(addrs.len(), 1, "address still returned for active set");
-        // No registration tx: PCR0 mismatch skips proof generation.
-        assert!(tx.sent_calldata().is_empty(), "no txs when PCR0 mismatches");
-    }
-
-    #[tokio::test]
-    async fn try_register_proceeds_on_pcr0_match() {
-        let ep = "10.0.0.1:8000";
-        let attestation = real_attestation_bytes();
-        let expected_hash = extract_pcr0_hash(&attestation).unwrap();
-        let signer_client = MockSignerClient::from_keys(&[(ep, &HARDHAT_KEY_0)])
-            .with_attestations(ep, vec![attestation]);
-        let tx = SharedTxManager::new();
-        let driver = step_driver(
-            vec![],
-            signer_client,
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
-
-        let inst = instance(ep, InstanceHealthStatus::Healthy);
-        let addrs = driver.process_instance(&inst, expected_hash).await.unwrap();
-
-        assert_eq!(addrs.len(), 1);
-        // Registration proceeds when PCR0 matches.
-        assert_eq!(tx.sent_calldata().len(), 1, "registration tx sent on PCR0 match");
-    }
-
-    #[tokio::test]
-    async fn try_register_skips_pcr0_check_when_hash_is_zero() {
-        let ep = "10.0.0.1:8000";
-        let signer_client = MockSignerClient::from_keys(&[(ep, &HARDHAT_KEY_0)]);
-        let tx = SharedTxManager::new();
-        let driver = step_driver(
-            vec![],
-            signer_client,
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
-
-        let inst = instance(ep, InstanceHealthStatus::Healthy);
-        let addrs = driver.process_instance(&inst, B256::ZERO).await.unwrap();
-
-        assert_eq!(addrs.len(), 1);
-        // B256::ZERO means "no PCR0 check" — registration proceeds.
-        assert_eq!(tx.sent_calldata().len(), 1, "registration tx sent when hash is zero");
     }
 
     // ── deregister_stale_pcr0 tests ─────────────────────────────────────
@@ -1589,7 +1501,7 @@ mod tests {
         );
 
         let inst = instance(ep, InstanceHealthStatus::Healthy);
-        let addrs = driver.process_instance(&inst, B256::ZERO).await.unwrap();
+        let addrs = driver.process_instance(&inst).await.unwrap();
 
         // First enclave (index 0) gets the single attestation → succeeds (proof gen).
         // Second enclave (index 1) → AttestationParse error → logged, but address
