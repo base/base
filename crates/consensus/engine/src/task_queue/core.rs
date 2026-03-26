@@ -146,6 +146,17 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         Ok((start.safe, l1_origin_info, system_config))
     }
 
+    /// Seeds the engine sync state from an external source without sending a forkchoice update.
+    ///
+    /// Pre-populates the [`EngineState`] watch channel so that callers such as `op_syncStatus`
+    /// never observe zeros during the bootstrap window. `el_sync_finished` is left unchanged —
+    /// the engine has not confirmed validity via FCU and the existing reset-deferral logic must
+    /// continue to gate on it.
+    pub fn seed_state(&mut self, update: EngineSyncStateUpdate) {
+        self.state.sync_state = self.state.sync_state.apply_update(update);
+        self.state_sender.send_replace(self.state);
+    }
+
     /// Clears the task queue.
     pub fn clear(&mut self) {
         self.tasks.clear();

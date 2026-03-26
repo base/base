@@ -4,8 +4,9 @@ use alloy_eips::BlockNumberOrTag;
 use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
-    BuildTask, ConsolidateInput, ConsolidateTask, Engine, EngineClient, EngineTask,
-    EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, GetPayloadTask, InsertTask, SealTask,
+    BuildTask, ConsolidateInput, ConsolidateTask, Engine, EngineClient, EngineSyncStateUpdate,
+    EngineTask, EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, GetPayloadTask, InsertTask,
+    SealTask,
 };
 use base_consensus_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
@@ -280,15 +281,42 @@ where
                         warn!(target: "engine", ?err, "Engine startup bootstrap failed; will initialize on first task");
                     }
                 }
-            } else if let (Ok(Some(head)), Some(unsafe_head_tx)) =
-                (reth_head, self.unsafe_head_tx.as_ref())
-            {
-                unsafe_head_tx
-                    .send_if_modified(|val| (*val != head).then(|| *val = head).is_some());
+            } else if let Ok(Some(head)) = reth_head {
+                //   Beyond genesis — reth already has a canonical chain (e.g. after snap sync).
+                //   Query safe and finalized heads optimistically; if unavailable (chain just
+                //   started, nothing finalized yet) fall back to default and let derivation fill
+                //   them in once the first task drains.
+                let safe = self
+                    .client
+                    .l2_block_info_by_label(BlockNumberOrTag::Safe)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                let finalized = self
+                    .client
+                    .l2_block_info_by_label(BlockNumberOrTag::Finalized)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                self.engine.seed_state(EngineSyncStateUpdate {
+                    unsafe_head: Some(head),
+                    cross_unsafe_head: Some(head),
+                    local_safe_head: Some(safe),
+                    safe_head: Some(safe),
+                    finalized_head: Some(finalized),
+                });
+                if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
+                    unsafe_head_tx
+                        .send_if_modified(|val| (*val != head).then(|| *val = head).is_some());
+                }
                 info!(
                     target: "engine",
-                    head = %head.block_info.number,
-                    "Bootstrap: skipped reset (beyond genesis), seeded unsafe head from reth"
+                    unsafe_head = %head.block_info.number,
+                    safe_head = %safe.block_info.number,
+                    finalized_head = %finalized.block_info.number,
+                    "Bootstrap: skipped reset (beyond genesis), seeded engine state from reth"
                 );
             }
 
