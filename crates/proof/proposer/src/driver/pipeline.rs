@@ -519,6 +519,14 @@ where
                             return Ok(state);
                         }
 
+                        // No matching game in the new range — keep the
+                        // previously cached state and only advance the
+                        // watermark.  This assumes factory game indices are
+                        // append-only (no reorg replaces a cached game with a
+                        // non-matching one at the same count).  The submission
+                        // path re-validates against the canonical chain, so a
+                        // stale cached state would be caught before any
+                        // onchain action.
                         cached.game_count = count;
                         return Ok(cached.state);
                     }
