@@ -103,54 +103,69 @@ async fn run_flashblock_ws_inner<T: Send + 'static>(
     loop {
         let url = url_rx.borrow_and_update().clone();
 
-        match connect_async(url.as_str()).await {
-            Ok((ws_stream, _)) => {
-                delay = WS_RECONNECT_INITIAL_DELAY;
-                let (_, mut read) = ws_stream.split();
-                let mut leader_changed = false;
+        // Wrap connect_async in a select so a second leader change that
+        // arrives while a TCP handshake is already in progress (e.g. rapid
+        // successive transfers, or non-localhost endpoints that stall rather
+        // than immediately refuse) is acted on without waiting for the
+        // handshake to resolve.
+        tokio::select! {
+            result = connect_async(url.as_str()) => {
+                match result {
+                    Ok((ws_stream, _)) => {
+                        delay = WS_RECONNECT_INITIAL_DELAY;
+                        let (_, mut read) = ws_stream.split();
+                        let mut leader_changed = false;
 
-                loop {
-                    tokio::select! {
-                        msg_opt = read.next() => {
-                            let msg = match msg_opt {
-                                Some(Ok(m)) => m,
-                                Some(Err(e)) => {
-                                    warn!(error = %e, "Flashblock WebSocket connection error");
-                                    let _ = toast_tx.try_send(Toast::warning("WebSocket disconnected"));
+                        loop {
+                            tokio::select! {
+                                msg_opt = read.next() => {
+                                    let msg = match msg_opt {
+                                        Some(Ok(m)) => m,
+                                        Some(Err(e)) => {
+                                            warn!(error = %e, "Flashblock WebSocket connection error");
+                                            let _ = toast_tx.try_send(Toast::warning("WebSocket disconnected"));
+                                            break;
+                                        }
+                                        None => break,
+                                    };
+                                    if !msg.is_binary() && !msg.is_text() {
+                                        continue;
+                                    }
+                                    let fb = match Flashblock::try_decode_message(msg.into_data()) {
+                                        Ok(fb) => fb,
+                                        Err(_) => continue,
+                                    };
+                                    if tx.send(map_fb(fb)).await.is_err() {
+                                        return;
+                                    }
+                                }
+                                Ok(()) = url_rx.changed() => {
+                                    leader_changed = true;
                                     break;
                                 }
-                                None => break,
-                            };
-                            if !msg.is_binary() && !msg.is_text() {
-                                continue;
-                            }
-                            let fb = match Flashblock::try_decode_message(msg.into_data()) {
-                                Ok(fb) => fb,
-                                Err(_) => continue,
-                            };
-                            if tx.send(map_fb(fb)).await.is_err() {
-                                return;
                             }
                         }
-                        Ok(()) = url_rx.changed() => {
-                            leader_changed = true;
-                            break;
+
+                        if leader_changed {
+                            // Skip backoff: reconnect immediately to the new leader.
+                            delay = WS_RECONNECT_INITIAL_DELAY;
+                            continue;
                         }
                     }
-                }
-
-                if leader_changed {
-                    // Skip backoff: reconnect immediately to the new leader.
-                    delay = WS_RECONNECT_INITIAL_DELAY;
-                    continue;
+                    Err(e) => {
+                        warn!(error = %e, url = %url, "Failed to connect to flashblock WebSocket");
+                        let _ = toast_tx.try_send(Toast::warning(format!(
+                            "WebSocket connection failed, retrying in {}s",
+                            delay.as_secs()
+                        )));
+                    }
                 }
             }
-            Err(e) => {
-                warn!(error = %e, url = %url, "Failed to connect to flashblock WebSocket");
-                let _ = toast_tx.try_send(Toast::warning(format!(
-                    "WebSocket connection failed, retrying in {}s",
-                    delay.as_secs()
-                )));
+            Ok(()) = url_rx.changed() => {
+                // URL changed while connecting; abandon this attempt and
+                // reconnect to the new leader immediately, without backoff.
+                delay = WS_RECONNECT_INITIAL_DELAY;
+                continue;
             }
         }
 
