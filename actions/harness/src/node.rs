@@ -118,10 +118,9 @@ pub enum NodeStepResult {
 ///
 /// # `SafeDB`
 ///
-/// Each node opens a real [`SafeDB`] backed by a [`tempfile::TempDir`]. This
+/// Each node opens a real [`SafeDB`] in a fresh temporary directory. This
 /// exercises the actual persistence layer (redb) rather than a mock, so tests
-/// catch encoding bugs, drop-order issues, and reopen behaviour. The tempdir is
-/// cleaned up automatically when the node is dropped.
+/// catch encoding bugs and real read/write behaviour.
 ///
 /// 1. Mine and push an L1 block: `h.mine_and_push(&chain)`.
 /// 2. Signal the new head: `node.act_l1_head_signal(block_info).await`.
@@ -177,15 +176,7 @@ pub struct TestRollupNode<P: Pipeline + SignalReceiver + Debug + Send = Verifier
     /// Shared rollup configuration used for Engine API version selection.
     rollup_config: Arc<RollupConfig>,
     /// redb-backed safe head database for assertion-level testing.
-    ///
-    /// Declared before `_safedb_dir` so that the `Arc<SafeDB>` (and redb's
-    /// internal flush) is dropped while the backing tempdir is still on disk.
     safe_db: Arc<SafeDB>,
-    /// Temporary directory backing the safe head database (kept alive for the node's lifetime).
-    ///
-    /// Must be declared *after* `safe_db` so it is dropped last — the directory
-    /// must outlive the redb `Database` that writes to it.
-    _safedb_dir: tempfile::TempDir,
 }
 
 impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
@@ -228,7 +219,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             derived_l1_info_txs: Vec::new(),
             rollup_config,
             safe_db,
-            _safedb_dir: safedb_dir,
         }
     }
 
