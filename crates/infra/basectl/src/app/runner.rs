@@ -12,8 +12,8 @@ use crate::{
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, L1BlockInfo, L1ConnectionMode,
         TimestampedFlashblock, fetch_initial_backlog_with_progress, run_block_fetcher,
-        run_conductor_leader_url_tracker, run_conductor_poller, run_flashblock_ws,
-        run_flashblock_ws_timestamped, run_l1_blob_watcher, run_safe_head_poller,
+        run_conductor_poller, run_flashblock_ws, run_flashblock_ws_timestamped, run_l1_blob_watcher,
+        run_safe_head_poller,
     },
     tui::Toast,
 };
@@ -114,9 +114,11 @@ fn start_background_services(config: &ChainConfig, resources: &mut Resources) {
         resources.conductor.set_channel(conductor_rx);
         tokio::spawn(run_conductor_poller(conductor_nodes.clone(), conductor_tx));
 
-        // Spawn the leader URL tracker only when nodes carry flashblocks endpoints.
+        // Wire the URL sender into ConductorState so that the existing
+        // conductor poll (200 ms) drives flashblocks URL changes instead of
+        // a separate task that would duplicate the conductor_leader RPCs.
         if conductor_nodes.iter().any(|n| n.flashblocks_ws.is_some()) {
-            tokio::spawn(run_conductor_leader_url_tracker(conductor_nodes, fb_url_tx));
+            resources.conductor.set_url_sender(conductor_nodes, fb_url_tx);
         }
     }
 }

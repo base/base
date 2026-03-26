@@ -6,7 +6,7 @@ use tokio::sync::{mpsc, watch};
 
 use crate::{
     commands::common::{DaTracker, FlashblockEntry, LoadingState},
-    config::ChainConfig,
+    config::{ChainConfig, ConductorNodeConfig},
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, L1BlockInfo, L1ConnectionMode,
         TimestampedFlashblock,
@@ -22,7 +22,15 @@ const MAX_RECENT_DA_FLASHBLOCK_IDS: usize = 512;
 pub(crate) struct ConductorState {
     /// Most recent status snapshot for each conductor node.
     pub nodes: Vec<ConductorNodeStatus>,
+    /// Original per-node configs, used to look up each node's flashblocks_ws URL.
+    nodes_config: Vec<ConductorNodeConfig>,
     rx: Option<mpsc::Receiver<Vec<ConductorNodeStatus>>>,
+    /// Sender half of the flashblocks URL watch channel.  When set, `poll`
+    /// derives the current leader's flashblocks endpoint from the polled
+    /// status and pushes a new value whenever the leader changes.  This
+    /// removes the need for a separate `run_conductor_leader_url_tracker`
+    /// task that would duplicate the `conductor_leader` RPC calls.
+    fb_url_tx: Option<watch::Sender<String>>,
 }
 
 impl ConductorState {
@@ -31,13 +39,28 @@ impl ConductorState {
         self.rx = Some(rx);
     }
 
-    /// Drains the latest status snapshot from the background poller.
+    /// Registers the node configs and URL sender used to track leader URL changes.
+    ///
+    /// After this is called, every `poll` will push the leader's `flashblocks_ws`
+    /// URL into `tx` whenever it changes — replacing the separate polling task.
+    pub(crate) fn set_url_sender(
+        &mut self,
+        nodes_config: Vec<ConductorNodeConfig>,
+        tx: watch::Sender<String>,
+    ) {
+        self.nodes_config = nodes_config;
+        self.fb_url_tx = Some(tx);
+    }
+
+    /// Drains the latest status snapshot from the background poller, then
+    /// pushes the leader's flashblocks URL into the watch channel if it changed.
     pub(crate) fn poll(&mut self) {
         let Some(ref mut rx) = self.rx else { return };
         // Drain all pending updates, keeping only the most recent snapshot.
         while let Ok(statuses) = rx.try_recv() {
             self.nodes = statuses;
         }
+        self.push_leader_url();
     }
 
     /// Returns the safe L2 block number reported by the current Raft leader, if known.
@@ -46,6 +69,26 @@ impl ConductorState {
             .iter()
             .find(|n| n.is_leader == Some(true))
             .and_then(|n| n.safe_l2_block)
+    }
+
+    /// Derives the leader's flashblocks URL from the current status snapshot
+    /// and sends it on the watch channel if it differs from the current value.
+    fn push_leader_url(&self) {
+        let Some(ref tx) = self.fb_url_tx else { return };
+        let leader = self.nodes.iter().find(|n| n.is_leader == Some(true));
+        let Some(leader) = leader else { return };
+        let Some(config) = self.nodes_config.iter().find(|c| c.name == leader.name) else {
+            return;
+        };
+        let Some(ref url) = config.flashblocks_ws else { return };
+        let url_str = url.to_string();
+        tx.send_if_modified(|current| {
+            if *current == url_str {
+                return false;
+            }
+            *current = url_str;
+            true
+        });
     }
 }
 

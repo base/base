@@ -217,54 +217,6 @@ pub(crate) async fn run_flashblock_ws_timestamped(
 ///
 /// Only conductor nodes that have a `flashblocks_ws` configured are considered.
 /// The task exits immediately if no such nodes exist.
-pub(crate) async fn run_conductor_leader_url_tracker(
-    nodes: Vec<ConductorNodeConfig>,
-    url_tx: watch::Sender<String>,
-) {
-    const POLL_INTERVAL: Duration = Duration::from_millis(500);
-    const RPC_TIMEOUT: Duration = Duration::from_millis(500);
-
-    // Pre-build one HTTP client per node (only for nodes that have a flashblocks_ws).
-    let clients: Vec<(String, _)> = nodes
-        .into_iter()
-        .filter_map(|node| {
-            let flashblocks_ws = node.flashblocks_ws?.to_string();
-            let client = HttpClientBuilder::default()
-                .request_timeout(RPC_TIMEOUT)
-                .build(node.conductor_rpc.as_str())
-                .inspect_err(|e| {
-                    warn!(error = %e, node = %node.name, "failed to build conductor HTTP client for URL tracker");
-                })
-                .ok()?;
-            Some((flashblocks_ws, client))
-        })
-        .collect();
-
-    if clients.is_empty() {
-        return;
-    }
-
-    let mut interval = tokio::time::interval(POLL_INTERVAL);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-    loop {
-        interval.tick().await;
-
-        for (flashblocks_ws, conductor_client) in &clients {
-            if ConductorApiClient::conductor_leader(conductor_client).await.unwrap_or(false) {
-                url_tx.send_if_modified(|current| {
-                    if *current == *flashblocks_ws {
-                        return false;
-                    }
-                    *current = flashblocks_ws.clone();
-                    true
-                });
-                break;
-            }
-        }
-    }
-}
-
 /// Summary of the initial DA backlog between safe and latest blocks.
 #[derive(Debug, Clone)]
 pub(crate) struct InitialBacklog {
