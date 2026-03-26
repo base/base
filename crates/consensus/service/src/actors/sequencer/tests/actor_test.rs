@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ExecutionPayloadV1;
-use alloy_transport::RpcError;
 use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadEnvelope, OpPayloadAttributes,
 };
 use base_consensus_derive::{BuilderError, PipelineErrorKind, test_utils::TestAttributesBuilder};
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use jsonrpsee::core::ClientError;
 use rstest::rstest;
 
 #[cfg(test)]
@@ -43,7 +43,7 @@ fn dummy_envelope() -> OpExecutionPayloadEnvelope {
 }
 
 fn conductor_rpc_error() -> ConductorError {
-    ConductorError::Rpc(RpcError::local_usage_str("test conductor error"))
+    ConductorError::Rpc(ClientError::Custom("test conductor error".to_string()))
 }
 
 fn dummy_attributes_with_parent() -> OpAttributesWithParent {

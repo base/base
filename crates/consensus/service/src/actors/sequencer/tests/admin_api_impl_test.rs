@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use alloy_primitives::B256;
-use alloy_transport::RpcError;
 use base_consensus_rpc::SequencerAdminAPIError;
 use base_protocol::{BlockInfo, L2BlockInfo};
+use jsonrpsee::core::ClientError;
 use rstest::rstest;
 use tokio::sync::oneshot;
 
@@ -218,7 +218,7 @@ async fn test_start_sequencer_conductor_leader_rpc_error(#[values(true, false)] 
     conductor
         .expect_leader()
         .times(1)
-        .return_once(|| Err(ConductorError::Rpc(RpcError::local_usage_str("rpc error"))));
+        .return_once(|| Err(ConductorError::Rpc(ClientError::Custom("rpc error".to_string()))));
 
     let mut actor = test_actor();
     actor.conductor = Some(conductor);
@@ -515,7 +515,7 @@ async fn test_override_leader(
         } else if conductor_error {
             let mut conductor = MockConductor::new();
             conductor.expect_override_leader().times(1).return_once(move || {
-                Err(ConductorError::Rpc(RpcError::local_usage_str(conductor_error_string)))
+                Err(ConductorError::Rpc(ClientError::Custom(conductor_error_string.to_string())))
             });
             let mut actor = test_actor();
             actor.conductor = Some(conductor);

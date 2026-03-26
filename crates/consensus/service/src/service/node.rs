@@ -405,8 +405,13 @@ impl RollupNode {
             L1OriginSelector::new(Arc::clone(&self.config), delayed_l1_provider);
 
         // Conditionally add conductor if configured
-        let conductor =
-            self.sequencer_config.conductor_rpc_url.clone().map(ConductorClient::new_http);
+        let conductor = self
+            .sequencer_config
+            .conductor_rpc_url
+            .clone()
+            .map(ConductorClient::new_http)
+            .transpose()
+            .map_err(|e| format!("Failed to create conductor client: {e}"))?;
 
         // Create the L1 Watcher actor
 

@@ -224,6 +224,21 @@ pub trait ConductorApi {
     #[method(name = "leader")]
     async fn conductor_leader(&self) -> RpcResult<bool>;
 
+    /// Returns whether the conductor is active.
+    #[method(name = "active")]
+    async fn conductor_active(&self) -> RpcResult<bool>;
+
+    /// Commits an unsafe payload to the conductor.
+    #[method(name = "commitUnsafePayload")]
+    async fn conductor_commit_unsafe_payload(
+        &self,
+        payload: OpExecutionPayloadEnvelope,
+    ) -> RpcResult<()>;
+
+    /// Overrides the leader of the conductor.
+    #[method(name = "overrideLeader")]
+    async fn conductor_override_leader(&self) -> RpcResult<()>;
+
     /// Transfers Raft leadership to any available peer.
     #[method(name = "transferLeader")]
     async fn conductor_transfer_leader(&self) -> RpcResult<()>;
