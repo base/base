@@ -139,10 +139,17 @@ where
         }
 
         // Fetch the expected PCR0 image hash once per cycle.
+        //
+        // On failure, fall back to B256::ZERO which skips `deregister_stale_pcr0`
+        // (guarded by `expected_image_hash != B256::ZERO`). This is an intentional
+        // degradation: stale enclave cleanup is deferred by one cycle, but
+        // registration and orphan deregistration proceed normally. The on-chain
+        // `TEEVerifier` independently gates proof acceptance on `TEE_IMAGE_HASH`,
+        // so stale enclaves cannot produce accepted proposals regardless.
         let expected_image_hash = match self.registry.get_expected_image_hash().await {
             Ok(hash) => B256::from(hash),
             Err(e) => {
-                warn!(error = %e, "failed to fetch expected image hash, using zero");
+                warn!(error = %e, "failed to fetch expected image hash, skipping PCR0 deregistration this cycle");
                 B256::ZERO
             }
         };

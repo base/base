@@ -812,7 +812,12 @@ where
                     )));
                 }
                 Err(e) => {
-                    // Don't block proposals on a failed read-only check.
+                    // Proceed on RPC failure: if L1 is unreachable, the
+                    // subsequent propose_output call will also fail and be
+                    // retried naturally. Blocking here would not save gas.
+                    // This also handles the case where the registry contract
+                    // is not yet deployed (rolling out the --tee-prover-registry-address
+                    // config before the contract exists on-chain).
                     warn!(error = %e, target_block, "signer validity check failed, proceeding anyway");
                 }
             }
