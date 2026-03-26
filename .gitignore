@@ -3,7 +3,7 @@ target/
 .DS_Store
 .devnet/
 .sisyphus/
-eif.bin
+eif*.bin
 docs/specs/node_modules/
 docs/specs/dist/
 docs/specs/.vocs/
