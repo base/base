@@ -137,9 +137,14 @@ where
 
         let safe_header = l2_provider.header_by_hash(l2_head_hash)?.seal_slow();
 
-        let cursor =
-            new_oracle_pipeline_cursor(&cfg, safe_header, &mut l1_provider, &mut l2_provider)
-                .await?;
+        let cursor = new_oracle_pipeline_cursor(
+            &cfg,
+            safe_header,
+            boot_info.agreed_l2_output_root,
+            &mut l1_provider,
+            &mut l2_provider,
+        )
+        .await?;
         l2_provider.set_cursor(Arc::clone(&cursor));
 
         let pipeline = Self::new(

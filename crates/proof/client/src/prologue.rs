@@ -56,11 +56,6 @@ where
         let l1_config = boot.l1_config;
         let rollup_config = Arc::new(boot.rollup_config);
 
-        if boot.agreed_l2_output_root == boot.claimed_l2_output_root {
-            info!("trace extension detected");
-            return Err(FaultProofProgramError::TraceExtension);
-        }
-
         let safe_head_hash =
             fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root).await?;
 
@@ -88,9 +83,31 @@ where
             });
         }
 
+        // If the claim targets the safe head block itself, no derivation is needed. This is the
+        // trace-extension leaf case where the trace is capped at the root-claim block number.
+        // The only valid output root here is the agreed output root (a zero-step transition).
+        if boot.claimed_l2_block_number == safe_head.number {
+            if boot.claimed_l2_output_root != boot.agreed_l2_output_root {
+                error!(
+                    claimed = boot.claimed_l2_block_number,
+                    safe = safe_head.number,
+                    expected_output_root = ?boot.agreed_l2_output_root,
+                    claimed_output_root = ?boot.claimed_l2_output_root,
+                    "claimed output root does not match agreed output root at safe head"
+                );
+                return Err(FaultProofProgramError::InvalidClaim {
+                    computed: boot.agreed_l2_output_root,
+                    claimed: boot.claimed_l2_output_root,
+                });
+            }
+            info!("trace extension detected");
+            return Err(FaultProofProgramError::TraceExtension);
+        }
+
         let cursor = new_oracle_pipeline_cursor(
             rollup_config.as_ref(),
             safe_head,
+            boot.agreed_l2_output_root,
             &mut l1_provider,
             &mut l2_provider,
         )
