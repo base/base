@@ -386,7 +386,7 @@ async fn test_step_scan_error_propagated() {
 
 #[tokio::test]
 async fn test_step_pending_proof_skips_prove_block() {
-    // First step: proof initiated (status=Created, not ready).
+    // First step: proof initiated (status=Unspecified via Default, not ready).
     // Second step: same game re-discovered → polls existing session,
     // proof succeeds, nullification submitted.
     let (l2, factory, verifier) = invalid_game_mocks();
@@ -402,7 +402,7 @@ async fn test_step_pending_proof_skips_prove_block() {
 
     let mut driver = test_driver(factory, verifier, l2, Arc::clone(&zk), tx_manager);
 
-    // Step 1: proof is initiated but not ready (Created) → session stored.
+    // Step 1: proof is initiated but not ready (Unspecified) → session stored.
     driver.step().await.unwrap();
     assert!(
         driver.pending_proofs.contains_key(&addr(0)),
