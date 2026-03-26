@@ -5,20 +5,38 @@
 //! to L1 via the [`TxManager`]. Also detects orphaned on-chain signers (those
 //! no longer backed by a healthy instance) and deregisters them.
 
-use std::{collections::HashSet, fmt, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    time::Duration,
+};
 
-use alloy_primitives::{Address, Bytes, hex};
+use alloy_primitives::{Address, B256, Bytes, hex, keccak256};
 use alloy_sol_types::SolCall;
+use base_proof_contracts::ITEEProverRegistry;
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
+use base_proof_tee_nitro_verifier::AttestationReport;
 use base_tx_manager::{TxCandidate, TxManager};
 use rand::random;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
+use url::Url;
 
 use crate::{
     InstanceDiscovery, ProverClient, ProverInstance, RegistrarError, RegistrarMetrics,
-    RegistryClient, Result, SignerClient, registry::ITEEProverRegistry,
+    RegistryClient, Result, SignerClient,
 };
+
+/// Parses an attestation document and returns `keccak256(pcr0)`.
+fn extract_pcr0_hash(attestation_bytes: &[u8]) -> Result<B256> {
+    let report = AttestationReport::parse(attestation_bytes)
+        .map_err(|e| RegistrarError::AttestationParse(e.to_string()))?;
+    let pcr0 =
+        report.doc.pcrs.get(&0).ok_or_else(|| {
+            RegistrarError::AttestationParse("PCR0 not found in attestation".into())
+        })?;
+    Ok(keccak256(pcr0.as_ref()))
+}
 
 /// Runtime parameters for the [`RegistrationDriver`] that are not
 /// trait-based dependencies.
@@ -104,7 +122,8 @@ where
         Ok(())
     }
 
-    /// Single registration cycle: discover → resolve addresses → register → deregister orphans.
+    /// Single registration cycle: discover → resolve addresses → register →
+    /// deregister orphans → deregister stale PCR0 signers.
     async fn step(&self) -> Result<()> {
         let instances = self.discovery.discover_instances().await?;
         metrics::counter!(RegistrarMetrics::DISCOVERY_SUCCESS_TOTAL).increment(1);
@@ -119,6 +138,15 @@ where
             );
         }
 
+        // Fetch the expected PCR0 image hash once per cycle.
+        let expected_image_hash = match self.registry.get_expected_image_hash().await {
+            Ok(hash) => B256::from(hash),
+            Err(e) => {
+                warn!(error = %e, "failed to fetch expected image hash, using zero");
+                B256::ZERO
+            }
+        };
+
         // Resolve signer addresses for ALL reachable instances (regardless of
         // health status) to build a complete active set. This protects draining
         // instances (still running, usually reachable) from premature
@@ -128,22 +156,30 @@ where
         // state management complexity; deferred for now.
         // Registration is only attempted for instances that pass should_register().
         let mut active_signers = HashSet::new();
+        // Map signer address → instance endpoint for PCR0 deregistration lookups.
+        // When a multi-enclave instance produces multiple addresses, they all
+        // map to the same endpoint URL. This is intentional — `deregister_stale_pcr0`
+        // checks all attestations from the endpoint for a PCR0 match.
+        let mut signer_endpoints: HashMap<Address, Url> = HashMap::new();
 
         for instance in &instances {
             if self.config.cancel.is_cancelled() {
                 break;
             }
 
-            match self.process_instance(instance).await {
-                Ok(address) => {
-                    active_signers.insert(address);
+            match self.process_instance(instance, expected_image_hash).await {
+                Ok(addresses) => {
+                    for addr in addresses {
+                        active_signers.insert(addr);
+                        signer_endpoints.insert(addr, instance.endpoint.clone());
+                    }
                 }
                 Err(e) => {
                     warn!(
                         error = %e,
                         instance = %instance.instance_id,
                         endpoint = %instance.endpoint,
-                        "failed to resolve signer address"
+                        "failed to resolve signer addresses"
                     );
                     metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
                 }
@@ -173,60 +209,94 @@ where
             return Ok(());
         }
 
-        if let Err(e) = self.deregister_orphans(&active_signers).await {
+        // Fetch on-chain signers once for both orphan and PCR0 deregistration.
+        let registered_signers = self.registry.get_registered_signers().await?;
+
+        if let Err(e) = self.deregister_orphans(&active_signers, &registered_signers).await {
             warn!(error = %e, "failed to deregister orphan signers");
+            metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+        }
+
+        // Deregister active signers whose PCR0 no longer matches the expected image hash.
+        if expected_image_hash != B256::ZERO
+            && let Err(e) = self
+                .deregister_stale_pcr0(
+                    &active_signers,
+                    &signer_endpoints,
+                    &registered_signers,
+                    expected_image_hash,
+                )
+                .await
+        {
+            warn!(error = %e, "failed to deregister stale PCR0 signers");
             metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
         }
 
         Ok(())
     }
 
-    /// Resolves a signer address from an instance and attempts registration
-    /// if the instance is healthy.
+    /// Resolves signer addresses from an instance and attempts registration
+    /// for each enclave whose PCR0 matches the expected image hash.
     ///
-    /// Returns the derived signer address regardless of whether registration
+    /// Returns the derived signer addresses regardless of whether registration
     /// was needed or succeeded, so the caller can build the active signer set.
-    /// Registration failures are logged but do not prevent the address from
+    /// Registration failures are logged but do not prevent the addresses from
     /// being returned.
-    async fn process_instance(&self, instance: &ProverInstance) -> Result<Address> {
-        // Fetch only the public key (cheap RPC) and derive the address.
-        let public_key = self.signer_client.signer_public_key(&instance.endpoint).await?;
-        let signer_address = ProverClient::derive_address(&public_key)?;
+    async fn process_instance(
+        &self,
+        instance: &ProverInstance,
+        expected_image_hash: B256,
+    ) -> Result<Vec<Address>> {
+        let public_keys = self.signer_client.signer_public_key(&instance.endpoint).await?;
+        let mut addresses = Vec::with_capacity(public_keys.len());
+
+        for public_key in &public_keys {
+            addresses.push(ProverClient::derive_address(public_key)?);
+        }
 
         // Only attempt registration for instances that pass should_register().
         // Non-registerable instances (Draining, Unhealthy) still contribute
-        // their address to the active signer set to prevent premature
+        // their addresses to the active signer set to prevent premature
         // deregistration.
         if !instance.health_status.should_register() {
             debug!(
-                signer = %signer_address,
                 status = ?instance.health_status,
+                instance = %instance.instance_id,
                 "instance not registerable, skipping registration"
             );
-            return Ok(signer_address);
+            return Ok(addresses);
         }
 
-        // Registration is best-effort: failures are logged but the address is
-        // still returned to protect the signer from orphan deregistration.
-        if let Err(e) = self.try_register(instance, signer_address).await {
-            warn!(
-                error = %e,
-                signer = %signer_address,
-                instance = %instance.instance_id,
-                "registration attempt failed"
-            );
-            metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+        for (idx, &signer_address) in addresses.iter().enumerate() {
+            if let Err(e) =
+                self.try_register(instance, signer_address, idx, expected_image_hash).await
+            {
+                warn!(
+                    error = %e,
+                    signer = %signer_address,
+                    enclave_index = idx,
+                    instance = %instance.instance_id,
+                    "registration attempt failed"
+                );
+                metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+            }
         }
 
-        Ok(signer_address)
+        Ok(addresses)
     }
 
     /// Attempts to register a signer on-chain if not already registered.
     ///
     /// This is the expensive path: checks on-chain status, fetches the NSM
-    /// attestation document, generates a ZK proof, and submits a registration
-    /// transaction.
-    async fn try_register(&self, instance: &ProverInstance, signer_address: Address) -> Result<()> {
+    /// attestation document, validates PCR0 against the expected image hash,
+    /// generates a ZK proof, and submits a registration transaction.
+    async fn try_register(
+        &self,
+        instance: &ProverInstance,
+        signer_address: Address,
+        enclave_index: usize,
+        expected_image_hash: B256,
+    ) -> Result<()> {
         if self.registry.is_registered(signer_address).await? {
             debug!(signer = %signer_address, "already registered, skipping");
             return Ok(());
@@ -241,19 +311,45 @@ where
 
         info!(
             signer = %signer_address,
+            enclave_index,
             instance = %instance.instance_id,
             "generating proof for unregistered signer"
         );
 
         // Only fetch the full NSM attestation document when registration is needed.
         // Bind a random nonce into the attestation to prevent replay attacks.
+        // NOTE: The same nonce is sent to all enclaves on this endpoint; true
+        // per-enclave nonce binding would require per-index attestation requests.
         let nonce: [u8; 32] = random();
         info!(nonce = %hex::encode(nonce), signer = %signer_address, "requesting attestation with nonce");
-        let attestation_bytes = self
+        let all_attestations = self
             .signer_client
             .signer_attestation(&instance.endpoint, None, Some(nonce.to_vec()))
             .await?;
-        let proof = self.proof_provider.generate_proof(&attestation_bytes).await?;
+        let attestation_bytes = all_attestations.get(enclave_index).ok_or_else(|| {
+            RegistrarError::AttestationParse(format!(
+                "no attestation at index {enclave_index} (got {} attestations)",
+                all_attestations.len()
+            ))
+        })?;
+
+        // PCR0 pre-check: parse the attestation to extract PCR0 and compare
+        // against the expected image hash before spending on ZK proof generation.
+        if expected_image_hash != B256::ZERO {
+            let pcr0_hash = extract_pcr0_hash(attestation_bytes)?;
+            if pcr0_hash != expected_image_hash {
+                warn!(
+                    signer = %signer_address,
+                    enclave_index,
+                    pcr0_hash = %pcr0_hash,
+                    expected = %expected_image_hash,
+                    "PCR0 mismatch, skipping proof generation for stale enclave"
+                );
+                return Ok(());
+            }
+        }
+
+        let proof = self.proof_provider.generate_proof(attestation_bytes).await?;
 
         // Check cancellation before submitting the transaction — avoid starting
         // new on-chain work if shutdown is in progress.
@@ -297,6 +393,41 @@ where
         Ok(())
     }
 
+    /// Submits a `deregisterSigner` transaction and returns whether it succeeded.
+    async fn submit_deregistration(&self, signer: Address) -> bool {
+        let calldata = ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode();
+        let candidate = TxCandidate {
+            tx_data: Bytes::from(calldata),
+            to: Some(self.config.registry_address),
+            ..Default::default()
+        };
+
+        match self.tx_manager.send(candidate).await {
+            Ok(receipt) => {
+                if !receipt.inner.status() {
+                    warn!(
+                        signer = %signer,
+                        tx_hash = %receipt.transaction_hash,
+                        "deregistration transaction reverted onchain",
+                    );
+                    metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+                    return false;
+                }
+                info!(
+                    signer = %signer,
+                    tx_hash = %receipt.transaction_hash,
+                    "signer deregistered"
+                );
+                true
+            }
+            Err(e) => {
+                warn!(error = %e, signer = %signer, "failed to deregister signer");
+                metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+                false
+            }
+        }
+    }
+
     /// Deregisters any on-chain signer that is not in the `active_signers` set.
     ///
     /// These orphans arise when a prover instance is terminated (e.g. ASG
@@ -309,12 +440,14 @@ where
     ///   registrar instances manage disjoint prover fleets, one registrar would
     ///   incorrectly deregister another's signers. The current deployment model
     ///   assumes a single registrar per registry contract.
-    async fn deregister_orphans(&self, active_signers: &HashSet<Address>) -> Result<()> {
-        let orphans: Vec<_> = self
-            .registry
-            .get_registered_signers()
-            .await?
-            .into_iter()
+    async fn deregister_orphans(
+        &self,
+        active_signers: &HashSet<Address>,
+        registered_signers: &[Address],
+    ) -> Result<()> {
+        let orphans: Vec<_> = registered_signers
+            .iter()
+            .copied()
             .filter(|addr| !active_signers.contains(addr))
             .collect();
 
@@ -330,48 +463,135 @@ where
                 debug!("shutdown requested, stopping orphan deregistration");
                 break;
             }
-
-            info!(signer = %signer, "deregistering orphan signer");
-
-            let calldata = ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode();
-
-            let candidate = TxCandidate {
-                tx_data: Bytes::from(calldata),
-                to: Some(self.config.registry_address),
-                ..Default::default()
-            };
-
-            match self.tx_manager.send(candidate).await {
-                Ok(receipt) => {
-                    if !receipt.inner.status() {
-                        warn!(
-                            signer = %signer,
-                            tx_hash = %receipt.transaction_hash,
-                            "deregistration transaction reverted onchain",
-                        );
-                        metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
-                        continue;
-                    }
-                    info!(
-                        signer = %signer,
-                        tx_hash = %receipt.transaction_hash,
-                        "orphan signer deregistered"
-                    );
-                    metrics::counter!(RegistrarMetrics::DEREGISTRATIONS_TOTAL).increment(1);
-                    deregistered += 1;
-                }
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        signer = %signer,
-                        "failed to deregister orphan signer"
-                    );
-                    metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
-                }
+            if self.submit_deregistration(signer).await {
+                metrics::counter!(RegistrarMetrics::DEREGISTRATIONS_TOTAL).increment(1);
+                deregistered += 1;
             }
         }
 
         info!(count = deregistered, "orphan deregistration complete");
+        Ok(())
+    }
+
+    /// Deregisters active signers whose PCR0 no longer matches the expected image hash.
+    ///
+    /// Called after orphan deregistration. For each on-chain signer that is still
+    /// backed by an active instance, fetches the attestation document, extracts PCR0,
+    /// and deregisters if `keccak256(pcr0) != expected_image_hash`.
+    ///
+    /// # Majority guard
+    ///
+    /// If more than 50% of active signers have a stale PCR0, deregistration is
+    /// skipped entirely. This protects against mass deregistration from a
+    /// misconfigured `expected_image_hash` or a transient on-chain read failure.
+    async fn deregister_stale_pcr0(
+        &self,
+        active_signers: &HashSet<Address>,
+        signer_endpoints: &HashMap<Address, Url>,
+        registered_signers: &[Address],
+        expected_image_hash: B256,
+    ) -> Result<()> {
+        // Only check signers that are both on-chain and in the active set
+        // (orphans are already handled by deregister_orphans).
+        let active_registered: Vec<_> = registered_signers
+            .iter()
+            .copied()
+            .filter(|addr| active_signers.contains(addr))
+            .collect();
+
+        if active_registered.is_empty() {
+            return Ok(());
+        }
+
+        // Identify stale signers by fetching attestations and checking PCR0.
+        // No nonce is needed here — we only read the hardware PCR0 measurement,
+        // not verify attestation freshness.
+        let mut stale = Vec::new();
+        for signer in &active_registered {
+            if self.config.cancel.is_cancelled() {
+                debug!("shutdown requested, stopping PCR0 staleness check");
+                return Ok(());
+            }
+
+            let endpoint = match signer_endpoints.get(signer) {
+                Some(ep) => ep,
+                None => continue,
+            };
+
+            match self.signer_client.signer_attestation(endpoint, None, None).await {
+                Ok(attestations) => {
+                    // Check all attestations from this endpoint for a match.
+                    // If any enclave's PCR0 matches, the signer is considered fresh.
+                    // Parse failures are treated as indeterminate — the signer is
+                    // skipped rather than marked stale, to avoid deregistering
+                    // signers due to transient CBOR corruption.
+                    let mut found_match = false;
+                    let mut all_failed = true;
+                    for att in &attestations {
+                        match extract_pcr0_hash(att) {
+                            Ok(hash) if hash == expected_image_hash => {
+                                found_match = true;
+                                break;
+                            }
+                            Ok(_) => {
+                                all_failed = false;
+                            }
+                            Err(e) => {
+                                warn!(
+                                    signer = %signer,
+                                    error = %e,
+                                    "failed to parse attestation for PCR0 check"
+                                );
+                            }
+                        }
+                    }
+                    // Stale only if at least one attestation parsed successfully
+                    // and none of them matched the expected hash.
+                    if !found_match && !all_failed {
+                        stale.push(*signer);
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        signer = %signer,
+                        error = %e,
+                        "failed to fetch attestation for PCR0 check, skipping"
+                    );
+                }
+            }
+        }
+
+        if stale.is_empty() {
+            return Ok(());
+        }
+
+        // Majority guard: skip if >50% of active registered signers are stale.
+        if stale.len() * 2 > active_registered.len() {
+            warn!(
+                stale = stale.len(),
+                total = active_registered.len(),
+                "majority of active signers have stale PCR0, skipping deregistration"
+            );
+            return Ok(());
+        }
+
+        info!(count = stale.len(), "deregistering stale PCR0 signers");
+
+        let mut deregistered = 0usize;
+        for signer in stale {
+            if self.config.cancel.is_cancelled() {
+                debug!("shutdown requested, stopping PCR0 deregistration");
+                break;
+            }
+
+            warn!(signer = %signer, "PCR0 mismatch, deregistering stale signer");
+            if self.submit_deregistration(signer).await {
+                metrics::counter!(RegistrarMetrics::PCR0_DEREGISTRATIONS_TOTAL).increment(1);
+                deregistered += 1;
+            }
+        }
+
+        info!(count = deregistered, "PCR0 deregistration complete");
         Ok(())
     }
 }
@@ -397,9 +617,7 @@ mod tests {
     use url::Url;
 
     use super::*;
-    use crate::{
-        InstanceHealthStatus, RegistryClient, Result, SignerClient, registry::ITEEProverRegistry,
-    };
+    use crate::{InstanceHealthStatus, RegistryClient, Result, SignerClient};
 
     // ── Shared constants ────────────────────────────────────────────────
 
@@ -471,6 +689,36 @@ mod tests {
         ProverInstance { instance_id: format!("i-{host_port}"), endpoint, health_status: status }
     }
 
+    /// Constructs a minimal `COSE_Sign1` envelope containing a CBOR attestation
+    /// document with the given 48-byte `pcr0` value. Used by tests that need a
+    /// parseable attestation with a controlled PCR0.
+    fn fake_attestation_with_pcr0(pcr0: &[u8; 48]) -> Vec<u8> {
+        // Build a CBOR map matching AttestationDocument's expected fields.
+        let pcrs =
+            vec![(ciborium::Value::Integer(0.into()), ciborium::Value::Bytes(pcr0.to_vec()))];
+        let doc = ciborium::Value::Map(vec![
+            (ciborium::Value::Text("module_id".into()), ciborium::Value::Text("test".into())),
+            (ciborium::Value::Text("timestamp".into()), ciborium::Value::Integer(1.into())),
+            (ciborium::Value::Text("digest".into()), ciborium::Value::Text("SHA384".into())),
+            (ciborium::Value::Text("pcrs".into()), ciborium::Value::Map(pcrs)),
+            (ciborium::Value::Text("certificate".into()), ciborium::Value::Bytes(vec![0])),
+            (ciborium::Value::Text("cabundle".into()), ciborium::Value::Array(vec![])),
+        ]);
+        let mut payload = Vec::new();
+        ciborium::ser::into_writer(&doc, &mut payload).unwrap();
+
+        // Wrap in a COSE_Sign1 structure: [protected, unprotected, payload, signature]
+        let cose = ciborium::Value::Array(vec![
+            ciborium::Value::Bytes(vec![]),
+            ciborium::Value::Map(vec![]),
+            ciborium::Value::Bytes(payload),
+            ciborium::Value::Bytes(vec![0; 64]),
+        ]);
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(&cose, &mut buf).unwrap();
+        buf
+    }
+
     // ── Mock implementations ────────────────────────────────────────────
 
     /// Configurable mock discovery that returns a pre-set list of instances.
@@ -503,18 +751,23 @@ mod tests {
         }
     }
 
-    /// Mock signer client that returns pre-configured public keys per endpoint.
+    /// Mock signer client that returns pre-configured public keys and attestations
+    /// per endpoint.
     ///
-    /// If an endpoint is not in the map, the call returns an error (simulating
-    /// an unreachable instance).
+    /// If an endpoint is not in the `keys` map, the call returns an error
+    /// (simulating an unreachable instance).
     #[derive(Debug)]
     struct MockSignerClient {
-        /// Maps endpoint URL → uncompressed public key bytes.
-        keys: HashMap<Url, Vec<u8>>,
+        /// Maps endpoint URL → list of uncompressed public key bytes (one per enclave).
+        keys: HashMap<Url, Vec<Vec<u8>>>,
+        /// Maps endpoint URL → list of attestation blobs (one per enclave).
+        /// Falls back to `b"mock-attestation"` if not configured.
+        attestations: HashMap<Url, Vec<Vec<u8>>>,
     }
 
     impl MockSignerClient {
         /// Creates a mock with the given host:port-to-private-key mappings.
+        /// Each endpoint gets a single enclave key wrapped in a Vec.
         /// The public key is derived automatically from each private key.
         /// An `http://` scheme is prepended to each host:port string.
         fn from_keys(entries: &[(&str, &[u8; 32])]) -> Self {
@@ -522,16 +775,31 @@ mod tests {
                 .iter()
                 .map(|(ep, pk)| {
                     let url = Url::parse(&format!("http://{ep}")).unwrap();
-                    (url, public_key_from_private(pk))
+                    (url, vec![public_key_from_private(pk)])
                 })
                 .collect();
-            Self { keys }
+            Self { keys, attestations: HashMap::new() }
+        }
+
+        /// Creates a mock that returns multiple public keys for a single endpoint,
+        /// simulating a multi-enclave instance.
+        fn multi_enclave(host_port: &str, private_keys: &[&[u8; 32]]) -> Self {
+            let url = Url::parse(&format!("http://{host_port}")).unwrap();
+            let pubs = private_keys.iter().map(|pk| public_key_from_private(pk)).collect();
+            Self { keys: HashMap::from([(url, pubs)]), attestations: HashMap::new() }
+        }
+
+        /// Configures attestation blobs for a given endpoint.
+        fn with_attestations(mut self, host_port: &str, attestations: Vec<Vec<u8>>) -> Self {
+            let url = Url::parse(&format!("http://{host_port}")).unwrap();
+            self.attestations.insert(url, attestations);
+            self
         }
     }
 
     #[async_trait]
     impl SignerClient for MockSignerClient {
-        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<u8>> {
+        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
             self.keys.get(endpoint).cloned().ok_or_else(|| RegistrarError::ProverClient {
                 instance: endpoint.to_string(),
                 source: "unreachable".into(),
@@ -540,30 +808,36 @@ mod tests {
 
         async fn signer_attestation(
             &self,
-            _endpoint: &Url,
+            endpoint: &Url,
             _user_data: Option<Vec<u8>>,
             _nonce: Option<Vec<u8>>,
-        ) -> Result<Vec<u8>> {
-            Ok(b"mock-attestation".to_vec())
+        ) -> Result<Vec<Vec<u8>>> {
+            if let Some(atts) = self.attestations.get(endpoint) {
+                return Ok(atts.clone());
+            }
+            // Default: one dummy attestation per key at this endpoint.
+            let count = self.keys.get(endpoint).map_or(1, |k| k.len());
+            Ok(vec![b"mock-attestation".to_vec(); count])
         }
     }
 
     /// Mock registry that returns a configured set of registered signers.
-    /// Optionally tracks `is_registered` queries.
     #[derive(Debug)]
     struct MockRegistry {
         signers: Vec<Address>,
         /// When `true`, `is_registered` returns `true` for all queries.
         all_registered: bool,
+        /// Configurable expected image hash (default: zero).
+        expected_image_hash: [u8; 32],
     }
 
     impl MockRegistry {
         fn with_signers(signers: Vec<Address>) -> Self {
-            Self { signers, all_registered: false }
+            Self { signers, all_registered: false, expected_image_hash: [0u8; 32] }
         }
 
         fn all_registered(signers: Vec<Address>) -> Self {
-            Self { signers, all_registered: true }
+            Self { signers, all_registered: true, expected_image_hash: [0u8; 32] }
         }
     }
 
@@ -575,6 +849,10 @@ mod tests {
 
         async fn get_registered_signers(&self) -> Result<Vec<Address>> {
             Ok(self.signers.clone())
+        }
+
+        async fn get_expected_image_hash(&self) -> Result<[u8; 32]> {
+            Ok(self.expected_image_hash)
         }
     }
 
@@ -615,7 +893,7 @@ mod tests {
 
     #[async_trait]
     impl SignerClient for StubSignerClient {
-        async fn signer_public_key(&self, _endpoint: &Url) -> Result<Vec<u8>> {
+        async fn signer_public_key(&self, _endpoint: &Url) -> Result<Vec<Vec<u8>>> {
             unimplemented!("not used in deregister_orphans tests")
         }
 
@@ -624,7 +902,7 @@ mod tests {
             _endpoint: &Url,
             _user_data: Option<Vec<u8>>,
             _nonce: Option<Vec<u8>>,
-        ) -> Result<Vec<u8>> {
+        ) -> Result<Vec<Vec<u8>>> {
             unimplemented!("not used in deregister_orphans tests")
         }
     }
@@ -720,9 +998,9 @@ mod tests {
             active_bytes.iter().map(|b| Address::repeat_byte(*b)).collect();
 
         let tx = SharedTxManager::new();
-        let driver = driver_with_shared_tx(registered, tx.clone());
+        let driver = driver_with_shared_tx(registered.clone(), tx.clone());
 
-        driver.deregister_orphans(&active).await.unwrap();
+        driver.deregister_orphans(&active, &registered).await.unwrap();
 
         assert_eq!(tx.sent_calldata().len(), expected_txs);
     }
@@ -732,10 +1010,11 @@ mod tests {
         let active_signer = Address::repeat_byte(0xAA);
         let orphan = Address::repeat_byte(0xBB);
 
+        let registered = vec![active_signer, orphan];
         let tx = SharedTxManager::new();
-        let driver = driver_with_shared_tx(vec![active_signer, orphan], tx.clone());
+        let driver = driver_with_shared_tx(registered.clone(), tx.clone());
 
-        driver.deregister_orphans(&HashSet::from([active_signer])).await.unwrap();
+        driver.deregister_orphans(&HashSet::from([active_signer]), &registered).await.unwrap();
 
         let sent = tx.sent_calldata();
         let expected = ITEEProverRegistry::deregisterSignerCall { signer: orphan }.abi_encode();
@@ -756,8 +1035,9 @@ mod tests {
             default_config(cancel.clone()),
         );
 
+        let registered = vec![Address::repeat_byte(0xAA)];
         cancel.cancel();
-        driver.deregister_orphans(&HashSet::new()).await.unwrap();
+        driver.deregister_orphans(&HashSet::new(), &registered).await.unwrap();
 
         assert!(tx.sent_calldata().is_empty(), "no txs should be sent after cancellation");
     }
@@ -788,9 +1068,9 @@ mod tests {
             step_driver(vec![], signer_client, registry, tx.clone(), CancellationToken::new());
 
         let inst = instance(ep, status);
-        let addr = driver.process_instance(&inst).await.unwrap();
+        let addrs = driver.process_instance(&inst, B256::ZERO).await.unwrap();
 
-        assert_eq!(addr, HARDHAT_ACCOUNT);
+        assert_eq!(addrs, vec![HARDHAT_ACCOUNT]);
         assert_eq!(tx.sent_calldata().len(), expected_txs);
     }
 
@@ -950,5 +1230,372 @@ mod tests {
             sent.iter().any(|s| s[..] == deregister_expected[..]),
             "expected deregistration of orphan {orphan}, sent: {addr1}, {addr2}",
         );
+    }
+
+    // ── extract_pcr0_hash tests ─────────────────────────────────────────
+
+    /// Full `COSE_Sign1` attestation from `NitroValidator.t.sol` `test_DecodeAttestationTbs`.
+    /// Contains a real AWS Nitro attestation with 16 PCRs.
+    const ATTESTATION_HEX: &str = include_str!("../testdata/attestation.hex");
+
+    /// Returns the raw attestation bytes decoded from [`ATTESTATION_HEX`].
+    fn real_attestation_bytes() -> Vec<u8> {
+        hex::decode(ATTESTATION_HEX.trim()).unwrap()
+    }
+
+    #[test]
+    fn extract_pcr0_hash_real_attestation() {
+        let attestation = real_attestation_bytes();
+        let hash = extract_pcr0_hash(&attestation).unwrap();
+        // Sanity: hash is non-zero (real PCR0 data hashed).
+        assert_ne!(hash, B256::ZERO);
+    }
+
+    #[test]
+    fn extract_pcr0_hash_deterministic() {
+        let attestation = real_attestation_bytes();
+        let hash1 = extract_pcr0_hash(&attestation).unwrap();
+        let hash2 = extract_pcr0_hash(&attestation).unwrap();
+        assert_eq!(hash1, hash2, "extract_pcr0_hash must be deterministic");
+    }
+
+    #[rstest]
+    #[case::empty(&[])]
+    #[case::garbage(&[0xDE, 0xAD, 0xBE, 0xEF])]
+    #[case::truncated(&[0x84, 0x44, 0xa1])]
+    fn extract_pcr0_hash_rejects_invalid_input(#[case] input: &[u8]) {
+        assert!(extract_pcr0_hash(input).is_err());
+    }
+
+    // ── Multi-enclave process_instance tests ────────────────────────────
+
+    #[tokio::test]
+    async fn process_instance_multi_enclave_returns_all_addresses() {
+        let ep = "10.0.0.1:8000";
+        let signer_client = MockSignerClient::multi_enclave(ep, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let inst = instance(ep, InstanceHealthStatus::Healthy);
+        let addrs = driver.process_instance(&inst, B256::ZERO).await.unwrap();
+
+        let expected_addr_0 =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let expected_addr_1 =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
+
+        assert_eq!(addrs.len(), 2);
+        assert_eq!(addrs[0], expected_addr_0);
+        assert_eq!(addrs[1], expected_addr_1);
+        // Two registration transactions (one per enclave).
+        assert_eq!(tx.sent_calldata().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn process_instance_multi_enclave_draining_skips_registration() {
+        let ep = "10.0.0.1:8000";
+        let signer_client = MockSignerClient::multi_enclave(ep, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let inst = instance(ep, InstanceHealthStatus::Draining);
+        let addrs = driver.process_instance(&inst, B256::ZERO).await.unwrap();
+
+        assert_eq!(addrs.len(), 2, "both addresses should be returned");
+        assert!(tx.sent_calldata().is_empty(), "no registration txs for draining instance");
+    }
+
+    // ── PCR0 pre-check tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn try_register_skips_proof_on_pcr0_mismatch() {
+        let ep = "10.0.0.1:8000";
+        let attestation = real_attestation_bytes();
+        let signer_client = MockSignerClient::from_keys(&[(ep, &HARDHAT_KEY_0)])
+            .with_attestations(ep, vec![attestation]);
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        // Use a non-zero but wrong expected hash.
+        let wrong_hash = B256::repeat_byte(0xFF);
+        let inst = instance(ep, InstanceHealthStatus::Healthy);
+        let addrs = driver.process_instance(&inst, wrong_hash).await.unwrap();
+
+        assert_eq!(addrs.len(), 1, "address still returned for active set");
+        // No registration tx: PCR0 mismatch skips proof generation.
+        assert!(tx.sent_calldata().is_empty(), "no txs when PCR0 mismatches");
+    }
+
+    #[tokio::test]
+    async fn try_register_proceeds_on_pcr0_match() {
+        let ep = "10.0.0.1:8000";
+        let attestation = real_attestation_bytes();
+        let expected_hash = extract_pcr0_hash(&attestation).unwrap();
+        let signer_client = MockSignerClient::from_keys(&[(ep, &HARDHAT_KEY_0)])
+            .with_attestations(ep, vec![attestation]);
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let inst = instance(ep, InstanceHealthStatus::Healthy);
+        let addrs = driver.process_instance(&inst, expected_hash).await.unwrap();
+
+        assert_eq!(addrs.len(), 1);
+        // Registration proceeds when PCR0 matches.
+        assert_eq!(tx.sent_calldata().len(), 1, "registration tx sent on PCR0 match");
+    }
+
+    #[tokio::test]
+    async fn try_register_skips_pcr0_check_when_hash_is_zero() {
+        let ep = "10.0.0.1:8000";
+        let signer_client = MockSignerClient::from_keys(&[(ep, &HARDHAT_KEY_0)]);
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let inst = instance(ep, InstanceHealthStatus::Healthy);
+        let addrs = driver.process_instance(&inst, B256::ZERO).await.unwrap();
+
+        assert_eq!(addrs.len(), 1);
+        // B256::ZERO means "no PCR0 check" — registration proceeds.
+        assert_eq!(tx.sent_calldata().len(), 1, "registration tx sent when hash is zero");
+    }
+
+    // ── deregister_stale_pcr0 tests ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn deregister_stale_pcr0_deregisters_mismatched_signer() {
+        let ep_stale = "10.0.0.1:8000";
+        let ep_fresh = "10.0.0.2:8000";
+
+        // Build two attestations with different PCR0 values.
+        let fresh_pcr0 = [0xAA; 48];
+        let stale_pcr0 = [0xBB; 48];
+        let fresh_attestation = fake_attestation_with_pcr0(&fresh_pcr0);
+        let stale_attestation = fake_attestation_with_pcr0(&stale_pcr0);
+        let expected_hash = extract_pcr0_hash(&fresh_attestation).unwrap();
+
+        let signer_client =
+            MockSignerClient::from_keys(&[(ep_stale, &HARDHAT_KEY_0), (ep_fresh, &HARDHAT_KEY_1)])
+                .with_attestations(ep_stale, vec![stale_attestation])
+                .with_attestations(ep_fresh, vec![fresh_attestation]);
+
+        let addr_stale =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let addr_fresh =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
+        let registered = vec![addr_stale, addr_fresh];
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(registered.clone()),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let active = HashSet::from([addr_stale, addr_fresh]);
+        let url_stale = Url::parse(&format!("http://{ep_stale}")).unwrap();
+        let url_fresh = Url::parse(&format!("http://{ep_fresh}")).unwrap();
+        let endpoints = HashMap::from([(addr_stale, url_stale), (addr_fresh, url_fresh)]);
+
+        // ep_fresh matches expected_hash, ep_stale does not.
+        // 1 out of 2 stale = 50%, not >50%, so majority guard does NOT fire.
+        driver
+            .deregister_stale_pcr0(&active, &endpoints, &registered, expected_hash)
+            .await
+            .unwrap();
+
+        assert_eq!(tx.sent_calldata().len(), 1, "stale signer should be deregistered");
+    }
+
+    #[tokio::test]
+    async fn deregister_stale_pcr0_keeps_matching_signer() {
+        let ep = "10.0.0.1:8000";
+        let pcr0 = [0xAA; 48];
+        let attestation = fake_attestation_with_pcr0(&pcr0);
+        let correct_hash = extract_pcr0_hash(&attestation).unwrap();
+        let signer_client = MockSignerClient::from_keys(&[(ep, &HARDHAT_KEY_0)])
+            .with_attestations(ep, vec![attestation]);
+
+        let signer_addr =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let registered = vec![signer_addr];
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(registered.clone()),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let active = HashSet::from([signer_addr]);
+        let url = Url::parse(&format!("http://{ep}")).unwrap();
+        let endpoints = HashMap::from([(signer_addr, url)]);
+
+        driver.deregister_stale_pcr0(&active, &endpoints, &registered, correct_hash).await.unwrap();
+
+        assert!(tx.sent_calldata().is_empty(), "matching signer should not be deregistered");
+    }
+
+    #[tokio::test]
+    async fn deregister_stale_pcr0_majority_guard_skips_when_all_stale() {
+        let ep1 = "10.0.0.1:8000";
+        let ep2 = "10.0.0.2:8000";
+        let pcr0 = [0xAA; 48];
+        let attestation = fake_attestation_with_pcr0(&pcr0);
+        let signer_client =
+            MockSignerClient::from_keys(&[(ep1, &HARDHAT_KEY_0), (ep2, &HARDHAT_KEY_1)])
+                .with_attestations(ep1, vec![attestation.clone()])
+                .with_attestations(ep2, vec![attestation]);
+
+        let addr1 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let addr2 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
+        let registered = vec![addr1, addr2];
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(registered.clone()),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let active = HashSet::from([addr1, addr2]);
+        let url1 = Url::parse(&format!("http://{ep1}")).unwrap();
+        let url2 = Url::parse(&format!("http://{ep2}")).unwrap();
+        let endpoints = HashMap::from([(addr1, url1), (addr2, url2)]);
+
+        // Both signers are "stale" (wrong hash) → majority guard fires.
+        let wrong_hash = B256::repeat_byte(0xFF);
+        driver.deregister_stale_pcr0(&active, &endpoints, &registered, wrong_hash).await.unwrap();
+
+        assert!(
+            tx.sent_calldata().is_empty(),
+            "majority guard should prevent deregistration when >50% are stale"
+        );
+    }
+
+    #[tokio::test]
+    async fn deregister_stale_pcr0_skips_unparseable_attestation() {
+        // If the attestation fails to parse, the signer should be skipped
+        // (not treated as stale), to avoid deregistering due to transient
+        // CBOR corruption.
+        let ep = "10.0.0.1:8000";
+        let signer_client = MockSignerClient::from_keys(&[(ep, &HARDHAT_KEY_0)]);
+        // Default mock-attestation (b"mock-attestation") is not valid COSE → parse fails.
+
+        let signer_addr =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let registered = vec![signer_addr];
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(registered.clone()),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let active = HashSet::from([signer_addr]);
+        let url = Url::parse(&format!("http://{ep}")).unwrap();
+        let endpoints = HashMap::from([(signer_addr, url)]);
+
+        driver
+            .deregister_stale_pcr0(&active, &endpoints, &registered, B256::repeat_byte(0xFF))
+            .await
+            .unwrap();
+
+        assert!(
+            tx.sent_calldata().is_empty(),
+            "unparseable attestation should be skipped, not treated as stale"
+        );
+    }
+
+    #[tokio::test]
+    async fn deregister_stale_pcr0_no_op_for_non_registered_signers() {
+        let ep = "10.0.0.1:8000";
+        let signer_client = MockSignerClient::from_keys(&[(ep, &HARDHAT_KEY_0)]);
+        let tx = SharedTxManager::new();
+        let registered: Vec<Address> = vec![];
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let signer_addr =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let active = HashSet::from([signer_addr]);
+        let url = Url::parse(&format!("http://{ep}")).unwrap();
+        let endpoints = HashMap::from([(signer_addr, url)]);
+
+        driver
+            .deregister_stale_pcr0(&active, &endpoints, &registered, B256::repeat_byte(0xFF))
+            .await
+            .unwrap();
+
+        assert!(tx.sent_calldata().is_empty(), "nothing to deregister when no signers on-chain");
+    }
+
+    // ── Finding #14: attestation count mismatch test ────────────────────
+
+    #[tokio::test]
+    async fn try_register_fails_on_attestation_count_mismatch() {
+        let ep = "10.0.0.1:8000";
+        // Return 2 public keys but only 1 attestation → index 1 should fail.
+        let signer_client = MockSignerClient::multi_enclave(ep, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
+        // Default mock returns 2 attestations (one per key), so override
+        // to return only 1 attestation.
+        let signer_client = signer_client.with_attestations(ep, vec![b"single-att".to_vec()]);
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let inst = instance(ep, InstanceHealthStatus::Healthy);
+        let addrs = driver.process_instance(&inst, B256::ZERO).await.unwrap();
+
+        // First enclave (index 0) gets the single attestation → succeeds (proof gen).
+        // Second enclave (index 1) → AttestationParse error → logged, but address
+        // is still returned for the active set.
+        assert_eq!(addrs.len(), 2, "both addresses should be returned despite error");
+        // Only 1 registration tx (for index 0); index 1 failed with error.
+        assert_eq!(tx.sent_calldata().len(), 1);
     }
 }

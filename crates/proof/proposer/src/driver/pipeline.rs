@@ -24,11 +24,13 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256, Signature, U256, keccak256};
+use alloy_sol_types::SolCall;
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient,
+    ITEEProverRegistry,
 };
-use base_proof_primitives::{ProofRequest, ProofResult, ProverClient};
+use base_proof_primitives::{ProofJournal, ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use eyre::Result;
 use futures::{StreamExt, stream};
@@ -59,6 +61,9 @@ pub struct PipelineConfig {
     /// When set, the pipeline will not perform any work until this
     /// timestamp has been reached.
     pub v1_hardfork_timestamp: Option<u64>,
+    /// Optional address of the `TEEProverRegistry` contract on L1.
+    /// When set, the pipeline validates signers via `isValidSigner` before submission.
+    pub tee_prover_registry_address: Option<Address>,
 }
 
 /// Snapshot of the last successful recovery, used to avoid re-scanning the
@@ -678,11 +683,66 @@ where
             proposer: self.config.driver.proposer_address,
             intermediate_block_interval: self.config.driver.intermediate_block_interval,
             l1_head_number: l1_head.number,
+            pcr0: self.config.driver.tee_image_hash,
         };
 
         info!(request = ?request, "Built proof request for parallel proving");
 
         Ok(request)
+    }
+
+    /// Recovers the TEE signer from the aggregate proposal and checks
+    /// `isValidSigner` on the `TEEProverRegistry`.
+    ///
+    /// Returns `Ok(true)` if the signer is valid, `Ok(false)` if not,
+    /// or `Err` if the check itself failed (RPC error, parse failure, etc.).
+    async fn check_signer_validity(
+        &self,
+        aggregate_proposal: &base_proof_primitives::Proposal,
+        starting_block_number: u64,
+        intermediate_roots: &[B256],
+        registry_address: Address,
+    ) -> Result<bool, ProposerError> {
+        // Reconstruct the journal that the enclave signed over.
+        let journal = ProofJournal {
+            proposer: self.config.driver.proposer_address,
+            l1_origin_hash: aggregate_proposal.l1_origin_hash,
+            prev_output_root: aggregate_proposal.prev_output_root,
+            starting_l2_block: U256::from(starting_block_number),
+            output_root: aggregate_proposal.output_root,
+            ending_l2_block: aggregate_proposal.l2_block_number,
+            intermediate_roots: intermediate_roots.to_vec(),
+            config_hash: aggregate_proposal.config_hash,
+            tee_image_hash: self.config.driver.tee_image_hash,
+        };
+        let digest = keccak256(journal.encode());
+
+        // Parse the 65-byte ECDSA signature (r ‖ s ‖ v).
+        let sig_bytes = aggregate_proposal.signature.as_ref();
+        let sig = Signature::try_from(sig_bytes)
+            .map_err(|e| ProposerError::Internal(format!("invalid proposal signature: {e}")))?;
+
+        let signer = sig
+            .recover_address_from_prehash(&digest)
+            .map_err(|e| ProposerError::Internal(format!("signer recovery failed: {e}")))?;
+
+        debug!(signer = %signer, "recovered TEE signer from aggregate proposal");
+
+        // Call isValidSigner on the registry via the L1 provider.
+        let calldata = ITEEProverRegistry::isValidSignerCall { signer }.abi_encode();
+        let result = self
+            .l1_client
+            .call_contract(registry_address, calldata.into(), None)
+            .await
+            .map_err(ProposerError::Rpc)?;
+
+        let is_valid =
+            ITEEProverRegistry::isValidSignerCall::abi_decode_returns(&result).map_err(|e| {
+                ProposerError::Internal(format!("failed to decode isValidSigner response: {e}"))
+            })?;
+        debug!(signer = %signer, is_valid, "isValidSigner check result");
+
+        Ok(is_valid)
     }
 
     async fn validate_and_submit(
@@ -728,6 +788,35 @@ where
         let intermediate_roots = self
             .extract_intermediate_roots(starting_block_number, proposals)
             .map_err(SubmitAction::Failed)?;
+
+        // Pre-submission signer validation: if a TEE prover registry is
+        // configured, recover the signer from the aggregate proposal signature
+        // and check `isValidSigner` on-chain. If the signer is invalid, skip
+        // submission to avoid wasting gas on a transaction that will revert.
+        if let Some(registry_address) = self.config.tee_prover_registry_address {
+            match self
+                .check_signer_validity(
+                    aggregate_proposal,
+                    starting_block_number,
+                    &intermediate_roots,
+                    registry_address,
+                )
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => {
+                    warn!(target_block, "TEE signer is not valid on-chain, skipping submission");
+                    metrics::counter!(proposer_metrics::TEE_SIGNER_INVALID_TOTAL).increment(1);
+                    return Err(SubmitAction::Failed(ProposerError::Internal(
+                        "TEE signer not registered on-chain".into(),
+                    )));
+                }
+                Err(e) => {
+                    // Don't block proposals on a failed read-only check.
+                    warn!(error = %e, target_block, "signer validity check failed, proceeding anyway");
+                }
+            }
+        }
 
         info!(
             target_block,
@@ -945,6 +1034,7 @@ mod tests {
                 max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: None,
+                tee_prover_registry_address: None,
                 driver: DriverConfig {
                     poll_interval: Duration::from_secs(3600),
                     block_interval: 512,
@@ -973,6 +1063,7 @@ mod tests {
                 max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: None,
+                tee_prover_registry_address: None,
                 driver: DriverConfig {
                     poll_interval: Duration::from_millis(100),
                     block_interval: 512,
@@ -1004,6 +1095,7 @@ mod tests {
                 max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: None,
+                tee_prover_registry_address: None,
                 driver: DriverConfig::default(),
             },
             0,
@@ -1023,6 +1115,7 @@ mod tests {
                 max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: Some(0),
+                tee_prover_registry_address: None,
                 driver: DriverConfig::default(),
             },
             0,
@@ -1044,6 +1137,7 @@ mod tests {
                 max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: Some(u64::MAX),
+                tee_prover_registry_address: None,
                 driver: DriverConfig::default(),
             },
             0,
@@ -1066,6 +1160,7 @@ mod tests {
                 max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: Some(u64::MAX),
+                tee_prover_registry_address: None,
                 driver: DriverConfig {
                     poll_interval: Duration::from_millis(100),
                     block_interval: 512,
@@ -1095,6 +1190,7 @@ mod tests {
                 max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: Some(0),
+                tee_prover_registry_address: None,
                 driver: DriverConfig {
                     poll_interval: Duration::from_millis(100),
                     block_interval: 512,
@@ -1153,6 +1249,7 @@ mod tests {
                 max_game_recovery_lookback: 5000,
                 max_retries: 1,
                 v1_hardfork_timestamp: None,
+                tee_prover_registry_address: None,
                 driver: DriverConfig { game_type, ..Default::default() },
             },
             prover,

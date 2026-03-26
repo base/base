@@ -90,8 +90,8 @@ impl ProverClient {
 
 #[async_trait]
 impl SignerClient for ProverClient {
-    async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<u8>> {
-        debug!(endpoint = %endpoint, "fetching signer public key");
+    async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
+        debug!(endpoint = %endpoint, "fetching signer public keys");
         let client = self.get_or_build_client(endpoint)?;
         client.signer_public_key().await.map_err(|e| RegistrarError::ProverClient {
             instance: endpoint.to_string(),
@@ -104,8 +104,8 @@ impl SignerClient for ProverClient {
         endpoint: &Url,
         user_data: Option<Vec<u8>>,
         nonce: Option<Vec<u8>>,
-    ) -> Result<Vec<u8>> {
-        debug!(endpoint = %endpoint, "fetching signer attestation");
+    ) -> Result<Vec<Vec<u8>>> {
+        debug!(endpoint = %endpoint, "fetching signer attestations");
         let client = self.get_or_build_client(endpoint)?;
         client.signer_attestation(user_data, nonce).await.map_err(|e| {
             RegistrarError::ProverClient { instance: endpoint.to_string(), source: Box::new(e) }

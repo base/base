@@ -211,6 +211,7 @@ mod tests {
                 max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 v1_hardfork_timestamp: None,
+                tee_prover_registry_address: None,
                 driver: DriverConfig {
                     poll_interval: Duration::from_secs(3600),
                     block_interval: 512,

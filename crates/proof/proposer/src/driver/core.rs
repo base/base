@@ -26,6 +26,10 @@ pub struct DriverConfig {
     /// Address of the proposer that submits proof transactions on-chain.
     /// Included in the proof journal so the enclave signs over the correct `msg.sender`.
     pub proposer_address: Address,
+    /// Keccak256 hash of the expected enclave PCR0 measurement.
+    /// Passed to the prover in each proof request so multi-enclave provers
+    /// can select the correct enclave.
+    pub tee_image_hash: B256,
 }
 
 impl Default for DriverConfig {
@@ -38,6 +42,7 @@ impl Default for DriverConfig {
             game_type: 0,
             allow_non_finalized: false,
             proposer_address: Address::ZERO,
+            tee_image_hash: B256::ZERO,
         }
     }
 }

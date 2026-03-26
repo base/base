@@ -10,6 +10,9 @@ pub const L2_OUTPUT_PROPOSALS_TOTAL: &str = "base_proposer_l2_output_proposals_t
 /// Gauge: proposer account balance in wei.
 pub const ACCOUNT_BALANCE_WEI: &str = "base_proposer_account_balance_wei";
 
+/// Counter: total number of TEE proofs skipped due to invalid signer.
+pub const TEE_SIGNER_INVALID_TOTAL: &str = "base_proposer_tee_signer_invalid_total";
+
 /// Label key for version.
 pub const LABEL_VERSION: &str = "version";
 

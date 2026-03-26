@@ -22,5 +22,10 @@ pub use dispute_game_factory::{
     encode_create_calldata, encode_extra_data, game_already_exists_selector,
 };
 
+mod tee_prover_registry;
+pub use tee_prover_registry::{
+    ITEEProverRegistry, TEEProverRegistryClient, TEEProverRegistryContractClient,
+};
+
 mod error;
 pub use error::ContractError;

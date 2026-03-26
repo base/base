@@ -12,8 +12,6 @@ workspace = true
 
 [dependencies]
 # Alloy
-alloy-contract.workspace = true
-alloy-provider.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
@@ -26,7 +24,11 @@ aws-sdk-elasticloadbalancingv2.workspace = true
 k256.workspace = true
 rand.workspace = true
 
+# Contracts
+base-proof-contracts.workspace = true
+
 # Proving
+base-proof-tee-nitro-verifier.workspace = true
 base-proof-tee-nitro-attestation-prover.workspace = true
 
 # Transaction management
@@ -54,7 +56,9 @@ tracing.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+hex.workspace = true
 rstest.workspace = true
+ciborium.workspace = true
 hex-literal.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true

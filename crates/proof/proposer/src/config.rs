@@ -97,6 +97,9 @@ pub struct ProposerConfig {
     pub max_parallel_proofs: usize,
     /// Maximum number of games to scan backwards when recovering state on startup.
     pub max_game_recovery_lookback: u64,
+    /// Optional address of the `TEEProverRegistry` contract on L1.
+    /// When set, the proposer validates signers before on-chain submission.
+    pub tee_prover_registry_address: Option<Address>,
 }
 
 impl ProposerConfig {
@@ -186,6 +189,7 @@ impl ProposerConfig {
             wait_node_sync: cli.proposer.wait_node_sync,
             max_parallel_proofs: cli.proposer.max_parallel_proofs,
             max_game_recovery_lookback: cli.proposer.max_game_recovery_lookback,
+            tee_prover_registry_address: cli.proposer.tee_prover_registry_address,
             log: LogConfig::from(cli.logging),
             metrics: cli.metrics.into(),
             health_addr: cli.health.socket_addr(),
@@ -260,6 +264,7 @@ mod tests {
                 },
                 max_parallel_proofs: 1,
                 max_game_recovery_lookback: 5000,
+                tee_prover_registry_address: None,
                 tx_manager: TxManagerCli::default(),
             },
             logging: LogArgs {

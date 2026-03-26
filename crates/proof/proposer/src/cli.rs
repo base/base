@@ -166,6 +166,14 @@ pub struct ProposerArgs {
     )]
     pub max_game_recovery_lookback: u64,
 
+    /// Address of the `TEEProverRegistry` contract on L1.
+    /// When set, the proposer validates signers before on-chain submission.
+    #[arg(
+        long = "tee-prover-registry-address",
+        env = cli_env!("TEE_PROVER_REGISTRY_ADDRESS")
+    )]
+    pub tee_prover_registry_address: Option<Address>,
+
     /// Transaction manager configuration.
     #[command(flatten)]
     pub tx_manager: TxManagerCli,

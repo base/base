@@ -199,6 +199,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         max_game_recovery_lookback: config.max_game_recovery_lookback,
         max_retries: 3,
         v1_hardfork_timestamp,
+        tee_prover_registry_address: config.tee_prover_registry_address,
         driver: DriverConfig {
             poll_interval: config.poll_interval,
             block_interval,
@@ -207,6 +208,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
             game_type: config.game_type,
             allow_non_finalized: config.allow_non_finalized,
             proposer_address: proposer_address.unwrap_or_default(),
+            tee_image_hash: config.tee_image_hash,
         },
     };
     let pipeline = ProvingPipeline::new(

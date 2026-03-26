@@ -49,6 +49,10 @@ pub enum RegistrarError {
     #[error("transaction error")]
     Transaction(#[source] Box<dyn std::error::Error + Send + Sync>),
 
+    /// Failed to parse an attestation document.
+    #[error("attestation parse error: {0}")]
+    AttestationParse(String),
+
     /// Configuration is invalid.
     #[error("config error: {0}")]
     Config(String),

@@ -53,11 +53,11 @@ pub trait ProverApi {
 /// Exposed by the host-side prover server; the registrar calls these endpoints
 /// to obtain the signer public key and attestation for on-chain registration.
 pub trait EnclaveApi {
-    /// Return the 65-byte uncompressed ECDSA public key for the enclave signer.
+    /// Return the 65-byte uncompressed ECDSA public key for each enclave signer.
     #[method(name = "signerPublicKey")]
-    async fn signer_public_key(&self) -> RpcResult<Vec<u8>>;
+    async fn signer_public_key(&self) -> RpcResult<Vec<Vec<u8>>>;
 
-    /// Return the raw Nitro attestation document (`COSE_Sign1` bytes) for the enclave signer.
+    /// Return the raw Nitro attestation document (`COSE_Sign1` bytes) for each enclave signer.
     ///
     /// Optional `user_data` and `nonce` bind the attestation to a specific request.
     #[method(name = "signerAttestation")]
@@ -65,5 +65,5 @@ pub trait EnclaveApi {
         &self,
         user_data: Option<Vec<u8>>,
         nonce: Option<Vec<u8>>,
-    ) -> RpcResult<Vec<u8>>;
+    ) -> RpcResult<Vec<Vec<u8>>>;
 }

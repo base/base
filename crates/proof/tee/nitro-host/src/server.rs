@@ -79,17 +79,18 @@ struct NitroSignerRpc {
 
 #[async_trait]
 impl EnclaveApiServer for NitroSignerRpc {
-    async fn signer_public_key(&self) -> RpcResult<Vec<u8>> {
-        self.transport.signer_public_key().await.map_err(|e| {
+    async fn signer_public_key(&self) -> RpcResult<Vec<Vec<u8>>> {
+        let key = self.transport.signer_public_key().await.map_err(|e| {
             jsonrpsee::types::ErrorObjectOwned::owned(-32001, e.to_string(), None::<()>)
-        })
+        })?;
+        Ok(vec![key])
     }
 
     async fn signer_attestation(
         &self,
         user_data: Option<Vec<u8>>,
         nonce: Option<Vec<u8>>,
-    ) -> RpcResult<Vec<u8>> {
+    ) -> RpcResult<Vec<Vec<u8>>> {
         // NSM limits: user_data ≤ 512 bytes, nonce ≤ 512 bytes.
         // Reject oversized payloads early to avoid allocating and forwarding them
         // through the vsock transport only to be rejected by the enclave.
@@ -108,9 +109,11 @@ impl EnclaveApiServer for NitroSignerRpc {
             ));
         }
 
-        self.transport.signer_attestation(user_data, nonce).await.map_err(|e| {
-            jsonrpsee::types::ErrorObjectOwned::owned(-32001, e.to_string(), None::<()>)
-        })
+        let attestation =
+            self.transport.signer_attestation(user_data, nonce).await.map_err(|e| {
+                jsonrpsee::types::ErrorObjectOwned::owned(-32001, e.to_string(), None::<()>)
+            })?;
+        Ok(vec![attestation])
     }
 }
 
@@ -129,9 +132,10 @@ mod tests {
 
         let rpc = NitroSignerRpc { transport };
         let result = EnclaveApiServer::signer_public_key(&rpc).await.unwrap();
-        assert_eq!(result, expected);
-        assert_eq!(result.len(), 65);
-        assert_eq!(result[0], 0x04);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], expected);
+        assert_eq!(result[0].len(), 65);
+        assert_eq!(result[0][0], 0x04);
     }
 
     #[tokio::test]
