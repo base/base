@@ -24,24 +24,12 @@ fi
 main() {
     echo "=== Start Release (bump: $BUMP_TYPE) ==="
 
-    # For major/minor bumps, include release branch names so we don't
-    # collide with an in-progress release that hasn't been tagged yet.
-    # For patch bumps, use only final tags so we patch the latest
-    # *completed* release, not an in-progress one.
-    TAG_VERSIONS=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
-        | grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+' || true)
-
-    if [[ "$BUMP_TYPE" == "patch" ]]; then
-        CURRENT_VERSION=$(echo "$TAG_VERSIONS" | sort -V | tail -1 | sed 's/^v//')
-    else
-        BRANCH_VERSIONS=$(git ls-remote --heads origin 'releases/v*' \
-            | sed -n 's|.*refs/heads/releases/\(v[0-9]*\.[0-9]*\.[0-9]*\)$|\1|p' || true)
-        CURRENT_VERSION=$(printf '%s\n' $TAG_VERSIONS $BRANCH_VERSIONS \
-            | sort -Vu | tail -1 | sed 's/^v//')
-    fi
+    # Get latest FINAL tag (exact vX.Y.Z, exclude RCs and other suffixes)
+    CURRENT_VERSION=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
+        | grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -1 | sed 's/^v//')
 
     if [[ -z "$CURRENT_VERSION" ]]; then
-        echo "Error: No release tags or release branches found. Cannot determine current version." >&2
+        echo "Error: No final release tags found. Cannot determine current version." >&2
         exit 1
     fi
 
