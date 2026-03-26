@@ -86,6 +86,7 @@ impl AttestationProofProvider for BoundlessProver {
         let client = Client::builder()
             .with_rpc_url(self.rpc_url.clone())
             .with_private_key(self.signer.clone())
+            .config_storage_layer(|c| c.inline_input_max_bytes(8192))
             .build()
             .await
             .map_err(|e| {
