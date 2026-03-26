@@ -39,7 +39,6 @@ members = [
   "crates/proof/host",
   "crates/proof/std-fpvm",
   "crates/proof/std-fpvm-proc",
-  "crates/proof/tee/core",
   "crates/proof/tee/nitro-host",
   "crates/proof/tee/nitro-enclave",
   "crates/proof/tee/registrar",
@@ -251,7 +250,6 @@ mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 # Proof
 base-zk-db = { path = "crates/proof/zk/db" }
 base-proof-rpc = { path = "crates/proof/rpc" }
-base-enclave = { path = "crates/proof/tee/core" }
 base-proposer = { path = "crates/proof/proposer" }
 base-zk-client = { path = "crates/proof/zk/client" }
 base-zk-outbox = { path = "crates/proof/zk/outbox" }

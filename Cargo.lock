@@ -3609,20 +3609,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-enclave"
-version = "0.0.0"
-dependencies = [
- "alloy-chains",
- "alloy-eips",
- "alloy-primitives",
- "base-consensus-genesis",
- "base-consensus-registry",
- "hex",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "base-engine-tree"
 version = "0.0.0"
 dependencies = [
@@ -4673,6 +4659,8 @@ dependencies = [
 name = "base-proof-tee-nitro-enclave"
 version = "0.0.0"
 dependencies = [
+ "alloy-chains",
+ "alloy-eips",
  "alloy-primitives",
  "alloy-signer",
  "alloy-signer-local",
@@ -4680,20 +4668,22 @@ dependencies = [
  "aws-nitro-enclaves-cose",
  "aws-nitro-enclaves-nsm-api",
  "base-alloy-evm",
+ "base-consensus-genesis",
  "base-consensus-registry",
- "base-enclave",
  "base-proof-client",
  "base-proof-preimage",
  "base64 0.22.1",
  "bincode 2.0.1",
  "ciborium",
  "eyre",
+ "hex",
  "k256",
  "openssl",
  "parking_lot",
  "rand 0.8.5",
  "serde",
  "serde_bytes",
+ "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokio",
