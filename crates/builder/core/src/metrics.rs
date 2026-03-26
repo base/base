@@ -363,7 +363,8 @@ mod tests {
             rendered.contains("base_builder_flashblock_txs_included_sum{flashblock_index=\"7\"} 3")
         );
         assert!(
-            rendered.contains("base_builder_flashblock_txs_considered_sum{flashblock_index=\"7\"} 6")
+            rendered
+                .contains("base_builder_flashblock_txs_considered_sum{flashblock_index=\"7\"} 6")
         );
         assert!(
             rendered
