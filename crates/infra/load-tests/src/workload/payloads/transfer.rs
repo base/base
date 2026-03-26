@@ -28,10 +28,7 @@ impl TransferPayload {
 
 impl Default for TransferPayload {
     fn default() -> Self {
-        Self {
-            min_value: U256::from(1_000_000_000_000_000u64),
-            max_value: U256::from(10_000_000_000_000_000u64),
-        }
+        Self { min_value: U256::from(1_000u64), max_value: U256::from(100_000u64) }
     }
 }
 

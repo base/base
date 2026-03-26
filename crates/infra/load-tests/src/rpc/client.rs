@@ -6,7 +6,7 @@ use alloy_provider::{
     Identity, Provider, ProviderBuilder, RootProvider,
     fillers::{ChainIdFiller, FillProvider, JoinFill, WalletFiller},
 };
-use alloy_rpc_types::{BlockId, BlockNumberOrTag};
+use alloy_rpc_types::BlockNumberOrTag;
 use base_alloy_network::Base;
 use base_alloy_rpc_types::OpTransactionReceipt;
 use tracing::instrument;
@@ -22,11 +22,8 @@ pub trait ReceiptProvider: Send + Sync {
     /// Fetches the current block number.
     fn get_block_number(&self) -> impl Future<Output = Result<u64>> + Send;
 
-    /// Fetches all transaction receipts for a given block.
-    fn get_block_receipts(
-        &self,
-        block_number: u64,
-    ) -> impl Future<Output = Result<Option<Vec<OpTransactionReceipt>>>> + Send;
+    /// Fetches transaction hashes from the pending block.
+    fn get_pending_block_tx_hashes(&self) -> impl Future<Output = Result<Vec<TxHash>>> + Send;
 
     /// Fetches the transaction receipt for a given hash.
     fn get_transaction_receipt(
@@ -79,10 +76,20 @@ impl RpcClient {
         self.provider.get_chain_id().await.map_err(|e| BaselineError::Rpc(e.to_string()))
     }
 
-    /// Fetches the balance of an address.
+    /// Fetches the balance of an address at the latest block.
     #[instrument(skip(self), fields(address = %address))]
     pub async fn get_balance(&self, address: Address) -> Result<U256> {
         self.provider.get_balance(address).await.map_err(|e| BaselineError::Rpc(e.to_string()))
+    }
+
+    /// Fetches the balance of an address including pending transactions.
+    #[instrument(skip(self), fields(address = %address))]
+    pub async fn get_pending_balance(&self, address: Address) -> Result<U256> {
+        self.provider
+            .get_balance(address)
+            .block_id(BlockNumberOrTag::Pending.into())
+            .await
+            .map_err(|e| BaselineError::Rpc(e.to_string()))
     }
 
     /// Fetches the nonce (transaction count) for an address.
@@ -118,16 +125,17 @@ impl RpcClient {
         self.provider.get_gas_price().await.map_err(|e| BaselineError::Rpc(e.to_string()))
     }
 
-    /// Fetches all transaction receipts for a given block number.
-    #[instrument(skip(self), fields(block_number = block_number))]
-    pub async fn get_block_receipts(
-        &self,
-        block_number: u64,
-    ) -> Result<Option<Vec<OpTransactionReceipt>>> {
-        self.provider
-            .get_block_receipts(BlockId::Number(BlockNumberOrTag::Number(block_number)))
+    /// Fetches transaction hashes from the pending block via `eth_getBlockByNumber("pending")`.
+    #[instrument(skip(self))]
+    pub async fn get_pending_block_tx_hashes(&self) -> Result<Vec<TxHash>> {
+        let block = self
+            .provider
+            .get_block_by_number(BlockNumberOrTag::Pending)
+            .hashes()
             .await
-            .map_err(|e| BaselineError::Rpc(e.to_string()))
+            .map_err(|e| BaselineError::Rpc(e.to_string()))?;
+
+        Ok(block.map(|b| b.transactions.hashes().collect()).unwrap_or_default())
     }
 }
 
@@ -142,11 +150,8 @@ impl ReceiptProvider for RpcClient {
         self.get_block_number().await
     }
 
-    async fn get_block_receipts(
-        &self,
-        block_number: u64,
-    ) -> Result<Option<Vec<OpTransactionReceipt>>> {
-        self.get_block_receipts(block_number).await
+    async fn get_pending_block_tx_hashes(&self) -> Result<Vec<TxHash>> {
+        self.get_pending_block_tx_hashes().await
     }
 
     async fn get_transaction_receipt(

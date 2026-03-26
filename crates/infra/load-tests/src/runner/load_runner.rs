@@ -353,6 +353,18 @@ impl LoadRunner {
             }
         }
 
+        for (address, nonce_manager) in &self.nonce_managers {
+            match nonce_manager.next_nonce().await {
+                Ok(guard) => {
+                    guard.rollback();
+                    debug!(address = %address, "nonce manager pre-warmed");
+                }
+                Err(e) => {
+                    warn!(address = %address, error = %e, "failed to pre-warm nonce manager");
+                }
+            }
+        }
+
         const METRICS_CHANNEL_BUFFER: usize = 2000;
         let (metrics_tx, mut metrics_rx) =
             mpsc::channel::<TransactionMetrics>(METRICS_CHANNEL_BUFFER);
@@ -660,15 +672,16 @@ impl LoadRunner {
         let max_fee = gas_price.saturating_mul(2).min(self.config.max_gas_price);
         let max_priority_fee = (gas_price / 10).max(1);
         let drain_gas_limit = 21_000u128;
-        // Use gas_limit * max_fee + buffer to ensure the tx value + gas cost never exceeds balance.
-        // The buffer covers any rounding in the node's cost validation.
-        let drain_gas_cost = U256::from(drain_gas_limit * max_fee + 10_000);
+        // L1 data fee on OP Stack can be significant (0.0001-0.001 ETH depending on L1 gas prices).
+        // Use 0.001 ETH (1e15 wei) buffer to be safe. We may leave dust in accounts.
+        let l1_fee_buffer = 1_000_000_000_000_000u128;
+        let drain_gas_cost = U256::from(drain_gas_limit * max_fee + l1_fee_buffer);
 
         let mut pending_txs = Vec::new();
         let mut total_drained = U256::ZERO;
 
         for account in self.accounts.accounts() {
-            let balance = self.client.get_balance(account.address).await?;
+            let balance = self.client.get_pending_balance(account.address).await?;
             if balance <= drain_gas_cost {
                 debug!(
                     address = %account.address,
