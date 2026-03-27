@@ -5,7 +5,7 @@ set -e
 # Downloads release binaries from GitHub releases and installs them locally.
 
 # NOTE: If you change this script, increment the version below.
-BASEUP_INSTALLER_VERSION="0.1.0"
+BASEUP_INSTALLER_VERSION="0.1.1"
 
 BASEUP_REPO="${BASEUP_REPO:-base/base}"
 BASEUP_REPO_REF="${BASEUP_REPO_REF:-main}"
@@ -18,6 +18,8 @@ BASEUP_BIN_PATH="$BIN_DIR/baseup"
 DEFAULT_BINS=("base-reth-node" "basectl")
 SELECTED_BINS=()
 VERSION=""
+UPDATE_TMP_FILE=""
+MAIN_TMP_DIR=""
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -49,20 +51,31 @@ array_contains() {
     return 1
 }
 
+parse_version() {
+    local ver="${1#v}"
+    local core="${ver%%-*}"
+    local suffix=""
+    local major
+    local minor
+    local patch
+
+    if [[ "$ver" == *-* ]]; then
+        suffix="${ver#$core-}"
+    fi
+
+    IFS=. read -r major minor patch <<< "$core"
+
+    printf '%s %s %s %s\n' "${major:-0}" "${minor:-0}" "${patch:-0}" "$suffix"
+}
+
 version_gt() {
     [ "$1" = "$2" ] && return 1
 
-    local ver1="${1#v}"
-    local ver2="${2#v}"
-    local major1 minor1 patch1
-    local major2 minor2 patch2
+    local major1 minor1 patch1 suffix1
+    local major2 minor2 patch2 suffix2
 
-    IFS=. read -r major1 minor1 patch1 <<EOF
-$ver1
-EOF
-    IFS=. read -r major2 minor2 patch2 <<EOF
-$ver2
-EOF
+    read -r major1 minor1 patch1 suffix1 <<< "$(parse_version "$1")"
+    read -r major2 minor2 patch2 suffix2 <<< "$(parse_version "$2")"
 
     [ "$major1" -gt "$major2" ] && return 0
     [ "$major1" -lt "$major2" ] && return 1
@@ -71,12 +84,34 @@ EOF
     [ "$patch1" -gt "$patch2" ] && return 0
     [ "$patch1" -lt "$patch2" ] && return 1
 
+    if [[ -z "$suffix1" && -n "$suffix2" ]]; then
+        return 0
+    fi
+
+    if [[ -n "$suffix1" && -z "$suffix2" ]]; then
+        return 1
+    fi
+
+    if [[ -n "$suffix1" && -n "$suffix2" && "$suffix1" > "$suffix2" ]]; then
+        return 0
+    fi
+
     return 1
 }
 
 version() {
     echo "$BASEUP_INSTALLER_VERSION"
     exit 0
+}
+
+cleanup_baseup() {
+    if [[ -n "${UPDATE_TMP_FILE:-}" ]]; then
+        rm -f "$UPDATE_TMP_FILE"
+    fi
+
+    if [[ -n "${MAIN_TMP_DIR:-}" ]]; then
+        rm -rf "$MAIN_TMP_DIR"
+    fi
 }
 
 can_download() {
@@ -95,6 +130,8 @@ download_url() {
         error "Neither curl nor wget found. Please install one of them."
     fi
 }
+
+trap cleanup_baseup EXIT
 
 fetch_text() {
     local url="$1"
@@ -162,17 +199,15 @@ update_baseup() {
         error "Neither curl nor wget found. Please install one of them."
     fi
 
-    local tmp_file
-    tmp_file="$(mktemp 2>/dev/null || mktemp -t baseup)"
-    trap "rm -f '$tmp_file'" EXIT
+    UPDATE_TMP_FILE="$(mktemp 2>/dev/null || mktemp -t baseup)"
 
     info "Downloading latest baseup..."
-    if ! download_url "$BASEUP_BIN_URL" "$tmp_file" 2>/dev/null; then
+    if ! download_url "$BASEUP_BIN_URL" "$UPDATE_TMP_FILE" 2>/dev/null; then
         error "Failed to download baseup update"
     fi
 
     local remote_version
-    remote_version="$(grep '^BASEUP_INSTALLER_VERSION=' "$tmp_file" | sed -E 's/BASEUP_INSTALLER_VERSION="(.+)"/\1/')"
+    remote_version="$(grep '^BASEUP_INSTALLER_VERSION=' "$UPDATE_TMP_FILE" | sed -E 's/BASEUP_INSTALLER_VERSION="(.+)"/\1/')"
     if [[ -z "$remote_version" ]]; then
         error "Failed to determine remote baseup version"
     fi
@@ -183,9 +218,9 @@ update_baseup() {
     fi
 
     info "Updating baseup from $BASEUP_INSTALLER_VERSION to $remote_version..."
-    if cp "$tmp_file" "$BASEUP_BIN_PATH" 2>/dev/null; then
+    if cp "$UPDATE_TMP_FILE" "$BASEUP_BIN_PATH" 2>/dev/null; then
         chmod 755 "$BASEUP_BIN_PATH"
-    elif sudo cp "$tmp_file" "$BASEUP_BIN_PATH" 2>/dev/null; then
+    elif sudo cp "$UPDATE_TMP_FILE" "$BASEUP_BIN_PATH" 2>/dev/null; then
         sudo chmod 755 "$BASEUP_BIN_PATH"
     else
         error "Failed to update baseup at $BASEUP_BIN_PATH. Try running with sudo."
@@ -318,8 +353,19 @@ get_latest_version() {
     fi
 
     local api_url="https://api.github.com/repos/${BASEUP_REPO}/releases/latest"
+    local response
     local version
-    version="$(fetch_text "$api_url" 2>/dev/null | grep '"tag_name":' | head -n 1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
+
+    response="$(fetch_text "$api_url" 2>/dev/null || true)"
+    if [[ -z "$response" ]]; then
+        error "Failed to fetch the latest release from GitHub. Try --install <tag>."
+    fi
+
+    if command -v jq >/dev/null 2>&1; then
+        version="$(printf '%s\n' "$response" | jq -r '.tag_name // empty')"
+    else
+        version="$(printf '%s\n' "$response" | grep '"tag_name":' | head -n 1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
+    fi
 
     if [[ -z "$version" ]]; then
         error "Failed to fetch the latest release from GitHub. Try --install <tag>."
@@ -426,9 +472,7 @@ main() {
     local version_tag="$VERSION"
     info "Installing release $version_tag"
 
-    local tmp_dir
-    tmp_dir="$(mktemp -d 2>/dev/null || mktemp -d -t baseup)"
-    trap "rm -rf '$tmp_dir'" EXIT
+    MAIN_TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t baseup)"
 
     local binary_name
     for binary_name in "${SELECTED_BINS[@]}"; do
@@ -441,12 +485,12 @@ main() {
         local binary_path
 
         archive_name="${binary_name}-${version_tag}-${target}.tar.gz"
-        archive_path="$tmp_dir/$archive_name"
+        archive_path="$MAIN_TMP_DIR/$archive_name"
         checksum_path="${archive_path}.sha256"
-        extract_dir="$tmp_dir/${binary_name}-extract"
+        extract_dir="$MAIN_TMP_DIR/${binary_name}-extract"
 
-        download_file "$version_tag" "$archive_name" "$tmp_dir"
-        download_file "$version_tag" "${archive_name}.sha256" "$tmp_dir"
+        download_file "$version_tag" "$archive_name" "$MAIN_TMP_DIR"
+        download_file "$version_tag" "${archive_name}.sha256" "$MAIN_TMP_DIR"
 
         expected_checksum="$(head -n 1 "$checksum_path" | awk '{print $1}')"
         actual_checksum="$(compute_sha256 "$archive_path")"
