@@ -276,8 +276,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             && let Some(tee) = &self.tee
         {
             ChallengerMetrics::tee_proof_attempts_total().increment(1);
-            let tee_fut =
-                self.attempt_tee_proof(&candidate, invalid_index, expected_root, tee);
+            let tee_fut = self.attempt_tee_proof(&candidate, invalid_index, expected_root, tee);
             match tokio::time::timeout(tee.request_timeout, tee_fut).await {
                 Err(_elapsed) => {
                     warn!(
