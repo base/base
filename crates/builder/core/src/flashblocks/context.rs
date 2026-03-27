@@ -723,6 +723,7 @@ impl OpPayloadBuilderCtx {
                     if !dry_run {
                         diag.record_rejection(&err);
                         record_rejected_tx_priority_fee(&err, priority_fee);
+                        log_txn(Err(err));
                         best_txs.mark_invalid(tx.signer(), tx.nonce());
                         continue;
                     }
