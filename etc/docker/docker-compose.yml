@@ -210,6 +210,8 @@ services:
       - --port=${L2_BUILDER_P2P_PORT}
       - --discovery.port=${L2_BUILDER_P2P_PORT}
       - --p2p-secret-key-hex=${BUILDER_P2P_KEY}
+      - --trusted-peers=enode://${SEQ1_ENODE_ID}@base-sequencer-1:${L2_SEQ1_P2P_PORT}
+      - --trusted-peers=enode://${SEQ2_ENODE_ID}@base-sequencer-2:${L2_SEQ2_P2P_PORT}
       - --flashblocks.addr=0.0.0.0
       - --flashblocks.port=${L2_BUILDER_FLASHBLOCKS_PORT}
       - --flashblocks.block-time=200
