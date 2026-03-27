@@ -17,6 +17,11 @@ use url::Url;
 
 use super::FlashblockTimes;
 
+/// Maximum number of transaction entries to retain in the flashblock times map.
+/// Entries beyond this limit are evicted oldest-first to prevent unbounded growth,
+/// since the map receives every transaction in every flashblock (not just ours).
+const MAX_FLASHBLOCK_CACHE_SIZE: usize = 50_000;
+
 /// Subscribes to flashblocks and tracks transaction inclusion times.
 #[derive(Debug)]
 pub struct FlashblockTracker {
@@ -125,6 +130,11 @@ impl FlashblockTracker {
                     if let Ok(tx_hash) = Self::extract_tx_hash(tx_bytes) {
                         times.entry(tx_hash).or_insert(now);
                     }
+                }
+
+                if times.len() > MAX_FLASHBLOCK_CACHE_SIZE {
+                    let cutoff = now - Duration::from_secs(120);
+                    times.retain(|_, t| *t > cutoff);
                 }
             }
             Err(e) => {

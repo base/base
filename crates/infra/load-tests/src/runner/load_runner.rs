@@ -13,11 +13,6 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::NonceManager;
-
-/// Provider type for nonce management. Uses Ethereum network type because
-/// `NonceManager` only calls `get_transaction_count`, which returns the same
-/// response for both Ethereum and Base networks.
-type NonceProvider = RootProvider<Ethereum>;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, instrument, warn};
@@ -36,6 +31,11 @@ use crate::{
         WorkloadGenerator,
     },
 };
+
+/// Provider type for nonce management. Uses Ethereum network type because
+/// `NonceManager` only calls `get_transaction_count`, which returns the same
+/// response for both Ethereum and Base networks.
+type NonceProvider = RootProvider<Ethereum>;
 
 struct PreparedTx {
     from: Address,
