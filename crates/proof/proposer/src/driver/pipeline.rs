@@ -383,13 +383,11 @@ where
 
             tracing::Span::current().record("next_block", next_to_submit);
 
-            let mut submit_timer = base_metrics::timed!(Metrics::submission_duration_seconds());
-            match self
-                .validate_and_submit(&proof_result, next_to_submit, recovered.game_index)
-                .await
-            {
+            let submit_result = base_metrics::time!(Metrics::submission_duration_seconds(), {
+                self.validate_and_submit(&proof_result, next_to_submit, recovered.game_index).await
+            });
+            match submit_result {
                 Ok(()) => {
-                    submit_timer.stop();
                     info!(target_block = next_to_submit, "Submission successful");
                     Metrics::last_proposed_block().set(next_to_submit as f64);
                     state.retry_counts.remove(&next_to_submit);

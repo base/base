@@ -2,6 +2,7 @@
 //!
 //! | Name | Type | Description |
 //! |------|------|-------------|
+//! | `base_proposer_info` | Gauge | Build info (label: `version`) |
 //! | `base_proposer_up` | Gauge | Proposer is running |
 //! | `base_proposer_l2_output_proposals_total` | Counter | Total L2 output proposals submitted |
 //! | `base_proposer_account_balance_wei` | Gauge | Proposer account balance in wei |
@@ -21,6 +22,10 @@ base_metrics::define_metrics! {
     base_proposer
 
     // ── Gauges ──────────────────────────────────────────────────────────
+    #[describe("Build info")]
+    #[label(version)]
+    info: gauge,
+
     #[describe("Proposer is running")]
     up: gauge,
 
@@ -101,6 +106,21 @@ impl Metrics {
         Self::zero();
     }
 
+    const ALL_ERROR_TYPES: &[&str] = &[
+        Self::ERROR_TYPE_RPC,
+        Self::ERROR_TYPE_PROVER,
+        Self::ERROR_TYPE_CONTRACT,
+        Self::ERROR_TYPE_TX_REVERTED,
+        Self::ERROR_TYPE_CONFIG,
+        Self::ERROR_TYPE_INTERNAL,
+        Self::ERROR_TYPE_OUTPUT_ROOT_MISMATCH,
+        Self::ERROR_TYPE_L1_ORIGIN_MISMATCH,
+        Self::ERROR_TYPE_BLOCK_NUMBER_MISMATCH,
+        Self::ERROR_TYPE_BLOCK_INFO_DERIVATION,
+        Self::ERROR_TYPE_TX_MANAGER,
+        Self::ERROR_TYPE_GAME_ALREADY_EXISTS,
+    ];
+
     fn zero() {
         Self::up().set(0.0);
         Self::account_balance_wei().set(0.0);
@@ -112,11 +132,14 @@ impl Metrics {
         Self::l2_output_proposals_total().absolute(0);
         Self::tee_signer_invalid_total().absolute(0);
         Self::reorgs_total().absolute(0);
+        for label in Self::ALL_ERROR_TYPES {
+            Self::errors_total(*label).absolute(0);
+        }
     }
 }
 
 /// Records build-info and liveness gauges at startup.
 pub(crate) fn record_startup_metrics(version: &str) {
-    metrics::gauge!("base_proposer_info", "version" => version.to_string()).set(1.0);
+    Metrics::info(version.to_string()).set(1.0);
     Metrics::up().set(1.0);
 }
