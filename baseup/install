@@ -185,7 +185,10 @@ main() {
     info "Running baseup to install release binaries..."
     echo ""
 
-    BASEUP_HOME="$BASEUP_HOME" BASE_BIN_DIR="$BIN_DIR" "$BIN_DIR/baseup"
+    if ! BASEUP_HOME="$BASEUP_HOME" BASE_BIN_DIR="$BIN_DIR" "$BIN_DIR/baseup"; then
+        warn "Initial binary install failed, but baseup is installed at $BIN_DIR/baseup"
+        warn "Retry later with: $BIN_DIR/baseup"
+    fi
 
     echo ""
     local user_shell

@@ -5,7 +5,7 @@ set -e
 # Downloads release binaries from GitHub releases and installs them locally.
 
 # NOTE: If you change this script, increment the version below.
-BASEUP_INSTALLER_VERSION="0.1.2"
+BASEUP_INSTALLER_VERSION="0.1.3"
 
 BASEUP_REPO="${BASEUP_REPO:-base/base}"
 BASEUP_REPO_REF="${BASEUP_REPO_REF:-main}"
@@ -86,7 +86,7 @@ parse_version() {
     local patch
 
     if [[ "$ver" == *-* ]]; then
-        suffix="${ver#$core-}"
+        suffix="${ver#*-}"
     fi
 
     IFS=. read -r major minor patch <<< "$core"
@@ -190,6 +190,52 @@ compute_sha256() {
     else
         shasum -a 256 "$1" | awk '{print $1}'
     fi
+}
+
+validate_archive() {
+    local archive_path="$1"
+    local archive_entries
+    local archive_listing
+    local entry
+    local mode
+
+    archive_entries="$(tar -tzf "$archive_path" 2>/dev/null)" || error "Failed to inspect $archive_path"
+    while IFS= read -r entry; do
+        [[ -n "$entry" ]] || continue
+
+        case "$entry" in
+            /*)
+                error "Archive contains an absolute path: $entry"
+                ;;
+        esac
+
+        case "/$entry/" in
+            *"/../"*)
+                error "Archive contains an unsafe path: $entry"
+                ;;
+        esac
+    done <<< "$archive_entries"
+
+    archive_listing="$(tar -tvzf "$archive_path" 2>/dev/null)" || error "Failed to inspect $archive_path"
+    while IFS= read -r entry; do
+        [[ -n "$entry" ]] || continue
+
+        mode="${entry%% *}"
+        case "${mode:0:1}" in
+            - | d) ;;
+            *)
+                error "Archive contains an unsupported entry type"
+                ;;
+        esac
+    done <<< "$archive_listing"
+}
+
+extract_archive() {
+    local archive_path="$1"
+    local extract_dir="$2"
+
+    validate_archive "$archive_path"
+    tar --no-same-owner -xzf "$archive_path" -C "$extract_dir"
 }
 
 fetch_remote_installer_version() {
@@ -591,7 +637,7 @@ main() {
         info "Checksum verified for $archive_name"
 
         mkdir -p "$extract_dir"
-        tar -xzf "$archive_path" -C "$extract_dir"
+        extract_archive "$archive_path" "$extract_dir"
         binary_path="$(find "$extract_dir" -name "$binary_name" -type f | head -n 1)"
 
         if [[ -z "$binary_path" ]]; then
