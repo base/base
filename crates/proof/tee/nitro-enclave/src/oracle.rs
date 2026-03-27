@@ -48,7 +48,7 @@ impl Oracle {
     ///
     /// For [`PreimageKeyType::Keccak256`] keys the keccak256 digest of `value`
     /// must produce a key equal to `key`. For [`PreimageKeyType::Sha256`] keys
-    /// the SHA-256 digest is checked instead. Local and GlobalGeneric keys are
+    /// the SHA-256 digest is checked instead. Local and `GlobalGeneric` keys are
     /// context-dependent and cannot be verified by hash, so they are accepted
     /// without validation.
     ///
@@ -58,17 +58,20 @@ impl Oracle {
         let expected_hash: Option<[u8; 32]> = match key.key_type() {
             PreimageKeyType::Keccak256 => Some(keccak256(value).0),
             PreimageKeyType::Sha256 => Some(sha2::Sha256::digest(value).into()),
-            PreimageKeyType::Local | PreimageKeyType::GlobalGeneric => None,
             // Blob keys are `keccak256(commitment ++ z)` and precompile keys are
             // `keccak256(address ++ input)` — neither can be re-derived from the
-            // stored value alone, so we skip them.
-            PreimageKeyType::Blob | PreimageKeyType::Precompile => None,
+            // stored value alone, so we skip verifying them here and instead verify them
+            // during derivation.
+            PreimageKeyType::Local
+            | PreimageKeyType::GlobalGeneric
+            | PreimageKeyType::Blob
+            | PreimageKeyType::Precompile => None,
         };
 
-        if let Some(hash) = expected_hash {
-            if key != &PreimageKey::new(hash, key.key_type()) {
-                return Err(NitroError::InvalidPreimage(*key));
-            }
+        if let Some(hash) = expected_hash
+            && key != &PreimageKey::new(hash, key.key_type())
+        {
+            return Err(NitroError::InvalidPreimage(*key));
         }
         Ok(())
     }
