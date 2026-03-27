@@ -2,13 +2,14 @@
 
 use alloc::{boxed::Box, vec::Vec};
 
+use alloy_eips::BlockNumHash;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
+use base_consensus_genesis::SystemConfig;
 use base_protocol::BlockInfo;
 
 use crate::{
-    FrameQueueProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, Signal,
-    SignalReceiver,
+    FrameQueueProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, StageReset,
 };
 
 /// A mock [`FrameQueueProvider`] for testing the frame queue stage.
@@ -59,8 +60,23 @@ impl FrameQueueProvider for TestFrameQueueProvider {
 }
 
 #[async_trait]
-impl SignalReceiver for TestFrameQueueProvider {
-    async fn signal(&mut self, _: Signal) -> PipelineResult<()> {
+impl StageReset for TestFrameQueueProvider {
+    async fn reset(&mut self, _: BlockNumHash, _: SystemConfig) -> PipelineResult<()> {
+        self.reset = true;
+        Ok(())
+    }
+
+    async fn activate(&mut self) -> PipelineResult<()> {
+        self.reset = true;
+        Ok(())
+    }
+
+    async fn flush_channel(&mut self) -> PipelineResult<()> {
+        self.reset = true;
+        Ok(())
+    }
+
+    async fn provide_block(&mut self, _: BlockInfo) -> PipelineResult<()> {
         self.reset = true;
         Ok(())
     }

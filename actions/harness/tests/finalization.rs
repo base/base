@@ -2,7 +2,7 @@
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TestRollupConfigBuilder, block_info_from,
+    TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 
@@ -266,11 +266,9 @@ async fn finalization_reorg_clears_state() {
     assert_eq!(node.l2_finalized_number(), 2, "pre-reset finalized = 2");
 
     // Simulate a reorg by resetting the pipeline to genesis.
-    let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis always present"));
     let l2_genesis = h.l2_genesis();
-    let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
 
-    node.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
+    node.act_reset(l2_genesis).await;
     node.run_until_idle().await;
 
     // After reset, finalized head should be back to genesis (block 0).

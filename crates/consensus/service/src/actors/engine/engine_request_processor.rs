@@ -107,11 +107,11 @@ where
     /// Resets the inner [`Engine`] and propagates the reset to the derivation actor.
     async fn reset(&mut self) -> Result<(), EngineError> {
         // Reset the engine.
-        let (l2_safe_head, l1_origin, system_config) =
+        let l2_safe_head =
             self.engine.reset(Arc::clone(&self.client), Arc::clone(&self.rollup)).await?;
 
         // Signal the derivation actor to reset.
-        let signal = ResetSignal { l2_safe_head, l1_origin, system_config: Some(system_config) };
+        let signal = ResetSignal { l2_safe_head };
         match self.derivation_client.send_signal(signal.signal()).await {
             Ok(_) => info!(target: "engine", "Sent reset signal to derivation actor"),
             Err(err) => {

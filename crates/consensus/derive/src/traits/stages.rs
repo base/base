@@ -2,10 +2,37 @@
 
 use alloc::boxed::Box;
 
+use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
+use base_consensus_genesis::SystemConfig;
 use base_protocol::BlockInfo;
 
 use crate::{PipelineResult, Signal};
+
+/// Provides typed reset/activation/signal operations for pipeline stages.
+///
+/// This trait replaces the generic [`SignalReceiver`] for internal stage-to-stage
+/// communication, allowing the pipeline core to dispatch typed operations with
+/// the correct parameters at each level, rather than threading signal fields
+/// (like `l1_origin` and `system_config`) through every signal variant.
+#[async_trait]
+pub trait StageReset {
+    /// Resets the stage to the given L1 origin and system config.
+    async fn reset(
+        &mut self,
+        l1_origin: BlockNumHash,
+        system_config: SystemConfig,
+    ) -> PipelineResult<()>;
+
+    /// Performs a hardfork activation soft-reset of the stage.
+    async fn activate(&mut self) -> PipelineResult<()>;
+
+    /// Flushes the currently active channel.
+    async fn flush_channel(&mut self) -> PipelineResult<()>;
+
+    /// Provides a new L1 block to the traversal stage.
+    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()>;
+}
 
 /// Providers a way for the pipeline to accept a signal from the driver.
 #[async_trait]

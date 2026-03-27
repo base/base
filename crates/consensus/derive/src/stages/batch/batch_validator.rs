@@ -8,11 +8,14 @@ use base_consensus_genesis::RollupConfig;
 use base_protocol::{Batch, BatchValidity, BlockInfo, L2BlockInfo, SingleBatch};
 
 use super::NextBatchProvider;
+use alloy_eips::BlockNumHash;
+use base_consensus_genesis::SystemConfig;
+
 use crate::{
     Metrics,
     errors::{PipelineError, PipelineErrorKind, ResetError},
-    traits::{AttributesProvider, OriginAdvancer, OriginProvider, SignalReceiver},
-    types::{PipelineResult, ResetSignal, Signal},
+    traits::{AttributesProvider, OriginAdvancer, OriginProvider, StageReset},
+    types::PipelineResult,
 };
 
 /// The [`BatchValidator`] stage is responsible for validating the [`SingleBatch`]es from
@@ -23,7 +26,7 @@ use crate::{
 #[derive(Debug)]
 pub struct BatchValidator<P>
 where
-    P: NextBatchProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: NextBatchProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     /// The rollup configuration.
     pub cfg: Arc<RollupConfig>,
@@ -42,7 +45,7 @@ where
 
 impl<P> BatchValidator<P>
 where
-    P: NextBatchProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: NextBatchProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     /// Create a new [`BatchValidator`] stage.
     pub const fn new(cfg: Arc<RollupConfig>, prev: P) -> Self {
@@ -188,7 +191,7 @@ where
 #[async_trait]
 impl<P> AttributesProvider for BatchValidator<P>
 where
-    P: NextBatchProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: NextBatchProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
     async fn next_batch(&mut self, parent: L2BlockInfo) -> PipelineResult<SingleBatch> {
         // Update the L1 origin blocks within the stage.
@@ -274,7 +277,7 @@ where
 
 impl<P> OriginProvider for BatchValidator<P>
 where
-    P: NextBatchProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: NextBatchProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     fn origin(&self) -> Option<BlockInfo> {
         self.prev.origin()
@@ -284,7 +287,7 @@ where
 #[async_trait]
 impl<P> OriginAdvancer for BatchValidator<P>
 where
-    P: NextBatchProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: NextBatchProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
     async fn advance_origin(&mut self) -> PipelineResult<()> {
         self.prev.advance_origin().await
@@ -292,26 +295,33 @@ where
 }
 
 #[async_trait]
-impl<P> SignalReceiver for BatchValidator<P>
+impl<P> StageReset for BatchValidator<P>
 where
-    P: NextBatchProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: NextBatchProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
-    async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
-        match signal {
-            s @ Signal::Reset(ResetSignal { l1_origin, .. }) => {
-                self.prev.signal(s).await?;
-                self.origin = Some(l1_origin);
-                // Include the new origin as an origin to build on.
-                // This is only for the initialization case.
-                // During normal resets we will later throw out this block.
-                self.l1_blocks.clear();
-                self.l1_blocks.push(l1_origin);
-            }
-            s @ Signal::Activation(_) | s @ Signal::FlushChannel | s @ Signal::ProvideBlock(_) => {
-                self.prev.signal(s).await?;
-            }
+    async fn reset(&mut self, l1_origin: BlockNumHash, system_config: SystemConfig) -> PipelineResult<()> {
+        self.prev.reset(l1_origin, system_config).await?;
+        self.origin = self.prev.origin();
+        // Include the new origin as an origin to build on.
+        // This is only for the initialization case.
+        // During normal resets we will later throw out this block.
+        self.l1_blocks.clear();
+        if let Some(origin) = self.origin {
+            self.l1_blocks.push(origin);
         }
         Ok(())
+    }
+
+    async fn activate(&mut self) -> PipelineResult<()> {
+        self.prev.activate().await
+    }
+
+    async fn flush_channel(&mut self) -> PipelineResult<()> {
+        self.prev.flush_channel().await
+    }
+
+    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
+        self.prev.provide_block(block).await
     }
 }
 
@@ -319,16 +329,16 @@ where
 mod tests {
     use alloc::{sync::Arc, vec, vec::Vec};
 
-    use alloy_eips::{BlockNumHash, NumHash};
+    use alloy_eips::BlockNumHash;
     use alloy_primitives::B256;
-    use base_consensus_genesis::{HardForkConfig, RollupConfig};
+    use base_consensus_genesis::{HardForkConfig, RollupConfig, SystemConfig};
     use base_protocol::{Batch, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 
     use crate::{
         AttributesProvider, BatchValidator, NextBatchProvider, OriginAdvancer, PipelineError,
-        PipelineErrorKind, PipelineResult, ResetError, ResetSignal, Signal, SignalReceiver,
+        PipelineErrorKind, PipelineResult, ResetError, StageReset,
         test_utils::{CollectingLayer, TestNextBatchProvider, TraceStorage},
     };
 
@@ -354,18 +364,10 @@ mod tests {
         mock.origin = Some(BlockInfo::default());
         let mut bv = BatchValidator::new(cfg, mock);
 
-        // Reset the pipeline to add the L1 origin to the stage.
-        bv.signal(Signal::Reset(ResetSignal {
-            l1_origin: BlockInfo { number: 1, ..Default::default() },
-            l2_safe_head: L2BlockInfo::new(
-                BlockInfo::default(),
-                NumHash::new(1, Default::default()),
-                0,
-            ),
-            system_config: None,
-        }))
-        .await
-        .unwrap();
+        // Set up state as if the pipeline was reset with l1_origin = block #1.
+        bv.origin = Some(BlockInfo { number: 1, ..Default::default() });
+        bv.l1_blocks.clear();
+        bv.l1_blocks.push(BlockInfo { number: 1, ..Default::default() });
 
         let mock_parent = L2BlockInfo {
             l1_origin: BlockNumHash { number: 2, ..Default::default() },
@@ -383,18 +385,10 @@ mod tests {
         mock.origin = Some(BlockInfo { number: 2, ..Default::default() });
         let mut bv = BatchValidator::new(cfg, mock);
 
-        // Reset the pipeline to add the L1 origin to the stage.
-        bv.signal(Signal::Reset(ResetSignal {
-            l1_origin: BlockInfo { number: 1, ..Default::default() },
-            l2_safe_head: L2BlockInfo::new(
-                BlockInfo::default(),
-                NumHash::new(1, Default::default()),
-                0,
-            ),
-            system_config: None,
-        }))
-        .await
-        .unwrap();
+        // Set up state as if the pipeline was reset with l1_origin = block #1.
+        bv.origin = Some(BlockInfo { number: 1, ..Default::default() });
+        bv.l1_blocks.clear();
+        bv.l1_blocks.push(BlockInfo { number: 1, ..Default::default() });
 
         let mock_parent = L2BlockInfo {
             l1_origin: BlockNumHash { number: 1, ..Default::default() },
@@ -412,18 +406,10 @@ mod tests {
         mock.origin = Some(BlockInfo { number: 2, ..Default::default() });
         let mut bv = BatchValidator::new(cfg, mock);
 
-        // Reset the pipeline to add the L1 origin to the stage.
-        bv.signal(Signal::Reset(ResetSignal {
-            l1_origin: BlockInfo { number: 1, ..Default::default() },
-            l2_safe_head: L2BlockInfo::new(
-                BlockInfo::default(),
-                NumHash::new(1, Default::default()),
-                0,
-            ),
-            system_config: None,
-        }))
-        .await
-        .unwrap();
+        // Set up state as if the pipeline was reset with l1_origin = block #1.
+        bv.origin = Some(BlockInfo { number: 1, ..Default::default() });
+        bv.l1_blocks.clear();
+        bv.l1_blocks.push(BlockInfo { number: 1, ..Default::default() });
 
         let mock_parent = L2BlockInfo {
             l1_origin: BlockNumHash { number: 2, ..Default::default() },
@@ -533,12 +519,7 @@ mod tests {
         let mut bv = BatchValidator::new(cfg, mock);
 
         // Reset the pipeline to add the L1 origin to the stage.
-        bv.signal(Signal::Reset(ResetSignal {
-            l1_origin: BlockInfo { number: 1, ..Default::default() },
-            ..Default::default()
-        }))
-        .await
-        .unwrap();
+        bv.reset(BlockNumHash { number: 1, ..Default::default() }, SystemConfig::default()).await.unwrap();
         bv.l1_blocks.push(BlockInfo { number: 1, ..Default::default() });
 
         // Grab the next batch.
@@ -559,12 +540,7 @@ mod tests {
         let mut bv = BatchValidator::new(cfg, mock);
 
         // Reset the pipeline to add the L1 origin to the stage.
-        bv.signal(Signal::Reset(ResetSignal {
-            l1_origin: BlockInfo { number: 1, ..Default::default() },
-            ..Default::default()
-        }))
-        .await
-        .unwrap();
+        bv.reset(BlockNumHash { number: 1, ..Default::default() }, SystemConfig::default()).await.unwrap();
 
         // Advance the origin of the previous stage to block #6.
         for _ in 0..6 {
@@ -598,12 +574,7 @@ mod tests {
         let mut bv = BatchValidator::new(cfg, mock);
 
         // Reset the pipeline to add the L1 origin to the stage.
-        bv.signal(Signal::Reset(ResetSignal {
-            l1_origin: BlockInfo { number: 1, ..Default::default() },
-            ..Default::default()
-        }))
-        .await
-        .unwrap();
+        bv.reset(BlockNumHash { number: 1, ..Default::default() }, SystemConfig::default()).await.unwrap();
 
         // Advance the origin of the previous stage to block #6.
         for _ in 0..6 {
