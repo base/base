@@ -45,7 +45,7 @@ impl WebSocketPublisher {
     pub fn with_capacity(addr: SocketAddr, capacity: usize) -> io::Result<Self> {
         let (pipe, _) = broadcast::channel(capacity);
         let cancel = CancellationToken::new();
-        let metrics: Arc<dyn PublisherMetrics> = Arc::new(PublishingMetrics::default());
+        let metrics: Arc<dyn PublisherMetrics> = Arc::new(PublishingMetrics);
 
         let std_listener = std::net::TcpListener::bind(addr)?;
         std_listener.set_nonblocking(true)?;

@@ -268,8 +268,7 @@ impl BuilderMetrics {
         num_txs_simulated_fail: impl metrics::IntoF64 + Copy,
         reverted_gas_used: impl metrics::IntoF64,
     ) {
-        Self::payload_transaction_simulation_duration()
-            .record(payload_transaction_simulation_time);
+        Self::payload_transaction_simulation_duration().record(payload_transaction_simulation_time);
         Self::payload_transaction_simulation_gauge().set(payload_transaction_simulation_time);
         Self::payload_num_tx_considered().record(num_txs_considered);
         Self::payload_num_tx_considered_gauge().set(num_txs_considered);

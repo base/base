@@ -18,7 +18,10 @@ use reth_provider::CanonStateSubscriptions;
 use tracing::info;
 
 use super::{PayloadHandler, generator::BlockPayloadJobGenerator, payload::OpPayloadBuilder};
-use crate::{BuilderConfig, traits::{NodeBounds, PoolBounds}};
+use crate::{
+    BuilderConfig,
+    traits::{NodeBounds, PoolBounds},
+};
 
 /// Builder for the flashblocks payload service.
 ///

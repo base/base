@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn publishing_metrics_can_be_constructed_and_called() {
-        let metrics = PublishingMetrics::default();
+        let metrics = PublishingMetrics;
         metrics.on_message_sent();
         metrics.on_connection_opened();
         metrics.on_connection_closed(Duration::from_secs(10));
