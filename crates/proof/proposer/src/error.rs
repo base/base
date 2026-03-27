@@ -4,6 +4,8 @@ use base_proof_contracts::ContractError;
 use base_proof_rpc::RpcError;
 use thiserror::Error;
 
+use crate::Metrics;
+
 /// Main error type for the proposer.
 #[derive(Debug, Error)]
 pub enum ProposerError {
@@ -80,6 +82,26 @@ impl From<ContractError> for ProposerError {
 impl From<eyre::Error> for ProposerError {
     fn from(err: eyre::Error) -> Self {
         Self::Internal(err.to_string())
+    }
+}
+
+impl ProposerError {
+    /// Returns the metrics label for this error variant.
+    pub const fn metric_label(&self) -> &'static str {
+        match self {
+            Self::Rpc(_) => Metrics::ERROR_TYPE_RPC,
+            Self::Prover(_) => Metrics::ERROR_TYPE_PROVER,
+            Self::Contract(_) => Metrics::ERROR_TYPE_CONTRACT,
+            Self::TxReverted(_) => Metrics::ERROR_TYPE_TX_REVERTED,
+            Self::GameAlreadyExists => Metrics::ERROR_TYPE_GAME_ALREADY_EXISTS,
+            Self::Config(_) => Metrics::ERROR_TYPE_CONFIG,
+            Self::Internal(_) => Metrics::ERROR_TYPE_INTERNAL,
+            Self::OutputRootMismatch { .. } => Metrics::ERROR_TYPE_OUTPUT_ROOT_MISMATCH,
+            Self::L1OriginMismatch { .. } => Metrics::ERROR_TYPE_L1_ORIGIN_MISMATCH,
+            Self::BlockNumberMismatch { .. } => Metrics::ERROR_TYPE_BLOCK_NUMBER_MISMATCH,
+            Self::BlockInfoDerivation(_) => Metrics::ERROR_TYPE_BLOCK_INFO_DERIVATION,
+            Self::TxManager(_) => Metrics::ERROR_TYPE_TX_MANAGER,
+        }
     }
 }
 

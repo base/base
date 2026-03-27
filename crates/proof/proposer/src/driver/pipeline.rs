@@ -36,7 +36,7 @@ use eyre::Result;
 use futures::{StreamExt, stream};
 use tokio::{task::JoinSet, time::sleep};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use super::core::{DriverConfig, RecoveredState};
 use crate::{
@@ -106,6 +106,13 @@ impl PipelineState {
         self.proved.clear();
         self.retry_counts.clear();
         self.cached_recovery = None;
+        self.record_gauges();
+    }
+
+    fn record_gauges(&self) {
+        Metrics::inflight_proofs().set(self.inflight.len() as f64);
+        Metrics::proved_queue_depth().set(self.proved.len() as f64);
+        Metrics::pipeline_retries().set(self.retry_counts.values().sum::<u32>() as f64);
     }
 
     fn prune_stale(&mut self, recovered_block: u64) {
@@ -255,9 +262,10 @@ where
         Ok(())
     }
 
-    /// Executes one pipeline tick: recover state, dispatch new proofs, submit
-    /// completed results.
+    #[instrument(skip_all)]
     async fn tick(&self, state: &mut PipelineState) -> Result<()> {
+        let _tick_timer = base_metrics::timed!(Metrics::tick_duration_seconds());
+
         if !self.is_v1_hardfork_active() {
             debug!(
                 v1_hardfork_timestamp = self.config.v1_hardfork_timestamp,
@@ -269,6 +277,7 @@ where
         if let Some((recovered, safe_head)) =
             self.try_recover_and_plan(&mut state.cached_recovery).await
         {
+            Metrics::safe_head().set(safe_head as f64);
             state.prune_stale(recovered.l2_block_number);
             self.dispatch_proofs(&recovered, safe_head, state).await?;
             self.try_submit(recovered, state).await?;
@@ -276,6 +285,10 @@ where
         Ok(())
     }
 
+    #[instrument(skip_all, fields(
+        recovered_block = recovered.l2_block_number,
+        safe_head = safe_head,
+    ))]
     async fn dispatch_proofs(
         &self,
         recovered: &RecoveredState,
@@ -308,9 +321,16 @@ where
                     let target = cursor;
                     let cancel = self.cancel.child_token();
 
-                    info!(request = ?request, "Dispatching proof task");
+                    info!(
+                        from_block = start_block,
+                        to_block = target,
+                        blocks = target.saturating_sub(start_block),
+                        "Dispatching proof task"
+                    );
                     state.inflight.insert(target);
+                    state.record_gauges();
                     state.prove_tasks.spawn(async move {
+                        let _proof_timer = base_metrics::timed!(Metrics::proof_duration_seconds());
                         tokio::select! {
                             () = cancel.cancelled() => {
                                 (target, Err(ProposerError::Internal("cancelled".into())))
@@ -337,6 +357,7 @@ where
         Ok(())
     }
 
+    #[instrument(skip_all, fields(next_block))]
     async fn try_submit(&self, initial: RecoveredState, state: &mut PipelineState) -> Result<()> {
         let mut recovered = initial;
         loop {
@@ -356,13 +377,19 @@ where
                 None => return Ok(()),
             };
 
+            tracing::Span::current().record("next_block", next_to_submit);
+
+            let mut submit_timer = base_metrics::timed!(Metrics::submission_duration_seconds());
             match self
                 .validate_and_submit(&proof_result, next_to_submit, recovered.game_index)
                 .await
             {
                 Ok(()) => {
+                    submit_timer.stop();
                     info!(target_block = next_to_submit, "Submission successful");
+                    Metrics::last_proposed_block().set(next_to_submit as f64);
                     state.retry_counts.remove(&next_to_submit);
+                    state.record_gauges();
                     recovered = match self.recover_latest_state(&mut state.cached_recovery).await {
                         Ok(r) => r,
                         Err(e) => {
@@ -376,10 +403,12 @@ where
                         target_block = next_to_submit,
                         "Reorg detected at submit time, resetting pipeline"
                     );
+                    Metrics::reorgs_total().increment(1);
                     state.reset();
                     return Ok(());
                 }
                 Err(SubmitAction::Failed(e)) => {
+                    Metrics::errors_total(e.metric_label()).increment(1);
                     warn!(
                         error = %e,
                         target_block = next_to_submit,
@@ -389,14 +418,12 @@ where
                     return Ok(());
                 }
                 Err(SubmitAction::Discard(e)) => {
+                    Metrics::errors_total(e.metric_label()).increment(1);
                     warn!(
                         error = %e,
                         target_block = next_to_submit,
                         "Proof discarded, will re-prove next tick"
                     );
-                    // Don't re-insert the proof — it's permanently invalid.
-                    // The block leaves `proved` and `inflight`, so the next
-                    // tick will re-dispatch a proof task for it.
                     return Ok(());
                 }
             }
@@ -413,9 +440,11 @@ where
                 state.inflight.remove(&target);
                 state.retry_counts.remove(&target);
                 state.proved.insert(target, proof_result);
+                state.record_gauges();
                 info!(target_block = target, "Proof completed successfully");
             }
             Ok((target, Err(e))) => {
+                Metrics::errors_total(e.metric_label()).increment(1);
                 state.inflight.remove(&target);
                 let count = state.retry_counts.entry(target).or_insert(0);
                 *count += 1;
@@ -434,6 +463,7 @@ where
                         error = %e,
                         "Proof failed, will retry next tick"
                     );
+                    state.record_gauges();
                 }
             }
             Err(join_err) => {
@@ -756,6 +786,7 @@ where
         Ok(is_valid)
     }
 
+    #[instrument(skip_all, fields(target_block = target_block, parent_index = parent_index))]
     async fn validate_and_submit(
         &self,
         proof_result: &ProofResult,
