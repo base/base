@@ -704,21 +704,25 @@ impl OpPayloadBuilderCtx {
                     // Record metrics for the exceeded limit
                     self.record_execution_metering_limit_exceeded(limit_err);
 
-                    if self.builder_config.execution_metering_mode.is_dry_run() {
-                        // In dry-run mode, log but don't reject
-                        warn!(
-                            target: "payload_builder",
-                            message = "Execution metering limit would reject transaction (dry-run mode)",
-                            tx_hash = ?tx_hash,
-                            limit = %limit_err,
-                        );
-                        // Don't skip - continue to simulate the transaction
-                    } else {
-                        // Enforce mode: reject the transaction
-                        diag.record_rejection(&err);
-                        let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
-                        record_rejected_tx_priority_fee(&err, priority_fee);
+                    let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
+                    let dry_run = self.builder_config.execution_metering_mode.is_dry_run();
 
+                    warn!(
+                        target: "payload_builder",
+                        message = if dry_run {
+                            "Metering throttle: transaction would be rejected (dry-run)"
+                        } else {
+                            "Metering throttle: transaction rejected"
+                        },
+                        tx_hash = ?tx_hash,
+                        limit = %limit_err,
+                        priority_fee,
+                        dry_run,
+                    );
+
+                    if !dry_run {
+                        diag.record_rejection(&err);
+                        record_rejected_tx_priority_fee(&err, priority_fee);
                         log_txn(Err(err));
                         best_txs.mark_invalid(tx.signer(), tx.nonce());
                         continue;
