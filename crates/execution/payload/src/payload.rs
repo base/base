@@ -450,29 +450,27 @@ where
         parent: &SealedHeader<H>,
         chain_spec: &ChainSpec,
     ) -> Result<Self, PayloadBuilderError> {
-        let extra_data = if chain_spec.is_jovian_active_at_timestamp(attributes.timestamp()) {
-            attributes
-                .get_jovian_extra_data(
-                    chain_spec.base_fee_params_at_timestamp(attributes.timestamp()),
-                )
-                .map_err(PayloadBuilderError::other)?
-        } else if chain_spec.is_holocene_active_at_timestamp(attributes.timestamp()) {
-            attributes
-                .get_holocene_extra_data(
-                    chain_spec.base_fee_params_at_timestamp(attributes.timestamp()),
-                )
-                .map_err(PayloadBuilderError::other)?
-        } else {
-            Default::default()
-        };
-
         Ok(Self {
             timestamp: attributes.timestamp(),
             suggested_fee_recipient: attributes.suggested_fee_recipient(),
             prev_randao: attributes.prev_randao(),
             gas_limit: attributes.gas_limit.unwrap_or_else(|| parent.gas_limit()),
             parent_beacon_block_root: attributes.parent_beacon_block_root(),
-            extra_data,
+            extra_data: if chain_spec.is_jovian_active_at_timestamp(attributes.timestamp()) {
+                attributes
+                    .get_jovian_extra_data(
+                        chain_spec.base_fee_params_at_timestamp(attributes.timestamp()),
+                    )
+                    .map_err(PayloadBuilderError::other)?
+            } else if chain_spec.is_holocene_active_at_timestamp(attributes.timestamp()) {
+                attributes
+                    .get_holocene_extra_data(
+                        chain_spec.base_fee_params_at_timestamp(attributes.timestamp()),
+                    )
+                    .map_err(PayloadBuilderError::other)?
+            } else {
+                Default::default()
+            },
         })
     }
 }
