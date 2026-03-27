@@ -52,7 +52,11 @@ metrics = { workspace = true, optional = true }
 
 [features]
 default = []
-metrics = [ "base-consensus-derive/metrics", "dep:metrics" ]
+metrics = [
+	"base-consensus-derive/metrics",
+	"base-metrics/metrics",
+	"dep:metrics",
+]
 
 [dev-dependencies]
 tokio.workspace = true

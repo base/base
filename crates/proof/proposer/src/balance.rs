@@ -7,7 +7,7 @@ use base_proof_rpc::L1Provider;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
-use crate::metrics::ACCOUNT_BALANCE_WEI;
+use crate::Metrics;
 
 /// Balance polling interval.
 pub const BALANCE_POLL_INTERVAL: Duration = Duration::from_secs(30);
@@ -26,7 +26,7 @@ pub async fn balance_monitor<L1: L1Provider>(
                     Ok(balance) => {
                         // U256 -> f64 conversion: safe enough for gauge display.
                         let balance_f64: f64 = balance.to_string().parse().unwrap_or(f64::MAX);
-                        metrics::gauge!(ACCOUNT_BALANCE_WEI).set(balance_f64);
+                        Metrics::account_balance_wei().set(balance_f64);
                     }
                     Err(e) => {
                         debug!(error = %e, "Failed to fetch account balance");

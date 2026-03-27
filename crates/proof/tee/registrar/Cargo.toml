@@ -46,7 +46,8 @@ tokio = { workspace = true, features = ["net", "time", "macros"] }
 thiserror.workspace = true
 
 # Metrics
-metrics.workspace = true
+base-metrics.workspace = true
+metrics = { workspace = true, optional = true }
 
 # Tracing
 tracing.workspace = true
@@ -61,4 +62,7 @@ alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
+
+[features]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]
 

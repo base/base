@@ -89,7 +89,7 @@ where
         loop {
             if let Err(e) = self.step().await {
                 warn!(error = %e, "registration step failed");
-                metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+                RegistrarMetrics::processing_errors_total().increment(1);
             }
 
             tokio::select! {
@@ -109,7 +109,7 @@ where
     /// deregister orphans.
     async fn step(&self) -> Result<()> {
         let instances = self.discovery.discover_instances().await?;
-        metrics::counter!(RegistrarMetrics::DISCOVERY_SUCCESS_TOTAL).increment(1);
+        RegistrarMetrics::discovery_success_total().increment(1);
 
         if !instances.is_empty() {
             let registerable =
@@ -151,7 +151,7 @@ where
                         endpoint = %instance.endpoint,
                         "failed to resolve signer addresses"
                     );
-                    metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+                    RegistrarMetrics::processing_errors_total().increment(1);
                 }
             }
         }
@@ -185,7 +185,7 @@ where
 
         if let Err(e) = self.deregister_orphans(&active_signers, &registered_signers).await {
             warn!(error = %e, "failed to deregister orphan signers");
-            metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+            RegistrarMetrics::processing_errors_total().increment(1);
         }
 
         Ok(())
@@ -256,7 +256,7 @@ where
                     instance = %instance.instance_id,
                     "registration attempt failed"
                 );
-                metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+                RegistrarMetrics::processing_errors_total().increment(1);
             }
         }
 
@@ -355,7 +355,7 @@ where
             tx_hash = %receipt.transaction_hash,
             "signer registered successfully"
         );
-        metrics::counter!(RegistrarMetrics::REGISTRATIONS_TOTAL).increment(1);
+        RegistrarMetrics::registrations_total().increment(1);
 
         Ok(())
     }
@@ -391,7 +391,7 @@ where
                         tx_hash = %receipt.transaction_hash,
                         "deregistration transaction reverted onchain",
                     );
-                    metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+                    RegistrarMetrics::processing_errors_total().increment(1);
                     return false;
                 }
                 info!(
@@ -403,7 +403,7 @@ where
             }
             Err(e) => {
                 warn!(error = %e, signer = %signer, "failed to deregister signer");
-                metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+                RegistrarMetrics::processing_errors_total().increment(1);
                 false
             }
         }
@@ -445,7 +445,7 @@ where
                 break;
             }
             if self.submit_deregistration(signer).await {
-                metrics::counter!(RegistrarMetrics::DEREGISTRATIONS_TOTAL).increment(1);
+                RegistrarMetrics::deregistrations_total().increment(1);
                 deregistered += 1;
             }
         }

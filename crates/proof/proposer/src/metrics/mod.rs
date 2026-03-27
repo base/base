@@ -1,23 +1,17 @@
-/// Gauge: proposer build info, labelled with `version`.
-pub const INFO: &str = "base_proposer_info";
+//! Proposer metrics.
 
-/// Gauge: proposer is running (set to 1 at startup).
-pub const UP: &str = "base_proposer_up";
+base_metrics::define_metrics! {
+    base_proposer
 
-/// Counter: total number of L2 output proposals submitted.
-pub const L2_OUTPUT_PROPOSALS_TOTAL: &str = "base_proposer_l2_output_proposals_total";
+    #[describe("Proposer is running")]
+    up: gauge,
 
-/// Gauge: proposer account balance in wei.
-pub const ACCOUNT_BALANCE_WEI: &str = "base_proposer_account_balance_wei";
+    #[describe("Total number of L2 output proposals submitted")]
+    l2_output_proposals_total: counter,
 
-/// Counter: total number of TEE proofs skipped due to invalid signer.
-pub const TEE_SIGNER_INVALID_TOTAL: &str = "base_proposer_tee_signer_invalid_total";
+    #[describe("Proposer account balance in wei")]
+    account_balance_wei: gauge,
 
-/// Label key for version.
-pub const LABEL_VERSION: &str = "version";
-
-/// Records startup metrics (INFO gauge with version label, UP gauge set to 1).
-pub fn record_startup_metrics(version: &str) {
-    metrics::gauge!(INFO, LABEL_VERSION => version.to_string()).set(1.0);
-    metrics::gauge!(UP).set(1.0);
+    #[describe("Total number of TEE proofs skipped due to invalid signer")]
+    tee_signer_invalid_total: counter,
 }

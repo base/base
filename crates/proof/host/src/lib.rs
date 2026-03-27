@@ -30,9 +30,7 @@ mod backend;
 pub use backend::{OfflineHostBackend, OnlineHostBackend};
 
 mod metrics;
-pub use metrics::Metrics;
-#[doc(hidden)]
-pub use metrics::{DropTimer, ProofGuard};
+pub use metrics::{Metrics, ProofGuard};
 
 mod service;
 pub use service::{ProverError, ProverService};

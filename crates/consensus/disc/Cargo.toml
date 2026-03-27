@@ -44,4 +44,4 @@ serde_json = { workspace = true, features = ["std"] }
 
 [features]
 default = []
-metrics = [ "dep:metrics", "libp2p/metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics", "libp2p/metrics" ]

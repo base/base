@@ -54,7 +54,12 @@ dev = [
 	"optional_eip3607",
 	"optional_no_base_fee",
 ]
-serde = [ "alloy-primitives/serde", "dep:serde", "revm/serde" ]
+serde = [
+	"alloy-primitives/serde",
+	"base-consensus-genesis/serde",
+	"dep:serde",
+	"revm/serde",
+]
 alloy = [ "dep:alloy-evm" ]
 reth = [ "alloy", "dep:reth-evm" ]
 bn = [ "revm/bn" ]

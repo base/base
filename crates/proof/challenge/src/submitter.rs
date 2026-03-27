@@ -63,7 +63,7 @@ impl<T: TxManager> ChallengeSubmitter<T> {
             "Sending tx candidate",
         );
 
-        metrics::counter!(ChallengerMetrics::NULLIFY_TX_SUBMITTED_TOTAL).increment(1);
+        ChallengerMetrics::nullify_tx_submitted_total().increment(1);
         let start = Instant::now();
         let result = self.tx_manager.send(candidate).await;
         let latency = start.elapsed();
@@ -73,13 +73,8 @@ impl<T: TxManager> ChallengeSubmitter<T> {
             Ok(_) => ChallengerMetrics::STATUS_REVERTED,
             Err(_) => ChallengerMetrics::STATUS_ERROR,
         };
-        metrics::counter!(
-            ChallengerMetrics::NULLIFY_TX_OUTCOME_TOTAL,
-            ChallengerMetrics::LABEL_STATUS => status_label,
-        )
-        .increment(1);
-        metrics::histogram!(ChallengerMetrics::NULLIFY_TX_LATENCY_SECONDS)
-            .record(latency.as_secs_f64());
+        ChallengerMetrics::nullify_tx_outcome_total(status_label).increment(1);
+        ChallengerMetrics::nullify_tx_latency_seconds().record(latency.as_secs_f64());
 
         let receipt = result?;
         let tx_hash = receipt.transaction_hash;
