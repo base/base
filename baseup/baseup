@@ -202,23 +202,11 @@ compute_sha256() {
 validate_archive() {
     local archive_path="$1"
     local archive_listing
-    local entry
-    local mode
     local path
 
-    archive_listing="$(tar -tvzf "$archive_path" 2>/dev/null)" || error "Failed to inspect $archive_path"
-    while IFS= read -r entry; do
-        [[ -n "$entry" ]] || continue
-
-        mode="${entry%% *}"
-        case "${mode:0:1}" in
-            - | d) ;;
-            *)
-                error "Archive contains an unsupported entry type"
-                ;;
-        esac
-
-        path="$(echo "$entry" | awk '{print $NF}')"
+    archive_listing="$(tar -tzf "$archive_path" 2>/dev/null)" || error "Failed to inspect $archive_path"
+    while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
 
         case "$path" in
             /*)

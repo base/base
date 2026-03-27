@@ -86,7 +86,7 @@ write_env_files() {
 
 configure_shell() {
     local source_line=". \"$ENV_FILE\""
-    local fish_source_line="source $ENV_FILE.fish"
+    local fish_source_line="source \"$ENV_FILE.fish\""
     local shell_configs=()
     local cfg
     local found_existing_config=0
