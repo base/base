@@ -8,6 +8,10 @@ homepage.workspace = true
 repository.workspace = true
 description = "Core library for Base network load testing and benchmarking"
 
+[[bin]]
+name = "base-load-test"
+path = "src/bin/load_test.rs"
+
 [lints]
 workspace = true
 

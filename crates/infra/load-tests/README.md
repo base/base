@@ -36,11 +36,8 @@ cargo build -p base-load-tests
 # Run tests
 cargo test -p base-load-tests
 
-# Run the load test example with a config file
-cargo run -p base-load-tests --example load_test -- path/to/config.yaml
-
-# Or use the default devnet config
-cargo run -p base-load-tests --example load_test
+# Run the load test binary with a config file
+cargo run -p base-load-tests --bin base-load-test -- path/to/config.yaml
 ```
 
 ## Configuration

@@ -1,4 +1,4 @@
-//! Load test runner that submits transactions at a target gas-per-second rate.
+//! Load test runner binary that submits transactions at a target gas-per-second rate.
 
 use std::path::PathBuf;
 
@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
             option_env!("CARGO_MANIFEST_DIR")
                 .map(|dir| PathBuf::from(dir).join("examples/devnet.yaml"))
         })
-        .ok_or_else(|| eyre::eyre!("usage: load_test [--continuous] <config.yaml>"))?;
+        .ok_or_else(|| eyre::eyre!("usage: base-load-test [--continuous] <config.yaml>"))?;
 
     if !config_path.exists() {
         bail!("config file not found: {}", config_path.display());
