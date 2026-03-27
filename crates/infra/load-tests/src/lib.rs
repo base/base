@@ -13,8 +13,8 @@ pub use rpc::{ReceiptProvider, RpcClient, WalletProvider, create_wallet_provider
 
 mod metrics;
 pub use metrics::{
-    GasMetrics, LatencyMetrics, MetricsAggregator, MetricsCollector, MetricsSummary,
-    ThroughputMetrics, TransactionMetrics,
+    FbSequencerLatencyMetrics, GasMetrics, LatencyMetrics, MetricsAggregator, MetricsCollector,
+    MetricsSummary, ThroughputMetrics, TransactionMetrics,
 };
 
 mod workload;
@@ -26,6 +26,7 @@ pub use workload::{
 
 mod runner;
 pub use runner::{
-    AdaptiveBackoff, Confirmer, ConfirmerHandle, DEFAULT_MAX_GAS_PRICE, LoadConfig, LoadRunner,
-    RateLimiter, TxConfig, TxType,
+    AdaptiveBackoff, BlockFirstSeen, BlockWatcher, Confirmer, ConfirmerHandle,
+    DEFAULT_MAX_GAS_PRICE, FlashblockTimes, FlashblockTracker, LoadConfig, LoadRunner, RateLimiter,
+    TxConfig, TxType,
 };

@@ -79,6 +79,10 @@ pub struct LoadConfig {
     pub batch_timeout: Duration,
     /// Maximum gas price cap to prevent overspending during congestion.
     pub max_gas_price: u128,
+    /// WebSocket RPC URL for block subscription (newHeads).
+    pub ws_url: Option<Url>,
+    /// WebSocket URL for flashblocks subscription.
+    pub flashblocks_url: Option<Url>,
 }
 
 impl LoadConfig {
@@ -98,6 +102,8 @@ impl LoadConfig {
             batch_size: 5,
             batch_timeout: Duration::from_millis(50),
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
+            ws_url: None,
+            flashblocks_url: None,
         }
     }
 
@@ -117,6 +123,8 @@ impl LoadConfig {
             batch_size: 5,
             batch_timeout: Duration::from_millis(50),
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
+            ws_url: None,
+            flashblocks_url: None,
         }
     }
 

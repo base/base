@@ -33,7 +33,7 @@ impl MetricsCollector {
 
     /// Records a confirmed transaction with metrics.
     pub fn record_confirmed(&mut self, metrics: TransactionMetrics) {
-        debug!(tx_hash = %metrics.tx_hash, latency_ms = metrics.latency.as_millis(), "tx confirmed");
+        debug!(tx_hash = %metrics.tx_hash, "tx confirmed");
         self.transactions.push(metrics);
     }
 

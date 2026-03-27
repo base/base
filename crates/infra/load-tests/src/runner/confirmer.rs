@@ -9,10 +9,15 @@ use std::{
 
 use alloy_primitives::{Address, TxHash};
 use futures::future::join_all;
+use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
+use super::BlockFirstSeen;
 use crate::{metrics::TransactionMetrics, rpc::ReceiptProvider};
+
+/// Shared map of transaction hashes to their flashblock inclusion times.
+pub type FlashblockTimes = Arc<RwLock<HashMap<TxHash, Instant>>>;
 
 /// Default channel buffer size for pending transactions.
 /// Sized for ~2 seconds of throughput at 1000 TPS.
@@ -22,7 +27,6 @@ const PENDING_CHANNEL_BUFFER: usize = 2000;
 const MAX_RECEIPT_LOOKUPS: usize = 50;
 
 /// Tracks pending transactions and collects confirmation metrics.
-#[derive(Debug)]
 pub struct Confirmer {
     pending: HashMap<TxHash, PendingTx>,
     metrics_tx: mpsc::Sender<TransactionMetrics>,
@@ -34,6 +38,18 @@ pub struct Confirmer {
     straggler_age: Duration,
     pending_rx: Option<mpsc::Receiver<PendingTx>>,
     pending_tx: mpsc::Sender<PendingTx>,
+    flashblock_times: FlashblockTimes,
+    block_first_seen: BlockFirstSeen,
+}
+
+impl std::fmt::Debug for Confirmer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Confirmer")
+            .field("pending_count", &self.pending.len())
+            .field("poll_interval", &self.poll_interval)
+            .field("max_pending_age", &self.max_pending_age)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A pending transaction awaiting confirmation.
@@ -95,6 +111,39 @@ impl Confirmer {
         metrics_tx: mpsc::Sender<TransactionMetrics>,
         stop_flag: Arc<AtomicBool>,
     ) -> Self {
+        Self::with_timing_data(
+            sender_addresses,
+            metrics_tx,
+            stop_flag,
+            Arc::new(RwLock::new(HashMap::new())),
+            Arc::new(RwLock::new(HashMap::new())),
+        )
+    }
+
+    /// Creates a new confirmer with shared flashblock timing data.
+    pub fn with_flashblock_times(
+        sender_addresses: &[Address],
+        metrics_tx: mpsc::Sender<TransactionMetrics>,
+        stop_flag: Arc<AtomicBool>,
+        flashblock_times: FlashblockTimes,
+    ) -> Self {
+        Self::with_timing_data(
+            sender_addresses,
+            metrics_tx,
+            stop_flag,
+            flashblock_times,
+            Arc::new(RwLock::new(HashMap::new())),
+        )
+    }
+
+    /// Creates a new confirmer with shared flashblock and block timing data.
+    pub fn with_timing_data(
+        sender_addresses: &[Address],
+        metrics_tx: mpsc::Sender<TransactionMetrics>,
+        stop_flag: Arc<AtomicBool>,
+        flashblock_times: FlashblockTimes,
+        block_first_seen: BlockFirstSeen,
+    ) -> Self {
         let mut in_flight_map = HashMap::new();
         for addr in sender_addresses {
             in_flight_map.insert(*addr, Arc::new(AtomicU64::new(0)));
@@ -113,7 +162,23 @@ impl Confirmer {
             straggler_age: Duration::from_secs(10),
             pending_rx: Some(pending_rx),
             pending_tx,
+            flashblock_times,
+            block_first_seen,
         }
+    }
+
+    fn get_fb_sequencer_latency(&self, tx_hash: &TxHash, pending: &PendingTx) -> Option<Duration> {
+        self.flashblock_times
+            .read()
+            .get(tx_hash)
+            .map(|fb_time| fb_time.saturating_duration_since(pending.submit_time))
+    }
+
+    fn get_block_latency(&self, block_number: u64, pending: &PendingTx) -> Option<Duration> {
+        self.block_first_seen
+            .read()
+            .get(&block_number)
+            .map(|block_time| block_time.saturating_duration_since(pending.submit_time))
     }
 
     /// Creates a handle for submitting transactions.
@@ -261,22 +326,31 @@ impl Confirmer {
         {
             match result {
                 Ok(Some(receipt)) => {
-                    // Use inclusion timestamp if available for accurate latency,
-                    // otherwise fall back to time-since-submission.
-                    let latency = included_at
-                        .map(|t| t.duration_since(submit_time))
-                        .unwrap_or_else(|| submit_time.elapsed());
-
+                    let block_num = receipt.inner.block_number.unwrap_or(0);
+                    let block_latency = if block_num > 0 {
+                        self.block_first_seen
+                            .read()
+                            .get(&block_num)
+                            .map(|block_time| block_time.saturating_duration_since(submit_time))
+                    } else {
+                        None
+                    };
+                    let fb_sequencer_latency = self
+                        .flashblock_times
+                        .read()
+                        .get(&tx_hash)
+                        .map(|fb_time| fb_time.saturating_duration_since(submit_time));
                     let metrics = TransactionMetrics::new(
                         tx_hash,
-                        latency,
+                        block_latency,
+                        fb_sequencer_latency,
                         receipt.inner.gas_used,
                         receipt.inner.effective_gas_price,
-                        receipt.inner.block_number.unwrap_or(0),
+                        block_num,
                     );
                     debug!(
                         tx_hash = %tx_hash,
-                        latency_ms = latency.as_millis(),
+                        block_latency_ms = block_latency.map(|d| d.as_millis()),
                         "tx confirmed"
                     );
                     let _ = self.metrics_tx.send(metrics).await;

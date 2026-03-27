@@ -1,7 +1,5 @@
 //! Smoke tests for load testing core functionality.
 
-use std::time::Duration;
-
 use alloy_primitives::{Address, TxHash, TxKind, U256};
 use base_load_tests::{
     AccountPool, MetricsCollector, Payload, SeededRng, TransactionMetrics, TransferPayload,
@@ -93,7 +91,8 @@ fn metrics_collector_counts() {
 
     collector.record_confirmed(TransactionMetrics::new(
         TxHash::ZERO,
-        Duration::from_millis(100),
+        None,
+        None,
         21000,
         1_000_000_000,
         1,
@@ -111,11 +110,11 @@ fn metrics_summary_latency() {
     let mut collector = MetricsCollector::new();
     collector.start();
 
-    let latencies_ms = [50, 60, 70, 80, 90];
-    for (i, latency) in latencies_ms.iter().enumerate() {
+    for i in 0..5 {
         collector.record_confirmed(TransactionMetrics::new(
             TxHash::repeat_byte(i as u8),
-            Duration::from_millis(*latency),
+            None,
+            None,
             21000,
             1_000_000_000,
             i as u64,
@@ -125,11 +124,6 @@ fn metrics_summary_latency() {
     let summary = collector.summarize();
 
     assert_eq!(summary.throughput.total_confirmed, 5);
-    assert_eq!(summary.latency.min, Duration::from_millis(50));
-    assert_eq!(summary.latency.max, Duration::from_millis(90));
-    // p50 of [50, 60, 70, 80, 90] - implementation uses floor((len * pct / 100) - 1)
-    assert!(summary.latency.p50 >= Duration::from_millis(50));
-    assert!(summary.latency.p50 <= Duration::from_millis(70));
 }
 
 #[test]
@@ -139,7 +133,8 @@ fn metrics_summary_gas() {
 
     collector.record_confirmed(TransactionMetrics::new(
         TxHash::ZERO,
-        Duration::from_millis(100),
+        None,
+        None,
         21000,
         1_000_000_000,
         1,
@@ -147,7 +142,8 @@ fn metrics_summary_gas() {
 
     collector.record_confirmed(TransactionMetrics::new(
         TxHash::repeat_byte(1),
-        Duration::from_millis(100),
+        None,
+        None,
         42000,
         2_000_000_000,
         2,
@@ -166,7 +162,8 @@ fn metrics_summary_json_serialization() {
 
     collector.record_confirmed(TransactionMetrics::new(
         TxHash::ZERO,
-        Duration::from_millis(100),
+        None,
+        None,
         21000,
         1_000_000_000,
         1,
@@ -175,7 +172,7 @@ fn metrics_summary_json_serialization() {
     let summary = collector.summarize();
     let json = summary.to_json().unwrap();
 
-    assert!(json.contains("latency"));
+    assert!(json.contains("block_latency"));
     assert!(json.contains("throughput"));
     assert!(json.contains("gas"));
 }

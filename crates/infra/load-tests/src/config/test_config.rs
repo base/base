@@ -114,6 +114,14 @@ pub struct TestConfig {
     /// Address of the precompile looper contract (required when using iterations > 1).
     #[serde(default)]
     pub looper_contract: Option<String>,
+
+    /// WebSocket RPC URL for block subscription (enables inclusion latency tracking).
+    #[serde(default)]
+    pub ws_url: Option<String>,
+
+    /// WebSocket URL for flashblocks subscription (enables flashblock latency tracking).
+    #[serde(default)]
+    pub flashblocks_url: Option<String>,
 }
 
 impl Default for TestConfig {
@@ -131,6 +139,8 @@ impl Default for TestConfig {
             chain_id: None,
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
             looper_contract: None,
+            ws_url: None,
+            flashblocks_url: None,
         }
     }
 }
@@ -150,6 +160,8 @@ impl fmt::Debug for TestConfig {
             .field("chain_id", &self.chain_id)
             .field("transactions", &self.transactions)
             .field("looper_contract", &self.looper_contract)
+            .field("ws_url", &self.ws_url)
+            .field("flashblocks_url", &self.flashblocks_url)
             .finish()
     }
 }
@@ -284,6 +296,25 @@ impl TestConfig {
             self.transactions.iter().map(|t| self.convert_tx_type(t)).collect::<Result<Vec<_>>>()?
         };
 
+        let ws_url = self
+            .ws_url
+            .as_ref()
+            .map(|s| {
+                s.parse::<Url>()
+                    .map_err(|e| BaselineError::Config(format!("invalid ws_url '{s}': {e}")))
+            })
+            .transpose()?;
+
+        let flashblocks_url = self
+            .flashblocks_url
+            .as_ref()
+            .map(|s| {
+                s.parse::<Url>().map_err(|e| {
+                    BaselineError::Config(format!("invalid flashblocks_url '{s}': {e}"))
+                })
+            })
+            .transpose()?;
+
         Ok(crate::runner::LoadConfig {
             rpc_url,
             chain_id: resolved_chain_id,
@@ -298,6 +329,8 @@ impl TestConfig {
             batch_size: 5,
             batch_timeout: Duration::from_millis(50),
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
+            ws_url,
+            flashblocks_url,
         })
     }
 

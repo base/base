@@ -71,15 +71,18 @@ async fn main() -> Result<()> {
         summary.throughput.gps,
         summary.throughput.success_rate()
     );
-    println!();
-    println!(
-        "Latency: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
-        summary.latency.min,
-        summary.latency.p50,
-        summary.latency.mean,
-        summary.latency.p99,
-        summary.latency.max
-    );
+    if let Some(seq) = &summary.fb_sequencer_latency {
+        println!(
+            "Sequencer Latency: p50={:.1?}  p90={:.1?}  p99={:.1?}  (n={})",
+            seq.p50, seq.p90, seq.p99, seq.count
+        );
+    }
+    if let Some(bl) = &summary.block_latency {
+        println!(
+            "Block Latency: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
+            bl.min, bl.p50, bl.mean, bl.p99, bl.max
+        );
+    }
     println!("Gas: total={}  avg/tx={}", summary.gas.total_gas, summary.gas.avg_gas);
     println!();
 

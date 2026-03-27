@@ -25,6 +25,7 @@ base-cli-utils.workspace = true
 base-tx-manager.workspace = true
 base-alloy-network.workspace = true
 base-alloy-rpc-types.workspace = true
+base-alloy-flashblocks.workspace = true
 
 # misc
 url.workspace = true
@@ -37,7 +38,9 @@ futures.workspace = true
 tracing.workspace = true
 humantime.workspace = true
 thiserror.workspace = true
+parking_lot.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+tokio-tungstenite.workspace = true
 
 [dev-dependencies]
