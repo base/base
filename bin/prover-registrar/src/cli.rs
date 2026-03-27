@@ -155,10 +155,6 @@ struct BoundlessArgs {
     )]
     boundless_verifier_program_url: Option<Url>,
 
-    /// Maximum price in wei per cycle for Boundless proof requests.
-    #[arg(long, env = cli_env!("BOUNDLESS_MAX_PRICE"), default_value_t = 1_000_000)]
-    boundless_max_price: u64,
-
     /// Interval between Boundless fulfillment status checks, in seconds.
     #[arg(long, env = cli_env!("BOUNDLESS_POLL_INTERVAL_SECS"), default_value_t = 5)]
     boundless_poll_interval_secs: u64,
@@ -247,7 +243,6 @@ impl Cli {
                             )
                         })?,
                     image_id: parse_image_id(image_id_hex)?,
-                    max_price: self.boundless.boundless_max_price,
                     poll_interval: Duration::from_secs(self.boundless.boundless_poll_interval_secs),
                     timeout: Duration::from_secs(self.boundless.boundless_timeout_secs),
                     nitro_verifier_address: self.boundless.nitro_verifier_address,
@@ -362,7 +357,6 @@ impl Cli {
                 signer: boundless.signer.clone(),
                 verifier_program_url: boundless.verifier_program_url.clone(),
                 image_id: boundless.image_id,
-                max_price: boundless.max_price,
                 poll_interval: boundless.poll_interval,
                 timeout: boundless.timeout,
                 trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX,

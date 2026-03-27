@@ -33,8 +33,6 @@ pub struct BoundlessConfig {
     pub verifier_program_url: Url,
     /// Expected image ID of the guest program (hex-encoded `[u32; 8]`).
     pub image_id: [u32; 8],
-    /// Maximum price in wei per cycle for Boundless proof requests.
-    pub max_price: u64,
     /// Interval between fulfillment status checks.
     pub poll_interval: Duration,
     /// Proof generation timeout.
@@ -50,7 +48,6 @@ impl std::fmt::Debug for BoundlessConfig {
             .field("signer", &self.signer.address())
             .field("verifier_program_url", &self.verifier_program_url)
             .field("image_id", &self.image_id)
-            .field("max_price", &self.max_price)
             .field("poll_interval", &self.poll_interval)
             .field("timeout", &self.timeout)
             .field("nitro_verifier_address", &self.nitro_verifier_address)

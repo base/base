@@ -5,13 +5,13 @@
 
 use std::{fmt, time::Duration};
 
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::Bytes;
 use alloy_signer_local::PrivateKeySigner;
 use base_proof_tee_nitro_verifier::VerifierInput;
 use boundless_market::{
     Client,
     contracts::Predicate,
-    request_builder::{OfferParams, RequestParams, RequirementParams},
+    request_builder::{RequestParams, RequirementParams},
 };
 use risc0_zkvm::sha::Digest;
 use tracing::{debug, info, warn};
@@ -33,8 +33,6 @@ pub struct BoundlessProver {
     pub verifier_program_url: Url,
     /// Expected image ID of the guest program.
     pub image_id: [u32; 8],
-    /// Maximum price (in wei) willing to pay for proving.
-    pub max_price: u64,
     /// Interval between fulfillment status checks.
     pub poll_interval: Duration,
     /// Maximum time to wait for proof fulfillment.
@@ -50,7 +48,6 @@ impl fmt::Debug for BoundlessProver {
             .field("signer", &self.signer.address())
             .field("verifier_program_url", &self.verifier_program_url)
             .field("image_id", &self.image_id)
-            .field("max_price", &self.max_price)
             .field("poll_interval", &self.poll_interval)
             .field("timeout", &self.timeout)
             .field("trusted_certs_prefix_len", &self.trusted_certs_prefix_len)
@@ -76,7 +73,6 @@ impl AttestationProofProvider for BoundlessProver {
             rpc_url = %self.rpc_url.origin().unicode_serialization(),
             signer_address = %self.signer.address(),
             program_url = %self.verifier_program_url,
-            max_price = self.max_price,
             timeout = ?self.timeout,
             poll_interval = ?self.poll_interval,
             trusted_certs_prefix_len = self.trusted_certs_prefix_len,
@@ -118,16 +114,14 @@ impl AttestationProofProvider for BoundlessProver {
             .with_image_id(image_id)
             .with_requirements(
                 RequirementParams::builder().predicate(Predicate::prefix_match(image_id, [])),
-            )
-            .with_offer(OfferParams::builder().max_price(U256::from(self.max_price)));
+            );
 
         let (request_id, expires_at) = client.submit_onchain(params).await.map_err(|e| {
             warn!(
                 error = %e,
-                error_debug = ?e,
-                image_id = ?self.image_id,
-                max_price = self.max_price,
-                signer_address = %self.signer.address(),
+                    error_debug = ?e,
+                    image_id = ?self.image_id,
+                    signer_address = %self.signer.address(),
                 "failed to submit Boundless proof request on-chain"
             );
             ProverError::Boundless(format!("failed to submit request: {e}"))
@@ -218,7 +212,6 @@ mod tests {
     const TEST_PRIVATE_KEY: &str =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     const TEST_IMAGE_ID: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
-    const TEST_MAX_PRICE_WEI: u64 = 1_000_000_000;
     const TEST_POLL_INTERVAL: Duration = Duration::from_secs(5);
     const TEST_TIMEOUT: Duration = Duration::from_secs(300);
     const DEFAULT_TRUSTED_PREFIX: u8 = 1;
@@ -230,7 +223,6 @@ mod tests {
             signer: PrivateKeySigner::from_str(TEST_PRIVATE_KEY).unwrap(),
             verifier_program_url: Url::parse(TEST_PROGRAM_URL).unwrap(),
             image_id: TEST_IMAGE_ID,
-            max_price: TEST_MAX_PRICE_WEI,
             poll_interval: TEST_POLL_INTERVAL,
             timeout: TEST_TIMEOUT,
             trusted_certs_prefix_len: DEFAULT_TRUSTED_PREFIX,
@@ -256,7 +248,6 @@ mod tests {
         );
         assert_eq!(prover.verifier_program_url, Url::parse(TEST_PROGRAM_URL).unwrap());
         assert_eq!(prover.image_id, TEST_IMAGE_ID);
-        assert_eq!(prover.max_price, TEST_MAX_PRICE_WEI);
         assert_eq!(prover.poll_interval, TEST_POLL_INTERVAL);
         assert_eq!(prover.timeout, TEST_TIMEOUT);
         assert_eq!(prover.trusted_certs_prefix_len, DEFAULT_TRUSTED_PREFIX);
@@ -270,7 +261,6 @@ mod tests {
         assert_eq!(cloned.rpc_url, prover.rpc_url);
         assert_eq!(cloned.signer.address(), prover.signer.address());
         assert_eq!(cloned.image_id, prover.image_id);
-        assert_eq!(cloned.max_price, prover.max_price);
         assert_eq!(cloned.timeout, prover.timeout);
     }
 
