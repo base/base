@@ -69,6 +69,10 @@ impl MeteringProvider for MeteringStore {
         Some(entry)
     }
 
+    fn is_enabled(&self) -> bool {
+        self.metering_enabled.load(Ordering::Relaxed)
+    }
+
     fn insert(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
         self.cache.insert(tx_hash, metering);
     }
@@ -169,6 +173,19 @@ mod tests {
         store.cache.run_pending_tasks();
 
         assert_eq!(store.len(), 2);
+    }
+
+    #[test]
+    fn test_metering_enabled_state_tracks_runtime_toggle() {
+        let store = MeteringStore::new(false, 100);
+
+        assert!(!store.is_enabled());
+
+        store.set_enabled(true);
+        assert!(store.is_enabled());
+
+        store.set_enabled(false);
+        assert!(!store.is_enabled());
     }
 
     #[test]

@@ -685,21 +685,22 @@ impl OpPayloadBuilderCtx {
             let resource_usage = self.builder_config.metering_provider.get(&tx_hash);
 
             // Skip transactions that are too young and don't have metering data yet
-            if resource_usage.is_none()
+            if self.builder_config.metering_provider.is_enabled()
+                && resource_usage.is_none()
                 && let Some(wait_duration) = self.builder_config.metering_wait_duration
             {
-                    let now_ms = SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .map(|d| d.as_millis())
-                        .unwrap_or(0);
-                    let tx_age_ms = now_ms.saturating_sub(tx_received_at_ms);
-                    if tx_age_ms < wait_duration.as_millis() {
-                        log_txn(Err(TxnExecutionError::MeteringDataPending));
-                        self.metrics.metering_data_pending_skip.increment(1);
-                        best_txs.mark_invalid(tx.signer(), tx.nonce());
-                        continue;
-                    }
+                let now_ms = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
+                let tx_age_ms = now_ms.saturating_sub(tx_received_at_ms);
+                if tx_age_ms < wait_duration.as_millis() {
+                    log_txn(Err(TxnExecutionError::MeteringDataPending));
+                    self.metrics.metering_data_pending_skip.increment(1);
+                    best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    continue;
                 }
+            }
 
             // Extract predicted execution and state root times from metering data
             let predicted_execution_time_us =
