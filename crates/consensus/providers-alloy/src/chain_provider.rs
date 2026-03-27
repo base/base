@@ -12,7 +12,6 @@ use base_consensus_derive::{ChainProvider, PipelineError, PipelineErrorKind, Res
 use base_protocol::BlockInfo;
 use lru::LruCache;
 
-#[cfg(feature = "metrics")]
 use crate::Metrics;
 
 /// The [`AlloyChainProvider`] is a concrete implementation of the [`ChainProvider`] trait, providing
@@ -64,13 +63,12 @@ impl AlloyChainProvider {
 
     /// Returns the latest L2 block number.
     pub async fn latest_block_number(&mut self) -> Result<u64, RpcError<TransportErrorKind>> {
-        base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_RPC_CALLS, "method" => "block_number");
+        Metrics::chain_rpc_calls("block_number").increment(1);
 
         let result = self.inner.get_block_number().await;
 
-        #[cfg(feature = "metrics")]
         if result.is_err() {
-            base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_RPC_ERRORS, "method" => "block_number");
+            Metrics::chain_rpc_errors("block_number").increment(1);
         }
 
         result
@@ -154,20 +152,20 @@ impl ChainProvider for AlloyChainProvider {
 
     async fn header_by_hash(&mut self, hash: B256) -> Result<Header, Self::Error> {
         if let Some(header) = self.header_by_hash_cache.get(&hash) {
-            base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_CACHE_HITS, "cache" => "header_by_hash");
+            Metrics::chain_cache_hits("header_by_hash").increment(1);
             return Ok(header.clone());
         }
 
-        base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_CACHE_MISSES, "cache" => "header_by_hash");
+        Metrics::chain_cache_misses("header_by_hash").increment(1);
 
-        base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_RPC_CALLS, "method" => "header_by_hash");
+        Metrics::chain_rpc_calls("header_by_hash").increment(1);
 
         let block = self
             .inner
             .get_block_by_hash(hash)
             .await
             .inspect_err(|_e| {
-                base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_RPC_ERRORS, "method" => "header_by_hash");
+                Metrics::chain_rpc_errors("header_by_hash").increment(1);
             })?
             .ok_or(AlloyChainProviderError::BlockNotFound(hash.into()))?;
         let header = block.header.into_consensus();
@@ -177,20 +175,20 @@ impl ChainProvider for AlloyChainProvider {
 
         self.header_by_hash_cache.put(hash, header.clone());
 
-        base_metrics::inc!(gauge, Metrics::CACHE_ENTRIES, "cache" => "header_by_hash");
+        Metrics::cache_entries("header_by_hash").increment(1);
 
         Ok(header)
     }
 
     async fn block_info_by_number(&mut self, number: u64) -> Result<BlockInfo, Self::Error> {
-        base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_RPC_CALLS, "method" => "block_by_number");
+        Metrics::chain_rpc_calls("block_by_number").increment(1);
 
         let block = self
             .inner
             .get_block_by_number(number.into())
             .await
             .inspect_err(|_e| {
-                base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_RPC_ERRORS, "method" => "block_by_number");
+                Metrics::chain_rpc_errors("block_by_number").increment(1);
             })?
             .ok_or(AlloyChainProviderError::BlockNotFound(number.into()))?;
         let header = block.header.into_consensus();
@@ -206,20 +204,20 @@ impl ChainProvider for AlloyChainProvider {
 
     async fn receipts_by_hash(&mut self, hash: B256) -> Result<Vec<Receipt>, Self::Error> {
         if let Some(receipts) = self.receipts_by_hash_cache.get(&hash) {
-            base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_CACHE_HITS, "cache" => "receipts_by_hash");
+            Metrics::chain_cache_hits("receipts_by_hash").increment(1);
             return Ok(receipts.clone());
         }
 
-        base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_CACHE_MISSES, "cache" => "receipts_by_hash");
+        Metrics::chain_cache_misses("receipts_by_hash").increment(1);
 
-        base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_RPC_CALLS, "method" => "receipts_by_hash");
+        Metrics::chain_rpc_calls("receipts_by_hash").increment(1);
 
         let receipts = self
             .inner
             .get_block_receipts(hash.into())
             .await
             .inspect_err(|_e| {
-                base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_RPC_ERRORS, "method" => "receipts_by_hash");
+                Metrics::chain_rpc_errors("receipts_by_hash").increment(1);
             })?
             .ok_or(AlloyChainProviderError::BlockNotFound(hash.into()))?;
         let consensus_receipts = receipts
@@ -230,7 +228,7 @@ impl ChainProvider for AlloyChainProvider {
 
         self.receipts_by_hash_cache.put(hash, consensus_receipts.clone());
 
-        base_metrics::inc!(gauge, Metrics::CACHE_ENTRIES, "cache" => "receipts_by_hash");
+        Metrics::cache_entries("receipts_by_hash").increment(1);
 
         Ok(consensus_receipts)
     }
@@ -241,13 +239,13 @@ impl ChainProvider for AlloyChainProvider {
     ) -> Result<(BlockInfo, Vec<TxEnvelope>), Self::Error> {
         if let Some(block_info_and_txs) = self.block_info_and_transactions_by_hash_cache.get(&hash)
         {
-            base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_CACHE_HITS, "cache" => "block_info_and_tx");
+            Metrics::chain_cache_hits("block_info_and_tx").increment(1);
             return Ok(block_info_and_txs.clone());
         }
 
-        base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_CACHE_MISSES, "cache" => "block_info_and_tx");
+        Metrics::chain_cache_misses("block_info_and_tx").increment(1);
 
-        base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_RPC_CALLS, "method" => "block_by_hash");
+        Metrics::chain_rpc_calls("block_by_hash").increment(1);
 
         let block = self
             .inner
@@ -255,7 +253,7 @@ impl ChainProvider for AlloyChainProvider {
             .full()
             .await
             .inspect_err(|_e| {
-                base_metrics::inc!(gauge, Metrics::CHAIN_PROVIDER_RPC_ERRORS, "method" => "block_by_hash");
+                Metrics::chain_rpc_errors("block_by_hash").increment(1);
             })?
             .ok_or(AlloyChainProviderError::BlockNotFound(hash.into()))?
             .into_consensus()
@@ -274,7 +272,7 @@ impl ChainProvider for AlloyChainProvider {
         self.block_info_and_transactions_by_hash_cache
             .put(hash, (block_info, block.body.transactions.clone()));
 
-        base_metrics::inc!(gauge, Metrics::CACHE_ENTRIES, "cache" => "block_info_and_tx");
+        Metrics::cache_entries("block_info_and_tx").increment(1);
 
         Ok((block_info, block.body.transactions))
     }

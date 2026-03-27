@@ -22,7 +22,6 @@ use http_body_util::Full;
 use lru::LruCache;
 use tower::ServiceBuilder;
 
-#[cfg(feature = "metrics")]
 use crate::Metrics;
 
 /// The [`AlloyL2ChainProvider`] is a concrete implementation of the [`L2ChainProvider`] trait,
@@ -106,13 +105,12 @@ impl AlloyL2ChainProvider {
         &mut self,
         id: BlockId,
     ) -> Result<Option<L2BlockInfo>, RpcError<TransportErrorKind>> {
-        #[cfg(feature = "metrics")]
         let method_name = match id {
             BlockId::Number(_) => "l2_block_ref_by_number",
             BlockId::Hash(_) => "l2_block_ref_by_hash",
         };
 
-        base_metrics::inc!(gauge, Metrics::L2_CHAIN_PROVIDER_REQUESTS, "method" => method_name);
+        Metrics::l2_chain_requests(method_name).increment(1);
 
         let result = async {
             let block = match id {
@@ -150,9 +148,8 @@ impl AlloyL2ChainProvider {
         }
         .await;
 
-        #[cfg(feature = "metrics")]
         if result.is_err() {
-            base_metrics::inc!(gauge, Metrics::L2_CHAIN_PROVIDER_ERRORS, "method" => method_name);
+            Metrics::l2_chain_errors(method_name).increment(1);
         }
 
         result
@@ -233,7 +230,7 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
             return Ok(block.clone());
         }
 
-        base_metrics::inc!(gauge, Metrics::L2_CHAIN_PROVIDER_REQUESTS, "method" => "l2_block_ref_by_number");
+        Metrics::l2_chain_requests("l2_block_ref_by_number").increment(1);
 
         let block = self
             .inner
@@ -241,7 +238,7 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
             .full()
             .await
             .map_err(|e| {
-                base_metrics::inc!(gauge, Metrics::L2_CHAIN_PROVIDER_ERRORS, "method" => "l2_block_ref_by_number");
+                Metrics::l2_chain_errors("l2_block_ref_by_number").increment(1);
                 AlloyL2ChainProviderError::Transport(e)
             })?
             .ok_or(AlloyL2ChainProviderError::BlockNotFound(number))?

@@ -8,11 +8,9 @@ use thiserror::Error;
 use tokio::sync::watch::Sender;
 
 use super::EngineTaskExt;
-#[cfg(feature = "metrics")]
-use crate::Metrics;
 use crate::{
     EngineClient, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskError,
-    EngineTaskErrorSeverity, SyncStartError, SynchronizeTask, SynchronizeTaskError,
+    EngineTaskErrorSeverity, Metrics, SyncStartError, SynchronizeTask, SynchronizeTaskError,
     find_starting_forkchoice, task_queue::EngineTaskErrors,
 };
 
@@ -141,7 +139,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             .map_transactions(|t| t.inner.inner.into_inner());
         let system_config = to_system_config(&l2_safe_block, &config)?;
 
-        base_metrics::inc!(counter, Metrics::ENGINE_RESET_COUNT);
+        Metrics::engine_reset_count().increment(1);
 
         Ok((start.safe, l1_origin_info, system_config))
     }

@@ -9,9 +9,7 @@ use base_consensus_derive::{BlobProvider, BlobProviderError};
 use base_protocol::BlockInfo;
 use tracing::warn;
 
-use crate::BeaconClient;
-#[cfg(feature = "metrics")]
-use crate::Metrics;
+use crate::{BeaconClient, Metrics};
 
 /// A boxed blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,7 +86,7 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
         slot: u64,
         blob_hashes: &[B256],
     ) -> Result<Vec<BoxedBlob>, BlobProviderError> {
-        base_metrics::inc!(gauge, Metrics::BLOB_FETCHES);
+        Metrics::blob_fetches().increment(1);
 
         let result =
             self.beacon_client.filtered_beacon_blobs(slot, blob_hashes).await.map_err(|e| {
@@ -107,9 +105,8 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
                 BlobProviderError::BlobNotFound { slot: missing_slot, reason: e.to_string() }
             });
 
-        #[cfg(feature = "metrics")]
         if result.is_err() {
-            base_metrics::inc!(gauge, Metrics::BLOB_FETCH_ERRORS);
+            Metrics::blob_fetch_errors().increment(1);
         }
 
         result

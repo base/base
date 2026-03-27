@@ -1,6 +1,6 @@
 //! An Engine API Client.
 
-use std::{future::Future, sync::Arc, time::Instant};
+use std::{future::Future, sync::Arc};
 
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_network::{Ethereum, Network};
@@ -380,24 +380,8 @@ async fn record_call_time<T, Err>(
     f: impl Future<Output = Result<T, Err>>,
     metric_label: &'static str,
 ) -> Result<T, Err> {
-    // Await on the future and track its duration.
-    let start = Instant::now();
-    let result = f.await?;
-
-    // Record the call duration.
-    #[cfg(feature = "metrics")]
-    {
-        let duration = start.elapsed();
-        base_metrics::record!(
-            histogram,
-            Metrics::ENGINE_METHOD_REQUEST_DURATION,
-            "method",
-            metric_label,
-            duration.as_secs_f64()
-        );
-    }
-    #[cfg(not(feature = "metrics"))]
-    let _ = (start, metric_label);
+    let result =
+        base_metrics::time!(Metrics::engine_method_request_duration(metric_label), { f.await? });
 
     Ok(result)
 }

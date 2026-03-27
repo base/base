@@ -280,7 +280,7 @@ impl Discv5Driver {
                             discv5::Event::Discovered(enr) => {
                                 if EnrValidation::validate(&enr, chain_id).is_valid() {
                                     debug!(target: "discovery", enr = ?enr, "Valid ENR discovered, forwarding to swarm");
-                                    Metrics::discovery_event("discovered").increment(1.0);
+                                    Metrics::discovery_events("discovered").increment(1.0);
                                     store.add_enr(enr.clone());
                                     let sender = enr_sender.clone();
                                     tokio::spawn(async move {
@@ -293,7 +293,7 @@ impl Discv5Driver {
                             discv5::Event::SessionEstablished(enr, addr) => {
                                 if EnrValidation::validate(&enr, chain_id).is_valid() {
                                     debug!(target: "discovery", addr = ?addr, enr = ?enr, "Session established with valid ENR, forwarding to swarm");
-                                    Metrics::discovery_event("session_established").increment(1.0);
+                                    Metrics::discovery_events("session_established").increment(1.0);
                                     store.add_enr(enr.clone());
                                     let sender = enr_sender.clone();
                                     tokio::spawn(async move {
@@ -306,7 +306,7 @@ impl Discv5Driver {
                             discv5::Event::UnverifiableEnr { enr, .. } => {
                                 if EnrValidation::validate(&enr, chain_id).is_valid() {
                                     debug!(target: "discovery", enr = ?enr, "Valid ENR discovered, forwarding to swarm");
-                                    Metrics::discovery_event("unverifiable_enr").increment(1.0);
+                                    Metrics::discovery_events("unverifiable_enr").increment(1.0);
                                     store.add_enr(enr.clone());
                                     let sender = enr_sender.clone();
                                     tokio::spawn(async move {
@@ -323,7 +323,7 @@ impl Discv5Driver {
                     _ = interval.tick() => {
                         let id = NodeId::random();
                         trace!(target: "discovery", node_id = %id, "Finding random node");
-                        Metrics::find_node_request().increment(1.0);
+                        Metrics::find_node_requests().increment(1.0);
                         let fut = self.disc.find_node(id);
                         let enr_sender = enr_sender.clone();
                         tokio::spawn(async move {
