@@ -21,28 +21,25 @@ struct ProveBlockRequestParams {
     number_of_blocks_to_prove: u64,
     sequence_window: Option<u64>,
     proof_type: String,
+    prover_address: Option<String>,
 }
 
 impl ProveBlockRequestParams {
-    /// Convert into proto `ProveBlockRequest`, consuming `self`.
-    fn into_proto(self) -> anyhow::Result<ProveBlockRequest> {
-        let proof_type = match self.proof_type.as_str() {
-            "generic_zkvm_cluster_compressed" => 3,
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "Invalid proof_type: {}. Must be 'generic_zkvm_cluster_compressed'",
-                    self.proof_type
-                ));
-            }
-        };
+    /// Convert into proto `ProveBlockRequest` and the parsed [`ProofType`], consuming `self`.
+    fn into_proto(self) -> anyhow::Result<(ProveBlockRequest, ProofType)> {
+        let proof_type =
+            ProofType::try_from(self.proof_type.as_str()).map_err(|e| anyhow::anyhow!(e))?;
 
-        Ok(ProveBlockRequest {
+        let request = ProveBlockRequest {
             start_block_number: self.start_block_number,
             number_of_blocks_to_prove: self.number_of_blocks_to_prove,
             sequence_window: self.sequence_window,
-            proof_type,
+            proof_type: proof_type.proto_i32(),
             session_id: None,
-        })
+            prover_address: self.prover_address,
+        };
+
+        Ok((request, proof_type))
     }
 }
 
@@ -101,24 +98,14 @@ impl TaskQueue for ProverWorkerPool {
                 anyhow::anyhow!("Failed to deserialize ProveBlockRequestParams: {e}")
             })?;
 
-        // Convert to proto (integer proof_type)
-        let params = params_intermediate.into_proto().map_err(|e| {
+        // Convert to proto (integer proof_type) and extract the parsed ProofType
+        let (params, proof_type) = params_intermediate.into_proto().map_err(|e| {
             error!(
                 proof_request_id = %proof_request_id,
                 error = %e,
                 "Failed to convert to ProveBlockRequest"
             );
             e
-        })?;
-
-        // Convert proto proof type to database enum, then to backend type
-        let proof_type = ProofType::try_from(params.proof_type).map_err(|e| {
-            error!(
-                proof_request_id = %proof_request_id,
-                error = %e,
-                "Invalid proof type"
-            );
-            anyhow::anyhow!(e)
         })?;
         let backend_type: BackendType = proof_type.into();
 

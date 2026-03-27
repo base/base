@@ -20,14 +20,8 @@ impl ProverServiceServer {
             "Attempting to prove base block(s)",
         );
 
-        let proof_type = match prove_block_request.proof_type {
-            3 => ProofType::GenericZkvmClusterCompressed,
-            _ => {
-                return Err(Status::invalid_argument(
-                    "Invalid proof_type: must be PROOF_TYPE_GENERIC_ZKVM_CLUSTER_COMPRESSED (3)",
-                ));
-            }
-        };
+        let proof_type = ProofType::try_from(prove_block_request.proof_type)
+            .map_err(|e| Status::invalid_argument(format!("Invalid proof_type: {e}")))?;
 
         let db_request = CreateProofRequest {
             start_block_number: prove_block_request.start_block_number,

@@ -5,7 +5,7 @@ use std::time::Instant;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use base_proof_contracts::encode_nullify_calldata;
 use base_tx_manager::{TxCandidate, TxManager};
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{ChallengeSubmitError, ChallengerMetrics};
 
@@ -41,6 +41,14 @@ impl<T: TxManager> ChallengeSubmitter<T> {
             proof_bytes,
             intermediate_root_index,
             intermediate_root_to_prove,
+        );
+
+        debug!(
+            game = %game_address,
+            intermediate_root_index,
+            intermediate_root_to_prove = %intermediate_root_to_prove,
+            calldata_len = calldata.len(),
+            "Nullifying dispute game"
         );
 
         let candidate = TxCandidate {

@@ -311,14 +311,23 @@ where
             return Ok(());
         }
 
-        let calldata = ITEEProverRegistry::registerSignerCall {
-            output: proof.output,
-            proofBytes: proof.proof_bytes,
-        }
-        .abi_encode();
+        let calldata = Bytes::from(
+            ITEEProverRegistry::registerSignerCall {
+                output: proof.output,
+                proofBytes: proof.proof_bytes,
+            }
+            .abi_encode(),
+        );
+
+        debug!(
+            signer = %signer_address,
+            registry = %self.config.registry_address,
+            calldata_len = calldata.len(),
+            "Registering signer"
+        );
 
         let candidate = TxCandidate {
-            tx_data: Bytes::from(calldata),
+            tx_data: calldata,
             to: Some(self.config.registry_address),
             ..Default::default()
         };
@@ -348,9 +357,18 @@ where
 
     /// Submits a `deregisterSigner` transaction and returns whether it succeeded.
     async fn submit_deregistration(&self, signer: Address) -> bool {
-        let calldata = ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode();
+        let calldata =
+            Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode());
+
+        debug!(
+            signer = %signer,
+            registry = %self.config.registry_address,
+            calldata_len = calldata.len(),
+            "Deregistering signer"
+        );
+
         let candidate = TxCandidate {
-            tx_data: Bytes::from(calldata),
+            tx_data: calldata,
             to: Some(self.config.registry_address),
             ..Default::default()
         };
