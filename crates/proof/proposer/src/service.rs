@@ -291,7 +291,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     driver_handle.start_proposer().await.map_err(|e| eyre::eyre!(e))?;
 
     ready.store(true, Ordering::SeqCst);
-    crate::metrics::record_startup_metrics(env!("CARGO_PKG_VERSION"));
+    Metrics::record_startup(env!("CARGO_PKG_VERSION"));
     info!(
         poll_interval = ?config.poll_interval,
         block_interval,

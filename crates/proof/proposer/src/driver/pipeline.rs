@@ -383,11 +383,12 @@ where
 
             tracing::Span::current().record("next_block", next_to_submit);
 
-            let submit_result = base_metrics::time!(Metrics::submission_duration_seconds(), {
-                self.validate_and_submit(&proof_result, next_to_submit, recovered.game_index).await
-            });
+            let submit_timer = base_metrics::timed!(Metrics::submission_duration_seconds());
+            let submit_result =
+                self.validate_and_submit(&proof_result, next_to_submit, recovered.game_index).await;
             match submit_result {
                 Ok(()) => {
+                    drop(submit_timer);
                     info!(target_block = next_to_submit, "Submission successful");
                     Metrics::last_proposed_block().set(next_to_submit as f64);
                     state.retry_counts.remove(&next_to_submit);
@@ -401,6 +402,8 @@ where
                     };
                 }
                 Err(SubmitAction::Reorg) => {
+                    // Disarm — don't record reorg latency as submission duration.
+                    std::mem::forget(submit_timer);
                     warn!(
                         target_block = next_to_submit,
                         "Reorg detected at submit time, resetting pipeline"
@@ -410,6 +413,7 @@ where
                     return Ok(());
                 }
                 Err(SubmitAction::Failed(e)) => {
+                    std::mem::forget(submit_timer);
                     Metrics::errors_total(e.metric_label()).increment(1);
                     warn!(
                         error = %e,
@@ -420,6 +424,7 @@ where
                     return Ok(());
                 }
                 Err(SubmitAction::Discard(e)) => {
+                    std::mem::forget(submit_timer);
                     Metrics::errors_total(e.metric_label()).increment(1);
                     warn!(
                         error = %e,

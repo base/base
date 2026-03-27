@@ -138,8 +138,10 @@ impl Metrics {
     }
 }
 
-/// Records build-info and liveness gauges at startup.
-pub(crate) fn record_startup_metrics(version: &str) {
-    Metrics::info(version.to_string()).set(1.0);
-    Metrics::up().set(1.0);
+impl Metrics {
+    /// Records build-info and liveness gauges at startup.
+    pub(crate) fn record_startup(version: &str) {
+        Self::info(version.to_string()).set(1.0);
+        Self::up().set(1.0);
+    }
 }
