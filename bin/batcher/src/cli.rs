@@ -128,6 +128,10 @@ pub(crate) struct BatcherArgs {
     )]
     pub resubmission_timeout_secs: u64,
 
+    /// Start the batcher in a paused state until resumed via the admin API.
+    #[arg(long = "stopped", env = "OP_BATCHER_STOPPED")]
+    pub stopped: bool,
+
     /// DA backlog threshold in bytes at which throttling activates.
     ///
     /// When the estimated unsubmitted DA backlog exceeds this value, the batcher
@@ -195,6 +199,7 @@ impl BatcherArgs {
             max_pending_transactions: self.max_pending_transactions,
             num_confirmations: self.num_confirmations,
             resubmission_timeout: Duration::from_secs(self.resubmission_timeout_secs),
+            stopped: self.stopped,
             throttle: if self.no_throttle {
                 None
             } else {

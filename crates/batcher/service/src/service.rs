@@ -425,7 +425,8 @@ impl BatcherService {
             DaThrottle::new(throttle, throttle_client),
             l1_head_source,
         )
-        .with_safe_head_rx(safe_head_rx);
+        .with_safe_head_rx(safe_head_rx)
+        .with_paused(self.config.stopped);
 
         let admin_server = match self.config.admin_addr {
             Some(addr) => {

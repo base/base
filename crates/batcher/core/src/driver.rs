@@ -113,6 +113,12 @@ where
         self
     }
 
+    /// Set the initial paused state for block ingestion.
+    pub const fn with_paused(mut self, paused: bool) -> Self {
+        self.paused = paused;
+        self
+    }
+
     /// Wire an admin command channel into the driver.
     ///
     /// When set, the driver processes admin commands as part of its main

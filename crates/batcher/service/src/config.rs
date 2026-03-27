@@ -48,6 +48,8 @@ pub struct BatcherConfig {
     pub num_confirmations: usize,
     /// Timeout before resubmitting a transaction.
     pub resubmission_timeout: Duration,
+    /// Start the batcher in a paused state.
+    pub stopped: bool,
     /// Throttle configuration (optional).
     pub throttle: Option<ThrottleConfig>,
     /// Socket address for the admin JSON-RPC API.
@@ -71,6 +73,7 @@ impl Default for BatcherConfig {
             max_pending_transactions: 1,
             num_confirmations: 1,
             resubmission_timeout: Duration::from_secs(48),
+            stopped: false,
             throttle: Some(ThrottleConfig::default()),
             admin_addr: None,
         }
