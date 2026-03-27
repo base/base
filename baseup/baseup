@@ -251,7 +251,7 @@ fetch_remote_installer_version() {
         return 1
     fi
 
-    remote_version="$(printf '%s\n' "$remote_script" | grep '^BASEUP_INSTALLER_VERSION=' | sed -E 's/BASEUP_INSTALLER_VERSION="(.+)"/\1/')"
+    remote_version="$(printf '%s\n' "$remote_script" | grep -m 1 '^BASEUP_INSTALLER_VERSION=' | sed -E 's/BASEUP_INSTALLER_VERSION="(.+)"/\1/')"
     if [[ -z "$remote_version" ]]; then
         return 1
     fi
@@ -353,7 +353,7 @@ update_baseup() {
     fi
 
     local remote_version
-    remote_version="$(grep '^BASEUP_INSTALLER_VERSION=' "$UPDATE_TMP_FILE" | sed -E 's/BASEUP_INSTALLER_VERSION="(.+)"/\1/')"
+    remote_version="$(grep -m 1 '^BASEUP_INSTALLER_VERSION=' "$UPDATE_TMP_FILE" | sed -E 's/BASEUP_INSTALLER_VERSION="(.+)"/\1/')"
     if [[ -z "$remote_version" ]]; then
         error "Failed to determine remote baseup version"
     fi
@@ -368,9 +368,8 @@ update_baseup() {
     local tmp_dest="$BASEUP_BIN_PATH.new"
 
     info "Updating baseup from $BASEUP_INSTALLER_VERSION to $remote_version..."
-    if cp "$UPDATE_TMP_FILE" "$tmp_dest" 2>/dev/null; then
-        chmod 755 "$tmp_dest"
-        mv -f "$tmp_dest" "$BASEUP_BIN_PATH"
+    if cp "$UPDATE_TMP_FILE" "$tmp_dest" 2>/dev/null && chmod 755 "$tmp_dest" && mv -f "$tmp_dest" "$BASEUP_BIN_PATH"; then
+        :
     else
         rm -f "$tmp_dest" 2>/dev/null || true
         error "Failed to update baseup at $BASEUP_BIN_PATH."
@@ -551,9 +550,8 @@ install_binary() {
     ensure_writable_destination "$destination"
 
     info "Installing $binary_name to $destination..."
-    if cp "$src" "$tmp_dest" 2>/dev/null; then
-        chmod 755 "$tmp_dest"
-        mv -f "$tmp_dest" "$destination"
+    if cp "$src" "$tmp_dest" 2>/dev/null && chmod 755 "$tmp_dest" && mv -f "$tmp_dest" "$destination"; then
+        :
     else
         rm -f "$tmp_dest" 2>/dev/null || true
         error "Failed to install $binary_name to $destination."
