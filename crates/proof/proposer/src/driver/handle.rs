@@ -145,9 +145,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
-
-    use std::collections::HashMap;
+    use std::{collections::HashMap, sync::Arc, time::Duration};
 
     use alloy_primitives::{B256, Bytes, U256};
     use async_trait::async_trait;

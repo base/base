@@ -112,8 +112,7 @@ impl RollupClient {
         // Create provider directly without fillers (read-only operations)
         let provider = RootProvider::new(rpc_client);
 
-        let output_cache =
-            MeteredCache::with_capacity("rollup_output_at_block", config.cache_size);
+        let output_cache = MeteredCache::with_capacity("rollup_output_at_block", config.cache_size);
 
         Ok(Self { provider, output_cache, retry_config: config.retry_config })
     }

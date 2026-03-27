@@ -1459,11 +1459,7 @@ mod tests {
         );
         info_map.insert(
             proxy_addr(1),
-            GameInfo {
-                root_claim: B256::repeat_byte(0xDE),
-                l2_block_number: 200,
-                parent_index: 0,
-            },
+            GameInfo { root_claim: B256::repeat_byte(0xDE), l2_block_number: 200, parent_index: 0 },
         );
 
         let mut output_roots = HashMap::new();
@@ -1496,19 +1492,11 @@ mod tests {
         let mut info_map = HashMap::new();
         info_map.insert(
             proxy_addr(0),
-            GameInfo {
-                root_claim: B256::repeat_byte(0xAA),
-                l2_block_number: 100,
-                parent_index: 0,
-            },
+            GameInfo { root_claim: B256::repeat_byte(0xAA), l2_block_number: 100, parent_index: 0 },
         );
         info_map.insert(
             proxy_addr(1),
-            GameInfo {
-                root_claim: B256::repeat_byte(0xBB),
-                l2_block_number: 200,
-                parent_index: 0,
-            },
+            GameInfo { root_claim: B256::repeat_byte(0xBB), l2_block_number: 200, parent_index: 0 },
         );
 
         let mut output_roots = HashMap::new();
