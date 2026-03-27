@@ -59,7 +59,7 @@ jobs:
       - name: Install mold linker (Linux)
         if: matrix.target.os == 'linux'
         run: |
-          MOLD_VERSION="2.30.0"
+          MOLD_VERSION="2.40.4"
           ARCH="$(uname -m)"
           curl -sSfL "https://github.com/rui314/mold/releases/download/v${MOLD_VERSION}/mold-${MOLD_VERSION}-${ARCH}-linux.tar.gz" \
             | sudo tar -xz --strip-components=1 -C /usr/local
