@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 #![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4",

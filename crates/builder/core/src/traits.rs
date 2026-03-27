@@ -10,6 +10,7 @@ use reth_payload_util::PayloadTransactions;
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
 use reth_transaction_pool::{TransactionPool, TransactionPoolExt};
 
+/// [`FullNodeTypes`] specialized for Base (`OpEngineTypes`, `OpChainSpec`, `OpPrimitives`).
 pub trait NodeBounds:
     FullNodeTypes<
     Types: NodeTypes<Payload = OpEngineTypes, ChainSpec = OpChainSpec, Primitives = OpPrimitives>,
@@ -17,7 +18,8 @@ pub trait NodeBounds:
 {
 }
 
-impl<T> NodeBounds for T where
+impl<T> NodeBounds for T
+where
     T: FullNodeTypes<
         Types: NodeTypes<
             Payload = OpEngineTypes,
@@ -28,6 +30,7 @@ impl<T> NodeBounds for T where
 {
 }
 
+/// [`TransactionPool`] bounds for Base (`OpPooledTx`, bundles, pool extensions).
 pub trait PoolBounds:
     TransactionPool<Transaction: OpPooledTx<Consensus = OpTransactionSigned> + BundleTransaction>
     + TransactionPoolExt
@@ -49,6 +52,7 @@ where
 {
 }
 
+/// Provider and reader traits used by the builder (`StateProviderFactory`, `OpChainSpec`, headers).
 pub trait ClientBounds:
     StateProviderFactory
     + ChainSpecProvider<ChainSpec = OpChainSpec>
@@ -65,6 +69,7 @@ impl<T> ClientBounds for T where
 {
 }
 
+/// [`PayloadTransactions`] stream whose items are Base pooled transactions (optionally bundled).
 pub trait PayloadTxsBounds:
     PayloadTransactions<Transaction: OpPooledTx<Consensus = OpTransactionSigned> + BundleTransaction>
 {

@@ -37,6 +37,7 @@ where
     T: PoolTransaction,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
+    /// Wraps Reth's best-transactions iterator for flashblock builds.
     pub fn new(inner: reth_payload_util::BestPayloadTransactions<T, I>) -> Self {
         Self { inner, committed_transactions: Default::default() }
     }
