@@ -168,7 +168,11 @@ impl<P> StageReset for ChannelReader<P>
 where
     P: ChannelReaderProvider + OriginAdvancer + OriginProvider + StageReset + Debug + Send,
 {
-    async fn reset(&mut self, l1_origin: BlockNumHash, system_config: SystemConfig) -> PipelineResult<()> {
+    async fn reset(
+        &mut self,
+        l1_origin: BlockNumHash,
+        system_config: SystemConfig,
+    ) -> PipelineResult<()> {
         self.prev.reset(l1_origin, system_config).await?;
         self.next_channel();
         Ok(())
@@ -199,10 +203,8 @@ where
 mod tests {
     use alloc::vec;
 
-    use base_consensus_genesis::HardForkConfig;
-
     use alloy_eips::BlockNumHash;
-    use base_consensus_genesis::SystemConfig;
+    use base_consensus_genesis::{HardForkConfig, SystemConfig};
 
     use super::*;
     use crate::{errors::PipelineErrorKind, test_utils::TestChannelReaderProvider};

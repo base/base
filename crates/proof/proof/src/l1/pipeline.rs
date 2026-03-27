@@ -15,7 +15,7 @@ use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_proof_driver::{DriverPipeline, PipelineCursor};
 use base_proof_executor::TrieDBProvider;
 use base_proof_preimage::{CommsClient, FlushableCache};
-use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo, OpAttributesWithParent};
 use spin::RwLock;
 
 use crate::{
@@ -65,7 +65,10 @@ where
         da_provider: DA,
         chain_provider: L1,
         l2_chain_provider: L2,
-    ) -> PipelineResult<Self> {
+    ) -> PipelineResult<Self>
+    where
+        <L2 as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
+    {
         let attributes = StatefulAttributesBuilder::new(
             Arc::clone(&cfg),
             l1_cfg,
@@ -155,6 +158,7 @@ where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
+    <L2 as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
 {
     /// Flushes the cache on re-org.
     fn flush(&mut self) {
@@ -169,6 +173,7 @@ where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
+    <L2 as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
 {
     /// Receives a signal from the driver.
     async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {

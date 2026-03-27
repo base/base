@@ -3,16 +3,14 @@
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
+use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_consensus_genesis::RollupConfig;
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{
     Batch, BatchValidity, BatchWithInclusionBlock, BlockInfo, L2BlockInfo, SingleBatch,
 };
 
 use super::NextBatchProvider;
-use alloy_eips::BlockNumHash;
-use base_consensus_genesis::SystemConfig;
-
 use crate::{
     errors::{PipelineEncodingError, PipelineError, PipelineErrorKind, ResetError},
     traits::{AttributesProvider, L2ChainProvider, OriginAdvancer, OriginProvider, StageReset},
@@ -439,7 +437,11 @@ where
     P: NextBatchProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
     BF: L2ChainProvider + Send + Debug,
 {
-    async fn reset(&mut self, l1_origin: BlockNumHash, system_config: SystemConfig) -> PipelineResult<()> {
+    async fn reset(
+        &mut self,
+        l1_origin: BlockNumHash,
+        system_config: SystemConfig,
+    ) -> PipelineResult<()> {
         self.prev.reset(l1_origin, system_config).await?;
         self.origin = self.prev.origin();
         self.batches.clear();
@@ -482,7 +484,9 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256};
     use alloy_rlp::{BytesMut, Encodable};
     use base_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType, TxDeposit};
-    use base_consensus_genesis::{ChainGenesis, HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_FJORD, SystemConfig};
+    use base_consensus_genesis::{
+        ChainGenesis, HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_FJORD, SystemConfig,
+    };
     use base_protocol::{BatchReader, L1BlockInfoBedrock, L1BlockInfoTx};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;

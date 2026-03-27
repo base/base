@@ -3,14 +3,12 @@
 use alloc::{boxed::Box, sync::Arc};
 use core::fmt::Debug;
 
+use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_consensus_genesis::RollupConfig;
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BlockInfo, L2BlockInfo, SingleBatch};
 
 use super::NextBatchProvider;
-use alloy_eips::BlockNumHash;
-use base_consensus_genesis::SystemConfig;
-
 use crate::{
     AttributesProvider, BatchQueue, BatchValidator, L2ChainProvider, OriginAdvancer,
     OriginProvider, PipelineError, PipelineResult, StageReset,
@@ -138,7 +136,11 @@ where
     P: NextBatchProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
     F: L2ChainProvider + Clone + Send + Debug,
 {
-    async fn reset(&mut self, l1_origin: BlockNumHash, system_config: SystemConfig) -> PipelineResult<()> {
+    async fn reset(
+        &mut self,
+        l1_origin: BlockNumHash,
+        system_config: SystemConfig,
+    ) -> PipelineResult<()> {
         self.attempt_update()?;
 
         if let Some(batch_validator) = self.batch_validator.as_mut() {
@@ -217,11 +219,9 @@ where
 mod tests {
     use alloc::{sync::Arc, vec};
 
-    use base_consensus_genesis::{HardForkConfig, RollupConfig};
-    use base_protocol::BlockInfo;
-
     use alloy_eips::BlockNumHash;
-    use base_consensus_genesis::SystemConfig;
+    use base_consensus_genesis::{HardForkConfig, RollupConfig, SystemConfig};
+    use base_protocol::BlockInfo;
 
     use super::BatchProvider;
     use crate::{

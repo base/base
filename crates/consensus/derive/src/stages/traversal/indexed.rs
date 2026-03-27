@@ -132,11 +132,8 @@ impl<F: ChainProvider + Send> StageReset for IndexedTraversal<F> {
         l1_origin: BlockNumHash,
         system_config: SystemConfig,
     ) -> PipelineResult<()> {
-        let block = self
-            .data_source
-            .block_info_by_number(l1_origin.number)
-            .await
-            .map_err(Into::into)?;
+        let block =
+            self.data_source.block_info_by_number(l1_origin.number).await.map_err(Into::into)?;
         self.update_origin(block);
         self.system_config = system_config;
         Ok(())
@@ -448,7 +445,7 @@ mod tests {
         assert_eq!(traversal.system_config.batcher_address, new_batcher);
     }
 
-    /// After a reset, batcher_address is restored to the system config provided.
+    /// After a reset, `batcher_address` is restored to the system config provided.
     #[tokio::test]
     async fn test_reorg_signal_restores_batcher_address() {
         let addr_a = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");

@@ -61,8 +61,7 @@ where
     where
         <P as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
     {
-        let channel_timeout =
-            self.rollup_config.channel_timeout(l2_safe_head.block_info.timestamp);
+        let channel_timeout = self.rollup_config.channel_timeout(l2_safe_head.block_info.timestamp);
         let l1_origin_number = l2_safe_head.l1_origin.number;
         let mut current = l2_safe_head;
 
@@ -134,8 +133,7 @@ where
     async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
         match signal {
             Signal::Reset(ResetSignal { l2_safe_head }) => {
-                let (l1_origin, system_config) =
-                    self.initial_reset(l2_safe_head).await?;
+                let (l1_origin, system_config) = self.initial_reset(l2_safe_head).await?;
                 match self.attributes.reset(l1_origin, system_config).await {
                     Ok(()) => trace!(target: "pipeline", "Stages reset"),
                     Err(err) => {
@@ -408,8 +406,7 @@ mod tests {
         let mut l2_chain_provider = TestL2ChainProvider::default();
         l2_chain_provider.system_configs.insert(0, SystemConfig::default());
         let attributes = TestNextAttributes::default();
-        let mut pipeline =
-            DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
+        let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
         // With L2 safe head at genesis (block 0), initial_reset should stop at genesis.
         let l2_safe_head = L2BlockInfo {

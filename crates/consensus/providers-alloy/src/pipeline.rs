@@ -5,10 +5,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base_consensus_derive::{
-    DerivationPipeline, EthereumDataSource, IndexedAttributesQueueStage,
-    OriginProvider, Pipeline, PipelineBuilder, PipelineErrorKind, PipelineResult,
-    PolledAttributesQueueStage, ResetSignal, Signal, SignalReceiver, StatefulAttributesBuilder,
-    StepResult,
+    DerivationPipeline, EthereumDataSource, IndexedAttributesQueueStage, OriginProvider, Pipeline,
+    PipelineBuilder, PipelineErrorKind, PipelineResult, PolledAttributesQueueStage, ResetSignal,
+    Signal, SignalReceiver, StatefulAttributesBuilder, StepResult,
 };
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};

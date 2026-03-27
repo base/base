@@ -138,11 +138,8 @@ impl<F: ChainProvider + Send> StageReset for PollingTraversal<F> {
         l1_origin: BlockNumHash,
         system_config: SystemConfig,
     ) -> PipelineResult<()> {
-        let block = self
-            .data_source
-            .block_info_by_number(l1_origin.number)
-            .await
-            .map_err(Into::into)?;
+        let block =
+            self.data_source.block_info_by_number(l1_origin.number).await.map_err(Into::into)?;
         self.update_origin(block);
         self.system_config = system_config;
         Ok(())
@@ -216,9 +213,7 @@ pub(crate) mod tests {
         assert!(traversal.advance_origin().await.is_ok());
         let cfg = SystemConfig::default();
         traversal.done = true;
-        assert!(
-            traversal.reset(BlockNumHash::default(), cfg).await.is_ok()
-        );
+        assert!(traversal.reset(BlockNumHash::default(), cfg).await.is_ok());
         assert_eq!(traversal.origin(), Some(BlockInfo::default()));
         assert_eq!(traversal.system_config, cfg);
         assert!(!traversal.done);

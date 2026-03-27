@@ -10,9 +10,7 @@ use base_protocol::{BlockInfo, L2BlockInfo, SingleBatch};
 
 use crate::{
     errors::{PipelineError, PipelineErrorKind},
-    traits::{
-        AttributesBuilder, AttributesProvider, OriginAdvancer, OriginProvider, StageReset,
-    },
+    traits::{AttributesBuilder, AttributesProvider, OriginAdvancer, OriginProvider, StageReset},
     types::PipelineResult,
 };
 

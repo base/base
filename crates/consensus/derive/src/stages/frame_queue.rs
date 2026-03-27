@@ -221,10 +221,8 @@ where
 pub(crate) mod tests {
     use alloc::vec;
 
-    use base_consensus_genesis::HardForkConfig;
-
     use alloy_eips::BlockNumHash;
-    use base_consensus_genesis::SystemConfig;
+    use base_consensus_genesis::{HardForkConfig, SystemConfig};
 
     use super::*;
     use crate::test_utils::TestFrameQueueProvider;

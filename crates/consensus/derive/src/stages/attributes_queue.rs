@@ -3,13 +3,11 @@
 use alloc::{boxed::Box, sync::Arc};
 use core::fmt::Debug;
 
+use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use base_consensus_genesis::RollupConfig;
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent, SingleBatch};
-
-use alloy_eips::BlockNumHash;
-use base_consensus_genesis::SystemConfig;
 
 use crate::{
     Metrics,
@@ -186,7 +184,11 @@ where
     P: AttributesProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
     AB: AttributesBuilder + Send + Debug,
 {
-    async fn reset(&mut self, l1_origin: BlockNumHash, system_config: SystemConfig) -> PipelineResult<()> {
+    async fn reset(
+        &mut self,
+        l1_origin: BlockNumHash,
+        system_config: SystemConfig,
+    ) -> PipelineResult<()> {
         self.prev.reset(l1_origin, system_config).await?;
         self.batch = None;
         self.is_last_in_span = false;
@@ -215,10 +217,9 @@ where
 mod tests {
     use alloc::{sync::Arc, vec, vec::Vec};
 
+    use alloy_eips::BlockNumHash;
     use alloy_primitives::{Address, B256, Bytes, b256};
     use alloy_rpc_types_engine::PayloadAttributes;
-
-    use alloy_eips::BlockNumHash;
     use base_consensus_genesis::SystemConfig;
 
     use super::*;

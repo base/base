@@ -3,15 +3,13 @@
 use alloc::{boxed::Box, collections::VecDeque, string::ToString, sync::Arc};
 use core::fmt::Debug;
 
+use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_consensus_genesis::RollupConfig;
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{
     Batch, BatchValidity, BatchWithInclusionBlock, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch,
     SpanBatchError,
 };
-
-use alloy_eips::BlockNumHash;
-use base_consensus_genesis::SystemConfig;
 
 use crate::{
     L2ChainProvider, Metrics, NextBatchProvider, OriginAdvancer, OriginProvider, PipelineError,
@@ -226,7 +224,11 @@ where
     P: BatchStreamProvider + OriginAdvancer + OriginProvider + StageReset + Debug + Send,
     BF: L2ChainProvider + Send + Debug,
 {
-    async fn reset(&mut self, l1_origin: BlockNumHash, system_config: SystemConfig) -> PipelineResult<()> {
+    async fn reset(
+        &mut self,
+        l1_origin: BlockNumHash,
+        system_config: SystemConfig,
+    ) -> PipelineResult<()> {
         self.prev.reset(l1_origin, system_config).await?;
         self.buffer.clear();
         self.span = None;

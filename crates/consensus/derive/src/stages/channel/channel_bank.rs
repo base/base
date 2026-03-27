@@ -274,14 +274,12 @@ where
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use base_consensus_genesis::HardForkConfig;
+    use alloy_eips::BlockNumHash;
+    use base_consensus_genesis::{HardForkConfig, SystemConfig};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
-    use alloy_eips::BlockNumHash;
-    use base_consensus_genesis::SystemConfig;
-
     use crate::test_utils::{CollectingLayer, TestNextFrameProvider, TraceStorage};
 
     #[test]

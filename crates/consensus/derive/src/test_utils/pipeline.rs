@@ -3,7 +3,8 @@
 
 use alloc::{boxed::Box, sync::Arc};
 
-use base_consensus_genesis::RollupConfig;
+use alloy_eips::BlockNumHash;
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
 
 // Re-export these types used internally to the test pipeline.
@@ -17,9 +18,6 @@ use crate::{
     BatchProvider, PipelineResult,
     test_utils::{TestChainProvider, TestL2ChainProvider},
 };
-
-use alloy_eips::BlockNumHash;
-use base_consensus_genesis::SystemConfig;
 
 /// A fully custom [`NextAttributes`].
 #[derive(Default, Debug, Clone)]

@@ -9,7 +9,9 @@ use async_trait::async_trait;
 use base_consensus_genesis::SystemConfig;
 use base_protocol::{Batch, BlockInfo};
 
-use crate::{BatchStreamProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, StageReset};
+use crate::{
+    BatchStreamProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, StageReset,
+};
 
 /// A mock provider for the [`BatchStream`] stage.
 ///

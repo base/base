@@ -97,7 +97,11 @@ where
     /// Handles a [`Signal`] received over the derivation signal receiver channel.
     async fn signal(&mut self, signal: Signal) {
         if let Signal::Reset(ResetSignal { l2_safe_head: _reset_safe_head }) = signal {
-            base_metrics::set!(counter, Metrics::DERIVATION_L1_ORIGIN, _reset_safe_head.l1_origin.number);
+            base_metrics::set!(
+                counter,
+                Metrics::DERIVATION_L1_ORIGIN,
+                _reset_safe_head.l1_origin.number
+            );
             // Clear the finalization queue on reset.
             self.finalizer.clear();
             // Discard any in-flight derived_from so that a stale pre-reset L1 inclusion

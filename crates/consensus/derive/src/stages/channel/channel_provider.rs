@@ -126,7 +126,11 @@ impl<P> StageReset for ChannelProvider<P>
 where
     P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
-    async fn reset(&mut self, l1_origin: BlockNumHash, system_config: SystemConfig) -> PipelineResult<()> {
+    async fn reset(
+        &mut self,
+        l1_origin: BlockNumHash,
+        system_config: SystemConfig,
+    ) -> PipelineResult<()> {
         self.attempt_update()?;
 
         if let Some(channel_assembler) = self.channel_assembler.as_mut() {
@@ -197,11 +201,9 @@ where
 mod tests {
     use alloc::{sync::Arc, vec};
 
-    use base_consensus_genesis::{HardForkConfig, RollupConfig};
-    use base_protocol::BlockInfo;
-
     use alloy_eips::BlockNumHash;
-    use base_consensus_genesis::SystemConfig;
+    use base_consensus_genesis::{HardForkConfig, RollupConfig, SystemConfig};
+    use base_protocol::BlockInfo;
 
     use crate::{
         ChannelProvider, ChannelReaderProvider, OriginProvider, PipelineError, StageReset,
