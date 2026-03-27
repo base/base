@@ -259,7 +259,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             "invalid intermediate root detected, requesting proof"
         );
 
-        self.initiate_proof(candidate, invalid_index, expected_root, &intermediate_roots).await
+        self.initiate_proof(candidate, invalid_index, expected_root).await
     }
 
     /// Attempts TEE-first proof sourcing with ZK fallback.
@@ -268,7 +268,6 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         candidate: CandidateGame,
         invalid_index: u64,
         expected_root: B256,
-        intermediate_roots: &[B256],
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
@@ -277,13 +276,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             && let Some(tee) = &self.tee
         {
             ChallengerMetrics::tee_proof_attempts_total().increment(1);
-            let tee_fut = self.attempt_tee_proof(
-                &candidate,
-                invalid_index,
-                expected_root,
-                intermediate_roots,
-                tee,
-            );
+            let tee_fut =
+                self.attempt_tee_proof(&candidate, invalid_index, expected_root, tee);
             match tokio::time::timeout(tee.request_timeout, tee_fut).await {
                 Err(_elapsed) => {
                     warn!(
@@ -325,7 +319,6 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         candidate: &CandidateGame,
         invalid_index: u64,
         expected_root: B256,
-        intermediate_roots: &[B256],
         tee: &TeeConfig,
     ) -> eyre::Result<Bytes> {
         let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
@@ -342,21 +335,11 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         let (l1_head, l1_head_number) = l1_head_result?;
         let (agreed_l2_head_hash, agreed_l2_output_root) = output_root_result?;
 
-        // The claimed root is the (wrong) on-chain root at the invalid index.
-        let invalid_idx = usize::try_from(invalid_index)
-            .map_err(|_| eyre::eyre!("invalid_index {invalid_index} overflows usize"))?;
-        let claimed_l2_output_root = *intermediate_roots.get(invalid_idx).ok_or_else(|| {
-            eyre::eyre!(
-                "invalid_index {invalid_index} out of bounds for intermediate_roots (len={})",
-                intermediate_roots.len()
-            )
-        })?;
-
         let request = TeeProofRequest {
             l1_head,
             agreed_l2_head_hash,
             agreed_l2_output_root,
-            claimed_l2_output_root,
+            claimed_l2_output_root: expected_root,
             claimed_l2_block_number,
             proposer: self.submitter.sender_address(),
             intermediate_block_interval: candidate.intermediate_block_interval,
