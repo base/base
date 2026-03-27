@@ -177,8 +177,10 @@ impl AttestationProofProvider for BoundlessProver {
         // verifier or a SetVerifier, so we must encode the seal correctly.
         let image_id_bytes: [u8; 32] = Digest::from(self.image_id).into();
         let image_id_b256 = B256::from(image_id_bytes);
-        let (journal, receipt) =
-            client.fetch_set_inclusion_receipt(request_id, image_id_b256).await.map_err(|e| {
+        let (journal, receipt) = client
+            .fetch_set_inclusion_receipt(request_id, image_id_b256, None, None)
+            .await
+            .map_err(|e| {
                 warn!(
                     error = %e,
                     error_debug = ?e,
