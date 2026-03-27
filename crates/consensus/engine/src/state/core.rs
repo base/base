@@ -175,7 +175,7 @@ mod tests {
     impl EngineState {
         /// Set the unsafe head.
         pub fn set_unsafe_head(&mut self, unsafe_head: L2BlockInfo) {
-            self.sync_state.apply_update(EngineSyncStateUpdate {
+            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
                 unsafe_head: Some(unsafe_head),
                 ..Default::default()
             });
@@ -183,7 +183,7 @@ mod tests {
 
         /// Set the cross-verified unsafe head.
         pub fn set_cross_unsafe_head(&mut self, cross_unsafe_head: L2BlockInfo) {
-            self.sync_state.apply_update(EngineSyncStateUpdate {
+            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
                 cross_unsafe_head: Some(cross_unsafe_head),
                 ..Default::default()
             });
@@ -191,7 +191,7 @@ mod tests {
 
         /// Set the local safe head.
         pub fn set_local_safe_head(&mut self, local_safe_head: L2BlockInfo) {
-            self.sync_state.apply_update(EngineSyncStateUpdate {
+            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
                 local_safe_head: Some(local_safe_head),
                 ..Default::default()
             });
@@ -199,7 +199,7 @@ mod tests {
 
         /// Set the safe head.
         pub fn set_safe_head(&mut self, safe_head: L2BlockInfo) {
-            self.sync_state.apply_update(EngineSyncStateUpdate {
+            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
                 safe_head: Some(safe_head),
                 ..Default::default()
             });
@@ -207,7 +207,7 @@ mod tests {
 
         /// Set the finalized head.
         pub fn set_finalized_head(&mut self, finalized_head: L2BlockInfo) {
-            self.sync_state.apply_update(EngineSyncStateUpdate {
+            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
                 finalized_head: Some(finalized_head),
                 ..Default::default()
             });
@@ -243,7 +243,7 @@ mod tests {
         );
 
         assert!(handle.render().contains(
-            format!("base_node.block_labels{{label=\"{label_name}\"}} {number}").as_str()
+            format!("base_node_block_labels{{label=\"{label_name}\"}} {number}").as_str()
         ));
     }
 }
