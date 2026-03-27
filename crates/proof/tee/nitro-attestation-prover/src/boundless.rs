@@ -5,7 +5,7 @@
 
 use std::{fmt, time::Duration};
 
-use alloy_primitives::Bytes;
+use alloy_primitives::{B256, Bytes};
 use alloy_signer_local::PrivateKeySigner;
 use base_proof_tee_nitro_verifier::VerifierInput;
 use boundless_market::{
@@ -150,7 +150,8 @@ impl AttestationProofProvider for BoundlessProver {
             "waiting for fulfillment with computed expiry"
         );
 
-        let fulfillment = client
+        // Wait for marketplace fulfillment (prover completes the proof).
+        let _fulfillment = client
             .wait_for_request_fulfillment(request_id, self.poll_interval, effective_expiry)
             .await
             .map_err(|e| {
@@ -166,32 +167,49 @@ impl AttestationProofProvider for BoundlessProver {
                 ProverError::Boundless(format!("fulfillment failed: {e}"))
             })?;
 
-        let data = fulfillment.data().map_err(|e| {
+        info!(request_id = %request_id, "fulfillment confirmed, fetching set inclusion receipt");
+
+        // Fetch the set inclusion receipt, which contains the Merkle inclusion
+        // path and root Groth16 proof needed for on-chain verification.
+        // The raw fulfillment.seal is a marketplace seal — NOT an
+        // independently-verifiable proof. The on-chain NitroEnclaveVerifier
+        // routes proofs by the first 4 bytes (selector) to either a Groth16
+        // verifier or a SetVerifier, so we must encode the seal correctly.
+        let image_id_bytes: [u8; 32] = Digest::from(self.image_id).into();
+        let image_id_b256 = B256::from(image_id_bytes);
+        let (journal, receipt) =
+            client.fetch_set_inclusion_receipt(request_id, image_id_b256).await.map_err(|e| {
+                warn!(
+                    error = %e,
+                    error_debug = ?e,
+                    request_id = %request_id,
+                    image_id = ?self.image_id,
+                    "failed to fetch set inclusion receipt"
+                );
+                ProverError::Boundless(format!("failed to fetch set inclusion receipt: {e}"))
+            })?;
+
+        // ABI-encode the seal: 4-byte selector + ABI-encoded Seal struct
+        // (Merkle path + root Groth16 seal). This is the format expected by
+        // the on-chain RiscZeroSetVerifier.
+        let encoded_seal = receipt.abi_encode_seal().map_err(|e| {
             warn!(
                 error = %e,
                 error_debug = ?e,
                 request_id = %request_id,
-                seal_len = fulfillment.seal.len(),
-                "failed to decode Boundless fulfillment data"
+                "failed to ABI-encode set inclusion seal"
             );
-            ProverError::Boundless(format!("failed to decode fulfillment: {e}"))
-        })?;
-        let journal = data.journal().ok_or_else(|| {
-            warn!(
-                request_id = %request_id,
-                "Boundless fulfillment missing journal"
-            );
-            ProverError::Boundless("fulfillment missing journal".into())
+            ProverError::Boundless(format!("failed to encode set inclusion seal: {e}"))
         })?;
 
-        let output = Bytes::copy_from_slice(journal);
-        let proof_bytes = Bytes::copy_from_slice(&fulfillment.seal);
+        let output = Bytes::copy_from_slice(&journal);
+        let proof_bytes = Bytes::from(encoded_seal);
 
         info!(
             request_id = %request_id,
             journal_len = output.len(),
             seal_len = proof_bytes.len(),
-            "proof fulfilled successfully"
+            "set inclusion receipt fetched and seal encoded successfully"
         );
 
         Ok(AttestationProof { output, proof_bytes })

@@ -4662,6 +4662,7 @@ dependencies = [
  "async-trait",
  "base-proof-tee-nitro-verifier",
  "boundless-market",
+ "risc0-aggregation",
  "risc0-ethereum-contracts",
  "risc0-zkvm",
  "rstest",
