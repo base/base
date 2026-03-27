@@ -319,7 +319,7 @@ where
             .abi_encode(),
         );
 
-        debug!(
+        info!(
             signer = %signer_address,
             registry = %self.config.registry_address,
             calldata_len = calldata.len(),
@@ -331,6 +331,11 @@ where
             to: Some(self.config.registry_address),
             ..Default::default()
         };
+
+        info!(
+            tx = ?candidate,
+            "Sending tx candidate",
+        );
 
         let receipt = self.tx_manager.send(candidate).await.map_err(RegistrarError::from)?;
 
@@ -360,7 +365,7 @@ where
         let calldata =
             Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode());
 
-        debug!(
+        info!(
             signer = %signer,
             registry = %self.config.registry_address,
             calldata_len = calldata.len(),
@@ -372,6 +377,11 @@ where
             to: Some(self.config.registry_address),
             ..Default::default()
         };
+
+        info!(
+            tx = ?candidate,
+            "Sending tx candidate",
+        );
 
         match self.tx_manager.send(candidate).await {
             Ok(receipt) => {

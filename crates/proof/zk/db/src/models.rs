@@ -264,6 +264,8 @@ pub struct CreateProofRequest {
     pub sequence_window: Option<u64>,
     /// Type of proof to generate.
     pub proof_type: ProofType,
+    /// Ethereum address of the on-chain prover (required for SNARK Groth16 proofs).
+    pub prover_address: Option<String>,
 }
 
 /// Parameters for creating a new proof session

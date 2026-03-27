@@ -23,11 +23,20 @@ impl ProverServiceServer {
         let proof_type = ProofType::try_from(prove_block_request.proof_type)
             .map_err(|e| Status::invalid_argument(format!("Invalid proof_type: {e}")))?;
 
+        if proof_type == ProofType::GenericZkvmClusterSnarkGroth16
+            && prove_block_request.prover_address.is_none()
+        {
+            return Err(Status::invalid_argument(
+                "prover_address is required for SNARK_GROTH16 proofs",
+            ));
+        }
+
         let db_request = CreateProofRequest {
             start_block_number: prove_block_request.start_block_number,
             number_of_blocks_to_prove: prove_block_request.number_of_blocks_to_prove,
             sequence_window: prove_block_request.sequence_window,
             proof_type,
+            prover_address: prove_block_request.prover_address,
         };
 
         let proof_request_id = self

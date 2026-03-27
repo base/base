@@ -83,7 +83,7 @@ fn default_prove_request() -> ProveBlockRequest {
         start_block_number: 15,
         number_of_blocks_to_prove: 5,
         sequence_window: None,
-        proof_type: ProofType::GenericZkvmClusterSnarkGroth16 as i32,
+        proof_type: ProofType::GenericZkvmClusterSnarkGroth16.into(),
         session_id: Some(session_id),
         prover_address: Some(format!("{:#x}", addr(0))),
     }

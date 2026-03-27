@@ -407,7 +407,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             start_block_number,
             number_of_blocks_to_prove: candidate.intermediate_block_interval,
             sequence_window: None,
-            proof_type: ProofType::GenericZkvmClusterSnarkGroth16 as i32,
+            proof_type: ProofType::GenericZkvmClusterSnarkGroth16.into(),
             session_id: Some(session_id),
             prover_address: Some(prover_address),
         };

@@ -5,7 +5,7 @@ use std::time::Instant;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use base_proof_contracts::encode_nullify_calldata;
 use base_tx_manager::{TxCandidate, TxManager};
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::{ChallengeSubmitError, ChallengerMetrics};
 
@@ -43,7 +43,7 @@ impl<T: TxManager> ChallengeSubmitter<T> {
             intermediate_root_to_prove,
         );
 
-        debug!(
+        info!(
             game = %game_address,
             intermediate_root_index,
             intermediate_root_to_prove = %intermediate_root_to_prove,
@@ -57,6 +57,11 @@ impl<T: TxManager> ChallengeSubmitter<T> {
             value: U256::ZERO,
             ..Default::default()
         };
+
+        info!(
+            tx = ?candidate,
+            "Sending tx candidate",
+        );
 
         metrics::counter!(ChallengerMetrics::NULLIFY_TX_SUBMITTED_TOTAL).increment(1);
         let start = Instant::now();
