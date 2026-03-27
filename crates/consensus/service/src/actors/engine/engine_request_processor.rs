@@ -16,8 +16,8 @@ use tokio::{
 };
 
 use crate::{
-    BuildRequest, EngineClientError, EngineDerivationClient, EngineError, GetPayloadRequest,
-    ResetRequest, SealRequest,
+    BuildRequest, Conductor, EngineClientError, EngineDerivationClient, EngineError,
+    GetPayloadRequest, ResetRequest, SealRequest,
 };
 
 /// Requires that the implementor handles [`EngineProcessingRequest`]s via the provided channel.
@@ -72,6 +72,13 @@ where
     /// mode.
     unsafe_head_tx: Option<watch::Sender<L2BlockInfo>>,
 
+    /// An optional conductor client used to check leadership during bootstrap.
+    ///
+    /// In a conductor-orchestrated cluster only the **active sequencer** (leader) should probe
+    /// the EL with reth's reported safe/finalized heads.  Follower sequencers send a standard
+    /// FCU with zeroed safe/finalized so that normal EL sync is not disrupted.
+    conductor: Option<Arc<dyn Conductor>>,
+
     /// The [`RollupConfig`] used to build tasks.
     rollup: Arc<RollupConfig>,
     /// An [`EngineClient`] used for creating engine tasks.
@@ -92,9 +99,11 @@ where
         derivation_client: DerivationClient,
         engine: Engine<EngineClient_>,
         unsafe_head_tx: Option<watch::Sender<L2BlockInfo>>,
+        conductor: Option<Arc<dyn Conductor>>,
     ) -> Self {
         Self {
             client,
+            conductor,
             derivation_client,
             el_sync_complete: false,
             engine,
@@ -267,7 +276,122 @@ where
                 }
             };
 
-            if at_genesis {
+            // Determine whether this node is the active conductor leader.
+            //
+            // Hoisted before the at_genesis / beyond_genesis split so both branches
+            // can use it.
+            //
+            // Decision matrix:
+            //   • validator (unsafe_head_tx = None)         → follower path always
+            //   • standalone sequencer (no conductor)        → active path
+            //   • conductor leader                           → active path
+            //   • conductor follower / check failed          → follower path
+            let is_active_sequencer = if self.unsafe_head_tx.is_none() {
+                false
+            } else {
+                match &self.conductor {
+                    None => true,
+                    Some(conductor) => match conductor.leader().await {
+                        Ok(is_leader) => is_leader,
+                        Err(err) => {
+                            warn!(
+                                target: "engine",
+                                error = %err,
+                                "Bootstrap: conductor leadership check failed, assuming follower"
+                            );
+                            false
+                        }
+                    },
+                }
+            };
+
+            if self.unsafe_head_tx.is_none() {
+                // Pure validator: seed the engine state so `op_syncStatus` never
+                // observes zeros, but do NOT send a bootstrap FCU or set
+                // `el_sync_finished`.
+                //
+                // Sending reth's own head in a bootstrap FCU would trivially return
+                // `Valid` (reth already has its own canonical tip), prematurely setting
+                // `el_sync_finished = true` and firing the engine reset that queries
+                // reth's stale safe/finalized labels.
+                //
+                // Instead, the first real FCU comes from a gossip-received unsafe block
+                // via `InsertTask`.  That block is ahead of reth's snapshot, so reth
+                // responds `Syncing` and begins EL peer-to-peer sync.  Only when reth
+                // catches up and responds `Valid` does `el_sync_finished` become true.
+                if let Ok(Some(head)) = &reth_head {
+                    let seed = EngineSyncStateUpdate {
+                        unsafe_head: Some(*head),
+                        cross_unsafe_head: Some(*head),
+                        ..Default::default()
+                    };
+                    self.engine.seed_state(seed);
+                    info!(
+                        target: "engine",
+                        unsafe_head = %head.block_info.number,
+                        "Bootstrap: validator seeded engine state, awaiting gossip for EL sync"
+                    );
+                }
+                // reth_head = Ok(None) | Err(_): nothing to seed, will initialize on
+                // first incoming task.
+            } else if !is_active_sequencer {
+                // Conductor follower sequencer: probe the EL with zeroed
+                // safe/finalized so that `el_sync_finished` is set when reth
+                // responds `Valid`.  Unlike pure validators, conductor followers
+                // must be ready for leadership transfer — they need derivation
+                // running, which requires `el_sync_finished = true`.
+                //
+                // Conductor followers typically start alongside the leader and share
+                // the same chain state, so reth responding `Valid` to its own head
+                // is legitimate.
+                if let Ok(Some(head)) = &reth_head {
+                    let follower_update = EngineSyncStateUpdate {
+                        unsafe_head: Some(*head),
+                        cross_unsafe_head: Some(*head),
+                        ..Default::default()
+                    };
+
+                    let el_confirmed = match self
+                        .engine
+                        .probe_el_sync(
+                            Arc::clone(&self.client),
+                            Arc::clone(&self.rollup),
+                            follower_update,
+                        )
+                        .await
+                    {
+                        Ok(c) => c,
+                        Err(err) => {
+                            warn!(
+                                target: "engine",
+                                error = ?err,
+                                "Bootstrap: conductor follower probe failed, seeding state"
+                            );
+                            false
+                        }
+                    };
+
+                    if !el_confirmed {
+                        self.engine.seed_state(follower_update);
+                    }
+
+                    if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
+                        let new_head = self.engine.state().sync_state.unsafe_head();
+                        unsafe_head_tx.send_if_modified(|val| {
+                            (*val != new_head).then(|| *val = new_head).is_some()
+                        });
+                    }
+
+                    info!(
+                        target: "engine",
+                        el_confirmed,
+                        unsafe_head = %head.block_info.number,
+                        "Bootstrap: conductor follower probed EL sync"
+                    );
+                }
+            } else if at_genesis {
+                // Active sequencer starting a new network — genesis is the correct
+                // forkchoice.  engine.reset() FCUs with all heads set to genesis.
                 match self.engine.reset(Arc::clone(&self.client), Arc::clone(&self.rollup)).await {
                     Ok(_) => {
                         if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
@@ -282,10 +406,9 @@ where
                     }
                 }
             } else if let Ok(Some(head)) = reth_head {
-                //   Beyond genesis — reth already has a canonical chain (e.g. after snap sync).
-                //   Query safe and finalized heads optimistically; if unavailable (chain just
-                //   started, nothing finalized yet) fall back to default and let derivation fill
-                //   them in once the first task drains.
+                // Active sequencer beyond genesis: probe the EL with reth's own
+                // canonical heads (including safe/finalized) so that el_sync_finished
+                // can be set immediately, unblocking schedule_initial_reset.
                 let safe = self
                     .client
                     .l2_block_info_by_label(BlockNumberOrTag::Safe)
@@ -301,34 +424,22 @@ where
                     .flatten()
                     .unwrap_or_default();
 
-                // Probe the EL with a FCU pointing to reth's own current canonical heads.
-                // This distinguishes two cases:
-                //
-                //   • Valid   — reth's chain is complete (post snap-sync or normal restart).
-                //               el_sync_finished is set to true immediately, so any incoming
-                //               Reset request (e.g. from schedule_initial_reset) is not
-                //               blocked by the ELSyncing guard.
-                //
-                //   • Syncing — reth is still snap-syncing. el_sync_finished stays false.
-                //               Behaviour is identical to the pre-fix path; the sequencer's
-                //               schedule_initial_reset loop keeps retrying until the EL is
-                //               ready (e.g. when a P2P unsafe block triggers InsertTask).
-                //
-                // IMPORTANT: the probe must be called before seed_state. SynchronizeTask
-                // short-circuits (skips the FCU) when state.sync_state already equals
-                // new_sync_state. Calling seed_state first would cause the probe to silently
-                // do nothing, leaving el_sync_finished = false permanently.
                 let probe_update = EngineSyncStateUpdate {
                     unsafe_head: Some(head),
                     safe_head: Some(safe),
                     finalized_head: Some(finalized),
                 };
+
                 let el_confirmed = match self
                     .engine
-                    .probe_el_sync(Arc::clone(&self.client), Arc::clone(&self.rollup), probe_update)
+                    .probe_el_sync(
+                        Arc::clone(&self.client),
+                        Arc::clone(&self.rollup),
+                        probe_update,
+                    )
                     .await
                 {
-                    Ok(confirmed) => confirmed,
+                    Ok(c) => c,
                     Err(err) => {
                         warn!(
                             target: "engine",
@@ -340,10 +451,6 @@ where
                 };
 
                 if !el_confirmed {
-                    // Snap-sync still in progress or probe failed. Seed the watch channel
-                    // so op_syncStatus never observes zeros during the bootstrap window,
-                    // but leave el_sync_finished = false so Reset requests are deferred
-                    // until the EL finishes syncing.
                     self.engine.seed_state(probe_update);
                 }
 
@@ -358,17 +465,13 @@ where
                     info!(
                         target: "engine",
                         unsafe_head = %head.block_info.number,
-                        safe_head = %safe.block_info.number,
-                        finalized_head = %finalized.block_info.number,
                         "Bootstrap: EL confirmed canonical chain, el_sync_finished = true"
                     );
                 } else {
                     info!(
                         target: "engine",
                         unsafe_head = %head.block_info.number,
-                        safe_head = %safe.block_info.number,
-                        finalized_head = %finalized.block_info.number,
-                        "Bootstrap: EL sync pending (snap-sync in progress), seeded engine state from reth"
+                        "Bootstrap: EL sync pending, seeded engine state"
                     );
                 }
             }
@@ -511,11 +614,12 @@ mod tests {
         test_utils::{test_block_info, test_engine_client_builder},
     };
     use base_consensus_genesis::RollupConfig;
+    use base_protocol::L2BlockInfo;
     use tokio::sync::{mpsc, watch};
 
     use crate::{
         EngineClientError, EngineProcessingRequest, EngineProcessor, EngineRequestReceiver,
-        ResetRequest, actors::engine::client::MockEngineDerivationClient,
+        MockConductor, ResetRequest, actors::engine::client::MockEngineDerivationClient,
     };
 
     fn valid_fcu() -> ForkchoiceUpdated {
@@ -538,13 +642,12 @@ mod tests {
         }
     }
 
-    /// Verifies that when reth is beyond genesis and responds Valid to the bootstrap FCU probe,
-    /// `el_sync_finished` is set immediately so that the sequencer's `schedule_initial_reset`
-    /// loop is not permanently blocked by the `ELSyncing` guard.
+    /// Verifies that when a standalone sequencer (no conductor) is beyond genesis and reth
+    /// responds Valid to the bootstrap FCU probe, `el_sync_finished` is set immediately so
+    /// that `schedule_initial_reset` is not permanently blocked by the `ELSyncing` guard.
     ///
-    /// This is the fix for the leadership-transfer deadlock: previously the "beyond genesis"
-    /// bootstrap path only called `seed_state` (no FCU), leaving `el_sync_finished = false`
-    /// forever when no P2P unsafe blocks arrived.
+    /// The active-sequencer path probes reth with its own safe/finalized heads, so
+    /// `el_sync_finished` is set to true without waiting for a P2P unsafe block.
     #[tokio::test]
     async fn bootstrap_beyond_genesis_valid_fcu_sets_el_sync_finished() {
         let head = test_block_info(100);
@@ -561,22 +664,27 @@ mod tests {
         );
 
         let mut mock_derivation = MockEngineDerivationClient::new();
-        // Called by send_derivation_actor_safe_head_if_updated in the first drain() loop.
+        // Called by send_derivation_actor_safe_head_if_updated in the first drain() loop:
+        // safe_head is advanced to block_90 so it differs from last_safe_head_sent.
         mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
         // Called by mark_el_sync_complete_and_notify_derivation_actor after el_sync_finished
-        // becomes true; finalized_head is non-default so reset() is skipped.
+        // becomes true; finalized_head is non-default (block_80) so reset() is skipped.
         mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
 
         let (state_tx, state_rx) = watch::channel(EngineState::default());
         let (queue_tx, _) = watch::channel(0usize);
         let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
 
+        // Sequencer mode: unsafe_head_tx is Some. No conductor → standalone sequencer → active.
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+
         let processor = EngineProcessor::new(
             Arc::clone(&client),
             Arc::new(RollupConfig::default()),
             mock_derivation,
             engine,
-            None, // validator mode — no unsafe_head_tx needed
+            Some(unsafe_head_tx),
+            None, // no conductor — standalone sequencer (active by default)
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
@@ -603,7 +711,7 @@ mod tests {
     /// Verifies that when reth is mid-snap-sync (FCU returns Syncing), `el_sync_finished`
     /// stays false and a subsequent Reset request is correctly deferred with `ELSyncing`.
     ///
-    /// This is the pre-existing snap-sync-in-progress path; the fix must not regress it.
+    /// Tests the standalone sequencer path (unsafe_head_tx = Some, no conductor).
     #[tokio::test]
     async fn bootstrap_beyond_genesis_syncing_fcu_defers_reset() {
         let head = test_block_info(100);
@@ -620,7 +728,8 @@ mod tests {
         );
 
         let mut mock_derivation = MockEngineDerivationClient::new();
-        // Called by send_derivation_actor_safe_head_if_updated after seed_state seeds safe_head.
+        // In the Syncing path, seed_state advances safe_head (block_90) so
+        // send_derivation_actor_safe_head_if_updated fires after seed.
         mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
         // notify_sync_completed must NOT be called: el_sync_finished is still false.
 
@@ -628,12 +737,16 @@ mod tests {
         let (queue_tx, _) = watch::channel(0usize);
         let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
 
+        // Sequencer mode (unsafe_head_tx = Some). No conductor → standalone sequencer → active.
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+
         let processor = EngineProcessor::new(
             Arc::clone(&client),
             Arc::new(RollupConfig::default()),
             mock_derivation,
             engine,
-            None,
+            Some(unsafe_head_tx),
+            None, // no conductor — standalone sequencer (active by default)
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
@@ -662,5 +775,204 @@ mod tests {
 
         drop(req_tx);
         let _ = handle.await;
+    }
+
+    /// Verifies that a conductor follower sequencer (conductor reports `leader() = false`)
+    /// probes reth and sets `el_sync_finished` so it is ready for leadership transfer.
+    ///
+    /// Unlike pure validators, conductor followers must have derivation running to be
+    /// eligible for leadership transfer.  They probe with zeroed safe/finalized (not
+    /// reth's labels), and when reth responds `Valid`, `el_sync_finished` is set.
+    ///
+    /// This test catches a regression where conductor followers were incorrectly treated
+    /// as pure validators (seed-only, no probe), leaving `el_sync_finished = false`
+    /// permanently and breaking conductor leadership transfer.
+    #[tokio::test]
+    async fn bootstrap_beyond_genesis_conductor_follower_probes_and_sets_el_sync_finished() {
+        let head = test_block_info(100);
+
+        // Conductor follower probes with zeroed safe/finalized — needs a Valid FCU response.
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                .build(),
+        );
+
+        let mut mock_derivation = MockEngineDerivationClient::new();
+        // el_sync_finished is set (Valid) → mark_el_sync_complete fires → reset + notify.
+        mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+        mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+        mock_derivation.expect_send_signal().returning(|_| Ok(()));
+
+        let mut mock_conductor = MockConductor::new();
+        mock_conductor.expect_leader().returning(|| Ok(false));
+
+        let (state_tx, state_rx) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+
+        let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
+
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            mock_derivation,
+            engine,
+            Some(unsafe_head_tx),
+            Some(Arc::new(mock_conductor)),
+        );
+
+        let (req_tx, req_rx) = mpsc::channel(8);
+        let handle = processor.start(req_rx);
+
+        // Conductor follower must set el_sync_finished via the probe so it is ready
+        // for leadership transfer.
+        state_rx
+            .clone()
+            .wait_for(|s| s.el_sync_finished)
+            .await
+            .expect("conductor follower must set el_sync_finished from bootstrap probe");
+
+        // Safe/finalized should be zeroed — the probe used zeroed values.
+        let state = state_rx.borrow();
+        assert_eq!(
+            state.sync_state.safe_head(),
+            L2BlockInfo::default(),
+            "conductor follower should have zeroed safe head"
+        );
+
+        drop(req_tx);
+        let _ = handle.await;
+    }
+
+    /// Verifies that a validator node (unsafe_head_tx = None, no conductor) seeds engine
+    /// state without sending a bootstrap FCU or setting `el_sync_finished`.
+    ///
+    /// The validator path must not probe reth — doing so would trivially return Valid
+    /// (reth has its own head from the snapshot), prematurely setting `el_sync_finished`
+    /// and triggering the engine reset that sends non-zero safe/finalized.  Instead,
+    /// `el_sync_finished` is left false and will be set by the first gossip `InsertTask`
+    /// FCU.
+    #[tokio::test]
+    async fn bootstrap_beyond_genesis_validator_seeds_without_probing_el_sync() {
+        let head = test_block_info(100);
+
+        // No FCU response configured — no FCU should be sent during bootstrap.
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .build(),
+        );
+
+        // No derivation calls: el_sync_finished stays false so
+        // mark_el_sync_complete_and_notify_derivation_actor never fires.
+        let mock_derivation = MockEngineDerivationClient::new();
+
+        let (state_tx, state_rx) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            mock_derivation,
+            engine,
+            None, // validator mode
+            None, // no conductor
+        );
+
+        let (req_tx, req_rx) = mpsc::channel(8);
+        let handle = processor.start(req_rx);
+
+        // Close the channel so the task exits after bootstrap + one drain.
+        drop(req_tx);
+        let _ = handle.await;
+
+        // el_sync_finished must remain false — only a gossip InsertTask FCU may set it.
+        let state = state_rx.borrow();
+        assert!(
+            !state.el_sync_finished,
+            "validator must not set el_sync_finished during bootstrap"
+        );
+        assert_eq!(
+            state.sync_state.unsafe_head().block_info.number,
+            100,
+            "unsafe head should be seeded from reth's latest"
+        );
+        assert_eq!(
+            state.sync_state.safe_head(),
+            L2BlockInfo::default(),
+            "safe head must remain zeroed"
+        );
+        assert_eq!(
+            state.sync_state.finalized_head(),
+            L2BlockInfo::default(),
+            "finalized head must remain zeroed"
+        );
+    }
+
+    /// Verifies that a validator node at genesis seeds the engine state without sending
+    /// a FCU or setting `el_sync_finished`.
+    ///
+    /// Previously, this path called `probe_el_sync`, which sent a genesis FCU and set
+    /// `el_sync_finished=true` when reth responded `Valid`. Reth always responds `Valid`
+    /// to a genesis FCU (it always holds the genesis block), so this incorrectly signalled
+    /// EL sync completion for validators joining an established network that still need to
+    /// snap-sync. The fix seeds internal state only; `el_sync_finished` is left `false`
+    /// and will be set by the first gossip `InsertTask` FCU instead.
+    #[tokio::test]
+    async fn bootstrap_at_genesis_validator_seeds_without_probing_el_sync() {
+        // genesis_head hash = B256::ZERO = RollupConfig::default().genesis.l2.hash,
+        // so at_genesis = true and the at-genesis validator branch executes.
+        let genesis_head = L2BlockInfo::default();
+
+        // No FCU response is configured — none should be sent.
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, genesis_head)
+                .build(),
+        );
+
+        // No derivation calls should be made during at-genesis validator bootstrap:
+        // el_sync_finished stays false so mark_el_sync_complete_... never fires.
+        let mock_derivation = MockEngineDerivationClient::new();
+
+        let (state_tx, state_rx) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            mock_derivation,
+            engine,
+            None, // validator mode
+            None, // no conductor
+        );
+
+        let (req_tx, req_rx) = mpsc::channel(8);
+        let handle = processor.start(req_rx);
+
+        // Close the channel so the task exits after completing bootstrap + one drain.
+        drop(req_tx);
+        let _ = handle.await;
+
+        // el_sync_finished must remain false — only a gossip InsertTask FCU may set it.
+        let state = state_rx.borrow();
+        assert!(
+            !state.el_sync_finished,
+            "validator at genesis must not set el_sync_finished during bootstrap"
+        );
+        assert_eq!(
+            state.sync_state.safe_head(),
+            L2BlockInfo::default(),
+            "safe head must remain zeroed"
+        );
+        assert_eq!(
+            state.sync_state.finalized_head(),
+            L2BlockInfo::default(),
+            "finalized head must remain zeroed"
+        );
     }
 }

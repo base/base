@@ -93,12 +93,12 @@ impl EngineTaskError for SealTaskError {
             Self::PayloadInsertionFailed(inner) => inner.severity(),
             Self::GetPayloadFailed(_) => EngineTaskErrorSeverity::Temporary,
             Self::HoloceneInvalidFlush => EngineTaskErrorSeverity::Flush,
+            Self::UnsafeHeadChangedSinceBuild => EngineTaskErrorSeverity::Reset,
             Self::DepositOnlyPayloadReattemptFailed
             | Self::DepositOnlyPayloadFailed
             | Self::FromBlock(_)
             | Self::MpscSend(_)
-            | Self::ClockWentBackwards
-            | Self::UnsafeHeadChangedSinceBuild => EngineTaskErrorSeverity::Critical,
+            | Self::ClockWentBackwards => EngineTaskErrorSeverity::Critical,
         }
     }
 }
