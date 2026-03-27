@@ -9,8 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use alloy_primitives::TxHash;
 use base_builder_core::{BuilderMetrics, MeteringProvider};
 use base_bundles::MeterBundleResponse;
-use moka::sync::Cache;
-use tracing::debug;
+use moka::{notification::RemovalCause, sync::Cache};
 
 /// Concurrent metering store with LRU eviction.
 pub struct MeteringStore {
@@ -34,13 +33,18 @@ impl core::fmt::Debug for MeteringStore {
 impl MeteringStore {
     /// Creates a new [`MeteringStore`] with the given metering flag and max capacity.
     pub fn new(enable_resource_metering: bool, max_capacity: usize) -> Self {
-        let cache = Cache::builder().max_capacity(max_capacity as u64).build();
+        let metrics = BuilderMetrics::default();
+        let listener_metrics = metrics.clone();
+        let cache = Cache::builder()
+            .max_capacity(max_capacity as u64)
+            .eviction_listener(move |_key, _value, cause| {
+                if cause == RemovalCause::Size {
+                    listener_metrics.metering_store_lru_evictions.increment(1);
+                }
+            })
+            .build();
 
-        Self {
-            cache,
-            metering_enabled: AtomicBool::new(enable_resource_metering),
-            metrics: BuilderMetrics::default(),
-        }
+        Self { cache, metering_enabled: AtomicBool::new(enable_resource_metering), metrics }
     }
 
     /// Returns the number of stored entries.
@@ -70,16 +74,13 @@ impl MeteringProvider for MeteringStore {
     }
 
     fn insert(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
-        // Track eviction when we're at capacity and about to displace an entry.
-        if self.cache.entry_count() >= self.cache.policy().max_capacity().unwrap_or(0) {
-            self.metrics.metering_store_lru_evictions.increment(1);
-            debug!(
-                target: "metering_store",
-                tx_hash = ?tx_hash,
-                "LRU cache at capacity, inserting will evict least-recently-used entry"
-            );
-        }
         self.cache.insert(tx_hash, metering);
+    }
+
+    fn remove(&self, tx_hashes: &[TxHash]) {
+        for hash in tx_hashes {
+            self.cache.invalidate(hash);
+        }
     }
 
     fn clear(&self) {
@@ -174,7 +175,8 @@ mod tests {
 
     #[test]
     fn test_accessed_entries_survive_eviction() {
-        let capacity = 100;
+        // Small capacity to keep the TinyLFU frequency sketch deterministic.
+        let capacity = 5;
         let store = MeteringStore::new(true, capacity);
 
         // Fill the cache to capacity.
@@ -187,20 +189,21 @@ mod tests {
         store.cache.run_pending_tasks();
         assert_eq!(store.len(), capacity);
 
-        // Access the first entry repeatedly to promote it.
+        // Access the first entry many times to build up its frequency estimate
+        // so TinyLFU's admission policy keeps it over newcomers.
         let promoted = hashes[0];
-        for _ in 0..5 {
+        for _ in 0..20 {
             assert!(store.get(&promoted).is_some());
         }
         store.cache.run_pending_tasks();
 
-        // Insert enough new entries to trigger eviction of old ones.
+        // Insert new entries one at a time, flushing between each so the
+        // eviction policy processes each displacement individually.
         for i in 0..capacity as u64 {
             store.insert(TxHash::random(), create_test_metering(i));
+            store.cache.run_pending_tasks();
         }
-        store.cache.run_pending_tasks();
 
-        // The frequently-accessed entry should survive eviction.
         assert!(
             store.get(&promoted).is_some(),
             "frequently accessed entry should survive eviction"
