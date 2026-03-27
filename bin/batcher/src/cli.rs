@@ -114,7 +114,7 @@ pub(crate) struct BatcherArgs {
         default_value = "blobs",
         env = "BATCHER_DATA_AVAILABILITY_TYPE"
     )]
-    da_type: DataAvailabilityTypeArg,
+    da_type: base_batcher_encoder::DaType,
 
     /// Approximate compression ratio used for span batch size estimation.
     ///
@@ -213,7 +213,7 @@ impl BatcherArgs {
             sub_safety_margin: self.sub_safety_margin,
             target_num_frames: self.target_num_frames,
             batch_type: self.batch_type.into(),
-            da_type: self.da_type.into(),
+            da_type: self.da_type,
             approx_compr_ratio: self.approx_compr_ratio,
             ..base_batcher_encoder::EncoderConfig::default()
         };
@@ -277,23 +277,6 @@ impl From<BatchTypeArg> for base_batcher_encoder::BatchType {
         }
     }
 }
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum DataAvailabilityTypeArg {
-    #[value(alias = "blob")]
-    Blobs,
-    Calldata,
-}
-
-impl From<DataAvailabilityTypeArg> for base_batcher_encoder::DaType {
-    fn from(value: DataAvailabilityTypeArg) -> Self {
-        match value {
-            DataAvailabilityTypeArg::Blobs => Self::Blob,
-            DataAvailabilityTypeArg::Calldata => Self::Calldata,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use clap::Parser;
