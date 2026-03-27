@@ -4,16 +4,10 @@ Installer for Base release binaries published from this repository.
 
 ## Quick Install
 
-Use the raw GitHub bootstrap immediately:
+Use the raw GitHub bootstrap from `main`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/base/base/main/baseup/install | bash
-```
-
-If GitHub Pages is enabled for this repository, the same bootstrap can be served from:
-
-```bash
-curl -fsSL https://base.github.io/base/install | bash
 ```
 
 ## Usage
@@ -61,7 +55,7 @@ BASE_BIN_DIR=/custom/path/bin baseup
 
 ## Hosting
 
-The scripts are written to work with GitHub-hosted URLs:
+The scripts pull directly from `main` in this repository on `raw.githubusercontent.com`:
 
-- bootstrap and self-update default to `raw.githubusercontent.com`
-- `.github/workflows/baseup-pages.yml` can publish `/install` and `/baseup` to GitHub Pages for a shorter URL
+- bootstrap uses `https://raw.githubusercontent.com/base/base/main/baseup/install`
+- self-update defaults to `https://raw.githubusercontent.com/base/base/main/baseup/baseup`
