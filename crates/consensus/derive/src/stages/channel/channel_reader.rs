@@ -1,6 +1,6 @@
 //! This module contains the `ChannelReader` struct.
 
-use alloc::{boxed::Box, sync::Arc};
+use alloc::{boxed::Box, string::ToString, sync::Arc};
 use core::fmt::Debug;
 
 use alloy_primitives::Bytes;
@@ -12,8 +12,8 @@ use base_protocol::{Batch, BatchReader, BlockInfo};
 use tracing::{debug, warn};
 
 use crate::{
-    BatchStreamProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, Signal,
-    SignalReceiver,
+    BatchStreamProvider, Metrics, OriginAdvancer, OriginProvider, PipelineError, PipelineResult,
+    Signal, SignalReceiver,
 };
 
 /// The [`ChannelReader`] provider trait.
@@ -72,7 +72,7 @@ where
 
             self.next_batch =
                 Some(BatchReader::new(&channel[..], max_rlp_bytes_per_channel as usize));
-            base_metrics::set!(gauge, crate::metrics::Metrics::PIPELINE_BATCH_READER_SET, 1);
+            Metrics::pipeline_batch_reader_set().set(1);
         }
         Ok(())
     }
@@ -81,7 +81,7 @@ where
     /// decoding / decompression state to a fresh start.
     pub fn next_channel(&mut self) {
         self.next_batch = None;
-        base_metrics::set!(gauge, crate::metrics::Metrics::PIPELINE_BATCH_READER_SET, 0);
+        Metrics::pipeline_batch_reader_set().set(0);
     }
 }
 
@@ -123,25 +123,14 @@ where
         match next_batch.decompress() {
             Ok(()) => {
                 // Record the decompressed size and type.
-                #[cfg(feature = "metrics")]
-                {
-                    let size = next_batch.decompressed.len() as f64;
-                    let ty = if next_batch.brotli_used {
-                        BatchReader::CHANNEL_VERSION_BROTLI
-                    } else {
-                        BatchReader::ZLIB_DEFLATE_COMPRESSION_METHOD
-                    };
-                    base_metrics::set!(
-                        gauge,
-                        crate::metrics::Metrics::PIPELINE_LATEST_DECOMPRESSED_BATCH_SIZE,
-                        size
-                    );
-                    base_metrics::set!(
-                        gauge,
-                        crate::metrics::Metrics::PIPELINE_LATEST_DECOMPRESSED_BATCH_TYPE,
-                        ty as f64
-                    );
-                }
+                let size = next_batch.decompressed.len() as f64;
+                let ty = if next_batch.brotli_used {
+                    BatchReader::CHANNEL_VERSION_BROTLI
+                } else {
+                    BatchReader::ZLIB_DEFLATE_COMPRESSION_METHOD
+                };
+                Metrics::pipeline_latest_decompressed_batch_size().set(size);
+                Metrics::pipeline_latest_decompressed_batch_type().set(ty as f64);
             }
             Err(err) => {
                 debug!(target: "channel_reader", ?err, "Failed to decompress batch");
@@ -153,11 +142,7 @@ where
         // Read the next batch from the reader's decompressed data
         match next_batch.next_batch(self.cfg.as_ref()).ok_or(PipelineError::NotEnoughData.temp()) {
             Ok(batch) => {
-                base_metrics::inc!(
-                    gauge,
-                    crate::metrics::Metrics::PIPELINE_READ_BATCHES,
-                    "type" => batch.to_string(),
-                );
+                Metrics::pipeline_read_batches(batch.to_string()).increment(1.0);
                 Ok(batch)
             }
             Err(e) => {
@@ -188,7 +173,7 @@ where
                 // Drop the current in-progress channel.
                 warn!(target: "channel_reader", "Flushed channel");
                 self.next_batch = None;
-                base_metrics::set!(gauge, crate::metrics::Metrics::PIPELINE_BATCH_READER_SET, 0);
+                Metrics::pipeline_batch_reader_set().set(0);
             }
             s => {
                 self.prev.signal(s).await?;

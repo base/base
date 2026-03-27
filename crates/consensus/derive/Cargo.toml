@@ -53,7 +53,7 @@ alloy-primitives = { workspace = true, features = ["rlp", "k256", "map", "arbitr
 
 [features]
 default = []
-metrics = [ "dep:metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]
 serde = [
 	"alloy-consensus/serde",
 	"alloy-eips/serde",
