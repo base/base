@@ -122,6 +122,8 @@ pub struct FlashblockDiagnostics {
     pub txs_rejected_state_root_time: u64,
     /// Number rejected by uncompressed size limit.
     pub txs_rejected_uncompressed_size: u64,
+    /// Number skipped because metering data has not yet arrived.
+    pub txs_rejected_metering_data_pending: u64,
     /// Number rejected or skipped for other reasons.
     pub txs_rejected_other: u64,
     /// Minimum effective priority fee (tip per gas) among included transactions.
@@ -141,7 +143,7 @@ impl FlashblockDiagnostics {
     }
 
     /// Returns the rejection counts keyed by their metric/log reason labels.
-    pub const fn rejection_counts(&self) -> [(&'static str, u64); 7] {
+    pub const fn rejection_counts(&self) -> [(&'static str, u64); 8] {
         [
             ("gas_limit", self.txs_rejected_gas),
             ("da_size", self.txs_rejected_da),
@@ -149,6 +151,7 @@ impl FlashblockDiagnostics {
             ("execution_time", self.txs_rejected_execution_time),
             ("state_root_time", self.txs_rejected_state_root_time),
             ("uncompressed_size", self.txs_rejected_uncompressed_size),
+            ("metering_data_pending", self.txs_rejected_metering_data_pending),
             ("other", self.txs_rejected_other),
         ]
     }
@@ -161,7 +164,7 @@ impl FlashblockDiagnostics {
             .collect()
     }
 
-    /// Total number of rejected transactions across all limit types.
+    /// Total number of rejected or skipped transactions across all tracked categories.
     pub const fn txs_rejected_total(&self) -> u64 {
         self.txs_rejected_gas
             + self.txs_rejected_da
@@ -169,6 +172,7 @@ impl FlashblockDiagnostics {
             + self.txs_rejected_execution_time
             + self.txs_rejected_state_root_time
             + self.txs_rejected_uncompressed_size
+            + self.txs_rejected_metering_data_pending
             + self.txs_rejected_other
     }
 
@@ -198,12 +202,14 @@ impl FlashblockDiagnostics {
                     self.txs_rejected_state_root_time += 1;
                 }
             },
+            TxnExecutionError::MeteringDataPending => {
+                self.txs_rejected_metering_data_pending += 1;
+            }
             TxnExecutionError::SequencerTransaction
             | TxnExecutionError::NonceTooLow
             | TxnExecutionError::InternalError(_)
             | TxnExecutionError::EvmError
-            | TxnExecutionError::MaxGasUsageExceeded
-            | TxnExecutionError::MeteringDataPending => {
+            | TxnExecutionError::MaxGasUsageExceeded => {
                 self.txs_rejected_other += 1;
             }
         }
@@ -1044,6 +1050,7 @@ mod tests {
                 ("execution_time", 0),
                 ("state_root_time", 1),
                 ("uncompressed_size", 0),
+                ("metering_data_pending", 0),
                 ("other", 0),
             ]
         );
@@ -1057,7 +1064,8 @@ mod tests {
         diag.record_rejection(&TxnExecutionError::MaxGasUsageExceeded);
         diag.record_rejection(&TxnExecutionError::MeteringDataPending);
 
-        assert_eq!(diag.txs_rejected_other, 4);
+        assert_eq!(diag.txs_rejected_metering_data_pending, 1);
+        assert_eq!(diag.txs_rejected_other, 3);
         assert_eq!(diag.txs_rejected_total(), 4);
     }
 

@@ -301,6 +301,7 @@ mod tests {
             txs_included: 3,
             txs_rejected_gas: 2,
             txs_rejected_da: 1,
+            txs_rejected_metering_data_pending: 1,
             min_priority_fee: Some(200_000),
             ..Default::default()
         };
@@ -332,6 +333,9 @@ mod tests {
         ));
         assert!(rendered.contains(
             "base_builder_flashblock_rejections_total{flashblock_index=\"7\",reason=\"da_size\"} 1"
+        ));
+        assert!(rendered.contains(
+            "base_builder_flashblock_rejections_total{flashblock_index=\"7\",reason=\"metering_data_pending\"} 1"
         ));
         assert!(
             rendered.contains("base_builder_flashblock_txs_included_sum{flashblock_index=\"7\"} 3")
