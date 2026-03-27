@@ -5,7 +5,7 @@ set -e
 # Downloads release binaries from GitHub releases and installs them locally.
 
 # NOTE: If you change this script, increment the version below.
-BASEUP_INSTALLER_VERSION="0.1.1"
+BASEUP_INSTALLER_VERSION="0.1.2"
 
 BASEUP_REPO="${BASEUP_REPO:-base/base}"
 BASEUP_REPO_REF="${BASEUP_REPO_REF:-main}"
@@ -18,8 +18,11 @@ BASEUP_BIN_PATH="$BIN_DIR/baseup"
 DEFAULT_BINS=("base-reth-node" "basectl")
 SELECTED_BINS=()
 VERSION=""
+VERSION_EXPLICIT=0
 UPDATE_TMP_FILE=""
 MAIN_TMP_DIR=""
+UPDATE_CHECK_CACHE_FILE="$BASEUP_HOME/baseup-update-check"
+UPDATE_CHECK_TTL_SECONDS="${BASEUP_UPDATE_CHECK_TTL_SECONDS:-86400}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -37,6 +40,29 @@ warn() {
 error() {
     echo -e "${RED}error${NC}: $1"
     exit 1
+}
+
+ensure_dir() {
+    local dir="$1"
+    local env_name="$2"
+
+    if ! mkdir -p "$dir" 2>/dev/null; then
+        error "Failed to create $dir. Choose a user-writable $env_name."
+    fi
+}
+
+ensure_writable_destination() {
+    local dst="$1"
+    local parent
+
+    if [[ -e "$dst" ]]; then
+        [[ -w "$dst" ]] && return
+    else
+        parent="$(dirname "$dst")"
+        [[ -w "$parent" ]] && return
+    fi
+
+    error "Destination $dst is not writable. Choose a user-writable BASE_BIN_DIR."
 }
 
 array_contains() {
@@ -166,21 +192,83 @@ compute_sha256() {
     fi
 }
 
+fetch_remote_installer_version() {
+    local remote_script
+    local remote_version
+
+    remote_script="$(fetch_text "$BASEUP_BIN_URL" 2>/dev/null || true)"
+    if [[ -z "$remote_script" ]]; then
+        return 1
+    fi
+
+    remote_version="$(printf '%s\n' "$remote_script" | grep '^BASEUP_INSTALLER_VERSION=' | sed -E 's/BASEUP_INSTALLER_VERSION="(.+)"/\1/')"
+    if [[ -z "$remote_version" ]]; then
+        return 1
+    fi
+
+    echo "$remote_version"
+}
+
+load_cached_installer_version() {
+    local now
+    local ttl
+    local cached_at
+    local cached_version
+
+    now="$(date +%s)"
+    ttl="$UPDATE_CHECK_TTL_SECONDS"
+    case "$ttl" in
+        '' | *[!0-9]*)
+            ttl=86400
+            ;;
+    esac
+
+    [[ -f "$UPDATE_CHECK_CACHE_FILE" ]] || return 1
+
+    cached_at="$(sed -n '1p' "$UPDATE_CHECK_CACHE_FILE" 2>/dev/null)"
+    cached_version="$(sed -n '2p' "$UPDATE_CHECK_CACHE_FILE" 2>/dev/null)"
+
+    case "$cached_at" in
+        '' | *[!0-9]*)
+            return 1
+            ;;
+    esac
+
+    [[ -n "$cached_version" ]] || return 1
+
+    if (( now - cached_at < ttl )); then
+        echo "$cached_version"
+        return 0
+    fi
+
+    return 1
+}
+
+cache_installer_version() {
+    local checked_at="$1"
+    local remote_version="$2"
+
+    ensure_dir "$BASEUP_HOME" "BASEUP_HOME"
+    printf '%s\n%s\n' "$checked_at" "$remote_version" > "$UPDATE_CHECK_CACHE_FILE" 2>/dev/null || true
+}
+
 check_installer_up_to_date() {
     if ! can_download; then
         return
     fi
 
-    local remote_script
-    remote_script="$(fetch_text "$BASEUP_BIN_URL" 2>/dev/null || true)"
-    if [[ -z "$remote_script" ]]; then
-        return
-    fi
-
     local remote_version
-    remote_version="$(printf '%s\n' "$remote_script" | grep '^BASEUP_INSTALLER_VERSION=' | sed -E 's/BASEUP_INSTALLER_VERSION="(.+)"/\1/')"
-    if [[ -z "$remote_version" ]]; then
-        return
+    local checked_at
+
+    if remote_version="$(load_cached_installer_version)"; then
+        :
+    else
+        checked_at="$(date +%s)"
+        remote_version="$(fetch_remote_installer_version 2>/dev/null || true)"
+        if [[ -z "$remote_version" ]]; then
+            return
+        fi
+        cache_installer_version "$checked_at" "$remote_version"
     fi
 
     if version_gt "$remote_version" "$BASEUP_INSTALLER_VERSION"; then
@@ -193,7 +281,7 @@ check_installer_up_to_date() {
 }
 
 update_baseup() {
-    mkdir -p "$BIN_DIR"
+    ensure_dir "$BIN_DIR" "BASE_BIN_DIR"
 
     if ! can_download; then
         error "Neither curl nor wget found. Please install one of them."
@@ -217,14 +305,16 @@ update_baseup() {
         exit 0
     fi
 
+    ensure_writable_destination "$BASEUP_BIN_PATH"
+
     info "Updating baseup from $BASEUP_INSTALLER_VERSION to $remote_version..."
     if cp "$UPDATE_TMP_FILE" "$BASEUP_BIN_PATH" 2>/dev/null; then
         chmod 755 "$BASEUP_BIN_PATH"
-    elif sudo cp "$UPDATE_TMP_FILE" "$BASEUP_BIN_PATH" 2>/dev/null; then
-        sudo chmod 755 "$BASEUP_BIN_PATH"
     else
-        error "Failed to update baseup at $BASEUP_BIN_PATH. Try running with sudo."
+        error "Failed to update baseup at $BASEUP_BIN_PATH."
     fi
+
+    cache_installer_version "$(date +%s)" "$remote_version"
 
     echo ""
     info "baseup updated successfully to version $remote_version"
@@ -380,6 +470,8 @@ install_binary() {
     local destination="$BIN_DIR/$binary_name"
     local backup="$destination.old"
 
+    ensure_writable_destination "$destination"
+
     info "Installing $binary_name to $destination..."
     mv -f "$destination" "$backup" 2>/dev/null || true
 
@@ -389,14 +481,8 @@ install_binary() {
         return
     fi
 
-    if sudo cp "$src" "$destination" 2>/dev/null; then
-        sudo chmod 755 "$destination"
-        rm -f "$backup" 2>/dev/null || true
-        return
-    fi
-
     mv -f "$backup" "$destination" 2>/dev/null || true
-    error "Failed to install $binary_name to $destination. Try running with sudo."
+    error "Failed to install $binary_name to $destination."
 }
 
 usage() {
@@ -428,6 +514,7 @@ while [[ $# -gt 0 ]]; do
         -i | --install)
             [[ $# -ge 2 ]] || error "Missing value for $1"
             VERSION="$2"
+            VERSION_EXPLICIT=1
             shift 2
             ;;
         -b | --bin)
@@ -448,11 +535,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 main() {
-    check_installer_up_to_date
+    if [[ "$VERSION_EXPLICIT" -eq 0 ]]; then
+        check_installer_up_to_date
+    fi
 
     info "Installing Base release binaries..."
 
-    mkdir -p "$BIN_DIR"
+    ensure_dir "$BIN_DIR" "BASE_BIN_DIR"
 
     local platform
     local arch

@@ -30,16 +30,39 @@ error() {
     exit 1
 }
 
+ensure_writable_destination() {
+    local dst="$1"
+    local parent
+
+    if [[ -e "$dst" ]]; then
+        [[ -w "$dst" ]] && return
+    else
+        parent="$(dirname "$dst")"
+        [[ -w "$parent" ]] && return
+    fi
+
+    error "destination $dst is not writable; choose a user-writable BASE_BIN_DIR"
+}
+
 install_bin() {
     local src="$1"
     local dst="$2"
 
+    ensure_writable_destination "$dst"
+
     if cp "$src" "$dst" 2>/dev/null; then
         chmod +x "$dst"
-    elif sudo cp "$src" "$dst" 2>/dev/null; then
-        sudo chmod +x "$dst"
     else
-        error "failed to install to $dst; try running with sudo"
+        error "failed to install to $dst"
+    fi
+}
+
+ensure_dir() {
+    local dir="$1"
+    local env_name="$2"
+
+    if ! mkdir -p "$dir" 2>/dev/null; then
+        error "failed to create $dir; choose a user-writable $env_name"
     fi
 }
 
@@ -59,6 +82,7 @@ configure_shell() {
     local fish_source_line="source $ENV_FILE.fish"
     local shell_configs=()
     local cfg
+    local found_existing_config=0
 
     if [[ -n "${ZDOTDIR:-}" ]]; then
         shell_configs+=("$ZDOTDIR/.zshenv")
@@ -95,7 +119,10 @@ configure_shell() {
     local modified=0
 
     for cfg in "${unique_configs[@]}"; do
-        if [[ -f "$cfg" ]] && grep -qF "$ENV_FILE" "$cfg" 2>/dev/null; then
+        [[ -f "$cfg" ]] || continue
+        found_existing_config=1
+
+        if grep -qF "$ENV_FILE" "$cfg" 2>/dev/null; then
             continue
         fi
 
@@ -106,18 +133,24 @@ configure_shell() {
         modified=1
     done
 
-    local fish_config="${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/base.fish"
-    if [[ -d "$(dirname "$fish_config")" ]] || [[ "$(basename "$SHELL")" == "fish" ]]; then
-        if [[ ! -f "$fish_config" ]] || ! grep -qF "$ENV_FILE.fish" "$fish_config" 2>/dev/null; then
-            mkdir -p "$(dirname "$fish_config")"
-            printf '%s\n' "# Added by baseup installer" "$fish_source_line" > "$fish_config"
+    local fish_config="${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish"
+    if [[ -f "$fish_config" ]]; then
+        found_existing_config=1
+        if ! grep -qF "$ENV_FILE.fish" "$fish_config" 2>/dev/null; then
+            echo >> "$fish_config"
+            echo "# Added by baseup installer" >> "$fish_config"
+            echo "$fish_source_line" >> "$fish_config"
             info "Added Base to PATH in $fish_config"
             modified=1
         fi
     fi
 
     if [[ $modified -eq 0 ]]; then
-        info "Base is already configured in your shell"
+        if [[ $found_existing_config -eq 0 ]]; then
+            info "No existing shell config file found; leaving PATH unchanged"
+        else
+            info "Base is already configured in your shell"
+        fi
     fi
 }
 
@@ -127,8 +160,8 @@ main() {
     echo "Installing baseup..."
     echo ""
 
-    mkdir -p "$BASEUP_HOME"
-    mkdir -p "$BIN_DIR"
+    ensure_dir "$BASEUP_HOME" "BASEUP_HOME"
+    ensure_dir "$BIN_DIR" "BASE_BIN_DIR"
 
     INSTALL_TMP_FILE="$(mktemp 2>/dev/null || mktemp -t baseup)"
 

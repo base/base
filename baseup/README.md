@@ -41,6 +41,8 @@ By default, `baseup` installs every binary this repo publishes in GitHub release
 
 Default: `~/.base/bin`
 
+`baseup` installs only to user-writable directories and does not use `sudo`.
+
 Customize with:
 
 ```bash
