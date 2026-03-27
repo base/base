@@ -285,6 +285,7 @@ impl BuilderMetrics {
         }
     }
 
+    /// Records payload-builder simulation counters and histograms from a build attempt.
     pub fn set_payload_builder_metrics(
         &self,
         payload_transaction_simulation_time: impl IntoF64 + Copy,

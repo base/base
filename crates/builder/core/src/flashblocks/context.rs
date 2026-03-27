@@ -96,6 +96,7 @@ impl FlashblockSelectionOutcome {
     }
 }
 
+/// Per-flashblock counters for transaction selection, rejections, and fee bounds.
 #[derive(Debug, Default)]
 pub struct FlashblockDiagnostics {
     /// Whether the flashblock timer or block cancel fired during execution.
