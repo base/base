@@ -86,6 +86,14 @@ impl ConfirmerHandle {
     pub fn total_in_flight(&self) -> u64 {
         self.total_in_flight.load(Ordering::SeqCst)
     }
+
+    /// Returns the number of senders at or above the given in-flight limit.
+    pub fn senders_at_limit(&self, limit: u64) -> usize {
+        self.in_flight_per_sender
+            .values()
+            .filter(|c| c.load(Ordering::SeqCst) >= limit)
+            .count()
+    }
 }
 
 impl Confirmer {

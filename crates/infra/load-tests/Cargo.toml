@@ -26,6 +26,11 @@ base-tx-manager.workspace = true
 base-alloy-network.workspace = true
 base-alloy-rpc-types.workspace = true
 
+# display
+indicatif.workspace = true
+tracing-indicatif.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
+
 # misc
 url.workspace = true
 eyre.workspace = true

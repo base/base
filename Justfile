@@ -22,6 +22,11 @@ alias h := hack
 alias u := check-udeps
 alias wt := watch-test
 alias wc := watch-check
+alias ldc := load-test-devnet-continuous
+
+# Load test devnet in continuous mode (Ctrl-C to stop)
+load-test-devnet-continuous:
+    just load-test devnet-continuous
 
 # Default to display help menu
 default:

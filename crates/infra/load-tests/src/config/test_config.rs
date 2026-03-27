@@ -276,7 +276,7 @@ impl TestConfig {
 
         let rpc_url = self.rpc.clone();
 
-        let duration = self.parse_duration()?.unwrap_or_else(|| Duration::from_secs(30));
+        let duration = self.parse_duration()?;
 
         let transactions = if self.transactions.is_empty() {
             vec![TxConfig { weight: 100, tx_type: TxType::Transfer }]

@@ -12,5 +12,8 @@ pub use backoff::AdaptiveBackoff;
 mod confirmer;
 pub use confirmer::{Confirmer, ConfirmerHandle};
 
+mod status;
+pub use status::{DisplaySnapshot, LoadTestDisplay};
+
 mod load_runner;
 pub use load_runner::LoadRunner;

@@ -8,7 +8,7 @@ use std::{
 };
 
 use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256, utils::format_ether};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
@@ -21,7 +21,10 @@ type NonceProvider = RootProvider<Ethereum>;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, instrument, warn};
 
-use super::{AdaptiveBackoff, Confirmer, ConfirmerHandle, LoadConfig, RateLimiter, TxType};
+use super::{
+    AdaptiveBackoff, Confirmer, ConfirmerHandle, DisplaySnapshot, LoadConfig, LoadTestDisplay,
+    RateLimiter, TxType,
+};
 use crate::{
     BaselineError, Result,
     config::WorkloadConfig,
@@ -43,6 +46,9 @@ struct PreparedTx {
 
 const NONCE_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Warn when any account drops below 0.001 ETH.
+const LOW_BALANCE_THRESHOLD: u128 = 1_000_000_000_000_000;
+
 /// Executes load tests by generating and submitting transactions at a target rate.
 pub struct LoadRunner {
     config: LoadConfig,
@@ -54,6 +60,14 @@ pub struct LoadRunner {
     nonce_managers: HashMap<Address, NonceManager<NonceProvider>>,
     providers: HashMap<Address, WalletProvider>,
     gas_price: u128,
+    /// Optional live status display for TTY terminals.
+    display: Option<LoadTestDisplay>,
+    /// Last observed total ETH across all sender accounts (formatted).
+    last_total_eth: Option<String>,
+    /// Last observed minimum ETH in any single sender account (formatted).
+    last_min_eth: Option<String>,
+    /// Whether any account was below the low-balance threshold on the last check.
+    last_funds_low: bool,
 }
 
 impl LoadRunner {
@@ -102,6 +116,10 @@ impl LoadRunner {
             nonce_managers: HashMap::new(),
             providers,
             gas_price: 0,
+            display: None,
+            last_total_eth: None,
+            last_min_eth: None,
+            last_funds_low: false,
         })
     }
 
@@ -336,7 +354,7 @@ impl LoadRunner {
     }
 
     /// Runs the load test and returns metrics summary.
-    #[instrument(skip(self), fields(target_gps = self.config.target_gps, duration = ?self.config.duration))]
+    #[instrument(skip(self), fields(target_gps = self.config.target_gps, continuous = self.config.duration.is_none(), duration = ?self.config.duration))]
     pub async fn run(&mut self) -> Result<MetricsSummary> {
         self.collector.reset();
         self.collector.start();
@@ -409,11 +427,21 @@ impl LoadRunner {
         let mut last_gas_price_refresh = Instant::now();
         let mut last_rate_limiter_update = Instant::now();
         let mut last_progress_report = Instant::now();
+        let mut last_balance_check = Instant::now();
         const GAS_PRICE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
         const RATE_LIMITER_UPDATE_INTERVAL: Duration = Duration::from_secs(10);
         const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
+        const DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
+        const BALANCE_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 
-        while start.elapsed() < self.config.duration && !self.stop_flag.load(Ordering::SeqCst) {
+        let use_live_display =
+            self.display.as_ref().is_some_and(|d| d.is_active());
+
+        self.check_account_balances().await;
+
+        while self.config.duration.is_none_or(|d| start.elapsed() < d)
+            && !self.stop_flag.load(Ordering::SeqCst)
+        {
             if last_gas_price_refresh.elapsed() >= GAS_PRICE_REFRESH_INTERVAL {
                 if let Ok(new_price) = self.client.get_gas_price().await
                     && new_price != self.gas_price
@@ -483,13 +511,59 @@ impl LoadRunner {
                 debug!(submitted, "batch submitted");
             }
 
-            if last_progress_report.elapsed() >= PROGRESS_REPORT_INTERVAL {
+            if last_balance_check.elapsed() >= BALANCE_CHECK_INTERVAL {
+                self.check_account_balances().await;
+                last_balance_check = Instant::now();
+            }
+
+            // Drain confirmed metrics non-blocking so the rolling window stays
+            // current during the run (not just during the post-run drain).
+            while let Ok(metrics) = metrics_rx.try_recv() {
+                self.collector.record_confirmed(metrics);
+            }
+
+            if use_live_display {
+                if last_progress_report.elapsed() >= DISPLAY_RENDER_INTERVAL {
+                    let (p50, p99) = self.collector.rolling_p50_p99();
+                    let snap = DisplaySnapshot {
+                        elapsed: start.elapsed(),
+                        duration: self.config.duration,
+                        submitted: self.collector.submitted_count(),
+                        confirmed: self.collector.confirmed_count(),
+                        failed: self.collector.failed_count(),
+                        in_flight: confirmer_handle.total_in_flight(),
+                        senders_blocked: confirmer_handle
+                            .senders_at_limit(max_in_flight_per_sender),
+                        total_senders: account_count,
+                        rolling_tps: self.collector.rolling_tps(),
+                        rolling_gps: self.collector.rolling_gps(),
+                        p50_latency: p50,
+                        p99_latency: p99,
+                        gas_price_gwei: self.gas_price as f64 / 1e9,
+                        total_eth: self.last_total_eth.clone(),
+                        min_eth: self.last_min_eth.clone(),
+                        funds_low: self.last_funds_low,
+                    };
+                    self.display.as_ref().unwrap().update(&snap);
+                    last_progress_report = Instant::now();
+                }
+            } else if last_progress_report.elapsed() >= PROGRESS_REPORT_INTERVAL {
                 let elapsed_secs = start.elapsed().as_secs();
                 let submitted = self.collector.submitted_count();
                 let confirmed = self.collector.confirmed_count();
                 let failed = self.collector.failed_count();
                 let in_flight = confirmer_handle.total_in_flight();
-                info!(elapsed_secs, submitted, confirmed, failed, in_flight, "progress");
+                let senders_blocked = confirmer_handle.senders_at_limit(max_in_flight_per_sender);
+                info!(
+                    elapsed_secs,
+                    submitted,
+                    confirmed,
+                    failed,
+                    in_flight,
+                    senders_blocked,
+                    gas_price = self.gas_price,
+                    "progress"
+                );
                 last_progress_report = Instant::now();
             }
         }
@@ -501,6 +575,10 @@ impl LoadRunner {
         }
 
         self.stop_flag.store(true, Ordering::SeqCst);
+
+        if let Some(display) = &self.display {
+            display.finish();
+        }
 
         let submitted = self.collector.submitted_count();
         let in_flight = confirmer_handle.total_in_flight();
@@ -767,6 +845,54 @@ impl LoadRunner {
         Ok(total_drained)
     }
 
+    /// Checks account balances, stores the results for the live display, and
+    /// logs a warning when any account is running low.
+    async fn check_account_balances(&mut self) {
+        let mut total = U256::ZERO;
+        let mut min = U256::MAX;
+        let mut below_threshold = 0usize;
+
+        for account in self.accounts.accounts() {
+            match self.client.get_balance(account.address).await {
+                Ok(balance) => {
+                    total = total.saturating_add(balance);
+                    if balance < min {
+                        min = balance;
+                    }
+                    if balance < U256::from(LOW_BALANCE_THRESHOLD) {
+                        below_threshold += 1;
+                    }
+                }
+                Err(e) => {
+                    warn!(address = %account.address, error = %e, "failed to check account balance");
+                }
+            }
+        }
+
+        if min == U256::MAX {
+            return;
+        }
+
+        self.last_total_eth = Some(format_ether(total));
+        self.last_min_eth = Some(format_ether(min));
+        self.last_funds_low = below_threshold > 0;
+
+        if below_threshold > 0 {
+            warn!(
+                total_eth = %format_ether(total),
+                min_eth = %format_ether(min),
+                accounts_low = below_threshold,
+                "account funds running low"
+            );
+        } else {
+            info!(
+                total_eth = %format_ether(total),
+                min_eth = %format_ether(min),
+                "account balances"
+            );
+        }
+    }
+
     /// Signals the load test to stop.
     pub fn stop(&self) {
         self.stop_flag.store(true, Ordering::SeqCst);
@@ -780,6 +906,14 @@ impl LoadRunner {
     /// Returns the load configuration.
     pub const fn config(&self) -> &LoadConfig {
         &self.config
+    }
+
+    /// Attaches a live progress-bar display.
+    ///
+    /// When set and stdout is a TTY, the runner updates the indicatif bars
+    /// every 500 ms instead of emitting 5-second progress log lines.
+    pub fn set_display(&mut self, display: LoadTestDisplay) {
+        self.display = Some(display);
     }
 }
 
