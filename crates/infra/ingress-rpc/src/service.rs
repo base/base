@@ -24,7 +24,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     Config, TxSubmissionMethod,
-    metrics::{Metrics, record_histogram},
+    metrics::Metrics,
     queue::{BundleQueuePublisher, MessageQueue},
 };
 
@@ -55,7 +55,6 @@ pub struct IngressService<Q: MessageQueue> {
     bundle_queue_publisher: BundleQueuePublisher<Q>,
     audit_channel: mpsc::UnboundedSender<BundleEvent>,
     send_transaction_default_lifetime_seconds: u64,
-    metrics: Metrics,
     block_time_milliseconds: u64,
     meter_bundle_timeout_ms: u64,
     builder_tx: broadcast::Sender<MeterBundleResponse>,
@@ -98,7 +97,6 @@ impl<Q: MessageQueue> IngressService<Q> {
             audit_channel,
             send_transaction_default_lifetime_seconds: config
                 .send_transaction_default_lifetime_seconds,
-            metrics: Metrics::default(),
             block_time_milliseconds: config.block_time_milliseconds,
             meter_bundle_timeout_ms: config.meter_bundle_timeout_ms,
             builder_tx,
@@ -114,7 +112,7 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
         let start = Instant::now();
         let transaction = self.get_tx(&data).await?;
 
-        self.metrics.transactions_received.increment(1);
+        Metrics::transactions_received().increment(1);
 
         let send_to_kafka = matches!(
             self.tx_submission_method,
@@ -127,7 +125,7 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
 
         // Forward before metering
         if let Some(forward_provider) = self.raw_tx_forward_provider.clone() {
-            self.metrics.raw_tx_forwards_total.increment(1);
+            Metrics::raw_tx_forwards_total().increment(1);
             let tx_data = data.clone();
             let tx_hash = transaction.tx_hash();
             tokio::spawn(async move {
@@ -167,7 +165,7 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
             );
         } else {
             self.bundle_cache.insert(*bundle_hash, ()).await;
-            self.metrics.bundles_parsed.increment(1);
+            Metrics::bundles_parsed().increment(1);
 
             let meter_bundle_response = match self.meter_bundle(&bundle, bundle_hash).await {
                 Ok(response) => {
@@ -185,9 +183,9 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
             };
 
             if let Some(meter_info) = meter_bundle_response.as_ref() {
-                self.metrics.successful_simulations.increment(1);
+                Metrics::successful_simulations().increment(1);
                 // Update the current size of the `builder_tx` channel captured right before sending to the builder
-                self.metrics.buffered_meter_bundle_responses_size.set(self.builder_tx.len() as f64);
+                Metrics::buffered_meter_bundle_responses_size().set(self.builder_tx.len() as f64);
                 if self.send_to_builder {
                     match self.builder_tx.send(meter_info.clone()) {
                         Ok(n) => debug!(
@@ -203,7 +201,7 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
                     }
                 }
             } else {
-                self.metrics.failed_simulations.increment(1);
+                Metrics::failed_simulations().increment(1);
             }
 
             let accepted_bundle =
@@ -216,7 +214,7 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
                     warn!(message = "Failed to publish Queue::enqueue_bundle", bundle_hash = %bundle_hash, error = %e);
                 }
 
-                self.metrics.sent_to_kafka.increment(1);
+                Metrics::sent_to_kafka().increment(1);
                 info!(message="queued singleton bundle", txn_hash=%transaction.tx_hash());
             }
 
@@ -225,7 +223,7 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
                     self.mempool_provider.send_raw_transaction(data.iter().as_slice()).await;
                 match response {
                     Ok(_) => {
-                        self.metrics.sent_to_mempool.increment(1);
+                        Metrics::sent_to_mempool().increment(1);
                         debug!(message = "sent transaction to the mempool", hash=%transaction.tx_hash());
                     }
                     Err(e) => {
@@ -243,7 +241,7 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
             self.send_audit_event(&accepted_bundle, accepted_bundle.bundle_hash());
         }
 
-        self.metrics.send_raw_transaction_duration.record(start.elapsed().as_secs_f64());
+        Metrics::send_raw_transaction_duration().record(start.elapsed().as_secs_f64());
 
         Ok(transaction.tx_hash())
     }
@@ -291,13 +289,13 @@ impl<Q: MessageQueue> IngressService<Q> {
         })?
         .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
 
-        record_histogram(start.elapsed(), "base_meterBundle".to_string());
+        Metrics::rpc_latency("base_meterBundle").record(start.elapsed().as_secs_f64());
 
         // we can save some builder payload building computation by not including bundles
         // that we know will take longer than the block time to execute
         let total_execution_time = (res.total_execution_time_us / 1_000) as u64;
         if total_execution_time > self.block_time_milliseconds {
-            self.metrics.bundles_exceeded_metering_time.increment(1);
+            Metrics::bundles_exceeded_metering_time().increment(1);
             return Err(
                 EthApiError::InvalidParams("Bundle simulation took too long".into()).into_rpc_err()
             );

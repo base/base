@@ -6,7 +6,7 @@ pub use health::HealthServer;
 
 /// Prometheus metrics for the ingress RPC service.
 mod metrics;
-pub use metrics::{Metrics, record_histogram};
+pub use metrics::Metrics;
 
 /// Kafka message queue publishing.
 mod queue;

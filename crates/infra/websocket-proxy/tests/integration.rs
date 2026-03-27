@@ -18,7 +18,7 @@ use tokio::{
 use tokio_tungstenite::connect_async;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
-use websocket_proxy::{Authentication, InMemoryRateLimit, Metrics, Registry, Server};
+use websocket_proxy::{Authentication, InMemoryRateLimit, Registry, Server};
 
 struct TestHarness {
     received_messages: Arc<Mutex<HashMap<usize, Vec<String>>>>,
@@ -43,15 +43,8 @@ impl TestHarness {
 
     fn new_with_auth(addr: SocketAddr, auth: Option<Authentication>) -> Self {
         let (sender, _) = broadcast::channel(5);
-        let metrics = Arc::new(Metrics::default());
-        let registry = Registry::new(
-            sender.clone(),
-            Arc::clone(&metrics),
-            false,
-            false,
-            120000,
-            Duration::from_millis(1000),
-        );
+        let registry =
+            Registry::new(sender.clone(), false, false, 120000, Duration::from_millis(1000));
         let rate_limited = Arc::new(InMemoryRateLimit::new(3, 10));
 
         Self {
@@ -59,15 +52,7 @@ impl TestHarness {
             clients_failed_to_connect: Arc::new(Mutex::new(HashMap::new())),
             current_client_id: 0,
             cancel_token: CancellationToken::new(),
-            server: Server::new(
-                addr,
-                registry,
-                metrics,
-                rate_limited,
-                auth,
-                "header".to_string(),
-                false,
-            ),
+            server: Server::new(addr, registry, rate_limited, auth, "header".to_string(), false),
             server_addr: addr,
             client_id_to_handle: HashMap::new(),
             sender,
@@ -373,15 +358,7 @@ async fn test_ping_timeout_disconnects_client() {
     let addr = TestHarness::alloc_port().await;
 
     let (sender, _) = broadcast::channel(5);
-    let metrics = Arc::new(Metrics::default());
-    let registry = Registry::new(
-        sender.clone(),
-        Arc::clone(&metrics),
-        false,
-        true,
-        1000,
-        Duration::from_millis(1000),
-    );
+    let registry = Registry::new(sender.clone(), false, true, 1000, Duration::from_millis(1000));
     let rate_limited = Arc::new(InMemoryRateLimit::new(3, 10));
 
     let mut harness = TestHarness {
@@ -389,15 +366,7 @@ async fn test_ping_timeout_disconnects_client() {
         clients_failed_to_connect: Arc::new(Mutex::new(HashMap::new())),
         current_client_id: 0,
         cancel_token: CancellationToken::new(),
-        server: Server::new(
-            addr,
-            registry,
-            metrics,
-            rate_limited,
-            None,
-            "header".to_string(),
-            false,
-        ),
+        server: Server::new(addr, registry, rate_limited, None, "header".to_string(), false),
         server_addr: addr,
         client_id_to_handle: HashMap::new(),
         sender,

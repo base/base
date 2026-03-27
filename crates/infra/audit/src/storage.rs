@@ -218,13 +218,12 @@ pub trait BundleEventS3Reader {
 pub struct S3EventReaderWriter {
     s3_client: S3Client,
     bucket: String,
-    metrics: Metrics,
 }
 
 impl S3EventReaderWriter {
     /// Creates a new S3 event reader/writer.
-    pub fn new(s3_client: S3Client, bucket: String) -> Self {
-        Self { s3_client, bucket, metrics: Metrics::default() }
+    pub const fn new(s3_client: S3Client, bucket: String) -> Self {
+        Self { s3_client, bucket }
     }
 
     async fn update_bundle_history(&self, event: Event) -> Result<()> {
@@ -261,7 +260,7 @@ impl S3EventReaderWriter {
         for attempt in 0..MAX_RETRIES {
             let get_start = Instant::now();
             let (current_value, etag) = self.get_object_with_etag::<T>(key).await?;
-            self.metrics.s3_get_duration.record(get_start.elapsed().as_secs_f64());
+            Metrics::s3_get_duration().record(get_start.elapsed().as_secs_f64());
 
             let value = current_value.unwrap_or_default();
 
@@ -285,7 +284,7 @@ impl S3EventReaderWriter {
                     let put_start = Instant::now();
                     match put_request.send().await {
                         Ok(_) => {
-                            self.metrics.s3_put_duration.record(put_start.elapsed().as_secs_f64());
+                            Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
                             info!(
                                 s3_key = %key,
                                 attempt = attempt + 1,
@@ -294,7 +293,7 @@ impl S3EventReaderWriter {
                             return Ok(());
                         }
                         Err(e) => {
-                            self.metrics.s3_put_duration.record(put_start.elapsed().as_secs_f64());
+                            Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
 
                             if attempt < MAX_RETRIES - 1 {
                                 let delay = BASE_DELAY_MS * 2_u64.pow(attempt as u32);
@@ -315,7 +314,7 @@ impl S3EventReaderWriter {
                     }
                 }
                 None => {
-                    self.metrics.s3_writes_skipped.increment(1);
+                    Metrics::s3_writes_skipped().increment(1);
                     info!(
                         s3_key = %key,
                         "Transform function returned None, no write required"
@@ -381,8 +380,8 @@ impl EventWriter for S3EventReaderWriter {
         // Run the bundle and transaction futures concurrently and wait for them to complete
         tokio::try_join!(bundle_future, future::try_join_all(tx_futures))?;
 
-        self.metrics.update_bundle_history_duration.record(bundle_start.elapsed().as_secs_f64());
-        self.metrics.update_tx_indexes_duration.record(tx_start.elapsed().as_secs_f64());
+        Metrics::update_bundle_history_duration().record(bundle_start.elapsed().as_secs_f64());
+        Metrics::update_tx_indexes_duration().record(tx_start.elapsed().as_secs_f64());
 
         Ok(())
     }

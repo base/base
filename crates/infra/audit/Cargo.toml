@@ -12,11 +12,10 @@ workspace = true
 
 [dependencies]
 bytes.workspace = true
-metrics.workspace = true
-futures = { workspace = true }
+futures.workspace = true
 base-bundles.workspace = true
 async-trait.workspace = true
-metrics-derive.workspace = true
+base-metrics = { workspace = true, features = ["metrics"] }
 tokio = { workspace = true, features = ["full"] }
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }

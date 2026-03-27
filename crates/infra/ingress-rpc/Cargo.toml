@@ -12,16 +12,15 @@ workspace = true
 
 [dependencies]
 url.workspace = true
-metrics.workspace = true
 base-revm.workspace = true
 base-bundles.workspace = true
 async-trait.workspace = true
-metrics-derive.workspace = true
 alloy-signer-local.workspace = true
 base-execution-evm.workspace = true
 base-alloy-network.workspace = true
 audit-archiver-lib.workspace = true
 reth-rpc-eth-types.workspace = true
+base-metrics = { workspace = true, features = ["metrics"] }
 tracing = { workspace = true, features = ["std"] }
 uuid = { workspace = true, features = ["v5"] }
 serde_json = { workspace = true, features = ["std"] }
