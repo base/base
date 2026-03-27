@@ -71,12 +71,6 @@ base_metrics::define_metrics_struct! {
 /// [`WebSocketPublisher::new`](crate::WebSocketPublisher::new).
 pub struct PublishingMetrics;
 
-impl Default for PublishingMetrics {
-    fn default() -> Self {
-        Self
-    }
-}
-
 impl Debug for PublishingMetrics {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PublishingMetrics").finish_non_exhaustive()
