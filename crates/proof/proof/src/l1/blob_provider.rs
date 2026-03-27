@@ -92,8 +92,7 @@ impl<T: CommsClient> OracleBlobProvider<T> {
                 .map_err(|e| OracleProviderError::BlobVerification(e.to_string()))?;
             if computed.as_slice() != commitment {
                 return Err(OracleProviderError::BlobVerification(alloc::format!(
-                    "commitment mismatch for blob {}",
-                    blob_hash
+                    "commitment mismatch for blob {blob_hash}"
                 )));
             }
         }
