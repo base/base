@@ -91,4 +91,4 @@ reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["test-util"] }
 
 [features]
-metrics = [ "base-metrics/metrics", "dep:metrics" ]
+metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]

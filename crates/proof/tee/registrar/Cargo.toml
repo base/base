@@ -64,5 +64,5 @@ k256 = { workspace = true, features = ["ecdsa"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 [features]
-metrics = [ "base-metrics/metrics", "dep:metrics" ]
+metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]
 

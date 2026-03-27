@@ -18,7 +18,8 @@ thiserror = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
-base-metrics = { workspace = true, features = ["metrics"] }
+base-metrics.workspace = true
+metrics = { workspace = true, optional = true }
 rand = { workspace = true, features = ["std", "small_rng"] }
 base-alloy-consensus = { workspace = true, features = ["std"] }
 base-consensus-genesis = { workspace = true, features = ["std"] }
@@ -26,3 +27,6 @@ base-consensus-genesis = { workspace = true, features = ["std"] }
 [dev-dependencies]
 alloy-consensus = { workspace = true, features = ["std"] }
 rstest.workspace = true
+
+[features]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]

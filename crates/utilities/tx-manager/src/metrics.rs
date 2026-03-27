@@ -128,14 +128,6 @@ impl BaseTxMetrics {
         TxManagerMetrics::describe();
         Self { name }
     }
-
-    /// Register human-readable descriptions for all tx-manager metrics.
-    ///
-    /// Called automatically by [`new`](Self::new). Descriptions are idempotent
-    /// — calling this multiple times is safe.
-    pub fn describe() {
-        TxManagerMetrics::describe();
-    }
 }
 
 impl TxMetrics for BaseTxMetrics {
@@ -202,12 +194,6 @@ mod tests {
         m.record_rpc_error();
         m.record_tx_confirmed();
         m.record_tx_failed();
-    }
-
-    #[test]
-    fn describe_is_idempotent() {
-        BaseTxMetrics::describe();
-        BaseTxMetrics::describe();
     }
 
     #[test]

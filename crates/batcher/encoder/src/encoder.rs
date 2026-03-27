@@ -203,7 +203,8 @@ impl BatchEncoder {
                     // `ready_channels`, where it can never be confirmed and never removed,
                     // leaking memory and growing the O(N) scan in `next_submission`.
                     // Emit a closed counter to keep opened/closed balanced.
-                    BatcherMetrics::channel_closed_total(BatcherMetrics::REASON_DISCARD).increment(1);
+                    BatcherMetrics::channel_closed_total(BatcherMetrics::REASON_DISCARD)
+                        .increment(1);
                     self.current_channel = None;
                 }
             }

@@ -138,9 +138,9 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                 frame_bytes = %frame_bytes,
                 "submitting packed batch frames to L1"
             );
-            BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_SUBMITTED).increment(ids.len() as u64);
-            BatcherMetrics::da_bytes_submitted_total(da_type_label)
-                .increment(frame_bytes as u64);
+            BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_SUBMITTED)
+                .increment(ids.len() as u64);
+            BatcherMetrics::da_bytes_submitted_total(da_type_label).increment(frame_bytes as u64);
             BatcherMetrics::in_flight_submissions().increment(1.0);
             let handle = self.tx_manager.send_async(candidate).await;
             let fut: Pin<Box<dyn Future<Output = (Vec<SubmissionId>, TxOutcome)> + Send>> =
@@ -206,7 +206,8 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                     pipeline.confirm(*id, l1_block);
                 }
                 pipeline.advance_l1_head(l1_block);
-                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_CONFIRMED).increment(ids.len() as u64);
+                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_CONFIRMED)
+                    .increment(ids.len() as u64);
                 info!(submissions = %ids.len(), l1_block = %l1_block, "submission confirmed on L1");
             }
             TxOutcome::Failed => {
@@ -214,7 +215,8 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                 for id in ids {
                     pipeline.requeue(id);
                 }
-                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_FAILED).increment(count as u64);
+                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_FAILED)
+                    .increment(count as u64);
                 warn!(submissions = %count, "submission failed, requeued for retry");
             }
             TxOutcome::TxpoolBlocked => {
@@ -223,7 +225,8 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                     pipeline.requeue(id);
                 }
                 self.txpool_blocked = true;
-                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_REQUEUED).increment(count as u64);
+                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_REQUEUED)
+                    .increment(count as u64);
                 warn!(submissions = %count, "submission blocked by txpool nonce slot, requeued");
             }
         }

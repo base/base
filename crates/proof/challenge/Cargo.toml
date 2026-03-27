@@ -88,5 +88,5 @@ tokio = { workspace = true, features = ["test-util"] }
 base-challenger = { path = ".", features = ["test-utils"] }
 
 [features]
-metrics = [ "base-metrics/metrics", "dep:metrics" ]
+metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]
 test-utils = [ "base-protocol/test-utils", "serde_json" ]
