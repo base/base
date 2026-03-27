@@ -96,14 +96,13 @@ impl Metrics {
 ///
 /// Use [`set_outcome`](Self::set_outcome) on the success/error path to
 /// override the default before the guard drops.
+///
+/// Prefer the [`proof_guard!`] macro to construct this type.
 #[cfg(feature = "metrics")]
 pub struct ProofGuard {
+    _inflight: base_metrics::InflightCounter,
     outcome: &'static str,
 }
-
-/// No-op guard used when the `metrics` feature is disabled.
-#[cfg(not(feature = "metrics"))]
-pub struct ProofGuard;
 
 #[cfg(feature = "metrics")]
 impl std::fmt::Debug for ProofGuard {
@@ -112,34 +111,15 @@ impl std::fmt::Debug for ProofGuard {
     }
 }
 
-#[cfg(not(feature = "metrics"))]
-impl std::fmt::Debug for ProofGuard {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ProofGuard").finish()
-    }
-}
-
-#[cfg(feature = "metrics")]
-impl Default for ProofGuard {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(not(feature = "metrics"))]
-impl Default for ProofGuard {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(feature = "metrics")]
 impl ProofGuard {
-    /// Creates a new guard. Prefer the [`proof_guard!`] macro.
+    /// Creates a new guard that increments the in-flight gauge.
     #[inline]
     pub fn new() -> Self {
-        Metrics::in_flight_proofs().increment(1);
-        Self { outcome: Metrics::OUTCOME_DROPPED }
+        Self {
+            _inflight: base_metrics::InflightCounter::new(Metrics::in_flight_proofs()),
+            outcome: Metrics::OUTCOME_DROPPED,
+        }
     }
 
     /// Overrides the outcome that will be recorded when this guard drops.
@@ -149,28 +129,25 @@ impl ProofGuard {
     }
 }
 
-#[cfg(not(feature = "metrics"))]
-impl ProofGuard {
-    /// Creates a no-op guard.
-    #[inline]
-    pub const fn new() -> Self {
-        Self
-    }
-
-    /// No-op.
-    #[inline]
-    pub const fn set_outcome(&mut self, _outcome: &'static str) {}
-}
-
 #[cfg(feature = "metrics")]
 impl Drop for ProofGuard {
     fn drop(&mut self) {
-        Metrics::in_flight_proofs().decrement(1.0);
         Metrics::requests_result_total(self.outcome).increment(1);
     }
 }
 
-/// Creates a [`ProofGuard`] that tracks an in-flight proof.
+/// No-op guard used when the `metrics` feature is disabled.
+#[derive(Debug)]
+pub struct NoopProofGuard;
+
+impl NoopProofGuard {
+    /// No-op.
+    #[inline(always)]
+    pub const fn set_outcome(&mut self, _outcome: &'static str) {}
+}
+
+/// Creates a [`ProofGuard`] that tracks an in-flight proof, or a
+/// [`NoopProofGuard`] when the `metrics` feature is disabled.
 ///
 /// # Examples
 ///
@@ -188,9 +165,10 @@ macro_rules! proof_guard {
         }
         #[cfg(not(feature = "metrics"))]
         {
-            $crate::ProofGuard::new()
+            $crate::NoopProofGuard
         }
     }};
 }
 
 pub(crate) use proof_guard;
+

@@ -30,7 +30,9 @@ mod backend;
 pub use backend::{OfflineHostBackend, OnlineHostBackend};
 
 mod metrics;
-pub use metrics::{Metrics, ProofGuard};
+pub use metrics::{Metrics, NoopProofGuard};
+#[cfg(feature = "metrics")]
+pub use metrics::ProofGuard;
 
 mod service;
 pub use service::{ProverError, ProverService};
