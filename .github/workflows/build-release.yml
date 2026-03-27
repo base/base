@@ -56,6 +56,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libclang-dev pkg-config
 
+      - name: Install lld linker (macOS)
+        if: matrix.target.os == 'macos'
+        run: |
+          # llvm@15 is pre-installed on GH runners and includes ld64.lld.
+          # Create a symlink so .cargo/config.toml's /opt/homebrew/opt/lld/ path resolves.
+          LLD_BIN="$(brew --prefix llvm@15)/bin/ld64.lld"
+          if [ -x "$LLD_BIN" ]; then
+            sudo mkdir -p /opt/homebrew/opt/lld/bin
+            sudo ln -sf "$LLD_BIN" /opt/homebrew/opt/lld/bin/ld64.lld
+          else
+            brew install lld
+          fi
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
 
