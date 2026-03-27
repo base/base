@@ -264,8 +264,6 @@ where
 
     #[instrument(skip_all)]
     async fn tick(&self, state: &mut PipelineState) -> Result<()> {
-        let _tick_timer = base_metrics::timed!(Metrics::tick_duration_seconds());
-
         if !self.is_v1_hardfork_active() {
             debug!(
                 v1_hardfork_timestamp = self.config.v1_hardfork_timestamp,
@@ -273,6 +271,8 @@ where
             );
             return Ok(());
         }
+
+        let _tick_timer = base_metrics::timed!(Metrics::tick_duration_seconds());
 
         if let Some((recovered, safe_head)) =
             self.try_recover_and_plan(&mut state.cached_recovery).await
