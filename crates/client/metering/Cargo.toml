@@ -48,8 +48,8 @@ base-alloy-consensus.workspace = true
 base-alloy-flz.workspace = true
 
 # metrics
-metrics.workspace = true
-metrics-derive.workspace = true
+metrics = { workspace = true, optional = true }
+base-metrics.workspace = true
 
 # misc
 eyre.workspace = true
@@ -92,3 +92,7 @@ base-alloy-rpc-types.workspace = true
 url.workspace = true
 rand.workspace = true
 serde_json.workspace = true
+
+[features]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]

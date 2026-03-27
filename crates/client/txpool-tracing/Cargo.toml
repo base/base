@@ -34,8 +34,8 @@ tokio-stream.workspace = true
 # misc
 lru.workspace = true
 chrono.workspace = true
-metrics.workspace = true
-metrics-derive.workspace = true
+metrics = { workspace = true, optional = true }
+base-metrics.workspace = true
 tracing = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["display"] }
 
@@ -61,3 +61,7 @@ base-alloy-consensus.workspace = true
 
 # misc
 eyre.workspace = true
+
+[features]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]

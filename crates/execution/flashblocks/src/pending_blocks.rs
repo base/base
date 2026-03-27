@@ -26,7 +26,9 @@ use revm::{
     state::EvmState,
 };
 
-use crate::{BuildError, Metrics, PendingBlocksAPI, StateProcessorError, TransactionWithLogs};
+use crate::{
+    BuildError, PendingBlocksAPI, StateProcessorError, TransactionWithLogs, metrics::Metrics,
+};
 
 /// Builder for [`PendingBlocks`].
 #[derive(Debug)]
@@ -286,12 +288,11 @@ impl PendingBlocks {
     /// storage slots modified in the flashblock. Monitor `bundle_state_clone_duration` and
     /// `bundle_state_clone_size` metrics to track if this becomes a bottleneck.
     pub fn get_bundle_state(&self) -> BundleState {
-        let metrics = Metrics::default();
         let size = self.bundle_state.state.len();
         let start = Instant::now();
         let cloned = self.bundle_state.clone();
-        metrics.bundle_state_clone_duration.record(start.elapsed());
-        metrics.bundle_state_clone_size.record(size as f64);
+        Metrics::bundle_state_clone_duration().record(start.elapsed());
+        Metrics::bundle_state_clone_size().record(size as f64);
         cloned
     }
 

@@ -23,19 +23,18 @@ use crate::{metrics::Metrics, transaction::validate_tx};
 pub(crate) fn compute_pending_trie_input<SP>(
     state_provider: &SP,
     hashed_state: HashedPostState,
-    metrics: &Metrics,
 ) -> EyreResult<PendingTrieInput>
 where
     SP: reth_provider::StateProvider + ?Sized,
 {
-    metrics.pending_trie_cache_misses.increment(1);
+    Metrics::pending_trie_cache_misses().increment(1);
     let start = Instant::now();
 
     let (_state_root, trie_updates) =
         state_provider.state_root_with_updates(hashed_state.clone())?;
 
     let elapsed = start.elapsed();
-    metrics.pending_trie_compute_duration.record(elapsed.as_secs_f64());
+    Metrics::pending_trie_compute_duration().record(elapsed.as_secs_f64());
 
     Ok(PendingTrieInput { trie_updates, hashed_state })
 }
@@ -131,18 +130,20 @@ where
 
     // Get pending trie input before starting timers. This ensures we only measure
     // the bundle's incremental I/O cost, not I/O from pending flashblocks.
-    let metrics = Metrics::default();
     let pending_trie = pending_state
         .as_ref()
         .map(|ps| -> EyreResult<PendingTrieInput> {
             // Use cached trie input if available, otherwise compute it
-            if let Some(ref cached) = ps.trie_input {
-                metrics.pending_trie_cache_hits.increment(1);
-                Ok(cached.clone())
-            } else {
-                let hashed = state_provider.hashed_post_state(&ps.bundle_state);
-                compute_pending_trie_input(&state_provider, hashed, &metrics)
-            }
+            ps.trie_input.as_ref().map_or_else(
+                || {
+                    let hashed = state_provider.hashed_post_state(&ps.bundle_state);
+                    compute_pending_trie_input(&state_provider, hashed)
+                },
+                |cached| {
+                    Metrics::pending_trie_cache_hits().increment(1);
+                    Ok(cached.clone())
+                },
+            )
         })
         .transpose()?;
 
@@ -295,11 +296,11 @@ where
     // Gets the number of storage slots modified from every account
     let storage_slots_modified: usize =
         bundle_update.state().values().map(|account| account.storage.len()).sum();
-    metrics.storage_slots_modified.record(storage_slots_modified as f64);
+    Metrics::storage_slots_modified().record(storage_slots_modified as f64);
 
     // Gets the number of accounts modified
     let accounts_modified: usize = bundle_update.state().len();
-    metrics.accounts_modified.record(accounts_modified as f64);
+    Metrics::accounts_modified().record(accounts_modified as f64);
 
     let state_provider = db.database.as_ref();
 
@@ -1068,7 +1069,7 @@ mod tests {
             .state_by_block_hash(latest.hash())
             .context("getting state provider for trie")?;
         let hashed = state_provider.hashed_post_state(&bundle_state);
-        let trie_input = compute_pending_trie_input(&state_provider, hashed, &Metrics::default())?;
+        let trie_input = compute_pending_trie_input(&state_provider, hashed)?;
         drop(state_provider);
 
         let pending_state = PendingState { bundle_state, trie_input: Some(trie_input) };

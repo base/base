@@ -2,17 +2,23 @@
 
 use alloy_eips::BlockId;
 use base_execution_trie::{OpProofsStorage, OpProofsStore, provider::OpProofsStateProviderRef};
-use derive_more::Constructor;
 use jsonrpsee_types::error::ErrorObject;
 use reth_provider::{BlockIdReader, ProviderError, ProviderResult, StateProvider};
 use reth_rpc_api::eth::helpers::FullEthApi;
 use reth_rpc_eth_types::EthApiError;
 
 /// Creates a factory for state providers using OP Proofs external proofs storage.
-#[derive(Debug, Constructor)]
+#[derive(Debug)]
 pub struct OpStateProviderFactory<Eth, P> {
     eth_api: Eth,
     preimage_store: OpProofsStorage<P>,
+}
+
+impl<Eth, P> OpStateProviderFactory<Eth, P> {
+    /// Creates a new state provider factory.
+    pub const fn new(eth_api: Eth, preimage_store: OpProofsStorage<P>) -> Self {
+        Self { eth_api, preimage_store }
+    }
 }
 
 impl<'a, Eth, P> OpStateProviderFactory<Eth, P>

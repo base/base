@@ -8,18 +8,15 @@ use std::{
 };
 
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
-use alloy_primitives::{B256, U256, map::HashMap};
+use alloy_primitives::{B256, U256};
 use derive_more::Constructor;
-use metrics::{Counter, Gauge, Histogram};
 use reth_db::DatabaseError;
-use reth_metrics::Metrics;
 use reth_primitives_traits::Account;
 use reth_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},
 };
 use reth_trie_common::{BranchNodeCompact, Nibbles};
-use strum::{EnumCount, EnumIter, IntoEnumIterator};
 
 use crate::{
     BlockStateDiff, OpProofsStorageResult, OpProofsStore,
@@ -44,7 +41,7 @@ pub type OpProofsHashedStorageCursor<C> =
     cursor::OpProofsHashedStorageCursor<OpProofsHashedCursorWithMetrics<C>>;
 
 /// Types of storage operations that can be tracked.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, EnumCount, EnumIter)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum StorageOperation {
     /// Store account trie branch
     StoreAccountBranch,
@@ -86,40 +83,45 @@ impl StorageOperation {
     }
 }
 
-/// Metrics for storage operations.
-#[derive(Debug)]
-pub struct StorageMetrics {
-    /// Cache of operation metrics handles, keyed by (operation, context)
-    operations: HashMap<StorageOperation, OperationMetrics>,
-    /// Block-level metrics
-    block_metrics: BlockMetrics,
+base_metrics::define_metrics_struct! {
+    OperationMetrics, optimism_trie_storage_operation,
+    #[describe("Duration of storage operations in seconds")]
+    #[label(operation)]
+    duration_seconds: histogram,
 }
 
+base_metrics::define_metrics_struct! {
+    BlockMetrics, optimism_trie_block,
+    #[describe("Total time to process a block (end-to-end) in seconds")]
+    total_duration_seconds: histogram,
+    #[describe("Time spent executing the block (EVM) in seconds")]
+    execution_duration_seconds: histogram,
+    #[describe("Time spent calculating state root in seconds")]
+    state_root_duration_seconds: histogram,
+    #[describe("Time spent writing trie updates to storage in seconds")]
+    write_duration_seconds: histogram,
+    #[describe("Number of trie updates written")]
+    account_trie_updates_written_total: counter,
+    #[describe("Number of storage trie updates written")]
+    storage_trie_updates_written_total: counter,
+    #[describe("Number of hashed accounts written")]
+    hashed_accounts_written_total: counter,
+    #[describe("Number of hashed storages written")]
+    hashed_storages_written_total: counter,
+    #[describe("Earliest block number that the proofs storage has stored")]
+    earliest_number: gauge,
+    #[describe("Latest block number that the proofs storage has stored")]
+    latest_number: gauge,
+}
+
+/// Metrics for storage operations.
+#[derive(Debug, Default, Clone)]
+pub struct StorageMetrics;
+
 impl StorageMetrics {
-    /// Create a new metrics instance with pre-allocated handles.
-    pub fn new() -> Self {
-        Self {
-            operations: Self::generate_operation_handles(),
-            block_metrics: BlockMetrics::new_with_labels(&[] as &[(&str, &str)]),
-        }
-    }
-
-    /// Generate metric handles for all operation and context combinations.
-    fn generate_operation_handles() -> HashMap<StorageOperation, OperationMetrics> {
-        let mut operations =
-            HashMap::with_capacity_and_hasher(StorageOperation::COUNT, Default::default());
-        for operation in StorageOperation::iter() {
-            operations.insert(
-                operation,
-                OperationMetrics::new_with_labels(&[("operation", operation.as_str())]),
-            );
-        }
-        operations
-    }
-
     /// Record a storage operation with timing.
     pub fn record_operation<R>(&self, operation: StorageOperation, f: impl FnOnce() -> R) -> R {
-        if let Some(metrics) = self.operations.get(&operation) { metrics.record(f) } else { f() }
+        base_metrics::time!(OperationMetrics::duration_seconds(operation.as_str()), { f() })
     }
 
     /// Record a storage operation with timing (async version).
@@ -127,27 +129,12 @@ impl StorageMetrics {
     where
         F: Future<Output = R>,
     {
-        let start = Instant::now();
-        let result = f.await;
-        let duration = start.elapsed();
-
-        if let Some(metrics) = self.operations.get(&operation) {
-            metrics.record_duration(duration);
-        }
-
-        result
-    }
-
-    /// Get block metrics for recording high-level timing.
-    pub const fn block_metrics(&self) -> &BlockMetrics {
-        &self.block_metrics
+        base_metrics::time!(OperationMetrics::duration_seconds(operation.as_str()), { f.await })
     }
 
     /// Record a pre-measured duration for an operation.
     pub fn record_duration(&self, operation: StorageOperation, duration: Duration) {
-        if let Some(metrics) = self.operations.get(&operation) {
-            metrics.record_duration(duration);
-        }
+        OperationMetrics::duration_seconds(operation.as_str()).record(duration);
     }
 
     /// Record multiple items with the same duration.
@@ -157,92 +144,32 @@ impl StorageMetrics {
         duration: Duration,
         count: usize,
     ) {
-        if let Some(metrics) = self.operations.get(&operation) {
-            metrics.record_duration_per_item(duration, count);
-        }
-    }
-}
-
-impl Default for StorageMetrics {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Metrics for individual storage operations.
-#[derive(Metrics, Clone)]
-#[metrics(scope = "optimism_trie.storage.operation")]
-struct OperationMetrics {
-    /// Duration of storage operations in seconds
-    duration_seconds: Histogram,
-}
-
-impl OperationMetrics {
-    /// Record an operation with timing.
-    fn record<R>(&self, f: impl FnOnce() -> R) -> R {
-        let start = Instant::now();
-        let result = f();
-        self.duration_seconds.record(start.elapsed());
-        result
-    }
-
-    /// Record a pre-measured duration.
-    fn record_duration(&self, duration: Duration) {
-        self.duration_seconds.record(duration);
-    }
-
-    fn record_duration_per_item(&self, duration: Duration, count_usize: usize) {
-        if count_usize > 0
-            && let Some(count) = u32::try_from(count_usize).ok()
+        if count > 0
+            && let Some(count_u32) = u32::try_from(count).ok()
         {
-            self.duration_seconds.record_many(duration / count, count as usize);
+            OperationMetrics::duration_seconds(operation.as_str())
+                .record_many(duration / count_u32, count);
         }
     }
-}
 
-/// High-level block processing metrics.
-#[derive(Metrics, Clone)]
-#[metrics(scope = "optimism_trie.block")]
-pub struct BlockMetrics {
-    /// Total time to process a block (end-to-end) in seconds
-    pub total_duration_seconds: Histogram,
-    /// Time spent executing the block (EVM) in seconds
-    pub execution_duration_seconds: Histogram,
-    /// Time spent calculating state root in seconds
-    pub state_root_duration_seconds: Histogram,
-    /// Time spent writing trie updates to storage in seconds
-    pub write_duration_seconds: Histogram,
-    /// Number of trie updates written
-    pub account_trie_updates_written_total: Counter,
-    /// Number of storage trie updates written
-    pub storage_trie_updates_written_total: Counter,
-    /// Number of hashed accounts written
-    pub hashed_accounts_written_total: Counter,
-    /// Number of hashed storages written
-    pub hashed_storages_written_total: Counter,
-    /// Earliest block number that the proofs storage has stored.
-    pub earliest_number: Gauge,
-    /// Latest block number that the proofs storage has stored.
-    pub latest_number: Gauge,
-}
-
-impl BlockMetrics {
     /// Record operation durations for the processing of a block.
     pub fn record_operation_durations(&self, durations: &OperationDurations) {
-        self.total_duration_seconds.record(durations.total_duration_seconds);
-        self.execution_duration_seconds.record(durations.execution_duration_seconds);
-        self.state_root_duration_seconds.record(durations.state_root_duration_seconds);
-        self.write_duration_seconds.record(durations.write_duration_seconds);
+        BlockMetrics::total_duration_seconds().record(durations.total_duration_seconds);
+        BlockMetrics::execution_duration_seconds().record(durations.execution_duration_seconds);
+        BlockMetrics::state_root_duration_seconds().record(durations.state_root_duration_seconds);
+        BlockMetrics::write_duration_seconds().record(durations.write_duration_seconds);
     }
 
     /// Increment write counts of historical trie updates for a single block.
     pub fn increment_write_counts(&self, counts: &WriteCounts) {
-        self.account_trie_updates_written_total
+        BlockMetrics::account_trie_updates_written_total()
             .increment(counts.account_trie_updates_written_total);
-        self.storage_trie_updates_written_total
+        BlockMetrics::storage_trie_updates_written_total()
             .increment(counts.storage_trie_updates_written_total);
-        self.hashed_accounts_written_total.increment(counts.hashed_accounts_written_total);
-        self.hashed_storages_written_total.increment(counts.hashed_storages_written_total);
+        BlockMetrics::hashed_accounts_written_total()
+            .increment(counts.hashed_accounts_written_total);
+        BlockMetrics::hashed_storages_written_total()
+            .increment(counts.hashed_storages_written_total);
     }
 }
 
@@ -343,7 +270,7 @@ pub struct OpProofsStorageWithMetrics<S> {
 impl<S> OpProofsStorageWithMetrics<S> {
     /// Initializes new [`StorageMetrics`] and wraps given storage instance.
     pub fn new(storage: S) -> Self {
-        Self { storage, metrics: Arc::new(StorageMetrics::default()) }
+        Self { storage, metrics: Arc::new(StorageMetrics) }
     }
 
     /// Get the underlying storage.
@@ -426,7 +353,6 @@ where
         Ok(OpProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
     }
 
-    // metrics are handled by the live trie collector
     #[inline]
     fn store_trie_updates(
         &self,
@@ -434,11 +360,10 @@ where
         block_state_diff: BlockStateDiff,
     ) -> OpProofsStorageResult<WriteCounts> {
         let result = self.storage.store_trie_updates(block_ref, block_state_diff)?;
-        self.metrics.block_metrics.latest_number.set(block_ref.block.number as f64);
+        BlockMetrics::latest_number().set(block_ref.block.number as f64);
         Ok(result)
     }
 
-    // no metrics for these
     #[inline]
     fn fetch_trie_updates(&self, block_number: u64) -> OpProofsStorageResult<BlockStateDiff> {
         self.storage.fetch_trie_updates(block_number)
@@ -448,7 +373,7 @@ where
         &self,
         new_earliest_block_ref: BlockWithParent,
     ) -> OpProofsStorageResult<WriteCounts> {
-        self.metrics.block_metrics.earliest_number.set(new_earliest_block_ref.block.number as f64);
+        BlockMetrics::earliest_number().set(new_earliest_block_ref.block.number as f64);
         self.storage.prune_earliest_state(new_earliest_block_ref)
     }
 
@@ -472,7 +397,7 @@ where
         block_number: u64,
         hash: B256,
     ) -> OpProofsStorageResult<()> {
-        self.metrics.block_metrics.earliest_number.set(block_number as f64);
+        BlockMetrics::earliest_number().set(block_number as f64);
         self.storage.set_earliest_block_number(block_number, hash)
     }
 }
@@ -501,7 +426,6 @@ where
         let result = self.storage.store_account_branches(account_nodes);
         let duration = start.elapsed();
 
-        // Record per-item duration
         if count > 0 {
             self.metrics.record_duration_per_item(
                 StorageOperation::StoreAccountBranch,
@@ -524,7 +448,6 @@ where
         let result = self.storage.store_storage_branches(hashed_address, storage_nodes);
         let duration = start.elapsed();
 
-        // Record per-item duration
         if count > 0 {
             self.metrics.record_duration_per_item(
                 StorageOperation::StoreStorageBranch,
@@ -546,7 +469,6 @@ where
         let result = self.storage.store_hashed_accounts(accounts);
         let duration = start.elapsed();
 
-        // Record per-item duration
         if count > 0 {
             self.metrics.record_duration_per_item(
                 StorageOperation::StoreHashedAccount,
@@ -569,7 +491,6 @@ where
         let result = self.storage.store_hashed_storages(hashed_address, storages);
         let duration = start.elapsed();
 
-        // Record per-item duration
         if count > 0 {
             self.metrics.record_duration_per_item(
                 StorageOperation::StoreHashedStorage,
@@ -584,7 +505,7 @@ where
     #[inline]
     fn commit_initial_state(&self) -> OpProofsStorageResult<BlockNumHash> {
         let block = self.storage.commit_initial_state()?;
-        self.metrics.block_metrics.earliest_number.set(block.number as f64);
+        BlockMetrics::earliest_number().set(block.number as f64);
         Ok(block)
     }
 }

@@ -11,7 +11,8 @@ use jsonrpsee::{
 use reth_transaction_pool::TransactionPool;
 use tracing::debug;
 
-use crate::{BasePooledTransaction, BuilderApiMetrics, ValidatedTransaction};
+use super::metrics::Metrics as BuilderApiMetrics;
+use crate::{BasePooledTransaction, ValidatedTransaction};
 
 /// RPC interface for submitting pre-validated transactions to a block builder.
 #[rpc(server, namespace = "base")]
@@ -35,13 +36,12 @@ pub trait BuilderApi {
 #[derive(Debug)]
 pub struct BuilderApiImpl<P> {
     pool: P,
-    metrics: BuilderApiMetrics,
 }
 
 impl<P> BuilderApiImpl<P> {
     /// Creates a new handler backed by the given transaction pool.
-    pub fn new(pool: P) -> Self {
-        Self { pool, metrics: BuilderApiMetrics::default() }
+    pub const fn new(pool: P) -> Self {
+        Self { pool }
     }
 }
 
@@ -59,7 +59,7 @@ where
 
         // Decode the EIP-2718 transaction bytes
         let consensus_tx = OpTransactionSigned::decode_2718(&mut tx.raw.as_ref()).map_err(|e| {
-            self.metrics.decode_errors.increment(1);
+            BuilderApiMetrics::decode_errors().increment(1);
             ErrorObjectOwned::owned(
                 ErrorCode::InvalidParams.code(),
                 format!("failed to decode transaction: {e}"),
@@ -78,17 +78,17 @@ where
         // Insert into the pool
         let start = Instant::now();
         let result = self.pool.add_external_transaction(pool_tx).await;
-        self.metrics.insert_duration.record(start.elapsed().as_secs_f64());
+        BuilderApiMetrics::insert_duration().record(start.elapsed().as_secs_f64());
 
         match result {
             Ok(_) => {
                 debug!(sender = %sender, "inserted validated transaction");
-                self.metrics.txs_inserted.increment(1);
+                BuilderApiMetrics::txs_inserted().increment(1);
                 Ok(())
             }
             Err(e) => {
                 debug!(sender = %sender, error = %e, "pool rejected transaction");
-                self.metrics.txs_rejected.increment(1);
+                BuilderApiMetrics::txs_rejected().increment(1);
                 Err(ErrorObjectOwned::owned(
                     ErrorCode::InternalError.code(),
                     format!("pool rejected transaction: {e}"),

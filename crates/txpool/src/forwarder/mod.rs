@@ -62,13 +62,11 @@ impl SpawnedForwarder {
             };
 
             let receiver = sender.subscribe();
-            let metrics = ForwarderMetrics::new(url.as_str());
             let forwarder = Forwarder::new(
                 url.clone(),
                 client,
                 receiver,
                 Arc::clone(&config),
-                metrics,
                 cancel.child_token(),
             );
 

@@ -4,8 +4,17 @@ use alloy_primitives::U64;
 pub use base_alloy_rpc_jsonrpsee::MinerApiExtServer;
 use base_execution_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 use jsonrpsee_core::{RpcResult, async_trait};
-use reth_metrics::{Metrics, metrics::Gauge};
 use tracing::debug;
+
+base_metrics::define_metrics_struct! {
+    OpMinerMetrics, base_rpc_miner,
+    #[describe("Max DA tx size set on the miner")]
+    max_da_tx_size: gauge,
+    #[describe("Max DA block size set on the miner")]
+    max_da_block_size: gauge,
+    #[describe("Gas limit set on the miner")]
+    gas_limit: gauge,
+}
 
 /// Miner API extension for OP, exposes settings for the data availability configuration via the
 /// `miner_` API.
@@ -13,14 +22,13 @@ use tracing::debug;
 pub struct OpMinerExtApi {
     da_config: OpDAConfig,
     gas_limit_config: OpGasLimitConfig,
-    metrics: OpMinerMetrics,
 }
 
 impl OpMinerExtApi {
     /// Instantiate the miner API extension with the given, sharable data availability
     /// configuration.
-    pub fn new(da_config: OpDAConfig, gas_limit_config: OpGasLimitConfig) -> Self {
-        Self { da_config, gas_limit_config, metrics: OpMinerMetrics::default() }
+    pub const fn new(da_config: OpDAConfig, gas_limit_config: OpGasLimitConfig) -> Self {
+        Self { da_config, gas_limit_config }
     }
 }
 
@@ -31,8 +39,8 @@ impl MinerApiExtServer for OpMinerExtApi {
         debug!(target: "rpc", max_tx_size = %max_tx_size, max_block_size = %max_block_size, "Setting max DA size");
         self.da_config.set_max_da_size(max_tx_size.to(), max_block_size.to());
 
-        self.metrics.set_max_da_tx_size(max_tx_size.to());
-        self.metrics.set_max_da_block_size(max_block_size.to());
+        OpMinerMetrics::max_da_tx_size().set(max_tx_size.to::<u64>() as f64);
+        OpMinerMetrics::max_da_block_size().set(max_block_size.to::<u64>() as f64);
 
         Ok(true)
     }
@@ -48,39 +56,7 @@ impl MinerApiExtServer for OpMinerExtApi {
     async fn set_gas_limit(&self, gas_limit: U64) -> RpcResult<bool> {
         debug!(target: "rpc", gas_limit = %gas_limit, "Setting gas limit");
         self.gas_limit_config.set_gas_limit(gas_limit.to());
-        self.metrics.set_gas_limit(gas_limit.to());
+        OpMinerMetrics::gas_limit().set(gas_limit.to::<u64>() as f64);
         Ok(true)
-    }
-}
-
-/// Base miner metrics
-#[derive(Metrics, Clone)]
-#[metrics(scope = "base_rpc.miner")]
-pub struct OpMinerMetrics {
-    /// Max DA tx size set on the miner
-    max_da_tx_size: Gauge,
-    /// Max DA block size set on the miner
-    max_da_block_size: Gauge,
-    /// Gas limit set on the miner
-    gas_limit: Gauge,
-}
-
-impl OpMinerMetrics {
-    /// Sets the max DA tx size gauge value
-    #[inline]
-    pub fn set_max_da_tx_size(&self, size: u64) {
-        self.max_da_tx_size.set(size as f64);
-    }
-
-    /// Sets the max DA block size gauge value
-    #[inline]
-    pub fn set_max_da_block_size(&self, size: u64) {
-        self.max_da_block_size.set(size as f64);
-    }
-
-    /// Sets the gas limit gauge value
-    #[inline]
-    pub fn set_gas_limit(&self, gas_limit: u64) {
-        self.gas_limit.set(gas_limit as f64);
     }
 }

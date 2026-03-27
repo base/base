@@ -5,7 +5,7 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, trace};
 
-use super::{config::ConsumerConfig, metrics::ConsumerMetrics, validator::RecentlySent};
+use super::{config::ConsumerConfig, metrics::Metrics, validator::RecentlySent};
 
 /// Background consumer that drains the pool and broadcasts transactions.
 ///
@@ -17,7 +17,6 @@ pub struct Consumer<P: TransactionPool> {
     config: ConsumerConfig,
     recently_sent: RecentlySent,
     sender: broadcast::Sender<Arc<ValidPoolTransaction<P::Transaction>>>,
-    metrics: ConsumerMetrics,
     cancel: CancellationToken,
 }
 
@@ -31,11 +30,10 @@ where
         pool: P,
         config: ConsumerConfig,
         sender: broadcast::Sender<Arc<ValidPoolTransaction<P::Transaction>>>,
-        metrics: ConsumerMetrics,
         cancel: CancellationToken,
     ) -> Self {
         let recently_sent = RecentlySent::new(config.resend_after);
-        Self { pool, config, recently_sent, sender, metrics, cancel }
+        Self { pool, config, recently_sent, sender, cancel }
     }
 
     /// Blocking loop — runs until the [`CancellationToken`] is cancelled.
@@ -74,13 +72,13 @@ where
                 }
             }
 
-            self.metrics.iterations.increment(1);
+            Metrics::iterations().increment(1);
 
             if txs_read > 0 {
-                self.metrics.txs_read.increment(txs_read);
-                self.metrics.txs_sent.increment(txs_sent);
-                self.metrics.txs_ignored.increment(txs_ignored);
-                self.metrics.dedup_cache_size.set(self.recently_sent.len() as f64);
+                Metrics::txs_read().increment(txs_read);
+                Metrics::txs_sent().increment(txs_sent);
+                Metrics::txs_ignored().increment(txs_ignored);
+                Metrics::dedup_cache_size().set(self.recently_sent.len() as f64);
 
                 trace!(
                     txs_read = txs_read,

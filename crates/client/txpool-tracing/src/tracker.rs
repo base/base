@@ -16,7 +16,7 @@ use reth_provider::{CanonStateNotification, Chain};
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{FullTransactionEvent, PoolTransaction};
 
-use crate::{EventLog, Metrics, Pool, TxEvent};
+use crate::{EventLog, Pool, TxEvent, metrics::Metrics};
 
 /// Tracks transactions as they move through the mempool and into blocks.
 #[derive(Debug, Clone)]
@@ -27,8 +27,6 @@ pub struct Tracker {
     tx_states: LruCache<TxHash, Pool>,
     /// Enable `info` logs for transaction tracing.
     enable_logs: bool,
-    /// Metrics for the `reth_transaction_tracing` component.
-    metrics: Metrics,
 }
 
 impl Tracker {
@@ -41,7 +39,6 @@ impl Tracker {
             txs: LruCache::new(NonZeroUsize::new(Self::MAX_SIZE).expect("non zero")),
             tx_states: LruCache::new(NonZeroUsize::new(Self::MAX_SIZE).expect("non zero")),
             enable_logs,
-            metrics: Metrics::default(),
         }
     }
 
@@ -186,9 +183,7 @@ impl Tracker {
                 && let Some(pending_time) = event_log.pending_time
             {
                 let time_pending_to_inclusion = received_at.duration_since(pending_time);
-                self.metrics
-                    .inclusion_duration
-                    .record(time_pending_to_inclusion.as_millis() as f64);
+                Metrics::inclusion_duration().record(time_pending_to_inclusion.as_millis() as f64);
             }
 
             // If a tx is included/dropped, log it now.
@@ -205,8 +200,7 @@ impl Tracker {
             // Record `fb_inclusion_duration` metric if transaction was pending
             if let Some(pending_time) = event_log.pending_time {
                 let time_pending_to_fb_inclusion = received_at.duration_since(pending_time);
-                self.metrics
-                    .fb_inclusion_duration
+                Metrics::fb_inclusion_duration()
                     .record(time_pending_to_fb_inclusion.as_millis() as f64);
 
                 debug!(
