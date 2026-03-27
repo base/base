@@ -196,7 +196,7 @@ pub(crate) mod tests {
         let receipts = TraversalTestHelper::new_receipts();
         let mut traversal = TraversalTestHelper::new_from_blocks(blocks, receipts);
         assert!(traversal.advance_origin().await.is_ok());
-        let cfg = SystemConfig::default();
+        let cfg = traversal.system_config;
         traversal.done = true;
         assert!(traversal.activate().await.is_ok());
         // activate() is a no-op — origin and done flag remain unchanged.
