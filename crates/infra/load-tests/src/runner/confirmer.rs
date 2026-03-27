@@ -125,22 +125,6 @@ impl Confirmer {
         )
     }
 
-    /// Creates a new confirmer with shared flashblock timing data.
-    pub fn with_flashblock_times(
-        sender_addresses: &[Address],
-        metrics_tx: mpsc::Sender<TransactionMetrics>,
-        stop_flag: Arc<AtomicBool>,
-        flashblock_times: FlashblockTimes,
-    ) -> Self {
-        Self::with_timing_data(
-            sender_addresses,
-            metrics_tx,
-            stop_flag,
-            flashblock_times,
-            Arc::new(RwLock::new(HashMap::new())),
-        )
-    }
-
     /// Creates a new confirmer with shared flashblock and block timing data.
     pub fn with_timing_data(
         sender_addresses: &[Address],
@@ -261,6 +245,14 @@ impl Confirmer {
 
         let confirmed_hashes: HashSet<TxHash> = confirmed.iter().map(|(hash, _)| *hash).collect();
 
+        // Prune confirmed transactions from shared timing maps to prevent unbounded growth.
+        if !confirmed.is_empty() {
+            let mut fb_times = self.flashblock_times.write();
+            for (tx_hash, _) in &confirmed {
+                fb_times.remove(tx_hash);
+            }
+        }
+
         for (tx_hash, from) in confirmed {
             self.pending.remove(&tx_hash);
             self.decrement_in_flight(&from);
@@ -307,7 +299,7 @@ impl Confirmer {
     ) {
         let now = Instant::now();
 
-        let to_lookup: Vec<_> = self
+        let to_lookup: Vec<TxHash> = self
             .pending
             .iter()
             .filter(|(_, pending)| {
@@ -315,36 +307,26 @@ impl Confirmer {
                     || now.duration_since(pending.submit_time) > self.straggler_age
             })
             .take(MAX_RECEIPT_LOOKUPS)
-            .map(|(hash, pending)| (*hash, pending.from, pending.submit_time, pending.included_at))
+            .map(|(hash, _)| *hash)
             .collect();
 
         if to_lookup.is_empty() {
             return;
         }
 
-        let futures =
-            to_lookup.iter().map(|(tx_hash, _, _, _)| client.get_transaction_receipt(*tx_hash));
+        let futures = to_lookup.iter().map(|tx_hash| client.get_transaction_receipt(*tx_hash));
         let results = join_all(futures).await;
 
-        for ((tx_hash, from, submit_time, included_at), result) in
-            to_lookup.into_iter().zip(results)
-        {
+        for (tx_hash, result) in to_lookup.into_iter().zip(results) {
+            let Some(pending) = self.pending.get(&tx_hash) else {
+                continue;
+            };
+
             match result {
                 Ok(Some(receipt)) => {
                     let block_num = receipt.inner.block_number.unwrap_or(0);
-                    let block_latency = if block_num > 0 {
-                        self.block_first_seen
-                            .read()
-                            .get(&block_num)
-                            .map(|block_time| block_time.saturating_duration_since(submit_time))
-                    } else {
-                        None
-                    };
-                    let fb_sequencer_latency = self
-                        .flashblock_times
-                        .read()
-                        .get(&tx_hash)
-                        .map(|fb_time| fb_time.saturating_duration_since(submit_time));
+                    let block_latency = self.get_block_latency(block_num, pending);
+                    let fb_sequencer_latency = self.get_fb_sequencer_latency(&tx_hash, pending);
                     let metrics = TransactionMetrics::new(
                         tx_hash,
                         block_latency,
@@ -359,7 +341,7 @@ impl Confirmer {
                         "tx confirmed"
                     );
                     let _ = self.metrics_tx.send(metrics).await;
-                    confirmed.push((tx_hash, from));
+                    confirmed.push((tx_hash, pending.from));
                 }
                 Ok(None) => {}
                 Err(e) => {

@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::TxHash;
+use alloy_primitives::{TxHash, keccak256};
 use base_alloy_flashblocks::Flashblock;
 use futures::StreamExt;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
@@ -134,7 +134,6 @@ impl FlashblockTracker {
     }
 
     fn extract_tx_hash(tx_bytes: &[u8]) -> Result<TxHash, &'static str> {
-        use alloy_primitives::keccak256;
         if tx_bytes.is_empty() {
             return Err("empty transaction bytes");
         }
