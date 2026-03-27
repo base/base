@@ -306,8 +306,7 @@ mod tests {
         );
 
         let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
-        let update =
-            EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
+        let update = EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
 
         let confirmed = engine
             .probe_el_sync(client, Arc::new(RollupConfig::default()), update)
@@ -323,9 +322,9 @@ mod tests {
         );
     }
 
-    /// Documents the "probe before seed_state" invariant: if seed_state is called first with
-    /// the same update, SynchronizeTask's early-exit guard fires and the FCU is never sent,
-    /// leaving el_sync_finished = false even when the EL would respond Valid.
+    /// Documents the "probe before `seed_state`" invariant: if `seed_state` is called first with
+    /// the same update, `SynchronizeTask`'s early-exit guard fires and the FCU is never sent,
+    /// leaving `el_sync_finished` = false even when the EL would respond Valid.
     #[tokio::test]
     async fn probe_el_sync_after_seed_state_silently_skips_fcu() {
         let head = test_block_info(100);

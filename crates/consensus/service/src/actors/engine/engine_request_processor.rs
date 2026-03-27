@@ -327,11 +327,7 @@ where
                 };
                 let el_confirmed = match self
                     .engine
-                    .probe_el_sync(
-                        Arc::clone(&self.client),
-                        Arc::clone(&self.rollup),
-                        probe_update,
-                    )
+                    .probe_el_sync(Arc::clone(&self.client), Arc::clone(&self.rollup), probe_update)
                     .await
                 {
                     Ok(confirmed) => confirmed,
@@ -546,7 +542,7 @@ mod tests {
 
     /// Verifies that when reth is beyond genesis and responds Valid to the bootstrap FCU probe,
     /// `el_sync_finished` is set immediately so that the sequencer's `schedule_initial_reset`
-    /// loop is not permanently blocked by the ELSyncing guard.
+    /// loop is not permanently blocked by the `ELSyncing` guard.
     ///
     /// This is the fix for the leadership-transfer deadlock: previously the "beyond genesis"
     /// bootstrap path only called `seed_state` (no FCU), leaving `el_sync_finished = false`
