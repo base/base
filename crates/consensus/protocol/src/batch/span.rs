@@ -521,7 +521,8 @@ impl SpanBatch {
         let parent_num = parent_block.block_info.number;
         let next_timestamp = l2_safe_head.block_info.timestamp + cfg.block_time;
         if self.starting_timestamp() < next_timestamp {
-            for i in 0..(l2_safe_head.block_info.number - parent_num) {
+            let overlap_count = l2_safe_head.block_info.number.saturating_sub(parent_num);
+            for i in 0..overlap_count {
                 let safe_block_num = parent_num + i + 1;
                 let safe_block_payload = match fetcher.block_by_number(safe_block_num).await {
                     Ok(p) => p,
