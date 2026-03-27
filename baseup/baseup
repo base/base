@@ -365,10 +365,14 @@ update_baseup() {
 
     ensure_writable_destination "$BASEUP_BIN_PATH"
 
+    local tmp_dest="$BASEUP_BIN_PATH.new"
+
     info "Updating baseup from $BASEUP_INSTALLER_VERSION to $remote_version..."
-    if cp "$UPDATE_TMP_FILE" "$BASEUP_BIN_PATH" 2>/dev/null; then
-        chmod 755 "$BASEUP_BIN_PATH"
+    if cp "$UPDATE_TMP_FILE" "$tmp_dest" 2>/dev/null; then
+        chmod 755 "$tmp_dest"
+        mv -f "$tmp_dest" "$BASEUP_BIN_PATH"
     else
+        rm -f "$tmp_dest" 2>/dev/null || true
         error "Failed to update baseup at $BASEUP_BIN_PATH."
     fi
 

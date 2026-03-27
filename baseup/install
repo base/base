@@ -48,12 +48,15 @@ ensure_writable_destination() {
 install_bin() {
     local src="$1"
     local dst="$2"
+    local tmp_dst="$dst.new"
 
     ensure_writable_destination "$dst"
 
-    if cp "$src" "$dst" 2>/dev/null; then
-        chmod +x "$dst"
+    if cp "$src" "$tmp_dst" 2>/dev/null; then
+        chmod +x "$tmp_dst"
+        mv -f "$tmp_dst" "$dst"
     else
+        rm -f "$tmp_dst" 2>/dev/null || true
         error "failed to install to $dst"
     fi
 }
@@ -181,6 +184,10 @@ main() {
 
     if ! head -n 1 "$INSTALL_TMP_FILE" | grep -q '^#!'; then
         error "downloaded file does not appear to be a valid script"
+    fi
+
+    if ! bash -n "$INSTALL_TMP_FILE" 2>/dev/null; then
+        error "downloaded script has syntax errors"
     fi
 
     install_bin "$INSTALL_TMP_FILE" "$BIN_DIR/baseup"
