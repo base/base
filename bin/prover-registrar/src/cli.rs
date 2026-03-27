@@ -195,7 +195,7 @@ fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], RegistrarError> {
 
     let mut id = [0u32; 8];
     for (i, chunk) in bytes.chunks_exact(4).enumerate() {
-        id[i] = u32::from_be_bytes(chunk.try_into().unwrap());
+        id[i] = u32::from_le_bytes(chunk.try_into().unwrap());
     }
     Ok(id)
 }
@@ -461,7 +461,7 @@ mod tests {
         "0202020202020202020202020202020202020202020202020202020202020202";
     const TEST_VERIFIER_URL: &str = "https://gateway.pinata.cloud/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
     const TEST_IMAGE_ID: &str =
-        "0x0000000100000002000000030000000400000005000000060000000700000008";
+        "0x0100000002000000030000000400000005000000060000000700000008000000";
     const TEST_ELF_PATH: &str = "/tmp/guest.elf";
     const TEST_SIGNER_ENDPOINT: &str = "http://localhost:8546";
     const TEST_SIGNER_ADDR: &str = "0x0000000000000000000000000000000000000002";
@@ -694,8 +694,8 @@ mod tests {
     // ── parse_image_id unit tests ───────────────────────────────────────
 
     #[rstest]
-    #[case::with_prefix("0x0000000100000002000000030000000400000005000000060000000700000008", [1,2,3,4,5,6,7,8])]
-    #[case::without_prefix("0000000100000002000000030000000400000005000000060000000700000008", [1,2,3,4,5,6,7,8])]
+    #[case::with_prefix("0x0100000002000000030000000400000005000000060000000700000008000000", [1,2,3,4,5,6,7,8])]
+    #[case::without_prefix("0100000002000000030000000400000005000000060000000700000008000000", [1,2,3,4,5,6,7,8])]
     fn parse_image_id_valid(#[case] input: &str, #[case] expected: [u32; 8]) {
         assert_eq!(parse_image_id(input).unwrap(), expected);
     }
