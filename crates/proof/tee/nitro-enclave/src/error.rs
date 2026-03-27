@@ -1,5 +1,6 @@
 //! Error types for enclave server operations.
 
+use base_proof_preimage::PreimageKey;
 use thiserror::Error;
 
 /// Errors that can occur during NSM operations.
@@ -165,6 +166,9 @@ pub enum NitroError {
     /// Unsupported chain ID.
     #[error("unsupported chain ID: {0}")]
     UnsupportedChain(u64),
+    /// A preimage's content does not match its hash-based key.
+    #[error("preimage hash mismatch for key {0}")]
+    InvalidPreimage(PreimageKey),
 }
 
 /// A specialized Result type for nitro enclave operations.

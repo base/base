@@ -145,7 +145,7 @@ impl Server {
         &self,
         preimages: impl IntoIterator<Item = (PreimageKey, Vec<u8>)>,
     ) -> Result<TeeProofResult> {
-        let oracle = Oracle::new(preimages);
+        let oracle = Oracle::new(preimages)?;
 
         let boot_info =
             BootInfo::load(&oracle).await.map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
