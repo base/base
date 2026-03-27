@@ -77,6 +77,18 @@ pub enum EngineTaskErrors {
     Finalize(#[from] FinalizeTaskError),
 }
 
+impl EngineTaskErrorSeverity {
+    /// Returns a static string label for use in metrics.
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::Temporary => "temporary",
+            Self::Critical => "critical",
+            Self::Reset => "reset",
+            Self::Flush => "flush",
+        }
+    }
+}
+
 impl EngineTaskError for EngineTaskErrors {
     fn severity(&self) -> EngineTaskErrorSeverity {
         match self {
@@ -219,7 +231,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
         while let Err(e) = self.execute_inner(state).await {
             let severity = e.severity();
 
-            Metrics::engine_task_failure(self.task_metrics_label(), severity.to_string())
+            Metrics::engine_task_failure(self.task_metrics_label(), severity.as_label())
                 .increment(1);
 
             match severity {
