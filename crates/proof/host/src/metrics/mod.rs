@@ -171,4 +171,3 @@ macro_rules! proof_guard {
 }
 
 pub(crate) use proof_guard;
-
