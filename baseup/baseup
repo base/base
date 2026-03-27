@@ -86,7 +86,7 @@ parse_version() {
     local patch
 
     if [[ "$ver" == *-* ]]; then
-        suffix="${ver#*-}"
+        suffix="${ver#"$core"-}"
     fi
 
     IFS=. read -r major minor patch <<< "$core"
@@ -102,6 +102,13 @@ version_gt() {
 
     read -r major1 minor1 patch1 suffix1 <<< "$(parse_version "$1")"
     read -r major2 minor2 patch2 suffix2 <<< "$(parse_version "$2")"
+
+    [[ "$major1" =~ ^[0-9]+$ ]] || major1=0
+    [[ "$minor1" =~ ^[0-9]+$ ]] || minor1=0
+    [[ "$patch1" =~ ^[0-9]+$ ]] || patch1=0
+    [[ "$major2" =~ ^[0-9]+$ ]] || major2=0
+    [[ "$minor2" =~ ^[0-9]+$ ]] || minor2=0
+    [[ "$patch2" =~ ^[0-9]+$ ]] || patch2=0
 
     [ "$major1" -gt "$major2" ] && return 0
     [ "$major1" -lt "$major2" ] && return 1
@@ -194,27 +201,10 @@ compute_sha256() {
 
 validate_archive() {
     local archive_path="$1"
-    local archive_entries
     local archive_listing
     local entry
     local mode
-
-    archive_entries="$(tar -tzf "$archive_path" 2>/dev/null)" || error "Failed to inspect $archive_path"
-    while IFS= read -r entry; do
-        [[ -n "$entry" ]] || continue
-
-        case "$entry" in
-            /*)
-                error "Archive contains an absolute path: $entry"
-                ;;
-        esac
-
-        case "/$entry/" in
-            *"/../"*)
-                error "Archive contains an unsafe path: $entry"
-                ;;
-        esac
-    done <<< "$archive_entries"
+    local path
 
     archive_listing="$(tar -tvzf "$archive_path" 2>/dev/null)" || error "Failed to inspect $archive_path"
     while IFS= read -r entry; do
@@ -225,6 +215,20 @@ validate_archive() {
             - | d) ;;
             *)
                 error "Archive contains an unsupported entry type"
+                ;;
+        esac
+
+        path="$(echo "$entry" | awk '{print $NF}')"
+
+        case "$path" in
+            /*)
+                error "Archive contains an absolute path: $path"
+                ;;
+        esac
+
+        case "/$path/" in
+            *"/../"*)
+                error "Archive contains an unsafe path: $path"
                 ;;
         esac
     done <<< "$archive_listing"
@@ -338,6 +342,14 @@ update_baseup() {
     info "Downloading latest baseup..."
     if ! download_url "$BASEUP_BIN_URL" "$UPDATE_TMP_FILE" 2>/dev/null; then
         error "Failed to download baseup update"
+    fi
+
+    if ! head -n 1 "$UPDATE_TMP_FILE" | grep -q '^#!'; then
+        error "Downloaded file does not appear to be a valid script"
+    fi
+
+    if ! bash -n "$UPDATE_TMP_FILE" 2>/dev/null; then
+        error "Downloaded file has syntax errors"
     fi
 
     local remote_version
@@ -491,8 +503,24 @@ get_latest_version() {
     local api_url="https://api.github.com/repos/${BASEUP_REPO}/releases/latest"
     local response
     local version
+    local auth_header=()
 
-    response="$(fetch_text "$api_url" 2>/dev/null || true)"
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        auth_header=(-H "Authorization: Bearer $GITHUB_TOKEN")
+    fi
+
+    if command -v curl >/dev/null 2>&1; then
+        response="$(curl -fsSL "${auth_header[@]}" "$api_url" 2>/dev/null || true)"
+    elif command -v wget >/dev/null 2>&1; then
+        if [[ ${#auth_header[@]} -gt 0 ]]; then
+            response="$(wget -qO- --header="Authorization: Bearer $GITHUB_TOKEN" "$api_url" 2>/dev/null || true)"
+        else
+            response="$(wget -qO- "$api_url" 2>/dev/null || true)"
+        fi
+    else
+        error "Neither curl nor wget found. Please install one of them."
+    fi
+
     if [[ -z "$response" ]]; then
         error "Failed to fetch the latest release from GitHub. Try --install <tag>."
     fi
@@ -514,21 +542,18 @@ install_binary() {
     local src="$1"
     local binary_name="$2"
     local destination="$BIN_DIR/$binary_name"
-    local backup="$destination.old"
+    local tmp_dest="$destination.new"
 
     ensure_writable_destination "$destination"
 
     info "Installing $binary_name to $destination..."
-    mv -f "$destination" "$backup" 2>/dev/null || true
-
-    if cp "$src" "$destination" 2>/dev/null; then
-        chmod 755 "$destination"
-        rm -f "$backup" 2>/dev/null || true
-        return
+    if cp "$src" "$tmp_dest" 2>/dev/null; then
+        chmod 755 "$tmp_dest"
+        mv -f "$tmp_dest" "$destination"
+    else
+        rm -f "$tmp_dest" 2>/dev/null || true
+        error "Failed to install $binary_name to $destination."
     fi
-
-    mv -f "$backup" "$destination" 2>/dev/null || true
-    error "Failed to install $binary_name to $destination."
 }
 
 usage() {
@@ -604,8 +629,7 @@ main() {
         VERSION="$(get_latest_version)"
     fi
 
-    local version_tag="$VERSION"
-    info "Installing release $version_tag"
+    info "Installing release $VERSION"
 
     MAIN_TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t baseup)"
 
@@ -619,13 +643,13 @@ main() {
         local extract_dir
         local binary_path
 
-        archive_name="${binary_name}-${version_tag}-${target}.tar.gz"
+        archive_name="${binary_name}-${VERSION}-${target}.tar.gz"
         archive_path="$MAIN_TMP_DIR/$archive_name"
         checksum_path="${archive_path}.sha256"
         extract_dir="$MAIN_TMP_DIR/${binary_name}-extract"
 
-        download_file "$version_tag" "$archive_name" "$MAIN_TMP_DIR"
-        download_file "$version_tag" "${archive_name}.sha256" "$MAIN_TMP_DIR"
+        download_file "$VERSION" "$archive_name" "$MAIN_TMP_DIR"
+        download_file "$VERSION" "${archive_name}.sha256" "$MAIN_TMP_DIR"
 
         expected_checksum="$(head -n 1 "$checksum_path" | awk '{print $1}')"
         actual_checksum="$(compute_sha256 "$archive_path")"
@@ -638,7 +662,7 @@ main() {
 
         mkdir -p "$extract_dir"
         extract_archive "$archive_path" "$extract_dir"
-        binary_path="$(find "$extract_dir" -name "$binary_name" -type f | head -n 1)"
+        binary_path="$(find "$extract_dir" -name "$binary_name" -type f -not -type l | head -n 1)"
 
         if [[ -z "$binary_path" ]]; then
             error "Could not find $binary_name in $archive_name"
@@ -648,7 +672,7 @@ main() {
     done
 
     echo ""
-    info "Installed release $version_tag successfully"
+    info "Installed release $VERSION successfully"
     echo ""
 
     if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
