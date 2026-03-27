@@ -18,11 +18,11 @@ and indexers that query historical state.
 
 ## Solution
 
-The proofs-history ExEx implements a **Versioned State Store** that tracks intermediate Merkle
+The proofs-history `ExEx` implements a **Versioned State Store** that tracks intermediate Merkle
 Patricia Trie nodes tagged by block number. This enables direct lookups of proofs at any
 historical block within a configurable retention window, without reverting state.
 
-The ExEx processes blocks asynchronously, so it adds zero overhead to sync speed and negligible
+The `ExEx` processes blocks asynchronously, so it adds zero overhead to sync speed and negligible
 tip latency.
 
 ## Architecture
@@ -146,7 +146,7 @@ Benchmarked on Base Sepolia (~700k block window, WETH contract):
 | -------------- | -------------------------------------------- |
 | Avg latency    | ~15 ms per `eth_getProof`                    |
 | Throughput     | ~5,000 req/s (10 concurrent workers)         |
-| Sync overhead  | Zero (ExEx processes asynchronously)         |
+| Sync overhead  | Zero (`ExEx` processes asynchronously)       |
 | Memory         | Bounded by window size — no OOM risk         |
 
 ## License
