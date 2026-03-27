@@ -81,9 +81,9 @@ impl L2Provider for MockL2 {
     }
 }
 
-/// Mock rollup client that returns a configurable `SyncStatus`.
 pub(crate) struct MockRollupClient {
     pub sync_status: SyncStatus,
+    pub output_roots: std::collections::HashMap<u64, B256>,
 }
 
 #[async_trait]
@@ -95,10 +95,12 @@ impl RollupProvider for MockRollupClient {
         Ok(self.sync_status.clone())
     }
     async fn output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
-        Ok(OutputAtBlock {
-            output_root: B256::repeat_byte(block_number as u8),
-            block_ref: test_l2_block_ref(block_number, B256::repeat_byte(block_number as u8)),
-        })
+        let root = self
+            .output_roots
+            .get(&block_number)
+            .copied()
+            .unwrap_or_else(|| B256::repeat_byte(block_number as u8));
+        Ok(OutputAtBlock { output_root: root, block_ref: test_l2_block_ref(block_number, root) })
     }
 }
 
