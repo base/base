@@ -330,12 +330,16 @@ where
                     state.inflight.insert(target);
                     state.record_gauges();
                     state.prove_tasks.spawn(async move {
-                        let _proof_timer = base_metrics::timed!(Metrics::proof_duration_seconds());
+                        let proof_timer = base_metrics::timed!(Metrics::proof_duration_seconds());
                         tokio::select! {
                             () = cancel.cancelled() => {
+                                // Disarm the timer so cancelled proofs don't pollute the
+                                // duration histogram.
+                                std::mem::forget(proof_timer);
                                 (target, Err(ProposerError::Internal("cancelled".into())))
                             }
                             result = prover.prove(request) => {
+                                drop(proof_timer);
                                 (target, result.map_err(|e| ProposerError::Prover(e.to_string())))
                             }
                         }
