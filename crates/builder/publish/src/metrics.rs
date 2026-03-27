@@ -46,32 +46,34 @@ impl PublisherMetrics for NoopPublisherMetrics {
     fn on_handshake_error(&self) {}
 }
 
+base_metrics::define_metrics_struct! {
+    PublishingMetricsInner, base_builder,
+    #[describe("Total messages sent to subscribers")]
+    messages_sent_count: counter,
+    #[describe("Active WebSocket connections")]
+    ws_connections_active: gauge,
+    #[describe("Total lagged messages dropped")]
+    ws_lagged_count: counter,
+    #[describe("Payload byte size histogram")]
+    ws_payload_byte_size: histogram,
+    #[describe("Total WebSocket send errors")]
+    ws_send_error_count: counter,
+    #[describe("Total WebSocket handshake errors")]
+    ws_handshake_error_count: counter,
+    #[describe("WebSocket connection duration")]
+    ws_connection_duration: histogram,
+}
+
 /// Concrete [`PublisherMetrics`] implementation backed by the [`metrics`] crate.
 ///
 /// Registers counters, gauges, and histograms under the `base_builder` scope
 /// in the global metrics recorder. Created automatically by
 /// [`WebSocketPublisher::new`](crate::WebSocketPublisher::new).
-pub struct PublishingMetrics {
-    messages_sent_count: metrics::Counter,
-    ws_connections_active: metrics::Gauge,
-    ws_lagged_count: metrics::Counter,
-    ws_payload_byte_size: metrics::Histogram,
-    ws_send_error_count: metrics::Counter,
-    ws_handshake_error_count: metrics::Counter,
-    ws_connection_duration: metrics::Histogram,
-}
+pub struct PublishingMetrics;
 
 impl Default for PublishingMetrics {
     fn default() -> Self {
-        Self {
-            messages_sent_count: metrics::counter!("base_builder_messages_sent_count"),
-            ws_connections_active: metrics::gauge!("base_builder_ws_connections_active"),
-            ws_lagged_count: metrics::counter!("base_builder_ws_lagged_count"),
-            ws_payload_byte_size: metrics::histogram!("base_builder_ws_payload_byte_size"),
-            ws_send_error_count: metrics::counter!("base_builder_ws_send_error_count"),
-            ws_handshake_error_count: metrics::counter!("base_builder_ws_handshake_error_count"),
-            ws_connection_duration: metrics::histogram!("base_builder_ws_connection_duration"),
-        }
+        Self
     }
 }
 
@@ -83,32 +85,32 @@ impl Debug for PublishingMetrics {
 
 impl PublisherMetrics for PublishingMetrics {
     fn on_message_sent(&self) {
-        self.messages_sent_count.increment(1);
+        PublishingMetricsInner::messages_sent_count().increment(1);
     }
 
     fn on_connection_opened(&self) {
-        self.ws_connections_active.increment(1.0);
+        PublishingMetricsInner::ws_connections_active().increment(1.0);
     }
 
     fn on_connection_closed(&self, duration: Duration) {
-        self.ws_connections_active.decrement(1.0);
-        self.ws_connection_duration.record(duration.as_secs_f64());
+        PublishingMetricsInner::ws_connections_active().decrement(1.0);
+        PublishingMetricsInner::ws_connection_duration().record(duration.as_secs_f64());
     }
 
     fn on_lagged(&self, skipped: u64) {
-        self.ws_lagged_count.increment(skipped);
+        PublishingMetricsInner::ws_lagged_count().increment(skipped);
     }
 
     fn on_payload_size(&self, size: usize) {
-        self.ws_payload_byte_size.record(size as f64);
+        PublishingMetricsInner::ws_payload_byte_size().record(size as f64);
     }
 
     fn on_send_error(&self) {
-        self.ws_send_error_count.increment(1);
+        PublishingMetricsInner::ws_send_error_count().increment(1);
     }
 
     fn on_handshake_error(&self) {
-        self.ws_handshake_error_count.increment(1);
+        PublishingMetricsInner::ws_handshake_error_count().increment(1);
     }
 }
 

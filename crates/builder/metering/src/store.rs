@@ -17,8 +17,6 @@ pub struct MeteringStore {
     cache: Cache<TxHash, MeterBundleResponse>,
     /// Whether resource metering is enabled.
     metering_enabled: AtomicBool,
-    /// Builder metrics.
-    metrics: BuilderMetrics,
 }
 
 impl core::fmt::Debug for MeteringStore {
@@ -33,18 +31,16 @@ impl core::fmt::Debug for MeteringStore {
 impl MeteringStore {
     /// Creates a new [`MeteringStore`] with the given metering flag and max capacity.
     pub fn new(enable_resource_metering: bool, max_capacity: usize) -> Self {
-        let metrics = BuilderMetrics::default();
-        let listener_metrics = metrics.clone();
         let cache = Cache::builder()
             .max_capacity(max_capacity as u64)
             .eviction_listener(move |_key, _value, cause| {
                 if cause == RemovalCause::Size {
-                    listener_metrics.metering_store_lru_evictions.increment(1);
+                    BuilderMetrics::metering_store_lru_evictions().increment(1);
                 }
             })
             .build();
 
-        Self { cache, metering_enabled: AtomicBool::new(enable_resource_metering), metrics }
+        Self { cache, metering_enabled: AtomicBool::new(enable_resource_metering) }
     }
 
     /// Returns the number of stored entries.
@@ -65,11 +61,11 @@ impl MeteringProvider for MeteringStore {
         }
 
         let Some(entry) = self.cache.get(tx_hash) else {
-            self.metrics.metering_unknown_transaction.increment(1);
+            BuilderMetrics::metering_unknown_transaction().increment(1);
             return None;
         };
 
-        self.metrics.metering_known_transaction.increment(1);
+        BuilderMetrics::metering_known_transaction().increment(1);
         Some(entry)
     }
 

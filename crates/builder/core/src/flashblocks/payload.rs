@@ -48,14 +48,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
 
 use crate::{
-    BuilderConfig, ExecutionInfo, PayloadBuilder, ResourceLimits,
+    BuilderConfig, BuilderMetrics, ExecutionInfo, PayloadBuilder, ResourceLimits,
     flashblocks::{
         FlashblocksExtraCtx,
         best_txs::BestFlashblocksTxs,
         context::OpPayloadBuilderCtx,
         generator::{BlockCell, BuildArguments},
     },
-    metrics::BuilderMetrics,
     traits::{ClientBounds, PoolBounds},
 };
 
@@ -102,8 +101,6 @@ pub(super) struct OpPayloadBuilder<Pool, Client> {
     pub ws_pub: Arc<WebSocketPublisher>,
     /// System configuration for the builder
     pub config: BuilderConfig,
-    /// The metrics for the builder
-    pub metrics: Arc<BuilderMetrics>,
 }
 
 impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
@@ -115,9 +112,8 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
         config: BuilderConfig,
         payload_tx: mpsc::Sender<OpBuiltPayload>,
         ws_pub: Arc<WebSocketPublisher>,
-        metrics: Arc<BuilderMetrics>,
     ) -> Self {
-        Self { evm_config, pool, client, payload_tx, ws_pub, config, metrics }
+        Self { evm_config, pool, client, payload_tx, ws_pub, config }
     }
 }
 
@@ -203,7 +199,6 @@ where
             evm_env,
             block_env_attributes,
             cancel,
-            metrics: Default::default(),
             extra,
             builder_config: self.config.clone(),
         })
@@ -262,8 +257,8 @@ where
 
         let mut info = execute_pre_steps(&mut state, &ctx)?;
         let sequencer_tx_time = sequencer_tx_start_time.elapsed();
-        ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
-        ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
+        BuilderMetrics::sequencer_tx_duration().record(sequencer_tx_time);
+        BuilderMetrics::sequencer_tx_gauge().set(sequencer_tx_time);
 
         // We adjust our flashblocks timings based on time_drift if dynamic adjustment enable
         let (flashblocks_per_block, first_flashblock_offset) =
@@ -291,12 +286,10 @@ where
         if !ctx.attributes().no_tx_pool {
             let flashblock_byte_size =
                 self.ws_pub.publish(&fb_payload).map_err(PayloadBuilderError::other)?;
-            ctx.metrics.flashblock_byte_size_histogram.record(flashblock_byte_size as f64);
-            ctx.metrics
-                .first_flashblock_time_offset
+            BuilderMetrics::flashblock_byte_size_histogram().record(flashblock_byte_size as f64);
+            BuilderMetrics::first_flashblock_time_offset()
                 .record(first_flashblock_offset.as_millis() as f64);
-            ctx.metrics
-                .reduced_flashblocks_number
+            BuilderMetrics::reduced_flashblocks_number()
                 .record(self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block)
                     as f64);
         } else {
@@ -304,8 +297,8 @@ where
                 target: "payload_builder",
                 "No transaction pool, skipping transaction pool processing",
             );
-            ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
-            ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
+            BuilderMetrics::payload_num_tx().record(info.executed_transactions.len() as f64);
+            BuilderMetrics::payload_num_tx_gauge().set(info.executed_transactions.len() as f64);
         }
 
         // fcu just arrived late, not syncing
@@ -328,8 +321,8 @@ where
         if skip_flashblocks_building {
             finalized_cell.set(payload);
             let total_block_building_time = block_build_start_time.elapsed();
-            ctx.metrics.total_block_built_duration.record(total_block_building_time);
-            ctx.metrics.total_block_built_gauge.set(total_block_building_time);
+            BuilderMetrics::total_block_built_duration().record(total_block_building_time);
+            BuilderMetrics::total_block_built_gauge().set(total_block_building_time);
 
             return Ok(());
         }
@@ -571,8 +564,8 @@ where
             self.pool.best_transactions_with_attributes(ctx.best_transaction_attributes()),
         ));
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
-        ctx.metrics.transaction_pool_fetch_duration.record(transaction_pool_fetch_time);
-        ctx.metrics.transaction_pool_fetch_gauge.set(transaction_pool_fetch_time);
+        BuilderMetrics::transaction_pool_fetch_duration().record(transaction_pool_fetch_time);
+        BuilderMetrics::transaction_pool_fetch_gauge().set(transaction_pool_fetch_time);
 
         let tx_execution_start_time = Instant::now();
         let limits = ResourceLimits {
@@ -629,20 +622,20 @@ where
         }
 
         let payload_transaction_simulation_time = tx_execution_start_time.elapsed();
-        ctx.metrics
-            .payload_transaction_simulation_duration
+        BuilderMetrics::payload_transaction_simulation_duration()
             .record(payload_transaction_simulation_time);
-        ctx.metrics.payload_transaction_simulation_gauge.set(payload_transaction_simulation_time);
+        BuilderMetrics::payload_transaction_simulation_gauge()
+            .set(payload_transaction_simulation_time);
 
         let total_block_built_duration = Instant::now();
         let build_result = build_block(state, ctx, info, ctx.attributes().no_tx_pool);
         let total_block_built_duration = total_block_built_duration.elapsed();
-        ctx.metrics.total_block_built_duration.record(total_block_built_duration);
-        ctx.metrics.total_block_built_gauge.set(total_block_built_duration);
+        BuilderMetrics::total_block_built_duration().record(total_block_built_duration);
+        BuilderMetrics::total_block_built_gauge().set(total_block_built_duration);
 
         match build_result {
             Err(err) => {
-                ctx.metrics.invalid_built_blocks_count.increment(1);
+                BuilderMetrics::invalid_built_blocks_count().increment(1);
                 Err(err).wrap_err("failed to build payload")
             }
             Ok((new_payload, mut fb_payload)) => {
@@ -686,10 +679,11 @@ where
                 best_payload.set(new_payload);
 
                 // Record flashblock build duration
-                ctx.metrics.flashblock_build_duration.record(flashblock_build_start_time.elapsed());
-                ctx.metrics.flashblock_byte_size_histogram.record(flashblock_byte_size as f64);
-                ctx.metrics
-                    .flashblock_num_tx_histogram
+                BuilderMetrics::flashblock_build_duration()
+                    .record(flashblock_build_start_time.elapsed());
+                BuilderMetrics::flashblock_byte_size_histogram()
+                    .record(flashblock_byte_size as f64);
+                BuilderMetrics::flashblock_num_tx_histogram()
                     .record(info.executed_transactions.len() as f64);
 
                 // Update bundle_state for next iteration
@@ -733,7 +727,7 @@ where
                 } else {
                     0
                 };
-                ctx.metrics.record_flashblock_diagnostics(flashblock_index, &diag, info, &limits);
+                BuilderMetrics::record_flashblock_diagnostics(flashblock_index, &diag, info, &limits);
                 info!(
                     target: "payload_builder",
                     message = "Flashblock built",
@@ -769,23 +763,22 @@ where
         span: &tracing::Span,
         message: &str,
     ) {
-        ctx.metrics.block_built_success.increment(1);
-        ctx.metrics.flashblock_count.record(ctx.flashblock_index() as f64);
-        ctx.metrics
-            .missing_flashblocks_count
+        BuilderMetrics::block_built_success().increment(1);
+        BuilderMetrics::flashblock_count().record(ctx.flashblock_index() as f64);
+        BuilderMetrics::missing_flashblocks_count()
             .record(flashblocks_per_block.saturating_sub(ctx.flashblock_index()) as f64);
-        ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
-        ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
+        BuilderMetrics::payload_num_tx().record(info.executed_transactions.len() as f64);
+        BuilderMetrics::payload_num_tx_gauge().set(info.executed_transactions.len() as f64);
 
         // Record cumulative predicted state root time for the block (observation metric)
         if info.cumulative_state_root_time_us > 0 {
-            ctx.metrics
-                .block_predicted_state_root_time_us
+            BuilderMetrics::block_predicted_state_root_time_us()
                 .record(info.cumulative_state_root_time_us as f64);
         }
 
         // Record cumulative uncompressed block size
-        ctx.metrics.block_uncompressed_size.record(info.cumulative_uncompressed_bytes as f64);
+        BuilderMetrics::block_uncompressed_size()
+            .record(info.cumulative_uncompressed_bytes as f64);
 
         debug!(
             target: "payload_builder",
@@ -846,7 +839,7 @@ where
             return (0, Duration::ZERO);
         };
 
-        self.metrics.flashblocks_time_drift.record(
+        BuilderMetrics::flashblocks_time_drift().record(
             self.config.block_time.as_millis().saturating_sub(time_drift.as_millis()) as f64,
         );
         debug!(
@@ -936,8 +929,8 @@ where
     let state_merge_start_time = Instant::now();
     state.merge_transitions(BundleRetention::Reverts);
     let state_transition_merge_time = state_merge_start_time.elapsed();
-    ctx.metrics.state_transition_merge_duration.record(state_transition_merge_time);
-    ctx.metrics.state_transition_merge_gauge.set(state_transition_merge_time);
+    BuilderMetrics::state_transition_merge_duration().record(state_transition_merge_time);
+    BuilderMetrics::state_transition_merge_gauge().set(state_transition_merge_time);
 
     let block_number = ctx.block_number();
     let expected = ctx.parent().number + 1;
@@ -1005,8 +998,8 @@ where
             )?
         };
         let state_root_calculation_time = state_root_start_time.elapsed();
-        ctx.metrics.state_root_calculation_duration.record(state_root_calculation_time);
-        ctx.metrics.state_root_calculation_gauge.set(state_root_calculation_time);
+        BuilderMetrics::state_root_calculation_duration().record(state_root_calculation_time);
+        BuilderMetrics::state_root_calculation_gauge().set(state_root_calculation_time);
     }
 
     let mut requests_hash = None;

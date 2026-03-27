@@ -67,8 +67,7 @@ fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64
         TxnExecutionError::EvmError => "evm_error",
         TxnExecutionError::MaxGasUsageExceeded => "max_gas_usage_exceeded",
     };
-    reth_metrics::metrics::histogram!("base_builder_rejected_tx_priority_fee", "reason" => r)
-        .record(priority_fee);
+    BuilderMetrics::rejected_tx_priority_fee(r).record(priority_fee);
 }
 
 /// Diagnostics captured during a single flashblock's transaction execution.
@@ -275,8 +274,6 @@ pub struct OpPayloadBuilderCtx {
     pub block_env_attributes: OpNextBlockEnvAttributes,
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancellationToken,
-    /// The metrics for the builder
-    pub metrics: Arc<BuilderMetrics>,
     /// Extra context for the payload builder
     pub extra: FlashblocksExtraCtx,
     /// Builder configuration containing limits and metering settings.
@@ -743,10 +740,10 @@ impl OpPayloadBuilderCtx {
 
             // Record execution time prediction accuracy metrics
             if let Some(predicted_us) = predicted_execution_time_us {
-                self.metrics.tx_predicted_execution_time_us.record(predicted_us as f64);
+                BuilderMetrics::tx_predicted_execution_time_us().record(predicted_us as f64);
             }
             if let Some(predicted_us) = predicted_state_root_time_us {
-                self.metrics.tx_predicted_state_root_time_us.record(predicted_us as f64);
+                BuilderMetrics::tx_predicted_state_root_time_us().record(predicted_us as f64);
             }
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
@@ -806,15 +803,15 @@ impl OpPayloadBuilderCtx {
 
             let actual_execution_time_us = tx_simulation_start_time.elapsed().as_micros();
 
-            self.metrics.tx_simulation_duration.record(tx_simulation_start_time.elapsed());
-            self.metrics.tx_byte_size.record(tx.inner().size() as f64);
-            self.metrics.tx_actual_execution_time_us.record(actual_execution_time_us as f64);
+            BuilderMetrics::tx_simulation_duration().record(tx_simulation_start_time.elapsed());
+            BuilderMetrics::tx_byte_size().record(tx.inner().size() as f64);
+            BuilderMetrics::tx_actual_execution_time_us().record(actual_execution_time_us as f64);
             num_txs_simulated += 1;
 
             // Record prediction accuracy
             if let Some(predicted_us) = predicted_execution_time_us {
                 let error = predicted_us as f64 - actual_execution_time_us as f64;
-                self.metrics.execution_time_prediction_error_us.record(error);
+                BuilderMetrics::execution_time_prediction_error_us().record(error);
             }
 
             let gas_used = result.gas_used();
@@ -822,12 +819,12 @@ impl OpPayloadBuilderCtx {
             if is_success {
                 log_txn(Ok(TxnOutcome::Success));
                 num_txs_simulated_success += 1;
-                self.metrics.successful_tx_gas_used.record(gas_used as f64);
+                BuilderMetrics::successful_tx_gas_used().record(gas_used as f64);
             } else {
                 log_txn(Ok(TxnOutcome::Reverted));
                 num_txs_simulated_fail += 1;
                 reverted_gas_used += gas_used as i32;
-                self.metrics.reverted_tx_gas_used.record(gas_used as f64);
+                BuilderMetrics::reverted_tx_gas_used().record(gas_used as f64);
             }
 
             // add gas used by the transaction to cumulative gas used, before creating the
@@ -859,7 +856,7 @@ impl OpPayloadBuilderCtx {
                 // Record state root time / gas ratio for anomaly detection
                 if gas_used > 0 {
                     let ratio = state_root_time as f64 / gas_used as f64;
-                    self.metrics.state_root_time_per_gas_ratio.record(ratio);
+                    BuilderMetrics::state_root_time_per_gas_ratio().record(ratio);
                 }
             }
 
@@ -904,13 +901,12 @@ impl OpPayloadBuilderCtx {
 
         // Record cumulative predicted state root time for the block
         if info.cumulative_state_root_time_us > 0 {
-            self.metrics
-                .block_predicted_state_root_time_us
+            BuilderMetrics::block_predicted_state_root_time_us()
                 .record(info.cumulative_state_root_time_us as f64);
         }
 
         let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
-        self.metrics.set_payload_builder_metrics(
+        BuilderMetrics::set_payload_builder_metrics(
             payload_transaction_simulation_time,
             num_txs_considered as f64,
             num_txs_simulated,
@@ -936,19 +932,19 @@ impl OpPayloadBuilderCtx {
     fn record_static_limit_exceeded(&self, err: &TxnExecutionError) {
         match err {
             TxnExecutionError::TransactionDASizeExceeded(_, _) => {
-                self.metrics.tx_da_size_exceeded_total.increment(1);
+                BuilderMetrics::tx_da_size_exceeded_total().increment(1);
             }
             TxnExecutionError::BlockDASizeExceeded { .. } => {
-                self.metrics.block_da_size_exceeded_total.increment(1);
+                BuilderMetrics::block_da_size_exceeded_total().increment(1);
             }
             TxnExecutionError::DAFootprintLimitExceeded { .. } => {
-                self.metrics.da_footprint_exceeded_total.increment(1);
+                BuilderMetrics::da_footprint_exceeded_total().increment(1);
             }
             TxnExecutionError::TransactionGasLimitExceeded { .. } => {
-                self.metrics.gas_limit_exceeded_total.increment(1);
+                BuilderMetrics::gas_limit_exceeded_total().increment(1);
             }
             TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
-                self.metrics.block_uncompressed_size_exceeded_total.increment(1);
+                BuilderMetrics::block_uncompressed_size_exceeded_total().increment(1);
             }
             _ => {}
         }
@@ -956,19 +952,19 @@ impl OpPayloadBuilderCtx {
 
     /// Record metrics for a limit that requires execution data (enforcement is configurable).
     fn record_execution_metering_limit_exceeded(&self, limit: &ExecutionMeteringLimitExceeded) {
-        self.metrics.resource_limit_would_reject_total.increment(1);
+        BuilderMetrics::resource_limit_would_reject_total().increment(1);
         match limit {
             ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
-                self.metrics.tx_execution_time_exceeded_total.increment(1);
+                BuilderMetrics::tx_execution_time_exceeded_total().increment(1);
             }
             ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
-                self.metrics.flashblock_execution_time_exceeded_total.increment(1);
+                BuilderMetrics::flashblock_execution_time_exceeded_total().increment(1);
             }
             ExecutionMeteringLimitExceeded::TransactionStateRootTime(_, _) => {
-                self.metrics.tx_state_root_time_exceeded_total.increment(1);
+                BuilderMetrics::tx_state_root_time_exceeded_total().increment(1);
             }
             ExecutionMeteringLimitExceeded::BlockStateRootTime(_, _, _) => {
-                self.metrics.block_state_root_time_exceeded_total.increment(1);
+                BuilderMetrics::block_state_root_time_exceeded_total().increment(1);
             }
         }
     }
