@@ -18,7 +18,9 @@ use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use base_execution_payload_builder::{OpPayloadBuilderAttributes, error::OpPayloadBuilderError};
 use base_execution_primitives::OpTransactionSigned;
 use base_revm::{L1BlockInfo, OpSpecId};
-use base_txpool::{BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized};
+use base_txpool::{
+    BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
+};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
@@ -200,7 +202,8 @@ impl FlashblockDiagnostics {
             | TxnExecutionError::NonceTooLow
             | TxnExecutionError::InternalError(_)
             | TxnExecutionError::EvmError
-            | TxnExecutionError::MaxGasUsageExceeded => {
+            | TxnExecutionError::MaxGasUsageExceeded
+            | TxnExecutionError::MeteringDataPending => {
                 self.txs_rejected_other += 1;
             }
         }
@@ -1052,9 +1055,10 @@ mod tests {
         diag.record_rejection(&TxnExecutionError::SequencerTransaction);
         diag.record_rejection(&TxnExecutionError::NonceTooLow);
         diag.record_rejection(&TxnExecutionError::MaxGasUsageExceeded);
+        diag.record_rejection(&TxnExecutionError::MeteringDataPending);
 
-        assert_eq!(diag.txs_rejected_other, 3);
-        assert_eq!(diag.txs_rejected_total(), 3);
+        assert_eq!(diag.txs_rejected_other, 4);
+        assert_eq!(diag.txs_rejected_total(), 4);
     }
 
     #[test]

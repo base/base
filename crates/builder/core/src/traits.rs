@@ -32,14 +32,14 @@ impl<T> NodeBounds for T where
 /// Composite trait bound for a transaction pool compatible with the Base builder.
 pub trait PoolBounds:
     TransactionPool<
-        Transaction:
-            OpPooledTx<Consensus = OpTransactionSigned> + BundleTransaction + TimestampedTransaction,
+        Transaction: OpPooledTx<Consensus = OpTransactionSigned>
+                         + BundleTransaction
+                         + TimestampedTransaction,
     > + TransactionPoolExt
     + Unpin
     + 'static
 where
-    <Self as TransactionPool>::Transaction:
-        OpPooledTx + BundleTransaction + TimestampedTransaction,
+    <Self as TransactionPool>::Transaction: OpPooledTx + BundleTransaction + TimestampedTransaction,
 {
 }
 
@@ -47,13 +47,12 @@ impl<T> PoolBounds for T
 where
     T: TransactionPool<
             Transaction: OpPooledTx<Consensus = OpTransactionSigned>
-                + BundleTransaction
-                + TimestampedTransaction,
+                             + BundleTransaction
+                             + TimestampedTransaction,
         > + TransactionPoolExt
         + Unpin
         + 'static,
-    <Self as TransactionPool>::Transaction:
-        OpPooledTx + BundleTransaction + TimestampedTransaction,
+    <Self as TransactionPool>::Transaction: OpPooledTx + BundleTransaction + TimestampedTransaction,
 {
 }
 
@@ -77,16 +76,18 @@ impl<T> ClientBounds for T where
 /// Composite trait bound for payload transaction iterators used by the Base builder.
 pub trait PayloadTxsBounds:
     PayloadTransactions<
-    Transaction:
-        OpPooledTx<Consensus = OpTransactionSigned> + BundleTransaction + TimestampedTransaction,
+    Transaction: OpPooledTx<Consensus = OpTransactionSigned>
+                     + BundleTransaction
+                     + TimestampedTransaction,
 >
 {
 }
 
 impl<T> PayloadTxsBounds for T where
     T: PayloadTransactions<
-        Transaction:
-            OpPooledTx<Consensus = OpTransactionSigned> + BundleTransaction + TimestampedTransaction,
+        Transaction: OpPooledTx<Consensus = OpTransactionSigned>
+                         + BundleTransaction
+                         + TimestampedTransaction,
     >
 {
 }
