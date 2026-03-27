@@ -12,13 +12,13 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-metrics.workspace = true
 tracing = { workspace = true, features = ["std"] }
 base-comp = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
+base-metrics = { workspace = true, features = ["metrics"] }
 rand = { workspace = true, features = ["std", "small_rng"] }
 base-alloy-consensus = { workspace = true, features = ["std"] }
 base-consensus-genesis = { workspace = true, features = ["std"] }

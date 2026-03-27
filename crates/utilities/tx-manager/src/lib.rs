@@ -40,7 +40,7 @@ mod queue;
 pub use queue::{SendResult, TxQueue};
 
 mod metrics;
-pub use metrics::{BaseTxMetrics, NoopTxMetrics, TxMetrics};
+pub use metrics::{BaseTxMetrics, NoopTxMetrics, TxManagerMetrics, TxMetrics};
 
 mod blob;
 pub use blob::{BlobTxBuilder, MAX_BLOBS_PER_TX};
