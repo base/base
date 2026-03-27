@@ -29,8 +29,8 @@ pub struct BoundlessProver {
     pub rpc_url: Url,
     /// Signer for Boundless Network proving fees.
     pub signer: PrivateKeySigner,
-    /// URL (IPFS or HTTP) where the guest ELF is hosted.
-    pub verifier_program_url: Url,
+    /// IPFS CID of the guest ELF (used to construct a Pinata gateway URL).
+    pub verifier_program_cid: String,
     /// Expected image ID of the guest program.
     pub image_id: [u32; 8],
     /// Maximum price (in wei) willing to pay for proving.
@@ -48,7 +48,7 @@ impl fmt::Debug for BoundlessProver {
         f.debug_struct("BoundlessProver")
             .field("rpc_url", &self.rpc_url.origin().unicode_serialization())
             .field("signer", &self.signer.address())
-            .field("verifier_program_url", &self.verifier_program_url)
+            .field("verifier_program_cid", &self.verifier_program_cid)
             .field("image_id", &self.image_id)
             .field("max_price", &self.max_price)
             .field("poll_interval", &self.poll_interval)
@@ -69,13 +69,23 @@ impl AttestationProofProvider for BoundlessProver {
 
         let image_id = Digest::from(self.image_id);
 
+        let program_url =
+            Url::parse(&format!("https://gateway.pinata.cloud/ipfs/{}", self.verifier_program_cid))
+                .map_err(|e| {
+                    ProverError::Boundless(format!(
+                        "invalid CID '{}': {e}",
+                        self.verifier_program_cid
+                    ))
+                })?;
+
         info!(
             image_id = ?self.image_id,
             input_len = input_bytes.len(),
             attestation_len = attestation_bytes.len(),
             rpc_url = %self.rpc_url.origin().unicode_serialization(),
             signer_address = %self.signer.address(),
-            program_url = %self.verifier_program_url,
+            program_url = %program_url,
+            verifier_program_cid = %self.verifier_program_cid,
             max_price = self.max_price,
             timeout = ?self.timeout,
             poll_interval = ?self.poll_interval,
@@ -104,12 +114,12 @@ impl AttestationProofProvider for BoundlessProver {
 
         // Build request parameters: program URL + stdin input + predicate.
         let params = RequestParams::new()
-            .with_program_url(self.verifier_program_url.clone())
+            .with_program_url(program_url.clone())
             .map_err(|e| {
                 warn!(
                     error = %e,
                     error_debug = ?e,
-                    program_url = %self.verifier_program_url,
+                    program_url = %program_url,
                     "invalid Boundless program URL"
                 );
                 ProverError::Boundless(format!("invalid program URL: {e}"))
@@ -213,7 +223,7 @@ mod tests {
     use super::*;
 
     const TEST_RPC_URL: &str = "http://localhost:8545";
-    const TEST_PROGRAM_URL: &str = "https://example.com/guest.bin";
+    const TEST_PROGRAM_CID: &str = "bafybeiarmjc6ftiyu7oyxd3kkz7dxg4vwffx4iestamjftaici3zakccr4";
     /// Well-known Hardhat/Anvil account #0 private key (not a real secret).
     const TEST_PRIVATE_KEY: &str =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -228,7 +238,7 @@ mod tests {
         BoundlessProver {
             rpc_url: Url::parse(TEST_RPC_URL).unwrap(),
             signer: PrivateKeySigner::from_str(TEST_PRIVATE_KEY).unwrap(),
-            verifier_program_url: Url::parse(TEST_PROGRAM_URL).unwrap(),
+            verifier_program_cid: TEST_PROGRAM_CID.to_string(),
             image_id: TEST_IMAGE_ID,
             max_price: TEST_MAX_PRICE_WEI,
             poll_interval: TEST_POLL_INTERVAL,
@@ -254,7 +264,7 @@ mod tests {
             prover.signer.address(),
             PrivateKeySigner::from_str(TEST_PRIVATE_KEY).unwrap().address()
         );
-        assert_eq!(prover.verifier_program_url, Url::parse(TEST_PROGRAM_URL).unwrap());
+        assert_eq!(prover.verifier_program_cid, TEST_PROGRAM_CID);
         assert_eq!(prover.image_id, TEST_IMAGE_ID);
         assert_eq!(prover.max_price, TEST_MAX_PRICE_WEI);
         assert_eq!(prover.poll_interval, TEST_POLL_INTERVAL);

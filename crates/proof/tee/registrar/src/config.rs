@@ -28,8 +28,8 @@ pub struct BoundlessConfig {
     pub rpc_url: Url,
     /// Signer for Boundless Network proving fees.
     pub signer: PrivateKeySigner,
-    /// IPFS URL of the Nitro attestation verifier ELF uploaded via `nitro-attest-cli`.
-    pub verifier_program_url: Url,
+    /// IPFS CID of the Nitro attestation verifier ELF uploaded via `nitro-attest-cli`.
+    pub verifier_program_cid: String,
     /// Expected image ID of the guest program (hex-encoded `[u32; 8]`).
     pub image_id: [u32; 8],
     /// Maximum price in wei per cycle for Boundless proof requests.
@@ -47,7 +47,7 @@ impl std::fmt::Debug for BoundlessConfig {
         f.debug_struct("BoundlessConfig")
             .field("rpc_url", &url_origin(&self.rpc_url))
             .field("signer", &self.signer.address())
-            .field("verifier_program_url", &self.verifier_program_url)
+            .field("verifier_program_cid", &self.verifier_program_cid)
             .field("image_id", &self.image_id)
             .field("max_price", &self.max_price)
             .field("poll_interval", &self.poll_interval)

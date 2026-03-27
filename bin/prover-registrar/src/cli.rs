@@ -147,13 +147,13 @@ struct BoundlessArgs {
     )]
     boundless_private_key: Option<String>,
 
-    /// IPFS URL of the Nitro attestation verifier ELF uploaded via `nitro-attest-cli`.
+    /// IPFS CID of the Nitro attestation verifier ELF uploaded via `nitro-attest-cli`.
     #[arg(
         long,
-        env = cli_env!("BOUNDLESS_VERIFIER_PROGRAM_URL"),
+        env = cli_env!("BOUNDLESS_VERIFIER_PROGRAM_CID"),
         required_if_eq("proving_mode", "boundless")
     )]
-    boundless_verifier_program_url: Option<Url>,
+    boundless_verifier_program_cid: Option<String>,
 
     /// Maximum price in wei per cycle for Boundless proof requests.
     #[arg(long, env = cli_env!("BOUNDLESS_MAX_PRICE"), default_value_t = 1_000_000)]
@@ -238,12 +238,12 @@ impl Cli {
                         RegistrarError::Config("--boundless-rpc-url is required".into())
                     })?,
                     signer: parse_private_key("--boundless-private-key", boundless_key)?,
-                    verifier_program_url: self
+                    verifier_program_cid: self
                         .boundless
-                        .boundless_verifier_program_url
+                        .boundless_verifier_program_cid
                         .ok_or_else(|| {
                             RegistrarError::Config(
-                                "--boundless-verifier-program-url is required".into(),
+                                "--boundless-verifier-program-cid is required".into(),
                             )
                         })?,
                     image_id: parse_image_id(image_id_hex)?,
@@ -360,7 +360,7 @@ impl Cli {
             ProvingConfig::Boundless(ref boundless) => Box::new(BoundlessProver {
                 rpc_url: boundless.rpc_url.clone(),
                 signer: boundless.signer.clone(),
-                verifier_program_url: boundless.verifier_program_url.clone(),
+                verifier_program_cid: boundless.verifier_program_cid.clone(),
                 image_id: boundless.image_id,
                 max_price: boundless.max_price,
                 poll_interval: boundless.poll_interval,
@@ -459,8 +459,7 @@ mod tests {
     const TEST_BOUNDLESS_RPC: &str = "http://localhost:9545";
     const TEST_BOUNDLESS_KEY: &str =
         "0202020202020202020202020202020202020202020202020202020202020202";
-    const TEST_VERIFIER_URL: &str =
-        "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+    const TEST_VERIFIER_CID: &str = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
     const TEST_IMAGE_ID: &str =
         "0x0000000100000002000000030000000400000005000000060000000700000008";
     const TEST_ELF_PATH: &str = "/tmp/guest.elf";
@@ -505,8 +504,8 @@ mod tests {
             TEST_BOUNDLESS_RPC,
             "--boundless-private-key",
             TEST_BOUNDLESS_KEY,
-            "--boundless-verifier-program-url",
-            TEST_VERIFIER_URL,
+            "--boundless-verifier-program-cid",
+            TEST_VERIFIER_CID,
         ]);
         args
     }
@@ -544,8 +543,8 @@ mod tests {
             TEST_BOUNDLESS_RPC,
             "--boundless-private-key",
             TEST_BOUNDLESS_KEY,
-            "--boundless-verifier-program-url",
-            TEST_VERIFIER_URL,
+            "--boundless-verifier-program-cid",
+            TEST_VERIFIER_CID,
         ]
     }
 
