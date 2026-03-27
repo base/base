@@ -123,7 +123,7 @@ Deriving an L2 block requires that we have constructed its sequencer batch and d
 blocks and state updates prior to it. This means we can typically derive the L2 blocks of an epoch
 _eagerly_ without waiting on the full sequencing window. The full sequencing window is required
 before derivation only in the very worst case where some portion of the sequencer batch for the
-first block of the epoch appears in the very last L1 block of the window. Note that this only
+first block of the epoch appears in the very last L2 block of the window. Note that this only
 applies to _block_ derivation. Sequencer batches can still be derived and tentatively queued
 without deriving blocks from them.
 
@@ -220,7 +220,7 @@ Channels might be too large to fit in a single [batcher transaction][g-batcher-t
 into chunks known as [channel frames][g-channel-frame]. A single batcher transaction can also carry multiple frames
 (belonging to the same or to different channels).
 
-This design gives use the maximum flexibility in how we aggregate batches into channels, and split channels over batcher
+This design gives us the maximum flexibility in how we aggregate batches into channels, and split channels over batcher
 transactions. It notably allows us to maximize data utilization in a batcher transaction: for instance it allows us to
 pack the final (small) frame of one channel with one or more frames from the next channel.
 
@@ -246,8 +246,8 @@ Each colored chunk within the boxes represents a [channel frame][g-channel-frame
 - a single batcher transaction can carry frames from multiple channels
 
 In the next line, the rounded boxes represent individual [sequencer batches][g-sequencer-batch] that were extracted from
-the channels. The four blue/purple/pink were derived from channel `A` while the other were derived from channel `B`.
-These batches are here represented in the order they were decoded from batches (in this case `B` is decoded first).
+the channels. The four blue/purple/pink were derived from channel `A` while the others were derived from channel `B`.
+These batches are here represented in the order they were decoded from channels (in this case `B` is decoded first).
 
 > **Note** The caption here says "Channel B was seen first and will be decoded into batches first", but this is not a
 > requirement. For instance, it would be equally acceptable for an implementation to peek into the channels and decode
@@ -275,7 +275,7 @@ Finally, the sixth line shows [user-deposited transactions][g-user-deposited] de
 contract][g-deposit-contract] event mentioned earlier.
 
 Note the `101-0` L1 attributes transaction on the bottom right of the diagram. Its presence there is only possible if
-frame `B2` indicates that it is the last frame within the channel and (2) no empty blocks must be inserted.
+frame `B2` indicates that (1) it is the last frame within the channel and (2) no empty blocks must be inserted.
 
 The diagram does not specify the sequencing window size in use, but from this we can infer that it must be at least 4
 blocks, because the last frame of channel `A` appears in block 102, but belong to epoch 99.
@@ -299,7 +299,7 @@ Batcher transactions are encoded as `version_byte ++ rollup_payload` (where `++`
 | 1    | `da_commitment` (experimental data-availability commitment format) |
 
 Unknown versions make the batcher transaction invalid (it must be ignored by the rollup node).
-All frames in a batcher transaction must be parseable. If any one frame fails to parse, the all frames in the
+All frames in a batcher transaction must be parseable. If any one frame fails to parse, all the frames in the
 transaction are rejected.
 
 Batch transactions are authenticated by verifying that the `to` address of the transaction matches the batch inbox
@@ -336,7 +336,7 @@ where:
 - `frame_number` identifies the index of the frame within the channel
 - `frame_data_length` is the length of `frame_data` in bytes. It is capped to 1,000,000 bytes.
 - `frame_data` is a sequence of bytes belonging to the channel, logically after the bytes from the previous frames
-- `is_last` is a single byte with a value of 1 if the frame is the last in the channel, 0 if there are frames in the
+- `is_last` is a single byte with a value of 1 if the frame is the last in the channel, 0 if there are more frames in the
   channel. Any other value makes the frame invalid (it must be ignored by the rollup node).
 
 ### Channel Format
@@ -605,7 +605,7 @@ A batch can have 4 different forms of validity:
 - `future`: the batch may be valid, but cannot be processed yet and should be checked again later.
 
 The batches are processed in order of the inclusion on L1: if multiple batches can be `accept`-ed the first is applied.
-An implementation can defer `future` batches a later derivation step to reduce validation work.
+An implementation can defer `future` batches to a later derivation step to reduce validation work.
 
 The batches validity is derived as follows:
 
@@ -895,7 +895,7 @@ Note that this algorithm covers several important use-cases:
 - Initialize the pipeline to derive a disputed L2 block with prior L1 and L2 history inside a proof program.
 
 Handling these cases also means a node can be configured to eagerly sync L1 data with 0 confirmations,
-as it can undo the changes if the L1 later does recognize the data as canonical, enabling safe low-latency usage.
+as it can undo the changes if the L1 later doesn't recognize the data as canonical, enabling safe low-latency usage.
 
 The Engine Queue is first reset, to determine the L1 and L2 starting points to continue derivation from.
 After this, the other stages are reset independent of each other.
@@ -990,7 +990,7 @@ for the target L2 block number. [Remember][batch-format] that the batch includes
 epoch][g-sequencing-epoch] number, an L2 timestamp, and a transaction list.
 
 This block is part of a [sequencing epoch][g-sequencing-epoch],
-whose number matches that of an L1 block (its _[L1 origin][g-l1-origin]_).
+whose epoch number matches that of an L1 block (its _[L1 origin][g-l1-origin]_).
 This L1 block is used to derive L1 attributes and (for the first L2 block in the epoch) user deposits.
 
 Therefore, a [`PayloadAttributesV2`][expanded-payload] object must include the following transactions:
