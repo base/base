@@ -330,12 +330,11 @@ where
                     state.inflight.insert(target);
                     state.record_gauges();
                     state.prove_tasks.spawn(async move {
-                        let proof_timer = base_metrics::timed!(Metrics::proof_duration_seconds());
+                        let mut proof_timer =
+                            base_metrics::timed!(Metrics::proof_duration_seconds());
                         tokio::select! {
                             () = cancel.cancelled() => {
-                                // Disarm the timer so cancelled proofs don't pollute the
-                                // duration histogram.
-                                std::mem::forget(proof_timer);
+                                proof_timer.disarm();
                                 (target, Err(ProposerError::Internal("cancelled".into())))
                             }
                             result = prover.prove(request) => {
@@ -383,7 +382,7 @@ where
 
             tracing::Span::current().record("next_block", next_to_submit);
 
-            let submit_timer = base_metrics::timed!(Metrics::submission_duration_seconds());
+            let mut submit_timer = base_metrics::timed!(Metrics::submission_duration_seconds());
             let submit_result =
                 self.validate_and_submit(&proof_result, next_to_submit, recovered.game_index).await;
             match submit_result {
@@ -402,8 +401,7 @@ where
                     };
                 }
                 Err(SubmitAction::Reorg) => {
-                    // Disarm — don't record reorg latency as submission duration.
-                    std::mem::forget(submit_timer);
+                    submit_timer.disarm();
                     warn!(
                         target_block = next_to_submit,
                         "Reorg detected at submit time, resetting pipeline"
@@ -413,7 +411,7 @@ where
                     return Ok(());
                 }
                 Err(SubmitAction::Failed(e)) => {
-                    std::mem::forget(submit_timer);
+                    submit_timer.disarm();
                     Metrics::errors_total(e.metric_label()).increment(1);
                     warn!(
                         error = %e,
@@ -424,7 +422,7 @@ where
                     return Ok(());
                 }
                 Err(SubmitAction::Discard(e)) => {
-                    std::mem::forget(submit_timer);
+                    submit_timer.disarm();
                     Metrics::errors_total(e.metric_label()).increment(1);
                     warn!(
                         error = %e,

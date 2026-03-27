@@ -47,10 +47,6 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     info!(
         dry_run = config.dry_run,
         allow_non_finalized = config.allow_non_finalized,
-        l1_eth_rpc = %config.l1_eth_rpc,
-        l2_eth_rpc = %config.l2_eth_rpc,
-        rollup_rpc = %config.rollup_rpc,
-        prover_rpc = %config.prover_rpc,
         anchor_state_registry = %config.anchor_state_registry_addr,
         dispute_game_factory = %config.dispute_game_factory_addr,
         game_type = config.game_type,
@@ -291,7 +287,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     driver_handle.start_proposer().await.map_err(|e| eyre::eyre!(e))?;
 
     ready.store(true, Ordering::SeqCst);
-    Metrics::record_startup(env!("CARGO_PKG_VERSION"));
+    Metrics::record_startup();
     info!(
         poll_interval = ?config.poll_interval,
         block_interval,

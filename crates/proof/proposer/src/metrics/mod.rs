@@ -1,31 +1,9 @@
 //! Proposer metrics.
-//!
-//! | Name | Type | Description |
-//! |------|------|-------------|
-//! | `base_proposer_info` | Gauge | Build info (label: `version`) |
-//! | `base_proposer_up` | Gauge | Proposer is running |
-//! | `base_proposer_l2_output_proposals_total` | Counter | Total L2 output proposals submitted |
-//! | `base_proposer_account_balance_wei` | Gauge | Proposer account balance in wei |
-//! | `base_proposer_tee_signer_invalid_total` | Counter | TEE proofs skipped (invalid signer) |
-//! | `base_proposer_errors_total` | Counter | Errors by type (label: `error_type`) |
-//! | `base_proposer_reorgs_total` | Counter | Reorgs detected at submit time |
-//! | `base_proposer_last_proposed_block` | Gauge | Most recently proposed L2 block number |
-//! | `base_proposer_inflight_proofs` | Gauge | Proof tasks currently in flight |
-//! | `base_proposer_proved_queue_depth` | Gauge | Proved results awaiting submission |
-//! | `base_proposer_pipeline_retries` | Gauge | Total pending retries across all blocks |
-//! | `base_proposer_safe_head` | Gauge | Latest safe (or finalized) L2 block number |
-//! | `base_proposer_proof_duration_seconds` | Histogram | Time to generate a proof |
-//! | `base_proposer_tick_duration_seconds` | Histogram | Time for one pipeline tick |
-//! | `base_proposer_submission_duration_seconds` | Histogram | Time to validate and submit a proposal |
 
 base_metrics::define_metrics! {
     base_proposer
 
     // ── Gauges ──────────────────────────────────────────────────────────
-    #[describe("Build info")]
-    #[label(version)]
-    info: gauge,
-
     #[describe("Proposer is running")]
     up: gauge,
 
@@ -139,9 +117,7 @@ impl Metrics {
 }
 
 impl Metrics {
-    /// Records build-info and liveness gauges at startup.
-    pub(crate) fn record_startup(version: &str) {
-        Self::info(version.to_string()).set(1.0);
+    pub(crate) fn record_startup() {
         Self::up().set(1.0);
     }
 }
