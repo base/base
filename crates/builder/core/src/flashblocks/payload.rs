@@ -596,6 +596,7 @@ where
             .map(|tx| tx.tx_hash())
             .collect::<Vec<_>>();
         best_txs.mark_committed(&new_transactions);
+        self.config.metering_provider.remove(&new_transactions);
         self.pool.prune_transactions(new_transactions);
 
         // Track executed nonces incrementally for the next flashblock's update_accounts call.

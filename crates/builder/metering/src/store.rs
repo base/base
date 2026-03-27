@@ -1,22 +1,20 @@
 //! Metering store.
 //!
 //! Provides a concurrent cache for resource metering data with LRU eviction
-//! to bound memory usage.
+//! to bound memory usage. Uses [`moka`] for the LRU cache that promotes
+//! entries on access, preventing premature eviction of frequently-read data.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use alloy_primitives::TxHash;
 use base_builder_core::{BuilderMetrics, MeteringProvider};
 use base_bundles::MeterBundleResponse;
-use concurrent_queue::ConcurrentQueue;
-use tracing::debug;
+use moka::{notification::RemovalCause, sync::Cache};
 
 /// Concurrent metering store with LRU eviction.
 pub struct MeteringStore {
-    /// Mapping of transaction hash to metering data.
-    by_tx_hash: dashmap::DashMap<TxHash, MeterBundleResponse>,
-    /// LRU queue for transaction hash eviction.
-    lru: ConcurrentQueue<TxHash>,
+    /// LRU cache mapping transaction hash to metering data.
+    cache: Cache<TxHash, MeterBundleResponse>,
     /// Whether resource metering is enabled.
     metering_enabled: AtomicBool,
     /// Builder metrics.
@@ -26,45 +24,37 @@ pub struct MeteringStore {
 impl core::fmt::Debug for MeteringStore {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("MeteringStore")
-            .field("entries", &self.by_tx_hash.len())
+            .field("entries", &self.cache.entry_count())
             .field("metering_enabled", &self.metering_enabled.load(Ordering::Relaxed))
             .finish()
     }
 }
 
 impl MeteringStore {
-    /// Creates a new [`MeteringStore`] with the given metering flag and LRU buffer size.
-    pub fn new(enable_resource_metering: bool, buffer_size: usize) -> Self {
-        Self {
-            by_tx_hash: dashmap::DashMap::new(),
-            lru: ConcurrentQueue::bounded(buffer_size),
-            metering_enabled: AtomicBool::new(enable_resource_metering),
-            metrics: BuilderMetrics::default(),
-        }
-    }
+    /// Creates a new [`MeteringStore`] with the given metering flag and max capacity.
+    pub fn new(enable_resource_metering: bool, max_capacity: usize) -> Self {
+        let metrics = BuilderMetrics::default();
+        let listener_metrics = metrics.clone();
+        let cache = Cache::builder()
+            .max_capacity(max_capacity as u64)
+            .eviction_listener(move |_key, _value, cause| {
+                if cause == RemovalCause::Size {
+                    listener_metrics.metering_store_lru_evictions.increment(1);
+                }
+            })
+            .build();
 
-    fn evict_if_needed(&self) {
-        if self.lru.is_full()
-            && let Ok(evicted_hash) = self.lru.pop()
-        {
-            self.by_tx_hash.remove(&evicted_hash);
-            self.metrics.metering_store_lru_evictions.increment(1);
-            debug!(
-                target: "metering_store",
-                evicted_tx = ?evicted_hash,
-                "Evicted old metering data"
-            );
-        }
+        Self { cache, metering_enabled: AtomicBool::new(enable_resource_metering), metrics }
     }
 
     /// Returns the number of stored entries.
     pub fn len(&self) -> usize {
-        self.by_tx_hash.len()
+        self.cache.entry_count() as usize
     }
 
     /// Returns `true` if the store contains no entries.
     pub fn is_empty(&self) -> bool {
-        self.by_tx_hash.is_empty()
+        self.cache.entry_count() == 0
     }
 }
 
@@ -74,23 +64,27 @@ impl MeteringProvider for MeteringStore {
             return None;
         }
 
-        let Some(entry) = self.by_tx_hash.get(tx_hash) else {
+        let Some(entry) = self.cache.get(tx_hash) else {
             self.metrics.metering_unknown_transaction.increment(1);
             return None;
         };
 
         self.metrics.metering_known_transaction.increment(1);
-        Some(entry.clone())
+        Some(entry)
     }
 
     fn insert(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
-        self.evict_if_needed();
-        let _ = self.lru.push(tx_hash);
-        self.by_tx_hash.insert(tx_hash, metering);
+        self.cache.insert(tx_hash, metering);
+    }
+
+    fn remove(&self, tx_hashes: &[TxHash]) {
+        for hash in tx_hashes {
+            self.cache.invalidate(hash);
+        }
     }
 
     fn clear(&self) {
-        self.by_tx_hash.clear();
+        self.cache.invalidate_all();
     }
 
     fn set_enabled(&self, enabled: bool) {
@@ -164,11 +158,55 @@ mod tests {
     fn test_lru_eviction() {
         let store = MeteringStore::new(true, 2);
 
-        for i in 0..3u64 {
-            let tx_hash = TxHash::random();
-            store.insert(tx_hash, create_test_metering(i * 1000));
-        }
+        let tx1 = TxHash::random();
+        let tx2 = TxHash::random();
+        let tx3 = TxHash::random();
+
+        store.insert(tx1, create_test_metering(1000));
+        store.insert(tx2, create_test_metering(2000));
+        // Trigger eviction by inserting a third entry.
+        store.insert(tx3, create_test_metering(3000));
+
+        // Moka evicts asynchronously; run pending tasks to ensure eviction completes.
+        store.cache.run_pending_tasks();
 
         assert_eq!(store.len(), 2);
+    }
+
+    #[test]
+    fn test_accessed_entries_survive_eviction() {
+        // Small capacity to keep the TinyLFU frequency sketch deterministic.
+        let capacity = 5;
+        let store = MeteringStore::new(true, capacity);
+
+        // Fill the cache to capacity.
+        let mut hashes: Vec<TxHash> = Vec::new();
+        for i in 0..capacity as u64 {
+            let h = TxHash::random();
+            store.insert(h, create_test_metering(i * 1000));
+            hashes.push(h);
+        }
+        store.cache.run_pending_tasks();
+        assert_eq!(store.len(), capacity);
+
+        // Access the first entry many times to build up its frequency estimate
+        // so TinyLFU's admission policy keeps it over newcomers.
+        let promoted = hashes[0];
+        for _ in 0..20 {
+            assert!(store.get(&promoted).is_some());
+        }
+        store.cache.run_pending_tasks();
+
+        // Insert new entries one at a time, flushing between each so the
+        // eviction policy processes each displacement individually.
+        for i in 0..capacity as u64 {
+            store.insert(TxHash::random(), create_test_metering(i));
+            store.cache.run_pending_tasks();
+        }
+
+        assert!(
+            store.get(&promoted).is_some(),
+            "frequently accessed entry should survive eviction"
+        );
     }
 }

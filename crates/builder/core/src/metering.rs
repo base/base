@@ -14,6 +14,13 @@ pub trait MeteringProvider: Debug + Send + Sync + 'static {
     /// Inserts metering information for a transaction.
     fn insert(&self, _tx_hash: TxHash, _metering: MeterBundleResponse) {}
 
+    /// Removes metering data for the given transaction hashes.
+    ///
+    /// Used to eagerly evict entries for transactions that have been included in
+    /// a flashblock so they don't occupy LRU slots that should go to pending
+    /// transactions.
+    fn remove(&self, _tx_hashes: &[TxHash]) {}
+
     /// Clears all stored metering data.
     fn clear(&self) {}
 

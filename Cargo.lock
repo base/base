@@ -3033,9 +3033,8 @@ dependencies = [
  "base-builder-core",
  "base-bundles",
  "base-node-runner",
- "concurrent-queue",
- "dashmap",
  "jsonrpsee",
+ "moka",
  "tracing",
 ]
 
