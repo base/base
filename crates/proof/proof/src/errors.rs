@@ -110,6 +110,13 @@ pub enum OracleProviderError {
     /// * `0` - The unknown chain ID that was encountered
     #[error("Unknown chain ID: {0}")]
     UnknownChainId(u64),
+    /// Blob KZG commitment verification failed.
+    ///
+    /// This error occurs when the KZG commitment computed from a reconstructed
+    /// blob does not match the commitment fetched from the oracle. This indicates
+    /// that the blob field elements were tampered with or corrupted.
+    #[error("Blob verification failed: {0}")]
+    BlobVerification(String),
 }
 
 impl From<OracleProviderError> for PipelineErrorKind {

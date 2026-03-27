@@ -51,19 +51,21 @@ ark-ff.workspace = true
 ark-bls12-381.workspace = true
 
 # `std` feature dependencies
+c-kzg = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"], optional = true }
 
 [dev-dependencies]
 rand.workspace = true
-c-kzg.workspace = true
 rayon.workspace = true
 rstest.workspace = true
 tokio = { workspace = true, features = ["full"] }
+c-kzg = { workspace = true, features = [] }
 alloy-eips = { workspace = true, features = ["kzg"] }
 
 [features]
 std = [
 	"alloy-consensus/std",
+	"alloy-eips/kzg",
 	"alloy-eips/std",
 	"alloy-evm/std",
 	"alloy-primitives/std",
@@ -82,6 +84,7 @@ std = [
 	"base-proof-preimage/std",
 	"base-protocol/std",
 	"base-revm/std",
+	"dep:c-kzg",
 	"dep:tokio",
 	"serde/std",
 	"serde_json/std",
