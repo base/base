@@ -6,7 +6,6 @@
 )]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![allow(clippy::useless_let_if_seq)]
 
 extern crate alloc;
 
