@@ -113,9 +113,9 @@ impl std::fmt::Debug for ProofGuard {
 
 #[cfg(feature = "metrics")]
 impl ProofGuard {
-    /// Creates a new guard that increments the in-flight gauge.
+    /// Starts tracking an in-flight proof request.
     #[inline]
-    pub fn new() -> Self {
+    pub(crate) fn track_inflight() -> Self {
         Self {
             _inflight: base_metrics::InflightCounter::new(Metrics::in_flight_proofs()),
             outcome: Metrics::OUTCOME_DROPPED,
@@ -161,7 +161,7 @@ macro_rules! proof_guard {
     () => {{
         #[cfg(feature = "metrics")]
         {
-            $crate::ProofGuard::new()
+            $crate::ProofGuard::track_inflight()
         }
         #[cfg(not(feature = "metrics"))]
         {
