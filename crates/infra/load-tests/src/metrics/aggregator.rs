@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use super::{GasMetrics, LatencyMetrics, ThroughputMetrics, TransactionMetrics};
+use super::{
+    FbSequencerLatencyMetrics, GasMetrics, LatencyMetrics, ThroughputMetrics, TransactionMetrics,
+};
 
 /// Aggregates raw transaction metrics into summary statistics.
 #[derive(Debug)]
@@ -19,32 +21,53 @@ impl<'a> MetricsAggregator<'a> {
     /// Computes summary statistics from the collected metrics.
     pub fn summarize(&self, duration: Duration, submitted: u64, failed: u64) -> MetricsSummary {
         MetricsSummary {
-            latency: self.compute_latency(),
+            block_latency: self.compute_block_latency(),
+            fb_sequencer_latency: self.compute_fb_sequencer_latency(),
             throughput: self.compute_throughput(duration, submitted, failed),
             gas: self.compute_gas(),
         }
     }
 
-    fn compute_latency(&self) -> LatencyMetrics {
-        if self.transactions.is_empty() {
-            return LatencyMetrics::default();
+    fn compute_block_latency(&self) -> Option<LatencyMetrics> {
+        let mut latencies: Vec<Duration> =
+            self.transactions.iter().filter_map(|t| t.block_latency).collect();
+
+        if latencies.is_empty() {
+            return None;
         }
 
-        let mut latencies: Vec<Duration> = self.transactions.iter().map(|t| t.latency).collect();
         latencies.sort();
 
         let len = latencies.len();
         let sum: Duration = latencies.iter().sum();
-
         let mean = Duration::from_nanos((sum.as_nanos() / len as u128) as u64);
-        LatencyMetrics {
+
+        Some(LatencyMetrics {
             min: latencies[0],
             max: latencies[len - 1],
             mean,
             p50: Self::percentile(&latencies, 50),
             p95: Self::percentile(&latencies, 95),
             p99: Self::percentile(&latencies, 99),
+        })
+    }
+
+    fn compute_fb_sequencer_latency(&self) -> Option<FbSequencerLatencyMetrics> {
+        let mut latencies: Vec<Duration> =
+            self.transactions.iter().filter_map(|t| t.fb_sequencer_latency).collect();
+
+        if latencies.is_empty() {
+            return None;
         }
+
+        latencies.sort();
+
+        Some(FbSequencerLatencyMetrics {
+            count: latencies.len() as u64,
+            p50: Self::percentile(&latencies, 50),
+            p90: Self::percentile(&latencies, 90),
+            p99: Self::percentile(&latencies, 99),
+        })
     }
 
     fn compute_throughput(
@@ -102,8 +125,10 @@ impl<'a> MetricsAggregator<'a> {
 /// Summary of all collected metrics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MetricsSummary {
-    /// Latency statistics.
-    pub latency: LatencyMetrics,
+    /// Block production latency via newHeads WebSocket.
+    pub block_latency: Option<LatencyMetrics>,
+    /// Sequencer acceptance latency via flashblocks WebSocket.
+    pub fb_sequencer_latency: Option<FbSequencerLatencyMetrics>,
     /// Throughput statistics.
     pub throughput: ThroughputMetrics,
     /// Gas usage statistics.

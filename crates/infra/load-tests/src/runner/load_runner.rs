@@ -18,12 +18,13 @@ use base_tx_manager::NonceManager;
 /// `NonceManager` only calls `get_transaction_count`, which returns the same
 /// response for both Ethereum and Base networks.
 type NonceProvider = RootProvider<Ethereum>;
+use parking_lot::RwLock;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, instrument, warn};
 
 use super::{
-    AdaptiveBackoff, Confirmer, ConfirmerHandle, DisplaySnapshot, LoadConfig, LoadTestDisplay,
-    RateLimiter, TxType,
+    AdaptiveBackoff, BlockFirstSeen, BlockWatcher, Confirmer, ConfirmerHandle, DisplaySnapshot,
+    FlashblockTimes, FlashblockTracker, LoadConfig, LoadTestDisplay, RateLimiter, TxType,
 };
 use crate::{
     BaselineError, Result,
@@ -414,9 +415,37 @@ impl LoadRunner {
         let (metrics_tx, mut metrics_rx) =
             mpsc::channel::<TransactionMetrics>(METRICS_CHANNEL_BUFFER);
 
+        let flashblock_times: FlashblockTimes = Arc::new(RwLock::new(HashMap::new()));
+        let block_first_seen: BlockFirstSeen = Arc::new(RwLock::new(HashMap::new()));
+
+        let flashblock_tracker_task = self.config.flashblocks_url.as_ref().map(|url| {
+            info!(url = %url, "starting flashblock tracker");
+            let tracker = FlashblockTracker::new(
+                url.clone(),
+                Arc::clone(&flashblock_times),
+                Arc::clone(&self.stop_flag),
+            );
+            tracker.start()
+        });
+
+        let block_watcher_task = self.config.ws_url.as_ref().map(|url| {
+            info!(url = %url, "starting block watcher");
+            let watcher = BlockWatcher::new(
+                url.clone(),
+                Arc::clone(&block_first_seen),
+                Arc::clone(&self.stop_flag),
+            );
+            watcher.start()
+        });
+
         let sender_addresses: Vec<_> = self.accounts.accounts().iter().map(|a| a.address).collect();
-        let mut confirmer =
-            Confirmer::new(&sender_addresses, metrics_tx, Arc::clone(&self.stop_flag));
+        let mut confirmer = Confirmer::with_timing_data(
+            &sender_addresses,
+            metrics_tx,
+            Arc::clone(&self.stop_flag),
+            Arc::clone(&flashblock_times),
+            Arc::clone(&block_first_seen),
+        );
         let confirmer_handle = confirmer.handle();
         let confirmer_handle_for_run = confirmer_handle.clone();
 
@@ -651,6 +680,14 @@ impl LoadRunner {
         }
 
         confirmer_task.abort();
+
+        if let Some(tracker_task) = flashblock_tracker_task {
+            tracker_task.abort();
+        }
+
+        if let Some(watcher_task) = block_watcher_task {
+            watcher_task.abort();
+        }
 
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");

@@ -28,6 +28,7 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 base-cli-utils.workspace = true
 base-tx-manager.workspace = true
 base-alloy-network.workspace = true
+base-alloy-flashblocks.workspace = true
 base-common-rpc-types.workspace = true
 
 # display
@@ -46,7 +47,9 @@ futures.workspace = true
 tracing.workspace = true
 humantime.workspace = true
 thiserror.workspace = true
+parking_lot.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+tokio-tungstenite.workspace = true
 
 [dev-dependencies]

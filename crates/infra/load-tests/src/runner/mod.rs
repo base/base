@@ -10,7 +10,13 @@ mod backoff;
 pub use backoff::AdaptiveBackoff;
 
 mod confirmer;
-pub use confirmer::{Confirmer, ConfirmerHandle};
+pub use confirmer::{Confirmer, ConfirmerHandle, FlashblockTimes};
+
+mod flashblock_tracker;
+pub use flashblock_tracker::FlashblockTracker;
+
+mod block_watcher;
+pub use block_watcher::{BlockFirstSeen, BlockWatcher};
 
 mod status;
 pub use status::{DisplaySnapshot, LoadTestDisplay};

@@ -4,6 +4,10 @@
 
 rpc: https://base-sepolia-alpha.cbhq.net
 
+# WebSocket endpoints for latency tracking
+ws_url: "wss://base-sepolia-alpha.cbhq.net"
+flashblocks_url: "wss://sepolia-alpha.flashblocks.base.org/ws"
+
 sender_count: 10
 target_gps: 2100000
 duration: "30s"
