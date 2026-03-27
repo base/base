@@ -3,7 +3,7 @@ use std::io::Write;
 use anyhow::Result;
 use base_alloy_flashblocks::Flashblock;
 use base_consensus_genesis::SystemConfig;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use super::{App, Resources, ViewId, views::create_view};
 use crate::{
@@ -49,6 +49,19 @@ fn start_background_services(config: &ChainConfig, resources: &mut Resources) {
     let (toast_tx, toast_rx) = mpsc::channel::<Toast>(50);
 
     resources.flash.set_channel(fb_rx);
+
+    // Create a watch channel seeded with the configured flashblocks URL.
+    // If a conductor cluster is configured and all nodes carry flashblocks_ws
+    // endpoints, `run_conductor_leader_url_tracker` will push the current
+    // leader's URL into this channel so both subscriber tasks switch over
+    // immediately on every leadership change.
+    let (fb_url_tx, fb_url_rx) = watch::channel(config.flashblocks_ws.to_string());
+
+    // Give FlashState a clone so it can detect URL changes and reset its
+    // last-flashblock tracking state (avoids spurious missed-flashblock counts
+    // when the first flashblock from the new leader arrives mid-block).
+    resources.flash.set_url_rx(fb_url_rx.clone());
+
     resources.da.set_channels(
         da_fb_rx,
         sync_rx,
@@ -59,13 +72,8 @@ fn start_background_services(config: &ChainConfig, resources: &mut Resources) {
     );
     resources.toasts.set_channel(toast_rx);
 
-    tokio::spawn(run_flashblock_ws_timestamped(
-        config.flashblocks_ws.to_string(),
-        fb_tx,
-        toast_tx.clone(),
-    ));
-
-    tokio::spawn(run_flashblock_ws(config.flashblocks_ws.to_string(), da_fb_tx, toast_tx.clone()));
+    tokio::spawn(run_flashblock_ws_timestamped(fb_url_rx.clone(), fb_tx, toast_tx.clone()));
+    tokio::spawn(run_flashblock_ws(fb_url_rx, da_fb_tx, toast_tx.clone()));
 
     tokio::spawn(run_block_fetcher(
         config.rpc.to_string(),
@@ -104,7 +112,14 @@ fn start_background_services(config: &ChainConfig, resources: &mut Resources) {
     if let Some(conductor_nodes) = config.conductors.clone() {
         let (conductor_tx, conductor_rx) = mpsc::channel::<Vec<ConductorNodeStatus>>(4);
         resources.conductor.set_channel(conductor_rx);
-        tokio::spawn(run_conductor_poller(conductor_nodes, conductor_tx));
+        tokio::spawn(run_conductor_poller(conductor_nodes.clone(), conductor_tx));
+
+        // Wire the URL sender into ConductorState so that the existing
+        // conductor poll (200 ms) drives flashblocks URL changes instead of
+        // a separate task that would duplicate the conductor_leader RPCs.
+        if conductor_nodes.iter().any(|n| n.flashblocks_ws.is_some()) {
+            resources.conductor.set_url_sender(conductor_nodes, fb_url_tx);
+        }
     }
 }
 
@@ -113,7 +128,8 @@ pub async fn run_flashblocks_json(config: ChainConfig) -> Result<()> {
     let (tx, mut rx) = mpsc::channel::<Flashblock>(100);
     let (toast_tx, mut toast_rx) = mpsc::channel::<Toast>(50);
 
-    tokio::spawn(run_flashblock_ws(config.flashblocks_ws.to_string(), tx, toast_tx));
+    let (_, url_rx) = watch::channel(config.flashblocks_ws.to_string());
+    tokio::spawn(run_flashblock_ws(url_rx, tx, toast_tx));
 
     tokio::spawn(async move {
         while let Some(toast) = toast_rx.recv().await {

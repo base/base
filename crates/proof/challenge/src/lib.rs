@@ -13,7 +13,7 @@ mod config;
 pub use config::{ChallengerConfig, ConfigError, UrlValidationError, Validated};
 
 mod driver;
-pub use driver::{Driver, DriverConfig, TeeConfig};
+pub use driver::{Driver, DriverConfig, TeeConfig, derive_session_id};
 
 mod pending;
 pub use pending::{PendingProof, PendingProofs, ProofPhase, ProofUpdate};

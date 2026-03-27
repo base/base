@@ -42,7 +42,7 @@ impl<B: ProverBackend> ProverService<B> {
     /// 4. Runs witness generation via [`Host::build_witness`]
     /// 5. Hands the populated oracle to [`ProverBackend::prove`]
     pub async fn prove_block(&self, request: ProofRequest) -> Result<ProofResult, ProverError<B>> {
-        base_macros::inc!(counter, crate::Metrics::REQUESTS_TOTAL, crate::Metrics::LABEL_MODE => crate::Metrics::MODE_ONLINE);
+        base_metrics::inc!(counter, crate::Metrics::REQUESTS_TOTAL, crate::Metrics::LABEL_MODE => crate::Metrics::MODE_ONLINE);
         let mut guard =
             proof_guard!(crate::Metrics::IN_FLIGHT_PROOFS, crate::Metrics::REQUESTS_RESULT_TOTAL);
         let _proof_timer = timed!(crate::Metrics::PROOF_DURATION_SECONDS);

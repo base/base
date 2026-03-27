@@ -142,13 +142,30 @@ pub enum ProofType {
     /// Compressed proof generated via generic zkVM cluster.
     #[sqlx(rename = "generic_zkvm_cluster_compressed")]
     GenericZkvmClusterCompressed,
+    /// SNARK Groth16 proof generated via generic zkVM cluster.
+    #[sqlx(rename = "generic_zkvm_cluster_snark_groth16")]
+    GenericZkvmClusterSnarkGroth16,
 }
 
 impl ProofType {
+    /// Proto discriminant for `PROOF_TYPE_GENERIC_ZKVM_CLUSTER_COMPRESSED`.
+    pub const PROTO_COMPRESSED: i32 = 3;
+    /// Proto discriminant for `PROOF_TYPE_GENERIC_ZKVM_CLUSTER_SNARK_GROTH16`.
+    pub const PROTO_SNARK_GROTH16: i32 = 4;
+
+    /// Returns the proto wire value for this proof type.
+    pub const fn proto_i32(&self) -> i32 {
+        match self {
+            Self::GenericZkvmClusterCompressed => Self::PROTO_COMPRESSED,
+            Self::GenericZkvmClusterSnarkGroth16 => Self::PROTO_SNARK_GROTH16,
+        }
+    }
+
     /// Convert enum to static string representation
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::GenericZkvmClusterCompressed => "generic_zkvm_cluster_compressed",
+            Self::GenericZkvmClusterSnarkGroth16 => "generic_zkvm_cluster_snark_groth16",
         }
     }
 }
@@ -165,6 +182,7 @@ impl TryFrom<&str> for ProofType {
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
             "generic_zkvm_cluster_compressed" => Ok(Self::GenericZkvmClusterCompressed),
+            "generic_zkvm_cluster_snark_groth16" => Ok(Self::GenericZkvmClusterSnarkGroth16),
             other => Err(format!("Unknown proof type: {other}")),
         }
     }
@@ -176,7 +194,8 @@ impl TryFrom<i32> for ProofType {
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
-            3 => Ok(Self::GenericZkvmClusterCompressed),
+            Self::PROTO_COMPRESSED => Ok(Self::GenericZkvmClusterCompressed),
+            Self::PROTO_SNARK_GROTH16 => Ok(Self::GenericZkvmClusterSnarkGroth16),
             _ => Err(format!("Unknown proof type: {value}")),
         }
     }
@@ -245,6 +264,8 @@ pub struct CreateProofRequest {
     pub sequence_window: Option<u64>,
     /// Type of proof to generate.
     pub proof_type: ProofType,
+    /// Ethereum address of the on-chain prover (required for SNARK Groth16 proofs).
+    pub prover_address: Option<String>,
 }
 
 /// Parameters for creating a new proof session
@@ -341,10 +362,11 @@ mod tests {
     #[test]
     fn test_proof_type_try_from_proto() {
         assert_eq!(ProofType::try_from(3).unwrap(), ProofType::GenericZkvmClusterCompressed);
+        assert_eq!(ProofType::try_from(4).unwrap(), ProofType::GenericZkvmClusterSnarkGroth16);
 
         assert!(ProofType::try_from(0).is_err());
         assert!(ProofType::try_from(1).is_err());
         assert!(ProofType::try_from(2).is_err());
-        assert!(ProofType::try_from(4).is_err());
+        assert!(ProofType::try_from(5).is_err());
     }
 }

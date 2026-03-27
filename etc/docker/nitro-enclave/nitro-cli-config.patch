@@ -1,0 +1,52 @@
+diff --git a/bootstrap/nitro-cli-config b/bootstrap/nitro-cli-config
+index 35d424b..e0e327f 100755
+--- a/bootstrap/nitro-cli-config
++++ b/bootstrap/nitro-cli-config
+@@ -450,19 +450,6 @@ function driver_insert {
+     local log_file="/var/log/$RES_DIR_NAME/nitro_enclaves.log"
+     local loop_idx=0
+
+-    # Remove an older driver if it is inserted.
+-    if [ "$(lsmod | grep -cw $DRIVER_NAME)" -gt 0 ]; then
+-        driver_remove
+-    fi
+-
+-    print "Inserting the driver..."
+-
+-    # Insert the new driver.
+-    sudo_run "insmod $DRIVER_NAME.ko" || fail "Failed to insert driver."
+-
+-    # Verify that the new driver has been inserted.
+-    [ "$(lsmod | grep -cw $DRIVER_NAME)" -eq 1 ] || fail "The driver is not visible."
+-
+     print "Configuring the device file..."
+
+     # Create the NE group if it doesn't already exist.
+@@ -520,16 +507,8 @@ function driver_insert {
+
+ # Run a function inside the driver directory.
+ function run_in_driver_dir {
+-    local driver_source_dir
+-
+-    verify_driver_directory || fail "Driver directory '$DRIVER_DIR' is invalid."
+-    driver_source_dir="$DRIVER_DIR/drivers/virt/$DRIVER_NAME"
+-    pushd "$driver_source_dir" &> /dev/null || fail "Driver source directory '$driver_source_dir' can't be accessed."
+-
+     # Run the function here.
+     "$@"
+-
+-    popd &> /dev/null
+ }
+
+ # Configure the CPU pool.
+@@ -777,10 +756,4 @@ else
+     configure_cpu_pool_by_cpu_count "$cpu_count_request" "$memory_request"
+ fi
+
+-# Reset the shell after configuring the driver.
+-if [ "$SHELL_RESET" -eq 1 ] && [ "$SKIP_SHELL_RESET" -eq 0 ]; then
+-    print "Shell will be reset."
+-    sudo_run "exec su -l $THIS_USER"
+-fi
+-
+ exit 0

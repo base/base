@@ -11,7 +11,8 @@ pub use transport::{Frame, TransportError, TransportResult};
 
 mod types;
 pub use types::{
-    ECDSA_SIGNATURE_LENGTH, PROOF_JOURNAL_BASE_LENGTH, ProofJournal, Proposal, TeeProofResult,
+    BlockId, ECDSA_SIGNATURE_LENGTH, Genesis, GenesisSystemConfig, PROOF_JOURNAL_BASE_LENGTH,
+    PerChainConfig, ProofJournal, Proposal, TeeProofResult,
 };
 
 mod attestation;

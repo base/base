@@ -43,12 +43,25 @@ impl<T: TxManager> ChallengeSubmitter<T> {
             intermediate_root_to_prove,
         );
 
+        info!(
+            game = %game_address,
+            intermediate_root_index,
+            intermediate_root_to_prove = %intermediate_root_to_prove,
+            calldata_len = calldata.len(),
+            "Nullifying dispute game"
+        );
+
         let candidate = TxCandidate {
             tx_data: calldata,
             to: Some(game_address),
             value: U256::ZERO,
             ..Default::default()
         };
+
+        info!(
+            tx = ?candidate,
+            "Sending tx candidate",
+        );
 
         metrics::counter!(ChallengerMetrics::NULLIFY_TX_SUBMITTED_TOTAL).increment(1);
         let start = Instant::now();

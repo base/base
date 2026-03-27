@@ -1,0 +1,147 @@
+# syntax=docker/dockerfile:1
+# check=skip=FromPlatformFlagConstDisallowed
+
+# Builds the base-prover-nitro-enclave EIF (Enclave Image Format).
+# All stages use --platform=linux/amd64 because Nitro enclaves only support x86_64.
+#
+# Outputs (via `docker cp`):
+#   /build/eif.bin   — Enclave Image Format file
+#   /app/eif.bin     — (describe stage) EIF + nitro-cli for PCR0 extraction
+
+# Stage 1: Bootstrap - AWS Nitro SDK bootstrap image for kernel + NSM
+FROM --platform=linux/amd64 ghcr.io/mdehoog/aws-nitro-enclaves-sdk-bootstrap@sha256:6e5e53bd47370dbc1920208e93d222533a36f9f5dc85615591cbfe56a03312b0 AS bootstrap
+
+# Stage 2: Rust base image - Alpine musl for fully static enclave binary
+FROM --platform=linux/amd64 rust:1.93-alpine3.21@sha256:3d805575c739eafbec6e0e81caa8e8daa0700831a7363755b88b75de69af7341 AS rust
+WORKDIR /app
+
+ENV SOURCE_DATE_EPOCH=0
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+crt-static -C link-self-contained=yes -C link-arg=-fuse-ld=mold"
+
+ENV OPENSSL_STATIC=1
+ENV OPENSSL_LIB_DIR=/usr/lib
+ENV OPENSSL_INCLUDE_DIR=/usr/include
+
+RUN apk add --no-cache \
+    musl-dev \
+    openssl-dev \
+    openssl-libs-static \
+    pkgconfig \
+    perl \
+    make \
+    clang \
+    clang-dev \
+    git \
+    mold \
+    protobuf-dev \
+    zlib-dev \
+    zlib-static
+
+# Stage 3: Builder - compile enclave binary and assemble ramdisks
+FROM rust AS builder
+
+ARG LINUXKIT_VERSION=v1.8.2
+ARG LINUXKIT_SHA256=18b97b0d83401dd88ade14f207eb26358d9a7fde5d3dc4b1e24bd8faf087be6f
+RUN wget -q -O /usr/local/bin/linuxkit \
+    "https://github.com/linuxkit/linuxkit/releases/download/${LINUXKIT_VERSION}/linuxkit-linux-amd64" && \
+    echo "${LINUXKIT_SHA256}  /usr/local/bin/linuxkit" | sha256sum -c - && \
+    chmod +x /usr/local/bin/linuxkit
+
+COPY . .
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=enclave-registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,id=enclave-git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=enclave-target,sharing=locked \
+    cargo build --release --locked --target x86_64-unknown-linux-musl --package base-prover-nitro-enclave --bin base-prover-nitro-enclave && \
+    cp target/x86_64-unknown-linux-musl/release/base-prover-nitro-enclave /app/base-prover-nitro-enclave
+
+COPY --from=bootstrap /build/out bootstrap
+RUN linuxkit build --format kernel+initrd --no-sbom --name init-ramdisk ./etc/docker/nitro-enclave/init-ramdisk.yaml
+RUN linuxkit build --format kernel+initrd --no-sbom --name user-ramdisk ./etc/docker/nitro-enclave/user-ramdisk.yaml
+
+# Stage 4: EIF - Build EIF using aws-nitro-enclaves-image-format
+FROM --platform=linux/amd64 rust:1.93@sha256:f7c649bf7cc388826273a4977e8304778b7f8ad2e20838c1d52283cf23e49f7a AS eif
+
+ENV SOURCE_DATE_EPOCH=0
+
+WORKDIR /build
+
+ENV REPO=https://github.com/aws/aws-nitro-enclaves-image-format.git
+ENV COMMIT=483114f1da3bad913ad1fb7d5c00dadacc6cbae6
+RUN git init && \
+    git remote add origin $REPO && \
+    git fetch --depth=1 origin $COMMIT && \
+    git reset --hard FETCH_HEAD
+
+COPY etc/docker/nitro-enclave/aws-nitro-enclaves-image-format.Cargo.lock Cargo.lock
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=eif-registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,id=eif-git,sharing=locked \
+    --mount=type=cache,target=/build/target,id=eif-target,sharing=locked \
+    cargo build --all --release --locked && \
+    cp target/release/eif_build /usr/local/bin/eif_build
+
+COPY etc/docker/nitro-enclave/cmdline-x86_64 cmdline
+COPY --from=bootstrap /build/out bootstrap
+COPY --from=builder /app/init-ramdisk-initrd.img .
+COPY --from=builder /app/user-ramdisk-initrd.img .
+
+# --build-time fixed for reproducible EIF sha256
+RUN eif_build \
+    --kernel bootstrap/bzImage \
+    --kernel_config bootstrap/bzImage.config \
+    --cmdline "$(cat cmdline)" \
+    --ramdisk init-ramdisk-initrd.img \
+    --ramdisk user-ramdisk-initrd.img \
+    --build-time "1970-01-01T00:00:00+00:00" \
+    --output eif.bin
+
+# Stage 5: Nitro CLI - build aws-nitro-enclaves-cli from source
+FROM --platform=linux/amd64 rust:1.93@sha256:f7c649bf7cc388826273a4977e8304778b7f8ad2e20838c1d52283cf23e49f7a AS nitro-cli
+
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends pkg-config libssl-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV REPO=https://github.com/aws/aws-nitro-enclaves-cli.git
+# v1.3.3
+ENV COMMIT=afb7264b477ad241922236dd61f1730154212034
+RUN git init && \
+    git remote add origin $REPO && \
+    git fetch --depth=1 origin $COMMIT && \
+    git reset --hard FETCH_HEAD
+
+RUN --mount=type=cache,target=/root/.cargo/registry,id=nitro-cli-registry,sharing=locked \
+    --mount=type=cache,target=/root/.cargo/git,id=nitro-cli-git,sharing=locked \
+    --mount=type=cache,target=/app/target,id=nitro-cli-target,sharing=locked \
+    cargo build --release --locked && \
+    cp target/release/nitro-cli /usr/local/bin/nitro-cli
+
+COPY etc/docker/nitro-enclave/nitro-cli-config.patch .
+RUN git apply nitro-cli-config.patch
+
+# Stage 6: Describe - lightweight image for PCR0 extraction
+FROM --platform=linux/amd64 debian:trixie-slim@sha256:1d3c811171a08a5adaa4a163fbafd96b61b87aa871bbc7aa15431ac275d3d430 AS describe
+WORKDIR /app
+COPY --from=eif /build/eif.bin .
+COPY --from=nitro-cli /usr/local/bin/nitro-cli .
+RUN mkdir -p /var/log/nitro_enclaves
+
+# Stage 7: Runtime - EC2 deployment image for enclave lifecycle
+FROM --platform=linux/amd64 debian:trixie-slim@sha256:1d3c811171a08a5adaa4a163fbafd96b61b87aa871bbc7aa15431ac275d3d430
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends udev systemd file ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=eif /build/eif.bin .
+COPY --from=nitro-cli /usr/local/bin/nitro-cli .
+COPY --from=nitro-cli /app/bootstrap/nitro-cli-config .
+COPY --from=nitro-cli /app/bootstrap/nitro-enclaves-allocator .
+COPY etc/docker/nitro-enclave/allocator.yaml /etc/nitro_enclaves/
+COPY etc/docker/nitro-enclave/entrypoint-enclave.sh ./entrypoint.sh
+
+ENTRYPOINT ["./entrypoint.sh"]

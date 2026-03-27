@@ -2,11 +2,11 @@ use std::collections::{HashSet, VecDeque};
 
 use base_alloy_flashblocks::Flashblock;
 use base_consensus_genesis::SystemConfig;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::{
     commands::common::{DaTracker, FlashblockEntry, LoadingState},
-    config::ChainConfig,
+    config::{ChainConfig, ConductorNodeConfig},
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, L1BlockInfo, L1ConnectionMode,
         TimestampedFlashblock,
@@ -22,7 +22,15 @@ const MAX_RECENT_DA_FLASHBLOCK_IDS: usize = 512;
 pub(crate) struct ConductorState {
     /// Most recent status snapshot for each conductor node.
     pub nodes: Vec<ConductorNodeStatus>,
+    /// Original per-node configs, used to look up each node's `flashblocks_ws` URL.
+    nodes_config: Vec<ConductorNodeConfig>,
     rx: Option<mpsc::Receiver<Vec<ConductorNodeStatus>>>,
+    /// Sender half of the flashblocks URL watch channel.  When set, `poll`
+    /// derives the current leader's flashblocks endpoint from the polled
+    /// status and pushes a new value whenever the leader changes.  This
+    /// removes the need for a separate `run_conductor_leader_url_tracker`
+    /// task that would duplicate the `conductor_leader` RPC calls.
+    fb_url_tx: Option<watch::Sender<String>>,
 }
 
 impl ConductorState {
@@ -31,13 +39,53 @@ impl ConductorState {
         self.rx = Some(rx);
     }
 
-    /// Drains the latest status snapshot from the background poller.
+    /// Registers the node configs and URL sender used to track leader URL changes.
+    ///
+    /// After this is called, every `poll` will push the leader's `flashblocks_ws`
+    /// URL into `tx` whenever it changes — replacing the separate polling task.
+    pub(crate) fn set_url_sender(
+        &mut self,
+        nodes_config: Vec<ConductorNodeConfig>,
+        tx: watch::Sender<String>,
+    ) {
+        self.nodes_config = nodes_config;
+        self.fb_url_tx = Some(tx);
+    }
+
+    /// Drains the latest status snapshot from the background poller, then
+    /// pushes the leader's flashblocks URL into the watch channel if it changed.
     pub(crate) fn poll(&mut self) {
         let Some(ref mut rx) = self.rx else { return };
         // Drain all pending updates, keeping only the most recent snapshot.
         while let Ok(statuses) = rx.try_recv() {
             self.nodes = statuses;
         }
+        self.push_leader_url();
+    }
+
+    /// Returns the safe L2 block number reported by the current Raft leader, if known.
+    pub(crate) fn leader_safe_l2_block(&self) -> Option<u64> {
+        self.nodes.iter().find(|n| n.is_leader == Some(true)).and_then(|n| n.safe_l2_block)
+    }
+
+    /// Derives the leader's flashblocks URL from the current status snapshot
+    /// and sends it on the watch channel if it differs from the current value.
+    fn push_leader_url(&self) {
+        let Some(ref tx) = self.fb_url_tx else { return };
+        let leader = self.nodes.iter().find(|n| n.is_leader == Some(true));
+        let Some(leader) = leader else { return };
+        let Some(config) = self.nodes_config.iter().find(|c| c.name == leader.name) else {
+            return;
+        };
+        let Some(ref url) = config.flashblocks_ws else { return };
+        let url_str = url.to_string();
+        tx.send_if_modified(|current| {
+            if *current == url_str {
+                return false;
+            }
+            *current = url_str;
+            true
+        });
     }
 }
 
@@ -100,6 +148,7 @@ pub(crate) struct FlashState {
     pub paused: bool,
     last_flashblock: Option<(u64, u64)>,
     fb_rx: Option<mpsc::Receiver<TimestampedFlashblock>>,
+    url_rx: Option<watch::Receiver<String>>,
 }
 
 impl Resources {
@@ -185,6 +234,19 @@ impl DaState {
     /// Sets the channel for receiving L1 connection mode updates.
     pub(crate) fn set_l1_mode_channel(&mut self, rx: mpsc::Receiver<L1ConnectionMode>) {
         self.l1_mode_rx = Some(rx);
+    }
+
+    /// Advances the safe head from the conductor leader's sync status.
+    ///
+    /// Called each tick when a conductor cluster is configured so the DA
+    /// tracker does not have to wait for sequencer-0's EL to P2P-sync
+    /// new blocks produced by whichever sequencer currently holds leadership.
+    pub(crate) fn apply_conductor_safe_head(&mut self, safe_block: u64) {
+        if self.loaded {
+            self.tracker.update_safe_head(safe_block);
+        } else {
+            self.buffered_safe_heads.push(safe_block);
+        }
     }
 
     /// Drains all pending messages from background channels and updates state.
@@ -365,6 +427,7 @@ impl FlashState {
             paused: false,
             last_flashblock: None,
             fb_rx: None,
+            url_rx: None,
         }
     }
 
@@ -373,8 +436,31 @@ impl FlashState {
         self.fb_rx = Some(fb_rx);
     }
 
+    /// Sets the watch receiver used to detect flashblocks endpoint changes.
+    ///
+    /// When the watched URL changes (i.e. a new Raft leader is elected and
+    /// `run_conductor_leader_url_tracker` pushes its endpoint), `poll` resets
+    /// `last_flashblock` so the first flashblock from the new leader is not
+    /// compared against the previous leader's index, preventing spurious
+    /// missed-flashblock counts.
+    pub(crate) fn set_url_rx(&mut self, rx: watch::Receiver<String>) {
+        self.url_rx = Some(rx);
+    }
+
     /// Drains pending flashblocks from the channel unless paused.
     pub(crate) fn poll(&mut self) {
+        // Reset missed-flashblock tracking when the flashblocks endpoint changes
+        // (i.e. leadership transferred to a different sequencer).  Each clone of
+        // the watch receiver tracks its own "seen" state independently, so this
+        // fires exactly once per URL change regardless of when the WS tasks
+        // consume their own copies of the notification.
+        if let Some(ref mut rx) = self.url_rx
+            && rx.has_changed().unwrap_or(false)
+        {
+            let _ = rx.borrow_and_update();
+            self.last_flashblock = None;
+        }
+
         if self.paused {
             return;
         }

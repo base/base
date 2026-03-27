@@ -9,7 +9,7 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes, U256};
 use base_challenger::{
     ChallengeSubmitter, Driver, DriverConfig, GameScanner, L1HeadProvider, OutputValidator,
-    PendingProof, ProofPhase, ScannerConfig, TeeConfig,
+    PendingProof, ProofPhase, ScannerConfig, TeeConfig, derive_session_id,
     test_utils::{
         MockAggregateVerifier, MockDisputeGameFactory, MockGameState, MockL1HeadProvider,
         MockL2Provider, MockTeeProofProvider, MockTxManager, MockZkProofProvider, addr,
@@ -76,13 +76,16 @@ fn default_tx_manager() -> MockTxManager {
     MockTxManager::new(Ok(receipt_with_status(true, B256::repeat_byte(0xAA))))
 }
 
-const fn default_prove_request() -> ProveBlockRequest {
+fn default_prove_request() -> ProveBlockRequest {
+    let session_id = derive_session_id(addr(0), 1);
+
     ProveBlockRequest {
         start_block_number: 15,
         number_of_blocks_to_prove: 5,
         sequence_window: None,
-        proof_type: ProofType::GenericZkvmClusterCompressed as i32,
-        session_id: None,
+        proof_type: ProofType::GenericZkvmClusterSnarkGroth16.into(),
+        session_id: Some(session_id),
+        prover_address: Some(format!("{:#x}", addr(0))),
     }
 }
 

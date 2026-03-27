@@ -47,6 +47,15 @@ impl InstanceHealthStatus {
     }
 }
 
+/// A signer currently registered on-chain via `TEEProverRegistry`.
+#[derive(Debug, Clone)]
+pub struct RegisteredSigner {
+    /// The signer's Ethereum address.
+    pub address: Address,
+    /// The `keccak256(PCR0)` measurement hash the signer was registered under.
+    pub pcr0: B256,
+}
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -73,13 +82,4 @@ mod tests {
     fn from_aws_state(#[case] input: &str, #[case] expected: InstanceHealthStatus) {
         assert_eq!(InstanceHealthStatus::from_aws_state(input), expected);
     }
-}
-
-/// A signer currently registered on-chain via `TEEProverRegistry`.
-#[derive(Debug, Clone)]
-pub struct RegisteredSigner {
-    /// The signer's Ethereum address.
-    pub address: Address,
-    /// The `keccak256(PCR0)` measurement hash the signer was registered under.
-    pub pcr0: B256,
 }

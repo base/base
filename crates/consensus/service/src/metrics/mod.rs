@@ -156,30 +156,42 @@ impl Metrics {
     #[cfg(feature = "metrics")]
     pub fn zero() {
         // L1 reorg reset count
-        base_macros::set!(counter, Self::L1_REORG_COUNT, 0);
+        base_metrics::set!(counter, Self::L1_REORG_COUNT, 0);
 
         // Derivation critical error
-        base_macros::set!(counter, Self::DERIVATION_CRITICAL_ERROR, 0);
+        base_metrics::set!(counter, Self::DERIVATION_CRITICAL_ERROR, 0);
 
         // Sequencer: reset total transactions sequenced
-        base_macros::set!(counter, Self::SEQUENCER_TOTAL_TRANSACTIONS_SEQUENCED, 0);
+        base_metrics::set!(counter, Self::SEQUENCER_TOTAL_TRANSACTIONS_SEQUENCED, 0);
 
-        base_macros::set!(counter, Self::SEQUENCER_SEAL_STEP_RETRIES_TOTAL, "step", "conductor", 0);
-        base_macros::set!(counter, Self::SEQUENCER_SEAL_STEP_RETRIES_TOTAL, "step", "gossip", 0);
-        base_macros::set!(counter, Self::SEQUENCER_SEAL_STEP_RETRIES_TOTAL, "step", "insert", 0);
-        base_macros::set!(counter, Self::SEQUENCER_SEAL_ERROR_TOTAL, "fatal", "true", 0);
-        base_macros::set!(counter, Self::SEQUENCER_SEAL_ERROR_TOTAL, "fatal", "false", 0);
-        base_macros::set!(counter, Self::SEQUENCER_START_REJECTED_TOTAL, "reason", "not_leader", 0);
-        base_macros::set!(
+        base_metrics::set!(
+            counter,
+            Self::SEQUENCER_SEAL_STEP_RETRIES_TOTAL,
+            "step",
+            "conductor",
+            0
+        );
+        base_metrics::set!(counter, Self::SEQUENCER_SEAL_STEP_RETRIES_TOTAL, "step", "gossip", 0);
+        base_metrics::set!(counter, Self::SEQUENCER_SEAL_STEP_RETRIES_TOTAL, "step", "insert", 0);
+        base_metrics::set!(counter, Self::SEQUENCER_SEAL_ERROR_TOTAL, "fatal", "true", 0);
+        base_metrics::set!(counter, Self::SEQUENCER_SEAL_ERROR_TOTAL, "fatal", "false", 0);
+        base_metrics::set!(
+            counter,
+            Self::SEQUENCER_START_REJECTED_TOTAL,
+            "reason",
+            "not_leader",
+            0
+        );
+        base_metrics::set!(
             counter,
             Self::SEQUENCER_START_REJECTED_TOTAL,
             "reason",
             "leadership_check_failed",
             0
         );
-        base_macros::set!(counter, Self::SEQUENCER_STOP_DEFERRED_TOTAL, 0);
-        base_macros::set!(counter, Self::SEQUENCER_RECOVERY_MODE_BLOCKS_TOTAL, 0);
-        base_macros::set!(counter, Self::SEQUENCER_DRIFT_EMPTY_BLOCKS_TOTAL, 0);
-        base_macros::set!(counter, Self::SEQUENCER_STALE_BUILD_DISCARDED_TOTAL, 0);
+        base_metrics::set!(counter, Self::SEQUENCER_STOP_DEFERRED_TOTAL, 0);
+        base_metrics::set!(counter, Self::SEQUENCER_RECOVERY_MODE_BLOCKS_TOTAL, 0);
+        base_metrics::set!(counter, Self::SEQUENCER_DRIFT_EMPTY_BLOCKS_TOTAL, 0);
+        base_metrics::set!(counter, Self::SEQUENCER_STALE_BUILD_DISCARDED_TOTAL, 0);
     }
 }

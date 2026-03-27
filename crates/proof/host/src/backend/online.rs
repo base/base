@@ -77,7 +77,7 @@ impl PreimageFetcher for OnlineHostBackend {
         drop(kv_lock);
 
         if preimage.is_none() {
-            base_macros::inc!(counter, crate::Metrics::KV_COLD_LOOKUPS_TOTAL);
+            base_metrics::inc!(counter, crate::Metrics::KV_COLD_LOOKUPS_TOTAL);
         }
 
         while preimage.is_none() {

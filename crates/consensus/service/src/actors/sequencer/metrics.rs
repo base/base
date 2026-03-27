@@ -47,12 +47,12 @@ where
 #[inline]
 pub(super) fn update_attributes_build_duration_metrics(_duration: Duration) {
     // Log the attributes build duration, if metrics are enabled.
-    base_macros::set!(gauge, crate::Metrics::SEQUENCER_ATTRIBUTES_BUILDER_DURATION, _duration);
+    base_metrics::set!(gauge, crate::Metrics::SEQUENCER_ATTRIBUTES_BUILDER_DURATION, _duration);
 }
 
 #[inline]
 pub(super) fn update_block_build_duration_metrics(_duration: Duration) {
-    base_macros::set!(
+    base_metrics::set!(
         gauge,
         crate::Metrics::SEQUENCER_BLOCK_BUILDING_START_TASK_DURATION,
         _duration
@@ -62,7 +62,7 @@ pub(super) fn update_block_build_duration_metrics(_duration: Duration) {
 #[inline]
 pub(super) fn update_seal_duration_metrics(_duration: Duration) {
     // Log the block building seal task duration, if metrics are enabled.
-    base_macros::set!(
+    base_metrics::set!(
         gauge,
         crate::Metrics::SEQUENCER_BLOCK_BUILDING_SEAL_TASK_DURATION,
         _duration
@@ -78,12 +78,12 @@ pub(super) fn update_total_transactions_sequenced(_transaction_count: u64) {
 
 #[inline]
 pub(super) fn inc_seal_step_retry(_step: &'static str) {
-    base_macros::inc!(counter, crate::Metrics::SEQUENCER_SEAL_STEP_RETRIES_TOTAL, "step" => _step);
+    base_metrics::inc!(counter, crate::Metrics::SEQUENCER_SEAL_STEP_RETRIES_TOTAL, "step" => _step);
 }
 
 #[inline]
 pub(super) fn update_seal_step_duration(_step: &'static str, _duration: Duration) {
-    base_macros::set!(
+    base_metrics::set!(
         gauge,
         crate::Metrics::SEQUENCER_SEAL_STEP_DURATION,
         "step",
@@ -95,30 +95,30 @@ pub(super) fn update_seal_step_duration(_step: &'static str, _duration: Duration
 #[inline]
 pub(super) fn inc_seal_error(fatal: bool) {
     let _label = if fatal { "true" } else { "false" };
-    base_macros::inc!(counter, crate::Metrics::SEQUENCER_SEAL_ERROR_TOTAL, "fatal" => _label);
+    base_metrics::inc!(counter, crate::Metrics::SEQUENCER_SEAL_ERROR_TOTAL, "fatal" => _label);
 }
 
 #[inline]
 pub(super) fn inc_start_rejected(_reason: &'static str) {
-    base_macros::inc!(counter, crate::Metrics::SEQUENCER_START_REJECTED_TOTAL, "reason" => _reason);
+    base_metrics::inc!(counter, crate::Metrics::SEQUENCER_START_REJECTED_TOTAL, "reason" => _reason);
 }
 
 #[inline]
 pub(super) fn inc_stop_deferred() {
-    base_macros::inc!(counter, crate::Metrics::SEQUENCER_STOP_DEFERRED_TOTAL);
+    base_metrics::inc!(counter, crate::Metrics::SEQUENCER_STOP_DEFERRED_TOTAL);
 }
 
 #[inline]
 pub(super) fn inc_recovery_mode_block() {
-    base_macros::inc!(counter, crate::Metrics::SEQUENCER_RECOVERY_MODE_BLOCKS_TOTAL);
+    base_metrics::inc!(counter, crate::Metrics::SEQUENCER_RECOVERY_MODE_BLOCKS_TOTAL);
 }
 
 #[inline]
 pub(super) fn inc_drift_empty_block() {
-    base_macros::inc!(counter, crate::Metrics::SEQUENCER_DRIFT_EMPTY_BLOCKS_TOTAL);
+    base_metrics::inc!(counter, crate::Metrics::SEQUENCER_DRIFT_EMPTY_BLOCKS_TOTAL);
 }
 
 #[inline]
 pub(super) fn inc_stale_build_discarded() {
-    base_macros::inc!(counter, crate::Metrics::SEQUENCER_STALE_BUILD_DISCARDED_TOTAL);
+    base_metrics::inc!(counter, crate::Metrics::SEQUENCER_STALE_BUILD_DISCARDED_TOTAL);
 }

@@ -141,7 +141,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             .map_transactions(|t| t.inner.inner.into_inner());
         let system_config = to_system_config(&l2_safe_block, &config)?;
 
-        base_macros::inc!(counter, Metrics::ENGINE_RESET_COUNT);
+        base_metrics::inc!(counter, Metrics::ENGINE_RESET_COUNT);
 
         Ok((start.safe, l1_origin_info, system_config))
     }

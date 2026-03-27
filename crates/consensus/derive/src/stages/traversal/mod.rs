@@ -43,7 +43,7 @@ fn update_system_config_with_receipts(
         info!(target: "traversal", %kind, block_number, "Applied system config update");
     }
     if !updates.is_empty() {
-        base_macros::set!(
+        base_metrics::set!(
             gauge,
             crate::Metrics::PIPELINE_LATEST_SYS_CONFIG_UPDATE,
             block_number as f64
@@ -51,7 +51,7 @@ fn update_system_config_with_receipts(
     }
     for err in &errors {
         warn!(target: "traversal", error = ?err, block_number, "Malformed system config update (skipped)");
-        base_macros::set!(
+        base_metrics::set!(
             gauge,
             crate::Metrics::PIPELINE_SYS_CONFIG_UPDATE_ERROR,
             block_number as f64

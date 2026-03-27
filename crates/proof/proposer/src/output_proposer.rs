@@ -8,11 +8,10 @@ use std::sync::LazyLock;
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use async_trait::async_trait;
-use base_enclave::ProofEncoder;
 use base_proof_contracts::{
     encode_create_calldata, encode_extra_data, game_already_exists_selector,
 };
-use base_proof_primitives::Proposal;
+use base_proof_primitives::{ProofEncoder, Proposal};
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tracing::info;
 
@@ -187,7 +186,7 @@ mod tests {
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use alloy_primitives::{Address, Bloom};
     use alloy_rpc_types_eth::TransactionReceipt;
-    use base_enclave::PROOF_TYPE_TEE;
+    use base_proof_primitives::PROOF_TYPE_TEE;
     use base_tx_manager::{SendHandle, SendResponse, TxManagerError};
 
     use super::*;

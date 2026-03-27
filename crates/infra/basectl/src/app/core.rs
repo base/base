@@ -50,6 +50,15 @@ impl App {
             self.resources.flash.poll();
             self.resources.toasts.poll();
             self.resources.conductor.poll();
+            // When a conductor cluster is configured, bridge the Raft leader's
+            // safe head into the DA tracker each tick.  The conductor poller
+            // already queries `op_sync_status` from every node's CL, so the
+            // leader's value is available here without an extra RPC.  This
+            // ensures the DA monitor advances even before sequencer-0's EL has
+            // P2P-synced blocks that were produced by a different leader.
+            if let Some(safe_head) = self.resources.conductor.leader_safe_l2_block() {
+                self.resources.da.apply_conductor_safe_head(safe_head);
+            }
             self.resources.poll_sys_config();
 
             let action = current_view.tick(&mut self.resources);

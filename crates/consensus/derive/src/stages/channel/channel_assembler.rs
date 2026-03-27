@@ -99,7 +99,7 @@ where
         #[cfg(feature = "metrics")]
         {
             let count = if self.channel.is_some() { 1 } else { 0 };
-            base_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_CHANNEL_BUFFER, count);
+            base_metrics::set!(gauge, crate::metrics::Metrics::PIPELINE_CHANNEL_BUFFER, count);
         }
 
         if let Some(channel) = self.channel.as_mut() {
@@ -109,7 +109,11 @@ where
                 let timeout =
                     channel.open_block_number() + self.cfg.channel_timeout(origin.timestamp);
                 let margin = timeout.saturating_sub(origin.number) as f64;
-                base_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_CHANNEL_TIMEOUT, margin);
+                base_metrics::set!(
+                    gauge,
+                    crate::metrics::Metrics::PIPELINE_CHANNEL_TIMEOUT,
+                    margin
+                );
             }
 
             // Add the frame to the channel. If this fails, return NotEnoughData and discard the
@@ -134,7 +138,7 @@ where
             #[cfg(feature = "metrics")]
             {
                 let size = channel.size() as f64;
-                base_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_CHANNEL_MEM, size);
+                base_metrics::set!(gauge, crate::metrics::Metrics::PIPELINE_CHANNEL_MEM, size);
             }
 
             let max_rlp_bytes_per_channel = if self.cfg.is_fjord_active(origin.timestamp) {
@@ -142,7 +146,7 @@ where
             } else {
                 MAX_RLP_BYTES_PER_CHANNEL_BEDROCK
             };
-            base_macros::set!(
+            base_metrics::set!(
                 gauge,
                 crate::metrics::Metrics::PIPELINE_MAX_RLP_BYTES,
                 max_rlp_bytes_per_channel as f64
@@ -175,7 +179,7 @@ where
             }
         }
 
-        base_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_CHANNEL_MEM, 0);
+        base_metrics::set!(gauge, crate::metrics::Metrics::PIPELINE_CHANNEL_MEM, 0);
 
         Err(PipelineError::NotEnoughData.temp())
     }

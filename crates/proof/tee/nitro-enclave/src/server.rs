@@ -19,19 +19,19 @@ const PCR0_LENGTH: usize = 48;
 
 /// `keccak256(PerChainConfig::marshal_binary())` for Base Mainnet (chain 8453).
 ///
-/// Produced by `print_real_config_hashes` in `base-enclave/src/types/config.rs`.
+/// Produced by `print_real_config_hashes` in `types.rs`.
 const CONFIG_HASH_BASE_MAINNET: B256 =
     b256!("1607709d90d40904f790574404e2ad614eac858f6162faa0ec34c6bf5e5f3c57");
 
 /// `keccak256(PerChainConfig::marshal_binary())` for Base Sepolia (chain 84532).
 ///
-/// Produced by `print_real_config_hashes` in `base-enclave/src/types/config.rs`.
+/// Produced by `print_real_config_hashes` in `types.rs`.
 const CONFIG_HASH_BASE_SEPOLIA: B256 =
     b256!("12e9c45f19f9817c6d4385fad29e7a70c355502cf0883e76a9a7e478a85d1360");
 
 /// `keccak256(PerChainConfig::marshal_binary())` for Sepolia Alpha (chain 11763072).
 ///
-/// Produced by `print_real_config_hashes` in `base-enclave/src/types/config.rs`.
+/// Produced by `print_real_config_hashes` in `types.rs`.
 const CONFIG_HASH_SEPOLIA_ALPHA: B256 =
     b256!("4600cdaa81262bf5f124bd9276f605264e2ded951e34923bc838e81c442f0fa4");
 
@@ -255,9 +255,9 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use base_consensus_registry::Registry;
-    use base_enclave::PerChainConfig;
 
     use super::*;
+    use crate::PerChainConfig;
 
     #[test]
     fn test_server_new_local_mode() {

@@ -13,17 +13,24 @@ workspace = true
 [dependencies]
 # General
 async-trait.workspace = true
+thiserror.workspace = true
 alloy-primitives = { workspace = true }
 base-proof-preimage = { workspace = true }
 serde = { workspace = true, optional = true, features = ["derive"] }
 jsonrpsee = { workspace = true, optional = true }
 
 [dev-dependencies]
+rstest.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 
 [features]
 default = []
-std = [ "alloy-primitives/std", "base-proof-preimage/std", "serde?/std" ]
+std = [
+	"alloy-primitives/std",
+	"base-proof-preimage/std",
+	"serde?/std",
+	"thiserror/std",
+]
 serde = [ "alloy-primitives/serde", "base-proof-preimage/serde", "dep:serde" ]
 rpc-server = [
 	"dep:jsonrpsee",

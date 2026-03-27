@@ -16,11 +16,14 @@ workspace = true
 base-alloy-evm.workspace = true
 base-proof-client.workspace = true
 base-proof-preimage = { workspace = true, features = ["serde"] }
+base-consensus-genesis = { workspace = true, features = ["serde"] }
 
 # alloy
+alloy-chains.workspace = true
 alloy-signer.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
+alloy-eips = { workspace = true, features = ["serde"] }
 
 # crypto
 sha2.workspace = true
@@ -56,7 +59,8 @@ tokio-vsock.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [dev-dependencies]
-base-enclave.workspace = true
+hex.workspace = true
+serde_json.workspace = true
 base-consensus-registry.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 

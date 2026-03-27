@@ -21,8 +21,8 @@ mod proto {
 #[cfg(feature = "server")]
 pub use proto::prover_service_server;
 pub use proto::{
-    GetProofRequest, GetProofResponse, ProofJobStatus, ProofType, ProveBlockRequest,
-    ProveBlockResponse, ReceiptType,
+    GetProofRequest, GetProofResponse, ProofType, ProveBlockRequest, ProveBlockResponse,
+    ReceiptType, get_proof_response::Status as ProofJobStatus,
 };
 
 mod client;

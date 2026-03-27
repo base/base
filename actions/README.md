@@ -40,14 +40,25 @@ Concretely, an action test can verify things like:
 actions/
 └── harness/        base-action-harness crate
     src/
-    ├── action.rs   Action trait, L2BlockProvider trait
-    ├── miner.rs    L1Miner actor
-    ├── l2.rs       MockL2Block, MockL2Source
-    ├── harness.rs  ActionTestHarness (owns all actors for a test)
-    └── batcher/    Batcher actor (in progress)
-        └── actor.rs
-    tests/
-    └── l1_mining.rs    action tests: L1 block production
+    ├── lib.rs                  public API (re-exports)
+    ├── action.rs               Action trait, L2BlockProvider trait
+    ├── miner.rs                L1Miner, L1 blocks, PendingTx, reorgs
+    ├── l2.rs                   L2Sequencer, ActionL2Source, TestAccount
+    ├── harness.rs              ActionTestHarness
+    ├── matrix.rs               ForkMatrix (upgrade combinations)
+    ├── test_rollup_config.rs   TestRollupConfigBuilder
+    ├── p2p.rs                  SupervisedP2P, TestGossipTransport
+    ├── engine.rs               ActionEngineClient
+    ├── node.rs                 TestRollupNode, derivation / verifier pipelines
+    ├── batcher/
+    │   ├── actor.rs            Batcher actor
+    │   └── tx_manager.rs       L1MinerTxManager (inbox submission)
+    └── providers/              L1 / L2 / blob sources for pipelines
+        ├── l1.rs               SharedL1Chain, ActionL1ChainProvider, ActionDataSource
+        ├── l1_block_fetcher.rs ActionL1BlockFetcher
+        ├── l2.rs               ActionL2ChainProvider
+        └── blob.rs             ActionBlobDataSource, blob DA
+    tests/                      integration tests - one scenario per module (subdirs when grouped)
 ```
 
 All actors live in the single `base-action-harness` crate. Action tests are

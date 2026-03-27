@@ -155,7 +155,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for GetPayloadTask<EngineClient_
                 parent_block_info = ?parent_block_info,
                 "GetPayload attributes parent does not match unsafe head, returning rebuild error"
             );
-            base_macros::inc!(counter, crate::Metrics::SEQUENCER_UNSAFE_HEAD_CHANGED_TOTAL);
+            base_metrics::inc!(counter, crate::Metrics::SEQUENCER_UNSAFE_HEAD_CHANGED_TOTAL);
             Err(SealTaskError::UnsafeHeadChangedSinceBuild)
         } else {
             self.get_payload(&self.cfg, &self.engine, self.payload_id, &self.attributes).await

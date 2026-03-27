@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 # workspace
-base-macros.workspace = true
+base-metrics.workspace = true
 base-consensus-genesis.workspace = true
 base-protocol = {workspace = true, features = ["serde", "std"]}
 

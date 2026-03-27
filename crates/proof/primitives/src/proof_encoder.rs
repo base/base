@@ -1,13 +1,29 @@
-use alloy_primitives::{B256, Bytes, U256};
-use base_proof_primitives::ECDSA_SIGNATURE_LENGTH;
+//! TEE proof encoding for the `AggregateVerifier` contract.
 
-use crate::CryptoError;
+use alloc::vec;
+
+use alloy_primitives::{B256, Bytes, U256};
+use thiserror::Error;
+
+use crate::ECDSA_SIGNATURE_LENGTH;
 
 /// Offset to add to ECDSA v-value (0/1 -> 27/28).
-pub(crate) const ECDSA_V_OFFSET: u8 = 27;
+const ECDSA_V_OFFSET: u8 = 27;
 
 /// Proof type byte for TEE proofs (matches `AggregateVerifier.ProofType.TEE`).
 pub const PROOF_TYPE_TEE: u8 = 0;
+
+/// Errors that can occur during cryptographic operations.
+#[derive(Debug, Clone, Eq, PartialEq, Error)]
+pub enum CryptoError {
+    /// Signature has invalid length.
+    #[error("invalid signature length: expected 65 bytes, got {0}")]
+    InvalidSignatureLength(usize),
+
+    /// Invalid ECDSA v-value.
+    #[error("invalid ECDSA v-value: expected 0, 1, 27, or 28, got {0}")]
+    InvalidVValue(u8),
+}
 
 /// Proof encoding utilities for TEE proofs.
 #[derive(Debug)]
@@ -57,6 +73,8 @@ impl ProofEncoder {
 
 #[cfg(test)]
 mod tests {
+    use alloc::{string::ToString, vec, vec::Vec};
+
     use rstest::rstest;
 
     use super::*;
@@ -105,7 +123,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case::invalid_v(vec![0xAB; 64].into_iter().chain(std::iter::once(5)).collect::<Vec<_>>(), "invalid ECDSA v-value")]
+    #[case::invalid_v(vec![0xAB; 64].into_iter().chain(core::iter::once(5)).collect::<Vec<_>>(), "invalid ECDSA v-value")]
     #[case::short_signature(vec![0u8; 32], "invalid signature length")]
     #[case::oversized_signature(vec![0u8; 70], "invalid signature length")]
     fn test_encode_proof_bytes_errors(#[case] sig: Vec<u8>, #[case] expected_err: &str) {

@@ -66,7 +66,7 @@ impl<F: ChainProvider> PollingTraversal<F> {
     fn update_origin(&mut self, block: BlockInfo) {
         self.done = false;
         self.block = Some(block);
-        base_macros::set!(gauge, crate::metrics::Metrics::PIPELINE_ORIGIN, block.number as f64);
+        base_metrics::set!(gauge, crate::metrics::Metrics::PIPELINE_ORIGIN, block.number as f64);
     }
 
     /// Update the origin block in the traversal stage.
@@ -126,7 +126,7 @@ impl<F: ChainProvider + Send> OriginAdvancer for PollingTraversal<F> {
         #[cfg(feature = "metrics")]
         {
             let duration = start_time.elapsed();
-            base_macros::record!(
+            base_metrics::record!(
                 histogram,
                 crate::metrics::Metrics::PIPELINE_ORIGIN_ADVANCE,
                 duration.as_secs_f64()
