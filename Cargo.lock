@@ -4698,6 +4698,7 @@ dependencies = [
  "tokio",
  "tokio-vsock",
  "tracing",
+ "tracing-subscriber 0.3.23",
  "x509-cert",
  "zip 8.3.1",
 ]
