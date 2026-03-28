@@ -303,7 +303,8 @@ where
     Builder::Attributes: Unpin + Clone,
     Builder::BuiltPayload: Unpin + Clone,
 {
-    /// Spawns a blocking payload build and stores a oneshot for completion.
+    /// Spawns a blocking task that runs [`PayloadBuilder::try_build`] and signals completion on the
+    /// job's oneshot channel.
     pub fn spawn_build_job(&mut self) {
         let builder = self.builder.clone();
         let payload_config = self.config.clone();
@@ -373,7 +374,7 @@ impl<T> std::fmt::Debug for ResolvePayload<T> {
 }
 
 impl<T> ResolvePayload<T> {
-    /// Builds a future that completes when `future` yields a value from the cell.
+    /// Builds a future that polls the given [`WaitForValue`] until the cell holds a value.
     pub const fn new(future: WaitForValue<T>) -> Self {
         Self { future }
     }
@@ -400,12 +401,12 @@ pub struct BlockCell<T> {
 }
 
 impl<T: Clone> BlockCell<T> {
-    /// Creates an empty cell; use [`BlockCell::set`] and [`BlockCell::wait_for_value`].
+    /// Creates an empty cell with no value set yet.
     pub fn new() -> Self {
         Self { inner: Arc::new(Mutex::new(None)), notify: Arc::new(Notify::new()) }
     }
 
-    /// Stores `value` and notifies one waiter.
+    /// Stores `value` and wakes one waiter from [`BlockCell::wait_for_value`].
     pub fn set(&self, value: T) {
         let mut inner = self.inner.lock();
         *inner = Some(value);

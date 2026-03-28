@@ -39,5 +39,7 @@ pub use flashblocks::{
 mod extension;
 pub use extension::BuilderApiExtension;
 
+/// Integration-test helpers for downstream crates using the `test-utils` feature.
 #[cfg(any(test, feature = "test-utils"))]
+#[allow(missing_docs)]
 pub mod test_utils;
