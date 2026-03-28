@@ -65,6 +65,10 @@ where
         }
 
         let mut i = 0;
+        // Prevent underflow when queue has fewer than 2 elements
+        if self.queue.len() < 2 {
+            return;
+        }
         while i < self.queue.len() - 1 {
             let prev_frame = &self.queue[i];
             let next_frame = &self.queue[i + 1];
