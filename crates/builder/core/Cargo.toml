@@ -13,7 +13,12 @@ workspace = true
 
 [features]
 default = [ "jemalloc", "metrics" ]
-metrics = [ "dep:metrics", "base-metrics/metrics" ]
+metrics = [
+	"base-metrics/metrics",
+	"dep:metrics",
+	"reth-evm/metrics",
+	"reth-trie/metrics",
+]
 jemalloc = [ "dep:tikv-jemallocator", "reth-cli-util/jemalloc" ]
 jemalloc-prof = [
 	"jemalloc",

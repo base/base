@@ -3045,6 +3045,7 @@ dependencies = [
  "base-metrics",
  "futures",
  "metrics",
+ "metrics-exporter-prometheus",
  "rstest",
  "serde",
  "serde_json",

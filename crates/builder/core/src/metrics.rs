@@ -280,19 +280,6 @@ impl BuilderMetrics {
         Self::payload_num_tx_simulated_fail_gauge().set(num_txs_simulated_fail);
         Self::payload_reverted_tx_gas_used().set(reverted_gas_used);
     }
-
-    /// No-op when the `metrics` feature is disabled.
-    #[cfg(not(feature = "metrics"))]
-    #[inline(always)]
-    pub fn set_payload_builder_metrics<A, B, C, D, E, F>(
-        _payload_transaction_simulation_time: A,
-        _num_txs_considered: B,
-        _num_txs_simulated: C,
-        _num_txs_simulated_success: D,
-        _num_txs_simulated_fail: E,
-        _reverted_gas_used: F,
-    ) {
-    }
 }
 
 #[cfg(test)]

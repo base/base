@@ -84,6 +84,7 @@ std = [
 	"base-proof-preimage/std",
 	"base-protocol/std",
 	"base-revm/std",
+	"c-kzg?/std",
 	"dep:c-kzg",
 	"dep:tokio",
 	"serde/std",
