@@ -263,6 +263,8 @@ mod tests {
                 total_gas_used: 21000,
                 total_execution_time_us: 500,
                 state_root_time_us: 100,
+                state_root_account_trie_nodes: 0,
+                state_root_storage_trie_nodes: 0,
             },
         );
 

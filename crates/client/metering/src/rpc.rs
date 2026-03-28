@@ -279,6 +279,8 @@ where
             total_gas_used: output.total_gas_used,
             total_execution_time_us,
             state_root_time_us: output.state_root_time_us,
+            state_root_account_trie_nodes: output.state_root_account_trie_nodes,
+            state_root_storage_trie_nodes: output.state_root_storage_trie_nodes,
         })
     }
 
@@ -1091,6 +1093,8 @@ mod tests {
             total_gas_used: 21_000,
             total_execution_time_us: 123,
             state_root_time_us: 45,
+            state_root_account_trie_nodes: 7,
+            state_root_storage_trie_nodes: 11,
             ..Default::default()
         };
 

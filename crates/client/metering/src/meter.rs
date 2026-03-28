@@ -105,6 +105,57 @@ pub struct MeterBundleOutput {
     pub total_time_us: u128,
     /// State root calculation time in microseconds
     pub state_root_time_us: u128,
+    /// Number of account trie nodes touched during state root calculation
+    pub state_root_account_trie_nodes: u64,
+    /// Number of storage trie nodes touched during state root calculation
+    pub state_root_storage_trie_nodes: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct StateRootTrieNodeCounts {
+    account_trie_nodes: u64,
+    storage_trie_nodes: u64,
+}
+
+/// Counts trie nodes represented on the hashed post-state leaf side.
+///
+/// The account count includes changed account leaves that remain in the post-state trie.
+///
+/// The storage count includes changed storage slot leaves that remain in the post-state trie.
+/// Deleted accounts, zero-valued storage removals, and pure storage wipes are not counted here,
+/// because reth represents them as overlay deletions rather than emitted leaves.
+///
+fn count_state_root_leaf_nodes(hashed_state: &HashedPostState) -> StateRootTrieNodeCounts {
+    let account_trie_nodes =
+        hashed_state.accounts.values().filter(|account| account.is_some()).count() as u64;
+    let storage_trie_nodes = hashed_state
+        .storages
+        .values()
+        .map(|storage| storage.storage.values().filter(|value| !value.is_zero()).count())
+        .sum::<usize>() as u64;
+
+    StateRootTrieNodeCounts { account_trie_nodes, storage_trie_nodes }
+}
+
+/// Adds trie-structure counts emitted by state root calculation.
+///
+/// These counts cover account/storage branch updates and removals plus storage trie deletion
+/// markers. Empty-path roots are excluded because reth filters those out of `TrieUpdates`, and a
+/// root can be either a branch or a leaf depending on trie shape.
+fn add_state_root_trie_update_counts(
+    counts: &mut StateRootTrieNodeCounts,
+    trie_updates: &reth_trie_common::updates::TrieUpdates,
+) {
+    counts.account_trie_nodes = counts.account_trie_nodes.saturating_add(
+        trie_updates
+            .account_nodes_ref()
+            .len()
+            .saturating_add(trie_updates.removed_nodes_ref().len()) as u64,
+    );
+    counts.storage_trie_nodes = counts.storage_trie_nodes.saturating_add(
+        trie_updates.storage_tries_ref().values().map(|updates| updates.len()).sum::<usize>()
+            as u64,
+    );
 }
 
 /// Simulates and meters a bundle of transactions.
@@ -306,6 +357,7 @@ where
 
     let state_root_start = Instant::now();
     let hashed_state = state_provider.hashed_post_state(&bundle_update);
+    let mut trie_node_counts = count_state_root_leaf_nodes(&hashed_state);
 
     if let Some(cached_trie) = pending_trie {
         // Build the trie input so the state root reflects canonical + pending + bundle.
@@ -321,10 +373,12 @@ where
         // optimization.
         let mut trie_input = TrieInput::from_state(hashed_state);
         trie_input.prepend_cached(cached_trie.trie_updates, cached_trie.hashed_state);
-        let _ = state_provider.state_root_from_nodes_with_updates(trie_input)?;
+        let (_, trie_updates) = state_provider.state_root_from_nodes_with_updates(trie_input)?;
+        add_state_root_trie_update_counts(&mut trie_node_counts, &trie_updates);
     } else {
         // No pending state, just calculate bundle state root
-        let _ = state_provider.state_root_with_updates(hashed_state)?;
+        let (_, trie_updates) = state_provider.state_root_with_updates(hashed_state)?;
+        add_state_root_trie_update_counts(&mut trie_node_counts, &trie_updates);
     }
 
     let state_root_time_us = state_root_start.elapsed().as_micros();
@@ -337,6 +391,8 @@ where
         bundle_hash,
         total_time_us,
         state_root_time_us,
+        state_root_account_trie_nodes: trie_node_counts.account_trie_nodes,
+        state_root_storage_trie_nodes: trie_node_counts.storage_trie_nodes,
     })
 }
 
@@ -401,6 +457,8 @@ mod tests {
         // Even empty bundles have some EVM setup overhead
         assert!(output.total_time_us > 0);
         assert!(output.state_root_time_us > 0);
+        assert_eq!(output.state_root_account_trie_nodes, 0);
+        assert_eq!(output.state_root_storage_trie_nodes, 0);
         assert_eq!(output.bundle_hash, keccak256([]));
 
         Ok(())
@@ -450,6 +508,8 @@ mod tests {
         let result = &output.results[0];
         assert!(output.total_time_us > 0);
         assert!(output.state_root_time_us > 0);
+        assert!(output.state_root_account_trie_nodes > 0);
+        assert_eq!(output.state_root_storage_trie_nodes, 0);
 
         assert_eq!(result.from_address, Account::Alice.address());
         assert_eq!(result.to_address, Some(to));

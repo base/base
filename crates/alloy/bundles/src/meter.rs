@@ -61,6 +61,20 @@ pub struct MeterBundleResponse {
     /// Time spent calculating state root in microseconds.
     #[serde(default)]
     pub state_root_time_us: u128,
+    /// Number of account trie nodes touched during state root calculation.
+    ///
+    /// This includes surviving/inserted account leaves plus account trie branch
+    /// updates/removals. Deleted account leaves are represented through the branch-side trie
+    /// updates, not counted again as leaves. Empty-path roots are excluded.
+    #[serde(default)]
+    pub state_root_account_trie_nodes: u64,
+    /// Number of storage trie nodes touched during state root calculation.
+    ///
+    /// This includes surviving/inserted storage slot leaves plus storage trie branch
+    /// updates/removals/deletes. Zero-valued slot removals and pure storage wipes are represented
+    /// through the trie updates, not counted again as leaves. Empty-path roots are excluded.
+    #[serde(default)]
+    pub state_root_storage_trie_nodes: u64,
 }
 
 #[cfg(test)]
@@ -140,16 +154,22 @@ mod tests {
             total_gas_used: 21000,
             total_execution_time_us: 1000,
             state_root_time_us: 500,
+            state_root_account_trie_nodes: 12,
+            state_root_storage_trie_nodes: 34,
         };
 
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"stateFlashblockIndex\":42"));
         assert!(json.contains("\"stateBlockNumber\":12345"));
         assert!(json.contains("\"stateRootTimeUs\":500"));
+        assert!(json.contains("\"stateRootAccountTrieNodes\":12"));
+        assert!(json.contains("\"stateRootStorageTrieNodes\":34"));
 
         let deserialized: MeterBundleResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.state_flashblock_index, Some(42));
         assert_eq!(deserialized.state_block_number, 12345);
+        assert_eq!(deserialized.state_root_account_trie_nodes, 12);
+        assert_eq!(deserialized.state_root_storage_trie_nodes, 34);
     }
 
     #[test]
@@ -166,6 +186,8 @@ mod tests {
             total_gas_used: 21000,
             total_execution_time_us: 1000,
             state_root_time_us: 0,
+            state_root_account_trie_nodes: 0,
+            state_root_storage_trie_nodes: 0,
         };
 
         let json = serde_json::to_string(&response).unwrap();
@@ -199,5 +221,7 @@ mod tests {
         assert_eq!(deserialized.state_flashblock_index, None);
         assert_eq!(deserialized.state_block_number, 12345);
         assert_eq!(deserialized.total_gas_used, 21000);
+        assert_eq!(deserialized.state_root_account_trie_nodes, 0);
+        assert_eq!(deserialized.state_root_storage_trie_nodes, 0);
     }
 }
