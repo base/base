@@ -1,6 +1,10 @@
 //! Bundle metering logic.
 
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Instant,
+};
 
 use alloy_consensus::{BlockHeader, Transaction as _};
 use alloy_primitives::{Address, B256, U256};
@@ -105,9 +109,11 @@ pub struct MeterBundleOutput {
     pub total_time_us: u128,
     /// State root calculation time in microseconds
     pub state_root_time_us: u128,
-    /// Number of account trie nodes touched during state root calculation
+    /// Number of account trie nodes attributed to bundle state changes during state root
+    /// calculation
     pub state_root_account_node_count: u64,
-    /// Number of storage trie nodes touched during state root calculation
+    /// Number of storage trie nodes attributed to bundle state changes during state root
+    /// calculation
     pub state_root_storage_node_count: u64,
 }
 
@@ -144,6 +150,7 @@ fn count_state_root_leaf_nodes(hashed_state: &HashedPostState) -> StateRootTrieN
 /// root can be either a branch or a leaf depending on trie shape.
 fn add_state_root_trie_update_counts(
     counts: &mut StateRootTrieNodeCounts,
+    changed_storage_tries: &HashSet<B256>,
     trie_updates: &reth_trie_common::updates::TrieUpdates,
 ) {
     counts.account_trie_nodes = counts.account_trie_nodes.saturating_add(
@@ -153,8 +160,12 @@ fn add_state_root_trie_update_counts(
             .saturating_add(trie_updates.removed_nodes_ref().len()) as u64,
     );
     counts.storage_trie_nodes = counts.storage_trie_nodes.saturating_add(
-        trie_updates.storage_tries_ref().values().map(|updates| updates.len()).sum::<usize>()
-            as u64,
+        trie_updates
+            .storage_tries_ref()
+            .iter()
+            .filter(|(hashed_address, _)| changed_storage_tries.contains(*hashed_address))
+            .map(|(_, updates)| updates.len())
+            .sum::<usize>() as u64,
     );
 }
 
@@ -352,11 +363,13 @@ where
     // Gets the number of accounts modified
     let accounts_modified: usize = bundle_update.state().len();
     Metrics::accounts_modified().record(accounts_modified as f64);
+    let has_bundle_state_changes = accounts_modified > 0;
 
     let state_provider = db.database.as_ref();
 
     let state_root_start = Instant::now();
     let hashed_state = state_provider.hashed_post_state(&bundle_update);
+    let changed_storage_tries = hashed_state.storages.keys().copied().collect::<HashSet<_>>();
     let mut trie_node_counts = count_state_root_leaf_nodes(&hashed_state);
 
     if let Some(cached_trie) = pending_trie {
@@ -374,11 +387,23 @@ where
         let mut trie_input = TrieInput::from_state(hashed_state);
         trie_input.prepend_cached(cached_trie.trie_updates, cached_trie.hashed_state);
         let (_, trie_updates) = state_provider.state_root_from_nodes_with_updates(trie_input)?;
-        add_state_root_trie_update_counts(&mut trie_node_counts, &trie_updates);
+        if has_bundle_state_changes {
+            add_state_root_trie_update_counts(
+                &mut trie_node_counts,
+                &changed_storage_tries,
+                &trie_updates,
+            );
+        }
     } else {
         // No pending state, just calculate bundle state root
         let (_, trie_updates) = state_provider.state_root_with_updates(hashed_state)?;
-        add_state_root_trie_update_counts(&mut trie_node_counts, &trie_updates);
+        if has_bundle_state_changes {
+            add_state_root_trie_update_counts(
+                &mut trie_node_counts,
+                &changed_storage_tries,
+                &trie_updates,
+            );
+        }
     }
 
     let state_root_time_us = state_root_start.elapsed().as_micros();
