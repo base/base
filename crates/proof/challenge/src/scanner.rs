@@ -298,6 +298,17 @@ impl GameScanner {
             // Path 3: ZK-proposed, unchallenged.
             (false, true, 0) => Some(GameCategory::InvalidZkProposal),
 
+            // ZK-only game with a non-zero countered_index — unexpected state.
+            // A ZK-proposed game should not have a challenge counter set.
+            (false, true, ci) if ci > 0 => {
+                debug!(
+                    index = index,
+                    countered_index = ci,
+                    "skipping ZK-only game with unexpected non-zero countered_index"
+                );
+                None
+            }
+
             // Both provers zeroed — already nullified.
             (false, false, _) => {
                 debug!(index = index, "skipping nullified game (both provers zeroed)");

@@ -380,14 +380,15 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         // The on-chain root at the challenged index is correct.
         // Use the on-chain root value as `intermediateRootToProve` — the
         // contract requires it to match `intermediateOutputRoot(index)`.
-        let on_chain_root =
-            intermediate_roots.get(challenged_index as usize).copied().ok_or_else(|| {
-                eyre::eyre!(
-                    "challenged_index {challenged_index} out of bounds \
+        let idx = usize::try_from(challenged_index)
+            .map_err(|_| eyre::eyre!("challenged_index {challenged_index} overflows usize"))?;
+        let on_chain_root = intermediate_roots.get(idx).copied().ok_or_else(|| {
+            eyre::eyre!(
+                "challenged_index {challenged_index} out of bounds \
                      (game has {} intermediate roots)",
-                    intermediate_roots.len()
-                )
-            })?;
+                intermediate_roots.len()
+            )
+        })?;
 
         info!(
             game = %game_address,
