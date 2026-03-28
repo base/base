@@ -184,7 +184,8 @@ where
                     min_timestamp,
                     max_timestamp,
                 });
-                ForwarderMetrics::buffer_size(self.url_label.clone()).set(self.buffer.len() as f64);
+                ForwarderMetrics::buffer_size(Arc::clone(&self.url_label))
+                    .set(self.buffer.len() as f64);
                 false
             }
             Err(broadcast::error::RecvError::Lagged(skipped)) => {
@@ -193,8 +194,8 @@ where
                     skipped = skipped,
                     "forwarder lagged, dropped transactions",
                 );
-                ForwarderMetrics::batches_lagged(self.url_label.clone()).increment(1);
-                ForwarderMetrics::txs_lagged(self.url_label.clone()).increment(skipped);
+                ForwarderMetrics::batches_lagged(Arc::clone(&self.url_label)).increment(1);
+                ForwarderMetrics::txs_lagged(Arc::clone(&self.url_label)).increment(skipped);
                 false
             }
             Err(broadcast::error::RecvError::Closed) => {
@@ -221,7 +222,7 @@ where
             self.buffer.len().min(self.config.max_batch_size)
         };
         let batch: Vec<ValidatedTransaction> = self.buffer.drain(..batch_size).collect();
-        ForwarderMetrics::buffer_size(self.url_label.clone()).set(self.buffer.len() as f64);
+        ForwarderMetrics::buffer_size(Arc::clone(&self.url_label)).set(self.buffer.len() as f64);
 
         if batch.is_empty() {
             return;
@@ -246,9 +247,9 @@ where
 
             match result {
                 Ok(response) => {
-                    ForwarderMetrics::rpc_latency(self.url_label.clone())
+                    ForwarderMetrics::rpc_latency(Arc::clone(&self.url_label))
                         .record(overall_start.elapsed().as_secs_f64());
-                    ForwarderMetrics::batches_sent(self.url_label.clone()).increment(1);
+                    ForwarderMetrics::batches_sent(Arc::clone(&self.url_label)).increment(1);
 
                     let mut ok_count = 0u64;
                     let mut err_count = 0u64;
@@ -266,9 +267,9 @@ where
                         }
                     }
 
-                    ForwarderMetrics::txs_forwarded(self.url_label.clone()).increment(ok_count);
+                    ForwarderMetrics::txs_forwarded(Arc::clone(&self.url_label)).increment(ok_count);
                     if err_count > 0 {
-                        ForwarderMetrics::num_tx_rejected_in_batch(self.url_label.clone())
+                        ForwarderMetrics::num_tx_rejected_in_batch(Arc::clone(&self.url_label))
                             .increment(err_count);
                     }
                     return;
@@ -289,7 +290,7 @@ where
                     }
                 }
                 Err(err) => {
-                    ForwarderMetrics::rpc_latency(self.url_label.clone())
+                    ForwarderMetrics::rpc_latency(Arc::clone(&self.url_label))
                         .record(overall_start.elapsed().as_secs_f64());
                     error!(
                         builder_url = %self.builder_url,
@@ -298,7 +299,7 @@ where
                         retryable = Self::is_retryable(&err),
                         "RPC send failed, dropping batch",
                     );
-                    ForwarderMetrics::rpc_errors(self.url_label.clone()).increment(1);
+                    ForwarderMetrics::rpc_errors(Arc::clone(&self.url_label)).increment(1);
                     return;
                 }
             }
