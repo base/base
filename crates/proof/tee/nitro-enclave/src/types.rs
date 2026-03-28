@@ -361,6 +361,7 @@ pub struct TeeProofResult {
 mod tests {
     use alloy_primitives::{address, b256};
     use base_consensus_registry::Registry;
+    use tracing::info;
 
     use super::*;
 
@@ -637,12 +638,17 @@ mod tests {
         assert_eq!(rollup_config.hardforks.regolith_time, Some(0));
     }
 
-    /// Print config hashes for supported chains so they can be hardcoded in the
+    /// Emit config hashes for supported chains (via `tracing`) so they can be hardcoded in the
     /// enclave server. Run with:
     /// `cargo test -p base-proof-tee-nitro-enclave print_real_config_hashes -- --nocapture --ignored`
     #[test]
     #[ignore]
     fn print_real_config_hashes() {
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_test_writer()
+            .try_init();
+
         let chains: &[(u64, &str)] =
             &[(8453, "Base Mainnet"), (84532, "Base Sepolia"), (11763072, "Sepolia Alpha")];
 
@@ -652,7 +658,12 @@ mod tests {
             let mut per_chain = PerChainConfig::from_rollup_config(rollup)
                 .unwrap_or_else(|| panic!("missing system_config for {name} ({chain_id})"));
             per_chain.force_defaults();
-            println!("{name} ({chain_id}): {:?}", per_chain.hash());
+            info!(
+                chain_id,
+                name = %name,
+                config_hash = ?per_chain.hash(),
+                "per-chain config hash for enclave server hardcoding",
+            );
         }
     }
 }
