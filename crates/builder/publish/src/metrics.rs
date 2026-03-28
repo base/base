@@ -1,5 +1,6 @@
-base_metrics::define_metrics_struct! {
-    PublishingMetrics, base_builder,
+base_metrics::define_metrics! {
+    base_builder,
+    struct = PublishingMetrics,
     #[describe("Total messages sent to subscribers")]
     messages_sent_count: counter,
     #[describe("Active WebSocket connections")]

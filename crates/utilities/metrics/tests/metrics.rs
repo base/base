@@ -57,8 +57,9 @@ fn assert_single_histogram(snap: &[SnapEntry], name: &str, min: f64) {
     }
 }
 
-base_metrics::define_metrics_struct! {
-    AppMetrics, test_app,
+base_metrics::define_metrics! {
+    test_app,
+    struct = AppMetrics,
     #[describe("Total requests")]
     requests_total: counter,
 
@@ -135,8 +136,9 @@ fn describe_registers_descriptions() {
     });
 }
 
-base_metrics::define_metrics_struct! {
-    CustomMetrics, my_service,
+base_metrics::define_metrics! {
+    my_service,
+    struct = CustomMetrics,
     #[describe("Events processed")]
     events: counter,
 }
@@ -154,8 +156,9 @@ fn named_struct() {
     });
 }
 
-base_metrics::define_metrics_struct! {
-    LabeledMetrics, labeled_app,
+base_metrics::define_metrics! {
+    labeled_app,
+    struct = LabeledMetrics,
 
     #[describe("Requests by method")]
     #[label(method)]
@@ -234,8 +237,9 @@ fn single_label_gauge() {
     });
 }
 
-base_metrics::define_metrics_struct! {
-    TwoLabelMetrics, multi_label,
+base_metrics::define_metrics! {
+    multi_label,
+    struct = TwoLabelMetrics,
 
     #[describe("Errors by kind and reason")]
     #[label(kind)]
@@ -271,8 +275,9 @@ fn two_label_counter() {
     });
 }
 
-base_metrics::define_metrics_struct! {
-    TimerMetrics, timer_test,
+base_metrics::define_metrics! {
+    timer_test,
+    struct = TimerMetrics,
     #[describe("Duration")]
     duration: histogram,
 }
@@ -318,8 +323,9 @@ fn timed_stop_is_idempotent() {
     });
 }
 
-base_metrics::define_metrics_struct! {
-    TimeBlockMetrics, time_block,
+base_metrics::define_metrics! {
+    time_block,
+    struct = TimeBlockMetrics,
     #[describe("Duration")]
     duration: histogram,
 }
@@ -337,8 +343,9 @@ fn time_block_records_and_returns_value() {
     });
 }
 
-base_metrics::define_metrics_struct! {
-    InflightMetrics, inflight_test,
+base_metrics::define_metrics! {
+    inflight_test,
+    struct = InflightMetrics,
     #[describe("In-flight operations")]
     in_flight: gauge,
 }
@@ -367,8 +374,8 @@ fn inflight_increments_and_decrements_gauge() {
 
 #[test]
 fn metric_names_use_dot_separator() {
-    base_metrics::define_metrics_struct! {
-        ScopeMetrics, scope_test,
+    base_metrics::define_metrics! {
+        scope_test
         #[describe("A counter")]
         my_counter: counter,
         #[describe("A gauge")]
@@ -378,9 +385,9 @@ fn metric_names_use_dot_separator() {
     }
 
     with_recorder(|snap| {
-        ScopeMetrics::my_counter().increment(1);
-        ScopeMetrics::my_gauge().set(1.0);
-        ScopeMetrics::my_histogram().record(1.0);
+        Metrics::my_counter().increment(1);
+        Metrics::my_gauge().set(1.0);
+        Metrics::my_histogram().record(1.0);
 
         let snapshot = snap.snapshot().into_vec();
         let names: Vec<&str> = snapshot.iter().map(|(ck, _, _, _)| ck.key().name()).collect();
@@ -390,8 +397,9 @@ fn metric_names_use_dot_separator() {
     });
 }
 
-base_metrics::define_metrics_struct! {
-    ParamMetrics, param_test,
+base_metrics::define_metrics! {
+    param_test,
+    struct = ParamMetrics,
 
     #[describe("Counter with string label")]
     #[label(endpoint)]

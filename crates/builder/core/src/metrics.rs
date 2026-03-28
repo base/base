@@ -3,8 +3,9 @@ use crate::{ExecutionInfo, FlashblockDiagnostics, ResourceLimits};
 const PRIORITY_FEE_THRESHOLDS_WEI: [(&str, u64); 3] =
     [("100wei", 100), ("100kwei", 100_000), ("1mwei", 1_000_000)];
 
-base_metrics::define_metrics_struct! {
-    BuilderMetrics, base_builder,
+base_metrics::define_metrics! {
+    base_builder,
+    struct = BuilderMetrics,
     #[describe("Block built success")]
     block_built_success: counter,
     #[describe("Block synced success")]

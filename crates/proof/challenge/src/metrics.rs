@@ -1,7 +1,8 @@
 //! Challenger metrics constants.
 
-base_metrics::define_metrics_struct! {
-    ChallengerMetrics, base_challenger,
+base_metrics::define_metrics! {
+    base_challenger,
+    struct = ChallengerMetrics,
 
     #[describe("Challenger is running")]
     up: gauge,

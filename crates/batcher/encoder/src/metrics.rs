@@ -1,7 +1,8 @@
 //! Batcher metric definitions and label values.
 
-base_metrics::define_metrics_struct! {
-    BatcherMetrics, batcher,
+base_metrics::define_metrics! {
+    batcher,
+    struct = BatcherMetrics,
     #[describe("Total number of encoding channels opened")]
     channel_opened_total: counter,
     #[describe("Total number of encoding channels closed")]

@@ -7,7 +7,8 @@
 ///
 /// The scope is prepended to every metric name with a dot separator.
 /// The scope may contain dots (e.g., `my.app`) by using dot-separated idents.
-/// For a custom struct name, use [`define_metrics_struct!`].
+/// To override the generated struct name, add `struct = MyMetrics,` after the
+/// scope.
 ///
 /// # Attributes
 ///
@@ -23,9 +24,36 @@
 ///     requests_total: counter,
 /// }
 /// Metrics::requests_total().increment(1);
+///
+/// base_metrics::define_metrics! {
+///     my.app,
+///     struct = MyMetrics,
+///     #[describe("Request duration")]
+///     #[label(method)]
+///     request_duration: histogram,
+/// }
+/// MyMetrics::request_duration("GET").record(0.42);
 /// ```
 #[macro_export]
 macro_rules! define_metrics {
+    (
+        $($scope:ident).+, struct = $name:ident,
+        $(
+            #[describe($desc:expr)]
+            $(#[label($label:ident)])*
+            $field:ident : $kind:ident
+        ),*
+        $(,)?
+    ) => {
+        $crate::__define_metrics_impl! {
+            $name, {$($scope).+},
+            $(
+                #[describe($desc)]
+                $(#[label($label)])*
+                $field : $kind
+            ),*
+        }
+    };
     (
         $($scope:ident).+
         $(
@@ -37,41 +65,6 @@ macro_rules! define_metrics {
     ) => {
         $crate::__define_metrics_impl! {
             Metrics, {$($scope).+},
-            $(
-                #[describe($desc)]
-                $(#[label($label)])*
-                $field : $kind
-            ),*
-        }
-    };
-}
-
-/// Like [`define_metrics!`] but with a custom struct name.
-///
-/// # Example
-///
-/// ```ignore
-/// base_metrics::define_metrics_struct! {
-///     MyMetrics, my.app,
-///     #[describe("Request duration")]
-///     #[label(method)]
-///     request_duration: histogram,
-/// }
-/// MyMetrics::request_duration("GET").record(0.42);
-/// ```
-#[macro_export]
-macro_rules! define_metrics_struct {
-    (
-        $name:ident, $($scope:ident).+,
-        $(
-            #[describe($desc:expr)]
-            $(#[label($label:ident)])*
-            $field:ident : $kind:ident
-        ),*
-        $(,)?
-    ) => {
-        $crate::__define_metrics_impl! {
-            $name, {$($scope).+},
             $(
                 #[describe($desc)]
                 $(#[label($label)])*

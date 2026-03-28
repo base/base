@@ -1,7 +1,8 @@
 //! Registrar metrics constants.
 
-base_metrics::define_metrics_struct! {
-    RegistrarMetrics, base_registrar,
+base_metrics::define_metrics! {
+    base_registrar,
+    struct = RegistrarMetrics,
 
     #[describe("Registrar is running")]
     up: gauge,

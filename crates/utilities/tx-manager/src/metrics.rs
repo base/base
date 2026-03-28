@@ -2,8 +2,9 @@
 
 use std::fmt::Debug;
 
-base_metrics::define_metrics_struct! {
-    TxManagerMetrics, base_tx_manager,
+base_metrics::define_metrics! {
+    base_tx_manager,
+    struct = TxManagerMetrics,
     #[describe("Maximum possible transaction fee in gwei")]
     #[label(name)]
     tx_max_fee_gwei: histogram,
