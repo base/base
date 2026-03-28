@@ -9,8 +9,8 @@ use base_consensus_genesis::RollupConfig;
 use base_protocol::{BlockInfo, Frame};
 
 use crate::{
-    NextFrameProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, Signal,
-    SignalReceiver,
+    Metrics, NextFrameProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult,
+    Signal, SignalReceiver,
 };
 
 /// Provides data frames for the [`FrameQueue`] stage.
@@ -138,20 +138,9 @@ where
         self.prune(origin);
 
         // Update metrics with the post-prune queue state.
-        base_metrics::set!(
-            gauge,
-            crate::metrics::Metrics::PIPELINE_FRAME_QUEUE_BUFFER,
-            self.queue.len() as f64
-        );
-        #[cfg(feature = "metrics")]
-        {
-            let queue_size = self.queue.iter().map(|f| f.size()).sum::<usize>() as f64;
-            base_metrics::set!(
-                gauge,
-                crate::metrics::Metrics::PIPELINE_FRAME_QUEUE_MEM,
-                queue_size
-            );
-        }
+        Metrics::pipeline_frame_queue_buffer().set(self.queue.len() as f64);
+        let queue_size = self.queue.iter().map(|f| f.size()).sum::<usize>() as f64;
+        Metrics::pipeline_frame_queue_mem().set(queue_size);
 
         Ok(())
     }

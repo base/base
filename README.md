@@ -18,6 +18,14 @@ Base is a rollup built on Ethereum.
     - [Deploy an app](https://docs.base.org/base-chain/quickstart/deploy-on-base)
 - The [specs](https://specs.base.org) site, has an overview of the protocol, including past and upcoming upgrades.
 
+## Install Binaries
+
+Use [`baseup`](baseup/README.md) to install the GitHub release binaries for this repository:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/base/base/main/baseup/install | bash
+```
+
 ## License
 
 Licensed under [MIT](LICENSE).

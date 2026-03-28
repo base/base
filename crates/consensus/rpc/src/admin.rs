@@ -5,6 +5,7 @@ use core::fmt::Debug;
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
+use base_consensus_gossip::Metrics;
 use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
@@ -72,7 +73,7 @@ where
     ) -> RpcResult<()> {
         // Note: intentionally no sequencer guard here. Posting an unsafe payload is a P2P/gossip
         // operation that is valid on both sequencer and validator nodes.
-        base_metrics::inc!(gauge, base_consensus_gossip::Metrics::RPC_CALLS, "method" => "admin_postUnsafePayload");
+        Metrics::rpc_calls("admin_postUnsafePayload").increment(1.0);
         self.network_sender
             .send(NetworkAdminQuery::PostUnsafePayload { payload })
             .await

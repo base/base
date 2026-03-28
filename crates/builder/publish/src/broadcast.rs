@@ -1,5 +1,4 @@
 use core::fmt::{Debug, Formatter};
-use std::sync::Arc;
 
 use futures::{SinkExt, StreamExt};
 use tokio::{
@@ -13,7 +12,7 @@ use tokio_tungstenite::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::PublisherMetrics;
+use crate::PublishingMetrics;
 
 /// Per-client broadcast sender.
 ///
@@ -22,7 +21,6 @@ use crate::PublisherMetrics;
 /// channel close, or WebSocket error.
 pub struct BroadcastLoop {
     stream: WebSocketStream<TcpStream>,
-    metrics: Arc<dyn PublisherMetrics>,
     cancel: CancellationToken,
     blocks: broadcast::Receiver<Utf8Bytes>,
 }
@@ -35,13 +33,12 @@ impl Debug for BroadcastLoop {
 
 impl BroadcastLoop {
     /// Creates a new [`BroadcastLoop`].
-    pub fn new(
+    pub const fn new(
         stream: WebSocketStream<TcpStream>,
-        metrics: Arc<dyn PublisherMetrics>,
         cancel: CancellationToken,
         blocks: broadcast::Receiver<Utf8Bytes>,
     ) -> Self {
-        Self { stream, metrics, cancel, blocks }
+        Self { stream, cancel, blocks }
     }
 
     /// Runs the broadcast loop until cancellation or error.
@@ -59,11 +56,11 @@ impl BroadcastLoop {
 
                 payload = self.blocks.recv() => match payload {
                     Ok(payload) => {
-                        self.metrics.on_message_sent();
+                        PublishingMetrics::messages_sent_count().increment(1);
 
                         debug!(payload = ?payload, "Broadcasted payload");
                         if let Err(e) = self.stream.send(Message::Text(payload)).await {
-                            self.metrics.on_send_error();
+                            PublishingMetrics::ws_send_error_count().increment(1);
                             debug!(peer_addr = %peer_addr, error = %e, "Closing subscription");
                             break;
                         }
@@ -73,7 +70,7 @@ impl BroadcastLoop {
                         return;
                     }
                     Err(RecvError::Lagged(skipped)) => {
-                        self.metrics.on_lagged(skipped);
+                        PublishingMetrics::ws_lagged_count().increment(skipped);
                         warn!(
                             skipped = skipped,
                             "Broadcast channel lagged, some messages were dropped"
@@ -99,66 +96,53 @@ impl BroadcastLoop {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
+    use metrics_exporter_prometheus::PrometheusBuilder;
     use rstest::rstest;
     use tokio::net::TcpListener;
     use tokio_tungstenite::{accept_async, connect_async};
 
     use super::*;
 
-    struct MockMetrics {
-        sent: AtomicU64,
-        lagged: AtomicU64,
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap()
     }
 
-    impl MockMetrics {
-        fn new() -> Self {
-            Self { sent: AtomicU64::new(0), lagged: AtomicU64::new(0) }
-        }
-    }
+    #[test]
+    fn broadcast_loop_forwards_messages() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let rt = runtime();
 
-    impl PublisherMetrics for MockMetrics {
-        fn on_message_sent(&self) {
-            self.sent.fetch_add(1, Ordering::Relaxed);
-        }
-        fn on_connection_opened(&self) {}
-        fn on_connection_closed(&self, _duration: std::time::Duration) {}
-        fn on_lagged(&self, skipped: u64) {
-            self.lagged.fetch_add(skipped, Ordering::Relaxed);
-        }
-        fn on_payload_size(&self, _size: usize) {}
-        fn on_send_error(&self) {}
-        fn on_handshake_error(&self) {}
-    }
+        metrics::with_local_recorder(&recorder, || {
+            rt.block_on(async {
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let addr = listener.local_addr().unwrap();
+                let (tx, rx) = broadcast::channel::<Utf8Bytes>(16);
+                let cancel = CancellationToken::new();
 
-    #[tokio::test]
-    async fn broadcast_loop_forwards_messages() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let (tx, rx) = broadcast::channel::<Utf8Bytes>(16);
-        let cancel = CancellationToken::new();
-        let metrics: Arc<dyn PublisherMetrics> = Arc::new(MockMetrics::new());
+                let server_handle = tokio::spawn({
+                    let cancel = cancel.clone();
+                    async move {
+                        let (stream, _) = listener.accept().await.unwrap();
+                        let ws = accept_async(stream).await.unwrap();
+                        BroadcastLoop::new(ws, cancel, rx).run().await;
+                    }
+                });
 
-        let server_handle = tokio::spawn({
-            let metrics = Arc::clone(&metrics);
-            let cancel = cancel.clone();
-            async move {
-                let (stream, _) = listener.accept().await.unwrap();
-                let ws = accept_async(stream).await.unwrap();
-                BroadcastLoop::new(ws, metrics, cancel, rx).run().await;
-            }
+                let (mut client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
+
+                tx.send(Utf8Bytes::from("hello")).unwrap();
+
+                let msg = client.next().await.unwrap().unwrap();
+                assert_eq!(msg, Message::Text(Utf8Bytes::from("hello")));
+
+                cancel.cancel();
+                let _ = server_handle.await;
+            });
         });
 
-        let (mut client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
-
-        tx.send(Utf8Bytes::from("hello")).unwrap();
-
-        let msg = client.next().await.unwrap().unwrap();
-        assert_eq!(msg, Message::Text(Utf8Bytes::from("hello")));
-
-        cancel.cancel();
-        let _ = server_handle.await;
+        let rendered = handle.render();
+        assert!(rendered.contains("base_builder_messages_sent_count 1"));
     }
 
     #[tokio::test]
@@ -167,14 +151,13 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let (_, rx) = broadcast::channel::<Utf8Bytes>(16);
         let cancel = CancellationToken::new();
-        let metrics: Arc<dyn PublisherMetrics> = Arc::new(MockMetrics::new());
 
         let server_handle = tokio::spawn({
             let cancel = cancel.clone();
             async move {
                 let (stream, _) = listener.accept().await.unwrap();
                 let ws = accept_async(stream).await.unwrap();
-                BroadcastLoop::new(ws, metrics, cancel, rx).run().await;
+                BroadcastLoop::new(ws, cancel, rx).run().await;
             }
         });
 
@@ -190,12 +173,11 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let (_tx, rx) = broadcast::channel::<Utf8Bytes>(16);
         let cancel = CancellationToken::new();
-        let metrics: Arc<dyn PublisherMetrics> = Arc::new(MockMetrics::new());
 
         let server_handle = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let ws = accept_async(stream).await.unwrap();
-            BroadcastLoop::new(ws, metrics, cancel, rx).run().await;
+            BroadcastLoop::new(ws, cancel, rx).run().await;
         });
 
         let (mut client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
@@ -208,39 +190,47 @@ mod tests {
     #[rstest]
     #[case::lagged(true)]
     #[case::closed(false)]
-    #[tokio::test]
-    async fn broadcast_loop_handles_recv_errors(#[case] test_lagged: bool) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
+    fn broadcast_loop_handles_recv_errors(#[case] test_lagged: bool) {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let rt = runtime();
 
-        let (tx, rx) = broadcast::channel::<Utf8Bytes>(1);
-        let cancel = CancellationToken::new();
-        let metrics = Arc::new(MockMetrics::new());
-        let metrics_clone: Arc<dyn PublisherMetrics> =
-            Arc::clone(&metrics) as Arc<dyn PublisherMetrics>;
+        metrics::with_local_recorder(&recorder, || {
+            rt.block_on(async {
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let addr = listener.local_addr().unwrap();
 
-        let server_handle = tokio::spawn({
-            let cancel = cancel.clone();
-            async move {
-                let (stream, _) = listener.accept().await.unwrap();
-                let ws = accept_async(stream).await.unwrap();
-                BroadcastLoop::new(ws, metrics_clone, cancel, rx).run().await;
-            }
+                let (tx, rx) = broadcast::channel::<Utf8Bytes>(1);
+                let cancel = CancellationToken::new();
+
+                let server_handle = tokio::spawn({
+                    let cancel = cancel.clone();
+                    async move {
+                        let (stream, _) = listener.accept().await.unwrap();
+                        let ws = accept_async(stream).await.unwrap();
+                        BroadcastLoop::new(ws, cancel, rx).run().await;
+                    }
+                });
+
+                let (_client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
+
+                if test_lagged {
+                    for i in 0..5 {
+                        let _ = tx.send(Utf8Bytes::from(format!("msg{i}")));
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    cancel.cancel();
+                } else {
+                    drop(tx);
+                }
+
+                server_handle.await.unwrap();
+            });
         });
 
-        let (_client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
-
         if test_lagged {
-            for i in 0..5 {
-                let _ = tx.send(Utf8Bytes::from(format!("msg{i}")));
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            assert!(metrics.lagged.load(Ordering::Relaxed) > 0);
-            cancel.cancel();
-        } else {
-            drop(tx);
+            let rendered = handle.render();
+            assert!(rendered.contains("base_builder_ws_lagged_count"));
         }
-
-        server_handle.await.unwrap();
     }
 }

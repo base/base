@@ -62,7 +62,8 @@ base-proof-primitives = { workspace = true, features = ["serde", "std", "rpc-cli
 jsonrpsee.workspace = true
 
 # Metrics
-metrics.workspace = true
+base-metrics.workspace = true
+metrics = { workspace = true, optional = true }
 
 # TLS
 rustls = { workspace = true, features = ["ring"] }
@@ -87,4 +88,5 @@ tokio = { workspace = true, features = ["test-util"] }
 base-challenger = { path = ".", features = ["test-utils"] }
 
 [features]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]
 test-utils = [ "base-protocol/test-utils", "serde_json" ]

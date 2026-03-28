@@ -1,0 +1,681 @@
+#!/usr/bin/env bash
+set -e
+
+# baseup - Base release installer
+# Downloads release binaries from GitHub releases and installs them locally.
+
+# NOTE: If you change this script, increment the version below.
+BASEUP_INSTALLER_VERSION="0.1.3"
+
+BASEUP_REPO="${BASEUP_REPO:-base/base}"
+BASEUP_REPO_REF="${BASEUP_REPO_REF:-main}"
+BASEUP_HOME="${BASEUP_HOME:-$HOME/.base}"
+BIN_DIR="${BASE_BIN_DIR:-$BASEUP_HOME/bin}"
+BASEUP_HOST_BASE_URL="${BASEUP_HOST_BASE_URL:-https://raw.githubusercontent.com/${BASEUP_REPO}/${BASEUP_REPO_REF}/baseup}"
+BASEUP_BIN_URL="${BASEUP_BIN_URL:-${BASEUP_HOST_BASE_URL}/baseup}"
+BASEUP_BIN_PATH="$BIN_DIR/baseup"
+
+DEFAULT_BINS=("base-reth-node" "basectl")
+SELECTED_BINS=()
+VERSION=""
+VERSION_EXPLICIT=0
+UPDATE_TMP_FILE=""
+MAIN_TMP_DIR=""
+UPDATE_CHECK_CACHE_FILE="$BASEUP_HOME/baseup-update-check"
+UPDATE_CHECK_TTL_SECONDS="${BASEUP_UPDATE_CHECK_TTL_SECONDS:-86400}"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+info() {
+    echo -e "${GREEN}info${NC}: $1"
+}
+
+warn() {
+    echo -e "${YELLOW}warn${NC}: $1"
+}
+
+error() {
+    echo -e "${RED}error${NC}: $1"
+    exit 1
+}
+
+ensure_dir() {
+    local dir="$1"
+    local env_name="$2"
+
+    if ! mkdir -p "$dir" 2>/dev/null; then
+        error "Failed to create $dir. Choose a user-writable $env_name."
+    fi
+}
+
+ensure_writable_destination() {
+    local dst="$1"
+    local parent
+
+    if [[ -e "$dst" ]]; then
+        [[ -w "$dst" ]] && return
+    else
+        parent="$(dirname "$dst")"
+        [[ -w "$parent" ]] && return
+    fi
+
+    error "Destination $dst is not writable. Choose a user-writable BASE_BIN_DIR."
+}
+
+array_contains() {
+    local needle="$1"
+    shift
+    local value
+    for value in "$@"; do
+        if [[ "$value" == "$needle" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+parse_version() {
+    local ver="${1#v}"
+    local core="${ver%%-*}"
+    local suffix=""
+    local major
+    local minor
+    local patch
+
+    if [[ "$ver" == *-* ]]; then
+        suffix="${ver#"$core"-}"
+    fi
+
+    IFS=. read -r major minor patch <<< "$core"
+
+    printf '%s %s %s %s\n' "${major:-0}" "${minor:-0}" "${patch:-0}" "$suffix"
+}
+
+version_gt() {
+    [ "$1" = "$2" ] && return 1
+
+    local major1 minor1 patch1 suffix1
+    local major2 minor2 patch2 suffix2
+
+    read -r major1 minor1 patch1 suffix1 <<< "$(parse_version "$1")"
+    read -r major2 minor2 patch2 suffix2 <<< "$(parse_version "$2")"
+
+    [[ "$major1" =~ ^[0-9]+$ ]] || major1=0
+    [[ "$minor1" =~ ^[0-9]+$ ]] || minor1=0
+    [[ "$patch1" =~ ^[0-9]+$ ]] || patch1=0
+    [[ "$major2" =~ ^[0-9]+$ ]] || major2=0
+    [[ "$minor2" =~ ^[0-9]+$ ]] || minor2=0
+    [[ "$patch2" =~ ^[0-9]+$ ]] || patch2=0
+
+    [ "$major1" -gt "$major2" ] && return 0
+    [ "$major1" -lt "$major2" ] && return 1
+    [ "$minor1" -gt "$minor2" ] && return 0
+    [ "$minor1" -lt "$minor2" ] && return 1
+    [ "$patch1" -gt "$patch2" ] && return 0
+    [ "$patch1" -lt "$patch2" ] && return 1
+
+    if [[ -z "$suffix1" && -n "$suffix2" ]]; then
+        return 0
+    fi
+
+    if [[ -n "$suffix1" && -z "$suffix2" ]]; then
+        return 1
+    fi
+
+    if [[ -n "$suffix1" && -n "$suffix2" && "$suffix1" > "$suffix2" ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+version() {
+    echo "$BASEUP_INSTALLER_VERSION"
+    exit 0
+}
+
+cleanup_baseup() {
+    if [[ -n "${UPDATE_TMP_FILE:-}" ]]; then
+        rm -f "$UPDATE_TMP_FILE"
+    fi
+
+    if [[ -n "${MAIN_TMP_DIR:-}" ]]; then
+        rm -rf "$MAIN_TMP_DIR"
+    fi
+}
+
+can_download() {
+    command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1
+}
+
+download_url() {
+    local url="$1"
+    local output_path="$2"
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -#fL "$url" -o "$output_path"
+    elif command -v wget >/dev/null 2>&1; then
+        wget --show-progress -q -O "$output_path" "$url"
+    else
+        error "Neither curl nor wget found. Please install one of them."
+    fi
+}
+
+trap cleanup_baseup EXIT
+
+fetch_text() {
+    local url="$1"
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$url"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- "$url"
+    else
+        error "Neither curl nor wget found. Please install one of them."
+    fi
+}
+
+download_file() {
+    local tag="$1"
+    local filename="$2"
+    local output_dir="$3"
+    local url="https://github.com/${BASEUP_REPO}/releases/download/${tag}/${filename}"
+    local output_path="$output_dir/$filename"
+
+    info "Downloading $filename..."
+    if ! download_url "$url" "$output_path"; then
+        error "Failed to download $filename from $url"
+    fi
+}
+
+compute_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | cut -d' ' -f1
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
+validate_archive() {
+    local archive_path="$1"
+    local archive_listing
+    local path
+
+    archive_listing="$(tar -tzf "$archive_path" 2>/dev/null)" || error "Failed to inspect $archive_path"
+    while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
+
+        case "$path" in
+            /*)
+                error "Archive contains an absolute path: $path"
+                ;;
+        esac
+
+        case "/$path/" in
+            *"/../"*)
+                error "Archive contains an unsafe path: $path"
+                ;;
+        esac
+    done <<< "$archive_listing"
+}
+
+extract_archive() {
+    local archive_path="$1"
+    local extract_dir="$2"
+
+    validate_archive "$archive_path"
+    tar --no-same-owner -xzf "$archive_path" -C "$extract_dir"
+}
+
+fetch_remote_installer_version() {
+    local remote_script
+    local remote_version
+
+    remote_script="$(fetch_text "$BASEUP_BIN_URL" 2>/dev/null || true)"
+    if [[ -z "$remote_script" ]]; then
+        return 1
+    fi
+
+    remote_version="$(printf '%s\n' "$remote_script" | grep -m 1 '^BASEUP_INSTALLER_VERSION=' | sed -E 's/BASEUP_INSTALLER_VERSION="(.+)"/\1/')"
+    if [[ -z "$remote_version" ]]; then
+        return 1
+    fi
+
+    echo "$remote_version"
+}
+
+load_cached_installer_version() {
+    local now
+    local ttl
+    local cached_at
+    local cached_version
+
+    now="$(date +%s)"
+    ttl="$UPDATE_CHECK_TTL_SECONDS"
+    case "$ttl" in
+        '' | *[!0-9]*)
+            ttl=86400
+            ;;
+    esac
+
+    [[ -f "$UPDATE_CHECK_CACHE_FILE" ]] || return 1
+
+    cached_at="$(sed -n '1p' "$UPDATE_CHECK_CACHE_FILE" 2>/dev/null)"
+    cached_version="$(sed -n '2p' "$UPDATE_CHECK_CACHE_FILE" 2>/dev/null)"
+
+    case "$cached_at" in
+        '' | *[!0-9]*)
+            return 1
+            ;;
+    esac
+
+    [[ -n "$cached_version" ]] || return 1
+
+    if (( now - cached_at < ttl )); then
+        echo "$cached_version"
+        return 0
+    fi
+
+    return 1
+}
+
+cache_installer_version() {
+    local checked_at="$1"
+    local remote_version="$2"
+
+    ensure_dir "$BASEUP_HOME" "BASEUP_HOME"
+    printf '%s\n%s\n' "$checked_at" "$remote_version" > "$UPDATE_CHECK_CACHE_FILE" 2>/dev/null || true
+}
+
+check_installer_up_to_date() {
+    if ! can_download; then
+        return
+    fi
+
+    local remote_version
+    local checked_at
+
+    if remote_version="$(load_cached_installer_version)"; then
+        :
+    else
+        checked_at="$(date +%s)"
+        remote_version="$(fetch_remote_installer_version 2>/dev/null || true)"
+        if [[ -z "$remote_version" ]]; then
+            return
+        fi
+        cache_installer_version "$checked_at" "$remote_version"
+    fi
+
+    if version_gt "$remote_version" "$BASEUP_INSTALLER_VERSION"; then
+        echo ""
+        warn "Your baseup version ($BASEUP_INSTALLER_VERSION) is outdated."
+        warn "Latest version is $remote_version."
+        warn "Run 'baseup --update' to update to the latest version."
+        echo ""
+    fi
+}
+
+update_baseup() {
+    ensure_dir "$BIN_DIR" "BASE_BIN_DIR"
+
+    if ! can_download; then
+        error "Neither curl nor wget found. Please install one of them."
+    fi
+
+    UPDATE_TMP_FILE="$(mktemp 2>/dev/null || mktemp -t baseup)"
+
+    info "Downloading latest baseup..."
+    if ! download_url "$BASEUP_BIN_URL" "$UPDATE_TMP_FILE" 2>/dev/null; then
+        error "Failed to download baseup update"
+    fi
+
+    if ! head -n 1 "$UPDATE_TMP_FILE" | grep -q '^#!'; then
+        error "Downloaded file does not appear to be a valid script"
+    fi
+
+    if ! bash -n "$UPDATE_TMP_FILE" 2>/dev/null; then
+        error "Downloaded file has syntax errors"
+    fi
+
+    local remote_version
+    remote_version="$(grep -m 1 '^BASEUP_INSTALLER_VERSION=' "$UPDATE_TMP_FILE" | sed -E 's/BASEUP_INSTALLER_VERSION="(.+)"/\1/')"
+    if [[ -z "$remote_version" ]]; then
+        error "Failed to determine remote baseup version"
+    fi
+
+    if ! version_gt "$remote_version" "$BASEUP_INSTALLER_VERSION"; then
+        info "baseup is already up to date (version $BASEUP_INSTALLER_VERSION)"
+        exit 0
+    fi
+
+    ensure_writable_destination "$BASEUP_BIN_PATH"
+
+    local tmp_dest="$BASEUP_BIN_PATH.new"
+
+    info "Updating baseup from $BASEUP_INSTALLER_VERSION to $remote_version..."
+    if cp "$UPDATE_TMP_FILE" "$tmp_dest" 2>/dev/null && chmod 755 "$tmp_dest" && mv -f "$tmp_dest" "$BASEUP_BIN_PATH"; then
+        :
+    else
+        rm -f "$tmp_dest" 2>/dev/null || true
+        error "Failed to update baseup at $BASEUP_BIN_PATH."
+    fi
+
+    cache_installer_version "$(date +%s)" "$remote_version"
+
+    echo ""
+    info "baseup updated successfully to version $remote_version"
+    exit 0
+}
+
+normalize_bin_name() {
+    case "$1" in
+        all)
+            echo "all"
+            ;;
+        node | reth-node | base-reth-node)
+            echo "base-reth-node"
+            ;;
+        ctl | basectl)
+            echo "basectl"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+add_selected_bin() {
+    local normalized
+    normalized="$(normalize_bin_name "$1")" || error "Unknown binary '$1'. Valid values: base-reth-node, basectl, all."
+
+    if [[ "$normalized" == "all" ]]; then
+        local item
+        for item in "${DEFAULT_BINS[@]}"; do
+            add_selected_bin "$item"
+        done
+        return
+    fi
+
+    if ! array_contains "$normalized" "${SELECTED_BINS[@]}"; then
+        SELECTED_BINS+=("$normalized")
+    fi
+}
+
+resolve_selected_bins() {
+    if [[ ${#SELECTED_BINS[@]} -eq 0 ]]; then
+        SELECTED_BINS=("${DEFAULT_BINS[@]}")
+    fi
+}
+
+detect_platform() {
+    local platform
+    platform="$(uname -s | tr '[:upper:]' '[:lower:]')"
+
+    case "$platform" in
+        linux*)
+            echo "linux"
+            ;;
+        darwin* | mac*)
+            echo "darwin"
+            ;;
+        *)
+            error "Unsupported platform: $platform"
+            ;;
+    esac
+}
+
+detect_arch() {
+    local arch
+    arch="$(uname -m)"
+
+    case "$arch" in
+        x86_64 | x64 | amd64)
+            if [[ "$(uname -s)" == "Darwin" ]] && [[ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" == "1" ]]; then
+                echo "arm64"
+            else
+                echo "amd64"
+            fi
+            ;;
+        arm64 | aarch64)
+            echo "arm64"
+            ;;
+        *)
+            warn "Unknown architecture: $arch, defaulting to amd64"
+            echo "amd64"
+            ;;
+    esac
+}
+
+detect_target() {
+    local platform="$1"
+    local arch="$2"
+
+    case "$platform" in
+        darwin)
+            case "$arch" in
+                arm64)
+                    echo "aarch64-apple-darwin"
+                    ;;
+                amd64)
+                    error "Intel macOS binaries are not published by this repository."
+                    ;;
+                *)
+                    error "Unsupported macOS architecture: $arch"
+                    ;;
+            esac
+            ;;
+        linux)
+            case "$arch" in
+                arm64)
+                    echo "aarch64-unknown-linux-gnu"
+                    ;;
+                amd64)
+                    echo "x86_64-unknown-linux-gnu"
+                    ;;
+                *)
+                    error "Unsupported Linux architecture: $arch"
+                    ;;
+            esac
+            ;;
+        *)
+            error "Unsupported platform: $platform"
+            ;;
+    esac
+}
+
+get_latest_version() {
+    if ! can_download; then
+        error "Neither curl nor wget found. Please install one of them."
+    fi
+
+    local api_url="https://api.github.com/repos/${BASEUP_REPO}/releases/latest"
+    local response
+    local version
+    local auth_header=()
+
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        auth_header=(-H "Authorization: Bearer $GITHUB_TOKEN")
+    fi
+
+    if command -v curl >/dev/null 2>&1; then
+        response="$(curl -fsSL "${auth_header[@]}" "$api_url" 2>/dev/null || true)"
+    elif command -v wget >/dev/null 2>&1; then
+        if [[ ${#auth_header[@]} -gt 0 ]]; then
+            response="$(wget -qO- --header="Authorization: Bearer $GITHUB_TOKEN" "$api_url" 2>/dev/null || true)"
+        else
+            response="$(wget -qO- "$api_url" 2>/dev/null || true)"
+        fi
+    else
+        error "Neither curl nor wget found. Please install one of them."
+    fi
+
+    if [[ -z "$response" ]]; then
+        error "Failed to fetch the latest release from GitHub. Try --install <tag>."
+    fi
+
+    if command -v jq >/dev/null 2>&1; then
+        version="$(printf '%s\n' "$response" | jq -r '.tag_name // empty')"
+    else
+        version="$(printf '%s\n' "$response" | grep '"tag_name":' | head -n 1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
+    fi
+
+    if [[ -z "$version" ]]; then
+        error "Failed to fetch the latest release from GitHub. Try --install <tag>."
+    fi
+
+    echo "$version"
+}
+
+install_binary() {
+    local src="$1"
+    local binary_name="$2"
+    local destination="$BIN_DIR/$binary_name"
+    local tmp_dest="$destination.new"
+
+    ensure_writable_destination "$destination"
+
+    info "Installing $binary_name to $destination..."
+    if cp "$src" "$tmp_dest" 2>/dev/null && chmod 755 "$tmp_dest" && mv -f "$tmp_dest" "$destination"; then
+        :
+    else
+        rm -f "$tmp_dest" 2>/dev/null || true
+        error "Failed to install $binary_name to $destination."
+    fi
+}
+
+usage() {
+    cat <<'EOF'
+Usage: baseup [OPTIONS]
+
+Options:
+  -v, --version         Print the baseup installer version
+  -i, --install <VER>   Install a specific release tag (for example: v0.6.0)
+  -b, --bin <NAME>      Install only one binary (base-reth-node, basectl, all)
+  -U, --update          Update baseup itself
+  -h, --help            Show this help message
+
+Examples:
+  baseup
+  baseup -i v0.6.0
+  baseup --bin base-reth-node
+  baseup --bin basectl
+  baseup --update
+EOF
+    exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -v | --version)
+            version
+            ;;
+        -i | --install)
+            [[ $# -ge 2 ]] || error "Missing value for $1"
+            VERSION="$2"
+            VERSION_EXPLICIT=1
+            shift 2
+            ;;
+        -b | --bin)
+            [[ $# -ge 2 ]] || error "Missing value for $1"
+            add_selected_bin "$2"
+            shift 2
+            ;;
+        -U | --update)
+            update_baseup
+            ;;
+        -h | --help)
+            usage
+            ;;
+        *)
+            error "Unknown option: $1. Use --help for usage information."
+            ;;
+    esac
+done
+
+main() {
+    if [[ "$VERSION_EXPLICIT" -eq 0 ]]; then
+        check_installer_up_to_date
+    fi
+
+    info "Installing Base release binaries..."
+
+    ensure_dir "$BIN_DIR" "BASE_BIN_DIR"
+
+    local platform
+    local arch
+    local target
+    platform="$(detect_platform)"
+    arch="$(detect_arch)"
+    target="$(detect_target "$platform" "$arch")"
+    resolve_selected_bins
+
+    info "Detected platform: $platform ($arch)"
+
+    if [[ -z "$VERSION" ]]; then
+        info "Fetching the latest release version..."
+        VERSION="$(get_latest_version)"
+    fi
+
+    info "Installing release $VERSION"
+
+    MAIN_TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t baseup)"
+
+    local binary_name
+    for binary_name in "${SELECTED_BINS[@]}"; do
+        local archive_name
+        local archive_path
+        local checksum_path
+        local expected_checksum
+        local actual_checksum
+        local extract_dir
+        local binary_path
+
+        archive_name="${binary_name}-${VERSION}-${target}.tar.gz"
+        archive_path="$MAIN_TMP_DIR/$archive_name"
+        checksum_path="${archive_path}.sha256"
+        extract_dir="$MAIN_TMP_DIR/${binary_name}-extract"
+
+        download_file "$VERSION" "$archive_name" "$MAIN_TMP_DIR"
+        download_file "$VERSION" "${archive_name}.sha256" "$MAIN_TMP_DIR"
+
+        expected_checksum="$(head -n 1 "$checksum_path" | awk '{print $1}')"
+        actual_checksum="$(compute_sha256 "$archive_path")"
+
+        if [[ "$expected_checksum" != "$actual_checksum" ]]; then
+            error "Checksum verification failed for $archive_name"
+        fi
+
+        info "Checksum verified for $archive_name"
+
+        mkdir -p "$extract_dir"
+        extract_archive "$archive_path" "$extract_dir"
+        binary_path="$(find "$extract_dir" -name "$binary_name" -type f -not -type l | head -n 1)"
+
+        if [[ -z "$binary_path" ]]; then
+            error "Could not find $binary_name in $archive_name"
+        fi
+
+        install_binary "$binary_path" "$binary_name"
+    done
+
+    echo ""
+    info "Installed release $VERSION successfully"
+    echo ""
+
+    if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+        warn "$BIN_DIR is not in your PATH"
+        echo "  Add it to your shell config:"
+        echo "    export PATH=\"$BIN_DIR:\$PATH\""
+        echo ""
+    else
+        local installed_binary
+        for installed_binary in "${SELECTED_BINS[@]}"; do
+            info "Run '$installed_binary --help' to verify the install"
+        done
+    fi
+}
+
+main

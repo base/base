@@ -1,5 +1,7 @@
 //! Contains the concrete implementation of the [`BlobProvider`] trait for the client program.
 
+#[cfg(feature = "std")]
+use alloc::string::ToString;
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::str::FromStr;
 
@@ -75,6 +77,24 @@ impl<T: CommsClient> OracleBlobProvider<T> {
                 .await
                 .map_err(OracleProviderError::Preimage)?;
             blob[(i as usize) << 5..(i as usize + 1) << 5].copy_from_slice(field_element.as_ref());
+        }
+
+        // Verify that the reconstructed blob matches the fetched commitment by recomputing
+        // the KZG commitment and comparing. This prevents a compromised host from supplying
+        // fake field elements that would reconstruct into a different blob.
+        #[cfg(feature = "std")]
+        {
+            let kzg_blob = c_kzg::Blob::new(blob.0);
+            let kzg = alloy_eips::eip4844::env_settings::EnvKzgSettings::Default;
+            let computed = kzg
+                .get()
+                .blob_to_kzg_commitment(&kzg_blob)
+                .map_err(|e| OracleProviderError::BlobVerification(e.to_string()))?;
+            if computed.as_slice() != commitment {
+                return Err(OracleProviderError::BlobVerification(alloc::format!(
+                    "commitment mismatch for blob {blob_hash}"
+                )));
+            }
         }
 
         info!(

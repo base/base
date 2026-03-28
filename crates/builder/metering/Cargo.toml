@@ -12,12 +12,11 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+moka = { workspace = true, features = ["sync"] }
 tracing.workspace = true
-dashmap.workspace = true
 jsonrpsee.workspace = true
 base-bundles.workspace = true
 alloy-primitives.workspace = true
-concurrent-queue.workspace = true
 base-builder-core.workspace = true
 base-node-runner.workspace = true
 

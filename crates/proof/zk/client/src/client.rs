@@ -8,9 +8,10 @@ use tracing::{debug, warn};
 use url::Url;
 
 use crate::{
+    ProofJobStatus,
     error::ZkProofError,
     proto::{
-        GetProofRequest, GetProofResponse, ProofJobStatus, ProveBlockRequest, ProveBlockResponse,
+        GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse,
         prover_service_client::ProverServiceClient,
     },
 };

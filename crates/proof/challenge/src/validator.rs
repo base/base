@@ -137,8 +137,7 @@ struct RecordOnDrop(Instant);
 
 impl Drop for RecordOnDrop {
     fn drop(&mut self) {
-        metrics::histogram!(ChallengerMetrics::VALIDATION_LATENCY_SECONDS)
-            .record(self.0.elapsed().as_secs_f64());
+        ChallengerMetrics::validation_latency_seconds().record(self.0.elapsed().as_secs_f64());
     }
 }
 
@@ -240,7 +239,7 @@ impl<L2: L2Provider> OutputValidator<L2> {
 
         while let Some((idx, cp, result)) = stream.next().await {
             let expected_root = result.inspect_err(|e| {
-                metrics::counter!(ChallengerMetrics::VALIDATION_ERRORS_TOTAL).increment(1);
+                ChallengerMetrics::validation_errors_total().increment(1);
                 warn!(
                     game = %game_address,
                     block = cp.block,
@@ -259,7 +258,7 @@ impl<L2: L2Provider> OutputValidator<L2> {
                     claimed = %cp.claimed_root,
                     "invalid output root detected"
                 );
-                metrics::counter!(ChallengerMetrics::GAMES_INVALID_TOTAL).increment(1);
+                ChallengerMetrics::games_invalid_total().increment(1);
                 return Ok(Some((idx, expected_root)));
             }
         }

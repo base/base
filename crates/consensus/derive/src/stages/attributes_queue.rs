@@ -9,6 +9,7 @@ use base_consensus_genesis::RollupConfig;
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent, SingleBatch};
 
 use crate::{
+    Metrics,
     errors::{PipelineError, ResetError},
     traits::{
         AttributesBuilder, AttributesProvider, NextAttributes, OriginAdvancer, OriginProvider,
@@ -81,8 +82,7 @@ where
         };
 
         // Construct the payload attributes from the loaded batch.
-        #[cfg(feature = "metrics")]
-        let start = std::time::Instant::now();
+        let mut timer = base_metrics::timed!(Metrics::pipeline_attributes_build_duration());
         let attributes = match self.create_next_attributes(batch, parent).await {
             Ok(attributes) => attributes,
             Err(e) => {
@@ -92,11 +92,7 @@ where
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
         let populated_attributes =
             OpAttributesWithParent::new(attributes, parent, Some(origin), self.is_last_in_span);
-        base_metrics::record!(
-            histogram,
-            crate::metrics::Metrics::PIPELINE_ATTRIBUTES_BUILD_DURATION,
-            start.elapsed().as_secs_f64()
-        );
+        timer.stop();
 
         // Clear out the local state once payload attributes are prepared.
         self.batch = None;

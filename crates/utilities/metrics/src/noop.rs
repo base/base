@@ -31,4 +31,7 @@ impl NoopDropTimer {
     /// Stop — compiles away.
     #[inline(always)]
     pub const fn stop(&mut self) {}
+    /// Disarm — compiles away.
+    #[inline(always)]
+    pub const fn disarm(&mut self) {}
 }

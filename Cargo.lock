@@ -2815,8 +2815,10 @@ dependencies = [
 name = "base-batcher-service"
 version = "0.0.0"
 dependencies = [
+ "alloy-eips",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-rlp",
  "alloy-rpc-types-eth",
  "alloy-signer-local",
  "async-trait",
@@ -2827,7 +2829,9 @@ dependencies = [
  "base-batcher-core",
  "base-batcher-encoder",
  "base-batcher-source",
+ "base-consensus-genesis",
  "base-consensus-rpc",
+ "base-protocol",
  "base-runtime",
  "base-tx-manager",
  "derive_more",
@@ -2835,6 +2839,7 @@ dependencies = [
  "futures",
  "httpmock",
  "jsonrpsee",
+ "miniz_oxide 0.9.1",
  "tokio",
  "tokio-util",
  "tracing",
@@ -2932,6 +2937,7 @@ dependencies = [
  "base-execution-payload-builder",
  "base-execution-primitives",
  "base-execution-rpc",
+ "base-metrics",
  "base-node-core",
  "base-node-runner",
  "base-revm",
@@ -2972,7 +2978,6 @@ dependencies = [
  "reth-evm",
  "reth-execution-types",
  "reth-ipc",
- "reth-metrics",
  "reth-network-peers",
  "reth-node-api",
  "reth-node-builder",
@@ -3028,9 +3033,8 @@ dependencies = [
  "base-builder-core",
  "base-bundles",
  "base-node-runner",
- "concurrent-queue",
- "dashmap",
  "jsonrpsee",
+ "moka",
  "tracing",
 ]
 
@@ -3038,8 +3042,10 @@ dependencies = [
 name = "base-builder-publish"
 version = "0.0.0"
 dependencies = [
+ "base-metrics",
  "futures",
  "metrics",
+ "metrics-exporter-prometheus",
  "rstest",
  "serde",
  "serde_json",
@@ -3094,6 +3100,7 @@ dependencies = [
  "base-challenger",
  "base-cli-utils",
  "base-health",
+ "base-metrics",
  "base-proof-contracts",
  "base-proof-primitives",
  "base-proof-rpc",
@@ -4747,6 +4754,7 @@ dependencies = [
  "async-trait",
  "aws-sdk-ec2",
  "aws-sdk-elasticloadbalancingv2",
+ "base-metrics",
  "base-proof-contracts",
  "base-proof-primitives",
  "base-proof-tee-nitro-attestation-prover",
@@ -4833,6 +4841,7 @@ dependencies = [
  "base-cli-utils",
  "base-consensus-genesis",
  "base-health",
+ "base-metrics",
  "base-proof-contracts",
  "base-proof-primitives",
  "base-proof-rpc",

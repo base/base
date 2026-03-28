@@ -157,7 +157,7 @@ impl GameScanner {
 
         candidates.sort_by_key(|c| c.index);
 
-        metrics::counter!(ChallengerMetrics::GAMES_SCANNED_TOTAL).increment(games_to_scan);
+        ChallengerMetrics::games_scanned_total().increment(games_to_scan);
 
         let new_last_scanned = match lowest_error {
             Some(0) => last_scanned,
@@ -166,7 +166,7 @@ impl GameScanner {
         };
 
         if let Some(head) = new_last_scanned {
-            metrics::gauge!(ChallengerMetrics::SCAN_HEAD).set(head as f64);
+            ChallengerMetrics::scan_head().set(head as f64);
         }
 
         info!(

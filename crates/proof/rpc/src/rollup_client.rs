@@ -13,7 +13,8 @@ use url::Url;
 
 use super::{
     HttpProvider,
-    config::RetryConfig,
+    cache::MeteredCache,
+    config::{DEFAULT_CACHE_SIZE, RetryConfig},
     error::{RpcError, RpcResult},
     traits::RollupProvider,
     types::{OutputAtBlock, SyncStatus},
@@ -26,6 +27,8 @@ pub struct RollupClientConfig {
     pub endpoint: Url,
     /// Request timeout.
     pub timeout: Duration,
+    /// Cache size for output-at-block responses.
+    pub cache_size: usize,
     /// Retry configuration.
     pub retry_config: RetryConfig,
     /// Skip TLS certificate verification.
@@ -38,6 +41,7 @@ impl RollupClientConfig {
         Self {
             endpoint,
             timeout: Duration::from_secs(30),
+            cache_size: DEFAULT_CACHE_SIZE,
             retry_config: RetryConfig::default(),
             skip_tls_verify: false,
         }
@@ -46,6 +50,12 @@ impl RollupClientConfig {
     /// Sets the request timeout.
     pub const fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Sets the cache size for output-at-block responses.
+    pub const fn with_cache_size(mut self, cache_size: usize) -> Self {
+        self.cache_size = cache_size;
         self
     }
 
@@ -66,13 +76,17 @@ impl RollupClientConfig {
 pub struct RollupClient {
     /// The underlying HTTP provider.
     provider: HttpProvider,
+    /// Cache for `optimism_outputAtBlock` responses keyed by L2 block number.
+    output_cache: MeteredCache<u64, OutputAtBlock>,
     /// Retry configuration.
     retry_config: RetryConfig,
 }
 
 impl std::fmt::Debug for RollupClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RollupClient").finish_non_exhaustive()
+        f.debug_struct("RollupClient")
+            .field("output_cache_entries", &self.output_cache.entry_count())
+            .finish_non_exhaustive()
     }
 }
 
@@ -98,7 +112,14 @@ impl RollupClient {
         // Create provider directly without fillers (read-only operations)
         let provider = RootProvider::new(rpc_client);
 
-        Ok(Self { provider, retry_config: config.retry_config })
+        let output_cache = MeteredCache::with_capacity("rollup_output_at_block", config.cache_size);
+
+        Ok(Self { provider, output_cache, retry_config: config.retry_config })
+    }
+
+    /// Returns the output-at-block cache.
+    pub const fn output_cache(&self) -> &MeteredCache<u64, OutputAtBlock> {
+        &self.output_cache
     }
 }
 
@@ -146,9 +167,13 @@ impl RollupProvider for RollupClient {
     }
 
     async fn output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
+        if let Some(cached) = self.output_cache.get(&block_number).await {
+            return Ok(cached);
+        }
+
         let backoff = self.retry_config.to_backoff_builder();
 
-        (|| async {
+        let output = (|| async {
             self.provider
                 .raw_request::<_, OutputAtBlock>(
                     "optimism_outputAtBlock".into(),
@@ -164,7 +189,11 @@ impl RollupProvider for RollupClient {
         .notify(|err, dur| {
             tracing::debug!(error = %err, delay = ?dur, "Retrying RollupClient::output_at_block");
         })
-        .await
+        .await?;
+
+        self.output_cache.insert(block_number, output.clone()).await;
+
+        Ok(output)
     }
 }
 

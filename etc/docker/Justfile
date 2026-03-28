@@ -62,6 +62,10 @@ flashblocks:
 logs *containers:
     docker compose {{ _env }} {{ _ha }} logs -f {{ containers }}
 
+# Stream logs from the sequencer's execution (EL) and consensus (CL) layers
+sequencer-logs:
+    docker compose {{ _env }} {{ _ha }} logs -f base-builder base-builder-cl
+
 # Follow the active raft leader's CL logs, switching automatically on failover
 follow-leader:
     ./etc/scripts/devnet/follow-leader.sh

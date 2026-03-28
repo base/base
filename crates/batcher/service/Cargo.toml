@@ -25,7 +25,9 @@ base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
 derive_more = { workspace = true, features = ["debug"] }
 tracing = { workspace = true, features = ["std"] }
+base-protocol = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["tokio"] }
+base-consensus-genesis = { workspace = true, features = ["std"] }
 alloy-signer-local.workspace = true
 alloy-primitives = { workspace = true, features = ["std"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
@@ -38,4 +40,7 @@ base-alloy-rpc-jsonrpsee = { workspace = true, features = ["client"] }
 
 [dev-dependencies]
 httpmock.workspace = true
+alloy-rlp.workspace = true
+alloy-eips.workspace = true
+miniz_oxide.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

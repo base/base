@@ -20,7 +20,6 @@ use tracing::info;
 use super::{PayloadHandler, generator::BlockPayloadJobGenerator, payload::OpPayloadBuilder};
 use crate::{
     BuilderConfig,
-    metrics::BuilderMetrics,
     traits::{NodeBounds, PoolBounds},
 };
 
@@ -42,7 +41,6 @@ impl FlashblocksServiceBuilder {
         Node: NodeBounds,
         Pool: PoolBounds,
     {
-        let metrics = Arc::new(BuilderMetrics::default());
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
         let ws_pub: Arc<WebSocketPublisher> =
@@ -54,7 +52,6 @@ impl FlashblocksServiceBuilder {
             self.0.clone(),
             built_payload_tx,
             ws_pub,
-            metrics,
         );
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 

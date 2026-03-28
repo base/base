@@ -33,6 +33,12 @@ impl DropTimer {
             self.stopped = true;
         }
     }
+
+    /// Disarms the timer so it will **not** record on drop.
+    #[inline]
+    pub const fn disarm(&mut self) {
+        self.stopped = true;
+    }
 }
 
 impl Drop for DropTimer {

@@ -13,6 +13,8 @@ use alloy_consensus::Receipt;
 use alloy_primitives::Address;
 use base_consensus_genesis::SystemConfig;
 
+use crate::Metrics;
+
 mod indexed;
 pub use indexed::IndexedTraversal;
 
@@ -43,18 +45,10 @@ fn update_system_config_with_receipts(
         info!(target: "traversal", %kind, block_number, "Applied system config update");
     }
     if !updates.is_empty() {
-        base_metrics::set!(
-            gauge,
-            crate::Metrics::PIPELINE_LATEST_SYS_CONFIG_UPDATE,
-            block_number as f64
-        );
+        Metrics::pipeline_latest_sys_config_update().set(block_number as f64);
     }
     for err in &errors {
         warn!(target: "traversal", error = ?err, block_number, "Malformed system config update (skipped)");
-        base_metrics::set!(
-            gauge,
-            crate::Metrics::PIPELINE_SYS_CONFIG_UPDATE_ERROR,
-            block_number as f64
-        );
+        Metrics::pipeline_sys_config_update_error().set(block_number as f64);
     }
 }

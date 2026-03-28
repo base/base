@@ -157,6 +157,35 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         self.state_sender.send_replace(self.state);
     }
 
+    /// Probes the EL with a bare FCU to determine whether a snap-sync is in progress.
+    ///
+    /// Unlike [`Engine::reset`], this does not search for a sync starting point —
+    /// it FCUs to the state the caller already knows reth holds. Used during bootstrap
+    /// when reth is beyond genesis to distinguish two cases:
+    ///
+    /// - `Ok(true)` — reth responded `Valid`: the canonical chain is complete.
+    ///   `el_sync_finished` is set to `true` and `sync_state` is advanced to `update`.
+    ///   Subscribers to the state watch channel are notified.
+    /// - `Ok(false)` — reth responded `Syncing`: snap-sync is still in progress.
+    ///   Both `el_sync_finished` and `sync_state` are left unchanged.
+    /// - `Err(_)` — transport or protocol error; the caller should treat this the same
+    ///   as `Syncing` (pessimistic fallback).
+    ///
+    /// **Precondition**: call this while `state.sync_state == Default::default()`.
+    /// If [`Engine::seed_state`] has already been called with the same `update`,
+    /// [`SynchronizeTask`] will detect an identical state and skip the FCU silently,
+    /// leaving `el_sync_finished = false`. Always probe before seeding.
+    pub async fn probe_el_sync(
+        &mut self,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        update: EngineSyncStateUpdate,
+    ) -> Result<bool, SynchronizeTaskError> {
+        SynchronizeTask::new(client, config, update).execute(&mut self.state).await?;
+        self.state_sender.send_replace(self.state);
+        Ok(self.state.el_sync_finished)
+    }
+
     /// Clears the task queue.
     pub fn clear(&mut self) {
         self.tasks.clear();
@@ -196,4 +225,133 @@ pub enum EngineResetError {
     /// An error occurred while constructing the `SystemConfig` for the new safe head.
     #[error(transparent)]
     SystemConfigConversion(#[from] OpBlockConversionError),
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
+    use base_consensus_genesis::RollupConfig;
+    use tokio::sync::watch;
+
+    use crate::{
+        Engine, EngineState, EngineSyncStateUpdate,
+        test_utils::{test_block_info, test_engine_client_builder},
+    };
+
+    fn syncing_fcu() -> ForkchoiceUpdated {
+        ForkchoiceUpdated {
+            payload_status: PayloadStatus {
+                status: PayloadStatusEnum::Syncing,
+                latest_valid_hash: None,
+            },
+            payload_id: None,
+        }
+    }
+
+    fn valid_fcu() -> ForkchoiceUpdated {
+        ForkchoiceUpdated {
+            payload_status: PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: None,
+            },
+            payload_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_el_sync_valid_sets_el_sync_finished_and_advances_state() {
+        let head = test_block_info(100);
+        let safe = test_block_info(90);
+        let finalized = test_block_info(80);
+
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let client = Arc::new(
+            test_engine_client_builder().with_fork_choice_updated_v3_response(valid_fcu()).build(),
+        );
+
+        let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let update = EngineSyncStateUpdate {
+            unsafe_head: Some(head),
+            cross_unsafe_head: Some(head),
+            local_safe_head: Some(safe),
+            safe_head: Some(safe),
+            finalized_head: Some(finalized),
+        };
+
+        let confirmed = engine
+            .probe_el_sync(client, Arc::new(RollupConfig::default()), update)
+            .await
+            .expect("probe_el_sync should not error on Valid");
+
+        assert!(confirmed, "Valid FCU must return true");
+        assert!(engine.state().el_sync_finished, "el_sync_finished must be set after Valid");
+        assert_eq!(engine.state().sync_state.unsafe_head().block_info.number, 100);
+        assert_eq!(engine.state().sync_state.safe_head().block_info.number, 90);
+        assert_eq!(engine.state().sync_state.finalized_head().block_info.number, 80);
+    }
+
+    #[tokio::test]
+    async fn probe_el_sync_syncing_leaves_state_unchanged() {
+        let head = test_block_info(100);
+
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_fork_choice_updated_v3_response(syncing_fcu())
+                .build(),
+        );
+
+        let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let update = EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
+
+        let confirmed = engine
+            .probe_el_sync(client, Arc::new(RollupConfig::default()), update)
+            .await
+            .expect("probe_el_sync should not error on Syncing");
+
+        assert!(!confirmed, "Syncing FCU must return false");
+        assert!(!engine.state().el_sync_finished, "el_sync_finished must remain false");
+        assert_eq!(
+            engine.state().sync_state.unsafe_head().block_info.number,
+            0,
+            "sync_state must not advance on Syncing"
+        );
+    }
+
+    /// Documents the "probe before `seed_state`" invariant: if `seed_state` is called first with
+    /// the same update, `SynchronizeTask`'s early-exit guard fires and the FCU is never sent,
+    /// leaving `el_sync_finished` = false even when the EL would respond Valid.
+    #[tokio::test]
+    async fn probe_el_sync_after_seed_state_silently_skips_fcu() {
+        let head = test_block_info(100);
+
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let client = Arc::new(
+            test_engine_client_builder().with_fork_choice_updated_v3_response(valid_fcu()).build(),
+        );
+
+        let update = EngineSyncStateUpdate {
+            unsafe_head: Some(head),
+            cross_unsafe_head: Some(head),
+            ..Default::default()
+        };
+
+        let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        engine.seed_state(update); // seed first — the wrong order
+
+        let confirmed = engine
+            .probe_el_sync(Arc::clone(&client), Arc::new(RollupConfig::default()), update)
+            .await
+            .expect("should not error");
+
+        // SynchronizeTask short-circuits because state.sync_state == new_sync_state.
+        // el_sync_finished stays false despite Valid being configured.
+        assert!(!confirmed, "probe after seed short-circuits — documents the invariant");
+        assert!(!engine.state().el_sync_finished);
+    }
 }

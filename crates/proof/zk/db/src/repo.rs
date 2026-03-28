@@ -68,6 +68,7 @@ impl ProofRequestRepo {
             "number_of_blocks_to_prove": req.number_of_blocks_to_prove,
             "sequence_window": req.sequence_window,
             "proof_type": req.proof_type.as_str(),
+            "prover_address": req.prover_address,
         });
 
         // Start transaction

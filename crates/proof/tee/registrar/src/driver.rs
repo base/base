@@ -5,7 +5,7 @@
 //! to L1 via the [`TxManager`]. Also detects orphaned on-chain signers (those
 //! no longer backed by a healthy instance) and deregisters them.
 
-use std::{collections::HashSet, fmt, time::Duration};
+use std::{collections::HashSet, error::Error, fmt, time::Duration};
 
 use alloy_primitives::{Address, Bytes, hex};
 use alloy_sol_types::SolCall;
@@ -89,7 +89,7 @@ where
         loop {
             if let Err(e) = self.step().await {
                 warn!(error = %e, "registration step failed");
-                metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+                RegistrarMetrics::processing_errors_total().increment(1);
             }
 
             tokio::select! {
@@ -109,7 +109,7 @@ where
     /// deregister orphans.
     async fn step(&self) -> Result<()> {
         let instances = self.discovery.discover_instances().await?;
-        metrics::counter!(RegistrarMetrics::DISCOVERY_SUCCESS_TOTAL).increment(1);
+        RegistrarMetrics::discovery_success_total().increment(1);
 
         if !instances.is_empty() {
             let registerable =
@@ -151,7 +151,7 @@ where
                         endpoint = %instance.endpoint,
                         "failed to resolve signer addresses"
                     );
-                    metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+                    RegistrarMetrics::processing_errors_total().increment(1);
                 }
             }
         }
@@ -185,7 +185,7 @@ where
 
         if let Err(e) = self.deregister_orphans(&active_signers, &registered_signers).await {
             warn!(error = %e, "failed to deregister orphan signers");
-            metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+            RegistrarMetrics::processing_errors_total().increment(1);
         }
 
         Ok(())
@@ -251,12 +251,14 @@ where
             {
                 warn!(
                     error = %e,
+                    error_source = e.source().map(|s| s.to_string()).unwrap_or_default(),
+                    error_debug = ?e,
                     signer = %signer_address,
                     enclave_index = idx,
                     instance = %instance.instance_id,
                     "registration attempt failed"
                 );
-                metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+                RegistrarMetrics::processing_errors_total().increment(1);
             }
         }
 
@@ -311,17 +313,31 @@ where
             return Ok(());
         }
 
-        let calldata = ITEEProverRegistry::registerSignerCall {
-            output: proof.output,
-            proofBytes: proof.proof_bytes,
-        }
-        .abi_encode();
+        let calldata = Bytes::from(
+            ITEEProverRegistry::registerSignerCall {
+                output: proof.output,
+                proofBytes: proof.proof_bytes,
+            }
+            .abi_encode(),
+        );
+
+        info!(
+            signer = %signer_address,
+            registry = %self.config.registry_address,
+            calldata_len = calldata.len(),
+            "Registering signer"
+        );
 
         let candidate = TxCandidate {
-            tx_data: Bytes::from(calldata),
+            tx_data: calldata,
             to: Some(self.config.registry_address),
             ..Default::default()
         };
+
+        info!(
+            tx = ?candidate,
+            "Sending tx candidate",
+        );
 
         let receipt = self.tx_manager.send(candidate).await.map_err(RegistrarError::from)?;
 
@@ -341,19 +357,33 @@ where
             tx_hash = %receipt.transaction_hash,
             "signer registered successfully"
         );
-        metrics::counter!(RegistrarMetrics::REGISTRATIONS_TOTAL).increment(1);
+        RegistrarMetrics::registrations_total().increment(1);
 
         Ok(())
     }
 
     /// Submits a `deregisterSigner` transaction and returns whether it succeeded.
     async fn submit_deregistration(&self, signer: Address) -> bool {
-        let calldata = ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode();
+        let calldata =
+            Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode());
+
+        info!(
+            signer = %signer,
+            registry = %self.config.registry_address,
+            calldata_len = calldata.len(),
+            "Deregistering signer"
+        );
+
         let candidate = TxCandidate {
-            tx_data: Bytes::from(calldata),
+            tx_data: calldata,
             to: Some(self.config.registry_address),
             ..Default::default()
         };
+
+        info!(
+            tx = ?candidate,
+            "Sending tx candidate",
+        );
 
         match self.tx_manager.send(candidate).await {
             Ok(receipt) => {
@@ -363,7 +393,7 @@ where
                         tx_hash = %receipt.transaction_hash,
                         "deregistration transaction reverted onchain",
                     );
-                    metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+                    RegistrarMetrics::processing_errors_total().increment(1);
                     return false;
                 }
                 info!(
@@ -375,7 +405,7 @@ where
             }
             Err(e) => {
                 warn!(error = %e, signer = %signer, "failed to deregister signer");
-                metrics::counter!(RegistrarMetrics::PROCESSING_ERRORS_TOTAL).increment(1);
+                RegistrarMetrics::processing_errors_total().increment(1);
                 false
             }
         }
@@ -417,7 +447,7 @@ where
                 break;
             }
             if self.submit_deregistration(signer).await {
-                metrics::counter!(RegistrarMetrics::DEREGISTRATIONS_TOTAL).increment(1);
+                RegistrarMetrics::deregistrations_total().increment(1);
                 deregistered += 1;
             }
         }

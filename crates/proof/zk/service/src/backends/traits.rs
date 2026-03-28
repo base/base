@@ -59,7 +59,9 @@ impl std::str::FromStr for BackendType {
 impl From<ProofType> for BackendType {
     fn from(proof_type: ProofType) -> Self {
         match proof_type {
-            ProofType::GenericZkvmClusterCompressed => Self::GenericZkvm,
+            ProofType::GenericZkvmClusterCompressed | ProofType::GenericZkvmClusterSnarkGroth16 => {
+                Self::GenericZkvm
+            }
         }
     }
 }
@@ -210,6 +212,10 @@ mod tests {
 
         assert_eq!(
             BackendType::from(ProofType::GenericZkvmClusterCompressed),
+            BackendType::GenericZkvm
+        );
+        assert_eq!(
+            BackendType::from(ProofType::GenericZkvmClusterSnarkGroth16),
             BackendType::GenericZkvm
         );
     }

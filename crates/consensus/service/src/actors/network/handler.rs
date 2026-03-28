@@ -7,7 +7,7 @@ use base_alloy_rpc_types_engine::{
 };
 use base_consensus_disc::{Discv5Handler, HandlerRequest};
 use base_consensus_gossip::{
-    BlockHandler, ConnectionGate, ConnectionGater, GossipDriver, P2pRpcRequest,
+    BlockHandler, ConnectionGate, ConnectionGater, GossipDriver, Metrics, P2pRpcRequest,
 };
 use base_consensus_sources::BlockSignerHandler;
 use discv5::Enr;
@@ -54,13 +54,7 @@ impl NetworkHandler {
                     self.gossip.swarm.behaviour().gossipsub.peer_score(peer_id).unwrap_or_default();
 
                 // Record the peer score in the metrics.
-                base_metrics::record!(
-                    histogram,
-                    base_consensus_gossip::Metrics::PEER_SCORES,
-                    "peer",
-                    peer_id.to_string(),
-                    score
-                );
+                Metrics::peer_scores().record(score);
 
                 if score < ban_peers.ban_threshold {
                     return Some(*peer_id);
@@ -83,18 +77,14 @@ impl NetworkHandler {
 
                         // Record the duration of the peer connection.
                         if let Some(start_time) = self.gossip.peer_connection_start.remove(&peer_to_remove) {
-                            let _peer_duration = start_time.elapsed();
-                            base_metrics::record!(
-                                histogram,
-                                base_consensus_gossip::Metrics::GOSSIP_PEER_CONNECTION_DURATION_SECONDS,
-                                _peer_duration.as_secs_f64()
-                            );
+                            Metrics::gossip_peer_connection_duration_seconds()
+                                .record(start_time.elapsed().as_secs_f64());
                         }
 
                 if let Some(info) = self.gossip.peerstore.remove(&peer_to_remove) {
                     self.gossip.connection_gate.remove_dial(&peer_to_remove);
                     let _score = self.gossip.swarm.behaviour().gossipsub.peer_score(&peer_to_remove).unwrap_or_default();
-                    base_metrics::inc!(gauge, base_consensus_gossip::Metrics::BANNED_PEERS, "peer_id" => peer_to_remove.to_string(), "score" => _score.to_string());
+                    Metrics::banned_peers().increment(1.0);
                     return Some(info.listen_addrs);
                 }
 

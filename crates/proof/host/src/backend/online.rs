@@ -9,7 +9,7 @@ use base_proof_preimage::{
 use tokio::sync::RwLock;
 use tracing::{debug, error, trace};
 
-use crate::{HostConfig, HostProviders, SharedKeyValueStore, handler::handle_hint};
+use crate::{HostConfig, HostProviders, Metrics, SharedKeyValueStore, handler::handle_hint};
 
 /// Fetches data from remote sources in response to hints.
 pub struct OnlineHostBackend {
@@ -77,7 +77,7 @@ impl PreimageFetcher for OnlineHostBackend {
         drop(kv_lock);
 
         if preimage.is_none() {
-            base_metrics::inc!(counter, crate::Metrics::KV_COLD_LOOKUPS_TOTAL);
+            Metrics::kv_cold_lookups_total().increment(1);
         }
 
         while preimage.is_none() {

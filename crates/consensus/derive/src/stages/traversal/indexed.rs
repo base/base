@@ -8,7 +8,7 @@ use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::BlockInfo;
 
 use crate::{
-    ActivationSignal, ChainProvider, L1RetrievalProvider, OriginAdvancer, OriginProvider,
+    ActivationSignal, ChainProvider, L1RetrievalProvider, Metrics, OriginAdvancer, OriginProvider,
     PipelineError, PipelineResult, ResetError, ResetSignal, Signal, SignalReceiver,
 };
 
@@ -62,18 +62,10 @@ impl<F: ChainProvider> IndexedTraversal<F> {
     }
 
     /// Update the origin block in the traversal stage.
-    #[cfg(feature = "metrics")]
     fn update_origin(&mut self, block: BlockInfo) {
         self.done = false;
         self.block = Some(block);
-        base_metrics::set!(gauge, crate::metrics::Metrics::PIPELINE_ORIGIN, block.number as f64);
-    }
-
-    /// Update the origin block in the traversal stage.
-    #[cfg(not(feature = "metrics"))]
-    const fn update_origin(&mut self, block: BlockInfo) {
-        self.done = false;
-        self.block = Some(block);
+        Metrics::pipeline_origin().set(block.number as f64);
     }
 
     /// Provide the next block to the traversal stage.

@@ -10,6 +10,9 @@
 mod config;
 pub use config::BatcherConfig;
 
+mod recent_txs;
+pub use recent_txs::{MAX_CHECK_RECENT_TXS_DEPTH, RecentTxScanner};
+
 mod source;
 pub use source::RpcPollingSource;
 

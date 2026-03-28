@@ -65,4 +65,9 @@ alloy-consensus = { workspace = true, features = ["arbitrary", "k256", "std"] }
 
 [features]
 default = []
-metrics = [ "base-consensus-disc/metrics", "dep:metrics", "libp2p/metrics" ]
+metrics = [
+	"base-consensus-disc/metrics",
+	"base-metrics/metrics",
+	"dep:metrics",
+	"libp2p/metrics",
+]
