@@ -114,7 +114,6 @@ pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider, EvmConfig, Attrs
     task_spawner: Box<dyn TaskSpawner>,
     semaphore: Semaphore,
     _attrs: PhantomData<Attrs>,
-    metrics: DebugApiExtMetrics,
 }
 
 impl<Eth, P, Provider, EvmConfig, Attrs> DebugApiExtInner<Eth, P, Provider, EvmConfig, Attrs>
@@ -140,7 +139,6 @@ where
             task_spawner,
             semaphore: Semaphore::new(3),
             _attrs: PhantomData,
-            metrics: DebugApiExtMetrics::new(),
         }
     }
 }
@@ -194,9 +192,7 @@ where
         parent_block_hash: B256,
         attributes: Attrs::RpcPayloadAttributes,
     ) -> RpcResult<ExecutionWitness> {
-        self.inner
-            .metrics
-            .record_operation_async(DebugApis::DebugExecutePayload, async {
+        DebugApiExtMetrics::record_operation_async(DebugApis::DebugExecutePayload, async {
                 let _permit = self.inner.semaphore.acquire().await;
 
                 let parent_header = self.parent_header(parent_block_hash).to_rpc_result()?;
@@ -249,9 +245,7 @@ where
     }
 
     async fn execution_witness(&self, block_id: BlockNumberOrTag) -> RpcResult<ExecutionWitness> {
-        self.inner
-            .metrics
-            .record_operation_async(DebugApis::DebugExecutionWitness, async {
+        DebugApiExtMetrics::record_operation_async(DebugApis::DebugExecutionWitness, async {
                 let _permit = self.inner.semaphore.acquire().await;
 
                 let block = self

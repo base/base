@@ -68,13 +68,8 @@ base_metrics::define_metrics_struct! {
 pub struct DebugApiExtMetrics;
 
 impl DebugApiExtMetrics {
-    /// Initializes new `DebugApiExtMetrics`.
-    pub const fn new() -> Self {
-        Self
-    }
-
     /// Record a Debug API call async (tracks latency, requests, success, failures).
-    pub async fn record_operation_async<F, T, E>(&self, api: DebugApis, f: F) -> Result<T, E>
+    pub async fn record_operation_async<F, T, E>(api: DebugApis, f: F) -> Result<T, E>
     where
         F: Future<Output = Result<T, E>>,
     {
@@ -91,11 +86,5 @@ impl DebugApiExtMetrics {
         }
 
         result
-    }
-}
-
-impl Default for DebugApiExtMetrics {
-    fn default() -> Self {
-        Self::new()
     }
 }
