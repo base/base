@@ -114,6 +114,26 @@ base_metrics::define_metrics_struct! {
     latest_number: gauge,
 }
 
+impl BlockMetrics {
+    /// Record operation durations for the processing of a block.
+    pub fn record_operation_durations(durations: &OperationDurations) {
+        Self::total_duration_seconds().record(durations.total_duration_seconds);
+        Self::execution_duration_seconds().record(durations.execution_duration_seconds);
+        Self::state_root_duration_seconds().record(durations.state_root_duration_seconds);
+        Self::write_duration_seconds().record(durations.write_duration_seconds);
+    }
+
+    /// Increment write counts of historical trie updates for a single block.
+    pub fn increment_write_counts(counts: &WriteCounts) {
+        Self::account_trie_updates_written_total()
+            .increment(counts.account_trie_updates_written_total);
+        Self::storage_trie_updates_written_total()
+            .increment(counts.storage_trie_updates_written_total);
+        Self::hashed_accounts_written_total().increment(counts.hashed_accounts_written_total);
+        Self::hashed_storages_written_total().increment(counts.hashed_storages_written_total);
+    }
+}
+
 /// Metrics for storage operations.
 #[derive(Debug, Default, Clone)]
 pub struct StorageMetrics;
@@ -150,26 +170,6 @@ impl StorageMetrics {
             OperationMetrics::duration_seconds(operation.as_str())
                 .record_many(duration / count_u32, count);
         }
-    }
-
-    /// Record operation durations for the processing of a block.
-    pub fn record_operation_durations(&self, durations: &OperationDurations) {
-        BlockMetrics::total_duration_seconds().record(durations.total_duration_seconds);
-        BlockMetrics::execution_duration_seconds().record(durations.execution_duration_seconds);
-        BlockMetrics::state_root_duration_seconds().record(durations.state_root_duration_seconds);
-        BlockMetrics::write_duration_seconds().record(durations.write_duration_seconds);
-    }
-
-    /// Increment write counts of historical trie updates for a single block.
-    pub fn increment_write_counts(&self, counts: &WriteCounts) {
-        BlockMetrics::account_trie_updates_written_total()
-            .increment(counts.account_trie_updates_written_total);
-        BlockMetrics::storage_trie_updates_written_total()
-            .increment(counts.storage_trie_updates_written_total);
-        BlockMetrics::hashed_accounts_written_total()
-            .increment(counts.hashed_accounts_written_total);
-        BlockMetrics::hashed_storages_written_total()
-            .increment(counts.hashed_storages_written_total);
     }
 }
 

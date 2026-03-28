@@ -267,7 +267,8 @@ where
                         }
                     }
 
-                    ForwarderMetrics::txs_forwarded(Arc::clone(&self.url_label)).increment(ok_count);
+                    ForwarderMetrics::txs_forwarded(Arc::clone(&self.url_label))
+                        .increment(ok_count);
                     if err_count > 0 {
                         ForwarderMetrics::num_tx_rejected_in_batch(Arc::clone(&self.url_label))
                             .increment(err_count);

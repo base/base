@@ -1,5 +1,7 @@
 //! RPC metrics unique for Base.
 
+use std::time::Instant;
+
 base_metrics::define_metrics_struct! {
     SequencerMetrics, base_rpc_sequencer,
     #[describe("How long it takes to forward a transaction to the sequencer")]
@@ -77,7 +79,9 @@ impl DebugApiExtMetrics {
         F: Future<Output = Result<T, E>>,
     {
         let label = api.as_str();
-        let result = base_metrics::time!(DebugApiExtRpcMetrics::latency(label), { f.await });
+        let start = Instant::now();
+        let result = f.await;
+        DebugApiExtRpcMetrics::latency(label).record(start.elapsed().as_secs_f64());
         DebugApiExtRpcMetrics::requests(label).increment(1);
 
         if result.is_ok() {
