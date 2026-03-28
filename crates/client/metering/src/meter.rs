@@ -106,9 +106,9 @@ pub struct MeterBundleOutput {
     /// State root calculation time in microseconds
     pub state_root_time_us: u128,
     /// Number of account trie nodes touched during state root calculation
-    pub state_root_account_trie_nodes: u64,
+    pub state_root_account_node_count: u64,
     /// Number of storage trie nodes touched during state root calculation
-    pub state_root_storage_trie_nodes: u64,
+    pub state_root_storage_node_count: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -391,8 +391,8 @@ where
         bundle_hash,
         total_time_us,
         state_root_time_us,
-        state_root_account_trie_nodes: trie_node_counts.account_trie_nodes,
-        state_root_storage_trie_nodes: trie_node_counts.storage_trie_nodes,
+        state_root_account_node_count: trie_node_counts.account_trie_nodes,
+        state_root_storage_node_count: trie_node_counts.storage_trie_nodes,
     })
 }
 
@@ -457,8 +457,8 @@ mod tests {
         // Even empty bundles have some EVM setup overhead
         assert!(output.total_time_us > 0);
         assert!(output.state_root_time_us > 0);
-        assert_eq!(output.state_root_account_trie_nodes, 0);
-        assert_eq!(output.state_root_storage_trie_nodes, 0);
+        assert_eq!(output.state_root_account_node_count, 0);
+        assert_eq!(output.state_root_storage_node_count, 0);
         assert_eq!(output.bundle_hash, keccak256([]));
 
         Ok(())
@@ -508,8 +508,8 @@ mod tests {
         let result = &output.results[0];
         assert!(output.total_time_us > 0);
         assert!(output.state_root_time_us > 0);
-        assert!(output.state_root_account_trie_nodes > 0);
-        assert_eq!(output.state_root_storage_trie_nodes, 0);
+        assert!(output.state_root_account_node_count > 0);
+        assert_eq!(output.state_root_storage_node_count, 0);
 
         assert_eq!(result.from_address, Account::Alice.address());
         assert_eq!(result.to_address, Some(to));
