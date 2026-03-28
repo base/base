@@ -39,7 +39,12 @@ alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 base-alloy-rpc-jsonrpsee = { workspace = true, features = ["client"] }
 
 [features]
-metrics = [ "base-batcher-core/metrics" ]
+metrics = [
+	"base-batcher-core/metrics",
+	"base-batcher-encoder/metrics",
+	"base-consensus-rpc/metrics",
+	"base-tx-manager/metrics",
+]
 
 [dev-dependencies]
 httpmock.workspace = true

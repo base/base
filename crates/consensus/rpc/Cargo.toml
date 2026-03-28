@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 # Workspace
-base-metrics.workspace = true
 base-consensus-gossip.workspace = true
 base-consensus-engine.workspace = true
 base-consensus-safedb.workspace = true
@@ -42,9 +41,6 @@ tokio = { workspace = true, features = ["time"] }
 getrandom = { workspace = true, features = ["wasm_js"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 
-# Optional
-metrics = { workspace = true, optional = true }
-
 [dev-dependencies]
 serde_json = { workspace = true, features = ["std"] }
 
@@ -60,7 +56,5 @@ client = [
 metrics = [
 	"base-consensus-engine/metrics",
 	"base-consensus-gossip/metrics",
-	"base-metrics/metrics",
-	"dep:metrics",
 	"libp2p/metrics",
 ]
