@@ -4652,6 +4652,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-signer-local",
+ "anyhow",
  "async-trait",
  "base-proof-tee-nitro-verifier",
  "boundless-market",
