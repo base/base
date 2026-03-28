@@ -38,6 +38,9 @@ base-consensus-rpc = { workspace = true, features = ["client"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 base-alloy-rpc-jsonrpsee = { workspace = true, features = ["client"] }
 
+[features]
+metrics = [ "base-batcher-core/metrics" ]
+
 [dev-dependencies]
 httpmock.workspace = true
 alloy-rlp.workspace = true

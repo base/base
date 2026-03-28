@@ -17,7 +17,7 @@ workspace = true
 
 [dependencies]
 base-batcher-core.workspace = true
-base-batcher-service.workspace = true
+base-batcher-service = { workspace = true, features = ["metrics"] }
 base-batcher-encoder.workspace = true
 base-cli-utils.workspace = true
 base-runtime = { workspace = true, features = ["tokio"] }

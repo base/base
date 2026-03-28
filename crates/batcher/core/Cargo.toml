@@ -64,6 +64,7 @@ name = "pause_resume"
 required-features = ["test-utils"]
 
 [features]
+metrics = [ "base-batcher-encoder/metrics", "base-tx-manager/metrics" ]
 test-utils = [
 	"base-protocol/test-utils",
 	"base-runtime/test-utils",
