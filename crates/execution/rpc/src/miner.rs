@@ -7,7 +7,7 @@ use jsonrpsee_core::{RpcResult, async_trait};
 use tracing::debug;
 
 base_metrics::define_metrics_struct! {
-    OpMinerMetrics, base_rpc_miner,
+    OpMinerMetrics, base_rpc.miner,
     #[describe("Max DA tx size set on the miner")]
     max_da_tx_size: gauge,
     #[describe("Max DA block size set on the miner")]

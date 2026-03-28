@@ -1,7 +1,7 @@
 //! Metrics for the transaction consumer.
 
 base_metrics::define_metrics! {
-    txpool_consumer
+    txpool.consumer
     #[describe("Total consumer loop iterations")]
     iterations: counter,
     #[describe("Total transactions read from the pool iterator")]

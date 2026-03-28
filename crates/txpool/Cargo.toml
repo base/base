@@ -63,4 +63,4 @@ tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros"] }
 
 [features]
 default = [ "metrics" ]
-metrics = [ "base-metrics/metrics", "dep:metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics", "reth-evm/metrics" ]

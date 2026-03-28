@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 base_metrics::define_metrics_struct! {
-    SequencerMetrics, base_rpc_sequencer,
+    SequencerMetrics, base_rpc.sequencer,
     #[describe("How long it takes to forward a transaction to the sequencer")]
     sequencer_forward_latency: histogram,
 }
@@ -17,7 +17,7 @@ impl SequencerMetrics {
 }
 
 base_metrics::define_metrics_struct! {
-    EthApiExtMetrics, base_rpc_eth_api_ext,
+    EthApiExtMetrics, base_rpc.eth_api_ext,
     #[describe("How long it takes to handle a eth_getProof request successfully")]
     get_proof_latency: histogram,
     #[describe("Total number of eth_getProof requests")]
@@ -48,7 +48,7 @@ impl DebugApis {
 }
 
 base_metrics::define_metrics_struct! {
-    DebugApiExtRpcMetrics, base_rpc_debug_api_ext,
+    DebugApiExtRpcMetrics, base_rpc.debug_api_ext,
     #[describe("End-to-end time to handle this API call")]
     #[label(api)]
     latency: histogram,

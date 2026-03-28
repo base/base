@@ -94,4 +94,9 @@ client = [
 	"jsonrpsee/client",
 	"reth-rpc-eth-api/client",
 ]
-metrics = [ "base-metrics/metrics", "dep:metrics" ]
+metrics = [
+	"base-execution-trie/metrics",
+	"base-metrics/metrics",
+	"dep:metrics",
+	"reth-evm/metrics",
+]

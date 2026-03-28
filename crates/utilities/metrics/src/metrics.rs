@@ -5,7 +5,8 @@
 /// Each field becomes a function that returns the appropriate `metrics` handle
 /// (or [`NoopMetric`] when the `metrics` feature is disabled).
 ///
-/// The scope ident is prepended to every metric name with a dot separator.
+/// The scope is prepended to every metric name with a dot separator.
+/// The scope may contain dots (e.g., `my.app`) by using dot-separated idents.
 /// For a custom struct name, use [`define_metrics_struct!`].
 ///
 /// # Attributes
@@ -17,7 +18,7 @@
 ///
 /// ```ignore
 /// base_metrics::define_metrics! {
-///     my_app
+///     my.app
 ///     #[describe("Total requests")]
 ///     requests_total: counter,
 /// }
@@ -26,7 +27,7 @@
 #[macro_export]
 macro_rules! define_metrics {
     (
-        $scope:ident
+        $($scope:ident).+
         $(
             #[describe($desc:expr)]
             $(#[label($label:ident)])*
@@ -34,8 +35,8 @@ macro_rules! define_metrics {
         ),*
         $(,)?
     ) => {
-        $crate::define_metrics_struct! {
-            Metrics, $scope,
+        $crate::__define_metrics_impl! {
+            Metrics, {$($scope).+},
             $(
                 #[describe($desc)]
                 $(#[label($label)])*
@@ -51,7 +52,7 @@ macro_rules! define_metrics {
 ///
 /// ```ignore
 /// base_metrics::define_metrics_struct! {
-///     MyMetrics, my_app,
+///     MyMetrics, my.app,
 ///     #[describe("Request duration")]
 ///     #[label(method)]
 ///     request_duration: histogram,
@@ -61,7 +62,32 @@ macro_rules! define_metrics {
 #[macro_export]
 macro_rules! define_metrics_struct {
     (
-        $name:ident, $scope:ident,
+        $name:ident, $($scope:ident).+,
+        $(
+            #[describe($desc:expr)]
+            $(#[label($label:ident)])*
+            $field:ident : $kind:ident
+        ),*
+        $(,)?
+    ) => {
+        $crate::__define_metrics_impl! {
+            $name, {$($scope).+},
+            $(
+                #[describe($desc)]
+                $(#[label($label)])*
+                $field : $kind
+            ),*
+        }
+    };
+}
+
+/// Internal — builds the metrics struct after the scope has been packaged into
+/// a brace group so it can be used inside field repetitions.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __define_metrics_impl {
+    (
+        $name:ident, $scope:tt,
         $(
             #[describe($desc:expr)]
             $(#[label($label:ident)])*
@@ -100,39 +126,39 @@ macro_rules! define_metrics_struct {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __define_metric_fn {
-    ($scope:ident, $field:ident, counter; label = $l1:ident; label = $l2:ident) => {
+    ($scope:tt, $field:ident, counter; label = $l1:ident; label = $l2:ident) => {
         $crate::__define_metric_fn!(@emit counter Counter @fn2 $scope, $field, $l1, $l2);
     };
-    ($scope:ident, $field:ident, gauge; label = $l1:ident; label = $l2:ident) => {
+    ($scope:tt, $field:ident, gauge; label = $l1:ident; label = $l2:ident) => {
         $crate::__define_metric_fn!(@emit gauge Gauge @fn2 $scope, $field, $l1, $l2);
     };
-    ($scope:ident, $field:ident, histogram; label = $l1:ident; label = $l2:ident) => {
+    ($scope:tt, $field:ident, histogram; label = $l1:ident; label = $l2:ident) => {
         $crate::__define_metric_fn!(@emit histogram Histogram @fn2 $scope, $field, $l1, $l2);
     };
-    ($scope:ident, $field:ident, counter; label = $l:ident) => {
+    ($scope:tt, $field:ident, counter; label = $l:ident) => {
         $crate::__define_metric_fn!(@emit counter Counter @fn1 $scope, $field, $l);
     };
-    ($scope:ident, $field:ident, gauge; label = $l:ident) => {
+    ($scope:tt, $field:ident, gauge; label = $l:ident) => {
         $crate::__define_metric_fn!(@emit gauge Gauge @fn1 $scope, $field, $l);
     };
-    ($scope:ident, $field:ident, histogram; label = $l:ident) => {
+    ($scope:tt, $field:ident, histogram; label = $l:ident) => {
         $crate::__define_metric_fn!(@emit histogram Histogram @fn1 $scope, $field, $l);
     };
-    ($scope:ident, $field:ident, counter) => {
+    ($scope:tt, $field:ident, counter) => {
         $crate::__define_metric_fn!(@emit counter Counter @fn0 $scope, $field);
     };
-    ($scope:ident, $field:ident, gauge) => {
+    ($scope:tt, $field:ident, gauge) => {
         $crate::__define_metric_fn!(@emit gauge Gauge @fn0 $scope, $field);
     };
-    ($scope:ident, $field:ident, histogram) => {
+    ($scope:tt, $field:ident, histogram) => {
         $crate::__define_metric_fn!(@emit histogram Histogram @fn0 $scope, $field);
     };
-    (@emit $macro_name:ident $ret:ident @fn2 $scope:ident, $field:ident, $l1:ident, $l2:ident) => {
+    (@emit $macro_name:ident $ret:ident @fn2 {$($scope:ident).+}, $field:ident, $l1:ident, $l2:ident) => {
         #[doc = concat!("Returns the `", stringify!($field), "` ", stringify!($macro_name), ".")]
         #[cfg(feature = "metrics")]
         #[allow(unused)]
         pub fn $field($l1: impl Into<::metrics::SharedString>, $l2: impl Into<::metrics::SharedString>) -> ::metrics::$ret {
-            ::metrics::$macro_name!(concat!(stringify!($scope), ".", stringify!($field)), stringify!($l1) => $l1, stringify!($l2) => $l2)
+            ::metrics::$macro_name!(concat!($(stringify!($scope), ".",)+ stringify!($field)), stringify!($l1) => $l1, stringify!($l2) => $l2)
         }
         #[doc = concat!("Returns the `", stringify!($field), "` ", stringify!($macro_name), ".")]
         #[cfg(not(feature = "metrics"))]
@@ -140,12 +166,12 @@ macro_rules! __define_metric_fn {
         #[allow(unused)]
         pub fn $field<S1, S2>(_: S1, _: S2) -> $crate::NoopMetric { $crate::NoopMetric }
     };
-    (@emit $macro_name:ident $ret:ident @fn1 $scope:ident, $field:ident, $l:ident) => {
+    (@emit $macro_name:ident $ret:ident @fn1 {$($scope:ident).+}, $field:ident, $l:ident) => {
         #[doc = concat!("Returns the `", stringify!($field), "` ", stringify!($macro_name), ".")]
         #[cfg(feature = "metrics")]
         #[allow(unused)]
         pub fn $field($l: impl Into<::metrics::SharedString>) -> ::metrics::$ret {
-            ::metrics::$macro_name!(concat!(stringify!($scope), ".", stringify!($field)), stringify!($l) => $l)
+            ::metrics::$macro_name!(concat!($(stringify!($scope), ".",)+ stringify!($field)), stringify!($l) => $l)
         }
         #[doc = concat!("Returns the `", stringify!($field), "` ", stringify!($macro_name), ".")]
         #[cfg(not(feature = "metrics"))]
@@ -153,12 +179,12 @@ macro_rules! __define_metric_fn {
         #[allow(unused)]
         pub fn $field<S>(_: S) -> $crate::NoopMetric { $crate::NoopMetric }
     };
-    (@emit $macro_name:ident $ret:ident @fn0 $scope:ident, $field:ident) => {
+    (@emit $macro_name:ident $ret:ident @fn0 {$($scope:ident).+}, $field:ident) => {
         #[doc = concat!("Returns the `", stringify!($field), "` ", stringify!($macro_name), ".")]
         #[cfg(feature = "metrics")]
         #[allow(unused)]
         pub fn $field() -> ::metrics::$ret {
-            ::metrics::$macro_name!(concat!(stringify!($scope), ".", stringify!($field)))
+            ::metrics::$macro_name!(concat!($(stringify!($scope), ".",)+ stringify!($field)))
         }
         #[doc = concat!("Returns the `", stringify!($field), "` ", stringify!($macro_name), ".")]
         #[cfg(not(feature = "metrics"))]
@@ -172,14 +198,14 @@ macro_rules! __define_metric_fn {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __describe_metric {
-    ($scope:ident, $field:ident, counter, $desc:expr) => {
-        ::metrics::describe_counter!(concat!(stringify!($scope), ".", stringify!($field)), $desc);
+    ({$($scope:ident).+}, $field:ident, counter, $desc:expr) => {
+        ::metrics::describe_counter!(concat!($(stringify!($scope), ".",)+ stringify!($field)), $desc);
     };
-    ($scope:ident, $field:ident, gauge, $desc:expr) => {
-        ::metrics::describe_gauge!(concat!(stringify!($scope), ".", stringify!($field)), $desc);
+    ({$($scope:ident).+}, $field:ident, gauge, $desc:expr) => {
+        ::metrics::describe_gauge!(concat!($(stringify!($scope), ".",)+ stringify!($field)), $desc);
     };
-    ($scope:ident, $field:ident, histogram, $desc:expr) => {
-        ::metrics::describe_histogram!(concat!(stringify!($scope), ".", stringify!($field)), $desc);
+    ({$($scope:ident).+}, $field:ident, histogram, $desc:expr) => {
+        ::metrics::describe_histogram!(concat!($(stringify!($scope), ".",)+ stringify!($field)), $desc);
     };
 }
 

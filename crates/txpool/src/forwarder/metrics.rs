@@ -1,7 +1,7 @@
 //! Metrics for the transaction forwarder.
 
 base_metrics::define_metrics_struct! {
-    ForwarderMetrics, txpool_forwarder,
+    ForwarderMetrics, txpool.forwarder,
     #[describe("Total RPC batches sent successfully")]
     #[label(builder_url)]
     batches_sent: counter,

@@ -1,7 +1,7 @@
 //! Metrics for the builder RPC handler.
 
 base_metrics::define_metrics! {
-    txpool_builder_rpc
+    txpool.builder_rpc
     #[describe("Transactions successfully inserted into the pool")]
     txs_inserted: counter,
     #[describe("Transactions that failed to decode")]

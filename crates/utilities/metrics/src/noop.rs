@@ -18,7 +18,7 @@ impl NoopMetric {
     /// Histogram record — compiles away.
     #[inline(always)]
     pub fn record<T>(&self, _: T) {}
-    /// Histogram record_many — compiles away.
+    /// Histogram `record_many` — compiles away.
     #[inline(always)]
     pub fn record_many<T>(&self, _: T, _: usize) {}
     /// Gauge decrement — compiles away.
