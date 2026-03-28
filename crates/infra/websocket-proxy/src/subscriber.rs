@@ -266,7 +266,7 @@ where
                     uri = %self.uri,
                     payload = text.as_str()
                 );
-                Metrics::upstream_messages(self.uri.to_string().as_str()).increment(1);
+                Metrics::upstream_messages(self.uri.to_string()).increment(1);
                 (self.handler)(text.to_string());
             }
             Message::Binary(data) => {

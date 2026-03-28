@@ -169,22 +169,22 @@ async fn authenticated_websocket_handler(
     headers: HeaderMap,
     Path(api_key): Path<String>,
 ) -> impl IntoResponse {
-    let application = state.auth.get_application_for_key(&api_key);
+    let application = state.auth.get_application_for_key(&api_key).cloned();
 
-    match application {
-        None => {
+    application.map_or_else(
+        || {
             Metrics::unauthorized_requests().increment(1);
 
             Response::builder()
                 .status(StatusCode::UNAUTHORIZED)
                 .body(Body::from(json!({"message": "Invalid API key"}).to_string()))
                 .unwrap()
-        }
-        Some(app) => {
+        },
+        |app| {
             Metrics::connections_by_app(app).increment(1);
             websocket_handler(state, ws, addr, headers, FilterType::None)
-        }
-    }
+        },
+    )
 }
 
 async fn authenticated_filter_websocket_handler(
@@ -195,23 +195,23 @@ async fn authenticated_filter_websocket_handler(
     Path(api_key): Path<String>,
     query: Query<FilterQuery>,
 ) -> impl IntoResponse {
-    let application = state.auth.get_application_for_key(&api_key);
+    let application = state.auth.get_application_for_key(&api_key).cloned();
 
-    match application {
-        None => {
+    application.map_or_else(
+        || {
             Metrics::unauthorized_requests().increment(1);
 
             Response::builder()
                 .status(StatusCode::UNAUTHORIZED)
                 .body(Body::from(json!({"message": "Invalid API key"}).to_string()))
                 .unwrap()
-        }
-        Some(app) => {
+        },
+        |app| {
             Metrics::connections_by_app(app).increment(1);
             let filter = create_filter_from_query(query.0);
             websocket_handler(state, ws, addr, headers, filter)
-        }
-    }
+        },
+    )
 }
 
 async fn unauthenticated_websocket_handler(
