@@ -31,6 +31,16 @@ base_metrics::define_metrics_struct! {
     #[describe("Latency in seconds for nullify transaction confirmation")]
     nullify_tx_latency_seconds: histogram,
 
+    #[describe("Total number of challenge transactions submitted")]
+    challenge_tx_submitted_total: counter,
+
+    #[describe("Total number of challenge transaction outcomes")]
+    #[label(status)]
+    challenge_tx_outcome_total: counter,
+
+    #[describe("Latency in seconds for challenge transaction confirmation")]
+    challenge_tx_latency_seconds: histogram,
+
     #[describe("Total number of proof retries after failure")]
     proof_retries_total: counter,
 
@@ -45,6 +55,12 @@ base_metrics::define_metrics_struct! {
 
     #[describe("Total number of TEE proof failures that fell back to ZK")]
     tee_proof_fallback_total: counter,
+
+    #[describe("Total number of fraudulent ZK challenges detected (Path 2)")]
+    fraudulent_zk_challenge_detected_total: counter,
+
+    #[describe("Total number of invalid ZK proposals detected (Path 3)")]
+    invalid_zk_proposal_detected_total: counter,
 }
 
 impl ChallengerMetrics {

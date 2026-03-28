@@ -1,8 +1,11 @@
 //! Pending proof state machine and collection.
 //!
-//! [`PendingProofs`] tracks in-flight ZK proof sessions keyed by dispute-game
+//! [`PendingProofs`] tracks in-flight proof sessions keyed by dispute-game
 //! address. Each entry moves through a [`ProofPhase`] lifecycle:
 //! `AwaitingProof` → `ReadyToSubmit` (on success) or `NeedsRetry` (on failure).
+//!
+//! Each entry also carries a [`DisputeIntent`] that determines whether the
+//! completed proof will be submitted via `challenge()` or `nullify()` on-chain.
 
 use std::collections::HashMap;
 
@@ -14,6 +17,20 @@ use tracing::warn;
 
 /// Proof type byte for ZK proofs (matches `AggregateVerifier.nullify` discriminator: `0` = TEE, `1` = ZK).
 const ZK_PROOF_TYPE_BYTE: u8 = 0x01;
+
+/// The intended on-chain action for a completed proof.
+///
+/// A TEE proof always targets `nullify()`. A ZK proof may target either
+/// `challenge()` (Path 1: challenging a wrong TEE proposal) or `nullify()`
+/// (Path 2: nullifying a fraudulent ZK challenge, Path 3: nullifying a
+/// wrong ZK proposal).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisputeIntent {
+    /// Submit via `challenge()` — challenges a TEE proof with a competing ZK proof.
+    Challenge,
+    /// Submit via `nullify()` — nullifies an existing proof.
+    Nullify,
+}
 
 /// Phase of a pending proof: awaiting the ZK service, ready for on-chain
 /// submission, or waiting for a retry after failure.
@@ -47,6 +64,8 @@ pub struct PendingProof {
     pub prove_request: Option<ProveBlockRequest>,
     /// Number of times this proof has been retried after failure.
     pub retry_count: u32,
+    /// The intended on-chain dispute action once the proof is ready.
+    pub intent: DisputeIntent,
 }
 
 impl PendingProof {
@@ -56,6 +75,7 @@ impl PendingProof {
         invalid_index: u64,
         expected_root: B256,
         prove_request: ProveBlockRequest,
+        intent: DisputeIntent,
     ) -> Self {
         Self {
             phase: ProofPhase::AwaitingProof { session_id },
@@ -63,6 +83,7 @@ impl PendingProof {
             expected_root,
             prove_request: Some(prove_request),
             retry_count: 0,
+            intent,
         }
     }
 
@@ -72,6 +93,7 @@ impl PendingProof {
         invalid_index: u64,
         expected_root: B256,
         prove_request: ProveBlockRequest,
+        intent: DisputeIntent,
     ) -> Self {
         Self {
             phase: ProofPhase::ReadyToSubmit { proof_bytes },
@@ -79,6 +101,7 @@ impl PendingProof {
             expected_root,
             prove_request: Some(prove_request),
             retry_count: 0,
+            intent,
         }
     }
 
@@ -86,6 +109,7 @@ impl PendingProof {
     ///
     /// Unlike [`ready`](Self::ready), this sets `prove_request` to `None` since
     /// TEE proofs don't have a ZK session to fall back to on retry failure.
+    /// TEE proofs always target `nullify()`.
     pub const fn ready_tee(proof_bytes: Bytes, invalid_index: u64, expected_root: B256) -> Self {
         Self {
             phase: ProofPhase::ReadyToSubmit { proof_bytes },
@@ -93,6 +117,7 @@ impl PendingProof {
             expected_root,
             prove_request: None,
             retry_count: 0,
+            intent: DisputeIntent::Nullify,
         }
     }
 

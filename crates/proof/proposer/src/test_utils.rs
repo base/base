@@ -214,6 +214,9 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn intermediate_output_roots(&self, _: Address) -> Result<Vec<B256>, ContractError> {
         Ok(vec![])
     }
+    async fn countered_index(&self, _: Address) -> Result<u64, ContractError> {
+        Ok(0)
+    }
 }
 
 pub(crate) fn test_l1_block_ref(number: u64) -> L1BlockRef {

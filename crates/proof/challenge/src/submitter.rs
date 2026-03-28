@@ -1,15 +1,23 @@
-//! Challenge submission logic for nullifying invalid dispute games.
+//! Challenge submission logic for disputing invalid dispute games.
+//!
+//! Three dispute paths are supported:
+//!
+//! 1. **Wrong TEE proof** — `nullify()` with a TEE proof, or `challenge()`
+//!    with a ZK proof.
+//! 2. **Correct TEE proof challenged with a wrong ZK proof** — `nullify()`
+//!    with a ZK proof to refute the fraudulent challenge.
+//! 3. **Wrong ZK proposal** — `nullify()` with a ZK proof.
 
 use std::time::Instant;
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use base_proof_contracts::encode_nullify_calldata;
+use base_proof_contracts::{encode_challenge_calldata, encode_nullify_calldata};
 use base_tx_manager::{TxCandidate, TxManager};
 use tracing::info;
 
-use crate::{ChallengeSubmitError, ChallengerMetrics};
+use crate::{ChallengeSubmitError, ChallengerMetrics, DisputeIntent};
 
-/// Submits nullify transactions to dispute game contracts on L1.
+/// Submits dispute transactions (nullify or challenge) to game contracts on L1.
 #[derive(Debug)]
 pub struct ChallengeSubmitter<T> {
     tx_manager: T,
@@ -26,29 +34,47 @@ impl<T: TxManager> ChallengeSubmitter<T> {
         self.tx_manager.sender_address()
     }
 
-    /// Submits a `nullify()` transaction to the given dispute game contract.
+    /// Submits a dispute transaction (`nullify()` or `challenge()`) to the
+    /// given dispute game contract, based on the [`DisputeIntent`].
+    ///
+    /// - [`DisputeIntent::Nullify`] — used across all three dispute paths:
+    ///   TEE nullification of a wrong TEE proof (Path 1), ZK nullification
+    ///   of a fraudulent challenge (Path 2), and ZK nullification of a wrong
+    ///   ZK proposal (Path 3).
+    /// - [`DisputeIntent::Challenge`] — challenges a TEE proof with a
+    ///   competing ZK proof (Path 1). The game resolves as `CHALLENGER_WINS`
+    ///   if the challenge is not nullified.
     ///
     /// Returns the transaction hash on success, or an error if the transaction
     /// manager fails or the transaction reverts on-chain.
-    pub async fn submit_nullification(
+    pub async fn submit_dispute(
         &self,
         game_address: Address,
         proof_bytes: Bytes,
         intermediate_root_index: u64,
         intermediate_root_to_prove: B256,
+        intent: DisputeIntent,
     ) -> Result<B256, ChallengeSubmitError> {
-        let calldata = encode_nullify_calldata(
-            proof_bytes,
-            intermediate_root_index,
-            intermediate_root_to_prove,
-        );
+        let calldata = match intent {
+            DisputeIntent::Nullify => encode_nullify_calldata(
+                proof_bytes,
+                intermediate_root_index,
+                intermediate_root_to_prove,
+            ),
+            DisputeIntent::Challenge => encode_challenge_calldata(
+                proof_bytes,
+                intermediate_root_index,
+                intermediate_root_to_prove,
+            ),
+        };
 
         info!(
             game = %game_address,
+            action = intent.label(),
             intermediate_root_index,
             intermediate_root_to_prove = %intermediate_root_to_prove,
             calldata_len = calldata.len(),
-            "Nullifying dispute game"
+            "submitting dispute transaction"
         );
 
         let candidate = TxCandidate {
@@ -60,10 +86,10 @@ impl<T: TxManager> ChallengeSubmitter<T> {
 
         info!(
             tx = ?candidate,
-            "Sending tx candidate",
+            "sending tx candidate",
         );
 
-        ChallengerMetrics::nullify_tx_submitted_total().increment(1);
+        intent.record_submitted();
         let start = Instant::now();
         let result = self.tx_manager.send(candidate).await;
         let latency = start.elapsed();
@@ -73,8 +99,8 @@ impl<T: TxManager> ChallengeSubmitter<T> {
             Ok(_) => ChallengerMetrics::STATUS_REVERTED,
             Err(_) => ChallengerMetrics::STATUS_ERROR,
         };
-        ChallengerMetrics::nullify_tx_outcome_total(status_label).increment(1);
-        ChallengerMetrics::nullify_tx_latency_seconds().record(latency.as_secs_f64());
+        intent.record_outcome(status_label);
+        intent.record_latency(latency.as_secs_f64());
 
         let receipt = result?;
         let tx_hash = receipt.transaction_hash;
@@ -83,9 +109,44 @@ impl<T: TxManager> ChallengeSubmitter<T> {
             return Err(ChallengeSubmitError::TxReverted { tx_hash });
         }
 
-        info!(tx_hash = %tx_hash, game = %game_address, "nullify transaction confirmed");
+        info!(tx_hash = %tx_hash, game = %game_address, action = intent.label(), "dispute transaction confirmed");
 
         Ok(tx_hash)
+    }
+}
+
+/// Metrics recording helpers for [`DisputeIntent`].
+impl DisputeIntent {
+    /// Returns a human-readable label for logging and metrics.
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Nullify => "nullify",
+            Self::Challenge => "challenge",
+        }
+    }
+
+    /// Records that a dispute transaction has been submitted.
+    pub fn record_submitted(&self) {
+        match self {
+            Self::Nullify => ChallengerMetrics::nullify_tx_submitted_total().increment(1),
+            Self::Challenge => ChallengerMetrics::challenge_tx_submitted_total().increment(1),
+        }
+    }
+
+    /// Records the outcome (success, reverted, error) of a dispute transaction.
+    pub fn record_outcome(&self, status: &'static str) {
+        match self {
+            Self::Nullify => ChallengerMetrics::nullify_tx_outcome_total(status).increment(1),
+            Self::Challenge => ChallengerMetrics::challenge_tx_outcome_total(status).increment(1),
+        }
+    }
+
+    /// Records the latency of a dispute transaction.
+    pub fn record_latency(&self, seconds: f64) {
+        match self {
+            Self::Nullify => ChallengerMetrics::nullify_tx_latency_seconds().record(seconds),
+            Self::Challenge => ChallengerMetrics::challenge_tx_latency_seconds().record(seconds),
+        }
     }
 }
 
@@ -98,17 +159,18 @@ mod tests {
     use crate::test_utils::{MockTxManager, receipt_with_status};
 
     #[tokio::test]
-    async fn submit_nullification_success_returns_tx_hash() {
+    async fn submit_dispute_nullify_success_returns_tx_hash() {
         let tx_hash = B256::repeat_byte(0xAA);
         let mock = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
         let submitter = ChallengeSubmitter::new(mock);
 
         let result = submitter
-            .submit_nullification(
+            .submit_dispute(
                 Address::repeat_byte(0x01),
                 Bytes::from(vec![0x00, 0x01]),
                 42,
                 B256::repeat_byte(0xFF),
+                DisputeIntent::Nullify,
             )
             .await;
 
@@ -116,17 +178,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_nullification_reverted_returns_error() {
+    async fn submit_dispute_reverted_returns_error() {
         let tx_hash = B256::repeat_byte(0xBB);
         let mock = MockTxManager::new(Ok(receipt_with_status(false, tx_hash)));
         let submitter = ChallengeSubmitter::new(mock);
 
         let result = submitter
-            .submit_nullification(
+            .submit_dispute(
                 Address::repeat_byte(0x01),
                 Bytes::from(vec![0x00]),
                 1,
                 B256::ZERO,
+                DisputeIntent::Nullify,
             )
             .await;
 
@@ -138,16 +201,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn submit_nullification_tx_manager_error_propagates() {
+    async fn submit_dispute_tx_manager_error_propagates() {
         let mock = MockTxManager::new(Err(TxManagerError::NonceTooLow));
         let submitter = ChallengeSubmitter::new(mock);
 
         let result = submitter
-            .submit_nullification(
+            .submit_dispute(
                 Address::repeat_byte(0x01),
                 Bytes::from(vec![0x01]),
                 0,
                 B256::ZERO,
+                DisputeIntent::Challenge,
             )
             .await;
 
@@ -156,5 +220,24 @@ mod tests {
             matches!(err, ChallengeSubmitError::TxManager(TxManagerError::NonceTooLow)),
             "expected TxManager(NonceTooLow), got {err:?}",
         );
+    }
+
+    #[tokio::test]
+    async fn submit_dispute_challenge_success_returns_tx_hash() {
+        let tx_hash = B256::repeat_byte(0xCC);
+        let mock = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
+        let submitter = ChallengeSubmitter::new(mock);
+
+        let result = submitter
+            .submit_dispute(
+                Address::repeat_byte(0x01),
+                Bytes::from(vec![0x01, 0xDE, 0xAD]),
+                5,
+                B256::repeat_byte(0xAB),
+                DisputeIntent::Challenge,
+            )
+            .await;
+
+        assert_eq!(result.unwrap(), tx_hash);
     }
 }

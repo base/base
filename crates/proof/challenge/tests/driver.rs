@@ -8,12 +8,13 @@ use std::{
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use base_challenger::{
-    ChallengeSubmitter, Driver, DriverConfig, GameScanner, L1HeadProvider, OutputValidator,
-    PendingProof, ProofPhase, ScannerConfig, TeeConfig, derive_session_id,
+    ChallengeSubmitter, DisputeIntent, Driver, DriverConfig, GameScanner, L1HeadProvider,
+    OutputValidator, PendingProof, ProofPhase, ScannerConfig, TeeConfig, derive_session_id,
     test_utils::{
         MockAggregateVerifier, MockDisputeGameFactory, MockGameState, MockL1HeadProvider,
         MockL2Provider, MockTeeProofProvider, MockTxManager, MockZkProofProvider, addr,
-        build_test_header_and_account, factory_game, mock_state, receipt_with_status,
+        build_test_header_and_account, factory_game, mock_state, mock_state_with_tee,
+        receipt_with_status,
     },
 };
 use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex};
@@ -107,12 +108,13 @@ fn invalid_game_mocks()
 
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let mut verifier_games = HashMap::new();
+    let tee_addr = Address::repeat_byte(0xEE);
     verifier_games.insert(
         addr(0),
         MockGameState {
             status: 0,
             zk_prover: Address::ZERO,
-            tee_prover: Address::ZERO,
+            tee_prover: tee_addr,
             game_info: base_proof_contracts::GameInfo {
                 root_claim: B256::repeat_byte(0x01),
                 l2_block_number: 20,
@@ -120,6 +122,7 @@ fn invalid_game_mocks()
             },
             starting_block_number: 10,
             intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
+            countered_index: 0,
         },
     );
     let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
@@ -143,6 +146,7 @@ fn driver_with_ready_proof(
             1,
             B256::repeat_byte(0xEE),
             default_prove_request(),
+            DisputeIntent::Challenge,
         ),
     );
     driver
@@ -168,12 +172,13 @@ async fn test_step_valid_game_skipped() {
     // so expected_count = 0 → trivially valid.
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let mut verifier_games = HashMap::new();
+    let tee_addr = Address::repeat_byte(0xEE);
     verifier_games.insert(
         addr(0),
         MockGameState {
             status: 0,
             zk_prover: Address::ZERO,
-            tee_prover: Address::ZERO,
+            tee_prover: tee_addr,
             game_info: base_proof_contracts::GameInfo {
                 root_claim: B256::repeat_byte(0x01),
                 l2_block_number: 14,
@@ -181,6 +186,7 @@ async fn test_step_valid_game_skipped() {
             },
             starting_block_number: 10,
             intermediate_output_roots: vec![],
+            countered_index: 0,
         },
     );
     let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
@@ -205,12 +211,13 @@ async fn test_step_validation_error_blocks_not_available() {
     // Validator returns BlockNotAvailable → process_candidate skips gracefully.
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let mut verifier_games = HashMap::new();
+    let tee_addr = Address::repeat_byte(0xEE);
     verifier_games.insert(
         addr(0),
         MockGameState {
             status: 0,
             zk_prover: Address::ZERO,
-            tee_prover: Address::ZERO,
+            tee_prover: tee_addr,
             game_info: base_proof_contracts::GameInfo {
                 root_claim: B256::repeat_byte(0x01),
                 l2_block_number: 20,
@@ -218,6 +225,7 @@ async fn test_step_validation_error_blocks_not_available() {
             },
             starting_block_number: 10,
             intermediate_output_roots: vec![B256::repeat_byte(0xFF), B256::repeat_byte(0xEE)],
+            countered_index: 0,
         },
     );
     let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
@@ -296,12 +304,13 @@ async fn test_step_validation_error_skipped() {
     // → process_candidate logs and returns Ok.
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let mut verifier_games = HashMap::new();
+    let tee_addr = Address::repeat_byte(0xEE);
     verifier_games.insert(
         addr(0),
         MockGameState {
             status: 0,
             zk_prover: Address::ZERO,
-            tee_prover: Address::ZERO,
+            tee_prover: tee_addr,
             game_info: base_proof_contracts::GameInfo {
                 root_claim: B256::repeat_byte(0x01),
                 l2_block_number: 20,
@@ -310,6 +319,7 @@ async fn test_step_validation_error_skipped() {
             starting_block_number: 10,
             // 2 roots expected at interval=5, provide 2 so count matches
             intermediate_output_roots: vec![B256::ZERO, B256::ZERO],
+            countered_index: 0,
         },
     );
     let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
@@ -416,7 +426,7 @@ async fn test_step_pending_proof_skips_prove_block() {
     *zk.proof_status.lock().unwrap() = ProofJobStatus::Succeeded as i32;
 
     // Step 2: same game re-discovered → polls existing session, proof succeeds,
-    // nullification submitted, session removed from pending_proofs.
+    // challenge tx submitted, session removed from pending_proofs.
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
@@ -446,7 +456,7 @@ async fn test_step_nullification_failure_preserves_proof() {
 
     let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
 
-    // Step 1: proof succeeds, but nullification tx fails.
+    // Step 1: proof succeeds, but dispute tx fails.
     // initiate_proof catches the poll_or_submit error and logs a warning,
     // so the error does not propagate up through process_candidate → step.
     driver.step().await.unwrap();
@@ -455,7 +465,7 @@ async fn test_step_nullification_failure_preserves_proof() {
     let entry = driver.pending_proofs.get(&addr(0)).expect("proof should be preserved");
     assert!(entry.is_ready(), "phase should be ReadyToSubmit after tx failure");
 
-    // Step 2: poll_pending_proofs re-submits, now the tx succeeds.
+    // Step 2: poll_pending_proofs re-submits the challenge tx, now it succeeds.
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
@@ -484,6 +494,19 @@ async fn test_poll_or_submit_drops_already_challenged_game() {
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
         "already-challenged game should be removed from pending_proofs"
+    );
+}
+
+#[tokio::test]
+async fn test_poll_or_submit_drops_nullified_game() {
+    // Game is still IN_PROGRESS but both provers are ZERO (nullified)
+    // — driver should drop the pending proof without attempting submission.
+    let mut driver =
+        driver_with_ready_proof(mock_state_with_tee(0, Address::ZERO, Address::ZERO, 20));
+    driver.step().await.unwrap();
+    assert!(
+        !driver.pending_proofs.contains_key(&addr(0)),
+        "nullified game should be removed from pending_proofs"
     );
 }
 
@@ -531,7 +554,7 @@ async fn test_run_cancellation() {
 async fn test_step_proof_retry_succeeds() {
     // Proof fails on first tick (NeedsRetry), then re-initiated prove_block
     // returns a new session. On the next tick the proof succeeds and
-    // nullification is submitted.
+    // challenge tx is submitted.
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let zk = Arc::new(MockZkProofProvider {
@@ -559,11 +582,11 @@ async fn test_step_proof_retry_succeeds() {
     // Simulate proof succeeding on the retry session.
     *zk.proof_status.lock().unwrap() = ProofJobStatus::Succeeded as i32;
 
-    // Step 2: proof succeeds, nullification submitted, entry removed.
+    // Step 2: proof succeeds, challenge tx submitted, entry removed.
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
-        "entry should be removed after successful nullification"
+        "entry should be removed after successful challenge submission"
     );
 }
 
@@ -607,48 +630,12 @@ async fn test_step_proof_exceeds_max_retries() {
 ///
 /// The game at `addr(0)` has `tee_prover = 0xEE..EE` and the same block
 /// layout as `invalid_game_mocks()`.
-fn invalid_game_mocks_with_tee()
--> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, Arc<MockAggregateVerifier>) {
-    let storage_hash = B256::repeat_byte(0xBB);
-    let (header_15, account_15) = build_test_header_and_account(15, storage_hash);
-    let root_15 =
-        OutputRoot::from_parts(header_15.state_root, storage_hash, header_15.hash_slow()).hash();
-    let (header_20, account_20) = build_test_header_and_account(20, storage_hash);
-
-    let mut l2 = MockL2Provider::new();
-    l2.insert_block(15, header_15, account_15);
-    l2.insert_block(20, header_20, account_20);
-    let l2 = Arc::new(l2);
-
-    let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
-    let tee_addr = Address::repeat_byte(0xEE);
-    let mut verifier_games = HashMap::new();
-    verifier_games.insert(
-        addr(0),
-        MockGameState {
-            status: 0,
-            zk_prover: Address::ZERO,
-            tee_prover: tee_addr,
-            game_info: base_proof_contracts::GameInfo {
-                root_claim: B256::repeat_byte(0x01),
-                l2_block_number: 20,
-                parent_index: 0,
-            },
-            starting_block_number: 10,
-            intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
-        },
-    );
-    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
-
-    (l2, factory, verifier)
-}
-
 #[tokio::test]
 async fn test_step_invalid_game_tee_fails_zk_fallback() {
     // Game has a TEE prover, TEE provider is configured, but the TEE proof
     // attempt fails (L1 provider is unreachable with dummy). The driver
     // should fall back to ZK and initiate a ZK proof session.
-    let (l2, factory, verifier) = invalid_game_mocks_with_tee();
+    let (l2, factory, verifier) = invalid_game_mocks();
 
     let tee = Arc::new(MockTeeProofProvider::failure("enclave unreachable"));
     let zk = Arc::new(MockZkProofProvider {
@@ -682,46 +669,10 @@ async fn test_step_invalid_game_tee_fails_zk_fallback() {
 }
 
 #[tokio::test]
-async fn test_step_invalid_game_no_tee_prover_zk_only() {
-    // Game has `tee_prover == ZERO`. Even though a TEE provider is
-    // configured, the TEE path should NOT be attempted. Goes straight to ZK.
-    let (l2, factory, verifier) = invalid_game_mocks();
-
-    // This TEE provider should never be called since tee_prover is ZERO.
-    let tee = Arc::new(MockTeeProofProvider::failure("should not be called"));
-    let zk =
-        Arc::new(MockZkProofProvider { session_id: "zk-direct".to_string(), ..Default::default() });
-
-    let tx_manager = default_tx_manager();
-    let mut driver = test_driver_with_tee(
-        factory,
-        verifier,
-        l2,
-        zk,
-        tx_manager,
-        Some(TeeConfig {
-            provider: tee as Arc<dyn ProverClient>,
-            l1_head_provider: Arc::new(MockL1HeadProvider::failure("dummy")),
-            request_timeout: Duration::from_secs(30),
-        }),
-    );
-
-    driver.step().await.unwrap();
-
-    // The ZK proof should be initiated directly (no TEE attempt since
-    // tee_prover == ZERO).
-    let entry = driver.pending_proofs.get(&addr(0)).expect("ZK proof should be pending");
-    assert!(
-        matches!(entry.phase, ProofPhase::AwaitingProof { .. }),
-        "phase should be AwaitingProof (direct ZK)"
-    );
-}
-
-#[tokio::test]
 async fn test_step_invalid_game_no_tee_provider_zk_only() {
     // Game has a TEE prover, but the driver has no TEE provider configured
     // (tee-rpc-url was not set). Should go straight to ZK.
-    let (l2, factory, verifier) = invalid_game_mocks_with_tee();
+    let (l2, factory, verifier) = invalid_game_mocks();
 
     let zk = Arc::new(MockZkProofProvider {
         session_id: "zk-no-provider".to_string(),
@@ -744,8 +695,8 @@ async fn test_step_invalid_game_no_tee_provider_zk_only() {
 #[tokio::test]
 async fn test_step_invalid_game_tee_fails_zk_succeeds() {
     // Game has a TEE prover, TEE proof attempt fails, driver falls back to
-    // ZK, ZK proof succeeds immediately, nullification submitted.
-    let (l2, factory, verifier) = invalid_game_mocks_with_tee();
+    // ZK, ZK proof succeeds immediately, challenge tx submitted.
+    let (l2, factory, verifier) = invalid_game_mocks();
 
     let tee = Arc::new(MockTeeProofProvider::failure("L1 unreachable"));
     let zk = Arc::new(MockZkProofProvider {
@@ -772,13 +723,13 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
     );
 
     // Step: TEE path is attempted (fails due to provider error), falls back to
-    // ZK, proof succeeds immediately, nullification submitted.
+    // ZK, proof succeeds immediately, challenge tx submitted.
     driver.step().await.unwrap();
 
     // Proof was submitted and removed from pending.
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
-        "entry should be removed after successful ZK fallback submission"
+        "entry should be removed after successful ZK challenge submission"
     );
 }
 
@@ -817,6 +768,7 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
             starting_block_number: 10,
             // root_15 is correct, index 1 is bogus — invalid_index == 1
             intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
+            countered_index: 0,
         },
     );
     let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
@@ -867,4 +819,324 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
         !driver.pending_proofs.contains_key(&addr(0)),
         "no pending ZK proof should exist after successful TEE submission"
     );
+}
+
+#[tokio::test]
+async fn test_step_nullified_game_not_reprocessed() {
+    // Simulate the post-nullification on-chain state: game is still
+    // IN_PROGRESS but both teeProver and zkProver are address(0).
+    // The scanner should filter it out and no proof should be initiated.
+    let storage_hash = B256::repeat_byte(0xBB);
+    let (header_15, account_15) = build_test_header_and_account(15, storage_hash);
+    let root_15 =
+        OutputRoot::from_parts(header_15.state_root, storage_hash, header_15.hash_slow()).hash();
+    let (header_20, account_20) = build_test_header_and_account(20, storage_hash);
+
+    let mut l2 = MockL2Provider::new();
+    l2.insert_block(15, header_15, account_15);
+    l2.insert_block(20, header_20, account_20);
+    let l2 = Arc::new(l2);
+
+    let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+    let mut verifier_games = HashMap::new();
+    verifier_games.insert(
+        addr(0),
+        MockGameState {
+            status: 0,
+            zk_prover: Address::ZERO,
+            // Both provers zeroed — this is the state after TEE nullification.
+            tee_prover: Address::ZERO,
+            game_info: base_proof_contracts::GameInfo {
+                root_claim: B256::repeat_byte(0x01),
+                l2_block_number: 20,
+                parent_index: 0,
+            },
+            starting_block_number: 10,
+            intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
+            countered_index: 0,
+        },
+    );
+    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+    // Neither the ZK prover nor the tx manager should be called.
+    let zk = Arc::new(MockZkProofProvider {
+        session_id: "should-not-be-called".to_string(),
+        ..Default::default()
+    });
+    let tx_manager = default_tx_manager();
+
+    let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
+
+    // Run two steps — the game should be filtered by the scanner on both.
+    driver.step().await.unwrap();
+    driver.step().await.unwrap();
+
+    assert!(driver.pending_proofs.is_empty(), "no proofs should be pending for a nullified game");
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Path 2: Correct TEE proof challenged with wrong ZK proof → nullify ZK
+// ──────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_poll_or_submit_nullify_intent_not_dropped_when_zk_prover_set() {
+    // A pending proof with DisputeIntent::Nullify should NOT be dropped
+    // when zkProver is non-zero (unlike DisputeIntent::Challenge, which
+    // requires zkProver == ZERO).
+    let tee_addr = Address::repeat_byte(0xEE);
+    let zk_addr = Address::repeat_byte(0xCC);
+
+    let (l2, factory, _verifier) = invalid_game_mocks();
+    let mut game_state = mock_state_with_tee(0, zk_addr, tee_addr, 20);
+    game_state.countered_index = 2; // challenged at 0-based index 1
+    let verifier_games = HashMap::from([(addr(0), game_state)]);
+    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
+    driver.pending_proofs.insert(
+        addr(0),
+        PendingProof::ready(
+            Bytes::from_static(&[0x01, 0xDE, 0xAD]),
+            1,
+            B256::repeat_byte(0xEE),
+            default_prove_request(),
+            DisputeIntent::Nullify,
+        ),
+    );
+
+    driver.step().await.unwrap();
+
+    // The pending proof should have been submitted (and removed), not dropped.
+    assert!(
+        !driver.pending_proofs.contains_key(&addr(0)),
+        "nullify intent should be submitted, not dropped due to zk_prover"
+    );
+}
+
+#[tokio::test]
+async fn test_poll_or_submit_challenge_intent_dropped_when_zk_prover_set() {
+    // A pending proof with DisputeIntent::Challenge should be dropped
+    // when zkProver is non-zero (game already challenged).
+    let tee_addr = Address::repeat_byte(0xEE);
+    let zk_addr = Address::repeat_byte(0xCC);
+
+    let (l2, factory, _verifier) = invalid_game_mocks();
+    let game_state = mock_state_with_tee(0, zk_addr, tee_addr, 20);
+    let verifier_games = HashMap::from([(addr(0), game_state)]);
+    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+    let tx = MockTxManager::new(Err(TxManagerError::NonceTooLow)); // Should never be called
+    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), tx);
+    driver.pending_proofs.insert(
+        addr(0),
+        PendingProof::ready(
+            Bytes::from_static(&[0x01, 0xDE, 0xAD]),
+            1,
+            B256::repeat_byte(0xEE),
+            default_prove_request(),
+            DisputeIntent::Challenge,
+        ),
+    );
+
+    driver.step().await.unwrap();
+
+    assert!(
+        !driver.pending_proofs.contains_key(&addr(0)),
+        "challenge intent should be dropped when game is already challenged"
+    );
+}
+
+/// Builds mocks for a Path 2 (`FraudulentZkChallenge`) scenario.
+///
+/// The game at `addr(0)` has both TEE and ZK provers set with
+/// `countered_index = 2` (1-based), meaning the challenged intermediate
+/// root is at 0-based index 1 (block 20).
+///
+/// Layout: starting=10, `l2_block=20`, interval=5, checkpoints at 15 and 20.
+/// `correct_root_at_20` controls whether the on-chain root at index 1
+/// (block 20) matches the L2-computed root:
+/// - `true`: on-chain root is correct → ZK challenge was fraudulent → nullify.
+/// - `false`: on-chain root is bogus → ZK challenge was legitimate → skip.
+fn fraudulent_zk_challenge_mocks(
+    correct_root_at_20: bool,
+) -> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, Arc<MockAggregateVerifier>) {
+    let storage_hash = B256::repeat_byte(0xBB);
+    let (header_15, account_15) = build_test_header_and_account(15, storage_hash);
+    let root_15 =
+        OutputRoot::from_parts(header_15.state_root, storage_hash, header_15.hash_slow()).hash();
+    let (header_20, account_20) = build_test_header_and_account(20, storage_hash);
+    let root_20 =
+        OutputRoot::from_parts(header_20.state_root, storage_hash, header_20.hash_slow()).hash();
+
+    let mut l2 = MockL2Provider::new();
+    l2.insert_block(15, header_15, account_15);
+    l2.insert_block(20, header_20, account_20);
+    let l2 = Arc::new(l2);
+
+    let tee_addr = Address::repeat_byte(0xEE);
+    let zk_addr = Address::repeat_byte(0xCC);
+    let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+
+    let onchain_root_at_20 = if correct_root_at_20 { root_20 } else { B256::repeat_byte(0xFF) };
+
+    let mut verifier_games = HashMap::new();
+    verifier_games.insert(
+        addr(0),
+        MockGameState {
+            status: 0,
+            zk_prover: zk_addr,
+            tee_prover: tee_addr,
+            game_info: base_proof_contracts::GameInfo {
+                root_claim: B256::repeat_byte(0x01),
+                l2_block_number: 20,
+                parent_index: 0,
+            },
+            starting_block_number: 10,
+            intermediate_output_roots: vec![root_15, onchain_root_at_20],
+            countered_index: 2, // 1-based → challenged_index = 1
+        },
+    );
+    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+    (l2, factory, verifier)
+}
+
+#[tokio::test]
+async fn test_step_fraudulent_zk_challenge_legitimate_skips() {
+    // The on-chain root at the challenged index is wrong, meaning the ZK
+    // challenge was legitimate. The driver should skip without initiating
+    // a proof.
+    let (l2, factory, verifier) = fraudulent_zk_challenge_mocks(false);
+
+    let zk = Arc::new(MockZkProofProvider {
+        session_id: "should-not-be-called".to_string(),
+        ..Default::default()
+    });
+
+    let mut driver = test_driver(factory, verifier, l2, zk, default_tx_manager());
+    driver.step().await.unwrap();
+
+    assert!(
+        driver.pending_proofs.is_empty(),
+        "no proof should be initiated when the ZK challenge is legitimate"
+    );
+}
+
+#[tokio::test]
+async fn test_step_fraudulent_zk_challenge_nullifies() {
+    // The on-chain root at the challenged index is correct, meaning the
+    // ZK challenge was fraudulent. The driver should initiate a ZK proof
+    // with DisputeIntent::Nullify.
+    let (l2, factory, verifier) = fraudulent_zk_challenge_mocks(true);
+
+    let zk = Arc::new(MockZkProofProvider {
+        session_id: "nullify-fraudulent".to_string(),
+        ..Default::default()
+    });
+
+    let mut driver = test_driver(factory, verifier, l2, zk, default_tx_manager());
+    driver.step().await.unwrap();
+
+    let entry = driver
+        .pending_proofs
+        .get(&addr(0))
+        .expect("proof should be pending for fraudulent ZK challenge");
+    assert_eq!(
+        entry.intent,
+        DisputeIntent::Nullify,
+        "intent should be Nullify for fraudulent ZK challenge"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Path 3: Wrong ZK proposal → nullify with ZK
+// ──────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_step_invalid_zk_proposal_initiates_zk_nullification() {
+    // A game proposed with a ZK proof (tee_prover == ZERO, zk_prover != ZERO)
+    // with invalid intermediate roots should trigger a ZK proof with
+    // DisputeIntent::Nullify.
+    let storage_hash = B256::repeat_byte(0xBB);
+    let (header_15, _account_15) = build_test_header_and_account(15, storage_hash);
+    let root_15 =
+        OutputRoot::from_parts(header_15.state_root, storage_hash, header_15.hash_slow()).hash();
+    let (header_20, account_20) = build_test_header_and_account(20, storage_hash);
+
+    let mut l2 = MockL2Provider::new();
+    l2.insert_block(15, header_15, account_20.clone());
+    l2.insert_block(20, header_20, account_20);
+    let l2 = Arc::new(l2);
+
+    let zk_addr = Address::repeat_byte(0xCC);
+    let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+    let mut verifier_games = HashMap::new();
+    verifier_games.insert(
+        addr(0),
+        MockGameState {
+            status: 0,
+            zk_prover: zk_addr,
+            tee_prover: Address::ZERO, // ZK-proposed game
+            game_info: base_proof_contracts::GameInfo {
+                root_claim: B256::repeat_byte(0x01),
+                l2_block_number: 20,
+                parent_index: 0,
+            },
+            starting_block_number: 10,
+            intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
+            countered_index: 0,
+        },
+    );
+    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+    let zk = Arc::new(MockZkProofProvider {
+        session_id: "zk-nullify-session".to_string(),
+        ..Default::default()
+    });
+
+    let mut driver = test_driver(factory, verifier, l2, zk, default_tx_manager());
+    driver.step().await.unwrap();
+
+    // A pending proof should have been created with Nullify intent.
+    let entry = driver.pending_proofs.get(&addr(0));
+    assert!(entry.is_some(), "ZK nullification proof should be pending");
+    let entry = entry.unwrap();
+    assert_eq!(entry.intent, DisputeIntent::Nullify, "intent should be Nullify for ZK proposals");
+}
+
+#[tokio::test]
+async fn test_step_valid_zk_proposal_skipped() {
+    // A ZK-proposed game with valid intermediate roots should not trigger
+    // any action.
+    let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+    let zk_addr = Address::repeat_byte(0xCC);
+    let mut verifier_games = HashMap::new();
+    verifier_games.insert(
+        addr(0),
+        MockGameState {
+            status: 0,
+            zk_prover: zk_addr,
+            tee_prover: Address::ZERO,
+            game_info: base_proof_contracts::GameInfo {
+                root_claim: B256::repeat_byte(0x01),
+                l2_block_number: 14,
+                parent_index: 0,
+            },
+            starting_block_number: 10,
+            intermediate_output_roots: vec![],
+            countered_index: 0,
+        },
+    );
+    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+    let l2 = Arc::new(MockL2Provider::new());
+
+    let zk = Arc::new(MockZkProofProvider {
+        session_id: "should-not-be-called".to_string(),
+        ..Default::default()
+    });
+
+    let mut driver = test_driver(factory, verifier, l2, zk, default_tx_manager());
+    driver.step().await.unwrap();
+
+    assert!(driver.pending_proofs.is_empty(), "valid ZK proposal should not trigger any proof");
 }

@@ -1,8 +1,16 @@
 //! Main driver loop for the challenger service.
 //!
 //! The [`Driver`] ties together all challenger components — scanning for
-//! invalid dispute games, validating output roots, requesting ZK proofs, and
-//! submitting nullification transactions — into a single polling loop.
+//! invalid dispute games, validating output roots, requesting proofs, and
+//! submitting dispute transactions — into a single polling loop.
+//!
+//! Three dispute paths are supported:
+//!
+//! 1. **Wrong TEE proof** — nullify with a TEE proof (`nullify()`) or
+//!    challenge with a ZK proof (`challenge()`).
+//! 2. **Correct TEE proof challenged with a wrong ZK proof** — nullify
+//!    the fraudulent ZK challenge with a ZK proof (`nullify()`).
+//! 3. **Wrong ZK proposal** — nullify with a ZK proof (`nullify()`).
 
 use std::{
     sync::{
@@ -26,7 +34,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
-    CandidateGame, ChallengeSubmitter, ChallengerMetrics, GameScanner,
+    CandidateGame, ChallengeSubmitter, ChallengerMetrics, DisputeIntent, GameCategory, GameScanner,
     IntermediateValidationParams, L1HeadProvider, OutputValidator, PendingProof, PendingProofs,
     ProofPhase, ProofUpdate, ValidatorError,
 };
@@ -195,7 +203,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         }
     }
 
-    /// Processes a single candidate game: validate, prove if invalid, submit.
+    /// Processes a single candidate game by dispatching to the appropriate
+    /// handler based on the game's [`GameCategory`].
     async fn process_candidate(&mut self, candidate: CandidateGame) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
@@ -205,6 +214,30 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             debug!(game = %game_address, "skipping game with pending proof session");
             return Ok(());
         }
+
+        match candidate.category {
+            GameCategory::InvalidTeeProposal => {
+                self.process_invalid_proposal(candidate, DisputeIntent::Challenge).await
+            }
+            GameCategory::FraudulentZkChallenge { challenged_index } => {
+                self.process_fraudulent_zk_challenge(candidate, challenged_index).await
+            }
+            GameCategory::InvalidZkProposal => {
+                self.process_invalid_proposal(candidate, DisputeIntent::Nullify).await
+            }
+        }
+    }
+
+    /// Fetches intermediate roots and validates them against the local L2 node.
+    ///
+    /// Returns `Ok(Some((result, roots)))` when validation completes, or
+    /// `Ok(None)` when a transient error (e.g. block not yet available) means
+    /// the game should be skipped this tick. Permanent errors are propagated.
+    async fn validate_game(
+        &self,
+        candidate: &CandidateGame,
+    ) -> eyre::Result<Option<(crate::ValidationResult, Vec<B256>)>> {
+        let game_address = candidate.factory.proxy;
 
         let intermediate_roots =
             self.verifier_client.intermediate_output_roots(game_address).await?;
@@ -218,8 +251,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             intermediate_roots: &intermediate_roots,
         };
 
-        let result = match self.validator.validate_intermediate_roots(params).await {
-            Ok(r) => r,
+        match self.validator.validate_intermediate_roots(params).await {
+            Ok(result) => Ok(Some((result, intermediate_roots))),
             Err(e) => {
                 match &e {
                     ValidatorError::BlockNotAvailable { .. } => {
@@ -237,8 +270,26 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                         );
                     }
                 }
-                return Ok(());
+                Ok(None)
             }
+        }
+    }
+
+    /// Processes a game whose proposal may contain an invalid intermediate
+    /// root (Path 1: wrong TEE proof, Path 3: wrong ZK proof).
+    ///
+    /// Validates the intermediate roots against the local L2 node. If a
+    /// mismatch is found, initiates a proof with the given `intent`.
+    async fn process_invalid_proposal(
+        &mut self,
+        candidate: CandidateGame,
+        intent: DisputeIntent,
+    ) -> eyre::Result<()> {
+        let game_address = candidate.factory.proxy;
+
+        let result = match self.validate_game(&candidate).await? {
+            Some((result, _)) => result,
+            None => return Ok(()),
         };
 
         if result.is_valid {
@@ -256,23 +307,118 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             game = %game_address,
             invalid_index = invalid_index,
             expected_root = %expected_root,
+            intent = ?intent,
             "invalid intermediate root detected, requesting proof"
         );
 
-        self.initiate_proof(candidate, invalid_index, expected_root).await
+        ChallengerMetrics::games_invalid_total().increment(1);
+        if intent == DisputeIntent::Nullify {
+            ChallengerMetrics::invalid_zk_proposal_detected_total().increment(1);
+        }
+
+        self.initiate_proof(candidate, invalid_index, expected_root, intent).await
+    }
+
+    /// Processes a game whose correct TEE proposal has been challenged with
+    /// a potentially fraudulent ZK proof (Path 2).
+    ///
+    /// Validates the originally proposed root at the challenged index. If the
+    /// original root is correct, the ZK challenge was fraudulent and a ZK
+    /// proof is submitted via `nullify()` to refute it.
+    async fn process_fraudulent_zk_challenge(
+        &mut self,
+        candidate: CandidateGame,
+        challenged_index: u64,
+    ) -> eyre::Result<()> {
+        let game_address = candidate.factory.proxy;
+
+        let (result, intermediate_roots) = match self.validate_game(&candidate).await? {
+            Some(pair) => pair,
+            None => return Ok(()),
+        };
+
+        // For Path 2: If the original proposal's root at the challenged index
+        // is valid, the ZK challenge was fraudulent. If it's invalid, the
+        // challenge was legitimate — skip.
+        //
+        // The validator scans intermediate roots sequentially and reports the
+        // first invalid index. If `first_invalid <= challenged_index`, the
+        // root at the challenged index (or an earlier one) was wrong, so the
+        // ZK challenge was legitimate.
+        if !result.is_valid {
+            match result.invalid_intermediate_index {
+                Some(first_invalid) if (first_invalid as u64) <= challenged_index => {
+                    debug!(
+                        game = %game_address,
+                        challenged_index = challenged_index,
+                        first_invalid_index = first_invalid,
+                        "ZK challenge is legitimate (original root was wrong), skipping"
+                    );
+                    return Ok(());
+                }
+                None => {
+                    // Validation says invalid but no specific index was identified.
+                    // Cannot confirm the challenged root is correct, so skip to
+                    // avoid submitting a potentially wrong nullification.
+                    warn!(
+                        game = %game_address,
+                        challenged_index = challenged_index,
+                        "validation returned invalid without specific index, skipping"
+                    );
+                    return Ok(());
+                }
+                Some(_) => {
+                    // first_invalid > challenged_index: all roots up to and
+                    // including the challenged index are valid, so the ZK
+                    // challenge was fraudulent. Fall through to nullify.
+                }
+            }
+        }
+
+        // The on-chain root at the challenged index is correct.
+        // Use the on-chain root value as `intermediateRootToProve` — the
+        // contract requires it to match `intermediateOutputRoot(index)`.
+        let on_chain_root =
+            intermediate_roots.get(challenged_index as usize).copied().ok_or_else(|| {
+                eyre::eyre!(
+                    "challenged_index {challenged_index} out of bounds \
+                     (game has {} intermediate roots)",
+                    intermediate_roots.len()
+                )
+            })?;
+
+        info!(
+            game = %game_address,
+            challenged_index = challenged_index,
+            on_chain_root = %on_chain_root,
+            "fraudulent ZK challenge detected, nullifying with ZK proof"
+        );
+
+        ChallengerMetrics::fraudulent_zk_challenge_detected_total().increment(1);
+
+        self.initiate_zk_proof(candidate, challenged_index, on_chain_root, DisputeIntent::Nullify)
+            .await
     }
 
     /// Attempts TEE-first proof sourcing with ZK fallback.
+    ///
+    /// The `intent` determines the on-chain action. For Path 1
+    /// ([`DisputeIntent::Challenge`]) the ZK proof targets `challenge()`.
+    /// TEE proofs always use `nullify()` regardless of `intent`.
     async fn initiate_proof(
         &mut self,
         candidate: CandidateGame,
         invalid_index: u64,
         expected_root: B256,
+        intent: DisputeIntent,
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
         // TEE-first: try if game has a TEE prover and we have a TEE config.
+        // TEE proofs only make sense when the intent is to challenge a TEE
+        // proposal — TEE nullification replaces the bad TEE proof.
         if candidate.tee_prover != Address::ZERO
+            && intent == DisputeIntent::Challenge
             && let Some(tee) = &self.tee
         {
             ChallengerMetrics::tee_proof_attempts_total().increment(1);
@@ -308,8 +454,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             ChallengerMetrics::tee_proof_fallback_total().increment(1);
         }
 
-        // ZK fallback (or direct ZK if no TEE prover).
-        self.initiate_zk_proof(candidate, invalid_index, expected_root).await
+        // ZK fallback (or direct ZK if no TEE prover / intent is Nullify).
+        self.initiate_zk_proof(candidate, invalid_index, expected_root, intent).await
     }
 
     /// Attempts to obtain a TEE proof for the given candidate game.
@@ -374,6 +520,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         candidate: CandidateGame,
         invalid_index: u64,
         expected_root: B256,
+        intent: DisputeIntent,
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
@@ -403,7 +550,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             "proof job initiated"
         );
 
-        let pending = PendingProof::awaiting(session_id, invalid_index, expected_root, request);
+        let pending =
+            PendingProof::awaiting(session_id, invalid_index, expected_root, request, intent);
         self.pending_proofs.insert(game_address, pending);
 
         if let Err(e) = self.poll_or_submit(game_address).await {
@@ -421,32 +569,57 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     ///   - `Failed` → transitions to `NeedsRetry` so `prove_block` is
     ///     re-initiated.
     ///   - Intermediate (`Created`/`Pending`/`Running`) → returns early.
-    /// - **`ReadyToSubmit`** — submits the nullification tx:
+    /// - **`ReadyToSubmit`** — submits the dispute tx based on the entry's
+    ///   [`DisputeIntent`]:
+    ///   - [`DisputeIntent::Nullify`] → calls `nullify()`.
+    ///   - [`DisputeIntent::Challenge`] → calls `challenge()`.
     ///   - On success → removes the entry.
     ///   - On failure → leaves the entry so it is retried next tick.
     /// - **`NeedsRetry`** — re-initiates `prove_block`:
     ///   - If `retry_count > MAX_PROOF_RETRIES` → drops the entry.
     ///   - Otherwise → calls `prove_block` and transitions to `AwaitingProof`.
     async fn poll_or_submit(&mut self, game_address: Address) -> eyre::Result<()> {
-        let (invalid_index, expected_root) = match self.pending_proofs.get(&game_address) {
-            Some(p) => (p.invalid_index, p.expected_root),
+        let (invalid_index, expected_root, intent) = match self.pending_proofs.get(&game_address) {
+            Some(p) => (p.invalid_index, p.expected_root, p.intent),
             None => return Ok(()),
         };
 
-        // Check if the game is still challengeable before doing any work.
-        let (status, zk_prover) = tokio::try_join!(
-            self.verifier_client.status(game_address),
-            self.verifier_client.zk_prover(game_address),
-        )?;
-        if status != GameScanner::STATUS_IN_PROGRESS {
-            debug!(game = %game_address, status = status, "game no longer in progress, dropping pending proof");
-            self.pending_proofs.remove(&game_address);
-            return Ok(());
-        }
-        if zk_prover != Address::ZERO {
-            debug!(game = %game_address, zk_prover = %zk_prover, "game already challenged, dropping pending proof");
-            self.pending_proofs.remove(&game_address);
-            return Ok(());
+        // Check if the game is still actionable before doing any work.
+        // For Challenge intents, also verify that the TEE proof still exists
+        // and no ZK proof has been submitted yet — fetch in parallel with
+        // status to avoid an extra round-trip.
+        if intent == DisputeIntent::Challenge {
+            let (status, zk_prover, tee_prover) = tokio::try_join!(
+                self.verifier_client.status(game_address),
+                self.verifier_client.zk_prover(game_address),
+                self.verifier_client.tee_prover(game_address),
+            )?;
+            if status != GameScanner::STATUS_IN_PROGRESS {
+                debug!(game = %game_address, status = status, "game no longer in progress, dropping pending proof");
+                self.pending_proofs.remove(&game_address);
+                return Ok(());
+            }
+            if zk_prover != Address::ZERO {
+                debug!(game = %game_address, zk_prover = %zk_prover, "game already challenged, dropping pending proof");
+                self.pending_proofs.remove(&game_address);
+                return Ok(());
+            }
+            if tee_prover == Address::ZERO {
+                debug!(game = %game_address, "game already nullified (both provers zeroed), dropping pending proof");
+                self.pending_proofs.remove(&game_address);
+                return Ok(());
+            }
+        } else {
+            // For Nullify intents (Paths 1-TEE, 2, 3) the contract itself
+            // validates that the target proof type still exists. We only
+            // check the game status and let the contract revert if the
+            // prover state changed between our check and submission.
+            let status = self.verifier_client.status(game_address).await?;
+            if status != GameScanner::STATUS_IN_PROGRESS {
+                debug!(game = %game_address, status = status, "game no longer in progress, dropping pending proof");
+                self.pending_proofs.remove(&game_address);
+                return Ok(());
+            }
         }
 
         // Resolve the proof bytes — either by polling the ZK service or
@@ -456,7 +629,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                 info!(
                     game = %game_address,
                     proof_len = proof_bytes.len(),
-                    "proof ready, submitting nullification"
+                    action = intent.label(),
+                    "proof ready, submitting dispute transaction"
                 );
                 proof_bytes
             }
@@ -470,12 +644,12 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             None => return Ok(()),
         };
 
-        // ── Submit nullification ─────────────────────────────────────────
-        match self
+        // ── Submit dispute transaction ────────────────────────────────────
+        let result = self
             .submitter
-            .submit_nullification(game_address, proof_bytes, invalid_index, expected_root)
-            .await
-        {
+            .submit_dispute(game_address, proof_bytes, invalid_index, expected_root, intent)
+            .await;
+        match result {
             Ok(_) => {
                 self.pending_proofs.remove(&game_address);
             }
@@ -483,7 +657,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                 warn!(
                     error = %e,
                     game = %game_address,
-                    "nullification tx failed, will retry next tick"
+                    "dispute tx failed, will retry next tick"
                 );
                 // Leave entry as ReadyToSubmit for retry.
             }
