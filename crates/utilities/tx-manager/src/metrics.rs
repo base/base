@@ -125,8 +125,7 @@ impl BaseTxMetrics {
     ///
     /// The `name` is emitted as a `"name"` label on every metric, allowing
     /// multiple tx-manager instances to be distinguished in dashboards.
-    pub fn new(name: &'static str) -> Self {
-        TxManagerMetrics::describe();
+    pub const fn new(name: &'static str) -> Self {
         Self { name }
     }
 }

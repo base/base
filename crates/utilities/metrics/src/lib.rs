@@ -11,10 +11,25 @@
 mod noop;
 pub use noop::{NoopDropTimer, NoopMetric};
 
-mod metrics;
+mod define_metrics;
+mod timing_macros;
 
 mod inflight;
 pub use inflight::InflightCounter;
+
+#[cfg(feature = "metrics")]
+mod registry;
+#[cfg(feature = "metrics")]
+#[doc(hidden)]
+pub use ctor as __private_ctor;
+#[cfg(feature = "metrics")]
+pub use registry::initialize_registered_metrics;
+#[cfg(feature = "metrics")]
+#[doc(hidden)]
+pub use registry::register_initializer;
+#[cfg(not(feature = "metrics"))]
+#[inline(always)]
+pub fn initialize_registered_metrics() {}
 
 #[cfg(feature = "metrics")]
 mod timer;

@@ -70,7 +70,6 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         .metrics
         .init_with(|| {
             base_cli_utils::register_version_metrics!();
-            Metrics::init();
         })
         .wrap_err("failed to install Prometheus recorder")?;
 

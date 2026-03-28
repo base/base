@@ -23,16 +23,16 @@ base_metrics::define_metrics! {
     #[describe("Total count of sequenced transactions")]
     sequencer_total_transactions_sequenced: counter,
     #[describe("Sequencer seal step retries by step")]
-    #[label(step)]
+    #[label(name = "step", default = ["conductor", "gossip", "insert"])]
     sequencer_seal_step_retries_total: counter,
     #[describe("Sequencer seal step duration by step")]
     #[label(step)]
     sequencer_seal_step_duration: gauge,
     #[describe("Seal errors by fatality")]
-    #[label(fatal)]
+    #[label(name = "fatal", default = ["true", "false"])]
     sequencer_seal_errors_total: counter,
     #[describe("Sequencer start rejections by reason")]
-    #[label(reason)]
+    #[label(name = "reason", default = ["not_leader", "leadership_check_failed"])]
     sequencer_start_rejected_total: counter,
     #[describe("Deferred stop_sequencer responses due to in-flight seal pipeline")]
     sequencer_stop_deferred_total: counter,
@@ -42,37 +42,4 @@ base_metrics::define_metrics! {
     sequencer_drift_empty_blocks_total: counter,
     #[describe("Pre-built payloads discarded because the unsafe head advanced past their parent")]
     sequencer_stale_build_discarded_total: counter,
-}
-
-impl Metrics {
-    /// Initializes metrics for the node service.
-    ///
-    /// This does two things:
-    /// * Describes various metrics.
-    /// * Initializes metrics to 0 so they can be queried immediately.
-    #[cfg(feature = "metrics")]
-    pub fn init() {
-        Self::describe();
-        Self::zero();
-    }
-
-    /// Initializes metrics to `0` so they can be queried immediately by consumers of prometheus
-    /// metrics.
-    pub fn zero() {
-        Self::l1_reorg_count().absolute(0);
-        Self::derivation_critical_errors().absolute(0);
-        Self::sequencer_total_transactions_sequenced().absolute(0);
-
-        Self::sequencer_seal_step_retries_total("conductor").absolute(0);
-        Self::sequencer_seal_step_retries_total("gossip").absolute(0);
-        Self::sequencer_seal_step_retries_total("insert").absolute(0);
-        Self::sequencer_seal_errors_total("true").absolute(0);
-        Self::sequencer_seal_errors_total("false").absolute(0);
-        Self::sequencer_start_rejected_total("not_leader").absolute(0);
-        Self::sequencer_start_rejected_total("leadership_check_failed").absolute(0);
-        Self::sequencer_stop_deferred_total().absolute(0);
-        Self::sequencer_recovery_mode_blocks_total().absolute(0);
-        Self::sequencer_drift_empty_blocks_total().absolute(0);
-        Self::sequencer_stale_build_discarded_total().absolute(0);
-    }
 }

@@ -4,11 +4,11 @@ base_metrics::define_metrics! {
     base_proof_host
 
     #[describe("Total proof requests received")]
-    #[label(mode)]
+    #[label(name = "mode", default = ["online"])]
     requests_total: counter,
 
     #[describe("Proof request outcomes by result")]
-    #[label(outcome)]
+    #[label(name = "outcome", default = ["success", "witness_error", "prove_error", "dropped"])]
     requests_result_total: counter,
 
     #[describe("Hint requests by type")]
@@ -66,26 +66,6 @@ impl Metrics {
 
     /// Future was cancelled (dropped) before completion.
     pub const OUTCOME_DROPPED: &str = "dropped";
-
-    /// Registers metric descriptions and initializes all counters/gauges to zero
-    /// so they appear in dashboards immediately.
-    pub fn init() {
-        Self::describe();
-        Self::zero();
-    }
-
-    fn zero() {
-        Self::in_flight_proofs().set(0);
-        Self::preimage_count().set(0);
-        Self::requests_total(Self::MODE_ONLINE).absolute(0);
-        Self::requests_result_total(Self::OUTCOME_SUCCESS).absolute(0);
-        Self::requests_result_total(Self::OUTCOME_WITNESS_ERROR).absolute(0);
-        Self::requests_result_total(Self::OUTCOME_PROVE_ERROR).absolute(0);
-        Self::requests_result_total(Self::OUTCOME_DROPPED).absolute(0);
-        Self::kv_cold_lookups_total().absolute(0);
-        Self::preimage_accesses_total().absolute(0);
-        Self::offline_misses_total().absolute(0);
-    }
 }
 
 /// RAII guard for in-flight proof tracking.

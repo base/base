@@ -17,15 +17,13 @@ pub struct PrometheusServer;
 
 impl PrometheusServer {
     /// Initialize a Prometheus metrics server on the given address and port.
-    ///
-    /// Initialize a Prometheus metrics server on the given address and port.
-    ///
     /// The interval specifies how often system metrics are collected, in seconds.
     pub fn init(addr: IpAddr, metrics_port: u16, interval: u64) -> Result<(), BuildError> {
         let prometheus_addr = SocketAddr::from((addr, metrics_port));
         let builder = PrometheusBuilder::new().with_http_listener(prometheus_addr);
 
         builder.install()?;
+        base_metrics::initialize_registered_metrics();
 
         // Initialise collector for system metrics e.g. CPU, memory, etc.
         let collector = Collector::default();

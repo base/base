@@ -186,7 +186,8 @@ async fn main() {
             builder = builder.add_global_label(key, value);
         }
 
-        builder.install().expect("failed to setup Prometheus endpoint")
+        builder.install().expect("failed to setup Prometheus endpoint");
+        base_metrics::initialize_registered_metrics();
     }
 
     // Validate that we have at least one upstream URI
@@ -196,8 +197,6 @@ async fn main() {
     }
 
     info!(message = "using upstream URIs", uris = ?args.upstream_ws);
-
-    Metrics::describe();
 
     let (send, _rec) = broadcast::channel(args.message_buffer_size);
     let sender = send.clone();

@@ -2,8 +2,6 @@
 
 base_metrics::define_metrics! {
     base_proposer
-
-    // ── Gauges ──────────────────────────────────────────────────────────
     #[describe("Proposer is running")]
     up: gauge,
 
@@ -24,8 +22,6 @@ base_metrics::define_metrics! {
 
     #[describe("Latest safe (or finalized) L2 block number")]
     safe_head: gauge,
-
-    // ── Counters ────────────────────────────────────────────────────────
     #[describe("Total number of L2 output proposals submitted")]
     l2_output_proposals_total: counter,
 
@@ -33,13 +29,27 @@ base_metrics::define_metrics! {
     tee_signer_invalid_total: counter,
 
     #[describe("Total errors by type")]
-    #[label(error_type)]
+    #[label(
+        name = "error_type",
+        default = [
+            "rpc",
+            "prover",
+            "contract",
+            "tx_reverted",
+            "config",
+            "internal",
+            "output_root_mismatch",
+            "l1_origin_mismatch",
+            "block_number_mismatch",
+            "block_info_derivation",
+            "tx_manager",
+            "game_already_exists"
+        ]
+    )]
     errors_total: counter,
 
     #[describe("Total reorgs detected at submit time")]
     reorgs_total: counter,
-
-    // ── Histograms ──────────────────────────────────────────────────────
     #[describe("Time to generate a single proof (seconds)")]
     proof_duration_seconds: histogram,
 
@@ -51,7 +61,6 @@ base_metrics::define_metrics! {
 }
 
 impl Metrics {
-    // ── Error-type label values ─────────────────────────────────────────
     /// RPC error.
     pub const ERROR_TYPE_RPC: &str = "rpc";
     /// Prover error.
@@ -76,44 +85,6 @@ impl Metrics {
     pub const ERROR_TYPE_TX_MANAGER: &str = "tx_manager";
     /// Game already exists.
     pub const ERROR_TYPE_GAME_ALREADY_EXISTS: &str = "game_already_exists";
-
-    /// Initializes metric descriptions and zeroes gauges/counters so they
-    /// appear in Prometheus output immediately.
-    pub fn init() {
-        Self::describe();
-        Self::zero();
-    }
-
-    const ALL_ERROR_TYPES: &[&str] = &[
-        Self::ERROR_TYPE_RPC,
-        Self::ERROR_TYPE_PROVER,
-        Self::ERROR_TYPE_CONTRACT,
-        Self::ERROR_TYPE_TX_REVERTED,
-        Self::ERROR_TYPE_CONFIG,
-        Self::ERROR_TYPE_INTERNAL,
-        Self::ERROR_TYPE_OUTPUT_ROOT_MISMATCH,
-        Self::ERROR_TYPE_L1_ORIGIN_MISMATCH,
-        Self::ERROR_TYPE_BLOCK_NUMBER_MISMATCH,
-        Self::ERROR_TYPE_BLOCK_INFO_DERIVATION,
-        Self::ERROR_TYPE_TX_MANAGER,
-        Self::ERROR_TYPE_GAME_ALREADY_EXISTS,
-    ];
-
-    fn zero() {
-        Self::up().set(0.0);
-        Self::account_balance_wei().set(0.0);
-        Self::last_proposed_block().set(0.0);
-        Self::inflight_proofs().set(0.0);
-        Self::proved_queue_depth().set(0.0);
-        Self::pipeline_retries().set(0.0);
-        Self::safe_head().set(0.0);
-        Self::l2_output_proposals_total().absolute(0);
-        Self::tee_signer_invalid_total().absolute(0);
-        Self::reorgs_total().absolute(0);
-        for label in Self::ALL_ERROR_TYPES {
-            Self::errors_total(*label).absolute(0);
-        }
-    }
 }
 
 impl Metrics {

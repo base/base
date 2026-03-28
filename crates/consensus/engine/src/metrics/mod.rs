@@ -9,11 +9,17 @@ base_metrics::define_metrics! {
     #[label(label)]
     block_labels: gauge,
     #[describe("Engine tasks successfully executed")]
-    #[label(task)]
+    #[label(
+        name = "task",
+        default = ["insert", "consolidate", "build", "finalize", "seal", "get-payload"]
+    )]
     engine_task_count: counter,
     #[describe("Engine tasks failed")]
-    #[label(task)]
-    #[label(severity)]
+    #[label(
+        name = "task",
+        default = ["insert", "consolidate", "build", "finalize", "seal", "get-payload"]
+    )]
+    #[label(name = "severity", default = ["temporary", "critical", "reset", "flush"])]
     engine_task_failure: counter,
     #[describe("Engine method request duration")]
     #[label(method)]
@@ -66,47 +72,4 @@ impl Metrics {
     pub const NEW_PAYLOAD_METHOD: &str = "engine_newPayload";
     /// `engine_getPayloadV<N>` label.
     pub const GET_PAYLOAD_METHOD: &str = "engine_getPayload";
-
-    /// Initializes metrics for the engine.
-    ///
-    /// This does two things:
-    /// * Describes various metrics.
-    /// * Initializes metrics to 0 so they can be queried immediately.
-    #[cfg(feature = "metrics")]
-    pub fn init() {
-        Self::describe();
-        Self::zero();
-    }
-
-    /// Initializes metrics to `0` so they can be queried immediately by consumers of prometheus
-    /// metrics.
-    pub fn zero() {
-        Self::engine_task_count(Self::INSERT_TASK_LABEL).absolute(0);
-        Self::engine_task_count(Self::CONSOLIDATE_TASK_LABEL).absolute(0);
-        Self::engine_task_count(Self::BUILD_TASK_LABEL).absolute(0);
-        Self::engine_task_count(Self::FINALIZE_TASK_LABEL).absolute(0);
-        Self::engine_task_count(Self::SEAL_TASK_LABEL).absolute(0);
-        Self::engine_task_count(Self::GET_PAYLOAD_TASK_LABEL).absolute(0);
-
-        for task in [
-            Self::INSERT_TASK_LABEL,
-            Self::CONSOLIDATE_TASK_LABEL,
-            Self::BUILD_TASK_LABEL,
-            Self::FINALIZE_TASK_LABEL,
-            Self::SEAL_TASK_LABEL,
-            Self::GET_PAYLOAD_TASK_LABEL,
-        ] {
-            for severity in [
-                Self::TEMPORARY_SEVERITY_LABEL,
-                Self::CRITICAL_SEVERITY_LABEL,
-                Self::RESET_SEVERITY_LABEL,
-                Self::FLUSH_SEVERITY_LABEL,
-            ] {
-                Self::engine_task_failure(task, severity).absolute(0);
-            }
-        }
-
-        Self::engine_reset_count().absolute(0);
-        Self::sequencer_unsafe_head_changed_total().absolute(0);
-    }
 }

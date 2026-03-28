@@ -230,17 +230,19 @@ mod tests {
         #[case] label_name: &str,
         #[case] number: u64,
     ) {
-        let handle = PrometheusBuilder::new().install_recorder().unwrap();
-        Metrics::init();
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
 
-        let mut state = EngineState::default();
-        set_fn(
-            &mut state,
-            L2BlockInfo {
-                block_info: BlockInfo { number, ..Default::default() },
-                ..Default::default()
-            },
-        );
+        metrics::with_local_recorder(&recorder, || {
+            let mut state = EngineState::default();
+            set_fn(
+                &mut state,
+                L2BlockInfo {
+                    block_info: BlockInfo { number, ..Default::default() },
+                    ..Default::default()
+                },
+            );
+        });
 
         assert!(handle.render().contains(
             format!("base_node_block_labels{{label=\"{label_name}\"}} {number}").as_str()

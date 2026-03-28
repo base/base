@@ -20,6 +20,7 @@ futures.workspace = true
 dotenvy.workspace = true
 hostname.workspace = true
 tokio-util.workspace = true
+base-metrics = { workspace = true, features = ["metrics"] }
 base-cli-utils.workspace = true
 websocket-proxy.workspace = true
 tracing = { workspace = true, features = ["std"] }

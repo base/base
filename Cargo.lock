@@ -3140,6 +3140,7 @@ name = "base-cli-utils"
 version = "0.0.0"
 dependencies = [
  "backtrace",
+ "base-metrics",
  "clap",
  "dirs-next",
  "eyre",
@@ -3226,11 +3227,7 @@ dependencies = [
  "base-alloy-network",
  "base-cli-utils",
  "base-client-cli",
- "base-consensus-derive",
- "base-consensus-disc",
- "base-consensus-engine",
  "base-consensus-genesis",
- "base-consensus-gossip",
  "base-consensus-node",
  "base-consensus-providers",
  "base-consensus-registry",
@@ -4235,6 +4232,7 @@ dependencies = [
 name = "base-metrics"
 version = "0.0.0"
 dependencies = [
+ "ctor",
  "metrics",
  "metrics-util",
  "ordered-float 5.2.0",
@@ -20953,6 +20951,7 @@ version = "0.0.0"
 dependencies = [
  "axum",
  "base-cli-utils",
+ "base-metrics",
  "brotli",
  "clap",
  "dotenvy",
