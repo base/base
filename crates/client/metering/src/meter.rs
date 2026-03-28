@@ -109,11 +109,19 @@ pub struct MeterBundleOutput {
     pub total_time_us: u128,
     /// State root calculation time in microseconds
     pub state_root_time_us: u128,
-    /// Number of account trie nodes attributed to bundle state changes during state root
-    /// calculation
+    /// Best-effort count of account trie nodes attributed to bundle state changes during state
+    /// root calculation.
+    ///
+    /// `reth` does not expose "all account trie nodes hashed for just this bundle" directly, so
+    /// we derive this by combining bundle-owned account leaves from `HashedPostState` with account
+    /// branch/removal updates from `TrieUpdates`.
     pub state_root_account_node_count: u64,
-    /// Number of storage trie nodes attributed to bundle state changes during state root
-    /// calculation
+    /// Best-effort count of storage trie nodes attributed to bundle state changes during state
+    /// root calculation.
+    ///
+    /// Like the account count, this is derived from two `reth` views of the work: bundle-owned
+    /// storage leaves from `HashedPostState` plus storage branch/removal updates from
+    /// `TrieUpdates`, with non-bundle artifacts filtered out below.
     pub state_root_storage_node_count: u64,
 }
 
@@ -125,7 +133,12 @@ struct StateRootTrieNodeCounts {
 
 /// Counts trie nodes represented on the hashed post-state leaf side.
 ///
-/// The account count includes changed account leaves that remain in the post-state trie.
+/// `reth` splits "work done for a state root" into two different surfaces:
+/// - `HashedPostState`: surviving leaves in the bundle delta.
+/// - `TrieUpdates`: branch/removal updates emitted while rebuilding affected trie paths.
+///
+/// This helper handles the leaf side of that split. The account count includes changed account
+/// leaves that remain in the post-state trie.
 ///
 /// The storage count includes changed storage slot leaves that remain in the post-state trie.
 /// Deleted accounts, zero-valued storage removals, and pure storage wipes are not counted here,
@@ -148,6 +161,13 @@ fn count_state_root_leaf_nodes(hashed_state: &HashedPostState) -> StateRootTrieN
 /// These counts cover account/storage branch updates and removals plus storage trie deletion
 /// markers. Empty-path roots are excluded because reth filters those out of `TrieUpdates`, and a
 /// root can be either a branch or a leaf depending on trie shape.
+///
+/// The `changed_storage_tries` filter is intentional. `reth` records `StorageTrieUpdates` for any
+/// account whose storage root was considered, including `deleted()` markers for empty-storage
+/// accounts and cached pending-state tries we prepended via `prepend_cached`. Those entries are
+/// useful for trie persistence, but they are not a defensible attribution of bundle-local storage
+/// hashing work. Restricting storage-side structural attribution to tries present in the bundle's
+/// own `HashedPostState` keeps these counts aligned with bundle-owned storage changes.
 fn add_state_root_trie_update_counts(
     counts: &mut StateRootTrieNodeCounts,
     changed_storage_tries: &HashSet<B256>,
@@ -363,6 +383,11 @@ where
     // Gets the number of accounts modified
     let accounts_modified: usize = bundle_update.state().len();
     Metrics::accounts_modified().record(accounts_modified as f64);
+    // `state_root_*_with_updates` reports structural trie updates for the entire overlay we hand
+    // to `reth`, not just the bundle delta. When the bundle made no state changes, those updates
+    // can come entirely from cached pending trie nodes or root-maintenance bookkeeping. In that
+    // case we still time the calculation, but we intentionally attribute zero trie nodes to the
+    // bundle itself.
     let has_bundle_state_changes = accounts_modified > 0;
 
     let state_provider = db.database.as_ref();

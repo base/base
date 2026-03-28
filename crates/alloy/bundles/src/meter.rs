@@ -61,20 +61,22 @@ pub struct MeterBundleResponse {
     /// Time spent calculating state root in microseconds.
     #[serde(default)]
     pub state_root_time_us: u128,
-    /// Number of account trie nodes attributed to bundle state changes during state root
-    /// calculation.
+    /// Best-effort count of account trie nodes attributed to bundle state changes during state
+    /// root calculation.
     ///
-    /// This includes surviving/inserted account leaves plus account trie branch
-    /// updates/removals. Deleted account leaves are represented through the branch-side trie
-    /// updates, not counted again as leaves. Empty-path roots are excluded.
+    /// This combines surviving/inserted account leaves from the bundle delta with account trie
+    /// branch updates/removals emitted by `reth`. Deleted account leaves are represented through
+    /// the branch-side trie updates, not counted again as leaves. Empty-path roots are excluded.
     #[serde(default)]
     pub state_root_account_node_count: u64,
-    /// Number of storage trie nodes attributed to bundle state changes during state root
-    /// calculation.
+    /// Best-effort count of storage trie nodes attributed to bundle state changes during state
+    /// root calculation.
     ///
-    /// This includes surviving/inserted storage slot leaves plus storage trie branch
-    /// updates/removals/deletes. Zero-valued slot removals and pure storage wipes are represented
-    /// through the trie updates, not counted again as leaves. Empty-path roots are excluded.
+    /// This combines surviving/inserted storage slot leaves from the bundle delta with
+    /// storage-trie branch updates/removals/deletes emitted by `reth`, excluding known non-bundle
+    /// artifacts such as empty-storage deletion markers from untouched tries. Zero-valued slot
+    /// removals and pure storage wipes are represented through the trie updates, not counted again
+    /// as leaves. Empty-path roots are excluded.
     #[serde(default)]
     pub state_root_storage_node_count: u64,
 }
