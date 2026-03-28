@@ -347,7 +347,9 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         // ZK challenge was legitimate.
         if !result.is_valid {
             match result.invalid_intermediate_index {
-                Some(first_invalid) if (first_invalid as u64) <= challenged_index => {
+                Some(first_invalid)
+                    if u64::try_from(first_invalid).unwrap_or(u64::MAX) <= challenged_index =>
+                {
                     debug!(
                         game = %game_address,
                         challenged_index = challenged_index,
