@@ -55,6 +55,26 @@ impl fmt::Debug for BoundlessProver {
     }
 }
 
+impl BoundlessProver {
+    /// Checks whether an error from the Boundless SDK is the
+    /// `RequestIsNotLocked` revert caused by the TOCTOU race in
+    /// `get_status()`.
+    ///
+    /// Because the SDK wraps the contract revert in opaque error types
+    /// we must resort to string matching. Both `Display` and `Debug`
+    /// representations are searched case-insensitively to be resilient
+    /// against upstream formatting changes.
+    fn is_request_not_locked_error(e: &dyn std::error::Error) -> bool {
+        const NEEDLE: &str = "requestisnotlocked";
+        let display = format!("{e}");
+        if display.to_ascii_lowercase().contains(NEEDLE) {
+            return true;
+        }
+        let debug = format!("{e:?}");
+        debug.to_ascii_lowercase().contains(NEEDLE)
+    }
+}
+
 #[async_trait::async_trait]
 impl AttestationProofProvider for BoundlessProver {
     async fn generate_proof(&self, attestation_bytes: &[u8]) -> Result<AttestationProof> {
@@ -151,21 +171,48 @@ impl AttestationProofProvider for BoundlessProver {
         );
 
         // Wait for marketplace fulfillment (prover completes the proof).
-        let _fulfillment = client
-            .wait_for_request_fulfillment(request_id, self.poll_interval, effective_expiry)
-            .await
-            .map_err(|e| {
-                warn!(
-                    error = %e,
-                    error_debug = ?e,
-                    request_id = %request_id,
-                    effective_expiry,
-                    timeout = ?self.timeout,
-                    poll_interval = ?self.poll_interval,
-                    "proof fulfillment failed"
-                );
-                ProverError::Boundless(format!("fulfillment failed: {e}"))
-            })?;
+        //
+        // The Boundless SDK has a race condition in `get_status()`: it calls
+        // `is_locked()` then `requestDeadline()` as separate RPC calls. If
+        // the request is fulfilled between these calls, `requestDeadline()`
+        // reverts with `RequestIsNotLocked` and the SDK treats it as fatal.
+        // We retry immediately on this specific error since the next poll
+        // will find the request fulfilled via the `is_fulfilled()` check
+        // that runs first. No sleep is needed — the request is already
+        // fulfilled; we just need the SDK to re-enter its poll loop.
+        const MAX_RACE_RETRIES: u32 = 3;
+        let mut race_retries = 0;
+        let _fulfillment = loop {
+            match client
+                .wait_for_request_fulfillment(request_id, self.poll_interval, effective_expiry)
+                .await
+            {
+                Ok(f) => break f,
+                Err(e) => {
+                    if Self::is_request_not_locked_error(&e) && race_retries < MAX_RACE_RETRIES {
+                        race_retries += 1;
+                        warn!(
+                            error = %e,
+                            request_id = %request_id,
+                            retry = race_retries,
+                            max_retries = MAX_RACE_RETRIES,
+                            "RequestIsNotLocked race condition, retrying fulfillment poll"
+                        );
+                        continue;
+                    }
+                    warn!(
+                        error = %e,
+                        error_debug = ?e,
+                        request_id = %request_id,
+                        effective_expiry,
+                        timeout = ?self.timeout,
+                        poll_interval = ?self.poll_interval,
+                        "proof fulfillment failed"
+                    );
+                    return Err(ProverError::Boundless(format!("fulfillment failed: {e}")));
+                }
+            }
+        };
 
         info!(request_id = %request_id, "fulfillment confirmed, fetching set inclusion receipt");
 
@@ -310,5 +357,113 @@ mod tests {
             !debug.contains(TEST_PRIVATE_KEY),
             "raw private key must not appear in Debug output"
         );
+    }
+
+    // ── is_request_not_locked_error ─────────────────────────────────────
+    //
+    // These tests construct the *real* Boundless SDK error types that the
+    // `RequestIsNotLocked` Solidity custom error produces in production.
+    // If a `boundless-market` upgrade changes the Display/Debug formatting
+    // of `ClientError` → `MarketError` → `TxnErr` →
+    // `IBoundlessMarketErrors::RequestIsNotLocked`, these tests will fail
+    // and alert us that the string-matching needle needs updating.
+
+    mod request_not_locked {
+        use alloy_primitives::U256;
+        use boundless_market::{
+            client::ClientError,
+            contracts::{
+                IBoundlessMarket::{self, IBoundlessMarketErrors},
+                TxnErr,
+                boundless_market::MarketError,
+            },
+        };
+
+        use super::*;
+
+        /// Arbitrary request ID used in error construction.
+        const TEST_REQUEST_ID: U256 = U256::from_limbs([42, 0, 0, 0]);
+
+        /// Build a `ClientError` wrapping `RequestIsNotLocked` through the
+        /// **production** path: `TxnErr` → `anyhow::Error` →
+        /// `MarketError::Error` → `ClientError::MarketError`.
+        fn production_path_error() -> ClientError {
+            let revert =
+                IBoundlessMarketErrors::RequestIsNotLocked(IBoundlessMarket::RequestIsNotLocked {
+                    requestId: TEST_REQUEST_ID,
+                });
+            let txn_err = TxnErr::BoundlessMarketErr(revert);
+            // Production wraps TxnErr in anyhow::Error, then into MarketError::Error.
+            let market_err = MarketError::Error(anyhow::Error::from(txn_err));
+            ClientError::MarketError(market_err)
+        }
+
+        /// Build a `ClientError` wrapping `RequestIsNotLocked` through the
+        /// **direct** path: `TxnErr` → `MarketError::TxnError` →
+        /// `ClientError::MarketError`.
+        fn direct_path_error() -> ClientError {
+            let revert =
+                IBoundlessMarketErrors::RequestIsNotLocked(IBoundlessMarket::RequestIsNotLocked {
+                    requestId: TEST_REQUEST_ID,
+                });
+            let txn_err = TxnErr::BoundlessMarketErr(revert);
+            let market_err = MarketError::TxnError(txn_err);
+            ClientError::MarketError(market_err)
+        }
+
+        /// Build a `ClientError` for a **different** Solidity error
+        /// (`RequestIsLocked`) to verify we don't false-positive.
+        fn different_revert_error() -> ClientError {
+            let revert =
+                IBoundlessMarketErrors::RequestIsLocked(IBoundlessMarket::RequestIsLocked {
+                    requestId: TEST_REQUEST_ID,
+                });
+            let txn_err = TxnErr::BoundlessMarketErr(revert);
+            let market_err = MarketError::Error(anyhow::Error::from(txn_err));
+            ClientError::MarketError(market_err)
+        }
+
+        /// Production error chain (anyhow-wrapped) matches.
+        #[rstest]
+        fn matches_production_path() {
+            let err = production_path_error();
+            assert!(
+                BoundlessProver::is_request_not_locked_error(&err),
+                "should detect RequestIsNotLocked through production error chain. \
+                 Display: {err}, Debug: {err:?}"
+            );
+        }
+
+        /// Direct error chain (`MarketError::TxnError`) matches.
+        #[rstest]
+        fn matches_direct_path() {
+            let err = direct_path_error();
+            assert!(
+                BoundlessProver::is_request_not_locked_error(&err),
+                "should detect RequestIsNotLocked through direct error chain. \
+                 Display: {err}, Debug: {err:?}"
+            );
+        }
+
+        /// A different revert (`RequestIsLocked`) must NOT match.
+        #[rstest]
+        fn rejects_different_revert() {
+            let err = different_revert_error();
+            assert!(
+                !BoundlessProver::is_request_not_locked_error(&err),
+                "should NOT match RequestIsLocked (different error). \
+                 Display: {err}, Debug: {err:?}"
+            );
+        }
+
+        /// Plain `std::io::Error` must NOT match.
+        #[rstest]
+        fn rejects_unrelated_error() {
+            let err = std::io::Error::new(std::io::ErrorKind::TimedOut, "connection timed out");
+            assert!(
+                !BoundlessProver::is_request_not_locked_error(&err),
+                "should NOT match an unrelated I/O error"
+            );
+        }
     }
 }

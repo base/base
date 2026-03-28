@@ -33,6 +33,7 @@ tokio = { workspace = true, features = ["rt"], optional = true }
 risc0-zkvm = { workspace = true, features = ["prove"], optional = true }
 
 [dev-dependencies]
+anyhow.workspace = true
 rstest.workspace = true
 
 [features]
