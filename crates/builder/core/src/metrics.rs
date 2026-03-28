@@ -259,14 +259,13 @@ impl BuilderMetrics {
     }
 
     /// Records payload builder metrics.
-    #[cfg(feature = "metrics")]
     pub fn set_payload_builder_metrics(
-        payload_transaction_simulation_time: impl metrics::IntoF64 + Copy,
-        num_txs_considered: impl metrics::IntoF64 + Copy,
-        num_txs_simulated: impl metrics::IntoF64 + Copy,
-        num_txs_simulated_success: impl metrics::IntoF64 + Copy,
-        num_txs_simulated_fail: impl metrics::IntoF64 + Copy,
-        reverted_gas_used: impl metrics::IntoF64,
+        payload_transaction_simulation_time: f64,
+        num_txs_considered: f64,
+        num_txs_simulated: f64,
+        num_txs_simulated_success: f64,
+        num_txs_simulated_fail: f64,
+        reverted_gas_used: f64,
     ) {
         Self::payload_transaction_simulation_duration().record(payload_transaction_simulation_time);
         Self::payload_transaction_simulation_gauge().set(payload_transaction_simulation_time);

@@ -907,12 +907,12 @@ impl OpPayloadBuilderCtx {
 
         let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
         BuilderMetrics::set_payload_builder_metrics(
-            payload_transaction_simulation_time,
+            payload_transaction_simulation_time.as_secs_f64(),
             num_txs_considered as f64,
-            num_txs_simulated,
-            num_txs_simulated_success,
-            num_txs_simulated_fail,
-            reverted_gas_used,
+            num_txs_simulated as f64,
+            num_txs_simulated_success as f64,
+            num_txs_simulated_fail as f64,
+            reverted_gas_used as f64,
         );
 
         diag.txs_considered = num_txs_considered;
