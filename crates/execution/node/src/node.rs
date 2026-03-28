@@ -134,7 +134,10 @@ impl PayloadAttributesBuilder<OpPayloadAttributes> for BaseLocalPayloadAttribute
 
         let timestamp = std::cmp::max(
             parent.timestamp().saturating_add(1),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or(std::time::Duration::from_secs(0))
+                .as_secs(),
         );
 
         let default_eip_1559_params = BaseFeeParams::optimism();
