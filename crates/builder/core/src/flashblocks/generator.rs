@@ -475,14 +475,10 @@ impl<T: Clone> Future for WaitForValue<T> {
                 }
                 None => {
                     // Reuse an empty slot or allocate a new one.
-                    let idx = state
-                        .wakers
-                        .iter()
-                        .position(Option::is_none)
-                        .unwrap_or_else(|| {
-                            state.wakers.push(None);
-                            state.wakers.len() - 1
-                        });
+                    let idx = state.wakers.iter().position(Option::is_none).unwrap_or_else(|| {
+                        state.wakers.push(None);
+                        state.wakers.len() - 1
+                    });
                     state.wakers[idx] = Some(waker);
                     this.slot = Some(idx);
                 }
