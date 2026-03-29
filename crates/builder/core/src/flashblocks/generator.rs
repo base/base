@@ -453,9 +453,10 @@ impl<T: Clone> Future for WaitForValue<T> {
         if let Some(value) = state.value.clone() {
             Poll::Ready(value)
         } else {
-            // Register waker so `set()` can wake us. The lock ensures no
-            // notification is lost between the value check and registration.
-            state.wakers.push(cx.waker().clone());
+            // Only register if no existing waker will already wake this task.
+            if !state.wakers.iter().any(|w| w.will_wake(cx.waker())) {
+                state.wakers.push(cx.waker().clone());
+            }
             Poll::Pending
         }
     }
