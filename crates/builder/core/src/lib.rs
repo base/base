@@ -39,5 +39,6 @@ pub use flashblocks::{
 mod extension;
 pub use extension::BuilderApiExtension;
 
+/// Shared test infrastructure: local node instances, chain drivers, transaction builders, and pool observers.
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

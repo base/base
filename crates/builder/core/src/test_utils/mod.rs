@@ -1,3 +1,5 @@
+//! Test utilities for the Base block builder.
+
 mod apis;
 mod contracts;
 mod driver;
@@ -78,24 +80,29 @@ pub async fn setup_test_instance_with_node_config(
     LocalInstance::new_with_node_config(builder_config, node_config).await
 }
 
-// anvil default key[1]
+/// Hardcoded builder private key (anvil default key[1]).
 pub const BUILDER_PRIVATE_KEY: &str =
     "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
-// anvil default key[0]
+/// Hardcoded funded account private key (anvil default key[0]).
 pub const FUNDED_PRIVATE_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-// anvil default key[8]
+/// Hardcoded flashblocks contract deployer private key (anvil default key[8]).
 pub const FLASHBLOCKS_DEPLOY_KEY: &str =
     "0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97";
 
+/// Default block gas limit used in tests.
 pub const DEFAULT_GAS_LIMIT: u64 = 10_000_000;
 
+/// Default EIP-1559 base fee denominator used in tests.
 pub const DEFAULT_DENOMINATOR: u32 = 50;
 
+/// Default EIP-1559 elasticity multiplier used in tests.
 pub const DEFAULT_ELASTICITY: u32 = 2;
+/// Default JWT secret token for authenticating Engine API requests in tests.
 pub const DEFAULT_JWT_TOKEN: &str =
     "688f5d737bad920bdfb2fc2f488d6b6209eebda1dae949a8de91398d932c517a";
 
+/// One ETH expressed in wei (10^18).
 pub const ONE_ETH: u128 = 1_000_000_000_000_000_000;
 
 /// This gets invoked before any tests, when the cargo test framework loads the test library.

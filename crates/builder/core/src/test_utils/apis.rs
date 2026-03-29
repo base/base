@@ -18,19 +18,25 @@ use tracing::{debug, info};
 
 use super::DEFAULT_JWT_TOKEN;
 
+/// RPC transport address for connecting to an execution client.
 #[derive(Clone, Debug)]
 pub enum Address {
+    /// Unix IPC socket path.
     Ipc(String),
+    /// HTTP(S) URL endpoint.
     Http(url::Url),
 }
 
+/// Abstraction over RPC transport protocols (IPC, HTTP) for Engine API clients.
 pub trait Protocol {
+    /// Creates a new JSON-RPC client connected via this protocol.
     fn client(
         jwt: JwtSecret,
         address: Address,
     ) -> impl Future<Output = impl SubscriptionClientT + Send + Sync + Unpin + 'static>;
 }
 
+/// HTTP transport protocol marker.
 #[derive(Debug)]
 pub struct Http;
 impl Protocol for Http {
@@ -51,6 +57,7 @@ impl Protocol for Http {
     }
 }
 
+/// IPC transport protocol marker.
 #[derive(Debug)]
 pub struct Ipc;
 impl Protocol for Ipc {
@@ -84,6 +91,7 @@ impl<P: Protocol> EngineApi<P> {
 
 // http specific
 impl EngineApi<Http> {
+    /// Creates an HTTP [`EngineApi`] client from a URL string.
     pub fn with_http(url: &str) -> Self {
         Self {
             address: Address::Http(url.parse().expect("Invalid URL")),
@@ -92,6 +100,7 @@ impl EngineApi<Http> {
         }
     }
 
+    /// Creates an HTTP [`EngineApi`] client targeting `localhost` on the given port.
     pub fn with_localhost_port(port: u16) -> Self {
         Self {
             address: Address::Http(
@@ -102,6 +111,7 @@ impl EngineApi<Http> {
         }
     }
 
+    /// Overrides the port on this client's URL.
     pub fn with_port(mut self, port: u16) -> Self {
         let Address::Http(url) = &mut self.address else {
             unreachable!();
@@ -111,11 +121,13 @@ impl EngineApi<Http> {
         self
     }
 
+    /// Overrides the JWT secret used for authentication.
     pub fn with_jwt_secret(mut self, jwt_secret: &str) -> Self {
         self.jwt_secret = jwt_secret.parse().expect("Invalid JWT");
         self
     }
 
+    /// Returns a reference to the underlying HTTP URL.
     pub fn url(&self) -> &url::Url {
         let Address::Http(url) = &self.address else {
             unreachable!();
@@ -126,6 +138,7 @@ impl EngineApi<Http> {
 
 // ipc specific
 impl EngineApi<Ipc> {
+    /// Creates an IPC [`EngineApi`] client from a socket path.
     pub fn with_ipc(path: &str) -> Self {
         Self {
             address: Address::Ipc(path.into()),
@@ -134,6 +147,7 @@ impl EngineApi<Ipc> {
         }
     }
 
+    /// Returns the IPC socket path.
     pub fn path(&self) -> &str {
         let Address::Ipc(path) = &self.address else {
             unreachable!();
@@ -143,6 +157,7 @@ impl EngineApi<Ipc> {
 }
 
 impl<P: Protocol> EngineApi<P> {
+    /// Fetches an execution payload by its identifier.
     pub async fn get_payload(
         &self,
         payload_id: PayloadId,
@@ -152,6 +167,7 @@ impl<P: Protocol> EngineApi<P> {
             .await?)
     }
 
+    /// Submits a new execution payload for validation.
     pub async fn new_payload(
         &self,
         payload: OpExecutionPayloadV4,
@@ -170,6 +186,7 @@ impl<P: Protocol> EngineApi<P> {
         .await?)
     }
 
+    /// Sends a forkchoice update, optionally triggering a new payload build.
     pub async fn update_forkchoice(
         &self,
         current_head: B256,
@@ -190,8 +207,10 @@ impl<P: Protocol> EngineApi<P> {
     }
 }
 
+/// JSON-RPC interface for block queries used in tests.
 #[rpc(server, client, namespace = "eth")]
 pub trait BlockApi {
+    /// Returns a block by number or tag, optionally including full transactions.
     #[method(name = "getBlockByNumber")]
     async fn get_block_by_number(
         &self,
@@ -200,6 +219,7 @@ pub trait BlockApi {
     ) -> RpcResult<Option<alloy_rpc_types_eth::Block>>;
 }
 
+/// Generates a genesis JSON file from the embedded template, stamped with the current time.
 pub fn generate_genesis(output: Option<String>) -> eyre::Result<()> {
     // Read the template file
     let template = include_str!("artifacts/genesis.json.tmpl");
