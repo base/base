@@ -584,10 +584,11 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     ///   - If `retry_count > MAX_PROOF_RETRIES` → drops the entry.
     ///   - Otherwise → calls `prove_block` and transitions to `AwaitingProof`.
     async fn poll_or_submit(&mut self, game_address: Address) -> eyre::Result<()> {
-        let (invalid_index, expected_root, intent) = match self.pending_proofs.get(&game_address) {
-            Some(p) => (p.invalid_index, p.expected_root, p.intent),
-            None => return Ok(()),
-        };
+        let (invalid_index, expected_root, intent, targets_tee) =
+            match self.pending_proofs.get(&game_address) {
+                Some(p) => (p.invalid_index, p.expected_root, p.intent, p.prove_request.is_none()),
+                None => return Ok(()),
+            };
 
         // Check if the game is still actionable before doing any work.
         // For Challenge intents, also verify that the TEE proof still exists
@@ -615,11 +616,19 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                 return Ok(());
             }
         } else {
-            // For Nullify intents, check status AND prover addresses.
-            // Nullification zeroes the target prover but does NOT change
-            // the game status (it stays IN_PROGRESS), so checking status
-            // alone would cause infinite retries after a successful
+            // For Nullify intents, check status AND whether the targeted
+            // prover has been zeroed. Nullification zeroes only the
+            // specific prover (TEE or ZK) but does NOT change the game
+            // status (it stays IN_PROGRESS), so checking status alone
+            // would cause infinite retries after a successful
             // nullification.
+            //
+            // TEE proofs (prove_request == None) target `teeProver`;
+            // ZK proofs target `zkProver`. Checking only the relevant
+            // prover avoids an infinite revert-retry loop in Path 2
+            // (fraudulent ZK challenge on a valid TEE proposal), where
+            // nullification zeroes `zkProver` but leaves `teeProver`
+            // intact.
             let (status, tee_prover, zk_prover) = tokio::try_join!(
                 self.verifier_client.status(game_address),
                 self.verifier_client.tee_prover(game_address),
@@ -630,8 +639,16 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                 self.pending_proofs.remove(&game_address);
                 return Ok(());
             }
-            if tee_prover == Address::ZERO && zk_prover == Address::ZERO {
-                debug!(game = %game_address, "game already nullified (both provers zeroed), dropping pending proof");
+            let target_prover_zeroed =
+                if targets_tee { tee_prover == Address::ZERO } else { zk_prover == Address::ZERO };
+            if target_prover_zeroed {
+                debug!(
+                    game = %game_address,
+                    targets_tee = targets_tee,
+                    tee_prover = %tee_prover,
+                    zk_prover = %zk_prover,
+                    "game already nullified (target prover zeroed), dropping pending proof"
+                );
                 self.pending_proofs.remove(&game_address);
                 return Ok(());
             }
