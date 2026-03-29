@@ -400,10 +400,13 @@ pub struct BlockCell<T> {
 }
 
 /// Internal state shared between the cell and its waiters.
+///
+/// Each waiter owns a slot (index) in the `wakers` vector. Slots are reused
+/// when a waiter completes or is dropped, keeping the vector compact.
 #[derive(Debug)]
 struct BlockCellState<T> {
     value: Option<T>,
-    wakers: Vec<Waker>,
+    wakers: Vec<Option<Waker>>,
 }
 
 impl<T: Clone> BlockCell<T> {
@@ -412,10 +415,10 @@ impl<T: Clone> BlockCell<T> {
     }
 
     pub fn set(&self, value: T) {
-        let wakers = {
+        let wakers: Vec<Waker> = {
             let mut state = self.state.lock();
             state.value = Some(value);
-            std::mem::take(&mut state.wakers)
+            state.wakers.iter_mut().filter_map(Option::take).collect()
         };
         // Wake outside the lock to avoid holding it during waker execution.
         for waker in wakers {
@@ -428,15 +431,21 @@ impl<T: Clone> BlockCell<T> {
     }
 
     /// Return a future that resolves when a value is set.
+    ///
+    /// The returned future cleans up its waker slot on drop, so it is safe to
+    /// use inside `tokio::select!` or with timeouts.
     pub fn wait_for_value(&self) -> WaitForValue<T> {
-        WaitForValue { cell: self.clone() }
+        WaitForValue { cell: self.clone(), slot: None }
     }
 }
 
 /// Future that resolves when a value is set in [`BlockCell`].
-#[derive(Clone)]
+///
+/// Cleans up its waker slot on drop, so cancelled futures do not leave stale
+/// entries in the waker list.
 pub struct WaitForValue<T> {
     cell: BlockCell<T>,
+    slot: Option<usize>,
 }
 
 impl<T> std::fmt::Debug for WaitForValue<T> {
@@ -449,15 +458,44 @@ impl<T: Clone> Future for WaitForValue<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.cell.state.lock();
+        let this = self.get_mut();
+        let mut state = this.cell.state.lock();
         if let Some(value) = state.value.clone() {
+            // Clear our slot since we're resolving.
+            if let Some(idx) = this.slot.take() {
+                state.wakers[idx] = None;
+            }
             Poll::Ready(value)
         } else {
-            // Only register if no existing waker will already wake this task.
-            if !state.wakers.iter().any(|w| w.will_wake(cx.waker())) {
-                state.wakers.push(cx.waker().clone());
+            let waker = cx.waker().clone();
+            match this.slot {
+                Some(idx) => {
+                    // Update existing slot with the current waker.
+                    state.wakers[idx] = Some(waker);
+                }
+                None => {
+                    // Reuse an empty slot or allocate a new one.
+                    let idx = state
+                        .wakers
+                        .iter()
+                        .position(Option::is_none)
+                        .unwrap_or_else(|| {
+                            state.wakers.push(None);
+                            state.wakers.len() - 1
+                        });
+                    state.wakers[idx] = Some(waker);
+                    this.slot = Some(idx);
+                }
             }
             Poll::Pending
+        }
+    }
+}
+
+impl<T> Drop for WaitForValue<T> {
+    fn drop(&mut self) {
+        if let Some(idx) = self.slot.take() {
+            self.cell.state.lock().wakers[idx] = None;
         }
     }
 }
