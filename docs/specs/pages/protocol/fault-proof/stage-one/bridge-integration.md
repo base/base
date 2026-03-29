@@ -238,7 +238,7 @@ roles: the `PROPOSER` and a `CHALLENGER` (or set of challengers). Each interacti
 In the event that we'd like to switch back to permissioned proposals, we can change the `RESPECTED_GAME_TYPE` in the
 `OptimismPortal` to a deployment of the `PermissionedFaultDisputeGame`.
 
-### Roles - `PermissionedDisputeGame`
+### Roles - `PermissionedFaultDisputeGame`
 
 - `PROPOSER` - Actor that can create a `PermissionedFaultDisputeGame` and participate in the games they've created.
 - `CHALLENGER` - Actor(s) that can participate in a `PermissionedFaultDisputeGame`.
