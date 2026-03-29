@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
     ChallengeSubmitter, Driver, DriverConfig, GameScanner, L1HeadProvider, OutputValidator,
     PendingProof, ProofPhase, ScannerConfig, TeeConfig, derive_session_id,
