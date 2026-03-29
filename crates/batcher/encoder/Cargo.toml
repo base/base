@@ -12,8 +12,8 @@ repository.workspace = true
 workspace = true
 
 [features]
-clap = ["dep:clap"]
-metrics = ["base-metrics/metrics", "dep:metrics"]
+clap = [ "dep:clap" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]
 
 [dependencies]
 tracing = { workspace = true, features = ["std"] }
