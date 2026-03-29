@@ -6,8 +6,8 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 pub const ECDSA_SIGNATURE_LENGTH: usize = 65;
 
 /// Base length of the proof journal without intermediate roots:
-/// address(20) + 7 × bytes32(32) = 244 bytes.
-pub const PROOF_JOURNAL_BASE_LENGTH: usize = 244;
+/// address(20) + 5 × bytes32(32) + 2 × uint64(8) = 196 bytes.
+pub const PROOF_JOURNAL_BASE_LENGTH: usize = 196;
 
 /// The `AggregateVerifier` contract journal encoding.
 ///
@@ -15,7 +15,7 @@ pub const PROOF_JOURNAL_BASE_LENGTH: usize = 244;
 ///
 /// ```text
 /// prover(20) || l1OriginHash(32) || prevOutputRoot(32)
-///   || startingL2Block(32) || outputRoot(32) || endingL2Block(32)
+///   || startingL2Block(8) || outputRoot(32) || endingL2Block(8)
 ///   || intermediateRoots(32*N) || configHash(32) || imageHash(32)
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,11 +27,11 @@ pub struct ProofJournal {
     /// The previous output root hash.
     pub prev_output_root: B256,
     /// The starting L2 block number.
-    pub starting_l2_block: U256,
+    pub starting_l2_block: u64,
     /// The output root hash.
     pub output_root: B256,
     /// The ending L2 block number.
-    pub ending_l2_block: U256,
+    pub ending_l2_block: u64,
     /// Intermediate output roots for aggregate proposals.
     pub intermediate_roots: Vec<B256>,
     /// The config hash.
@@ -50,9 +50,9 @@ impl ProofJournal {
         data.extend_from_slice(self.proposer.as_slice());
         data.extend_from_slice(self.l1_origin_hash.as_slice());
         data.extend_from_slice(self.prev_output_root.as_slice());
-        data.extend_from_slice(&self.starting_l2_block.to_be_bytes::<32>());
+        data.extend_from_slice(&self.starting_l2_block.to_be_bytes());
         data.extend_from_slice(self.output_root.as_slice());
-        data.extend_from_slice(&self.ending_l2_block.to_be_bytes::<32>());
+        data.extend_from_slice(&self.ending_l2_block.to_be_bytes());
         for root in &self.intermediate_roots {
             data.extend_from_slice(root.as_slice());
         }
@@ -161,9 +161,9 @@ mod tests {
             prev_output_root: b256!(
                 "3333333333333333333333333333333333333333333333333333333333333333"
             ),
-            starting_l2_block: U256::from(999),
+            starting_l2_block: 999,
             output_root: b256!("4444444444444444444444444444444444444444444444444444444444444444"),
-            ending_l2_block: U256::from(1000),
+            ending_l2_block: 1000,
             intermediate_roots: vec![],
             config_hash: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
             tee_image_hash: b256!(
@@ -176,7 +176,7 @@ mod tests {
     fn test_journal_encode_length() {
         let data = test_journal().encode();
         assert_eq!(data.len(), PROOF_JOURNAL_BASE_LENGTH);
-        assert_eq!(data.len(), 244);
+        assert_eq!(data.len(), 196);
     }
 
     #[test]
@@ -194,12 +194,12 @@ mod tests {
         off += 32;
         assert_eq!(&data[off..off + 32], journal.prev_output_root.as_slice());
         off += 32;
-        assert_eq!(&data[off..off + 32], &journal.starting_l2_block.to_be_bytes::<32>());
-        off += 32;
+        assert_eq!(&data[off..off + 8], &journal.starting_l2_block.to_be_bytes());
+        off += 8;
         assert_eq!(&data[off..off + 32], journal.output_root.as_slice());
         off += 32;
-        assert_eq!(&data[off..off + 32], &journal.ending_l2_block.to_be_bytes::<32>());
-        off += 32;
+        assert_eq!(&data[off..off + 8], &journal.ending_l2_block.to_be_bytes());
+        off += 8;
         assert_eq!(&data[off..off + 32], journal.config_hash.as_slice());
         off += 32;
         assert_eq!(&data[off..off + 32], journal.tee_image_hash.as_slice());
@@ -211,9 +211,9 @@ mod tests {
             proposer: address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
             l1_origin_hash: B256::ZERO,
             prev_output_root: B256::ZERO,
-            starting_l2_block: U256::ZERO,
+            starting_l2_block: 0,
             output_root: B256::ZERO,
-            ending_l2_block: U256::ZERO,
+            ending_l2_block: 0,
             intermediate_roots: vec![
                 b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
                 b256!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
@@ -225,7 +225,7 @@ mod tests {
         let data = journal.encode();
         assert_eq!(data.len(), PROOF_JOURNAL_BASE_LENGTH + 64);
 
-        let ir_offset = 20 + 5 * 32;
+        let ir_offset = 20 + 32 + 32 + 8 + 32 + 8;
         assert_eq!(&data[ir_offset..ir_offset + 32], journal.intermediate_roots[0].as_slice());
         assert_eq!(&data[ir_offset + 32..ir_offset + 64], journal.intermediate_roots[1].as_slice());
     }

@@ -91,7 +91,7 @@ impl Signing {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{U256, address, b256};
+    use alloy_primitives::{address, b256};
     use rand_08::rngs::OsRng;
 
     use super::*;
@@ -106,9 +106,9 @@ mod tests {
             prev_output_root: b256!(
                 "3333333333333333333333333333333333333333333333333333333333333333"
             ),
-            starting_l2_block: U256::from(999),
+            starting_l2_block: 999,
             output_root: b256!("4444444444444444444444444444444444444444444444444444444444444444"),
-            ending_l2_block: U256::from(1000),
+            ending_l2_block: 1000,
             intermediate_roots: vec![],
             config_hash: b256!("1111111111111111111111111111111111111111111111111111111111111111"),
             tee_image_hash: b256!(

@@ -24,7 +24,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::{Address, B256, Signature, U256, keccak256};
+use alloy_primitives::{Address, B256, Signature, keccak256};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient,
@@ -781,9 +781,9 @@ where
             proposer: self.config.driver.proposer_address,
             l1_origin_hash: aggregate_proposal.l1_origin_hash,
             prev_output_root: aggregate_proposal.prev_output_root,
-            starting_l2_block: U256::from(starting_block_number),
+            starting_l2_block: starting_block_number,
             output_root: aggregate_proposal.output_root,
-            ending_l2_block: aggregate_proposal.l2_block_number,
+            ending_l2_block: aggregate_proposal.l2_block_number.to::<u64>(),
             intermediate_roots: intermediate_roots.to_vec(),
             config_hash: aggregate_proposal.config_hash,
             tee_image_hash: self.config.driver.tee_image_hash,
