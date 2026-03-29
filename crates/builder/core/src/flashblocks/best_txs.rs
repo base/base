@@ -37,6 +37,7 @@ where
     T: PoolTransaction,
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
+    /// Creates a new [`BestFlashblocksTxs`] wrapping the given payload transaction iterator.
     pub fn new(inner: reth_payload_util::BestPayloadTransactions<T, I>) -> Self {
         Self { inner, committed_transactions: Default::default() }
     }

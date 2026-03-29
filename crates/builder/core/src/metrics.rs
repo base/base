@@ -1,3 +1,5 @@
+//! Builder metrics collected during block and flashblock construction.
+
 use crate::{ExecutionInfo, FlashblockDiagnostics, ResourceLimits};
 
 const PRIORITY_FEE_THRESHOLDS_WEI: [(&str, u64); 3] =

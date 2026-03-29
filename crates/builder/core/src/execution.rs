@@ -73,14 +73,18 @@ pub struct TxResources {
 /// These can operate in dry-run or enforcement mode via the execution metering mode setting.
 #[derive(Debug, Error, Clone)]
 pub enum ExecutionMeteringLimitExceeded {
+    /// A single transaction's predicted execution time exceeded its per-tx limit.
     #[error("transaction execution time exceeded: tx_time_us={0} limit_us={1}")]
     TransactionExecutionTime(u128, u128),
+    /// Cumulative flashblock execution time would exceed the per-flashblock limit.
     #[error(
         "flashblock execution time exceeded: flashblock_used_us={0} tx_time_us={1} limit_us={2}"
     )]
     FlashblockExecutionTime(u128, u128, u128),
+    /// A single transaction's predicted state root time exceeded its per-tx limit.
     #[error("transaction state root time exceeded: tx_time_us={0} limit_us={1}")]
     TransactionStateRootTime(u128, u128),
+    /// Cumulative state root time would exceed the per-block limit.
     #[error("block state root time exceeded: cumulative_us={0} tx_time_us={1} block_limit_us={2}")]
     BlockStateRootTime(u128, u128, u128),
 }
@@ -190,6 +194,7 @@ pub enum TxnOutcome {
     RevertedAndExcluded,
 }
 
+/// Accumulated execution state for the current block being built.
 #[derive(Default, Debug)]
 pub struct ExecutionInfo {
     /// All executed transactions (unrecovered).
