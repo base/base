@@ -37,11 +37,12 @@ enum ReceiptType {
   RECEIPT_TYPE_UNSPECIFIED = 0;
   RECEIPT_TYPE_STARK = 1;
   RECEIPT_TYPE_SNARK = 2;
+  RECEIPT_TYPE_ON_CHAIN_SNARK = 3;
 }
 
 message GetProofRequest {
   string session_id = 1;
-  // Optional: specify which receipt type to return (STARK or SNARK)
+  // Optional: specify which receipt type to return (STARK, SNARK, or ON_CHAIN_SNARK)
   // If unspecified, returns STARK by default
   optional ReceiptType receipt_type = 2;
 }

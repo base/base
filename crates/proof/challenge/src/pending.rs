@@ -222,7 +222,8 @@ impl PendingProofs {
             }
         };
 
-        let request = GetProofRequest { session_id, receipt_type: Some(ReceiptType::Snark as i32) };
+        let request =
+            GetProofRequest { session_id, receipt_type: Some(ReceiptType::OnChainSnark as i32) };
 
         let response = zk_prover.get_proof(request).await?;
         let status = ProofJobStatus::try_from(response.status).unwrap_or_else(|_| {
