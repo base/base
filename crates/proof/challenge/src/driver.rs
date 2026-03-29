@@ -615,13 +615,23 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                 return Ok(());
             }
         } else {
-            // For Nullify intents (Paths 1-TEE, 2, 3) the contract itself
-            // validates that the target proof type still exists. We only
-            // check the game status and let the contract revert if the
-            // prover state changed between our check and submission.
-            let status = self.verifier_client.status(game_address).await?;
+            // For Nullify intents, check status AND prover addresses.
+            // Nullification zeroes the target prover but does NOT change
+            // the game status (it stays IN_PROGRESS), so checking status
+            // alone would cause infinite retries after a successful
+            // nullification.
+            let (status, tee_prover, zk_prover) = tokio::try_join!(
+                self.verifier_client.status(game_address),
+                self.verifier_client.tee_prover(game_address),
+                self.verifier_client.zk_prover(game_address),
+            )?;
             if status != GameScanner::STATUS_IN_PROGRESS {
                 debug!(game = %game_address, status = status, "game no longer in progress, dropping pending proof");
+                self.pending_proofs.remove(&game_address);
+                return Ok(());
+            }
+            if tee_prover == Address::ZERO && zk_prover == Address::ZERO {
+                debug!(game = %game_address, "game already nullified (both provers zeroed), dropping pending proof");
                 self.pending_proofs.remove(&game_address);
                 return Ok(());
             }
