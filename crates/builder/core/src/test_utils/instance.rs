@@ -81,8 +81,8 @@ impl<P: core::fmt::Debug> core::fmt::Debug for PoolHandle<P> {
     }
 }
 
-#[async_trait]
 /// Trait for submitting transactions to the pool from outside the node.
+#[async_trait]
 pub trait ExternalTransactionPool: Send + Sync + core::fmt::Debug {
     /// Submits a pooled transaction as if it arrived from an external peer.
     async fn add_external_transaction(&self, tx: BasePooledTransaction) -> eyre::Result<()>;
