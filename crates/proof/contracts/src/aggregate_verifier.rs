@@ -50,6 +50,9 @@ sol! {
         /// Returns the starting block number.
         function startingBlockNumber() external view returns (uint256);
 
+        /// Returns the L1 head block hash stored in CWIA at game creation time.
+        function l1Head() external pure returns (bytes32);
+
         /// Returns the intermediate output roots submitted with this game.
         function intermediateOutputRoots() external view returns (bytes memory);
 
@@ -111,6 +114,9 @@ pub trait AggregateVerifierClient: Send + Sync {
 
     /// Returns the starting block number for the given game.
     async fn starting_block_number(&self, game_address: Address) -> Result<u64, ContractError>;
+
+    /// Returns the L1 head block hash stored at game creation time.
+    async fn l1_head(&self, game_address: Address) -> Result<B256, ContractError>;
 
     /// Reads `BLOCK_INTERVAL` from the `AggregateVerifier` implementation contract.
     async fn read_block_interval(&self, impl_address: Address) -> Result<u64, ContractError>;
@@ -228,6 +234,17 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         block_u256
             .try_into()
             .map_err(|_| ContractError::Validation("startingBlockNumber overflows u64".into()))
+    }
+
+    async fn l1_head(&self, game_address: Address) -> Result<B256, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract
+            .l1Head()
+            .call()
+            .await
+            .map_err(|e| ContractError::Call { context: "l1Head failed".into(), source: e })
     }
 
     async fn read_block_interval(&self, impl_address: Address) -> Result<u64, ContractError> {

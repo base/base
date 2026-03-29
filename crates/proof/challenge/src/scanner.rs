@@ -29,7 +29,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use base_proof_contracts::{
     AggregateVerifierClient, DisputeGameFactoryClient, GameAtIndex, GameInfo,
 };
@@ -87,6 +87,8 @@ pub struct CandidateGame {
     pub starting_block_number: u64,
     /// The intermediate block interval for this game's type.
     pub intermediate_block_interval: u64,
+    /// The L1 head block hash stored at game creation time.
+    pub l1_head: B256,
     /// Address of the TEE prover for this game (`Address::ZERO` if none registered).
     pub tee_prover: Address,
     /// Classification of this candidate and the action the driver should take.
@@ -239,12 +241,13 @@ impl GameScanner {
             return Ok(None);
         }
 
-        let (zk_prover, tee_prover, countered_index, info, starting_block_number) = tokio::try_join!(
+        let (zk_prover, tee_prover, countered_index, info, starting_block_number, l1_head) = tokio::try_join!(
             self.verifier_client.zk_prover(factory.proxy),
             self.verifier_client.tee_prover(factory.proxy),
             self.verifier_client.countered_index(factory.proxy),
             self.verifier_client.game_info(factory.proxy),
             self.verifier_client.starting_block_number(factory.proxy),
+            self.verifier_client.l1_head(factory.proxy),
         )?;
 
         // Classify the game based on its prover state.
@@ -263,6 +266,7 @@ impl GameScanner {
             info,
             starting_block_number,
             intermediate_block_interval,
+            l1_head,
             tee_prover,
             category,
         }))

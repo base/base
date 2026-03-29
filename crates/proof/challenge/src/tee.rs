@@ -1,15 +1,14 @@
-//! L1 head provider abstraction for fetching the finalized L1 block hash.
+//! L1 head provider abstraction for fetching L1 block information.
 
 use alloy_primitives::B256;
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types_eth::BlockNumberOrTag;
 use async_trait::async_trait;
 
-/// Trait for fetching the L1 finalized head.
+/// Trait for fetching L1 block information.
 #[async_trait]
 pub trait L1HeadProvider: Send + Sync + std::fmt::Debug {
-    /// Returns the hash and block number of the current L1 finalized block.
-    async fn finalized_head(&self) -> eyre::Result<(B256, u64)>;
+    /// Returns the block number for the given L1 block hash.
+    async fn block_number_by_hash(&self, hash: B256) -> eyre::Result<u64>;
 }
 
 /// [`L1HeadProvider`] backed by an RPC [`RootProvider`].
@@ -27,12 +26,12 @@ impl RpcL1HeadProvider {
 
 #[async_trait]
 impl L1HeadProvider for RpcL1HeadProvider {
-    async fn finalized_head(&self) -> eyre::Result<(B256, u64)> {
+    async fn block_number_by_hash(&self, hash: B256) -> eyre::Result<u64> {
         let block = self
             .provider
-            .get_block_by_number(BlockNumberOrTag::Finalized)
+            .get_block_by_hash(hash)
             .await?
-            .ok_or_else(|| eyre::eyre!("L1 finalized block not found"))?;
-        Ok((block.header.hash, block.header.number))
+            .ok_or_else(|| eyre::eyre!("L1 block not found for hash {hash}"))?;
+        Ok(block.header.number)
     }
 }

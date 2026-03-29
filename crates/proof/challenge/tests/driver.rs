@@ -121,6 +121,7 @@ fn invalid_game_mocks()
                 parent_index: 0,
             },
             starting_block_number: 10,
+            l1_head: B256::repeat_byte(0xAA),
             intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
             countered_index: 0,
         },
@@ -185,6 +186,7 @@ async fn test_step_valid_game_skipped() {
                 parent_index: 0,
             },
             starting_block_number: 10,
+            l1_head: B256::repeat_byte(0xAA),
             intermediate_output_roots: vec![],
             countered_index: 0,
         },
@@ -224,6 +226,7 @@ async fn test_step_validation_error_blocks_not_available() {
                 parent_index: 0,
             },
             starting_block_number: 10,
+            l1_head: B256::repeat_byte(0xAA),
             intermediate_output_roots: vec![B256::repeat_byte(0xFF), B256::repeat_byte(0xEE)],
             countered_index: 0,
         },
@@ -317,6 +320,7 @@ async fn test_step_validation_error_skipped() {
                 parent_index: 0,
             },
             starting_block_number: 10,
+            l1_head: B256::repeat_byte(0xAA),
             // 2 roots expected at interval=5, provide 2 so count matches
             intermediate_output_roots: vec![B256::ZERO, B256::ZERO],
             countered_index: 0,
@@ -751,6 +755,8 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
     l2.insert_block(20, header_20, account_20);
     let l2 = Arc::new(l2);
 
+    let l1_hash = B256::repeat_byte(0xAA);
+
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let tee_addr = Address::repeat_byte(0xEE);
     let mut verifier_games = HashMap::new();
@@ -766,6 +772,7 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
                 parent_index: 0,
             },
             starting_block_number: 10,
+            l1_head: l1_hash,
             // root_15 is correct, index 1 is bogus — invalid_index == 1
             intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
             countered_index: 0,
@@ -773,7 +780,6 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
     );
     let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-    let l1_hash = B256::repeat_byte(0xAA);
     let l1_head = Arc::new(MockL1HeadProvider::success(l1_hash, 100));
 
     let aggregate_proposal = Proposal {
@@ -852,6 +858,7 @@ async fn test_step_nullified_game_not_reprocessed() {
                 parent_index: 0,
             },
             starting_block_number: 10,
+            l1_head: B256::repeat_byte(0xAA),
             intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
             countered_index: 0,
         },
@@ -992,6 +999,7 @@ fn fraudulent_zk_challenge_mocks(
                 parent_index: 0,
             },
             starting_block_number: 10,
+            l1_head: B256::repeat_byte(0xAA),
             intermediate_output_roots: vec![root_15, onchain_root_at_20],
             countered_index: 2, // 1-based → challenged_index = 1
         },
@@ -1083,6 +1091,7 @@ async fn test_step_invalid_zk_proposal_initiates_zk_nullification() {
                 parent_index: 0,
             },
             starting_block_number: 10,
+            l1_head: B256::repeat_byte(0xAA),
             intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
             countered_index: 0,
         },
@@ -1123,6 +1132,7 @@ async fn test_step_valid_zk_proposal_skipped() {
                 parent_index: 0,
             },
             starting_block_number: 10,
+            l1_head: B256::repeat_byte(0xAA),
             intermediate_output_roots: vec![],
             countered_index: 0,
         },

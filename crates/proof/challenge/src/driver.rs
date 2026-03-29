@@ -475,12 +475,16 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             .checked_add(candidate.intermediate_block_interval)
             .ok_or_else(|| eyre::eyre!("claimed_l2_block_number overflow"))?;
 
-        // Fetch L1 finalized head and compute agreed L2 state concurrently.
-        let (l1_head_result, output_root_result) = tokio::join!(
-            tee.l1_head_provider.finalized_head(),
+        // Use the game's stored L1 head (from CWIA) so the enclave signs a
+        // journal whose `l1OriginHash` matches what the on-chain `nullify()`
+        // will use for verification. Look up its block number concurrently
+        // with the agreed L2 state computation.
+        let l1_head = candidate.l1_head;
+        let (l1_head_number_result, output_root_result) = tokio::join!(
+            tee.l1_head_provider.block_number_by_hash(l1_head),
             self.validator.compute_output_root_with_hash(start_block_number),
         );
-        let (l1_head, l1_head_number) = l1_head_result?;
+        let l1_head_number = l1_head_number_result?;
         let (agreed_l2_head_hash, agreed_l2_output_root) = output_root_result?;
 
         let request = TeeProofRequest {
@@ -497,7 +501,9 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
 
         let result = tee.provider.prove(request).await.map_err(|e| eyre::eyre!(e))?;
 
-        // Validate that the TEE computed the expected output root and encode the proof.
+        // Validate that the TEE computed the expected output root and encode
+        // the proof in compact format (type + signature only, no L1 origin
+        // data — the contract already has it in CWIA).
         match &result {
             ProofResult::Tee { aggregate_proposal, .. } => {
                 if aggregate_proposal.output_root != expected_root {
@@ -506,12 +512,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                         aggregate_proposal.output_root
                     ));
                 }
-                ProofEncoder::encode_proof_bytes(
-                    &aggregate_proposal.signature,
-                    aggregate_proposal.l1_origin_hash,
-                    aggregate_proposal.l1_origin_number,
-                )
-                .map_err(|e| eyre::eyre!("TEE proof encoding failed: {e}"))
+                ProofEncoder::encode_dispute_proof_bytes(&aggregate_proposal.signature)
+                    .map_err(|e| eyre::eyre!("TEE proof encoding failed: {e}"))
             }
             ProofResult::Zk { .. } => Err(eyre::eyre!("TEE provider returned ZK result")),
         }

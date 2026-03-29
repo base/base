@@ -41,6 +41,8 @@ pub struct MockGameState {
     pub game_info: GameInfo,
     /// Starting block number for this game.
     pub starting_block_number: u64,
+    /// L1 head block hash stored at game creation time.
+    pub l1_head: B256,
     /// Intermediate output roots for this game.
     pub intermediate_output_roots: Vec<B256>,
     /// 1-based index of the challenged intermediate root (`0` = unchallenged).
@@ -120,6 +122,13 @@ impl AggregateVerifierClient for MockAggregateVerifier {
             .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
     }
 
+    async fn l1_head(&self, game_address: Address) -> Result<B256, ContractError> {
+        self.games
+            .get(&game_address)
+            .map(|s| s.l1_head)
+            .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
+    }
+
     async fn read_block_interval(&self, _impl_address: Address) -> Result<u64, ContractError> {
         Ok(10)
     }
@@ -168,6 +177,9 @@ pub fn factory_game(index: u64, game_type: u32) -> GameAtIndex {
 /// the production invariant.
 pub const DEFAULT_TEE_PROVER: Address = Address::new([0xEE; 20]);
 
+/// Default L1 head hash used by [`mock_state`].
+pub const DEFAULT_L1_HEAD: B256 = B256::repeat_byte(0xAA);
+
 /// Helper to build mock game state for the verifier.
 ///
 /// Uses [`DEFAULT_TEE_PROVER`] as the TEE prover address. Use
@@ -193,6 +205,7 @@ pub const fn mock_state_with_tee(
             parent_index: 0,
         },
         starting_block_number: block_number.saturating_sub(10),
+        l1_head: DEFAULT_L1_HEAD,
         intermediate_output_roots: vec![],
         countered_index: 0,
     }
@@ -377,30 +390,46 @@ impl ProverClient for MockTeeProofProvider {
 /// Mock L1 head provider for testing the driver.
 #[derive(Debug)]
 pub struct MockL1HeadProvider {
-    /// Queue of results returned by [`finalized_head`](L1HeadProvider::finalized_head).
-    pub results: Mutex<VecDeque<eyre::Result<(B256, u64)>>>,
+    /// Queue of `(expected_hash, result)` pairs returned by
+    /// [`block_number_by_hash`](L1HeadProvider::block_number_by_hash).
+    /// When `expected_hash` is `Some`, the mock asserts that the caller
+    /// passes the correct hash.
+    pub block_number_results: Mutex<VecDeque<(Option<B256>, eyre::Result<u64>)>>,
 }
 
 impl MockL1HeadProvider {
-    /// Creates a mock that returns a single successful hash and block number.
+    /// Creates a mock whose [`block_number_by_hash`](L1HeadProvider::block_number_by_hash)
+    /// returns `number` and asserts it is called with `hash`.
     pub fn success(hash: B256, number: u64) -> Self {
-        let mut q = VecDeque::new();
-        q.push_back(Ok((hash, number)));
-        Self { results: Mutex::new(q) }
+        let mut bq = VecDeque::new();
+        bq.push_back((Some(hash), Ok(number)));
+        Self { block_number_results: Mutex::new(bq) }
     }
 
     /// Creates a mock that returns a single error.
     pub fn failure(msg: &str) -> Self {
-        let mut q = VecDeque::new();
-        q.push_back(Err(eyre::eyre!("{msg}")));
-        Self { results: Mutex::new(q) }
+        let mut bq = VecDeque::new();
+        bq.push_back((None, Err(eyre::eyre!("{msg}"))));
+        Self { block_number_results: Mutex::new(bq) }
     }
 }
 
 #[async_trait]
 impl L1HeadProvider for MockL1HeadProvider {
-    async fn finalized_head(&self) -> eyre::Result<(B256, u64)> {
-        self.results.lock().unwrap().pop_front().expect("MockL1HeadProvider has no more results")
+    async fn block_number_by_hash(&self, hash: B256) -> eyre::Result<u64> {
+        let (expected_hash, result) = self
+            .block_number_results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("MockL1HeadProvider has no more block_number_by_hash results");
+        if let Some(expected) = expected_hash {
+            assert_eq!(
+                hash, expected,
+                "MockL1HeadProvider::block_number_by_hash called with unexpected hash"
+            );
+        }
+        result
     }
 }
 
