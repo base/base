@@ -1,0 +1,102 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Counters.sol";
+
+/// @title 基础链上冒险游戏
+/// @author 您的名字
+/// @notice 这是一个链上角色养成与冒险的游戏模板
+contract BaselineGame is ERC721, ERC721URIStorage, Ownable {
+    using Counters for Counters.Counter;
+    using Strings for uint256;
+
+    // 角色属性结构
+    struct Character {
+        uint256 attack;  // 攻击力
+        uint256 defense; // 防御力
+        uint256 level;   // 等级
+        uint256 exp;     // 经验值
+        bool isExist;    // 角色是否存在
+    }
+
+    Counters.Counter private _tokenIdCounter;
+    mapping(uint256 => Character) public characters; // TokenID => 角色属性
+
+    // 事件：角色冒险开始
+    event AdventureStarted(uint256 indexed tokenId, uint256 reward);
+    // 事件：角色升级
+    event LeveledUp(uint256 indexed tokenId, uint256 newLevel);
+
+    /// @notice 构造函数
+    constructor(address initialOwner) Ownable(initialOwner) ERC721("BaselineGameCharacter", "BGC") {}
+
+    /// @notice 铸造游戏角色
+    /// @param tokenURI 角色元数据IPFS链接
+    function mintCharacter(string memory tokenURI) public returns (uint256) {
+        uint256 tokenId = _tokenIdCounter.current();
+        _tokenIdCounter.increment();
+
+        _safeMint(msg.sender, tokenId);
+        _setTokenURI(tokenId, tokenURI);
+
+        // 初始化角色属性
+        characters[tokenId] = Character({
+            attack: 10,
+            defense: 5,
+            level: 1,
+            exp: 0,
+            isExist: true
+        });
+
+        return tokenId;
+    }
+
+    /// @notice 角色执行一次冒险
+    /// @param tokenId 角色ID
+    function adventure(uint256 tokenId) public onlyOwnerOf(tokenId) {
+        Character storage chara = characters[tokenId];
+        require(chara.isExist, "Character does not exist");
+
+        // 简单的冒险逻辑：随机获得经验
+        uint256 expGained = (block.timestamp % 10) + 5;
+        chara.exp += expGained;
+
+        // 升级逻辑
+        if (chara.exp >= chara.level * 100) {
+            chara.level += 1;
+            chara.attack += 5;
+            chara.defense += 3;
+            chara.exp = 0;
+            emit LeveledUp(tokenId, chara.level);
+        }
+
+        emit AdventureStarted(tokenId, expGained);
+    }
+
+    /// @notice 查询角色详细属性
+    /// @param tokenId 角色ID
+    /// @return attack, defense, level, exp
+    function getCharacterStats(uint256 tokenId) public view returns (uint256 attack, uint256 defense, uint256 level, uint256 exp) {
+        require(_exists(tokenId), "ERC721: invalid token ID");
+        Character storage chara = characters[tokenId];
+        return (chara.attack, chara.defense, chara.level, chara.exp);
+    }
+
+    // 以下是OpenZeppelin要求的重写函数
+    function tokenURI(uint256 tokenId) public view override(ERC721, ERC721URIStorage) returns (string memory) {
+        return super.tokenURI(tokenId);
+    }
+
+    function supportsInterface(bytes4 interfaceId) public view override(ERC721, ERC721URIStorage) returns (bool) {
+        return super.supportsInterface(interfaceId);
+    }
+
+    // 修饰符：检查调用者是否为角色所有者
+    modifier onlyOwnerOf(uint256 tokenId) {
+        require(ownerOf(tokenId) == msg.sender, "Not the owner of this character");
+        _;
+    }
+}
