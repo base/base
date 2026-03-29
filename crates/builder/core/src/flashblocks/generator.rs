@@ -1,5 +1,6 @@
 use std::{
     sync::Arc,
+    task::Waker,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -19,7 +20,7 @@ use reth_provider::{BlockReaderIdExt, CanonStateNotification, StateProviderFacto
 use reth_revm::cached::CachedReads;
 use reth_tasks::TaskSpawner;
 use tokio::{
-    sync::{Notify, oneshot},
+    sync::oneshot,
     time::{Duration, Sleep},
 };
 use tokio_util::sync::CancellationToken;
@@ -391,26 +392,39 @@ impl<T: Clone> Future for ResolvePayload<T> {
 /// A cell that holds a value and allows waiting for it to be set.
 ///
 /// Values can be overwritten by calling [`BlockCell::set`] multiple times.
+/// Waiters registered via [`BlockCell::wait_for_value`] are woken when a new
+/// value is stored.
 #[derive(Clone, Debug)]
 pub struct BlockCell<T> {
-    inner: Arc<Mutex<Option<T>>>,
-    notify: Arc<Notify>,
+    state: Arc<Mutex<BlockCellState<T>>>,
+}
+
+/// Internal state shared between the cell and its waiters.
+#[derive(Debug)]
+struct BlockCellState<T> {
+    value: Option<T>,
+    wakers: Vec<Waker>,
 }
 
 impl<T: Clone> BlockCell<T> {
     pub fn new() -> Self {
-        Self { inner: Arc::new(Mutex::new(None)), notify: Arc::new(Notify::new()) }
+        Self { state: Arc::new(Mutex::new(BlockCellState { value: None, wakers: Vec::new() })) }
     }
 
     pub fn set(&self, value: T) {
-        let mut inner = self.inner.lock();
-        *inner = Some(value);
-        self.notify.notify_one();
+        let wakers = {
+            let mut state = self.state.lock();
+            state.value = Some(value);
+            std::mem::take(&mut state.wakers)
+        };
+        // Wake outside the lock to avoid holding it during waker execution.
+        for waker in wakers {
+            waker.wake();
+        }
     }
 
     pub fn get(&self) -> Option<T> {
-        let inner = self.inner.lock();
-        inner.clone()
+        self.state.lock().value.clone()
     }
 
     /// Return a future that resolves when a value is set.
@@ -435,13 +449,15 @@ impl<T: Clone> Future for WaitForValue<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.cell.get().map_or_else(
-            || {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            },
-            Poll::Ready,
-        )
+        let mut state = self.cell.state.lock();
+        if let Some(value) = state.value.clone() {
+            Poll::Ready(value)
+        } else {
+            // Register waker so `set()` can wake us. The lock ensures no
+            // notification is lost between the value check and registration.
+            state.wakers.push(cx.waker().clone());
+            Poll::Pending
+        }
     }
 }
 
