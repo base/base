@@ -10,6 +10,37 @@ and `SyncStatusApiClient` for the `optimism_syncStatus` method, which returns cu
 block references (unsafe, safe, and finalized heads). Enable the `client` feature for the
 generated HTTP client.
 
+## `getrandom` and the `wasm_js` feature
+
+This crate lists `getrandom` with the **`wasm_js`** feature enabled in `Cargo.toml`, and references
+it with `use getrandom as _` in `jsonrpsee.rs` (with a wasm-only `allow(unused_imports)` on that
+import) so **WebAssembly** builds resolve a supported randomness backend for transitive callers
+that need `getrandom`.
+
+**Who needs it**
+
+- **WASM targets** (`wasm32-unknown-unknown`, and similar) where this crate appears in the
+  dependency graph. Transitive code (for example RPC stacks using `getrandom`) must be able to
+  obtain random bytes; without `wasm_js`, `getrandom` has no viable implementation on that target
+  and builds can fail.
+
+**When it is actually used**
+
+- On **native** OS targets, `getrandom` uses the normal platform source; the `wasm_js` feature is
+  there so the **same dependency line** satisfies both native and WASM builds. It is not an
+  invitation to enable unrelated WASM-only features elsewhere in the workspace.
+
+**Avoid feature misuse**
+
+- **Do not remove** `wasm_js` from this crate’s `getrandom` dependency just because you only run
+  the node on Linux/macOS—doing so breaks WASM consumers and any CI or tooling that compiles this
+  crate for `wasm32-unknown-unknown`.
+- **Do not** patch or override `getrandom` downstream in a way that drops `wasm_js` while still
+  depending on `base-consensus-rpc`, unless you explicitly do not support WASM at all and accept
+  that breakage.
+- **Do not** enable `wasm_js` on workspace-root `getrandom` for unrelated crates; per workspace
+  policy, enable dependency features only on the crates that need them (this crate already does).
+
 ## RPC Methods
 
 ### `optimism_syncStatus`
