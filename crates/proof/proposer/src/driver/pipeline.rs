@@ -783,7 +783,7 @@ where
             prev_output_root: aggregate_proposal.prev_output_root,
             starting_l2_block: starting_block_number,
             output_root: aggregate_proposal.output_root,
-            ending_l2_block: aggregate_proposal.l2_block_number.to::<u64>(),
+            ending_l2_block: aggregate_proposal.l2_block_number,
             intermediate_roots: intermediate_roots.to_vec(),
             config_hash: aggregate_proposal.config_hash,
             tee_image_hash: self.config.driver.tee_image_hash,
@@ -1013,7 +1013,7 @@ impl std::fmt::Display for SubmitAction {
 mod tests {
     use std::{collections::HashMap, sync::Arc, time::Duration};
 
-    use alloy_primitives::{Address, B256, Bytes, U256};
+    use alloy_primitives::{Address, B256, Bytes};
     use async_trait::async_trait;
     use base_proof_contracts::{GameAtIndex, GameInfo};
     use base_proof_primitives::{ProofResult, Proposal, ProverClient};
@@ -1033,8 +1033,8 @@ mod tests {
             output_root: B256::repeat_byte(block_number as u8),
             signature: Bytes::from(vec![0xab; 65]),
             l1_origin_hash: B256::repeat_byte(0x02),
-            l1_origin_number: U256::from(100 + block_number),
-            l2_block_number: U256::from(block_number),
+            l1_origin_number: 100 + block_number,
+            l2_block_number: block_number,
             prev_output_root: B256::repeat_byte(0x03),
             config_hash: B256::repeat_byte(0x04),
         }
@@ -1059,8 +1059,8 @@ mod tests {
                 output_root: B256::repeat_byte(block_number as u8),
                 signature: Bytes::from(vec![0xab; 65]),
                 l1_origin_hash: B256::repeat_byte(0x02),
-                l1_origin_number: U256::from(100 + block_number),
-                l2_block_number: U256::from(block_number),
+                l1_origin_number: 100 + block_number,
+                l2_block_number: block_number,
                 prev_output_root: B256::repeat_byte(0x03),
                 config_hash: B256::repeat_byte(0x04),
             };

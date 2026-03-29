@@ -1,5 +1,5 @@
 /// Enclave server — manages keys, attestation, signing, and proof execution.
-use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, b256, keccak256};
 use alloy_signer_local::PrivateKeySigner;
 use base_alloy_evm::OpEvmFactory;
 use base_proof_client::{BootInfo, Prologue};
@@ -195,8 +195,8 @@ impl Server {
                 output_root: *output_root,
                 signature: Bytes::from(signature.to_vec()),
                 l1_origin_hash,
-                l1_origin_number: U256::from(l1_origin_number),
-                l2_block_number: U256::from(l2_block_number),
+                l1_origin_number,
+                l2_block_number,
                 prev_output_root,
                 config_hash,
             });
@@ -225,11 +225,10 @@ impl Server {
                 prev_output_root: agreed_l2_output_root,
                 starting_l2_block: first
                     .l2_block_number
-                    .to::<u64>()
                     .checked_sub(1)
                     .ok_or_else(|| NitroError::ProofPipeline("l2_block_number is 0".into()))?,
                 output_root: last.output_root,
-                ending_l2_block: last.l2_block_number.to::<u64>(),
+                ending_l2_block: last.l2_block_number,
                 intermediate_roots,
                 config_hash,
                 tee_image_hash: self.tee_image_hash,
@@ -242,7 +241,7 @@ impl Server {
                 output_root: last.output_root,
                 signature: Bytes::from(signature.to_vec()),
                 l1_origin_hash,
-                l1_origin_number: U256::from(l1_origin_number),
+                l1_origin_number,
                 l2_block_number: last.l2_block_number,
                 prev_output_root: agreed_l2_output_root,
                 config_hash,

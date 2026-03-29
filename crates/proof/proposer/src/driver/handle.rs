@@ -147,7 +147,7 @@ where
 mod tests {
     use std::{collections::HashMap, sync::Arc, time::Duration};
 
-    use alloy_primitives::{B256, Bytes, U256};
+    use alloy_primitives::{B256, Bytes};
     use async_trait::async_trait;
     use base_proof_primitives::{ProofResult, Proposal, ProverClient};
     use tokio_util::sync::CancellationToken;
@@ -175,8 +175,8 @@ mod tests {
                 output_root: B256::repeat_byte(n as u8),
                 signature: Bytes::from(vec![0xab; 65]),
                 l1_origin_hash: B256::repeat_byte(0x02),
-                l1_origin_number: U256::from(100 + n),
-                l2_block_number: U256::from(n),
+                l1_origin_number: 100 + n,
+                l2_block_number: n,
                 prev_output_root: B256::repeat_byte(0x03),
                 config_hash: B256::repeat_byte(0x04),
             };

@@ -336,9 +336,9 @@ pub struct Proposal {
     /// The L1 origin block hash.
     pub l1_origin_hash: B256,
     /// The L1 origin block number.
-    pub l1_origin_number: U256,
+    pub l1_origin_number: u64,
     /// The L2 block number (ending block of this proposal's range).
-    pub l2_block_number: U256,
+    pub l2_block_number: u64,
     /// The previous output root hash.
     pub prev_output_root: B256,
     /// The config hash.

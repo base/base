@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes};
 
 /// ECDSA signature length in bytes (r: 32 + s: 32 + v: 1).
 pub const ECDSA_SIGNATURE_LENGTH: usize = 65;
@@ -74,9 +74,9 @@ pub struct Proposal {
     /// The L1 origin block hash.
     pub l1_origin_hash: B256,
     /// The L1 origin block number.
-    pub l1_origin_number: U256,
+    pub l1_origin_number: u64,
     /// The L2 block number (ending block of this proposal's range).
-    pub l2_block_number: U256,
+    pub l2_block_number: u64,
     /// The previous output root hash.
     pub prev_output_root: B256,
     /// The config hash.
@@ -99,8 +99,8 @@ mod tests {
             l1_origin_hash: b256!(
                 "0000000000000000000000000000000000000000000000000000000000000002"
             ),
-            l1_origin_number: U256::from(100),
-            l2_block_number: U256::from(12345),
+            l1_origin_number: 100,
+            l2_block_number: 12345,
             prev_output_root: b256!(
                 "0000000000000000000000000000000000000000000000000000000000000003"
             ),
@@ -129,8 +129,8 @@ mod tests {
         let json = serde_json::to_string(&proposal).unwrap();
 
         assert!(json.contains("\"0x"));
-        // 12345 = 0x3039
-        assert!(json.contains("\"0x3039\""));
+        assert!(json.contains("\"l2_block_number\":12345"));
+        assert!(json.contains("\"l1_origin_number\":100"));
     }
 
     #[test]
@@ -146,10 +146,10 @@ mod tests {
     #[cfg(feature = "serde")]
     fn test_proposal_l2_block_number_zero() {
         let mut proposal = sample_proposal();
-        proposal.l2_block_number = U256::ZERO;
+        proposal.l2_block_number = 0;
 
         let json = serde_json::to_string(&proposal).unwrap();
-        assert!(json.contains("\"l2_block_number\":\"0x0\""));
+        assert!(json.contains("\"l2_block_number\":0"));
     }
 
     fn test_journal() -> ProofJournal {

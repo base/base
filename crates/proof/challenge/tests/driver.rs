@@ -828,8 +828,8 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
         output_root: root_20,
         signature: Bytes::from(vec![0u8; 65]),
         l1_origin_hash: l1_hash,
-        l1_origin_number: U256::from(1000),
-        l2_block_number: U256::from(20),
+        l1_origin_number: 1000,
+        l2_block_number: 20,
         prev_output_root: root_15,
         config_hash: B256::ZERO,
     };
