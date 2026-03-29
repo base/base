@@ -638,36 +638,39 @@ where
         // Fetch game_at_index concurrently with order-preserving buffering.
         // Because indices are emitted highest-first, the first type-match is
         // the best — stop consuming the stream immediately.
-        let mut stream = std::pin::pin!(stream::iter(0..len)
-            .map(|i| {
-                let factory = &self.factory_client;
-                async move {
-                    let game_index = count - 1 - i;
-                    let result = factory.game_at_index(game_index).await;
-                    (game_index, result)
-                }
-            })
-            .buffered(RECOVERY_SCAN_CONCURRENCY)
-            .filter_map(|(idx, result)| async move {
-                match result {
-                    Ok(game) if game.game_type == game_type => Some((idx, game)),
-                    Ok(_) => None,
-                    Err(e) => {
-                        warn!(error = %e, game_index = idx, "Failed to read game at index during recovery");
-                        None
+        //
+        // RPC failures are propagated as errors rather than silently skipped,
+        // so the caller does not advance the cache watermark past games that
+        // were never successfully read.
+        let mut stream = std::pin::pin!(
+            stream::iter(0..len)
+                .map(|i| {
+                    let factory = &self.factory_client;
+                    async move {
+                        let game_index = count - 1 - i;
+                        let result = factory.game_at_index(game_index).await;
+                        (game_index, result)
                     }
-                }
-            }));
+                })
+                .buffered(RECOVERY_SCAN_CONCURRENCY)
+        );
 
-        // Try each matching game in order (most-recent first). If
-        // `game_info` fails for one match, fall through to the next rather
-        // than giving up entirely.
-        while let Some((game_index, game)) = stream.next().await {
+        // Try each game in order (most-recent first).
+        while let Some((game_index, result)) = stream.next().await {
+            let game = match result {
+                Ok(game) if game.game_type == game_type => game,
+                Ok(_) => continue,
+                Err(e) => {
+                    warn!(error = %e, game_index, "Failed to read game at index during recovery");
+                    return Err(e.into());
+                }
+            };
+
             let game_info = match self.verifier_client.game_info(game.proxy).await {
                 Ok(info) => info,
                 Err(e) => {
-                    warn!(error = %e, game_index, "Failed to read game_info during recovery, trying next match");
-                    continue;
+                    warn!(error = %e, game_index, game_proxy = %game.proxy, "Failed to read game_info during recovery");
+                    return Err(e.into());
                 }
             };
 
@@ -1011,7 +1014,11 @@ impl std::fmt::Display for SubmitAction {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc, time::Duration};
+    use std::{
+        collections::{HashMap, HashSet},
+        sync::Arc,
+        time::Duration,
+    };
 
     use alloy_primitives::{Address, B256, Bytes, U256};
     use async_trait::async_trait;
@@ -1881,5 +1888,95 @@ mod tests {
 
         state.reset();
         assert!(state.cached_recovery.is_none(), "reset() should clear cached_recovery");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_scan_range_returns_err_on_game_at_index_failure() {
+        let target_game_type = 42u32;
+
+        // Factory reports count=3 but only has 1 game. Index 2 (first scanned,
+        // since scan walks highest-first) will fail with out-of-bounds.
+        let games =
+            vec![GameAtIndex { game_type: target_game_type, timestamp: 1, proxy: proxy_addr(0) }];
+        let factory = MockDisputeGameFactory { games, game_count_override: Some(3) };
+
+        let pipeline = recovery_pipeline(target_game_type, factory, MockAggregateVerifier::empty());
+
+        let result = pipeline.scan_range_for_recovery(3, 3).await;
+        assert!(result.is_err(), "game_at_index failure should propagate as Err");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_scan_range_returns_err_on_game_info_failure() {
+        let target_game_type = 42u32;
+        let failing_proxy = proxy_addr(0);
+
+        let games =
+            vec![GameAtIndex { game_type: target_game_type, timestamp: 1, proxy: failing_proxy }];
+
+        let mut failing = HashSet::new();
+        failing.insert(failing_proxy);
+
+        let verifier =
+            MockAggregateVerifier { game_info_map: HashMap::new(), failing_addresses: failing };
+
+        let pipeline = recovery_pipeline(
+            target_game_type,
+            MockDisputeGameFactory::with_games(games),
+            verifier,
+        );
+
+        let result = pipeline.scan_range_for_recovery(1, 1).await;
+        assert!(result.is_err(), "game_info failure should propagate as Err");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_incremental_rpc_error_preserves_cache() {
+        let target_game_type = 42u32;
+        let root = B256::repeat_byte(0xAA);
+
+        // Seed the cache: we found a game at index 0 with game_count=1.
+        let mut cache = Some(CachedRecovery {
+            game_count: 1,
+            state: RecoveredState { game_index: 0, output_root: root, l2_block_number: 512 },
+        });
+
+        // Factory now reports count=2. The new game at index 1 matches our type
+        // but game_info will fail for its proxy address.
+        let failing_proxy = proxy_addr(1);
+        let games = vec![
+            GameAtIndex { game_type: target_game_type, timestamp: 1, proxy: proxy_addr(0) },
+            GameAtIndex { game_type: target_game_type, timestamp: 2, proxy: failing_proxy },
+        ];
+
+        let mut info_map = HashMap::new();
+        info_map.insert(
+            proxy_addr(0),
+            GameInfo { root_claim: root, l2_block_number: 512, parent_index: 0 },
+        );
+
+        let mut failing = HashSet::new();
+        failing.insert(failing_proxy);
+
+        let mut output_roots = HashMap::new();
+        output_roots.insert(512, root);
+
+        let pipeline = recovery_pipeline_with_roots(
+            target_game_type,
+            MockDisputeGameFactory { games, game_count_override: Some(2) },
+            MockAggregateVerifier { game_info_map: info_map, failing_addresses: failing },
+            output_roots,
+        );
+
+        // The incremental scan should fail because game_info errors for the
+        // new game. The error propagates, so recover_latest_state returns Err
+        // and the cache remains untouched at game_count=1.
+        let result = pipeline.recover_latest_state(&mut cache).await;
+        assert!(result.is_err(), "RPC error should propagate from incremental scan");
+        assert_eq!(
+            cache.as_ref().unwrap().game_count,
+            1,
+            "cache watermark must not advance past the failed scan"
+        );
     }
 }

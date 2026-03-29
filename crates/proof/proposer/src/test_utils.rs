@@ -170,25 +170,37 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
 ///
 /// When `game_info_map` is empty, all queries return a default `GameInfo`.
 /// When populated, `game_info` looks up the address in the map.
+///
+/// Addresses in `failing_addresses` will return a `ContractError::Validation`
+/// to simulate transient RPC failures.
 pub(crate) struct MockAggregateVerifier {
     pub game_info_map: std::collections::HashMap<Address, GameInfo>,
+    pub failing_addresses: std::collections::HashSet<Address>,
 }
 
 impl MockAggregateVerifier {
     /// Creates a verifier that returns default values for all addresses.
     pub(crate) fn empty() -> Self {
-        Self { game_info_map: std::collections::HashMap::new() }
+        Self {
+            game_info_map: std::collections::HashMap::new(),
+            failing_addresses: std::collections::HashSet::new(),
+        }
     }
 
     /// Creates a verifier backed by an explicit address-to-info map.
     pub(crate) fn with_game_info(map: std::collections::HashMap<Address, GameInfo>) -> Self {
-        Self { game_info_map: map }
+        Self { game_info_map: map, failing_addresses: std::collections::HashSet::new() }
     }
 }
 
 #[async_trait]
 impl AggregateVerifierClient for MockAggregateVerifier {
     async fn game_info(&self, addr: Address) -> Result<GameInfo, ContractError> {
+        if self.failing_addresses.contains(&addr) {
+            return Err(ContractError::Validation(format!(
+                "mock: simulated game_info failure for {addr}"
+            )));
+        }
         Ok(self.game_info_map.get(&addr).cloned().unwrap_or(GameInfo {
             root_claim: B256::ZERO,
             l2_block_number: 0,
