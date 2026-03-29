@@ -1160,6 +1160,16 @@ impl SimpleTxManager {
         receipt_tx: &mpsc::Sender<TransactionReceipt>,
         state: &mut BumpState,
     ) -> Option<TxManagerError> {
+        // If the receipt-polling task has already detected the original tx
+        // on-chain, skip the fee bump entirely. This avoids a race where
+        // `estimate_gas` on the replacement tx reverts because the
+        // original calldata has already executed (e.g. `GameAlreadyExists`),
+        // producing noisy error logs even though the proposal will succeed.
+        if send_state.is_waiting_for_confirmation() {
+            info!("skipping fee bump — original tx already mined, awaiting confirmation");
+            return None;
+        }
+
         let result = self.handle_fee_bump(candidate, send_state, receipt_tx, state).await;
         Self::apply_bump_result_with_suppression(result, state, send_state)
     }
