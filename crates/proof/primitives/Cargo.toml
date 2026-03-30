@@ -30,7 +30,10 @@ serde_json = { workspace = true, features = ["std"] }
 [features]
 default = []
 std = [
+	"alloy-chains/std",
+	"alloy-eips/std",
 	"alloy-primitives/std",
+	"base-consensus-genesis/std",
 	"base-proof-preimage/std",
 	"serde?/std",
 	"thiserror/std",

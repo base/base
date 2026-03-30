@@ -11,8 +11,12 @@
 
 use alloc::vec::Vec;
 
+use alloy_chains::Chain;
+use alloy_eips::eip1898::BlockNumHash;
 use alloy_primitives::{Address, B256, U256, keccak256};
-use base_consensus_genesis::RollupConfig;
+use base_consensus_genesis::{
+    BaseFeeConfig, BaseHardforkConfig, ChainGenesis, HardForkConfig, RollupConfig, SystemConfig,
+};
 
 const VERSION_0: u64 = 0;
 
@@ -208,11 +212,9 @@ impl PerChainConfig {
     /// default fork settings (all forks active at genesis).
     #[must_use]
     pub fn to_rollup_config(&self) -> RollupConfig {
-        use base_consensus_genesis::{BaseFeeConfig, BaseHardforkConfig, HardForkConfig};
-
         RollupConfig {
             l1_chain_id: 1,
-            l2_chain_id: alloy_chains::Chain::from_id(self.chain_id.to::<u64>()),
+            l2_chain_id: Chain::from_id(self.chain_id.to::<u64>()),
             genesis: self.to_chain_genesis(),
             block_time: self.block_time,
             max_sequencer_drift: 600,
@@ -242,14 +244,12 @@ impl PerChainConfig {
     }
 
     /// Convert to [`base_consensus_genesis::ChainGenesis`].
-    const fn to_chain_genesis(&self) -> base_consensus_genesis::ChainGenesis {
-        use alloy_eips::eip1898::BlockNumHash;
-
-        base_consensus_genesis::ChainGenesis {
+    const fn to_chain_genesis(&self) -> ChainGenesis {
+        ChainGenesis {
             l1: BlockNumHash { hash: self.genesis.l1.hash, number: self.genesis.l1.number },
             l2: BlockNumHash { hash: self.genesis.l2.hash, number: self.genesis.l2.number },
             l2_time: self.genesis.l2_time,
-            system_config: Some(base_consensus_genesis::SystemConfig {
+            system_config: Some(SystemConfig {
                 batcher_address: self.genesis.system_config.batcher_addr,
                 overhead: U256::ZERO,
                 scalar: U256::from_be_bytes(self.genesis.system_config.scalar.0),
