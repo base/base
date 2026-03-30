@@ -11,7 +11,7 @@ use base_alloy_flashblocks::Flashblock;
 use base_alloy_network::Base;
 use base_consensus_rpc::{ConductorApiClient, OpP2PApiClient, RollupNodeApiClient};
 use futures::{StreamExt, stream};
-use jsonrpsee::http_client::HttpClientBuilder;
+use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::connect_async;
 use tracing::warn;
@@ -676,16 +676,40 @@ pub(crate) async fn fetch_block_transactions(
 pub(crate) struct ConductorNodeStatus {
     /// Human-readable name for this node.
     pub name: String,
+
+    // ── Conductor ────────────────────────────────────────────────────────
     /// Whether this node is the Raft leader. `None` means the node is unreachable.
     pub is_leader: Option<bool>,
-    /// Unsafe L2 block number from `optimism_syncStatus`. `None` means unreachable.
+    /// Whether the conductor's sequencer is actively sequencing (`conductor_active`).
+    /// Expected to be `false` for followers. `None` means unreachable.
+    pub conductor_active: Option<bool>,
+
+    // ── CL (consensus layer) ─────────────────────────────────────────────
+    /// Unsafe L2 block number from `optimism_syncStatus`.
     pub unsafe_l2_block: Option<u64>,
-    /// Safe L2 block number from `optimism_syncStatus`. `None` means unreachable.
+    /// Unsafe L2 block hash from `optimism_syncStatus`.
+    pub unsafe_l2_hash: Option<alloy_primitives::B256>,
+    /// Safe L2 block number from `optimism_syncStatus`.
     pub safe_l2_block: Option<u64>,
-    /// Finalized L2 block number from `optimism_syncStatus`. `None` means unreachable.
+    /// Safe L2 block hash from `optimism_syncStatus`.
+    pub safe_l2_hash: Option<alloy_primitives::B256>,
+    /// Finalized L2 block number from `optimism_syncStatus`.
     pub finalized_l2_block: Option<u64>,
-    /// Number of connected P2P peers from `opp2p_peerStats`. `None` means unreachable.
-    pub peer_count: Option<u32>,
+    /// L1 derivation cursor block number (`current_l1`).
+    pub current_l1_block: Option<u64>,
+    /// L1 chain head block number (`head_l1`). Compared with `current_l1_block` to show lag.
+    pub head_l1_block: Option<u64>,
+    /// Number of connected CL libp2p peers from `opp2p_peerStats`.
+    pub cl_peer_count: Option<u32>,
+
+    // ── EL (execution layer) ─────────────────────────────────────────────
+    /// Latest block number from `eth_blockNumber`. `None` if `el_rpc` not configured.
+    pub el_block: Option<u64>,
+    /// Whether the EL is snap-syncing (`eth_syncing` returns non-false). `None` if not
+    /// configured.
+    pub el_syncing: Option<bool>,
+    /// Number of connected EL devp2p peers from `net_peerCount`. `None` if not configured.
+    pub el_peer_count: Option<u32>,
 }
 
 /// Finds the current Raft leader and transfers leadership.
@@ -748,6 +772,80 @@ pub(crate) async fn transfer_conductor_leader(
     let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
 }
 
+/// Restarts the docker containers for a single conductor cluster node.
+///
+/// Containers are restarted in dependency order — EL → CL → conductor —
+/// waiting for each to become healthy before starting the next. This prevents
+/// op-conductor from crashing on startup because it tries to connect to the EL
+/// before the EL has bound its port.
+pub(crate) async fn restart_conductor_node(
+    node: ConductorNodeConfig,
+    result_tx: mpsc::Sender<Result<String, String>>,
+) {
+    // Dependency order: EL must be healthy before CL starts, CL before conductor.
+    let ordered: &[Option<&str>] = &[
+        node.docker_el.as_deref(),
+        node.docker_cl.as_deref(),
+        node.docker_conductor.as_deref(),
+    ];
+    let containers: Vec<&str> = ordered.iter().filter_map(|c| *c).collect();
+
+    let outcome: anyhow::Result<String> = async {
+        if containers.is_empty() {
+            return Err(anyhow::anyhow!("no docker containers configured for {}", node.name));
+        }
+
+        for container in &containers {
+            // Restart this container.
+            let out = tokio::process::Command::new("docker")
+                .args(["restart", container])
+                .output()
+                .await
+                .map_err(|e| anyhow::anyhow!("docker restart {container}: {e}"))?;
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                return Err(anyhow::anyhow!(
+                    "docker restart {container} failed: {}",
+                    stderr.trim()
+                ));
+            }
+
+            // Wait until Docker reports the container as healthy (or running if
+            // no healthcheck is defined) before moving to the next dependency.
+            for _ in 0..60u32 {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                let status = tokio::process::Command::new("docker")
+                    .args(["inspect", "--format", "{{.State.Health.Status}}", container])
+                    .output()
+                    .await
+                    .ok()
+                    .and_then(|o| String::from_utf8(o.stdout).ok());
+                match status.as_deref().map(str::trim) {
+                    Some("healthy") => break,
+                    // Container has no healthcheck — treat "running" as ready.
+                    Some("") | None => {
+                        let running = tokio::process::Command::new("docker")
+                            .args(["inspect", "--format", "{{.State.Running}}", container])
+                            .output()
+                            .await
+                            .ok()
+                            .and_then(|o| String::from_utf8(o.stdout).ok());
+                        if running.as_deref().map(str::trim) == Some("true") {
+                            break;
+                        }
+                    }
+                    _ => {} // starting / unhealthy — keep waiting
+                }
+            }
+        }
+
+        Ok(format!("restarted {} ({})", node.name, containers.join(" → ")))
+    }
+    .await;
+
+    let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
+}
+
 /// Polls all conductor nodes every 200 ms and forwards status snapshots.
 ///
 /// Builds one pair of HTTP clients per node (conductor RPC + CL RPC) before
@@ -762,7 +860,7 @@ pub(crate) async fn run_conductor_poller(
     const POLL_INTERVAL: Duration = Duration::from_millis(200);
     const RPC_TIMEOUT: Duration = Duration::from_millis(500);
 
-    let clients: Vec<(String, _, _)> = nodes
+    let clients: Vec<(String, _, _, _)> = nodes
         .into_iter()
         .filter_map(|node| {
             let conductor_client = HttpClientBuilder::default()
@@ -779,7 +877,19 @@ pub(crate) async fn run_conductor_poller(
                     warn!(error = %e, node = %node.name, "failed to build CL HTTP client");
                 })
                 .ok()?;
-            Some((node.name, conductor_client, cl_client))
+            let el_client = node
+                .el_rpc
+                .as_ref()
+                .and_then(|url| {
+                    HttpClientBuilder::default()
+                        .request_timeout(RPC_TIMEOUT)
+                        .build(url.as_str())
+                        .inspect_err(|e| {
+                            warn!(error = %e, node = %node.name, "failed to build EL HTTP client");
+                        })
+                        .ok()
+                });
+            Some((node.name, conductor_client, cl_client, el_client))
         })
         .collect();
 
@@ -790,21 +900,60 @@ pub(crate) async fn run_conductor_poller(
         interval.tick().await;
 
         let statuses = futures::future::join_all(clients.iter().map(
-            |(name, conductor_client, cl_client)| async move {
-                let is_leader = ConductorApiClient::conductor_leader(conductor_client).await.ok();
-                let sync = RollupNodeApiClient::op_sync_status(cl_client).await.ok();
-                let unsafe_l2_block = sync.as_ref().map(|s| s.unsafe_l2.block_info.number);
-                let safe_l2_block = sync.as_ref().map(|s| s.safe_l2.block_info.number);
-                let finalized_l2_block = sync.as_ref().map(|s| s.finalized_l2.block_info.number);
-                let peer_count =
-                    OpP2PApiClient::opp2p_peer_stats(cl_client).await.ok().map(|s| s.connected);
+            |(name, conductor_client, cl_client, el_client)| async move {
+                // Fire all RPCs concurrently so a single timed-out node does not
+                // stall the poll for the full sum of all call timeouts (7 × 500 ms).
+                let (is_leader, conductor_active, sync, cl_peer_stats, el_block_r, el_syncing_r, el_peers_r) =
+                    tokio::join!(
+                        ConductorApiClient::conductor_leader(conductor_client),
+                        ConductorApiClient::conductor_active(conductor_client),
+                        RollupNodeApiClient::op_sync_status(cl_client),
+                        OpP2PApiClient::opp2p_peer_stats(cl_client),
+                        async {
+                            if let Some(el) = el_client {
+                                let r: Result<alloy_primitives::U64, _> =
+                                    ClientT::request(el, "eth_blockNumber", rpc_params![]).await;
+                                r.ok().map(|v| v.to::<u64>())
+                            } else {
+                                None
+                            }
+                        },
+                        async {
+                            if let Some(el) = el_client {
+                                let r: Result<serde_json::Value, _> =
+                                    ClientT::request(el, "eth_syncing", rpc_params![]).await;
+                                r.ok().map(|v| !matches!(v, serde_json::Value::Bool(false)))
+                            } else {
+                                None
+                            }
+                        },
+                        async {
+                            if let Some(el) = el_client {
+                                let r: Result<alloy_primitives::U64, _> =
+                                    ClientT::request(el, "net_peerCount", rpc_params![]).await;
+                                r.ok().map(|v| v.to::<u32>())
+                            } else {
+                                None
+                            }
+                        },
+                    );
+
+                let sync = sync.ok();
                 ConductorNodeStatus {
                     name: name.clone(),
-                    is_leader,
-                    unsafe_l2_block,
-                    safe_l2_block,
-                    finalized_l2_block,
-                    peer_count,
+                    is_leader: is_leader.ok(),
+                    conductor_active: conductor_active.ok(),
+                    unsafe_l2_block: sync.as_ref().map(|s| s.unsafe_l2.block_info.number),
+                    unsafe_l2_hash: sync.as_ref().map(|s| s.unsafe_l2.block_info.hash),
+                    safe_l2_block: sync.as_ref().map(|s| s.safe_l2.block_info.number),
+                    safe_l2_hash: sync.as_ref().map(|s| s.safe_l2.block_info.hash),
+                    finalized_l2_block: sync.as_ref().map(|s| s.finalized_l2.block_info.number),
+                    current_l1_block: sync.as_ref().map(|s| s.current_l1.number),
+                    head_l1_block: sync.as_ref().map(|s| s.head_l1.number),
+                    cl_peer_count: cl_peer_stats.ok().map(|s| s.connected),
+                    el_block: el_block_r,
+                    el_syncing: el_syncing_r,
+                    el_peer_count: el_peers_r,
                 }
             },
         ))

@@ -21,6 +21,27 @@ pub struct ConductorNodeConfig {
     pub server_id: String,
     /// Raft peer address (`host:port`) used when targeting this node for leadership transfer.
     pub raft_addr: String,
+    /// Execution-layer JSON-RPC endpoint for this sequencer's EL node.
+    ///
+    /// If set, the TUI polls `net_peerCount` on this endpoint to show the EL
+    /// peer count separately from the CL P2P peer count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub el_rpc: Option<Url>,
+    /// Docker container name for the conductor process.
+    ///
+    /// If set, the TUI can restart this container with `r`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_conductor: Option<String>,
+    /// Docker container name for the EL (execution layer) process.
+    ///
+    /// If set, the TUI can restart this container with `r`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_el: Option<String>,
+    /// Docker container name for the CL (consensus layer) process.
+    ///
+    /// If set, the TUI can restart this container with `r`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_cl: Option<String>,
     /// Flashblocks WebSocket endpoint for this sequencer's builder node.
     ///
     /// When set, the command center will automatically reconnect its flashblocks
@@ -168,6 +189,10 @@ impl ChainConfig {
                     cl_rpc: Url::parse("http://localhost:7549").unwrap(),
                     server_id: "sequencer-0".to_string(),
                     raft_addr: "op-conductor-0:5050".to_string(),
+                    el_rpc: Some(Url::parse("http://localhost:7545").unwrap()),
+                    docker_conductor: Some("op-conductor-0".to_string()),
+                    docker_el: Some("base-builder".to_string()),
+                    docker_cl: Some("base-builder-cl".to_string()),
                     flashblocks_ws: Some(Url::parse("ws://localhost:7111").unwrap()),
                 },
                 ConductorNodeConfig {
@@ -176,6 +201,10 @@ impl ChainConfig {
                     cl_rpc: Url::parse("http://localhost:10549").unwrap(),
                     server_id: "sequencer-1".to_string(),
                     raft_addr: "op-conductor-1:5051".to_string(),
+                    el_rpc: Some(Url::parse("http://localhost:10545").unwrap()),
+                    docker_conductor: Some("op-conductor-1".to_string()),
+                    docker_el: Some("base-sequencer-1".to_string()),
+                    docker_cl: Some("base-sequencer-1-cl".to_string()),
                     flashblocks_ws: Some(Url::parse("ws://localhost:10111").unwrap()),
                 },
                 ConductorNodeConfig {
@@ -184,6 +213,10 @@ impl ChainConfig {
                     cl_rpc: Url::parse("http://localhost:11549").unwrap(),
                     server_id: "sequencer-2".to_string(),
                     raft_addr: "op-conductor-2:5052".to_string(),
+                    el_rpc: Some(Url::parse("http://localhost:11545").unwrap()),
+                    docker_conductor: Some("op-conductor-2".to_string()),
+                    docker_el: Some("base-sequencer-2".to_string()),
+                    docker_cl: Some("base-sequencer-2-cl".to_string()),
                     flashblocks_ws: Some(Url::parse("ws://localhost:11111").unwrap()),
                 },
             ]),
