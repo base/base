@@ -18,9 +18,9 @@ use base_proof_tee_nitro_attestation_prover::{
     AttestationProofProvider, BoundlessProver, DirectProver,
 };
 use base_proof_tee_registrar::{
-    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, DriverConfig, ProverClient,
-    ProvingConfig, RegistrarConfig, RegistrarError, RegistrarMetrics, RegistrationDriver,
-    RegistryContractClient,
+    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, DEFAULT_MAX_CONCURRENCY,
+    DriverConfig, ProverClient, ProvingConfig, RegistrarConfig, RegistrarError, RegistrarMetrics,
+    RegistrationDriver, RegistryContractClient,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use clap::{Args, Parser, ValueEnum};
@@ -105,6 +105,12 @@ pub(crate) struct Cli {
     /// Timeout for JSON-RPC calls to prover instances, in seconds.
     #[arg(long, env = cli_env!("PROVER_TIMEOUT_SECS"), default_value_t = 30)]
     prover_timeout_secs: u64,
+
+    /// Maximum number of instances to process concurrently within a single
+    /// registration cycle. Each instance may trigger a ~20-minute proof
+    /// generation, so this limits concurrent proof work.
+    #[arg(long, env = cli_env!("MAX_CONCURRENCY"), default_value_t = DEFAULT_MAX_CONCURRENCY)]
+    max_concurrency: usize,
 
     // ── Health Server ─────────────────────────────────────────────────────────
     #[command(flatten)]
@@ -268,6 +274,10 @@ impl Cli {
             ));
         }
 
+        if self.max_concurrency == 0 {
+            return Err(RegistrarError::Config("--max-concurrency must be greater than 0".into()));
+        }
+
         if self.health.port == 0 {
             return Err(RegistrarError::Config("health server port must be non-zero".into()));
         }
@@ -284,6 +294,7 @@ impl Cli {
             proving,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             prover_timeout: Duration::from_secs(self.prover_timeout_secs),
+            max_concurrency: self.max_concurrency,
             health_addr,
         })
     }
@@ -387,6 +398,7 @@ impl Cli {
             registry_address: config.tee_prover_registry_address,
             poll_interval: config.poll_interval,
             cancel: cancel.clone(),
+            max_concurrency: config.max_concurrency,
         };
 
         // Mark the service as ready. This signals "initialised and running", not
@@ -607,6 +619,7 @@ mod tests {
     #[case::zero_poll_interval("--poll-interval-secs", "0")]
     #[case::zero_prover_timeout("--prover-timeout-secs", "0")]
     #[case::zero_boundless_timeout("--boundless-timeout-secs", "0")]
+    #[case::zero_max_concurrency("--max-concurrency", "0")]
     fn zero_duration_fails_into_config(#[case] flag: &str, #[case] value: &str) {
         let mut args = boundless_args();
         args.extend([flag, value]);
@@ -625,10 +638,11 @@ mod tests {
     // ── Field value checks ──────────────────────────────────────────────
 
     #[rstest]
-    fn default_durations() {
+    fn default_durations_and_concurrency() {
         let config = Cli::parse_from(boundless_args()).into_config().unwrap();
         assert_eq!(config.poll_interval, Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS));
         assert_eq!(config.prover_timeout, Duration::from_secs(DEFAULT_PROVER_TIMEOUT_SECS));
+        assert_eq!(config.max_concurrency, DEFAULT_MAX_CONCURRENCY);
     }
 
     #[rstest]

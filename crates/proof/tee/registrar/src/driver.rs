@@ -12,14 +12,23 @@ use alloy_sol_types::SolCall;
 use base_proof_contracts::ITEEProverRegistry;
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::{TxCandidate, TxManager};
+use futures::stream::StreamExt;
 use rand::random;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
     InstanceDiscovery, ProverClient, ProverInstance, RegistrarError, RegistrarMetrics,
     RegistryClient, Result, SignerClient,
 };
+
+/// Default maximum number of instances processed concurrently.
+///
+/// Each instance may trigger a ~20-minute Boundless proof generation, so
+/// limiting concurrency prevents overwhelming the proof service and keeps
+/// nonce management tractable. The default allows moderate parallelism
+/// while keeping resource usage bounded.
+pub const DEFAULT_MAX_CONCURRENCY: usize = 4;
 
 /// Runtime parameters for the [`RegistrationDriver`] that are not
 /// trait-based dependencies.
@@ -31,6 +40,10 @@ pub struct DriverConfig {
     pub poll_interval: Duration,
     /// Cancellation token for graceful shutdown.
     pub cancel: CancellationToken,
+    /// Maximum number of instances to process concurrently. Each instance
+    /// may trigger proof generation, so this bounds concurrent proof work
+    /// and nonce acquisition. Defaults to [`DEFAULT_MAX_CONCURRENCY`].
+    pub max_concurrency: usize,
 }
 
 /// Core registration loop tying together discovery, attestation polling,
@@ -121,6 +134,10 @@ where
             );
         }
 
+        // Process all instances concurrently. Proof generation (~20 min via
+        // Boundless) is the bottleneck — running instances in parallel overlaps
+        // these waits and dramatically reduces total cycle time.
+        //
         // Resolve signer addresses for ALL reachable instances (regardless of
         // health status) to build a complete active set. This protects draining
         // instances (still running, usually reachable) from premature
@@ -132,26 +149,51 @@ where
         let mut active_signers = HashSet::new();
         let mut reachable_instances = 0usize;
 
-        for instance in &instances {
-            if self.config.cancel.is_cancelled() {
-                break;
-            }
+        let concurrency = self.config.max_concurrency.max(1);
+        let mut futs = futures::stream::iter(instances.iter().map(|instance| {
+            let span = info_span!(
+                "process_instance",
+                instance_id = %instance.instance_id,
+                endpoint = %instance.endpoint,
+                health = ?instance.health_status,
+            );
+            async move { (instance, self.process_instance(instance).await) }.instrument(span)
+        }))
+        .buffer_unordered(concurrency);
 
-            match self.process_instance(instance).await {
-                Ok(addresses) => {
-                    reachable_instances += 1;
-                    for addr in addresses {
-                        active_signers.insert(addr);
-                    }
+        // Use `tokio::select!` so cancellation is observed immediately, even
+        // when all futures are blocked on long-running proof generation (~20 min).
+        // Without this, shutdown would hang until at least one future completes.
+        loop {
+            tokio::select! {
+                biased;
+                () = self.config.cancel.cancelled() => {
+                    debug!("shutdown requested during instance processing");
+                    break;
                 }
-                Err(e) => {
-                    warn!(
-                        error = %e,
-                        instance = %instance.instance_id,
-                        endpoint = %instance.endpoint,
-                        "failed to resolve signer addresses"
-                    );
-                    RegistrarMetrics::processing_errors_total().increment(1);
+                maybe_result = futs.next() => {
+                    match maybe_result {
+                        None => break, // all futures completed
+                        Some((instance, result)) => {
+                            match result {
+                                Ok(addresses) => {
+                                    reachable_instances += 1;
+                                    for addr in addresses {
+                                        active_signers.insert(addr);
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        error = %e,
+                                        instance = %instance.instance_id,
+                                        endpoint = %instance.endpoint,
+                                        "failed to resolve signer addresses"
+                                    );
+                                    RegistrarMetrics::processing_errors_total().increment(1);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -172,7 +214,7 @@ where
         // them from the target group), deregistration proceeds normally — scaled-down
         // instances leave the target group entirely, so they don't inflate
         // `instances.len()`.
-        if !instances.is_empty() && reachable_instances * 2 <= instances.len() {
+        if !instances.is_empty() && reachable_instances.saturating_mul(2) <= instances.len() {
             warn!(
                 reachable = reachable_instances,
                 total = instances.len(),
@@ -541,7 +583,7 @@ mod tests {
         collections::{HashMap, HashSet, VecDeque},
         sync::{
             Arc, Mutex,
-            atomic::{AtomicU32, Ordering},
+            atomic::{AtomicU32, AtomicUsize, Ordering},
         },
     };
 
@@ -588,6 +630,24 @@ mod tests {
     /// Hardhat / Anvil account #2 private key.
     const HARDHAT_KEY_2: [u8; 32] =
         hex!("5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a");
+
+    /// Prover instance endpoints for tests. Each simulates a distinct
+    /// EC2 instance at a private IP.
+    const EP1: &str = "10.0.0.1:8000";
+    const EP2: &str = "10.0.0.2:8000";
+    const EP3: &str = "10.0.0.3:8000";
+    const EP4: &str = "10.0.0.4:8000";
+
+    /// Synthetic orphan addresses for deregistration tests.
+    /// Each uses `Address::repeat_byte` for deterministic, readable values.
+    const ORPHAN_A: Address = Address::repeat_byte(0xAA);
+    const ORPHAN_B: Address = Address::repeat_byte(0xBB);
+    const ORPHAN_C: Address = Address::repeat_byte(0xCC);
+    const ORPHAN_D: Address = Address::repeat_byte(0xDD);
+    const ORPHAN_E: Address = Address::repeat_byte(0xEE);
+
+    /// Placeholder registry contract address used in `DriverConfig`.
+    const TEST_REGISTRY_ADDRESS: Address = Address::repeat_byte(0x01);
 
     // ── Test helpers ─────────────────────────────────────────────────────
 
@@ -660,6 +720,22 @@ mod tests {
                 output: Bytes::from_static(b"stub-output"),
                 proof_bytes: Bytes::from_static(b"stub-proof"),
             })
+        }
+    }
+
+    /// Mock proof provider that always fails, simulating Boundless errors.
+    #[derive(Debug)]
+    struct FailingProofProvider;
+
+    #[async_trait]
+    impl AttestationProofProvider for FailingProofProvider {
+        async fn generate_proof(
+            &self,
+            _attestation_bytes: &[u8],
+        ) -> base_proof_tee_nitro_attestation_prover::Result<AttestationProof> {
+            Err(base_proof_tee_nitro_attestation_prover::ProverError::Boundless(
+                "simulated proof failure".into(),
+            ))
         }
     }
 
@@ -817,9 +893,10 @@ mod tests {
 
     fn default_config(cancel: CancellationToken) -> DriverConfig {
         DriverConfig {
-            registry_address: Address::repeat_byte(0x01),
+            registry_address: TEST_REGISTRY_ADDRESS,
             poll_interval: Duration::from_secs(1),
             cancel,
+            max_concurrency: DEFAULT_MAX_CONCURRENCY,
         }
     }
 
@@ -874,9 +951,6 @@ mod tests {
     /// Maximum number of tx submission retries in `try_register`.
     /// Mirrors the constant in production code.
     const MAX_TX_RETRIES: u32 = 3;
-
-    /// Default endpoint used in retry tests.
-    const RETRY_TEST_ENDPOINT: &str = "10.0.0.1:8000";
 
     /// Proof provider that counts `generate_proof` invocations.
     ///
@@ -1045,19 +1119,16 @@ mod tests {
     // ── deregister_orphans tests ────────────────────────────────────────
 
     #[rstest]
-    #[case::no_orphans(&[0xAA, 0xBB], &[0xAA, 0xBB], 0)]
-    #[case::one_orphan(&[0xAA, 0xBB], &[0xAA], 1)]
-    #[case::all_orphans(&[0xAA, 0xBB], &[], 2)]
+    #[case::no_orphans(vec![ORPHAN_A, ORPHAN_B], vec![ORPHAN_A, ORPHAN_B], 0)]
+    #[case::one_orphan(vec![ORPHAN_A, ORPHAN_B], vec![ORPHAN_A], 1)]
+    #[case::all_orphans(vec![ORPHAN_A, ORPHAN_B], vec![], 2)]
     #[tokio::test]
     async fn deregister_orphans_tx_count(
-        #[case] registered_bytes: &[u8],
-        #[case] active_bytes: &[u8],
+        #[case] registered: Vec<Address>,
+        #[case] active: Vec<Address>,
         #[case] expected_txs: usize,
     ) {
-        let registered: Vec<Address> =
-            registered_bytes.iter().map(|b| Address::repeat_byte(*b)).collect();
-        let active: HashSet<Address> =
-            active_bytes.iter().map(|b| Address::repeat_byte(*b)).collect();
+        let active: HashSet<Address> = active.into_iter().collect();
 
         let tx = SharedTxManager::new();
         let driver = driver_with_shared_tx(registered.clone(), tx.clone());
@@ -1069,17 +1140,14 @@ mod tests {
 
     #[tokio::test]
     async fn deregister_orphans_calldata_targets_orphan() {
-        let active_signer = Address::repeat_byte(0xAA);
-        let orphan = Address::repeat_byte(0xBB);
-
-        let registered = vec![active_signer, orphan];
+        let registered = vec![ORPHAN_A, ORPHAN_B];
         let tx = SharedTxManager::new();
         let driver = driver_with_shared_tx(registered.clone(), tx.clone());
 
-        driver.deregister_orphans(&HashSet::from([active_signer]), &registered).await.unwrap();
+        driver.deregister_orphans(&HashSet::from([ORPHAN_A]), &registered).await.unwrap();
 
         let sent = tx.sent_calldata();
-        let expected = ITEEProverRegistry::deregisterSignerCall { signer: orphan }.abi_encode();
+        let expected = ITEEProverRegistry::deregisterSignerCall { signer: ORPHAN_B }.abi_encode();
         assert_eq!(sent[0], Bytes::from(expected));
     }
 
@@ -1087,7 +1155,7 @@ mod tests {
     async fn deregister_orphans_respects_cancellation() {
         let tx = SharedTxManager::new();
         let cancel = CancellationToken::new();
-        let registry = MockRegistry::with_signers(vec![Address::repeat_byte(0xAA)]);
+        let registry = MockRegistry::with_signers(vec![ORPHAN_A]);
         let driver = RegistrationDriver::new(
             MockDiscovery { instances: vec![] },
             StubProofProvider,
@@ -1097,7 +1165,7 @@ mod tests {
             default_config(cancel.clone()),
         );
 
-        let registered = vec![Address::repeat_byte(0xAA)];
+        let registered = vec![ORPHAN_A];
         cancel.cancel();
         driver.deregister_orphans(&HashSet::new(), &registered).await.unwrap();
 
@@ -1118,8 +1186,7 @@ mod tests {
         #[case] all_registered: bool,
         #[case] expected_txs: usize,
     ) {
-        let ep = "10.0.0.1:8000";
-        let signer_client = MockSignerClient::from_keys(&[(ep, &HARDHAT_KEY_0)]);
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let tx = SharedTxManager::new();
         let registry = if all_registered {
             MockRegistry::all_registered(vec![])
@@ -1129,7 +1196,7 @@ mod tests {
         let driver =
             step_driver(vec![], signer_client, registry, tx.clone(), CancellationToken::new());
 
-        let inst = instance(ep, status);
+        let inst = instance(EP1, status);
         let addrs = driver.process_instance(&inst).await.unwrap();
 
         assert_eq!(addrs, vec![HARDHAT_ACCOUNT]);
@@ -1138,46 +1205,55 @@ mod tests {
 
     // ── step() tests ────────────────────────────────────────────────────
 
+    /// When discovery returns zero instances the active set is empty, so
+    /// every on-chain signer is an orphan and must be deregistered.
+    #[rstest]
+    #[case::single_orphan(vec![ORPHAN_A])]
+    #[case::multiple_orphans(vec![ORPHAN_A, ORPHAN_B, ORPHAN_C])]
     #[tokio::test]
-    async fn step_zero_instances_deregisters_all_onchain_signers() {
-        let orphan = Address::repeat_byte(0xAA);
+    async fn step_zero_instances_deregisters_all_onchain_signers(#[case] orphans: Vec<Address>) {
+        let expected_count = orphans.len();
         let tx = SharedTxManager::new();
         let driver = step_driver(
             vec![], // no discovered instances
             MockSignerClient::from_keys(&[]),
-            MockRegistry::with_signers(vec![orphan]),
+            MockRegistry::with_signers(orphans.clone()),
             tx.clone(),
             CancellationToken::new(),
         );
 
         driver.step().await.unwrap();
 
-        // Zero instances → empty active set → all on-chain signers are orphans.
-        assert_eq!(tx.sent_calldata().len(), 1);
+        let sent = tx.sent_calldata();
+        assert_eq!(sent.len(), expected_count, "all on-chain signers should be deregistered");
+
+        // Verify each deregistration targets the correct signer.
+        for orphan in orphans {
+            let expected = ITEEProverRegistry::deregisterSignerCall { signer: orphan }.abi_encode();
+            assert!(
+                sent.iter().any(|s| s[..] == expected[..]),
+                "expected deregistration of {orphan}"
+            );
+        }
     }
 
     #[tokio::test]
     async fn step_majority_unreachable_skips_orphan_deregistration() {
         // 3 instances discovered, but only 1 is reachable via MockSignerClient.
         // active_signers.len() (1) * 2 <= instances.len() (3) → skip deregistration.
-        let ep_reachable = "10.0.0.1:8000";
-        let ep_unreachable_1 = "10.0.0.2:8000";
-        let ep_unreachable_2 = "10.0.0.3:8000";
-
         let instances = vec![
-            instance(ep_reachable, InstanceHealthStatus::Healthy),
-            instance(ep_unreachable_1, InstanceHealthStatus::Healthy),
-            instance(ep_unreachable_2, InstanceHealthStatus::Healthy),
+            instance(EP1, InstanceHealthStatus::Healthy),
+            instance(EP2, InstanceHealthStatus::Healthy),
+            instance(EP3, InstanceHealthStatus::Healthy),
         ];
 
-        // Only ep_reachable has a key; the other two will fail signer_public_key.
-        let signer_client = MockSignerClient::from_keys(&[(ep_reachable, &HARDHAT_KEY_0)]);
-        let orphan = Address::repeat_byte(0xBB);
+        // Only EP1 has a key; the other two will fail signer_public_key.
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let tx = SharedTxManager::new();
         let driver = step_driver(
             instances,
             signer_client,
-            MockRegistry::all_registered(vec![orphan]),
+            MockRegistry::all_registered(vec![ORPHAN_B]),
             tx.clone(),
             CancellationToken::new(),
         );
@@ -1192,18 +1268,14 @@ mod tests {
 
     #[tokio::test]
     async fn step_cancellation_before_loop_skips_orphan_cleanup() {
-        let ep1 = "10.0.0.1:8000";
-        let ep2 = "10.0.0.2:8000";
-
         let instances = vec![
-            instance(ep1, InstanceHealthStatus::Healthy),
-            instance(ep2, InstanceHealthStatus::Healthy),
+            instance(EP1, InstanceHealthStatus::Healthy),
+            instance(EP2, InstanceHealthStatus::Healthy),
         ];
 
         let signer_client =
-            MockSignerClient::from_keys(&[(ep1, &HARDHAT_KEY_0), (ep2, &HARDHAT_KEY_1)]);
+            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
 
-        let orphan = Address::repeat_byte(0xCC);
         let cancel = CancellationToken::new();
         let tx = SharedTxManager::new();
 
@@ -1211,13 +1283,13 @@ mod tests {
         let driver = step_driver(
             instances,
             signer_client,
-            MockRegistry::all_registered(vec![orphan]),
+            MockRegistry::all_registered(vec![ORPHAN_C]),
             tx.clone(),
             cancel.clone(),
         );
 
-        // Cancel before running step — the loop breaks immediately at the
-        // first `is_cancelled()` check, so no instances are processed.
+        // Cancel before running step — cancellation is checked when
+        // collecting results, so no deregistration occurs.
         cancel.cancel();
         driver.step().await.unwrap();
 
@@ -1229,10 +1301,9 @@ mod tests {
     async fn step_draining_instance_contributes_to_active_set() {
         // A draining instance should contribute its address to active_signers
         // so it isn't deregistered as an orphan, but should not be registered.
-        let ep = "10.0.0.1:8000";
-        let signer_client = MockSignerClient::from_keys(&[(ep, &HARDHAT_KEY_0)]);
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
 
-        let instances = vec![instance(ep, InstanceHealthStatus::Draining)];
+        let instances = vec![instance(EP1, InstanceHealthStatus::Draining)];
 
         let tx = SharedTxManager::new();
         let driver = step_driver(
@@ -1251,23 +1322,398 @@ mod tests {
         assert!(tx.sent_calldata().is_empty());
     }
 
+    // ── Reachability guard boundary tests ────────────────────────────────
+    //
+    // The majority guard uses instance counts (not signer counts):
+    //
+    //     if !instances.is_empty() && reachable_instances * 2 <= instances.len()
+    //
+    // These tests verify the exact boundary and surrounding values:
+    //   - 1/4 reachable → 1*2 <= 4 → true  → deregistration skipped
+    //   - 2/4 reachable → 2*2 <= 4 → true  → deregistration skipped
+    //   - 3/4 reachable → 3*2 <= 4 → false → deregistration proceeds
+    //   - 4/4 reachable → 4*2 <= 4 → false → deregistration proceeds
+
+    /// All 4 endpoints and corresponding private keys, indexed for
+    /// dynamic slicing in the parametrized guard test.
+    const ALL_ENDPOINTS: [&str; 4] = [EP1, EP2, EP3, EP4];
+    const ALL_KEYS: [&[u8; 32]; 4] =
+        [&HARDHAT_KEY_0, &HARDHAT_KEY_1, &HARDHAT_KEY_2, &HARDHAT_KEY_0];
+
+    #[rstest]
+    #[case::one_of_four(1, true)]
+    #[case::two_of_four(2, true)]
+    #[case::three_of_four(3, false)]
+    #[case::four_of_four(4, false)]
+    #[tokio::test]
+    async fn step_reachability_guard_boundary(
+        #[case] reachable_count: usize,
+        #[case] should_skip_deregistration: bool,
+    ) {
+        // All 4 instances are discovered; only `reachable_count` have keys
+        // in the MockSignerClient (the rest will fail signer_public_key).
+        let instances: Vec<_> =
+            ALL_ENDPOINTS.iter().map(|ep| instance(ep, InstanceHealthStatus::Healthy)).collect();
+
+        let keys: Vec<(&str, &[u8; 32])> = ALL_ENDPOINTS[..reachable_count]
+            .iter()
+            .zip(&ALL_KEYS[..reachable_count])
+            .map(|(ep, key)| (*ep, *key))
+            .collect();
+        let signer_client = MockSignerClient::from_keys(&keys);
+
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            instances,
+            signer_client,
+            // All reachable signers already registered, so no registration txs.
+            // The orphan is on-chain — deregistered only if guard passes.
+            MockRegistry::all_registered(vec![ORPHAN_D]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        driver.step().await.unwrap();
+
+        if should_skip_deregistration {
+            assert!(
+                tx.sent_calldata().is_empty(),
+                "{reachable_count}/4 reachable: majority guard should skip deregistration"
+            );
+        } else {
+            let sent = tx.sent_calldata();
+            assert_eq!(sent.len(), 1, "{reachable_count}/4 reachable: should deregister orphan");
+            let expected =
+                ITEEProverRegistry::deregisterSignerCall { signer: ORPHAN_D }.abi_encode();
+            assert_eq!(sent[0], Bytes::from(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn step_unreachable_instance_does_not_block_reachable_registration() {
+        // An unreachable instance should not prevent other instances from
+        // being processed and registered in the same cycle.
+        let instances = vec![
+            instance(EP4, InstanceHealthStatus::Healthy),
+            instance(EP1, InstanceHealthStatus::Healthy),
+            instance(EP2, InstanceHealthStatus::Healthy),
+            instance(EP3, InstanceHealthStatus::Healthy),
+        ];
+
+        // EP4 has no keys → signer_public_key will error.
+        let signer_client = MockSignerClient::from_keys(&[
+            (EP1, &HARDHAT_KEY_0),
+            (EP2, &HARDHAT_KEY_1),
+            (EP3, &HARDHAT_KEY_2),
+        ]);
+
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            instances,
+            signer_client,
+            // No signers registered yet → all three reachable signers
+            // should be registered.
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        driver.step().await.unwrap();
+
+        // 3 registration txs for the reachable instances, despite the
+        // unreachable one failing. No deregistration (no on-chain signers).
+        assert_eq!(
+            tx.sent_calldata().len(),
+            3,
+            "all 3 reachable instances should be registered despite 1 unreachable"
+        );
+    }
+
+    #[tokio::test]
+    async fn step_registration_failure_keeps_signer_in_active_set() {
+        // A signer whose registration tx fails should remain in active_signers,
+        // preventing it from being deregistered as an orphan. This protects
+        // against the case where a signer is already on-chain from a previous
+        // cycle but the current registration attempt fails (e.g. insufficient
+        // funds).
+        let signer_addr =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+
+        let instances = vec![instance(EP1, InstanceHealthStatus::Healthy)];
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+
+        // is_registered returns false (first call in try_register), then
+        // false again (post-error check). The signer IS in the on-chain
+        // set for get_registered_signers — so without active_signers
+        // protection it would be deregistered as an orphan.
+        let registry = DynamicRegistry::never_registered(vec![signer_addr]);
+
+        // First send (registration) fails; subsequent sends (deregistration)
+        // would succeed — but we expect no deregistration to happen.
+        let tx = FailingTxManager::with_errors(vec![
+            TxManagerError::InsufficientFunds,
+            TxManagerError::InsufficientFunds,
+            TxManagerError::InsufficientFunds,
+            TxManagerError::InsufficientFunds,
+        ]);
+
+        let driver = RegistrationDriver::new(
+            MockDiscovery { instances },
+            StubProofProvider,
+            registry,
+            tx.clone(),
+            signer_client,
+            default_config(CancellationToken::new()),
+        );
+
+        driver.step().await.unwrap();
+
+        // Registration was attempted (1 send for the non-retryable error),
+        // but no deregistration tx should have been sent because the signer
+        // remains in active_signers.
+        let sent = tx.sent_calldata();
+        assert_eq!(sent.len(), 1, "only the failed registration attempt should be sent");
+        // Verify the single tx was a registration, not a deregistration.
+        let register_selector = ITEEProverRegistry::registerSignerCall::SELECTOR;
+        assert_eq!(
+            &sent[0][..4],
+            register_selector,
+            "the only tx should be the registration attempt"
+        );
+    }
+
+    /// Signer client wrapper that cancels a token after returning keys.
+    ///
+    /// Delegates to an inner [`MockSignerClient`] for actual key/attestation
+    /// data, but cancels the given [`CancellationToken`] after the first
+    /// successful `signer_public_key` call. This simulates cancellation
+    /// occurring mid-cycle (after instance processing begins but before
+    /// orphan deregistration).
+    #[derive(Debug)]
+    struct CancellingSignerClient {
+        inner: MockSignerClient,
+        cancel: CancellationToken,
+    }
+
+    #[async_trait]
+    impl SignerClient for CancellingSignerClient {
+        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
+            let result = self.inner.signer_public_key(endpoint).await;
+            if result.is_ok() {
+                self.cancel.cancel();
+            }
+            result
+        }
+
+        async fn signer_attestation(
+            &self,
+            endpoint: &Url,
+            user_data: Option<Vec<u8>>,
+            nonce: Option<Vec<u8>>,
+        ) -> Result<Vec<Vec<u8>>> {
+            self.inner.signer_attestation(endpoint, user_data, nonce).await
+        }
+    }
+
+    #[tokio::test]
+    async fn step_cancellation_mid_cycle_skips_orphan_deregistration() {
+        // Cancellation during instance processing should skip orphan
+        // deregistration. CancellingSignerClient cancels the token as a
+        // side-effect of signer_public_key, simulating a shutdown signal
+        // arriving while the registrar is processing instances.
+        let instances = vec![instance(EP1, InstanceHealthStatus::Healthy)];
+
+        let cancel = CancellationToken::new();
+        let tx = SharedTxManager::new();
+
+        let signer_client = CancellingSignerClient {
+            inner: MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]),
+            cancel: cancel.clone(),
+        };
+
+        let driver = RegistrationDriver::new(
+            MockDiscovery { instances },
+            StubProofProvider,
+            MockRegistry::all_registered(vec![ORPHAN_E]),
+            tx.clone(),
+            signer_client,
+            default_config(cancel),
+        );
+
+        driver.step().await.unwrap();
+
+        // The instance was processed (all_registered → no registration tx),
+        // but orphan deregistration was skipped because the token was
+        // cancelled during instance processing.
+        assert!(
+            tx.sent_calldata().is_empty(),
+            "cancellation mid-cycle should prevent orphan deregistration"
+        );
+    }
+
+    #[tokio::test]
+    async fn step_multi_enclave_draining_protects_all_signers_from_deregistration() {
+        // A draining multi-enclave instance should contribute ALL of its
+        // signer addresses to active_signers, preventing orphan
+        // deregistration for each of them — even though registration is
+        // skipped.
+        let addr0 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let addr1 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
+
+        let instances = vec![instance(EP1, InstanceHealthStatus::Draining)];
+        let signer_client = MockSignerClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
+
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            instances,
+            signer_client,
+            // Both signers are on-chain — without active_signers protection
+            // they would be deregistered as orphans.
+            MockRegistry::with_signers(vec![addr0, addr1]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        driver.step().await.unwrap();
+
+        // No registration (draining) and no deregistration (both signers
+        // are in active_signers).
+        assert!(
+            tx.sent_calldata().is_empty(),
+            "draining multi-enclave instance should protect all signers from deregistration"
+        );
+    }
+
+    #[tokio::test]
+    async fn step_unhealthy_instance_is_reachable_but_not_registered() {
+        // An unhealthy instance (failing ALB health checks) that is still
+        // reachable by the registrar (responds to JSON-RPC) should:
+        //   1. NOT be registered (should_register returns false for Unhealthy)
+        //   2. Count as reachable (increments reachable_instances)
+        //   3. Contribute its signers to active_signers (preventing deregistration)
+        //
+        // This is important because "unhealthy" in ALB terms does not mean
+        // the registrar can't connect — the instance may be failing
+        // application-level health checks while still responding to RPC.
+        let addr_unhealthy =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+
+        let instances = vec![
+            instance(EP1, InstanceHealthStatus::Unhealthy),
+            instance(EP2, InstanceHealthStatus::Healthy),
+        ];
+
+        // Both instances are reachable via MockSignerClient.
+        let signer_client =
+            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
+
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            instances,
+            signer_client,
+            // The unhealthy signer is on-chain. Without active_signers
+            // protection it would be deregistered.
+            MockRegistry::with_signers(vec![addr_unhealthy]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        driver.step().await.unwrap();
+
+        let sent = tx.sent_calldata();
+
+        // 1 registration tx for the healthy instance (unregistered).
+        // 0 registration txs for the unhealthy instance (should_register = false).
+        // 0 deregistration txs (unhealthy signer is in active_signers).
+        assert_eq!(sent.len(), 1, "only the healthy instance should be registered");
+        let register_selector = ITEEProverRegistry::registerSignerCall::SELECTOR;
+        assert_eq!(&sent[0][..4], register_selector, "the only tx should be a registration");
+    }
+
+    #[tokio::test]
+    async fn step_proof_generation_failure_keeps_signer_in_active_set() {
+        // When proof generation fails, the signer address should still be
+        // in active_signers (because process_instance returns the address
+        // before try_register is called). This prevents the signer from
+        // being deregistered as an orphan due to a transient Boundless outage.
+        let signer_addr =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+
+        let instances = vec![instance(EP1, InstanceHealthStatus::Healthy)];
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+
+        let tx = SharedTxManager::new();
+        let driver = RegistrationDriver::new(
+            MockDiscovery { instances },
+            FailingProofProvider,
+            MockRegistry::with_signers(vec![signer_addr]),
+            tx.clone(),
+            signer_client,
+            default_config(CancellationToken::new()),
+        );
+
+        driver.step().await.unwrap();
+
+        // No registration tx (proof gen failed), and no deregistration tx
+        // (signer is in active_signers despite the proof failure).
+        assert!(
+            tx.sent_calldata().is_empty(),
+            "proof failure should not cause deregistration of the signer"
+        );
+    }
+
+    #[tokio::test]
+    async fn step_mixed_healthy_and_draining_instances() {
+        // A cycle with both healthy (should register) and draining
+        // (should not register, but contributes to active_signers)
+        // instances. Verifies the two statuses compose correctly:
+        // the healthy instance is registered, the draining instance
+        // protects its signer from deregistration.
+        let addr_draining =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+
+        let instances = vec![
+            instance(EP1, InstanceHealthStatus::Draining),
+            instance(EP2, InstanceHealthStatus::Healthy),
+        ];
+
+        let signer_client =
+            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
+
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            instances,
+            signer_client,
+            // The draining signer is on-chain. The healthy signer is not.
+            MockRegistry::with_signers(vec![addr_draining]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        driver.step().await.unwrap();
+
+        let sent = tx.sent_calldata();
+        // 1 registration tx for the healthy instance.
+        // 0 deregistration txs (draining signer is in active_signers).
+        assert_eq!(sent.len(), 1, "only the healthy instance should be registered");
+        let register_selector = ITEEProverRegistry::registerSignerCall::SELECTOR;
+        assert_eq!(&sent[0][..4], register_selector, "the only tx should be a registration");
+    }
+
     #[tokio::test]
     async fn step_healthy_instances_register_and_deregister_orphans() {
-        let ep1 = "10.0.0.1:8000";
-        let ep2 = "10.0.0.2:8000";
-
         let addr1 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
         let addr2 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
         let orphan =
             ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_2)).unwrap();
 
         let instances = vec![
-            instance(ep1, InstanceHealthStatus::Healthy),
-            instance(ep2, InstanceHealthStatus::Healthy),
+            instance(EP1, InstanceHealthStatus::Healthy),
+            instance(EP2, InstanceHealthStatus::Healthy),
         ];
 
         let signer_client =
-            MockSignerClient::from_keys(&[(ep1, &HARDHAT_KEY_0), (ep2, &HARDHAT_KEY_1)]);
+            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
 
         let tx = SharedTxManager::new();
         let driver = step_driver(
@@ -1285,6 +1731,12 @@ mod tests {
         // 2 registration txs (addr1, addr2) + 1 deregistration tx (orphan).
         assert_eq!(sent.len(), 3, "expected 2 registrations + 1 deregistration");
 
+        // Verify registration calldata uses registerSigner selector.
+        let register_selector = ITEEProverRegistry::registerSignerCall::SELECTOR;
+        let registration_count =
+            sent.iter().filter(|s| s.len() >= 4 && s[..4] == register_selector).count();
+        assert_eq!(registration_count, 2, "expected 2 registration txs");
+
         // Verify the deregistration calldata targets the orphan.
         let deregister_expected =
             ITEEProverRegistry::deregisterSignerCall { signer: orphan }.abi_encode();
@@ -1298,8 +1750,7 @@ mod tests {
 
     #[tokio::test]
     async fn process_instance_multi_enclave_returns_all_addresses() {
-        let ep = "10.0.0.1:8000";
-        let signer_client = MockSignerClient::multi_enclave(ep, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
+        let signer_client = MockSignerClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
         let tx = SharedTxManager::new();
         let driver = step_driver(
             vec![],
@@ -1309,7 +1760,7 @@ mod tests {
             CancellationToken::new(),
         );
 
-        let inst = instance(ep, InstanceHealthStatus::Healthy);
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
         let addrs = driver.process_instance(&inst).await.unwrap();
 
         let expected_addr_0 =
@@ -1326,8 +1777,7 @@ mod tests {
 
     #[tokio::test]
     async fn process_instance_multi_enclave_draining_skips_registration() {
-        let ep = "10.0.0.1:8000";
-        let signer_client = MockSignerClient::multi_enclave(ep, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
+        let signer_client = MockSignerClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
         let tx = SharedTxManager::new();
         let driver = step_driver(
             vec![],
@@ -1337,7 +1787,7 @@ mod tests {
             CancellationToken::new(),
         );
 
-        let inst = instance(ep, InstanceHealthStatus::Draining);
+        let inst = instance(EP1, InstanceHealthStatus::Draining);
         let addrs = driver.process_instance(&inst).await.unwrap();
 
         assert_eq!(addrs.len(), 2, "both addresses should be returned");
@@ -1348,12 +1798,11 @@ mod tests {
 
     #[tokio::test]
     async fn process_instance_fails_on_attestation_count_mismatch() {
-        let ep = "10.0.0.1:8000";
         // Return 2 public keys but only 1 attestation → mismatch should error.
-        let signer_client = MockSignerClient::multi_enclave(ep, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
+        let signer_client = MockSignerClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
         // Default mock returns 2 attestations (one per key), so override
         // to return only 1 attestation.
-        let signer_client = signer_client.with_attestations(ep, vec![b"single-att".to_vec()]);
+        let signer_client = signer_client.with_attestations(EP1, vec![b"single-att".to_vec()]);
         let tx = SharedTxManager::new();
         let driver = step_driver(
             vec![],
@@ -1363,13 +1812,185 @@ mod tests {
             CancellationToken::new(),
         );
 
-        let inst = instance(ep, InstanceHealthStatus::Healthy);
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
         // Attestations are fetched once for all enclaves before registration.
         // A count mismatch (fewer attestations than keys) fails the entire
         // instance — no enclaves are registered.
         let result = driver.process_instance(&inst).await;
 
         assert!(result.is_err(), "should fail when attestation count < key count");
+    }
+
+    // ── Cancellation responsiveness test ──────────────────────────────────
+
+    /// Signer client that blocks `signer_public_key` on a `Notify` gate.
+    /// Allows tests to control when each instance's RPC completes, so
+    /// cancellation responsiveness can be verified.
+    #[derive(Debug)]
+    struct BlockingSignerClient {
+        inner: MockSignerClient,
+        gate: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl SignerClient for BlockingSignerClient {
+        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
+            self.gate.notified().await;
+            self.inner.signer_public_key(endpoint).await
+        }
+
+        async fn signer_attestation(
+            &self,
+            endpoint: &Url,
+            user_data: Option<Vec<u8>>,
+            nonce: Option<Vec<u8>>,
+        ) -> Result<Vec<Vec<u8>>> {
+            self.inner.signer_attestation(endpoint, user_data, nonce).await
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn step_cancellation_breaks_immediately_without_waiting_for_blocked_futures() {
+        // Verify that `tokio::select!` with `cancel.cancelled()` causes
+        // `step()` to return as soon as cancellation fires, even when all
+        // instance futures are blocked on long-running operations. Without
+        // this, the old `while let Some(..) = futs.next().await` loop
+        // would hang until at least one future completed (~20 min for
+        // proof generation in production).
+        //
+        // The test uses `start_paused = true` so time only advances via
+        // explicit `tokio::time::sleep`. We schedule a cancellation after
+        // 1s, then assert `step()` completes well before the 20-minute
+        // proof generation timeout — proving the `select!` broke the loop
+        // immediately without waiting for the blocked futures.
+        let instances = vec![
+            instance(EP1, InstanceHealthStatus::Healthy),
+            instance(EP2, InstanceHealthStatus::Healthy),
+        ];
+
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let signer_client = BlockingSignerClient {
+            inner: MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]),
+            gate: Arc::clone(&gate),
+        };
+
+        let cancel = CancellationToken::new();
+        let tx = SharedTxManager::new();
+        let driver = RegistrationDriver::new(
+            MockDiscovery { instances },
+            StubProofProvider,
+            MockRegistry::all_registered(vec![ORPHAN_E]),
+            tx.clone(),
+            signer_client,
+            default_config(cancel.clone()),
+        );
+
+        // Schedule cancellation after 1 second (paused time).
+        let cancel_clone = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            cancel_clone.cancel();
+        });
+
+        // step() should return quickly after the cancellation fires.
+        // With paused time, this verifies the select! breaks the loop
+        // rather than waiting for the BlockingSignerClient gate.
+        let result = tokio::time::timeout(Duration::from_secs(10), driver.step()).await;
+
+        let step_result =
+            result.expect("step should complete within timeout, not hang on blocked futures");
+        assert!(step_result.is_ok(), "step should return Ok after cancellation");
+
+        // No transactions should have been sent — neither registration
+        // (futures never completed) nor deregistration (cancelled).
+        assert!(
+            tx.sent_calldata().is_empty(),
+            "no transactions should be sent when all futures are blocked and cancellation fires"
+        );
+    }
+
+    // ── Concurrency limit test ──────────────────────────────────────────
+
+    /// Signer client that tracks the peak number of concurrent
+    /// `signer_public_key` calls. Used to verify `max_concurrency`.
+    #[derive(Debug)]
+    struct ConcurrencyTrackingSignerClient {
+        inner: MockSignerClient,
+        in_flight: Arc<AtomicUsize>,
+        peak: Arc<AtomicUsize>,
+    }
+
+    impl ConcurrencyTrackingSignerClient {
+        fn new(inner: MockSignerClient) -> (Self, Arc<AtomicUsize>) {
+            let peak = Arc::new(AtomicUsize::new(0));
+            let client =
+                Self { inner, in_flight: Arc::new(AtomicUsize::new(0)), peak: Arc::clone(&peak) };
+            (client, peak)
+        }
+    }
+
+    #[async_trait]
+    impl SignerClient for ConcurrencyTrackingSignerClient {
+        async fn signer_public_key(&self, endpoint: &Url) -> Result<Vec<Vec<u8>>> {
+            let current = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(current, Ordering::SeqCst);
+
+            // Yield to give other futures a chance to enter concurrently.
+            tokio::task::yield_now().await;
+
+            let result = self.inner.signer_public_key(endpoint).await;
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            result
+        }
+
+        async fn signer_attestation(
+            &self,
+            endpoint: &Url,
+            user_data: Option<Vec<u8>>,
+            nonce: Option<Vec<u8>>,
+        ) -> Result<Vec<Vec<u8>>> {
+            self.inner.signer_attestation(endpoint, user_data, nonce).await
+        }
+    }
+
+    #[rstest]
+    #[case::serial(1)]
+    #[case::limited(2)]
+    #[tokio::test]
+    async fn step_respects_max_concurrency(#[case] max_concurrency: usize) {
+        // Process 4 instances with a limited max_concurrency and verify
+        // the peak concurrent in-flight count never exceeds the limit.
+        let instances: Vec<_> =
+            ALL_ENDPOINTS.iter().map(|ep| instance(ep, InstanceHealthStatus::Healthy)).collect();
+
+        let keys: Vec<(&str, &[u8; 32])> =
+            ALL_ENDPOINTS.iter().copied().zip(ALL_KEYS.iter().copied()).collect();
+        let inner = MockSignerClient::from_keys(&keys);
+        let (signer_client, peak) = ConcurrencyTrackingSignerClient::new(inner);
+
+        let cancel = CancellationToken::new();
+        let tx = SharedTxManager::new();
+        let mut config = default_config(cancel);
+        config.max_concurrency = max_concurrency;
+
+        let driver = RegistrationDriver::new(
+            MockDiscovery { instances },
+            StubProofProvider,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            signer_client,
+            config,
+        );
+
+        driver.step().await.unwrap();
+
+        let observed_peak = peak.load(Ordering::SeqCst);
+        assert!(
+            observed_peak <= max_concurrency,
+            "peak concurrency {observed_peak} exceeded max_concurrency {max_concurrency}"
+        );
+        // Verify instances were actually processed (4 registration txs).
+        assert_eq!(tx.sent_calldata().len(), 4, "all 4 instances should be registered");
     }
 
     // ── tx retry tests (Fix C) ──────────────────────────────────────────
@@ -1403,7 +2024,7 @@ mod tests {
     /// across all attempts.
     #[tokio::test(start_paused = true)]
     async fn try_register_retries_transient_error_then_succeeds() {
-        let signer_client = MockSignerClient::from_keys(&[(RETRY_TEST_ENDPOINT, &HARDHAT_KEY_0)]);
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let tx = FailingTxManager::with_errors(vec![
             TxManagerError::Rpc("transient 1".into()),
             TxManagerError::Rpc("transient 2".into()),
@@ -1418,7 +2039,7 @@ mod tests {
             CancellationToken::new(),
         );
 
-        let inst = instance(RETRY_TEST_ENDPOINT, InstanceHealthStatus::Healthy);
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
         let result = driver.process_instance(&inst).await;
 
         assert!(result.is_ok(), "should succeed after retries: {result:?}");
@@ -1432,7 +2053,7 @@ mod tests {
     /// registered: should return Ok without retrying.
     #[tokio::test(start_paused = true)]
     async fn try_register_already_registered_after_error_returns_ok() {
-        let signer_client = MockSignerClient::from_keys(&[(RETRY_TEST_ENDPOINT, &HARDHAT_KEY_0)]);
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let tx = FailingTxManager::with_errors(vec![TxManagerError::Rpc("nonce race".into())]);
         // First `is_registered` call (before proof gen) returns false.
         // Second call (after tx error) returns true (tx was mined despite error).
@@ -1445,7 +2066,7 @@ mod tests {
             CancellationToken::new(),
         );
 
-        let inst = instance(RETRY_TEST_ENDPOINT, InstanceHealthStatus::Healthy);
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
         let result = driver.process_instance(&inst).await;
 
         assert!(result.is_ok(), "should succeed: signer registered on-chain: {result:?}");
@@ -1453,14 +2074,20 @@ mod tests {
         assert_eq!(tx.send_count(), 1);
     }
 
-    /// `ExecutionReverted` aborts immediately without retry.
+    /// Non-retryable errors abort immediately without retry.
+    /// Each variant is a distinct `TxManagerError` that `is_retryable()` returns
+    /// `false` for — the retry loop must recognise them and bail after one send.
+    #[rstest]
+    #[case::execution_reverted(TxManagerError::ExecutionReverted {
+        reason: Some("bad proof".into()),
+        data: None,
+    })]
+    #[case::insufficient_funds(TxManagerError::InsufficientFunds)]
+    #[case::fee_limit_exceeded(TxManagerError::FeeLimitExceeded { fee: 500, ceiling: 100 })]
     #[tokio::test(start_paused = true)]
-    async fn try_register_execution_reverted_aborts_immediately() {
-        let signer_client = MockSignerClient::from_keys(&[(RETRY_TEST_ENDPOINT, &HARDHAT_KEY_0)]);
-        let tx = FailingTxManager::with_errors(vec![TxManagerError::ExecutionReverted {
-            reason: Some("bad proof".into()),
-            data: None,
-        }]);
+    async fn try_register_non_retryable_error_aborts_immediately(#[case] error: TxManagerError) {
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let tx = FailingTxManager::with_errors(vec![error]);
         let registry = DynamicRegistry::never_registered(vec![]);
         let driver = retry_driver(
             signer_client,
@@ -1470,65 +2097,20 @@ mod tests {
             CancellationToken::new(),
         );
 
-        let inst = instance(RETRY_TEST_ENDPOINT, InstanceHealthStatus::Healthy);
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
         let result = driver.process_instance(&inst).await;
 
         // process_instance logs errors but doesn't propagate them, so it returns Ok.
         // However, the tx manager should only have been called once (no retry).
         assert!(result.is_ok());
-        assert_eq!(tx.send_count(), 1, "should not retry after ExecutionReverted");
-    }
-
-    /// `InsufficientFunds` aborts immediately without retry.
-    #[tokio::test(start_paused = true)]
-    async fn try_register_insufficient_funds_aborts_immediately() {
-        let signer_client = MockSignerClient::from_keys(&[(RETRY_TEST_ENDPOINT, &HARDHAT_KEY_0)]);
-        let tx = FailingTxManager::with_errors(vec![TxManagerError::InsufficientFunds]);
-        let registry = DynamicRegistry::never_registered(vec![]);
-        let driver = retry_driver(
-            signer_client,
-            registry,
-            tx.clone(),
-            StubProofProvider,
-            CancellationToken::new(),
-        );
-
-        let inst = instance(RETRY_TEST_ENDPOINT, InstanceHealthStatus::Healthy);
-        let result = driver.process_instance(&inst).await;
-
-        assert!(result.is_ok());
-        assert_eq!(tx.send_count(), 1, "should not retry after InsufficientFunds");
-    }
-
-    /// `FeeLimitExceeded` is non-retryable and aborts immediately.
-    #[tokio::test(start_paused = true)]
-    async fn try_register_fee_limit_exceeded_aborts_immediately() {
-        let signer_client = MockSignerClient::from_keys(&[(RETRY_TEST_ENDPOINT, &HARDHAT_KEY_0)]);
-        let tx = FailingTxManager::with_errors(vec![TxManagerError::FeeLimitExceeded {
-            fee: 500,
-            ceiling: 100,
-        }]);
-        let registry = DynamicRegistry::never_registered(vec![]);
-        let driver = retry_driver(
-            signer_client,
-            registry,
-            tx.clone(),
-            StubProofProvider,
-            CancellationToken::new(),
-        );
-
-        let inst = instance(RETRY_TEST_ENDPOINT, InstanceHealthStatus::Healthy);
-        let result = driver.process_instance(&inst).await;
-
-        assert!(result.is_ok());
-        assert_eq!(tx.send_count(), 1, "should not retry after FeeLimitExceeded");
+        assert_eq!(tx.send_count(), 1, "should not retry after non-retryable error");
     }
 
     /// Transient errors exhaust all retries: should fail after
     /// `MAX_TX_RETRIES` + 1 attempts. Same calldata in every attempt.
     #[tokio::test(start_paused = true)]
     async fn try_register_exhausts_retries_then_fails() {
-        let signer_client = MockSignerClient::from_keys(&[(RETRY_TEST_ENDPOINT, &HARDHAT_KEY_0)]);
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         // Return more errors than MAX_TX_RETRIES allows.
         let errors: Vec<TxManagerError> = (0..=MAX_TX_RETRIES)
             .map(|_| TxManagerError::Rpc("persistent failure".into()))
@@ -1544,7 +2126,7 @@ mod tests {
             CancellationToken::new(),
         );
 
-        let inst = instance(RETRY_TEST_ENDPOINT, InstanceHealthStatus::Healthy);
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
         let result = driver.process_instance(&inst).await;
 
         // process_instance catches the error — verify via send count.
@@ -1568,7 +2150,7 @@ mod tests {
     /// occurs.
     #[tokio::test(start_paused = true)]
     async fn try_register_cancellation_during_retry_sleep_aborts() {
-        let signer_client = MockSignerClient::from_keys(&[(RETRY_TEST_ENDPOINT, &HARDHAT_KEY_0)]);
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         // Return enough transient errors for multiple retries — but
         // cancellation should prevent all but the first.
         let tx = FailingTxManager::with_errors(vec![
@@ -1581,7 +2163,7 @@ mod tests {
         let driver =
             retry_driver(signer_client, registry, tx.clone(), StubProofProvider, cancel.clone());
 
-        let inst = instance(RETRY_TEST_ENDPOINT, InstanceHealthStatus::Healthy);
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
 
         // Spawn a task that cancels after 1 second (during the 5s delay).
         let cancel_handle = cancel.clone();
@@ -1601,14 +2183,14 @@ mod tests {
     /// Cancellation before the retry loop starts: no tx is sent at all.
     #[tokio::test(start_paused = true)]
     async fn try_register_cancellation_before_loop_sends_nothing() {
-        let signer_client = MockSignerClient::from_keys(&[(RETRY_TEST_ENDPOINT, &HARDHAT_KEY_0)]);
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let tx = FailingTxManager::with_errors(vec![]);
         let registry = DynamicRegistry::never_registered(vec![]);
         let cancel = CancellationToken::new();
         cancel.cancel(); // Cancel before entering try_register.
         let driver = retry_driver(signer_client, registry, tx.clone(), StubProofProvider, cancel);
 
-        let inst = instance(RETRY_TEST_ENDPOINT, InstanceHealthStatus::Healthy);
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
         let result = driver.process_instance(&inst).await;
 
         assert!(result.is_ok());
@@ -1620,7 +2202,7 @@ mod tests {
     /// (non-retryable) without further retries.
     #[tokio::test(start_paused = true)]
     async fn try_register_transient_then_execution_reverted() {
-        let signer_client = MockSignerClient::from_keys(&[(RETRY_TEST_ENDPOINT, &HARDHAT_KEY_0)]);
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let tx = FailingTxManager::with_errors(vec![
             TxManagerError::Rpc("transient".into()),
             TxManagerError::ExecutionReverted { reason: None, data: None },
@@ -1634,7 +2216,7 @@ mod tests {
             CancellationToken::new(),
         );
 
-        let inst = instance(RETRY_TEST_ENDPOINT, InstanceHealthStatus::Healthy);
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
         let result = driver.process_instance(&inst).await;
 
         assert!(result.is_ok());
@@ -1646,7 +2228,7 @@ mod tests {
     /// Immediate success on first attempt: no retries needed.
     #[tokio::test(start_paused = true)]
     async fn try_register_immediate_success() {
-        let signer_client = MockSignerClient::from_keys(&[(RETRY_TEST_ENDPOINT, &HARDHAT_KEY_0)]);
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
         let tx = FailingTxManager::with_errors(vec![]); // no errors — immediate success
         let proof_provider = CountingProofProvider::new();
         let registry = DynamicRegistry::never_registered(vec![]);
@@ -1658,7 +2240,7 @@ mod tests {
             CancellationToken::new(),
         );
 
-        let inst = instance(RETRY_TEST_ENDPOINT, InstanceHealthStatus::Healthy);
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
         let result = driver.process_instance(&inst).await;
 
         assert!(result.is_ok());

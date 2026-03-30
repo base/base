@@ -95,6 +95,10 @@ pub struct RegistrarConfig {
     pub poll_interval: Duration,
     /// Timeout for JSON-RPC calls to prover instances.
     pub prover_timeout: Duration,
+    /// Maximum number of instances to process concurrently within a single
+    /// registration cycle. Each instance may trigger a ~20-minute proof
+    /// generation, so this limits concurrent proof work and nonce acquisition.
+    pub max_concurrency: usize,
     /// Health server socket address.
     pub health_addr: SocketAddr,
 }
@@ -111,6 +115,7 @@ impl std::fmt::Debug for RegistrarConfig {
             .field("proving", &self.proving)
             .field("poll_interval", &self.poll_interval)
             .field("prover_timeout", &self.prover_timeout)
+            .field("max_concurrency", &self.max_concurrency)
             .field("health_addr", &self.health_addr)
             .finish()
     }

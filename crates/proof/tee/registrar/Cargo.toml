@@ -38,6 +38,7 @@ jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
 # Async
+futures.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["net", "time", "macros"] }
