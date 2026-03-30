@@ -172,8 +172,7 @@ the withdrawal was proven against.
 
 **Trusted `GameType`**
 The `DisputeGameFactory` can create many different types of dispute games, delineated by their `GameType`. The game
-type of the dispute game fetched from the factory's list at `_disputeGameIndex` must be of type `RESPECTED_GAME_TYPE`.
-The call should revert on all other game types it encounters.
+type of the dispute game referenced by the stored `ProvenWithdrawal` (the game the withdrawal was proven against) must be `RESPECTED_GAME_TYPE`.
 
 **Respected Game Type Updated**
 A withdrawal may never be finalized if the dispute game was created before the respected game type was last updated.
