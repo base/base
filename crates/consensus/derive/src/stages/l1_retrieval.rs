@@ -140,10 +140,14 @@ where
 mod tests {
     use alloc::vec;
 
-    use alloy_primitives::Bytes;
+    use alloy_primitives::{Address, Bytes};
+    use base_consensus_genesis::RollupConfig;
 
     use super::*;
-    use crate::test_utils::{TestDAP, TraversalTestHelper};
+    use crate::{
+        BlobData, BlobSource, CalldataSource, EthereumDataSource,
+        test_utils::{TestBlobProvider, TestChainProvider, TestDAP, TraversalTestHelper},
+    };
 
     #[tokio::test]
     async fn test_l1_retrieval_flush_channel() {
@@ -227,6 +231,92 @@ mod tests {
             ActivationSignal { system_config: Some(Default::default()), ..Default::default() }
                 .signal();
         test_l1_retrieval_clears_stale_data(activation_signal).await;
+    }
+
+    // --- `EthereumDataSource` contract (same invariant as base/base#1691; extends TestDAP cases) ---
+
+    fn poisoned_ethereum_dap_pre_ecotone() -> EthereumDataSource<TestChainProvider, TestBlobProvider>
+    {
+        let mut chain = TestChainProvider::default();
+        chain.insert_block_with_transactions(0, BlockInfo::default(), vec![]);
+
+        let mut calldata = CalldataSource::new(chain.clone(), Address::ZERO);
+        calldata.calldata.push_back(Bytes::from_static(b"stale-calldata"));
+        calldata.open = true;
+
+        let blob = BlobSource::new(chain, TestBlobProvider::default(), Address::ZERO);
+        EthereumDataSource::new(blob, calldata, &RollupConfig::default())
+    }
+
+    #[tokio::test]
+    async fn test_l1_retrieval_reset_clears_ethereum_dap_stale_calldata_via_next_data() {
+        let traversal = TraversalTestHelper::new_populated();
+        let dap = poisoned_ethereum_dap_pre_ecotone();
+        let mut retrieval = L1Retrieval::new(traversal, dap);
+        retrieval.next = Some(BlockInfo::default());
+
+        retrieval
+            .signal(
+                ResetSignal { system_config: Some(Default::default()), ..Default::default() }
+                    .signal(),
+            )
+            .await
+            .unwrap();
+
+        let err = retrieval.next_data().await.unwrap_err();
+        assert_eq!(err, PipelineError::Eof.temp());
+    }
+
+    #[tokio::test]
+    async fn test_l1_retrieval_activation_clears_ethereum_dap_stale_calldata_via_next_data() {
+        let traversal = TraversalTestHelper::new_populated();
+        let dap = poisoned_ethereum_dap_pre_ecotone();
+        let mut retrieval = L1Retrieval::new(traversal, dap);
+        retrieval.next = Some(BlockInfo::default());
+
+        retrieval
+            .signal(
+                ActivationSignal { system_config: Some(Default::default()), ..Default::default() }
+                    .signal(),
+            )
+            .await
+            .unwrap();
+
+        let err = retrieval.next_data().await.unwrap_err();
+        assert_eq!(err, PipelineError::Eof.temp());
+    }
+
+    #[tokio::test]
+    async fn test_l1_retrieval_reset_clears_ethereum_blob_and_calldata_subsources() {
+        let traversal = TraversalTestHelper::new_populated();
+        let mut chain = TestChainProvider::default();
+        chain.insert_block_with_transactions(0, BlockInfo::default(), vec![]);
+
+        let mut calldata = CalldataSource::new(chain.clone(), Address::ZERO);
+        calldata.calldata.push_back(Bytes::from_static(b"stale"));
+        calldata.open = true;
+
+        let mut blob = BlobSource::new(chain, TestBlobProvider::default(), Address::ZERO);
+        blob.data =
+            vec![BlobData { data: None, calldata: Some(Bytes::from_static(b"blob-stale")) }];
+        blob.open = true;
+
+        let dap = EthereumDataSource::new(blob, calldata, &RollupConfig::default());
+        let mut retrieval = L1Retrieval::new(traversal, dap);
+        retrieval.next = Some(BlockInfo::default());
+
+        retrieval
+            .signal(
+                ResetSignal { system_config: Some(Default::default()), ..Default::default() }
+                    .signal(),
+            )
+            .await
+            .unwrap();
+
+        assert!(retrieval.provider.calldata_source.calldata.is_empty());
+        assert!(!retrieval.provider.calldata_source.open);
+        assert!(retrieval.provider.blob_source.data.is_empty());
+        assert!(!retrieval.provider.blob_source.open);
     }
 
     #[tokio::test]
