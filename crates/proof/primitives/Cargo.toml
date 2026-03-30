@@ -12,11 +12,11 @@ workspace = true
 
 [dependencies]
 # General
-async-trait.workspace = true
 thiserror.workspace = true
-alloy-primitives = { workspace = true }
-alloy-chains = { workspace = true }
+async-trait.workspace = true
 alloy-eips = { workspace = true }
+alloy-chains = { workspace = true }
+alloy-primitives = { workspace = true }
 base-proof-preimage = { workspace = true }
 base-consensus-genesis = { workspace = true }
 serde = { workspace = true, optional = true, features = ["derive"] }
