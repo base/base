@@ -3,6 +3,11 @@
 
 extern crate alloc;
 
+mod per_chain_config;
+pub use per_chain_config::{
+    BlockId, Genesis, GenesisSystemConfig, MARSHAL_BINARY_SIZE, PerChainConfig,
+};
+
 mod proof;
 pub use proof::{ProofBundle, ProofRequest, ProofResult};
 

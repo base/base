@@ -4584,9 +4584,13 @@ dependencies = [
 name = "base-proof-primitives"
 version = "0.0.0"
 dependencies = [
+ "alloy-chains",
+ "alloy-eips",
  "alloy-primitives",
  "async-trait",
+ "base-consensus-genesis",
  "base-proof-preimage",
+ "hex",
  "jsonrpsee",
  "rstest",
  "serde",
@@ -4680,6 +4684,7 @@ dependencies = [
  "base-consensus-registry",
  "base-proof-client",
  "base-proof-preimage",
+ "base-proof-primitives",
  "base64 0.22.1",
  "bincode 2.0.1",
  "ciborium",
