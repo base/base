@@ -783,11 +783,8 @@ pub(crate) async fn restart_conductor_node(
     result_tx: mpsc::Sender<Result<String, String>>,
 ) {
     // Dependency order: EL must be healthy before CL starts, CL before conductor.
-    let ordered: &[Option<&str>] = &[
-        node.docker_el.as_deref(),
-        node.docker_cl.as_deref(),
-        node.docker_conductor.as_deref(),
-    ];
+    let ordered: &[Option<&str>] =
+        &[node.docker_el.as_deref(), node.docker_cl.as_deref(), node.docker_conductor.as_deref()];
     let containers: Vec<&str> = ordered.iter().filter_map(|c| *c).collect();
 
     let outcome: anyhow::Result<String> = async {
@@ -877,18 +874,15 @@ pub(crate) async fn run_conductor_poller(
                     warn!(error = %e, node = %node.name, "failed to build CL HTTP client");
                 })
                 .ok()?;
-            let el_client = node
-                .el_rpc
-                .as_ref()
-                .and_then(|url| {
-                    HttpClientBuilder::default()
-                        .request_timeout(RPC_TIMEOUT)
-                        .build(url.as_str())
-                        .inspect_err(|e| {
-                            warn!(error = %e, node = %node.name, "failed to build EL HTTP client");
-                        })
-                        .ok()
-                });
+            let el_client = node.el_rpc.as_ref().and_then(|url| {
+                HttpClientBuilder::default()
+                    .request_timeout(RPC_TIMEOUT)
+                    .build(url.as_str())
+                    .inspect_err(|e| {
+                        warn!(error = %e, node = %node.name, "failed to build EL HTTP client");
+                    })
+                    .ok()
+            });
             Some((node.name, conductor_client, cl_client, el_client))
         })
         .collect();
@@ -903,40 +897,47 @@ pub(crate) async fn run_conductor_poller(
             |(name, conductor_client, cl_client, el_client)| async move {
                 // Fire all RPCs concurrently so a single timed-out node does not
                 // stall the poll for the full sum of all call timeouts (7 × 500 ms).
-                let (is_leader, conductor_active, sync, cl_peer_stats, el_block_r, el_syncing_r, el_peers_r) =
-                    tokio::join!(
-                        ConductorApiClient::conductor_leader(conductor_client),
-                        ConductorApiClient::conductor_active(conductor_client),
-                        RollupNodeApiClient::op_sync_status(cl_client),
-                        OpP2PApiClient::opp2p_peer_stats(cl_client),
-                        async {
-                            if let Some(el) = el_client {
-                                let r: Result<alloy_primitives::U64, _> =
-                                    ClientT::request(el, "eth_blockNumber", rpc_params![]).await;
-                                r.ok().map(|v| v.to::<u64>())
-                            } else {
-                                None
-                            }
-                        },
-                        async {
-                            if let Some(el) = el_client {
-                                let r: Result<serde_json::Value, _> =
-                                    ClientT::request(el, "eth_syncing", rpc_params![]).await;
-                                r.ok().map(|v| !matches!(v, serde_json::Value::Bool(false)))
-                            } else {
-                                None
-                            }
-                        },
-                        async {
-                            if let Some(el) = el_client {
-                                let r: Result<alloy_primitives::U64, _> =
-                                    ClientT::request(el, "net_peerCount", rpc_params![]).await;
-                                r.ok().map(|v| v.to::<u32>())
-                            } else {
-                                None
-                            }
-                        },
-                    );
+                let (
+                    is_leader,
+                    conductor_active,
+                    sync,
+                    cl_peer_stats,
+                    el_block_r,
+                    el_syncing_r,
+                    el_peers_r,
+                ) = tokio::join!(
+                    ConductorApiClient::conductor_leader(conductor_client),
+                    ConductorApiClient::conductor_active(conductor_client),
+                    RollupNodeApiClient::op_sync_status(cl_client),
+                    OpP2PApiClient::opp2p_peer_stats(cl_client),
+                    async {
+                        if let Some(el) = el_client {
+                            let r: Result<alloy_primitives::U64, _> =
+                                ClientT::request(el, "eth_blockNumber", rpc_params![]).await;
+                            r.ok().map(|v| v.to::<u64>())
+                        } else {
+                            None
+                        }
+                    },
+                    async {
+                        if let Some(el) = el_client {
+                            let r: Result<serde_json::Value, _> =
+                                ClientT::request(el, "eth_syncing", rpc_params![]).await;
+                            r.ok().map(|v| !matches!(v, serde_json::Value::Bool(false)))
+                        } else {
+                            None
+                        }
+                    },
+                    async {
+                        if let Some(el) = el_client {
+                            let r: Result<alloy_primitives::U64, _> =
+                                ClientT::request(el, "net_peerCount", rpc_params![]).await;
+                            r.ok().map(|v| v.to::<u32>())
+                        } else {
+                            None
+                        }
+                    },
+                );
 
                 let sync = sync.ok();
                 ConductorNodeStatus {

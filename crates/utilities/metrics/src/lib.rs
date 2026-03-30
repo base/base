@@ -29,6 +29,7 @@ pub use registry::initialize_registered_metrics;
 pub use registry::register_initializer;
 #[cfg(not(feature = "metrics"))]
 #[inline(always)]
+/// Initializes all registered metrics. No-op when the `metrics` feature is disabled.
 pub fn initialize_registered_metrics() {}
 
 #[cfg(feature = "metrics")]
