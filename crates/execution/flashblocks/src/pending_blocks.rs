@@ -1116,4 +1116,28 @@ mod tests {
         assert_eq!(txs.len(), 1);
         assert_eq!(txs[0].gas_used, Some(21_000));
     }
+
+    #[test]
+    fn filtered_transactions_with_combined_address_and_topic() {
+        let hash_a = B256::with_last_byte(0xAA);
+        let hash_b = B256::with_last_byte(0xBB);
+        let hash_c = B256::with_last_byte(0xCC);
+
+        let addr_usdc = Address::with_last_byte(0x0A);
+        let addr_weth = Address::with_last_byte(0x0B);
+        let topic_transfer = B256::with_last_byte(0x01);
+        let topic_approval = B256::with_last_byte(0x02);
+
+        let pending = build_pending_blocks_with_topics(&[
+            (hash_a, addr_usdc, topic_transfer),
+            (hash_b, addr_usdc, topic_approval),
+            (hash_c, addr_weth, topic_transfer),
+        ]);
+
+        let filter = Filter::new().address(addr_usdc).event_signature(topic_transfer);
+        let txs = pending.get_latest_flashblock_transactions_with_logs_filtered(&filter);
+
+        assert_eq!(txs.len(), 1);
+        assert_eq!(txs[0].transaction.tx_hash(), hash_a);
+    }
 }
