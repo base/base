@@ -50,7 +50,7 @@ fn map_contract_error(e: ContractError) -> RegistrarError {
 #[async_trait]
 impl RegistryClient for RegistryContractClient {
     async fn is_registered(&self, signer: Address) -> Result<bool> {
-        self.inner.is_valid_signer(signer).await.map_err(map_contract_error)
+        self.inner.is_registered_signer(signer).await.map_err(map_contract_error)
     }
 
     async fn get_registered_signers(&self) -> Result<Vec<Address>> {

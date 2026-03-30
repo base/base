@@ -22,8 +22,13 @@ sol! {
         /// Deregisters a signer.
         function deregisterSigner(address signer) external;
 
-        /// Returns `true` if the signer is currently registered.
+        /// Returns `true` if the signer is registered AND its image hash matches
+        /// the contract's current expected image hash.
         function isValidSigner(address signer) external view returns (bool);
+
+        /// Returns `true` if the signer has been registered, regardless of
+        /// whether its image hash matches the current expected value.
+        function isRegisteredSigner(address signer) external view returns (bool);
 
         /// Returns all currently registered signer addresses.
         function getRegisteredSigners() external view returns (address[]);
@@ -33,8 +38,13 @@ sol! {
 /// Reads registration state from the on-chain `TEEProverRegistry`.
 #[async_trait]
 pub trait TEEProverRegistryClient: Send + Sync {
-    /// Returns `true` if `signer` is currently registered on-chain.
+    /// Returns `true` if `signer` is registered AND its image hash matches
+    /// the contract's current expected image hash.
     async fn is_valid_signer(&self, signer: Address) -> Result<bool, ContractError>;
+
+    /// Returns `true` if `signer` has been registered, regardless of whether
+    /// its image hash matches the current expected value.
+    async fn is_registered_signer(&self, signer: Address) -> Result<bool, ContractError>;
 
     /// Fetches the complete set of registered signer addresses.
     async fn get_registered_signers(&self) -> Result<Vec<Address>, ContractError>;
@@ -60,6 +70,13 @@ impl TEEProverRegistryClient for TEEProverRegistryContractClient {
     async fn is_valid_signer(&self, signer: Address) -> Result<bool, ContractError> {
         self.contract.isValidSigner(signer).call().await.map_err(|e| ContractError::Call {
             context: format!("isValidSigner({signer})"),
+            source: e,
+        })
+    }
+
+    async fn is_registered_signer(&self, signer: Address) -> Result<bool, ContractError> {
+        self.contract.isRegisteredSigner(signer).call().await.map_err(|e| ContractError::Call {
+            context: format!("isRegisteredSigner({signer})"),
             source: e,
         })
     }
@@ -105,6 +122,7 @@ mod tests {
         assert_ne!(ITEEProverRegistry::registerSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::deregisterSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::isValidSignerCall::SELECTOR, [0u8; 4]);
+        assert_ne!(ITEEProverRegistry::isRegisteredSignerCall::SELECTOR, [0u8; 4]);
         assert_ne!(ITEEProverRegistry::getRegisteredSignersCall::SELECTOR, [0u8; 4]);
     }
 }
