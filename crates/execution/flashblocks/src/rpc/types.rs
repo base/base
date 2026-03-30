@@ -5,10 +5,11 @@ use base_alloy_rpc_types::Transaction;
 use derive_more::From;
 use serde::{Deserialize, Serialize};
 
-/// A full transaction object with its associated logs.
+/// A full transaction object with its associated logs and gas usage.
 ///
-/// This is returned by `newFlashblockTransactions` subscription when `full = true`,
-/// providing both the transaction details and logs emitted by its execution.
+/// This is returned by `newFlashblockTransactions` subscription when `full = true`
+/// or when a log filter is provided, giving both the transaction details, logs emitted
+/// by its execution, and gas accounting fields.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionWithLogs {
@@ -17,6 +18,8 @@ pub struct TransactionWithLogs {
     pub transaction: Transaction,
     /// Logs emitted by this transaction.
     pub logs: Vec<Log>,
+    /// Gas consumed by this transaction's execution.
+    pub gas_used: Option<u64>,
 }
 
 /// Extended subscription kind that includes both standard Ethereum subscription types
@@ -65,10 +68,13 @@ pub enum BaseSubscriptionKind {
     /// confidence than standard `newPendingTransactions` which returns mempool transactions.
     /// Flashblock transactions have been included by the sequencer and are effectively preconfirmed.
     ///
-    /// Accepts an optional boolean parameter:
+    /// Accepts an optional parameter:
     /// - `true`: Returns full transaction objects with their associated logs (as
     ///   [`TransactionWithLogs`])
     /// - `false` (default): Returns only transaction hashes
+    /// - A log filter object (with `address` and/or `topics`): Returns full transaction objects
+    ///   where at least one log matches the filter. All logs are included in the response, not
+    ///   just the matching ones.
     NewFlashblockTransactions,
 }
 
