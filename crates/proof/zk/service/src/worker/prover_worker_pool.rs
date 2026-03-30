@@ -37,6 +37,7 @@ impl ProveBlockRequestParams {
             proof_type: proof_type.proto_i32(),
             session_id: None,
             prover_address: self.prover_address,
+            l1_head: None,
         };
 
         Ok((request, proof_type))

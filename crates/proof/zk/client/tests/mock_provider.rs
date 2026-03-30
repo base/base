@@ -59,6 +59,7 @@ async fn mock_prove_block_returns_session_id() {
         proof_type: ProofType::GenericZkvmClusterCompressed.into(),
         session_id: None,
         prover_address: None,
+        l1_head: None,
     };
 
     let response = provider.prove_block(request).await.expect("prove_block should succeed");

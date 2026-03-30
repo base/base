@@ -27,6 +27,9 @@ message ProveBlockRequest {
   optional string session_id = 5;
   // Ethereum address of the on-chain prover (required for SNARK_GROTH16 proofs)
   optional string prover_address = 6;
+  // Optional: explicit L1 head hash (hex-encoded B256) to use for witness generation.
+  // When provided, bypasses SafeDB and sequence_window L1 head calculation.
+  optional string l1_head = 7;
 }
 
 message ProveBlockResponse {

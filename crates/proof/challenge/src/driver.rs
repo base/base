@@ -544,6 +544,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             proof_type: ProofType::GenericZkvmClusterSnarkGroth16.into(),
             session_id: Some(session_id),
             prover_address: Some(prover_address),
+            l1_head: Some(format!("{:#x}", candidate.l1_head)),
         };
 
         let prove_response = self.zk_prover.prove_block(request.clone()).await?;

@@ -87,6 +87,7 @@ fn default_prove_request() -> ProveBlockRequest {
         proof_type: ProofType::GenericZkvmClusterSnarkGroth16.into(),
         session_id: Some(session_id),
         prover_address: Some(format!("{:#x}", addr(0))),
+        l1_head: Some(format!("{:#x}", B256::repeat_byte(0xAA))),
     }
 }
 
