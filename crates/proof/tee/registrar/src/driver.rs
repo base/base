@@ -164,6 +164,15 @@ where
         // Use `tokio::select!` so cancellation is observed immediately, even
         // when all futures are blocked on long-running proof generation (~20 min).
         // Without this, shutdown would hang until at least one future completes.
+        //
+        // NOTE: When the cancellation branch fires, `futs` is dropped, which
+        // cancels any in-flight futures — including those awaiting
+        // `tx_manager.send()` inside `try_register`. Dropping `send()` after
+        // nonce acquisition but before signing can leave a nonce gap. This is
+        // benign during shutdown because the next startup fetches a fresh nonce
+        // from chain. If the service ever needs cancel-and-restart within the
+        // same process (e.g. hot reconfiguration), a `NonceManager::reset()`
+        // would be needed.
         loop {
             tokio::select! {
                 biased;
@@ -630,6 +639,10 @@ mod tests {
     /// Hardhat / Anvil account #2 private key.
     const HARDHAT_KEY_2: [u8; 32] =
         hex!("5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a");
+
+    /// Hardhat / Anvil account #3 private key.
+    const HARDHAT_KEY_3: [u8; 32] =
+        hex!("7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6");
 
     /// Prover instance endpoints for tests. Each simulates a distinct
     /// EC2 instance at a private IP.
@@ -1338,7 +1351,7 @@ mod tests {
     /// dynamic slicing in the parametrized guard test.
     const ALL_ENDPOINTS: [&str; 4] = [EP1, EP2, EP3, EP4];
     const ALL_KEYS: [&[u8; 32]; 4] =
-        [&HARDHAT_KEY_0, &HARDHAT_KEY_1, &HARDHAT_KEY_2, &HARDHAT_KEY_0];
+        [&HARDHAT_KEY_0, &HARDHAT_KEY_1, &HARDHAT_KEY_2, &HARDHAT_KEY_3];
 
     #[rstest]
     #[case::one_of_four(1, true)]
