@@ -1,6 +1,10 @@
 //! Bundle metering logic.
 
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Instant,
+};
 
 use alloy_consensus::{BlockHeader, Transaction as _};
 use alloy_primitives::{Address, B256, U256};
@@ -106,6 +110,84 @@ pub struct MeterBundleOutput {
     pub total_time_us: u128,
     /// State root calculation time in microseconds
     pub state_root_time_us: u128,
+    /// Best-effort count of account trie nodes attributed to bundle state changes during state
+    /// root calculation.
+    ///
+    /// `reth` does not expose "all account trie nodes hashed for just this bundle" directly, so
+    /// we derive this by combining bundle-owned account leaves from `HashedPostState` with account
+    /// branch/removal updates from `TrieUpdates`.
+    pub state_root_account_node_count: u64,
+    /// Best-effort count of storage trie nodes attributed to bundle state changes during state
+    /// root calculation.
+    ///
+    /// Like the account count, this is derived from two `reth` views of the work: bundle-owned
+    /// storage leaves from `HashedPostState` plus storage branch/removal updates from
+    /// `TrieUpdates`, with non-bundle artifacts filtered out below.
+    pub state_root_storage_node_count: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct StateRootTrieNodeCounts {
+    account_trie_nodes: u64,
+    storage_trie_nodes: u64,
+}
+
+/// Counts trie nodes represented on the hashed post-state leaf side.
+///
+/// `reth` splits "work done for a state root" into two different surfaces:
+/// - `HashedPostState`: surviving leaves in the bundle delta.
+/// - `TrieUpdates`: branch/removal updates emitted while rebuilding affected trie paths.
+///
+/// This helper handles the leaf side of that split. The account count includes changed account
+/// leaves that remain in the post-state trie.
+///
+/// The storage count includes changed storage slot leaves that remain in the post-state trie.
+/// Deleted accounts, zero-valued storage removals, and pure storage wipes are not counted here,
+/// because reth represents them as overlay deletions rather than emitted leaves.
+///
+fn count_state_root_leaf_nodes(hashed_state: &HashedPostState) -> StateRootTrieNodeCounts {
+    let account_trie_nodes =
+        hashed_state.accounts.values().filter(|account| account.is_some()).count() as u64;
+    let storage_trie_nodes = hashed_state
+        .storages
+        .values()
+        .map(|storage| storage.storage.values().filter(|value| !value.is_zero()).count())
+        .sum::<usize>() as u64;
+
+    StateRootTrieNodeCounts { account_trie_nodes, storage_trie_nodes }
+}
+
+/// Adds trie-structure counts emitted by state root calculation.
+///
+/// These counts cover account/storage branch updates and removals plus storage trie deletion
+/// markers. Empty-path roots are excluded because reth filters those out of `TrieUpdates`, and a
+/// root can be either a branch or a leaf depending on trie shape.
+///
+/// The `changed_storage_tries` filter is intentional. `reth` records `StorageTrieUpdates` for any
+/// account whose storage root was considered, including `deleted()` markers for empty-storage
+/// accounts and cached pending-state tries we prepended via `prepend_cached`. Those entries are
+/// useful for trie persistence, but they are not a defensible attribution of bundle-local storage
+/// hashing work. Restricting storage-side structural attribution to tries present in the bundle's
+/// own `HashedPostState` keeps these counts aligned with bundle-owned storage changes.
+fn add_state_root_trie_update_counts(
+    counts: &mut StateRootTrieNodeCounts,
+    changed_storage_tries: &HashSet<B256>,
+    trie_updates: &reth_trie_common::updates::TrieUpdates,
+) {
+    counts.account_trie_nodes = counts.account_trie_nodes.saturating_add(
+        trie_updates
+            .account_nodes_ref()
+            .len()
+            .saturating_add(trie_updates.removed_nodes_ref().len()) as u64,
+    );
+    counts.storage_trie_nodes = counts.storage_trie_nodes.saturating_add(
+        trie_updates
+            .storage_tries_ref()
+            .iter()
+            .filter(|(hashed_address, _)| changed_storage_tries.contains(*hashed_address))
+            .map(|(_, updates)| updates.len())
+            .sum::<usize>() as u64,
+    );
 }
 
 /// Simulates and meters a bundle of transactions.
@@ -300,11 +382,19 @@ where
     // Gets the number of accounts modified
     let accounts_modified: usize = bundle_update.state().len();
     metrics.accounts_modified.record(accounts_modified as f64);
+    // `state_root_*_with_updates` reports structural trie updates for the entire overlay we hand
+    // to `reth`, not just the bundle delta. When the bundle made no state changes, those updates
+    // can come entirely from cached pending trie nodes or root-maintenance bookkeeping. In that
+    // case we still time the calculation, but we intentionally attribute zero trie nodes to the
+    // bundle itself.
+    let has_bundle_state_changes = accounts_modified > 0;
 
     let state_provider = db.database.as_ref();
 
     let state_root_start = Instant::now();
     let hashed_state = state_provider.hashed_post_state(&bundle_update);
+    let changed_storage_tries = hashed_state.storages.keys().copied().collect::<HashSet<_>>();
+    let mut trie_node_counts = count_state_root_leaf_nodes(&hashed_state);
 
     if let Some(cached_trie) = pending_trie {
         // Build the trie input so the state root reflects canonical + pending + bundle.
@@ -320,10 +410,24 @@ where
         // optimization.
         let mut trie_input = TrieInput::from_state(hashed_state);
         trie_input.prepend_cached(cached_trie.trie_updates, cached_trie.hashed_state);
-        let _ = state_provider.state_root_from_nodes_with_updates(trie_input)?;
+        let (_, trie_updates) = state_provider.state_root_from_nodes_with_updates(trie_input)?;
+        if has_bundle_state_changes {
+            add_state_root_trie_update_counts(
+                &mut trie_node_counts,
+                &changed_storage_tries,
+                &trie_updates,
+            );
+        }
     } else {
         // No pending state, just calculate bundle state root
-        let _ = state_provider.state_root_with_updates(hashed_state)?;
+        let (_, trie_updates) = state_provider.state_root_with_updates(hashed_state)?;
+        if has_bundle_state_changes {
+            add_state_root_trie_update_counts(
+                &mut trie_node_counts,
+                &changed_storage_tries,
+                &trie_updates,
+            );
+        }
     }
 
     let state_root_time_us = state_root_start.elapsed().as_micros();
@@ -336,6 +440,8 @@ where
         bundle_hash,
         total_time_us,
         state_root_time_us,
+        state_root_account_node_count: trie_node_counts.account_trie_nodes,
+        state_root_storage_node_count: trie_node_counts.storage_trie_nodes,
     })
 }
 
@@ -343,9 +449,10 @@ where
 mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
+    use alloy_sol_types::SolCall;
     use base_bundles::{Bundle, ParsedBundle};
     use base_execution_primitives::OpTransactionSigned;
-    use base_node_runner::test_utils::{Account, TestHarness};
+    use base_node_runner::test_utils::{Account, SimpleStorage, TestHarness};
     use eyre::Context;
     use reth_provider::StateProviderFactory;
     use reth_revm::{bytecode::Bytecode, state::AccountInfo};
@@ -400,6 +507,8 @@ mod tests {
         // Even empty bundles have some EVM setup overhead
         assert!(output.total_time_us > 0);
         assert!(output.state_root_time_us > 0);
+        assert_eq!(output.state_root_account_node_count, 0);
+        assert_eq!(output.state_root_storage_node_count, 0);
         assert_eq!(output.bundle_hash, keccak256([]));
 
         Ok(())
@@ -449,6 +558,8 @@ mod tests {
         let result = &output.results[0];
         assert!(output.total_time_us > 0);
         assert!(output.state_root_time_us > 0);
+        assert!(output.state_root_account_node_count > 0);
+        assert_eq!(output.state_root_storage_node_count, 0);
 
         assert_eq!(result.from_address, Account::Alice.address());
         assert_eq!(result.to_address, Some(to));
@@ -465,6 +576,59 @@ mod tests {
         assert_eq!(output.bundle_hash, keccak256(concatenated));
 
         assert!(result.execution_time_us > 0, "execution_time_us should be greater than zero");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_storage_write_transaction() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+
+        let (deployment_tx, contract_address, _deployment_hash) =
+            Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 0)?;
+        harness.build_block_from_transactions(vec![deployment_tx]).await?;
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(contract_address)
+            .gas_limit(100_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode())
+            .into_eip1559();
+
+        let tx = OpTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+
+        let output = meter_bundle(
+            state_provider,
+            harness.chain_spec(),
+            parsed_bundle,
+            &header,
+            header.parent_beacon_block_root(),
+            None,
+            L1BlockInfo::default(),
+        )?;
+
+        assert_eq!(output.results.len(), 1);
+        assert!(output.state_root_account_node_count > 0);
+        assert!(
+            output.state_root_storage_node_count > 0,
+            "storage-writing transactions should attribute storage trie work"
+        );
 
         Ok(())
     }

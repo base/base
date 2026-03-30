@@ -117,6 +117,8 @@ mod tests {
             total_gas_used: gas_used,
             total_execution_time_us: 533,
             state_root_time_us: 0,
+            state_root_account_node_count: 0,
+            state_root_storage_node_count: 0,
         }
     }
 
