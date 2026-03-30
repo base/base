@@ -241,21 +241,27 @@ impl GameScanner {
             return Ok(None);
         }
 
-        let (zk_prover, tee_prover, countered_index, info, starting_block_number, l1_head) = tokio::try_join!(
+        // Phase 1: fetch only the fields needed for classification.
+        let (zk_prover, tee_prover, countered_index) = tokio::try_join!(
             self.verifier_client.zk_prover(factory.proxy),
             self.verifier_client.tee_prover(factory.proxy),
             self.verifier_client.countered_index(factory.proxy),
-            self.verifier_client.game_info(factory.proxy),
-            self.verifier_client.starting_block_number(factory.proxy),
-            self.verifier_client.l1_head(factory.proxy),
         )?;
 
-        // Classify the game based on its prover state.
+        // Classify the game based on its prover state. Return early for
+        // non-actionable games to avoid the remaining RPC calls.
         let category = Self::classify(index, tee_prover, zk_prover, countered_index);
         let category = match category {
             Some(c) => c,
             None => return Ok(None),
         };
+
+        // Phase 2: fetch the remaining fields only for actionable games.
+        let (info, starting_block_number, l1_head) = tokio::try_join!(
+            self.verifier_client.game_info(factory.proxy),
+            self.verifier_client.starting_block_number(factory.proxy),
+            self.verifier_client.l1_head(factory.proxy),
+        )?;
 
         let intermediate_block_interval =
             self.resolve_intermediate_block_interval(factory.game_type).await?;
