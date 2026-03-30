@@ -69,10 +69,10 @@ impl From<ProofType> for BackendType {
 /// Configuration for initializing a proving backend.
 #[derive(Debug, Clone)]
 pub enum BackendConfig {
-    /// Generic zkVM backend settings (`op_node_url=<url>`, `cluster_rpc=<url>`).
+    /// Generic zkVM backend settings (`base_consensus_url=<url>`, `cluster_rpc=<url>`).
     GenericZkvm {
-        /// OP node RPC URL used for rollup-specific chain state.
-        op_node_url: String,
+        /// Base consensus node RPC URL used for rollup-specific chain state.
+        base_consensus_url: String,
         /// L1 execution node RPC URL used for L1 state queries.
         l1_node_url: String,
         /// L1 beacon node URL used for beacon chain data.

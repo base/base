@@ -182,7 +182,7 @@ impl ZkArgs {
         let artifact_storage = self.resolve_artifact_storage()?;
 
         let config = BackendConfig::GenericZkvm {
-            op_node_url: self.base_consensus_address.clone(),
+            base_consensus_url: self.base_consensus_address.clone(),
             l1_node_url: l1_url.clone(),
             l1_beacon_url: beacon_url.clone(),
             l2_node_url: l2_url.clone(),
