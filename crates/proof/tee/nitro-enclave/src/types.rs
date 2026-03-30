@@ -9,9 +9,8 @@
 //! `GenesisSystemConfig`) live in `base-proof-primitives` so they can be
 //! shared with zkVM programs without pulling in enclave-specific dependencies.
 
-pub use base_proof_primitives::{BlockId, Genesis, GenesisSystemConfig, PerChainConfig};
-
 use alloy_primitives::{Address, B256, Bytes};
+pub use base_proof_primitives::{BlockId, Genesis, GenesisSystemConfig, PerChainConfig};
 
 // ---------------------------------------------------------------------------
 // Proof types
