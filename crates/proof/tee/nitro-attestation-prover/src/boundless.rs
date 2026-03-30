@@ -3,7 +3,7 @@
 //! Submits proof requests to the Boundless decentralised proving marketplace
 //! and polls for fulfillment with a configurable timeout.
 
-use std::{fmt, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 
 use alloy_primitives::{B256, Bytes};
 use alloy_signer_local::PrivateKeySigner;
@@ -14,6 +14,7 @@ use boundless_market::{
     request_builder::{RequestParams, RequirementParams},
 };
 use risc0_zkvm::sha::Digest;
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 use url::Url;
 
@@ -39,6 +40,11 @@ pub struct BoundlessProver {
     pub timeout: Duration,
     /// Number of trusted certificates in the chain (typically 1 for root-only).
     pub trusted_certs_prefix_len: u8,
+    /// Serialises the `submit_onchain` call so that concurrent proof
+    /// requests do not race on the Boundless wallet nonce. The lock is
+    /// released immediately after submission, allowing the long-running
+    /// fulfillment poll to proceed concurrently.
+    pub submit_lock: Arc<Mutex<()>>,
 }
 
 impl fmt::Debug for BoundlessProver {
@@ -136,16 +142,23 @@ impl AttestationProofProvider for BoundlessProver {
                 RequirementParams::builder().predicate(Predicate::prefix_match(image_id, [])),
             );
 
-        let (request_id, expires_at) = client.submit_onchain(params).await.map_err(|e| {
-            warn!(
-                error = %e,
+        // Acquire the submit lock to serialise on-chain submissions and
+        // prevent nonce races when multiple proofs are generated concurrently.
+        // The lock is dropped immediately after submission so that the
+        // long-running fulfillment poll runs concurrently.
+        let (request_id, expires_at) = {
+            let _guard = self.submit_lock.lock().await;
+            client.submit_onchain(params).await.map_err(|e| {
+                warn!(
+                    error = %e,
                     error_debug = ?e,
                     image_id = ?self.image_id,
                     signer_address = %self.signer.address(),
-                "failed to submit Boundless proof request on-chain"
-            );
-            ProverError::Boundless(format!("failed to submit request: {e}"))
-        })?;
+                    "failed to submit Boundless proof request on-chain"
+                );
+                ProverError::Boundless(format!("failed to submit request: {e}"))
+            })?
+        };
 
         info!(
             request_id = %request_id,
@@ -293,6 +306,7 @@ mod tests {
             poll_interval: TEST_POLL_INTERVAL,
             timeout: TEST_TIMEOUT,
             trusted_certs_prefix_len: DEFAULT_TRUSTED_PREFIX,
+            submit_lock: Arc::new(Mutex::new(())),
         }
     }
 

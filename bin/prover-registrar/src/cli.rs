@@ -371,6 +371,7 @@ impl Cli {
                 poll_interval: boundless.poll_interval,
                 timeout: boundless.timeout,
                 trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX,
+                submit_lock: Arc::new(tokio::sync::Mutex::new(())),
             }),
             ProvingConfig::Direct { ref elf_path } => {
                 let elf = std::fs::read(elf_path).map_err(|e| {
