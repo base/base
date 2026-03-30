@@ -6,8 +6,8 @@ use std::{
 };
 
 use alloy_consensus::{
-    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, Transaction, TxReceipt,
-    constants::EMPTY_WITHDRAWALS, proofs,
+    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, Transaction, TxReceipt, constants::EMPTY_WITHDRAWALS,
+    proofs,
 };
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::Database;
@@ -33,8 +33,8 @@ use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
-    BlockExecutionOutput, BlockExecutionResult, HashedPostStateProvider,
-    ProviderError, StateRootProvider, StorageRootProvider,
+    BlockExecutionOutput, BlockExecutionResult, HashedPostStateProvider, ProviderError,
+    StateRootProvider, StorageRootProvider,
 };
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
@@ -955,8 +955,7 @@ where
         &ctx.chain_spec,
         ctx.attributes().timestamp(),
     );
-    let logs_bloom: Bloom =
-        logs_bloom(info.receipts.iter().flat_map(|r| r.logs()));
+    let logs_bloom: Bloom = logs_bloom(info.receipts.iter().flat_map(|r| r.logs()));
 
     // TODO: maybe recreate state with bundle in here
     // calculate the state root
