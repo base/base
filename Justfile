@@ -107,7 +107,7 @@ zepter-fix:
 
 # Installs cargo-nextest if not present
 install-nextest:
-    @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
+    @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest --locked
 
 # Runs tests across workspace with all features enabled (excludes devnet)
 test: install-nextest build-contracts

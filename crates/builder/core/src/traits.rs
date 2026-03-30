@@ -10,6 +10,7 @@ use reth_payload_util::PayloadTransactions;
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
 use reth_transaction_pool::{TransactionPool, TransactionPoolExt};
 
+/// Composite trait bound for a full node type compatible with the Base builder.
 pub trait NodeBounds:
     FullNodeTypes<
     Types: NodeTypes<Payload = OpEngineTypes, ChainSpec = OpChainSpec, Primitives = OpPrimitives>,
@@ -28,6 +29,7 @@ impl<T> NodeBounds for T where
 {
 }
 
+/// Composite trait bound for a transaction pool compatible with the Base builder.
 pub trait PoolBounds:
     TransactionPool<Transaction: OpPooledTx<Consensus = OpTransactionSigned> + BundleTransaction>
     + TransactionPoolExt
@@ -49,6 +51,7 @@ where
 {
 }
 
+/// Composite trait bound for state provider clients used by the Base builder.
 pub trait ClientBounds:
     StateProviderFactory
     + ChainSpecProvider<ChainSpec = OpChainSpec>
@@ -65,6 +68,7 @@ impl<T> ClientBounds for T where
 {
 }
 
+/// Composite trait bound for payload transaction iterators used by the Base builder.
 pub trait PayloadTxsBounds:
     PayloadTransactions<Transaction: OpPooledTx<Consensus = OpTransactionSigned> + BundleTransaction>
 {

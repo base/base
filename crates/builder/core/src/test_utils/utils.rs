@@ -21,13 +21,20 @@ use super::{
     sign_op_tx,
 };
 
+/// Extension methods on [`TransactionBuilder`] for common test transaction patterns.
 pub trait TransactionBuilderExt {
+    /// Configures a simple ETH transfer to a random address.
     fn random_valid_transfer(self) -> Self;
+    /// Configures a contract creation whose bytecode immediately reverts.
     fn random_reverting_transaction(self) -> Self;
+    /// Configures a contract creation that consumes approximately 86 220 gas.
     fn random_big_transaction(self) -> Self;
     // flashblocks number methods
+    /// Configures deployment of the `FlashblocksNumber` contract.
     fn deploy_flashblock_number_contract(self) -> Self;
+    /// Configures an `initialize` call on the `FlashblocksNumber` contract.
     fn init_flashblock_number_contract(self, register_builder: bool) -> Self;
+    /// Configures an `addBuilder` call to authorize a builder address.
     fn add_authorized_builder(self, builder: Address) -> Self;
 }
 
@@ -79,15 +86,19 @@ impl TransactionBuilderExt for TransactionBuilder {
     }
 }
 
+/// Extension methods on [`ChainDriver`] for common funding and block-building patterns.
 pub trait ChainDriverExt {
+    /// Funds multiple addresses by minting via deposit transactions in a single block.
     fn fund_many(
         &self,
         addresses: Vec<Address>,
         amount: u128,
     ) -> impl Future<Output = eyre::Result<BlockHash>>;
+    /// Funds a single address by minting via a deposit transaction.
     fn fund(&self, address: Address, amount: u128)
     -> impl Future<Output = eyre::Result<BlockHash>>;
 
+    /// Creates `count` random signers, funds each with `amount` wei, and returns them.
     fn fund_accounts(
         &self,
         count: usize,
@@ -100,10 +111,12 @@ pub trait ChainDriverExt {
         }
     }
 
+    /// Sends a random valid transfer and builds a new block containing it.
     fn build_new_block_with_valid_transaction(
         &self,
     ) -> impl Future<Output = eyre::Result<(TxHash, Block<Transaction>)>>;
 
+    /// Sends a reverting transaction and builds a new block containing it.
     fn build_new_block_with_reverting_transaction(
         &self,
     ) -> impl Future<Output = eyre::Result<(TxHash, Block<Transaction>)>>;
@@ -168,7 +181,9 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
     }
 }
 
+/// Convenience methods for checking transaction inclusion in blocks.
 pub trait BlockTransactionsExt {
+    /// Returns `true` if the block contains all of the given transaction hashes.
     fn includes(&self, txs: &impl AsTxs) -> bool;
 }
 
@@ -185,7 +200,9 @@ impl BlockTransactionsExt for BlockTransactionHashes<'_, Transaction> {
     }
 }
 
+/// Conversion to a list of transaction hashes for inclusion checks.
 pub trait AsTxs {
+    /// Returns the value as a `Vec<TxHash>`.
     fn as_txs(&self) -> Vec<TxHash>;
 }
 
@@ -201,6 +218,7 @@ impl AsTxs for Vec<TxHash> {
     }
 }
 
+/// Creates a temporary MDBX database suitable for tests.
 pub fn create_test_db(config: NodeConfig<OpChainSpec>) -> Arc<TempDatabase<DatabaseEnv>> {
     let path = reth_node_core::dirs::MaybePlatformPath::<DataDirPath>::from(
         reth_db::test_utils::tempdir_path(),
@@ -231,14 +249,17 @@ pub fn get_available_port() -> u16 {
         .port()
 }
 
+/// Returns the [`PrivateKeySigner`] for the default builder account.
 pub fn builder_signer() -> PrivateKeySigner {
     BUILDER_PRIVATE_KEY.parse().expect("invalid hardcoded builder private key")
 }
 
+/// Returns the [`PrivateKeySigner`] for the default pre-funded account.
 pub fn funded_signer() -> PrivateKeySigner {
     FUNDED_PRIVATE_KEY.parse().expect("invalid hardcoded funded private key")
 }
 
+/// Returns the [`PrivateKeySigner`] for the flashblocks contract deployer account.
 pub fn flashblocks_number_signer() -> PrivateKeySigner {
     FLASHBLOCKS_DEPLOY_KEY
         .parse()

@@ -1552,6 +1552,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn step_healthy_instances_register_and_deregister_orphans() {
+        let addr1 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let addr2 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
+        let orphan =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_2)).unwrap();
+
+        let instances = vec![
+            instance(EP1, InstanceHealthStatus::Healthy),
+            instance(EP2, InstanceHealthStatus::Healthy),
+        ];
+
+        let signer_client =
+            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
+
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            instances,
+            signer_client,
+            // addr1 and addr2 are not yet registered; orphan is on-chain.
+            MockRegistry::with_signers(vec![orphan]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        driver.step().await.unwrap();
+
+        let sent = tx.sent_calldata();
+        // 2 registration txs (addr1, addr2) + 1 deregistration tx (orphan).
+        assert_eq!(sent.len(), 3, "expected 2 registrations + 1 deregistration");
+
+        // Verify registration calldata uses registerSigner selector.
+        let register_selector = ITEEProverRegistry::registerSignerCall::SELECTOR;
+        let registration_count =
+            sent.iter().filter(|s| s.len() >= 4 && s[..4] == register_selector).count();
+        assert_eq!(registration_count, 2, "expected 2 registration txs");
+
+        // Verify the deregistration calldata targets the orphan.
+        let deregister_expected =
+            ITEEProverRegistry::deregisterSignerCall { signer: orphan }.abi_encode();
+        assert!(
+            sent.iter().any(|s| s[..] == deregister_expected[..]),
+            "expected deregistration of orphan {orphan}, sent: {addr1}, {addr2}",
+        );
+    }
+
+    // ── Multi-enclave process_instance tests ────────────────────────────
+
+    #[tokio::test]
+    async fn process_instance_multi_enclave_returns_all_addresses() {
+        let signer_client = MockSignerClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let inst = instance(EP1, InstanceHealthStatus::Healthy);
+        let addrs = driver.process_instance(&inst).await.unwrap();
+
+        let expected_addr_0 =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let expected_addr_1 =
+            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
+
+        assert_eq!(addrs.len(), 2);
+        assert_eq!(addrs[0], expected_addr_0);
+        assert_eq!(addrs[1], expected_addr_1);
+        // Two registration transactions (one per enclave).
+        assert_eq!(tx.sent_calldata().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn process_instance_multi_enclave_draining_skips_registration() {
+        let signer_client = MockSignerClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let inst = instance(EP1, InstanceHealthStatus::Draining);
+        let addrs = driver.process_instance(&inst).await.unwrap();
+
+        assert_eq!(addrs.len(), 2, "both addresses should be returned");
+        assert!(tx.sent_calldata().is_empty(), "no registration txs for draining instance");
+    }
+
+    #[tokio::test]
     async fn step_multi_enclave_draining_protects_all_signers_from_deregistration() {
         // A draining multi-enclave instance should contribute ALL of its
         // signer addresses to active_signers, preventing orphan
@@ -1698,100 +1792,6 @@ mod tests {
         assert_eq!(sent.len(), 1, "only the healthy instance should be registered");
         let register_selector = ITEEProverRegistry::registerSignerCall::SELECTOR;
         assert_eq!(&sent[0][..4], register_selector, "the only tx should be a registration");
-    }
-
-    #[tokio::test]
-    async fn step_healthy_instances_register_and_deregister_orphans() {
-        let addr1 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-        let addr2 = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
-        let orphan =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_2)).unwrap();
-
-        let instances = vec![
-            instance(EP1, InstanceHealthStatus::Healthy),
-            instance(EP2, InstanceHealthStatus::Healthy),
-        ];
-
-        let signer_client =
-            MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0), (EP2, &HARDHAT_KEY_1)]);
-
-        let tx = SharedTxManager::new();
-        let driver = step_driver(
-            instances,
-            signer_client,
-            // addr1 and addr2 are not yet registered; orphan is on-chain.
-            MockRegistry::with_signers(vec![orphan]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
-
-        driver.step().await.unwrap();
-
-        let sent = tx.sent_calldata();
-        // 2 registration txs (addr1, addr2) + 1 deregistration tx (orphan).
-        assert_eq!(sent.len(), 3, "expected 2 registrations + 1 deregistration");
-
-        // Verify registration calldata uses registerSigner selector.
-        let register_selector = ITEEProverRegistry::registerSignerCall::SELECTOR;
-        let registration_count =
-            sent.iter().filter(|s| s.len() >= 4 && s[..4] == register_selector).count();
-        assert_eq!(registration_count, 2, "expected 2 registration txs");
-
-        // Verify the deregistration calldata targets the orphan.
-        let deregister_expected =
-            ITEEProverRegistry::deregisterSignerCall { signer: orphan }.abi_encode();
-        assert!(
-            sent.iter().any(|s| s[..] == deregister_expected[..]),
-            "expected deregistration of orphan {orphan}, sent: {addr1}, {addr2}",
-        );
-    }
-
-    // ── Multi-enclave process_instance tests ────────────────────────────
-
-    #[tokio::test]
-    async fn process_instance_multi_enclave_returns_all_addresses() {
-        let signer_client = MockSignerClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
-        let tx = SharedTxManager::new();
-        let driver = step_driver(
-            vec![],
-            signer_client,
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Healthy);
-        let addrs = driver.process_instance(&inst).await.unwrap();
-
-        let expected_addr_0 =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
-        let expected_addr_1 =
-            ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_1)).unwrap();
-
-        assert_eq!(addrs.len(), 2);
-        assert_eq!(addrs[0], expected_addr_0);
-        assert_eq!(addrs[1], expected_addr_1);
-        // Two registration transactions (one per enclave).
-        assert_eq!(tx.sent_calldata().len(), 2);
-    }
-
-    #[tokio::test]
-    async fn process_instance_multi_enclave_draining_skips_registration() {
-        let signer_client = MockSignerClient::multi_enclave(EP1, &[&HARDHAT_KEY_0, &HARDHAT_KEY_1]);
-        let tx = SharedTxManager::new();
-        let driver = step_driver(
-            vec![],
-            signer_client,
-            MockRegistry::with_signers(vec![]),
-            tx.clone(),
-            CancellationToken::new(),
-        );
-
-        let inst = instance(EP1, InstanceHealthStatus::Draining);
-        let addrs = driver.process_instance(&inst).await.unwrap();
-
-        assert_eq!(addrs.len(), 2, "both addresses should be returned");
-        assert!(tx.sent_calldata().is_empty(), "no registration txs for draining instance");
     }
 
     // ── Attestation count mismatch test ───────────────────────────────

@@ -1,14 +1,13 @@
 use std::{
     sync::Arc,
+    task::Waker,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use alloy_primitives::B256;
 use futures::{Future, FutureExt};
 use parking_lot::Mutex;
-use reth_basic_payload_builder::{
-    BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig, PrecachedState,
-};
+use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PrecachedState};
 use reth_node_api::{NodePrimitives, PayloadBuilderAttributes, PayloadKind};
 use reth_payload_builder::{
     KeepPayloadJobAlive, PayloadBuilderError, PayloadJob, PayloadJobGenerator,
@@ -19,7 +18,7 @@ use reth_provider::{BlockReaderIdExt, CanonStateNotification, StateProviderFacto
 use reth_revm::cached::CachedReads;
 use reth_tasks::TaskSpawner;
 use tokio::{
-    sync::{Notify, oneshot},
+    sync::oneshot,
     time::{Duration, Sleep},
 };
 use tokio_util::sync::CancellationToken;
@@ -34,8 +33,6 @@ pub struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     client: Client,
     /// How to spawn building tasks
     executor: Tasks,
-    /// The configuration for the job generator.
-    _config: BasicPayloadJobGeneratorConfig,
     /// The type responsible for building payloads.
     ///
     /// See [`PayloadBuilder`]
@@ -58,7 +55,6 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
     pub fn with_builder(
         client: Client,
         executor: Tasks,
-        config: BasicPayloadJobGeneratorConfig,
         builder: Builder,
         ensure_only_one_payload: bool,
         extra_block_deadline: std::time::Duration,
@@ -66,7 +62,6 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
         Self {
             client,
             executor,
-            _config: config,
             builder,
             ensure_only_one_payload,
             last_payload: Arc::new(Mutex::new(CancellationToken::new())),
@@ -303,6 +298,7 @@ where
     Builder::Attributes: Unpin + Clone,
     Builder::BuiltPayload: Unpin + Clone,
 {
+    /// Spawns a blocking task that builds the next payload using the current configuration.
     pub fn spawn_build_job(&mut self) {
         let builder = self.builder.clone();
         let payload_config = self.config.clone();
@@ -372,6 +368,7 @@ impl<T> std::fmt::Debug for ResolvePayload<T> {
 }
 
 impl<T> ResolvePayload<T> {
+    /// Creates a new [`ResolvePayload`] from the given [`WaitForValue`] future.
     pub const fn new(future: WaitForValue<T>) -> Self {
         Self { future }
     }
@@ -391,38 +388,63 @@ impl<T: Clone> Future for ResolvePayload<T> {
 /// A cell that holds a value and allows waiting for it to be set.
 ///
 /// Values can be overwritten by calling [`BlockCell::set`] multiple times.
+/// Waiters registered via [`BlockCell::wait_for_value`] are woken when a new
+/// value is stored.
 #[derive(Clone, Debug)]
 pub struct BlockCell<T> {
-    inner: Arc<Mutex<Option<T>>>,
-    notify: Arc<Notify>,
+    state: Arc<Mutex<BlockCellState<T>>>,
+}
+
+/// Internal state shared between the cell and its waiters.
+///
+/// Each waiter owns a slot (index) in the `wakers` vector. Slots are reused
+/// when a waiter completes or is dropped, keeping the vector compact.
+#[derive(Debug)]
+struct BlockCellState<T> {
+    value: Option<T>,
+    wakers: Vec<Option<Waker>>,
 }
 
 impl<T: Clone> BlockCell<T> {
+    /// Creates an empty [`BlockCell`].
     pub fn new() -> Self {
-        Self { inner: Arc::new(Mutex::new(None)), notify: Arc::new(Notify::new()) }
+        Self { state: Arc::new(Mutex::new(BlockCellState { value: None, wakers: Vec::new() })) }
     }
 
+    /// Stores `value` in the cell, overwriting any previous value, and wakes one waiter.
     pub fn set(&self, value: T) {
-        let mut inner = self.inner.lock();
-        *inner = Some(value);
-        self.notify.notify_one();
+        let wakers: Vec<Waker> = {
+            let mut state = self.state.lock();
+            state.value = Some(value);
+            state.wakers.iter_mut().filter_map(Option::take).collect()
+        };
+        // Wake outside the lock to avoid holding it during waker execution.
+        for waker in wakers {
+            waker.wake();
+        }
     }
 
+    /// Returns a clone of the stored value, or `None` if the cell is empty.
     pub fn get(&self) -> Option<T> {
-        let inner = self.inner.lock();
-        inner.clone()
+        self.state.lock().value.clone()
     }
 
     /// Return a future that resolves when a value is set.
+    ///
+    /// The returned future cleans up its waker slot on drop, so it is safe to
+    /// use inside `tokio::select!` or with timeouts.
     pub fn wait_for_value(&self) -> WaitForValue<T> {
-        WaitForValue { cell: self.clone() }
+        WaitForValue { cell: self.clone(), slot: None }
     }
 }
 
 /// Future that resolves when a value is set in [`BlockCell`].
-#[derive(Clone)]
+///
+/// Cleans up its waker slot on drop, so cancelled futures do not leave stale
+/// entries in the waker list.
 pub struct WaitForValue<T> {
     cell: BlockCell<T>,
+    slot: Option<usize>,
 }
 
 impl<T> std::fmt::Debug for WaitForValue<T> {
@@ -435,13 +457,41 @@ impl<T: Clone> Future for WaitForValue<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.cell.get().map_or_else(
-            || {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            },
-            Poll::Ready,
-        )
+        let this = self.get_mut();
+        let mut state = this.cell.state.lock();
+        if let Some(value) = state.value.clone() {
+            // Clear our slot since we're resolving.
+            if let Some(idx) = this.slot.take() {
+                state.wakers[idx] = None;
+            }
+            Poll::Ready(value)
+        } else {
+            let waker = cx.waker().clone();
+            match this.slot {
+                Some(idx) => {
+                    // Update existing slot with the current waker.
+                    state.wakers[idx] = Some(waker);
+                }
+                None => {
+                    // Reuse an empty slot or allocate a new one.
+                    let idx = state.wakers.iter().position(Option::is_none).unwrap_or_else(|| {
+                        state.wakers.push(None);
+                        state.wakers.len() - 1
+                    });
+                    state.wakers[idx] = Some(waker);
+                    this.slot = Some(idx);
+                }
+            }
+            Poll::Pending
+        }
+    }
+}
+
+impl<T> Drop for WaitForValue<T> {
+    fn drop(&mut self) {
+        if let Some(idx) = self.slot.take() {
+            self.cell.state.lock().wakers[idx] = None;
+        }
     }
 }
 
@@ -672,7 +722,6 @@ mod tests {
 
         let client = MockEthProvider::default();
         let executor = TokioTaskExecutor::default();
-        let config = BasicPayloadJobGeneratorConfig::default();
         let builder = MockBuilder::<OpPrimitives>::new();
 
         let (start, count) = (1, 10);
@@ -687,7 +736,6 @@ mod tests {
         let generator = BlockPayloadJobGenerator::with_builder(
             client.clone(),
             executor,
-            config,
             builder.clone(),
             false,
             std::time::Duration::from_secs(1),

@@ -16,6 +16,7 @@ workspace = true
 base-alloy-evm.workspace = true
 base-proof-client = { workspace = true, features = ["std"] }
 base-proof-preimage = { workspace = true, features = ["serde"] }
+base-proof-primitives = { workspace = true, features = ["serde"] }
 base-consensus-genesis = { workspace = true, features = ["serde"] }
 
 # alloy

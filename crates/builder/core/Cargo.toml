@@ -89,7 +89,6 @@ reth-chain-state.workspace = true
 reth-payload-util.workspace = true
 reth-node-builder.workspace = true
 reth-network-peers.workspace = true
-reth-testing-utils.workspace = true
 reth-tracing-otlp.workspace = true
 base-execution-evm.workspace = true
 reth-node-ethereum.workspace = true
@@ -183,7 +182,6 @@ eyre.workspace = true
 tower.workspace = true
 either.workspace = true
 chrono.workspace = true
-anyhow.workspace = true
 dashmap.workspace = true
 dirs-next.workspace = true
 secp256k1.workspace = true
@@ -214,6 +212,7 @@ base-builder-core = { path = ".", features = ["test-utils"] }
 
 # reth
 reth-ipc.workspace = true
+reth-testing-utils.workspace = true
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 
 # metrics

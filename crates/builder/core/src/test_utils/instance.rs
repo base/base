@@ -81,8 +81,10 @@ impl<P: core::fmt::Debug> core::fmt::Debug for PoolHandle<P> {
     }
 }
 
+/// Trait for submitting transactions to the pool from outside the node.
 #[async_trait]
 pub trait ExternalTransactionPool: Send + Sync + core::fmt::Debug {
+    /// Submits a pooled transaction as if it arrived from an external peer.
     async fn add_external_transaction(&self, tx: BasePooledTransaction) -> eyre::Result<()>;
 }
 
@@ -196,14 +198,17 @@ impl LocalInstance {
         Self::new(BuilderConfig::for_tests()).await
     }
 
+    /// Returns the Reth node configuration.
     pub const fn node_config(&self) -> &NodeConfig<OpChainSpec> {
         &self.node_config
     }
 
+    /// Returns the builder configuration.
     pub const fn builder_config(&self) -> &BuilderConfig {
         &self.builder_config
     }
 
+    /// Returns the WebSocket URL for the flashblocks publisher.
     pub fn flashblocks_ws_url(&self) -> String {
         let ipaddr = self.builder_config.flashblocks_ws_addr.ip();
         let ipaddr = if ipaddr.is_unspecified() {
@@ -215,38 +220,47 @@ impl LocalInstance {
         format!("ws://{ipaddr}:{port}/")
     }
 
+    /// Spawns a background task that listens for flashblock payloads over WebSocket.
     pub fn spawn_flashblocks_listener(&self) -> FlashblocksListener {
         FlashblocksListener::new(self.flashblocks_ws_url())
     }
 
+    /// Returns the IPC socket path for the regular JSON-RPC server.
     pub fn rpc_ipc(&self) -> &str {
         &self.node_config.rpc.ipcpath
     }
 
+    /// Returns the IPC socket path for the authenticated Engine API server.
     pub fn auth_ipc(&self) -> &str {
         &self.node_config.rpc.auth_ipc_path
     }
 
+    /// Creates an IPC-based [`EngineApi`] client for this instance.
     pub fn engine_api(&self) -> EngineApi<Ipc> {
         EngineApi::<Ipc>::with_ipc(self.auth_ipc())
     }
 
+    /// Returns a reference to the transaction pool observer.
     pub const fn pool(&self) -> &TransactionPoolObserver {
         &self.pool_observer
     }
 
+    /// Returns a cloned handle for submitting external transactions to the pool.
     pub fn pool_handle(&self) -> Arc<dyn ExternalTransactionPool> {
         Arc::clone(&self.pool_handle)
     }
 
+    /// Returns a reference to the shared metering provider.
     pub fn metering_provider(&self) -> &SharedMeteringProvider {
         &self.metering_provider
     }
 
+    /// Creates a [`ChainDriver`] connected to this local instance.
     pub async fn driver(&self) -> eyre::Result<ChainDriver<Ipc>> {
         ChainDriver::<Ipc>::local(self).await
     }
 
+    /// Creates an alloy provider connected to this instance over IPC.
     pub async fn provider(&self) -> eyre::Result<RootProvider<Base>> {
         ProviderBuilder::<Identity, Identity, Base>::default()
             .connect_ipc(self.rpc_ipc().to_string().into())
@@ -277,6 +291,7 @@ impl Future for LocalInstance {
     }
 }
 
+/// Returns the default Reth node configuration used in tests.
 pub fn default_node_config() -> NodeConfig<OpChainSpec> {
     node_config_with_chain_spec(chain_spec())
 }
@@ -360,8 +375,11 @@ fn pool_component() -> OpPoolBuilder<BasePooledTransaction> {
 /// during test execution, eliminating the need for duplicate WebSocket listening code.
 #[derive(Debug)]
 pub struct FlashblocksListener {
+    /// All flashblock payloads received so far.
     pub flashblocks: Arc<Mutex<Vec<FlashblocksPayloadV1>>>,
+    /// Token used to signal the listener task to stop.
     pub cancellation_token: CancellationToken,
+    /// Handle to the spawned listener task.
     pub handle: JoinHandle<eyre::Result<()>>,
 }
 

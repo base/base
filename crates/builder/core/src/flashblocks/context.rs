@@ -95,6 +95,7 @@ impl FlashblockSelectionOutcome {
     }
 }
 
+/// Per-flashblock diagnostics summarizing transaction selection outcomes.
 #[derive(Debug, Default)]
 pub struct FlashblockDiagnostics {
     /// Whether the flashblock timer or block cancel fired during execution.
