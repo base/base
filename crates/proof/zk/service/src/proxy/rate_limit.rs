@@ -85,12 +85,6 @@ impl RateLimiter {
         debug!(name = %self.name, "Request allowed");
         Some(permit)
     }
-
-    /// Get current available permits (for monitoring)
-    #[allow(dead_code)]
-    pub(super) fn available_permits(&self) -> usize {
-        self.semaphore.available_permits()
-    }
 }
 
 #[cfg(test)]
