@@ -7,9 +7,7 @@ use std::{
 use alloy_primitives::B256;
 use futures::{Future, FutureExt};
 use parking_lot::Mutex;
-use reth_basic_payload_builder::{
-    BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig, PrecachedState,
-};
+use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PrecachedState};
 use reth_node_api::{NodePrimitives, PayloadBuilderAttributes, PayloadKind};
 use reth_payload_builder::{
     KeepPayloadJobAlive, PayloadBuilderError, PayloadJob, PayloadJobGenerator,
@@ -35,8 +33,6 @@ pub struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     client: Client,
     /// How to spawn building tasks
     executor: Tasks,
-    /// The configuration for the job generator.
-    _config: BasicPayloadJobGeneratorConfig,
     /// The type responsible for building payloads.
     ///
     /// See [`PayloadBuilder`]
@@ -59,7 +55,6 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
     pub fn with_builder(
         client: Client,
         executor: Tasks,
-        config: BasicPayloadJobGeneratorConfig,
         builder: Builder,
         ensure_only_one_payload: bool,
         extra_block_deadline: std::time::Duration,
@@ -67,7 +62,6 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
         Self {
             client,
             executor,
-            _config: config,
             builder,
             ensure_only_one_payload,
             last_payload: Arc::new(Mutex::new(CancellationToken::new())),
@@ -728,7 +722,6 @@ mod tests {
 
         let client = MockEthProvider::default();
         let executor = TokioTaskExecutor::default();
-        let config = BasicPayloadJobGeneratorConfig::default();
         let builder = MockBuilder::<OpPrimitives>::new();
 
         let (start, count) = (1, 10);
@@ -743,7 +736,6 @@ mod tests {
         let generator = BlockPayloadJobGenerator::with_builder(
             client.clone(),
             executor,
-            config,
             builder.clone(),
             false,
             std::time::Duration::from_secs(1),

@@ -7,7 +7,6 @@ use base_node_core::{
 };
 use base_node_runner::{BaseNode, OpNodeTypes, PayloadServiceBuilder as BasePayloadServiceBuilder};
 use derive_more::Debug;
-use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
 use reth_node_api::NodeTypes;
 use reth_node_builder::{
     BuilderContext,
@@ -53,12 +52,9 @@ impl FlashblocksServiceBuilder {
             built_payload_tx,
             ws_pub,
         );
-        let payload_job_config = BasicPayloadJobGeneratorConfig::default();
-
         let payload_generator = BlockPayloadJobGenerator::with_builder(
             ctx.provider().clone(),
             ctx.task_executor().clone(),
-            payload_job_config,
             payload_builder,
             true,
             self.0.block_time_leeway,
