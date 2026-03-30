@@ -347,16 +347,24 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         // ZK challenge was legitimate.
         if !result.is_valid {
             match result.invalid_intermediate_index {
-                Some(first_invalid)
-                    if u64::try_from(first_invalid).unwrap_or(u64::MAX) <= challenged_index =>
-                {
-                    debug!(
-                        game = %game_address,
-                        challenged_index = challenged_index,
-                        first_invalid_index = first_invalid,
-                        "ZK challenge is legitimate (original root was wrong), skipping"
-                    );
-                    return Ok(());
+                Some(first_invalid) => {
+                    let first_invalid_u64 = u64::try_from(first_invalid).map_err(|_| {
+                        eyre::eyre!(
+                            "first invalid intermediate index {first_invalid} overflows u64"
+                        )
+                    })?;
+                    if first_invalid_u64 <= challenged_index {
+                        debug!(
+                            game = %game_address,
+                            challenged_index = challenged_index,
+                            first_invalid_index = first_invalid,
+                            "ZK challenge is legitimate (original root was wrong), skipping"
+                        );
+                        return Ok(());
+                    }
+                    // first_invalid > challenged_index: all roots up to and
+                    // including the challenged index are valid, so the ZK
+                    // challenge was fraudulent. Fall through to nullify.
                 }
                 None => {
                     // Validation says invalid but no specific index was identified.
@@ -368,11 +376,6 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                         "validation returned invalid without specific index, skipping"
                     );
                     return Ok(());
-                }
-                Some(_) => {
-                    // first_invalid > challenged_index: all roots up to and
-                    // including the challenged index are valid, so the ZK
-                    // challenge was fraudulent. Fall through to nullify.
                 }
             }
         }
