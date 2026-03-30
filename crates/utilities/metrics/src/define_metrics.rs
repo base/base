@@ -137,8 +137,11 @@ macro_rules! __define_metrics_impl {
 
         #[cfg(feature = "metrics")]
         const _: () = {
-            #[$crate::__private_ctor::ctor(anonymous, crate_path = $crate::__private_ctor)]
-            fn register_metrics_initializer() {
+            // Name the ctor after the metrics struct so each `define_metrics!` gets a distinct
+            // linker symbol (ctor `anonymous` would reuse the same name for every expansion).
+            #[allow(non_snake_case)]
+            #[$crate::__private_ctor::ctor(crate_path = $crate::__private_ctor)]
+            fn $name() {
                 $crate::register_initializer($name::init);
             }
         };
