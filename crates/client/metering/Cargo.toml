@@ -84,6 +84,7 @@ alloy-network.workspace = true
 alloy-rpc-client.workspace = true
 alloy-genesis = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
+alloy-sol-types.workspace = true
 
 # base-alloy
 base-alloy-rpc-types.workspace = true

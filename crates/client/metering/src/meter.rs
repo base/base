@@ -450,9 +450,10 @@ where
 mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
+    use alloy_sol_types::SolCall;
     use base_bundles::{Bundle, ParsedBundle};
     use base_execution_primitives::OpTransactionSigned;
-    use base_node_runner::test_utils::{Account, TestHarness};
+    use base_node_runner::test_utils::{Account, SimpleStorage, TestHarness};
     use eyre::Context;
     use reth_provider::StateProviderFactory;
     use reth_revm::{bytecode::Bytecode, state::AccountInfo};
@@ -576,6 +577,59 @@ mod tests {
         assert_eq!(output.bundle_hash, keccak256(concatenated));
 
         assert!(result.execution_time_us > 0, "execution_time_us should be greater than zero");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_storage_write_transaction() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+
+        let (deployment_tx, contract_address, _deployment_hash) =
+            Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 0)?;
+        harness.build_block_from_transactions(vec![deployment_tx]).await?;
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        let signed_tx = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(contract_address)
+            .gas_limit(100_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode())
+            .into_eip1559();
+
+        let tx = OpTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let parsed_bundle = create_parsed_bundle(vec![tx])?;
+
+        let output = meter_bundle(
+            state_provider,
+            harness.chain_spec(),
+            parsed_bundle,
+            &header,
+            header.parent_beacon_block_root(),
+            None,
+            L1BlockInfo::default(),
+        )?;
+
+        assert_eq!(output.results.len(), 1);
+        assert!(output.state_root_account_node_count > 0);
+        assert!(
+            output.state_root_storage_node_count > 0,
+            "storage-writing transactions should attribute storage trie work"
+        );
 
         Ok(())
     }
