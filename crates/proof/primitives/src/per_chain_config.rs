@@ -412,4 +412,28 @@ mod tests {
         assert_eq!(rollup_config.hardforks.isthmus_time, Some(0));
         assert_eq!(rollup_config.hardforks.regolith_time, Some(0));
     }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_json_roundtrip() {
+        let config = sample_config();
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: PerChainConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, deserialized);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_json_snake_case() {
+        let config = sample_config();
+        let json = serde_json::to_string(&config).unwrap();
+
+        assert!(json.contains("chain_id"));
+        assert!(json.contains("block_time"));
+        assert!(json.contains("deposit_contract_address"));
+        assert!(json.contains("l1_system_config_address"));
+        assert!(json.contains("l2_time"));
+        assert!(json.contains("batcher_addr"));
+        assert!(json.contains("gas_limit"));
+    }
 }
