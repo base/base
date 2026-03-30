@@ -16,7 +16,7 @@ mod driver;
 pub use driver::{Driver, DriverConfig, TeeConfig, derive_session_id};
 
 mod pending;
-pub use pending::{DisputeIntent, PendingProof, PendingProofs, ProofPhase, ProofUpdate};
+pub use pending::{DisputeIntent, PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate};
 
 mod error;
 pub use error::ChallengeSubmitError;

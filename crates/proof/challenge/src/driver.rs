@@ -36,7 +36,7 @@ use uuid::Uuid;
 use crate::{
     CandidateGame, ChallengeSubmitter, ChallengerMetrics, DisputeIntent, GameCategory, GameScanner,
     IntermediateValidationParams, L1HeadProvider, OutputValidator, PendingProof, PendingProofs,
-    ProofPhase, ProofUpdate, ValidatorError,
+    ProofKind, ProofPhase, ProofUpdate, ValidatorError,
 };
 
 /// Configuration for the challenger [`Driver`].
@@ -590,7 +590,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     async fn poll_or_submit(&mut self, game_address: Address) -> eyre::Result<()> {
         let (invalid_index, expected_root, intent, targets_tee) =
             match self.pending_proofs.get(&game_address) {
-                Some(p) => (p.invalid_index, p.expected_root, p.intent, p.prove_request.is_none()),
+                Some(p) => (p.invalid_index, p.expected_root, p.intent, p.kind.is_tee()),
                 None => return Ok(()),
             };
 
@@ -627,8 +627,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             // would cause infinite retries after a successful
             // nullification.
             //
-            // TEE proofs (prove_request == None) target `teeProver`;
-            // ZK proofs target `zkProver`. Checking only the relevant
+            // TEE proofs (ProofKind::Tee) target `teeProver`;
+            // ZK proofs (ProofKind::Zk) target `zkProver`. Checking only the relevant
             // prover avoids an infinite revert-retry loop in Path 2
             // (fraudulent ZK challenge on a valid TEE proposal), where
             // nullification zeroes `zkProver` but leaves `teeProver`
@@ -724,14 +724,14 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             return Ok(());
         }
 
-        let request = match &pending.prove_request {
-            Some(req) => req.clone(),
-            None => {
+        let request = match &pending.kind {
+            ProofKind::Tee => {
                 // TEE proofs have no ZK session to re-initiate — drop the entry.
                 debug!(game = %game_address, "TEE proof has no ZK request, dropping entry");
                 self.pending_proofs.remove(&game_address);
                 return Ok(());
             }
+            ProofKind::Zk { prove_request } => prove_request.clone(),
         };
 
         ChallengerMetrics::proof_retries_total().increment(1);
