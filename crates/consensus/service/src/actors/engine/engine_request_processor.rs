@@ -432,11 +432,7 @@ where
 
                 let el_confirmed = match self
                     .engine
-                    .probe_el_sync(
-                        Arc::clone(&self.client),
-                        Arc::clone(&self.rollup),
-                        probe_update,
-                    )
+                    .probe_el_sync(Arc::clone(&self.client), Arc::clone(&self.rollup), probe_update)
                     .await
                 {
                     Ok(c) => c,
@@ -711,7 +707,7 @@ mod tests {
     /// Verifies that when reth is mid-snap-sync (FCU returns Syncing), `el_sync_finished`
     /// stays false and a subsequent Reset request is correctly deferred with `ELSyncing`.
     ///
-    /// Tests the standalone sequencer path (unsafe_head_tx = Some, no conductor).
+    /// Tests the standalone sequencer path (`unsafe_head_tx` = Some, no conductor).
     #[tokio::test]
     async fn bootstrap_beyond_genesis_syncing_fcu_defers_reset() {
         let head = test_block_info(100);
@@ -846,7 +842,7 @@ mod tests {
         let _ = handle.await;
     }
 
-    /// Verifies that a validator node (unsafe_head_tx = None, no conductor) seeds engine
+    /// Verifies that a validator node (`unsafe_head_tx` = None, no conductor) seeds engine
     /// state without sending a bootstrap FCU or setting `el_sync_finished`.
     ///
     /// The validator path must not probe reth — doing so would trivially return Valid

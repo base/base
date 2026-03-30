@@ -786,11 +786,8 @@ pub(crate) async fn restart_conductor_node(
     result_tx: mpsc::Sender<Result<String, String>>,
 ) {
     // Dependency order: EL must be healthy before CL starts, CL before conductor.
-    let ordered: &[Option<&str>] = &[
-        node.docker_el.as_deref(),
-        node.docker_cl.as_deref(),
-        node.docker_conductor.as_deref(),
-    ];
+    let ordered: &[Option<&str>] =
+        &[node.docker_el.as_deref(), node.docker_cl.as_deref(), node.docker_conductor.as_deref()];
     let containers: Vec<&str> = ordered.iter().filter_map(|c| *c).collect();
 
     let outcome: anyhow::Result<String> = async {

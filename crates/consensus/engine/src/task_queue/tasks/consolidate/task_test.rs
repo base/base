@@ -21,7 +21,7 @@ use crate::{
 /// Previously, `SealTask` compared `state.sync_state.unsafe_head()` (the chain
 /// tip, e.g. block 76) against `attributes.parent` (the safe head, e.g. block 34)
 /// and returned `UnsafeHeadChangedSinceBuild` with Critical severity, crashing the
-/// engine.  Op-node has no such check — the BuildTask already FCU'd the EL to the
+/// engine.  Op-node has no such check — the `BuildTask` already FCU'd the EL to the
 /// correct parent, so the comparison is invalid.
 ///
 /// After the fix the reconcile path proceeds to `seal_and_canonicalize_block`
@@ -32,7 +32,8 @@ async fn consolidate_does_not_crash_when_safe_behind_unsafe_and_attributes_misma
     let unsafe_head = crate::test_utils::test_block_info(76);
 
     // Attributes produced by derivation: parent = safe_head (block 34) → block 35.
-    let attributes = TestAttributesBuilder::new().with_parent(safe_head).with_timestamp(2000).build();
+    let attributes =
+        TestAttributesBuilder::new().with_parent(safe_head).with_timestamp(2000).build();
 
     // Engine state: safe at 34, unsafe at 76.
     let mut state = TestEngineStateBuilder::new()

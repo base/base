@@ -248,18 +248,10 @@ fn render_cluster_table(
 
     // ── Fork detection: find leader's unsafe and safe hashes ──────────────
     let leader_unsafe: Option<(u64, alloy_primitives::B256)> = nodes.iter().find_map(|n| {
-        if n.is_leader == Some(true) {
-            n.unsafe_l2_block.zip(n.unsafe_l2_hash)
-        } else {
-            None
-        }
+        if n.is_leader == Some(true) { n.unsafe_l2_block.zip(n.unsafe_l2_hash) } else { None }
     });
     let leader_safe: Option<(u64, alloy_primitives::B256)> = nodes.iter().find_map(|n| {
-        if n.is_leader == Some(true) {
-            n.safe_l2_block.zip(n.safe_l2_hash)
-        } else {
-            None
-        }
+        if n.is_leader == Some(true) { n.safe_l2_block.zip(n.safe_l2_hash) } else { None }
     });
 
     // ── Header row: node names ─────────────────────────────────────────────
@@ -466,8 +458,7 @@ fn render_cluster_table(
 
     // ── EL block row ───────────────────────────────────────────────────────
     let mut el_block_cells = vec![
-        Cell::from("  Block")
-            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Cell::from("  Block").style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
     ];
     for node in nodes {
         let (label, style) = match node.el_block {
