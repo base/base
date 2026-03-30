@@ -54,8 +54,7 @@ impl RollingWindow {
         if self.latency_events.is_empty() {
             return (Duration::ZERO, Duration::ZERO);
         }
-        let mut latencies: Vec<Duration> =
-            self.latency_events.iter().map(|(_, l)| *l).collect();
+        let mut latencies: Vec<Duration> = self.latency_events.iter().map(|(_, l)| *l).collect();
         latencies.sort_unstable();
         let len = latencies.len();
         let p50 = latencies[(len * 50).div_ceil(100).saturating_sub(1).min(len - 1)];

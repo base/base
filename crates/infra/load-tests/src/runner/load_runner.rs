@@ -434,8 +434,7 @@ impl LoadRunner {
         const DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
         const BALANCE_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 
-        let use_live_display =
-            self.display.as_ref().is_some_and(|d| d.is_active());
+        let use_live_display = self.display.as_ref().is_some_and(|d| d.is_active());
 
         self.check_account_balances().await;
 

@@ -69,9 +69,8 @@ impl LoadTestDisplay {
         // tracing log write, so log lines never corrupt the rendered bars.
         let writer: IndicatifWriter<Stderr> = IndicatifWriter::new(mp.clone());
 
-        let filter = EnvFilter::builder()
-            .with_default_directive(LevelFilter::WARN.into())
-            .from_env_lossy();
+        let filter =
+            EnvFilter::builder().with_default_directive(LevelFilter::WARN.into()).from_env_lossy();
 
         let _ = tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(writer).with_ansi(true))
@@ -110,8 +109,7 @@ impl LoadTestDisplay {
         header.set_message("Base Load Test  starting...");
         header.enable_steady_tick(Duration::from_millis(120));
 
-        let stat_style =
-            ProgressStyle::with_template("  {msg}").expect("stat template is valid");
+        let stat_style = ProgressStyle::with_template("  {msg}").expect("stat template is valid");
         let make_stat = |mp: &MultiProgress| {
             let pb = mp.add(ProgressBar::new_spinner());
             pb.set_style(stat_style.clone());
@@ -146,8 +144,7 @@ impl LoadTestDisplay {
                 fmt_hms(d.saturating_sub(snap.elapsed)),
             ));
         } else {
-            self.header
-                .set_message(format!("Base Load Test  elapsed {elapsed_str}   continuous"));
+            self.header.set_message(format!("Base Load Test  elapsed {elapsed_str}   continuous"));
         }
 
         self.txs.set_message(format!(
@@ -169,8 +166,7 @@ impl LoadTestDisplay {
             fmt_num(snap.rolling_gps as u64),
         ));
 
-        let all_blocked =
-            snap.total_senders > 0 && snap.senders_blocked >= snap.total_senders;
+        let all_blocked = snap.total_senders > 0 && snap.senders_blocked >= snap.total_senders;
         self.flight.set_message(if all_blocked {
             format!(
                 "flight  {} total   !! {}/{} senders ALL BLOCKED !!",

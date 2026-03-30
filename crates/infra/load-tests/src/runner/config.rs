@@ -129,7 +129,9 @@ impl LoadConfig {
             return Err(BaselineError::Config("target_gps must be > 0".into()));
         }
         if self.duration == Some(Duration::ZERO) {
-            return Err(BaselineError::Config("duration must be > 0 (or omit for continuous)".into()));
+            return Err(BaselineError::Config(
+                "duration must be > 0 (or omit for continuous)".into(),
+            ));
         }
         if self.batch_size == 0 {
             return Err(BaselineError::Config("batch_size must be > 0".into()));

@@ -3,8 +3,7 @@ use std::time::{Duration, Instant};
 use alloy_primitives::TxHash;
 use tracing::debug;
 
-use super::{MetricsAggregator, MetricsSummary, TransactionMetrics};
-use super::RollingWindow;
+use super::{MetricsAggregator, MetricsSummary, RollingWindow, TransactionMetrics};
 
 /// Collects transaction metrics during test execution.
 #[derive(Debug)]
