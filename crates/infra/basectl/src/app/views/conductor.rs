@@ -102,37 +102,40 @@ impl View for ConductorView {
 
     fn tick(&mut self, resources: &mut Resources) -> Action {
         if let Some(ref mut rx) = self.op_rx
-            && let Ok(result) = rx.try_recv() {
-                self.op_pending = false;
-                self.op_rx = None;
-                match result {
-                    Ok(msg) => resources.toasts.push(Toast::info(msg)),
-                    Err(msg) => resources.toasts.push(Toast::warning(msg)),
-                }
+            && let Ok(result) = rx.try_recv()
+        {
+            self.op_pending = false;
+            self.op_rx = None;
+            match result {
+                Ok(msg) => resources.toasts.push(Toast::info(msg)),
+                Err(msg) => resources.toasts.push(Toast::warning(msg)),
             }
+        }
 
         if let Some((ref node_name, ref mut rx)) = self.pause_rx
-            && let Ok(result) = rx.try_recv() {
-                self.op_pending = false;
-                match result {
-                    Ok((msg, peers)) => {
-                        self.paused_node_peers.insert(node_name.clone(), peers);
-                        resources.toasts.push(Toast::info(msg));
-                    }
-                    Err(msg) => resources.toasts.push(Toast::warning(msg)),
+            && let Ok(result) = rx.try_recv()
+        {
+            self.op_pending = false;
+            match result {
+                Ok((msg, peers)) => {
+                    self.paused_node_peers.insert(node_name.clone(), peers);
+                    resources.toasts.push(Toast::info(msg));
                 }
-                self.pause_rx = None;
+                Err(msg) => resources.toasts.push(Toast::warning(msg)),
             }
+            self.pause_rx = None;
+        }
 
         if let Some(ref mut rx) = self.unpause_rx
-            && let Ok(result) = rx.try_recv() {
-                self.op_pending = false;
-                self.unpause_rx = None;
-                match result {
-                    Ok(msg) => resources.toasts.push(Toast::info(msg)),
-                    Err(msg) => resources.toasts.push(Toast::warning(msg)),
-                }
+            && let Ok(result) = rx.try_recv()
+        {
+            self.op_pending = false;
+            self.unpause_rx = None;
+            match result {
+                Ok(msg) => resources.toasts.push(Toast::info(msg)),
+                Err(msg) => resources.toasts.push(Toast::warning(msg)),
             }
+        }
 
         Action::None
     }
