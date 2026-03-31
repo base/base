@@ -17,6 +17,7 @@ revm = { workspace = true, default-features = false }
 
 # misc
 auto_impl.workspace = true
+base-consensus-genesis.workspace = true
 base-alloy-flz = { workspace = true, default-features = false }
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
 
@@ -64,6 +65,7 @@ std = [
 	"alloy-sol-types/std",
 	"base-alloy-consensus?/std",
 	"base-alloy-flz/std",
+	"base-consensus-genesis/std",
 	"reth-evm?/std",
 	"reth-execution-errors?/std",
 	"reth-primitives-traits?/std",
