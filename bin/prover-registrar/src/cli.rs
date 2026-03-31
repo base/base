@@ -640,6 +640,7 @@ mod tests {
     #[case::zero_prover_timeout("--prover-timeout-secs", "0")]
     #[case::zero_boundless_timeout("--boundless-timeout-secs", "0")]
     #[case::zero_max_concurrency("--max-concurrency", "0")]
+    #[case::zero_tx_retry_delay("--tx-retry-delay-secs", "0")]
     fn zero_duration_fails_into_config(#[case] flag: &str, #[case] value: &str) {
         let mut args = boundless_args();
         args.extend([flag, value]);
