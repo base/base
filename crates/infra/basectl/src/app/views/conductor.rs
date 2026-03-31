@@ -28,6 +28,8 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "?", description: "Toggle help" },
 ];
 
+type PauseRx = Option<(String, mpsc::Receiver<Result<(String, PausedPeers), String>>)>;
+
 /// HA conductor cluster status view.
 ///
 /// Renders a fixed grid with one column per conductor node and rows for
@@ -44,7 +46,7 @@ pub(crate) struct ConductorView {
     op_rx: Option<mpsc::Receiver<Result<String, String>>>,
     /// In-flight result channel for pause operations.
     /// Carries `(node_name, result)` where `Ok` includes the peers that were saved.
-    pause_rx: Option<(String, mpsc::Receiver<Result<(String, PausedPeers), String>>)>,
+    pause_rx: PauseRx,
     /// In-flight result channel for unpause operations.
     unpause_rx: Option<mpsc::Receiver<Result<String, String>>>,
     /// Saved peer lists for each paused node, keyed by node name.
