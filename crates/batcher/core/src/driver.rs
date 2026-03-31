@@ -123,6 +123,17 @@ where
         self
     }
 
+    /// Start the driver in a paused state, deferring block ingestion until
+    /// [`AdminCommand::Resume`] is received via the admin API.
+    ///
+    /// Equivalent to the batcher starting normally and immediately receiving
+    /// a pause command, but without discarding any in-flight submissions.
+    /// Use this when the `--stopped` flag is set at startup.
+    pub const fn with_paused(mut self, paused: bool) -> Self {
+        self.paused = paused;
+        self
+    }
+
     /// Run the batch driver loop.
     ///
     /// Each iteration has two phases:
@@ -132,6 +143,12 @@ where
     /// When draining (after cancellation or source exhaustion), the I/O phase is
     /// replaced by a bounded drain of all in-flight receipts.
     pub async fn run(mut self) -> Result<(), BatchDriverError> {
+        if self.paused {
+            info!(
+                paused = true,
+                "batcher starting in paused state; call admin_startBatcher to begin submission"
+            );
+        }
         let mut draining = false;
         loop {
             self.drain_encoding()?;

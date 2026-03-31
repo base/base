@@ -194,6 +194,14 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "admin-port", env = "BATCHER_ADMIN_PORT")]
     pub admin_port: Option<u16>,
 
+    /// Start in a paused state, deferring batch submission until `admin_startBatcher` is called.
+    ///
+    /// The batcher connects to all endpoints and is fully observable but will not
+    /// submit any batches until activated via the admin API. Useful for staged
+    /// rollouts, controlled restarts, and debugging.
+    #[arg(long = "stopped", env = "BATCHER_STOPPED")]
+    pub stopped: bool,
+
     /// Logging configuration.
     #[command(flatten)]
     pub logging: LogArgs,
@@ -241,6 +249,7 @@ impl BatcherArgs {
             },
             check_recent_txs_depth: self.check_recent_txs_depth,
             admin_addr: self.admin_port.map(|port| SocketAddr::new(self.admin_addr, port)),
+            stopped: self.stopped,
         })
     }
 
@@ -341,5 +350,21 @@ mod tests {
         args.extend_from_slice(["--data-availability-type", "auto"].as_slice());
 
         assert!(Cli::try_parse_from(args).is_err());
+    }
+
+    #[test]
+    fn stopped_defaults_to_false() {
+        let cli = parse_cli(&[]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert!(!config.stopped);
+    }
+
+    #[test]
+    fn stopped_flag_sets_stopped_in_config() {
+        let cli = parse_cli(&["--stopped"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert!(config.stopped);
     }
 }

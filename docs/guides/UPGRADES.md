@@ -392,6 +392,6 @@ forks.push((BaseUpgrade::V1.boxed(), self[BaseUpgrade::V1]));  // <-- add
 
 - [ ] `OpSpecId` variant added with `into_eth_spec`, `FromStr`, `From<&str>`, `name::X`
 - [ ] Precompile match arm updated (or new precompile set added)
-- [ ] `spec_by_timestamp_after_bedrock` updated (`alloy/evm/src/spec_id.rs`)
+- [ ] `spec_by_timestamp_after_bedrock` updated (`core/evm/src/spec_id.rs`)
 - [ ] `RollupConfig::spec_id` updated (`consensus/genesis/src/rollup.rs`)
 - [ ] `to_chain_hardforks` updated (`execution/hardforks/src/chain.rs`)
