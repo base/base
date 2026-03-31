@@ -545,6 +545,16 @@ where
     /// These orphans arise when a prover instance is terminated (e.g. ASG
     /// scale-down) without first deregistering its signer on-chain.
     ///
+    /// # Defense in depth
+    ///
+    /// Before submitting a deregistration transaction, each orphan candidate is
+    /// verified via [`RegistryClient::is_registered`] (backed by the
+    /// `isRegisteredSigner` mapping). This guards against ghost entries in the
+    /// on-chain `EnumerableSetLib.AddressSet` that can appear after certain
+    /// add/remove sequences due to a bug in Solady v0.0.245. Without this
+    /// check, ghost addresses would be deregistered every cycle in an infinite
+    /// loop, burning gas without effect.
+    ///
     /// # Assumptions
     ///
     /// - **Single registrar**: This method queries *all* on-chain signers and
@@ -575,6 +585,34 @@ where
                 debug!("shutdown requested, stopping orphan deregistration");
                 break;
             }
+
+            // Verify the signer is truly registered on-chain before spending
+            // gas on a deregistration tx. The `getRegisteredSigners()` view
+            // reads from an `EnumerableSetLib.AddressSet` which can contain
+            // ghost entries (addresses that appear in `values()` but have
+            // `isRegisteredSigner == false`) due to a storage corruption bug
+            // in Solady v0.0.245. Skipping ghosts prevents an infinite
+            // deregistration loop.
+            match self.registry.is_registered(signer).await {
+                Ok(false) => {
+                    warn!(
+                        signer = %signer,
+                        "signer appears in getRegisteredSigners but isRegisteredSigner is false, \
+                         skipping (possible EnumerableSet ghost entry)"
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        signer = %signer,
+                        "failed to verify signer registration status, skipping deregistration"
+                    );
+                    continue;
+                }
+                Ok(true) => {}
+            }
+
             if self.submit_deregistration(signer).await {
                 RegistrarMetrics::deregistrations_total().increment(1);
                 deregistered += 1;
@@ -823,10 +861,17 @@ mod tests {
     }
 
     /// Mock registry that returns a configured set of registered signers.
+    ///
+    /// By default, `is_registered` checks membership in the `signers` list
+    /// (matching real contract behavior). When `all_registered` is set, it
+    /// returns `true` unconditionally — useful for `try_register` tests that
+    /// need to short-circuit the registration path.
     #[derive(Debug)]
     struct MockRegistry {
         signers: Vec<Address>,
-        /// When `true`, `is_registered` returns `true` for all queries.
+        /// When `true`, `is_registered` returns `true` for all queries,
+        /// regardless of `signers` membership. Used by tests that need the
+        /// "already registered" path in `try_register`.
         all_registered: bool,
     }
 
@@ -842,8 +887,11 @@ mod tests {
 
     #[async_trait]
     impl RegistryClient for MockRegistry {
-        async fn is_registered(&self, _signer: Address) -> Result<bool> {
-            Ok(self.all_registered)
+        async fn is_registered(&self, signer: Address) -> Result<bool> {
+            if self.all_registered {
+                return Ok(true);
+            }
+            Ok(self.signers.contains(&signer))
         }
 
         async fn get_registered_signers(&self) -> Result<Vec<Address>> {
@@ -1183,6 +1231,93 @@ mod tests {
         driver.deregister_orphans(&HashSet::new(), &registered).await.unwrap();
 
         assert!(tx.sent_calldata().is_empty(), "no txs should be sent after cancellation");
+    }
+
+    /// Mock registry that simulates a corrupted `EnumerableSetLib.AddressSet`.
+    ///
+    /// `get_registered_signers()` returns `all_values` (including ghost entries),
+    /// but `is_registered()` only returns `true` for addresses in
+    /// `truly_registered`. This models the Solady v0.0.245 bug where
+    /// `values()` contains stale addresses whose `isRegisteredSigner`
+    /// mapping is `false`.
+    #[derive(Debug)]
+    struct GhostRegistry {
+        /// Addresses returned by `getRegisteredSigners()` (includes ghosts).
+        all_values: Vec<Address>,
+        /// Addresses for which `isRegisteredSigner` is `true`.
+        truly_registered: HashSet<Address>,
+    }
+
+    impl GhostRegistry {
+        /// Creates a registry where `ghosts` appear in `values()` but have
+        /// `isRegisteredSigner == false`, and `real` signers appear in both.
+        fn new(real: Vec<Address>, ghosts: Vec<Address>) -> Self {
+            let truly_registered: HashSet<Address> = real.iter().copied().collect();
+            let mut all_values = real;
+            all_values.extend(ghosts);
+            Self { all_values, truly_registered }
+        }
+    }
+
+    #[async_trait]
+    impl RegistryClient for GhostRegistry {
+        async fn is_registered(&self, signer: Address) -> Result<bool> {
+            Ok(self.truly_registered.contains(&signer))
+        }
+
+        async fn get_registered_signers(&self) -> Result<Vec<Address>> {
+            Ok(self.all_values.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn deregister_orphans_skips_ghost_entries() {
+        // Simulates the Solady v0.0.245 EnumerableSetLib bug: ORPHAN_A is a
+        // ghost entry that appears in getRegisteredSigners() but has
+        // isRegisteredSigner == false. ORPHAN_B is a real orphan.
+        let ghost_registry = GhostRegistry::new(vec![ORPHAN_B], vec![ORPHAN_A]);
+
+        let tx = SharedTxManager::new();
+        let driver = RegistrationDriver::new(
+            MockDiscovery { instances: vec![] },
+            StubProofProvider,
+            ghost_registry,
+            tx.clone(),
+            StubSignerClient,
+            default_config(CancellationToken::new()),
+        );
+
+        // Both ORPHAN_A and ORPHAN_B are "registered" (in values()),
+        // neither is in active_signers.
+        let registered = vec![ORPHAN_A, ORPHAN_B];
+        driver.deregister_orphans(&HashSet::new(), &registered).await.unwrap();
+
+        let sent = tx.sent_calldata();
+        // Only ORPHAN_B should be deregistered; ORPHAN_A is a ghost.
+        assert_eq!(sent.len(), 1, "ghost entry should be skipped");
+        let expected = ITEEProverRegistry::deregisterSignerCall { signer: ORPHAN_B }.abi_encode();
+        assert_eq!(sent[0], Bytes::from(expected));
+    }
+
+    #[tokio::test]
+    async fn deregister_orphans_skips_all_ghosts_sends_nothing() {
+        // All orphan candidates are ghost entries — no tx should be sent.
+        let ghost_registry = GhostRegistry::new(vec![], vec![ORPHAN_A, ORPHAN_B, ORPHAN_C]);
+
+        let tx = SharedTxManager::new();
+        let driver = RegistrationDriver::new(
+            MockDiscovery { instances: vec![] },
+            StubProofProvider,
+            ghost_registry,
+            tx.clone(),
+            StubSignerClient,
+            default_config(CancellationToken::new()),
+        );
+
+        let registered = vec![ORPHAN_A, ORPHAN_B, ORPHAN_C];
+        driver.deregister_orphans(&HashSet::new(), &registered).await.unwrap();
+
+        assert!(tx.sent_calldata().is_empty(), "all ghosts should be skipped, no txs sent");
     }
 
     // ── process_instance tests ──────────────────────────────────────────
