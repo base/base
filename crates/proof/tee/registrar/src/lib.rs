@@ -8,7 +8,10 @@ mod discovery;
 pub use discovery::AwsTargetGroupDiscovery;
 
 mod driver;
-pub use driver::{DEFAULT_MAX_CONCURRENCY, DriverConfig, RegistrationDriver};
+pub use driver::{
+    DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, DriverConfig,
+    RegistrationDriver,
+};
 
 mod error;
 pub use error::{RegistrarError, Result};

@@ -99,6 +99,10 @@ pub struct RegistrarConfig {
     /// registration cycle. Each instance may trigger a ~20-minute proof
     /// generation, so this limits concurrent proof work and nonce acquisition.
     pub max_concurrency: usize,
+    /// Maximum number of transaction submission retries for transient errors.
+    pub max_tx_retries: u32,
+    /// Delay between transaction submission retries.
+    pub tx_retry_delay: Duration,
     /// Health server socket address.
     pub health_addr: SocketAddr,
 }
@@ -116,6 +120,8 @@ impl std::fmt::Debug for RegistrarConfig {
             .field("poll_interval", &self.poll_interval)
             .field("prover_timeout", &self.prover_timeout)
             .field("max_concurrency", &self.max_concurrency)
+            .field("max_tx_retries", &self.max_tx_retries)
+            .field("tx_retry_delay", &self.tx_retry_delay)
             .field("health_addr", &self.health_addr)
             .finish()
     }
