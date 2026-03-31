@@ -152,10 +152,8 @@ pub struct BuilderMetrics {
     pub tx_execution_time_exceeded_total: Counter,
     /// Transactions that exceeded flashblock execution time budget
     pub flashblock_execution_time_exceeded_total: Counter,
-    /// Transactions that exceeded per-tx state root time limit
-    pub tx_state_root_time_exceeded_total: Counter,
-    /// Transactions that exceeded block state root time budget
-    pub block_state_root_time_exceeded_total: Counter,
+    /// Transactions that exceeded block state root gas limit
+    pub block_state_root_gas_exceeded_total: Counter,
 
     // === Execution Time Prediction Accuracy ===
     /// Histogram of (predicted - actual) execution time per transaction in microseconds.
@@ -165,11 +163,15 @@ pub struct BuilderMetrics {
     /// Distribution of actual execution times (microseconds)
     pub tx_actual_execution_time_us: Histogram,
 
+    // === State Root Gas ===
+    /// Per-transaction state root gas (computed from metering data)
+    pub tx_state_root_gas: Histogram,
+    /// Cumulative state root gas per block
+    pub block_state_root_gas: Histogram,
+
     // === State Root Time Prediction Distribution ===
     /// Distribution of predicted state root times from metering service (microseconds)
     pub tx_predicted_state_root_time_us: Histogram,
-    /// Cumulative predicted state root time per block (microseconds)
-    pub block_predicted_state_root_time_us: Histogram,
 
     // === State Root Time / Gas Ratio (Anomaly Detection) ===
     /// Ratio of `state_root_time_us` / `gas_used` for each transaction.
@@ -260,15 +262,14 @@ impl BuilderMetrics {
             FLASHBLOCK_STATE_ROOT_TIME_USED_US,
             FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
         )
-        .record(info.cumulative_state_root_time_us as f64);
-        if let Some(block_state_root_time_limit_us) = limits.block_state_root_time_limit_us {
+        .record(info.cumulative_state_root_gas as f64);
+        if let Some(block_state_root_gas_limit) = limits.block_state_root_gas_limit {
             histogram!(
                 FLASHBLOCK_STATE_ROOT_TIME_HEADROOM_US,
                 FLASHBLOCK_INDEX_LABEL => flashblock_index.clone(),
             )
             .record(
-                block_state_root_time_limit_us.saturating_sub(info.cumulative_state_root_time_us)
-                    as f64,
+                block_state_root_gas_limit.saturating_sub(info.cumulative_state_root_gas) as f64,
             );
         }
 
@@ -331,14 +332,14 @@ mod tests {
             cumulative_gas_used: 60,
             cumulative_da_bytes_used: 15,
             flashblock_execution_time_us: 40,
-            cumulative_state_root_time_us: 90,
+            cumulative_state_root_gas: 90,
             ..Default::default()
         };
         let limits = ResourceLimits {
             block_gas_limit: 100,
             block_data_limit: Some(20),
             flashblock_execution_time_limit_us: Some(50),
-            block_state_root_time_limit_us: Some(100),
+            block_state_root_gas_limit: Some(100),
             ..Default::default()
         };
 

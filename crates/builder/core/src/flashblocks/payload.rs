@@ -351,10 +351,10 @@ where
         let da_footprint_per_batch =
             info.da_footprint_scalar.map(|_| ctx.block_gas_limit() / flashblocks_per_block);
         let execution_time_per_batch_us = ctx.builder_config.flashblock_execution_time_budget_us;
-        let state_root_time_per_batch_us = ctx
+        let state_root_gas_per_batch = ctx
             .builder_config
-            .block_state_root_time_budget_us
-            .map(|budget| budget / flashblocks_per_block as u128);
+            .block_state_root_gas_limit
+            .map(|limit| limit / flashblocks_per_block);
 
         let extra = FlashblocksExtraCtx {
             flashblock_index: 1,
@@ -363,12 +363,12 @@ where
             target_da_for_batch: da_per_batch,
             target_da_footprint_for_batch: da_footprint_per_batch,
             target_execution_time_for_batch_us: execution_time_per_batch_us,
-            target_state_root_time_for_batch_us: state_root_time_per_batch_us,
+            target_state_root_gas_for_batch: state_root_gas_per_batch,
             gas_per_batch,
             da_per_batch,
             da_footprint_per_batch,
             execution_time_per_batch_us,
-            state_root_time_per_batch_us,
+            state_root_gas_per_batch,
         };
 
         let mut fb_cancel = block_cancel.child_token();
@@ -522,9 +522,8 @@ where
         let target_gas_for_batch = ctx.extra.target_gas_for_batch;
         let mut target_da_for_batch = ctx.extra.target_da_for_batch;
         let mut target_da_footprint_for_batch = ctx.extra.target_da_footprint_for_batch;
-        let mut target_state_root_time_for_batch_us = ctx.extra.target_state_root_time_for_batch_us;
+        let mut target_state_root_gas_for_batch = ctx.extra.target_state_root_gas_for_batch;
         let flashblock_execution_time_limit_us = ctx.extra.execution_time_per_batch_us;
-        let block_state_root_time_limit_us = target_state_root_time_for_batch_us;
 
         info!(
             target: "payload_builder",
@@ -537,7 +536,7 @@ where
             block_gas_used = ctx.block_gas_limit(),
             target_da_footprint = target_da_footprint_for_batch,
             flashblock_execution_time_limit_us = ?flashblock_execution_time_limit_us,
-            target_state_root_time_for_batch_us = ?target_state_root_time_for_batch_us,
+            target_state_root_gas_for_batch = ?target_state_root_gas_for_batch,
             "Building flashblock",
         );
         let flashblock_build_start_time = Instant::now();
@@ -583,8 +582,7 @@ where
             block_da_footprint_limit: target_da_footprint_for_batch,
             tx_execution_time_limit_us: ctx.builder_config.max_execution_time_per_tx_us,
             flashblock_execution_time_limit_us,
-            tx_state_root_time_limit_us: ctx.builder_config.max_state_root_time_per_tx_us,
-            block_state_root_time_limit_us,
+            block_state_root_gas_limit: target_state_root_gas_for_batch,
             block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
         };
         let diag = ctx
@@ -711,10 +709,9 @@ where
                     *footprint += da_footprint_limit;
                 }
 
-                if let (Some(time), Some(time_per_batch)) = (
-                    target_state_root_time_for_batch_us.as_mut(),
-                    ctx.extra.state_root_time_per_batch_us,
-                ) {
+                if let (Some(time), Some(time_per_batch)) =
+                    (target_state_root_gas_for_batch.as_mut(), ctx.extra.state_root_gas_per_batch)
+                {
                     *time += time_per_batch;
                 }
 
@@ -723,7 +720,7 @@ where
                     target_da_for_batch,
                     target_da_footprint_for_batch,
                     ctx.extra.execution_time_per_batch_us,
-                    target_state_root_time_for_batch_us,
+                    target_state_root_gas_for_batch,
                 );
 
                 let gas_headroom_pct = if limits.block_gas_limit > 0 {
@@ -750,8 +747,8 @@ where
                     current_da = info.cumulative_da_bytes_used,
                     flashblock_exec_time_us = info.flashblock_execution_time_us,
                     exec_time_limit_us = ?limits.flashblock_execution_time_limit_us,
-                    cumulative_state_root_time_us = info.cumulative_state_root_time_us,
-                    state_root_time_limit_us = ?limits.block_state_root_time_limit_us,
+                    cumulative_state_root_gas = info.cumulative_state_root_gas,
+                    state_root_gas_limit = ?limits.block_state_root_gas_limit,
                     target_flashblocks = ctx.target_flashblock_count(),
                 );
 
@@ -777,11 +774,9 @@ where
         ctx.metrics.payload_num_tx.record(info.executed_transactions.len() as f64);
         ctx.metrics.payload_num_tx_gauge.set(info.executed_transactions.len() as f64);
 
-        // Record cumulative predicted state root time for the block (observation metric)
-        if info.cumulative_state_root_time_us > 0 {
-            ctx.metrics
-                .block_predicted_state_root_time_us
-                .record(info.cumulative_state_root_time_us as f64);
+        // Record cumulative state root gas for the block
+        if info.cumulative_state_root_gas > 0 {
+            ctx.metrics.block_state_root_gas.record(info.cumulative_state_root_gas as f64);
         }
 
         // Record cumulative uncompressed block size

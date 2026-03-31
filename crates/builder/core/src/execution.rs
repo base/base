@@ -5,7 +5,7 @@
 use core::fmt::Debug;
 
 use ExecutionMeteringLimitExceeded::{
-    BlockStateRootTime, FlashblockExecutionTime, TransactionExecutionTime, TransactionStateRootTime,
+    BlockStateRootGas, FlashblockExecutionTime, TransactionExecutionTime,
 };
 use alloy_primitives::{Address, U256};
 use base_alloy_consensus::OpReceipt;
@@ -40,13 +40,12 @@ pub struct ResourceLimits {
     /// This is a "use it or lose it" budget - unused time does not carry over between
     /// flashblocks. The budget resets at the start of each flashblock.
     pub flashblock_execution_time_limit_us: Option<u128>,
-    /// Maximum state root calculation time per transaction in microseconds (optional).
-    pub tx_state_root_time_limit_us: Option<u128>,
-    /// Maximum cumulative state root calculation time for the block in microseconds (optional).
+    /// Maximum cumulative state root gas for the block (optional).
     ///
-    /// Unlike execution time, state root time is cumulative across the entire block because
-    /// state root is calculated once at the end of the block, not per-flashblock.
-    pub block_state_root_time_limit_us: Option<u128>,
+    /// State root gas is a synthetic resource: `sr_gas = gas_used × (1 + K × max(0, SR_ms - anchor))`.
+    /// Normal transactions pay 1:1 with actual gas. State-heavy transactions pay more.
+    /// Cumulative across the entire block (not per-flashblock).
+    pub block_state_root_gas_limit: Option<u64>,
     /// Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes (optional).
     pub block_uncompressed_size_limit: Option<u64>,
 }
@@ -63,8 +62,8 @@ pub struct TxResources {
     pub gas_limit: u64,
     /// Predicted execution time in microseconds (from metering data, if available).
     pub execution_time_us: Option<u128>,
-    /// Predicted state root calculation time in microseconds (from metering data, if available).
-    pub state_root_time_us: Option<u128>,
+    /// Computed state root gas for this transaction (from metering data, if available).
+    pub state_root_gas: Option<u64>,
     /// Raw EIP-2718 encoded transaction size in bytes.
     pub uncompressed_size: u64,
 }
@@ -79,10 +78,9 @@ pub enum ExecutionMeteringLimitExceeded {
         "flashblock execution time exceeded: flashblock_used_us={0} tx_time_us={1} limit_us={2}"
     )]
     FlashblockExecutionTime(u128, u128, u128),
-    #[error("transaction state root time exceeded: tx_time_us={0} limit_us={1}")]
-    TransactionStateRootTime(u128, u128),
-    #[error("block state root time exceeded: cumulative_us={0} tx_time_us={1} block_limit_us={2}")]
-    BlockStateRootTime(u128, u128, u128),
+    /// Cumulative state root gas would exceed the per-block limit.
+    #[error("block state root gas exceeded: cumulative={0} tx_sr_gas={1} block_limit={2}")]
+    BlockStateRootGas(u64, u64, u64),
 }
 
 /// Error returned when a transaction fails execution or exceeds block limits.
@@ -205,9 +203,9 @@ pub struct ExecutionInfo {
     /// Execution time used in the current flashblock in microseconds.
     /// Reset at the start of each flashblock (see [`ResourceLimits::flashblock_execution_time_limit_us`]).
     pub flashblock_execution_time_us: u128,
-    /// Cumulative state root calculation time in microseconds across the block
-    /// (see [`ResourceLimits::block_state_root_time_limit_us`]).
-    pub cumulative_state_root_time_us: u128,
+    /// Cumulative state root gas across the block
+    /// (see [`ResourceLimits::block_state_root_gas_limit`]).
+    pub cumulative_state_root_gas: u64,
     /// Cumulative uncompressed (EIP-2718 encoded) bytes used in the block
     pub cumulative_uncompressed_bytes: u64,
     /// Tracks fees from executed mempool transactions
@@ -228,7 +226,7 @@ impl ExecutionInfo {
             cumulative_gas_used: 0,
             cumulative_da_bytes_used: 0,
             flashblock_execution_time_us: 0,
-            cumulative_state_root_time_us: 0,
+            cumulative_state_root_gas: 0,
             cumulative_uncompressed_bytes: 0,
             total_fees: U256::ZERO,
             extra: Default::default(),
@@ -332,26 +330,18 @@ impl ExecutionInfo {
             }
         }
 
-        // Check state root time limits (if metering data is available)
-        if let Some(tx_time) = tx.state_root_time_us {
-            // Check per-transaction state root time limit
-            if let Some(tx_limit) = limits.tx_state_root_time_limit_us
-                && tx_time > tx_limit
-            {
-                return Err(TransactionStateRootTime(tx_time, tx_limit).into());
-            }
-
-            // Check block state root time limit (cumulative across the block)
-            if let Some(block_limit) = limits.block_state_root_time_limit_us {
-                let total_time = self.cumulative_state_root_time_us.saturating_add(tx_time);
-                if total_time > block_limit {
-                    return Err(BlockStateRootTime(
-                        self.cumulative_state_root_time_us,
-                        tx_time,
-                        block_limit,
-                    )
-                    .into());
-                }
+        // Check state root gas limit (if metering data is available)
+        if let Some(tx_sr_gas) = tx.state_root_gas
+            && let Some(block_limit) = limits.block_state_root_gas_limit
+        {
+            let total = self.cumulative_state_root_gas.saturating_add(tx_sr_gas);
+            if total > block_limit {
+                return Err(BlockStateRootGas(
+                    self.cumulative_state_root_gas,
+                    tx_sr_gas,
+                    block_limit,
+                )
+                .into());
             }
         }
 
@@ -525,40 +515,20 @@ mod tests {
         assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
     }
 
-    // ==================== State Root Time Tests ====================
+    // ==================== State Root Gas Tests ====================
 
     #[test]
-    fn test_tx_state_root_time_exceeded() {
-        let info = ExecutionInfo::with_capacity(10);
-        let limits =
-            ResourceLimits { tx_state_root_time_limit_us: Some(500_000), ..default_limits() };
-        let tx = TxResources {
-            gas_limit: 21_000,
-            state_root_time_us: Some(600_000), // 0.6s > 0.5s limit
-            ..Default::default()
-        };
-
-        let result = info.is_tx_over_limits(&tx, &limits);
-        assert!(matches!(
-            result,
-            Err(TxnExecutionError::ExecutionMeteringLimitExceeded(
-                ExecutionMeteringLimitExceeded::TransactionStateRootTime(600_000, 500_000)
-            ))
-        ));
-    }
-
-    #[test]
-    fn test_block_state_root_time_exceeded() {
+    fn test_block_state_root_gas_exceeded() {
         let mut info = ExecutionInfo::with_capacity(10);
-        info.cumulative_state_root_time_us = 8_000_000; // 8s already used
+        info.cumulative_state_root_gas = 500_000_000; // 500M already used
 
         let limits = ResourceLimits {
-            block_state_root_time_limit_us: Some(10_000_000), // 10s block limit
+            block_state_root_gas_limit: Some(600_000_000), // 600M limit
             ..default_limits()
         };
         let tx = TxResources {
             gas_limit: 21_000,
-            state_root_time_us: Some(3_000_000), // 3s would exceed (8 + 3 > 10)
+            state_root_gas: Some(200_000_000), // 200M would exceed (500 + 200 > 600)
             ..Default::default()
         };
 
@@ -566,26 +536,25 @@ mod tests {
         assert!(matches!(
             result,
             Err(TxnExecutionError::ExecutionMeteringLimitExceeded(
-                ExecutionMeteringLimitExceeded::BlockStateRootTime(
-                    8_000_000, 3_000_000, 10_000_000
+                ExecutionMeteringLimitExceeded::BlockStateRootGas(
+                    500_000_000,
+                    200_000_000,
+                    600_000_000
                 )
             ))
         ));
     }
 
     #[test]
-    fn test_state_root_time_within_limits() {
+    fn test_state_root_gas_within_limits() {
         let mut info = ExecutionInfo::with_capacity(10);
-        info.cumulative_state_root_time_us = 5_000_000;
+        info.cumulative_state_root_gas = 200_000_000;
 
-        let limits = ResourceLimits {
-            tx_state_root_time_limit_us: Some(1_000_000),
-            block_state_root_time_limit_us: Some(10_000_000),
-            ..default_limits()
-        };
+        let limits =
+            ResourceLimits { block_state_root_gas_limit: Some(600_000_000), ..default_limits() };
         let tx = TxResources {
             gas_limit: 21_000,
-            state_root_time_us: Some(500_000),
+            state_root_gas: Some(50_000_000),
             ..Default::default()
         };
 
@@ -593,14 +562,10 @@ mod tests {
     }
 
     #[test]
-    fn test_state_root_time_no_metering_data_skips_check() {
+    fn test_state_root_gas_no_metering_data_skips_check() {
         let info = ExecutionInfo::with_capacity(10);
-        let limits = ResourceLimits {
-            tx_state_root_time_limit_us: Some(1),
-            block_state_root_time_limit_us: Some(1),
-            ..default_limits()
-        };
-        let tx = TxResources { gas_limit: 21_000, state_root_time_us: None, ..Default::default() };
+        let limits = ResourceLimits { block_state_root_gas_limit: Some(1), ..default_limits() };
+        let tx = TxResources { gas_limit: 21_000, state_root_gas: None, ..Default::default() };
 
         assert!(info.is_tx_over_limits(&tx, &limits).is_ok());
     }
@@ -611,7 +576,7 @@ mod tests {
     fn test_reset_flashblock_execution_time() {
         let mut info = ExecutionInfo::with_capacity(10);
         info.flashblock_execution_time_us = 5_000_000;
-        info.cumulative_state_root_time_us = 3_000_000;
+        info.cumulative_state_root_gas = 300_000_000;
         info.cumulative_gas_used = 1_000_000;
         info.cumulative_da_bytes_used = 50_000;
 
@@ -620,7 +585,7 @@ mod tests {
         // Only execution time should be reset
         assert_eq!(info.flashblock_execution_time_us, 0);
         // Other cumulative values should remain
-        assert_eq!(info.cumulative_state_root_time_us, 3_000_000);
+        assert_eq!(info.cumulative_state_root_gas, 300_000_000);
         assert_eq!(info.cumulative_gas_used, 1_000_000);
         assert_eq!(info.cumulative_da_bytes_used, 50_000);
     }
@@ -652,22 +617,24 @@ mod tests {
     }
 
     #[test]
-    fn test_state_root_time_cumulative_across_flashblocks() {
+    fn test_state_root_gas_cumulative_across_flashblocks() {
         let mut info = ExecutionInfo::with_capacity(10);
-        let limits =
-            ResourceLimits { block_state_root_time_limit_us: Some(10_000_000), ..default_limits() };
+        let limits = ResourceLimits {
+            block_state_root_gas_limit: Some(600_000_000), // 600M
+            ..default_limits()
+        };
 
-        // Simulate multiple flashblocks accumulating state root time
-        info.cumulative_state_root_time_us = 3_000_000;
+        // Simulate multiple flashblocks accumulating state root gas
+        info.cumulative_state_root_gas = 200_000_000;
         info.reset_flashblock_execution_time();
 
-        info.cumulative_state_root_time_us = 6_000_000;
+        info.cumulative_state_root_gas = 400_000_000;
         info.reset_flashblock_execution_time();
 
-        // Flashblock 3: try to add 5s (would be 11s > 10s limit)
+        // Flashblock 3: try to add 300M (would be 700M > 600M limit)
         let tx = TxResources {
             gas_limit: 21_000,
-            state_root_time_us: Some(5_000_000),
+            state_root_gas: Some(300_000_000),
             ..Default::default()
         };
 
@@ -675,7 +642,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(TxnExecutionError::ExecutionMeteringLimitExceeded(
-                ExecutionMeteringLimitExceeded::BlockStateRootTime(_, _, _)
+                ExecutionMeteringLimitExceeded::BlockStateRootGas(_, _, _)
             ))
         ));
     }
@@ -688,7 +655,7 @@ mod tests {
         let limits = ResourceLimits {
             tx_data_limit: Some(100),
             tx_execution_time_limit_us: Some(1_000_000),
-            tx_state_root_time_limit_us: Some(500_000),
+            block_state_root_gas_limit: Some(500_000),
             ..default_limits()
         };
 
@@ -697,7 +664,7 @@ mod tests {
             da_size: 200,
             gas_limit: 21_000,
             execution_time_us: Some(2_000_000),
-            state_root_time_us: Some(1_000_000),
+            state_root_gas: Some(1_000_000),
             uncompressed_size: 0,
         };
 
@@ -715,8 +682,7 @@ mod tests {
             block_data_limit: Some(1_000_000),
             tx_execution_time_limit_us: Some(1_000_000),
             flashblock_execution_time_limit_us: Some(10_000_000),
-            tx_state_root_time_limit_us: Some(500_000),
-            block_state_root_time_limit_us: Some(5_000_000),
+            block_state_root_gas_limit: Some(500_000_000),
             ..Default::default()
         };
 
@@ -724,7 +690,7 @@ mod tests {
             da_size: 500,
             gas_limit: 100_000,
             execution_time_us: Some(100_000),
-            state_root_time_us: Some(50_000),
+            state_root_gas: Some(100_000),
             uncompressed_size: 0,
         };
 
@@ -776,7 +742,7 @@ mod tests {
         assert_eq!(info.cumulative_gas_used, 0);
         assert_eq!(info.cumulative_da_bytes_used, 0);
         assert_eq!(info.flashblock_execution_time_us, 0);
-        assert_eq!(info.cumulative_state_root_time_us, 0);
+        assert_eq!(info.cumulative_state_root_gas, 0);
         assert_eq!(info.cumulative_uncompressed_bytes, 0);
         assert_eq!(info.total_fees, U256::ZERO);
         assert!(info.executed_transactions.is_empty());

@@ -46,7 +46,7 @@ impl Default for FlashblocksArgs {
 }
 
 /// Parameters for rollup configuration
-#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+#[derive(Debug, Clone, clap::Args)]
 #[command(next_help_heading = "Rollup")]
 pub struct Args {
     /// Rollup configuration
@@ -65,17 +65,21 @@ pub struct Args {
     #[arg(long = "builder.max-execution-time-per-tx-us")]
     pub max_execution_time_per_tx_us: Option<u128>,
 
-    /// Maximum state root calculation time per transaction in microseconds (requires resource metering)
-    #[arg(long = "builder.max-state-root-time-per-tx-us")]
-    pub max_state_root_time_per_tx_us: Option<u128>,
-
     /// Flashblock-level execution time budget in microseconds (requires resource metering)
     #[arg(long = "builder.flashblock-execution-time-budget-us")]
     pub flashblock_execution_time_budget_us: Option<u128>,
 
-    /// Block-level state root calculation time budget in microseconds (requires resource metering)
-    #[arg(long = "builder.block-state-root-time-budget-us")]
-    pub block_state_root_time_budget_us: Option<u128>,
+    /// Block-level state root gas limit (requires resource metering)
+    #[arg(long = "builder.block-state-root-gas-limit")]
+    pub block_state_root_gas_limit: Option<u64>,
+
+    /// State root gas coefficient (K): controls how excess SR time inflates `sr_gas` cost
+    #[arg(long = "builder.state-root-gas-coefficient", default_value = "0.02")]
+    pub state_root_gas_coefficient: f64,
+
+    /// State root gas anchor in microseconds: SR below this produces no penalty
+    #[arg(long = "builder.state-root-gas-anchor-us", default_value = "5000")]
+    pub state_root_gas_anchor_us: u128,
 
     /// Execution metering mode: off, dry-run, or enforce
     #[arg(long = "builder.execution-metering-mode", value_enum, default_value = "off")]
@@ -123,9 +127,10 @@ impl Default for Args {
             chain_block_time: 1000,
             max_gas_per_txn: None,
             max_execution_time_per_tx_us: None,
-            max_state_root_time_per_tx_us: None,
             flashblock_execution_time_budget_us: None,
-            block_state_root_time_budget_us: None,
+            block_state_root_gas_limit: None,
+            state_root_gas_coefficient: 0.02,
+            state_root_gas_anchor_us: 5000,
             execution_metering_mode: ExecutionMeteringMode::Off,
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
@@ -163,9 +168,10 @@ impl Args {
             ),
             max_gas_per_txn: self.max_gas_per_txn,
             max_execution_time_per_tx_us: self.max_execution_time_per_tx_us,
-            max_state_root_time_per_tx_us: self.max_state_root_time_per_tx_us,
             flashblock_execution_time_budget_us: self.flashblock_execution_time_budget_us,
-            block_state_root_time_budget_us: self.block_state_root_time_budget_us,
+            block_state_root_gas_limit: self.block_state_root_gas_limit,
+            state_root_gas_coefficient: self.state_root_gas_coefficient,
+            state_root_gas_anchor_us: self.state_root_gas_anchor_us,
             execution_metering_mode: self.execution_metering_mode,
             max_uncompressed_block_size: self.max_uncompressed_block_size,
             metering_provider,

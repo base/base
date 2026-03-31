@@ -54,11 +54,8 @@ fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64
             ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
                 "flashblock_execution_time_exceeded"
             }
-            ExecutionMeteringLimitExceeded::TransactionStateRootTime(_, _) => {
-                "tx_state_root_time_exceeded"
-            }
-            ExecutionMeteringLimitExceeded::BlockStateRootTime(_, _, _) => {
-                "block_state_root_time_exceeded"
+            ExecutionMeteringLimitExceeded::BlockStateRootGas(_, _, _) => {
+                "block_state_root_gas_exceeded"
             }
         },
         TxnExecutionError::SequencerTransaction => "sequencer_transaction",
@@ -187,8 +184,7 @@ impl FlashblockDiagnostics {
                 | ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
                     self.txs_rejected_execution_time += 1;
                 }
-                ExecutionMeteringLimitExceeded::TransactionStateRootTime(_, _)
-                | ExecutionMeteringLimitExceeded::BlockStateRootTime(_, _, _) => {
+                ExecutionMeteringLimitExceeded::BlockStateRootGas(_, _, _) => {
                     self.txs_rejected_state_root_time += 1;
                 }
             },
@@ -221,8 +217,8 @@ pub struct FlashblocksExtraCtx {
     pub target_da_footprint_for_batch: Option<u64>,
     /// Target execution time for the current flashblock in microseconds
     pub target_execution_time_for_batch_us: Option<u128>,
-    /// Target state root time for the current flashblock in microseconds
-    pub target_state_root_time_for_batch_us: Option<u128>,
+    /// Target state root gas for the current flashblock
+    pub target_state_root_gas_for_batch: Option<u64>,
     /// Gas limit per flashblock
     pub gas_per_batch: u64,
     /// DA bytes limit per flashblock
@@ -231,8 +227,8 @@ pub struct FlashblocksExtraCtx {
     pub da_footprint_per_batch: Option<u64>,
     /// Execution time limit per flashblock in microseconds
     pub execution_time_per_batch_us: Option<u128>,
-    /// State root time limit per flashblock in microseconds
-    pub state_root_time_per_batch_us: Option<u128>,
+    /// State root gas limit per flashblock
+    pub state_root_gas_per_batch: Option<u64>,
 }
 
 impl FlashblocksExtraCtx {
@@ -246,7 +242,7 @@ impl FlashblocksExtraCtx {
         target_da_for_batch: Option<u64>,
         target_da_footprint_for_batch: Option<u64>,
         target_execution_time_for_batch_us: Option<u128>,
-        target_state_root_time_for_batch_us: Option<u128>,
+        target_state_root_gas_for_batch: Option<u64>,
     ) -> Self {
         Self {
             flashblock_index: self.flashblock_index + 1,
@@ -254,7 +250,7 @@ impl FlashblocksExtraCtx {
             target_da_for_batch,
             target_da_footprint_for_batch,
             target_execution_time_for_batch_us,
-            target_state_root_time_for_batch_us,
+            target_state_root_gas_for_batch,
             ..self
         }
     }
@@ -612,7 +608,7 @@ impl OpPayloadBuilderCtx {
             tx_data_limit = ?limits.tx_data_limit,
             block_gas_limit = ?limits.block_gas_limit,
             flashblock_execution_time_limit_us = ?limits.flashblock_execution_time_limit_us,
-            block_state_root_time_limit_us = ?limits.block_state_root_time_limit_us,
+            block_state_root_gas_limit = ?limits.block_state_root_gas_limit,
             execution_metering_mode = ?self.builder_config.execution_metering_mode,
         );
 
@@ -681,18 +677,31 @@ impl OpPayloadBuilderCtx {
 
             let resource_usage = self.builder_config.metering_provider.get(&tx_hash);
 
-            // Extract predicted execution and state root times from metering data
+            // Extract predicted execution time from metering data
             let predicted_execution_time_us =
                 resource_usage.as_ref().map(|m| m.total_execution_time_us);
             let predicted_state_root_time_us =
                 resource_usage.as_ref().map(|m| m.state_root_time_us);
+
+            // Compute state root gas from metering data:
+            // sr_gas = gas_used × (1 + K × max(0, SR_ms - anchor_ms))
+            let state_root_gas = resource_usage.as_ref().map(|m| {
+                let gas_used = m.total_gas_used;
+                let sr_us = m.state_root_time_us;
+                let anchor_us = self.builder_config.state_root_gas_anchor_us;
+                let k = self.builder_config.state_root_gas_coefficient;
+                let excess_us = sr_us.saturating_sub(anchor_us);
+                let excess_ms = excess_us as f64 / 1000.0;
+                let multiplier = 1.0 + k * excess_ms;
+                (gas_used as f64 * multiplier) as u64
+            });
 
             // Build tx resources struct
             let tx_resources = TxResources {
                 da_size: tx_da_size,
                 gas_limit: tx.gas_limit(),
                 execution_time_us: predicted_execution_time_us,
-                state_root_time_us: predicted_state_root_time_us,
+                state_root_gas,
                 uncompressed_size: tx_uncompressed_size,
             };
 
@@ -852,15 +861,17 @@ impl OpPayloadBuilderCtx {
             // record execution time (use predicted time if available, fall back to actual)
             info.flashblock_execution_time_us +=
                 predicted_execution_time_us.unwrap_or(actual_execution_time_us);
-            // record state root time (only from predictions)
-            if let Some(state_root_time) = predicted_state_root_time_us {
-                info.cumulative_state_root_time_us += state_root_time;
-
-                // Record state root time / gas ratio for anomaly detection
-                if gas_used > 0 {
-                    let ratio = state_root_time as f64 / gas_used as f64;
-                    self.metrics.state_root_time_per_gas_ratio.record(ratio);
-                }
+            // record state root gas (only from predictions)
+            if let Some(sr_gas) = state_root_gas {
+                info.cumulative_state_root_gas += sr_gas;
+                self.metrics.tx_state_root_gas.record(sr_gas as f64);
+            }
+            // record state root time / gas ratio for anomaly detection
+            if let Some(state_root_time) = predicted_state_root_time_us
+                && gas_used > 0
+            {
+                let ratio = state_root_time as f64 / gas_used as f64;
+                self.metrics.state_root_time_per_gas_ratio.record(ratio);
             }
 
             // Push transaction changeset and calculate header bloom filter for receipt.
@@ -902,11 +913,9 @@ impl OpPayloadBuilderCtx {
             }
         }
 
-        // Record cumulative predicted state root time for the block
-        if info.cumulative_state_root_time_us > 0 {
-            self.metrics
-                .block_predicted_state_root_time_us
-                .record(info.cumulative_state_root_time_us as f64);
+        // Record cumulative state root gas for the block
+        if info.cumulative_state_root_gas > 0 {
+            self.metrics.block_state_root_gas.record(info.cumulative_state_root_gas as f64);
         }
 
         let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
@@ -964,11 +973,8 @@ impl OpPayloadBuilderCtx {
             ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
                 self.metrics.flashblock_execution_time_exceeded_total.increment(1);
             }
-            ExecutionMeteringLimitExceeded::TransactionStateRootTime(_, _) => {
-                self.metrics.tx_state_root_time_exceeded_total.increment(1);
-            }
-            ExecutionMeteringLimitExceeded::BlockStateRootTime(_, _, _) => {
-                self.metrics.block_state_root_time_exceeded_total.increment(1);
+            ExecutionMeteringLimitExceeded::BlockStateRootGas(_, _, _) => {
+                self.metrics.block_state_root_gas_exceeded_total.increment(1);
             }
         }
     }
