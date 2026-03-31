@@ -123,6 +123,35 @@ fn test_resume_triggers_catchup_from_safe_head() {
     });
 }
 
+/// Starting paused must apply the same reset semantics as `AdminCommand::Pause`
+/// and report `paused = true` immediately via the admin API.
+#[test]
+fn test_starting_paused_applies_pause_semantics() {
+    Runner::start(Config::seeded(0), |ctx| async move {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+        let (admin_handle, admin_rx) = AdminHandle::channel();
+
+        let driver =
+            DriverFixture::build(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
+                .with_paused(true)
+                .with_admin_rx(admin_rx);
+        let handle = ctx.spawn(driver.run());
+
+        ctx.sleep(Duration::from_millis(10)).await;
+        let status = admin_handle.get_status().await.unwrap();
+        ctx.cancel();
+
+        assert!(handle.await.unwrap().is_ok());
+        assert!(status.paused, "driver must report paused=true when started paused");
+        assert_eq!(
+            recorded.lock().unwrap().resets,
+            1,
+            "startup paused state must apply the same pipeline reset semantics as admin pause"
+        );
+    });
+}
+
 /// While paused, `Block` and `Flush` source events must be dropped; the
 /// pipeline must not receive any blocks.
 #[test]

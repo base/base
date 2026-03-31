@@ -55,7 +55,7 @@ where
     /// Maximum wall-clock time to wait for in-flight submissions to settle
     /// when draining on cancellation or source exhaustion.
     drain_timeout: Duration,
-    /// Whether block ingestion is currently paused via the admin API.
+    /// Whether block ingestion is currently paused.
     paused: bool,
     /// Admin command channel, wired in via [`Self::with_admin_rx`].
     admin_rx: Option<mpsc::Receiver<AdminCommand>>,
@@ -114,6 +114,9 @@ where
     }
 
     /// Set the initial paused state for block ingestion.
+    ///
+    /// The full paused-state transition is applied when [`run`](Self::run)
+    /// starts, so startup semantics match the admin pause path.
     pub const fn with_paused(mut self, paused: bool) -> Self {
         self.paused = paused;
         self
@@ -138,6 +141,10 @@ where
     /// When draining (after cancellation or source exhaustion), the I/O phase is
     /// replaced by a bounded drain of all in-flight receipts.
     pub async fn run(mut self) -> Result<(), BatchDriverError> {
+        if self.paused {
+            self.enter_paused_state("startup");
+        }
+
         let mut draining = false;
         loop {
             self.drain_encoding()?;
@@ -196,6 +203,18 @@ where
                 }
             }
         }
+    }
+
+    /// Apply the full paused-state transition.
+    ///
+    /// This matches the semantics of the admin pause path: in-flight
+    /// submissions are discarded, the pipeline is reset, and new `Block` /
+    /// `Flush` source events are ignored until resume.
+    fn enter_paused_state(&mut self, reason: &'static str) {
+        self.submissions.discard();
+        self.pipeline.reset();
+        self.paused = true;
+        info!(paused = true, reason, "batcher entered paused state");
     }
 
     /// Drain encoding steps synchronously up to [`Self::STEP_BUDGET`].
@@ -263,8 +282,9 @@ where
     /// arm so control-plane operations (pause, resume, flush) are never starved
     /// by sustained block throughput.
     ///
-    /// [`AdminCommand::Pause`] immediately discards in-flight submissions and
-    /// resets the pipeline, then drops `Block` and `Flush` source events until
+    /// [`AdminCommand::Pause`] applies the same paused-state transition used
+    /// for startup with `with_paused(true)`: discard in-flight submissions,
+    /// reset the pipeline, then drop `Block` and `Flush` source events until
     /// [`AdminCommand::Resume`] is received. Reorg events propagate regardless
     /// of pause state. On resume the source is reset to catch up sequentially
     /// from the last known safe L2 head.
@@ -282,10 +302,7 @@ where
                     match cmd {
                         AdminCommand::Flush => return Ok(DriverEvent::Flush),
                         AdminCommand::Pause => {
-                            self.submissions.discard();
-                            self.pipeline.reset();
-                            self.paused = true;
-                            info!(paused = true, "batcher paused via admin");
+                            self.enter_paused_state("admin");
                         }
                         AdminCommand::Resume => {
                             let safe_head =
