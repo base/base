@@ -8,6 +8,24 @@ use base_consensus_registry::Registry;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+/// Configuration for a single validator (non-sequencing) node in the local devnet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidatorNodeConfig {
+    /// Human-readable name for this node (e.g. "base-client").
+    pub name: String,
+    /// Consensus-layer JSON-RPC endpoint (serves `optimism_*` and `opp2p_*` methods).
+    pub cl_rpc: Url,
+    /// Execution-layer JSON-RPC endpoint for this node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub el_rpc: Option<Url>,
+    /// Docker container name for the EL process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_el: Option<String>,
+    /// Docker container name for the CL process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_cl: Option<String>,
+}
+
 /// Configuration for a single node in an HA conductor cluster.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConductorNodeConfig {
@@ -87,6 +105,9 @@ pub struct ChainConfig {
     /// HA conductor cluster nodes, if this chain runs an op-conductor setup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conductors: Option<Vec<ConductorNodeConfig>>,
+    /// Validator (non-sequencing) nodes to monitor alongside the conductor cluster.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validators: Option<Vec<ValidatorNodeConfig>>,
 }
 
 impl ChainConfig {
@@ -126,6 +147,7 @@ struct ChainConfigOverride {
     batcher_address: Option<Address>,
     l1_blob_target: Option<u64>,
     conductors: Option<Vec<ConductorNodeConfig>>,
+    validators: Option<Vec<ValidatorNodeConfig>>,
 }
 
 impl ChainConfig {
@@ -143,6 +165,7 @@ impl ChainConfig {
             batcher_address: Some("0x5050F69a9786F081509234F1a7F4684b5E5b76C9".parse().unwrap()),
             l1_blob_target: 14,
             conductors: None,
+            validators: None,
         }
     }
 
@@ -160,6 +183,7 @@ impl ChainConfig {
             batcher_address: Some("0xfc56E7272EEBBBA5bC6c544e159483C4a38f8bA3".parse().unwrap()),
             l1_blob_target: 14,
             conductors: None,
+            validators: None,
         }
     }
 
@@ -220,6 +244,13 @@ impl ChainConfig {
                     flashblocks_ws: Some(Url::parse("ws://localhost:11111").unwrap()),
                 },
             ]),
+            validators: Some(vec![ValidatorNodeConfig {
+                name: "base-client".to_string(),
+                cl_rpc: Url::parse("http://localhost:8549").unwrap(),
+                el_rpc: Some(Url::parse("http://localhost:8545").unwrap()),
+                docker_el: Some("base-client".to_string()),
+                docker_cl: Some("base-client-cl".to_string()),
+            }]),
         }
     }
 
@@ -323,6 +354,7 @@ impl ChainConfig {
             batcher_address: overrides.batcher_address.or(base.batcher_address),
             l1_blob_target: overrides.l1_blob_target.unwrap_or(base.l1_blob_target),
             conductors: overrides.conductors.or(base.conductors),
+            validators: overrides.validators.or(base.validators),
         })
     }
 

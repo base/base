@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::connect_async;
 use tracing::warn;
 
-use crate::{config::ConductorNodeConfig, tui::Toast};
+use crate::{config::{ConductorNodeConfig, ValidatorNodeConfig}, tui::Toast};
 
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
 const WS_RECONNECT_INITIAL_DELAY: Duration = Duration::from_secs(1);
@@ -944,6 +944,135 @@ pub(crate) async fn run_conductor_poller(
                     name: name.clone(),
                     is_leader: is_leader.ok(),
                     conductor_active: conductor_active.ok(),
+                    unsafe_l2_block: sync.as_ref().map(|s| s.unsafe_l2.block_info.number),
+                    unsafe_l2_hash: sync.as_ref().map(|s| s.unsafe_l2.block_info.hash),
+                    safe_l2_block: sync.as_ref().map(|s| s.safe_l2.block_info.number),
+                    safe_l2_hash: sync.as_ref().map(|s| s.safe_l2.block_info.hash),
+                    finalized_l2_block: sync.as_ref().map(|s| s.finalized_l2.block_info.number),
+                    current_l1_block: sync.as_ref().map(|s| s.current_l1.number),
+                    head_l1_block: sync.as_ref().map(|s| s.head_l1.number),
+                    cl_peer_count: cl_peer_stats.ok().map(|s| s.connected),
+                    el_block: el_block_r,
+                    el_syncing: el_syncing_r,
+                    el_peer_count: el_peers_r,
+                }
+            },
+        ))
+        .await;
+
+        if tx.send(statuses).await.is_err() {
+            break;
+        }
+    }
+}
+
+/// Live status snapshot for a single validator (non-sequencing) node.
+#[derive(Debug, Clone)]
+pub(crate) struct ValidatorNodeStatus {
+    /// Human-readable name for this node.
+    pub name: String,
+
+    // ── CL (consensus layer) ─────────────────────────────────────────────
+    /// Unsafe L2 block number from `optimism_syncStatus`.
+    pub unsafe_l2_block: Option<u64>,
+    /// Unsafe L2 block hash from `optimism_syncStatus`.
+    pub unsafe_l2_hash: Option<alloy_primitives::B256>,
+    /// Safe L2 block number from `optimism_syncStatus`.
+    pub safe_l2_block: Option<u64>,
+    /// Safe L2 block hash from `optimism_syncStatus`.
+    pub safe_l2_hash: Option<alloy_primitives::B256>,
+    /// Finalized L2 block number from `optimism_syncStatus`.
+    pub finalized_l2_block: Option<u64>,
+    /// L1 derivation cursor block number (`current_l1`).
+    pub current_l1_block: Option<u64>,
+    /// L1 chain head block number (`head_l1`).
+    pub head_l1_block: Option<u64>,
+    /// Number of connected CL libp2p peers from `opp2p_peerStats`.
+    pub cl_peer_count: Option<u32>,
+
+    // ── EL (execution layer) ─────────────────────────────────────────────
+    /// Latest block number from `eth_blockNumber`. `None` if `el_rpc` not configured.
+    pub el_block: Option<u64>,
+    /// Whether the EL is snap-syncing. `None` if not configured.
+    pub el_syncing: Option<bool>,
+    /// Number of connected EL devp2p peers from `net_peerCount`. `None` if not configured.
+    pub el_peer_count: Option<u32>,
+}
+
+/// Polls all validator nodes every 200 ms and forwards status snapshots.
+pub(crate) async fn run_validator_poller(
+    nodes: Vec<ValidatorNodeConfig>,
+    tx: mpsc::Sender<Vec<ValidatorNodeStatus>>,
+) {
+    const POLL_INTERVAL: Duration = Duration::from_millis(200);
+    const RPC_TIMEOUT: Duration = Duration::from_millis(500);
+
+    let clients: Vec<(String, _, _)> = nodes
+        .into_iter()
+        .filter_map(|node| {
+            let cl_client = HttpClientBuilder::default()
+                .request_timeout(RPC_TIMEOUT)
+                .build(node.cl_rpc.as_str())
+                .inspect_err(|e| {
+                    warn!(error = %e, node = %node.name, "failed to build validator CL HTTP client");
+                })
+                .ok()?;
+            let el_client = node.el_rpc.as_ref().and_then(|url| {
+                HttpClientBuilder::default()
+                    .request_timeout(RPC_TIMEOUT)
+                    .build(url.as_str())
+                    .inspect_err(|e| {
+                        warn!(error = %e, node = %node.name, "failed to build validator EL HTTP client");
+                    })
+                    .ok()
+            });
+            Some((node.name, cl_client, el_client))
+        })
+        .collect();
+
+    let mut interval = tokio::time::interval(POLL_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        interval.tick().await;
+
+        let statuses = futures::future::join_all(clients.iter().map(
+            |(name, cl_client, el_client)| async move {
+                let (sync, cl_peer_stats, el_block_r, el_syncing_r, el_peers_r) = tokio::join!(
+                    RollupNodeApiClient::op_sync_status(cl_client),
+                    OpP2PApiClient::opp2p_peer_stats(cl_client),
+                    async {
+                        if let Some(el) = el_client {
+                            let r: Result<alloy_primitives::U64, _> =
+                                ClientT::request(el, "eth_blockNumber", rpc_params![]).await;
+                            r.ok().map(|v| v.to::<u64>())
+                        } else {
+                            None
+                        }
+                    },
+                    async {
+                        if let Some(el) = el_client {
+                            let r: Result<serde_json::Value, _> =
+                                ClientT::request(el, "eth_syncing", rpc_params![]).await;
+                            r.ok().map(|v| !matches!(v, serde_json::Value::Bool(false)))
+                        } else {
+                            None
+                        }
+                    },
+                    async {
+                        if let Some(el) = el_client {
+                            let r: Result<alloy_primitives::U64, _> =
+                                ClientT::request(el, "net_peerCount", rpc_params![]).await;
+                            r.ok().map(|v| v.to::<u32>())
+                        } else {
+                            None
+                        }
+                    },
+                );
+
+                let sync = sync.ok();
+                ValidatorNodeStatus {
+                    name: name.clone(),
                     unsafe_l2_block: sync.as_ref().map(|s| s.unsafe_l2.block_info.number),
                     unsafe_l2_hash: sync.as_ref().map(|s| s.unsafe_l2.block_info.hash),
                     safe_l2_block: sync.as_ref().map(|s| s.safe_l2.block_info.number),

@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use crate::{
     app::{Action, Resources, View},
     commands::common::COLOR_BASE_BLUE,
-    rpc::{ConductorNodeStatus, restart_conductor_node, transfer_conductor_leader},
+    rpc::{ConductorNodeStatus, ValidatorNodeStatus, restart_conductor_node, transfer_conductor_leader},
     tui::{Keybinding, Toast},
 };
 
@@ -117,12 +117,36 @@ impl View for ConductorView {
         let footer_area = chunks[1];
 
         let nodes = &resources.conductor.nodes;
+        let validators = &resources.validators.nodes;
 
-        if nodes.is_empty() {
-            render_unconfigured(frame, content_area);
+        if validators.is_empty() {
+            if nodes.is_empty() {
+                render_unconfigured(frame, content_area);
+            } else {
+                let selected = self.selected.min(nodes.len().saturating_sub(1));
+                render_cluster_table(frame, content_area, nodes, selected, self.op_pending);
+            }
         } else {
-            let selected = self.selected.min(nodes.len().saturating_sub(1));
-            render_cluster_table(frame, content_area, nodes, selected, self.op_pending);
+            // Conductor table: 2 border + 1 header + 16 data rows = 19 lines.
+            // Validator table: 2 border + 1 header + 14 data rows = 17 lines.
+            let conductor_height = 19u16;
+            let validator_height = 17u16;
+            let sections = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(conductor_height),
+                    Constraint::Length(validator_height),
+                    Constraint::Min(0),
+                ])
+                .split(content_area);
+
+            if nodes.is_empty() {
+                render_unconfigured(frame, sections[0]);
+            } else {
+                let selected = self.selected.min(nodes.len().saturating_sub(1));
+                render_cluster_table(frame, sections[0], nodes, selected, self.op_pending);
+            }
+            render_validator_table(frame, sections[1], validators);
         }
 
         render_footer(frame, footer_area, self.op_pending);
@@ -483,6 +507,221 @@ fn render_cluster_table(
         // ── Conductor ────────────────────────────────────────────────────
         role_row,
         active_row,
+        // ── CL ───────────────────────────────────────────────────────────
+        spacer.clone(),
+        cl_section,
+        l2_row,
+        l2_hash_row,
+        safe_l2_row,
+        safe_hash_row,
+        finalized_l2_row,
+        l1_row,
+        cl_peers_row,
+        // ── EL ───────────────────────────────────────────────────────────
+        spacer,
+        el_section,
+        el_block_row,
+        el_syncing_row,
+        el_peers_row,
+    ];
+    let table = Table::new(rows, constraints).header(header).row_highlight_style(Style::default());
+
+    f.render_stateful_widget(table, inner, &mut TableState::default());
+}
+
+fn render_validator_table(
+    f: &mut Frame<'_>,
+    area: Rect,
+    nodes: &[ValidatorNodeStatus],
+) {
+    let block = Block::default()
+        .title(" Validators ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(COLOR_BASE_BLUE));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let node_count = nodes.len();
+    let label_pct = 15u16;
+    let node_pct = (100u16 - label_pct) / node_count as u16;
+
+    let mut constraints = vec![Constraint::Percentage(label_pct)];
+    for _ in 0..node_count {
+        constraints.push(Constraint::Percentage(node_pct));
+    }
+
+    // ── Header row: node names ─────────────────────────────────────────────
+    let mut header_cells = vec![Cell::from("")];
+    for node in nodes {
+        let style = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+        header_cells.push(Cell::from(node.name.as_str()).style(style));
+    }
+    let header = Row::new(header_cells)
+        .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
+        .height(1);
+
+    // ── CL section header ──────────────────────────────────────────────────
+    let cl_section = section_row("CL", node_count);
+
+    // ── Unsafe L2 row ──────────────────────────────────────────────────────
+    let mut l2_cells = vec![
+        Cell::from("  Unsafe L2")
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
+    for node in nodes {
+        let (label, style) = match node.unsafe_l2_block {
+            Some(n) => (format!("   #{n}"), Style::default().fg(Color::White)),
+            None => ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+        };
+        l2_cells.push(Cell::from(label).style(style));
+    }
+    let l2_row = Row::new(l2_cells).height(1);
+
+    // ── Unsafe L2 hash row ────────────────────────────────────────────────
+    let mut l2_hash_cells = vec![
+        Cell::from("  Unsafe Hash")
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
+    for node in nodes {
+        let (label, style) = match node.unsafe_l2_hash {
+            Some(h) => {
+                let hex = format!("{h:x}");
+                (format!("   0x{}…", &hex[..8]), Style::default().fg(Color::White))
+            }
+            None => ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+        };
+        l2_hash_cells.push(Cell::from(label).style(style));
+    }
+    let l2_hash_row = Row::new(l2_hash_cells).height(1);
+
+    // ── Safe L2 row ────────────────────────────────────────────────────────
+    let mut safe_l2_cells = vec![
+        Cell::from("  Safe L2")
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
+    for node in nodes {
+        let (label, style) = match node.safe_l2_block {
+            Some(n) => (format!("   #{n}"), Style::default().fg(Color::White)),
+            None => ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+        };
+        safe_l2_cells.push(Cell::from(label).style(style));
+    }
+    let safe_l2_row = Row::new(safe_l2_cells).height(1);
+
+    // ── Safe L2 hash row ──────────────────────────────────────────────────
+    let mut safe_hash_cells = vec![
+        Cell::from("  Safe Hash")
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
+    for node in nodes {
+        let (label, style) = match node.safe_l2_hash {
+            Some(h) => {
+                let hex = format!("{h:x}");
+                (format!("   0x{}…", &hex[..8]), Style::default().fg(Color::White))
+            }
+            None => ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+        };
+        safe_hash_cells.push(Cell::from(label).style(style));
+    }
+    let safe_hash_row = Row::new(safe_hash_cells).height(1);
+
+    // ── Finalized L2 row ───────────────────────────────────────────────────
+    let mut finalized_l2_cells = vec![
+        Cell::from("  Finalized L2")
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
+    for node in nodes {
+        let (label, style) = match node.finalized_l2_block {
+            Some(n) => (format!("   #{n}"), Style::default().fg(Color::White)),
+            None => ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+        };
+        finalized_l2_cells.push(Cell::from(label).style(style));
+    }
+    let finalized_l2_row = Row::new(finalized_l2_cells).height(1);
+
+    // ── L1 derivation row ──────────────────────────────────────────────────
+    let mut l1_cells = vec![
+        Cell::from("  L1 Derived")
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
+    for node in nodes {
+        let (label, style) = match (node.current_l1_block, node.head_l1_block) {
+            (Some(cur), Some(head)) => {
+                let lag = head.saturating_sub(cur);
+                let color = if lag > 10 { Color::Yellow } else { Color::Green };
+                (format!("   #{cur} / #{head}"), Style::default().fg(color))
+            }
+            _ => ("   ? / ?".to_string(), Style::default().fg(Color::DarkGray)),
+        };
+        l1_cells.push(Cell::from(label).style(style));
+    }
+    let l1_row = Row::new(l1_cells).height(1);
+
+    // ── CL peer count row ──────────────────────────────────────────────────
+    let mut cl_peers_cells = vec![
+        Cell::from("  CL Peers")
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
+    for node in nodes {
+        let (label, style) = match node.cl_peer_count {
+            Some(0) => ("   0".to_string(), Style::default().fg(Color::Red)),
+            Some(n) => (format!("   {n}"), Style::default().fg(Color::Green)),
+            None => ("   ?".to_string(), Style::default().fg(Color::Red)),
+        };
+        cl_peers_cells.push(Cell::from(label).style(style));
+    }
+    let cl_peers_row = Row::new(cl_peers_cells).height(1);
+
+    // ── EL section header ──────────────────────────────────────────────────
+    let el_section = section_row("EL", node_count);
+
+    // ── EL block row ───────────────────────────────────────────────────────
+    let mut el_block_cells = vec![
+        Cell::from("  Block").style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
+    for node in nodes {
+        let (label, style) = match node.el_block {
+            Some(n) => (format!("   #{n}"), Style::default().fg(Color::White)),
+            None => ("   -".to_string(), Style::default().fg(Color::DarkGray)),
+        };
+        el_block_cells.push(Cell::from(label).style(style));
+    }
+    let el_block_row = Row::new(el_block_cells).height(1);
+
+    // ── EL syncing row ─────────────────────────────────────────────────────
+    let mut el_syncing_cells = vec![
+        Cell::from("  Syncing")
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
+    for node in nodes {
+        let (label, style) = match node.el_syncing {
+            Some(true) => ("   yes", Style::default().fg(Color::Yellow)),
+            Some(false) => ("   no", Style::default().fg(Color::Green)),
+            None => ("   -", Style::default().fg(Color::DarkGray)),
+        };
+        el_syncing_cells.push(Cell::from(label).style(style));
+    }
+    let el_syncing_row = Row::new(el_syncing_cells).height(1);
+
+    // ── EL peer count row ──────────────────────────────────────────────────
+    let mut el_peers_cells = vec![
+        Cell::from("  EL Peers")
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
+    for node in nodes {
+        let (label, style) = match node.el_peer_count {
+            Some(0) => ("   0".to_string(), Style::default().fg(Color::Red)),
+            Some(n) => (format!("   {n}"), Style::default().fg(Color::Green)),
+            None => ("   -".to_string(), Style::default().fg(Color::DarkGray)),
+        };
+        el_peers_cells.push(Cell::from(label).style(style));
+    }
+    let el_peers_row = Row::new(el_peers_cells).height(1);
+
+    let spacer = Row::new(vec![Cell::from("")]).height(1);
+
+    let rows = vec![
         // ── CL ───────────────────────────────────────────────────────────
         spacer.clone(),
         cl_section,
