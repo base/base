@@ -275,7 +275,7 @@ where
     ///
     /// *Subject to downgrade to [`BootstrapRole::ConductorFollower`] by
     /// [`Self::resolve_bootstrap_role`] if a conductor reports this node is not the leader.
-    pub fn config_bootstrap_role(&self) -> BootstrapRole {
+    pub const fn config_bootstrap_role(&self) -> BootstrapRole {
         if self.unsafe_head_tx.is_none() {
             BootstrapRole::Validator
         } else if self.sequencer_stopped {
@@ -318,11 +318,7 @@ where
     /// is left `false` and will be set by the first gossip `InsertTask` FCU.
     async fn bootstrap_validator(&mut self, head: Option<L2BlockInfo>) {
         let Some(head) = head else { return };
-        let seed = EngineSyncStateUpdate {
-            unsafe_head: Some(head),
-            cross_unsafe_head: Some(head),
-            ..Default::default()
-        };
+        let seed = EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
         self.engine.seed_state(seed);
         info!(
             target: "engine",
@@ -340,19 +336,12 @@ where
     async fn bootstrap_conductor_follower(&mut self, head: Option<L2BlockInfo>) {
         let Some(head) = head else { return };
 
-        let follower_update = EngineSyncStateUpdate {
-            unsafe_head: Some(head),
-            cross_unsafe_head: Some(head),
-            ..Default::default()
-        };
+        let follower_update =
+            EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
 
         let el_confirmed = match self
             .engine
-            .probe_el_sync(
-                Arc::clone(&self.client),
-                Arc::clone(&self.rollup),
-                follower_update,
-            )
+            .probe_el_sync(Arc::clone(&self.client), Arc::clone(&self.rollup), follower_update)
             .await
         {
             Ok(c) => c,
@@ -372,9 +361,8 @@ where
 
         if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
             let new_head = self.engine.state().sync_state.unsafe_head();
-            unsafe_head_tx.send_if_modified(|val| {
-                (*val != new_head).then(|| *val = new_head).is_some()
-            });
+            unsafe_head_tx
+                .send_if_modified(|val| (*val != new_head).then(|| *val = new_head).is_some());
         }
 
         info!(
@@ -423,7 +411,6 @@ where
 
             let probe_update = EngineSyncStateUpdate {
                 unsafe_head: Some(head),
-                cross_unsafe_head: Some(head),
                 local_safe_head: Some(safe),
                 safe_head: Some(safe),
                 finalized_head: Some(finalized),
@@ -451,9 +438,8 @@ where
 
             if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
                 let new_head = self.engine.state().sync_state.unsafe_head();
-                unsafe_head_tx.send_if_modified(|val| {
-                    (*val != new_head).then(|| *val = new_head).is_some()
-                });
+                unsafe_head_tx
+                    .send_if_modified(|val| (*val != new_head).then(|| *val = new_head).is_some());
             }
 
             if el_confirmed {
@@ -985,7 +971,15 @@ mod tests {
         } else {
             None
         };
-        EngineProcessor::new(client, config, derivation_client, engine, unsafe_head_tx, conductor, sequencer_stopped)
+        EngineProcessor::new(
+            client,
+            config,
+            derivation_client,
+            engine,
+            unsafe_head_tx,
+            conductor,
+            sequencer_stopped,
+        )
     }
 
     #[test]
@@ -1050,9 +1044,10 @@ mod tests {
     async fn resolve_bootstrap_role_conductor_error_is_follower() {
         use jsonrpsee::core::ClientError;
         let mut mock_conductor = MockConductor::new();
-        mock_conductor.expect_leader().once().returning(|| {
-            Err(crate::ConductorError::Rpc(ClientError::Custom("timeout".into())))
-        });
+        mock_conductor
+            .expect_leader()
+            .once()
+            .returning(|| Err(crate::ConductorError::Rpc(ClientError::Custom("timeout".into()))));
         let p = test_processor(true, false, Some(Arc::new(mock_conductor)));
         assert_eq!(p.resolve_bootstrap_role().await, super::BootstrapRole::ConductorFollower);
     }

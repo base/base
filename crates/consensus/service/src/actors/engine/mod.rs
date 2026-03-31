@@ -19,11 +19,11 @@ pub use request::{
 };
 
 mod engine_request_processor;
+#[cfg(test)]
+pub use client::MockEngineDerivationClient;
 pub use engine_request_processor::{
     BootstrapRole, EngineProcessingRequest, EngineProcessor, EngineRequestReceiver,
 };
-#[cfg(test)]
-pub use client::MockEngineDerivationClient;
 
 mod rpc_request_processor;
 pub use rpc_request_processor::{EngineRpcProcessor, EngineRpcRequestReceiver};
