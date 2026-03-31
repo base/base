@@ -8,11 +8,10 @@ use std::{
 
 use alloy_consensus::{BlockHeader, Transaction as _};
 use alloy_primitives::{Address, B256, U256};
+use base_alloy_evm::OpEvmConfig;
 use base_bundles::{BundleExtensions, BundleTxs, ParsedBundle, TransactionResult};
 use base_execution_chainspec::OpChainSpec;
-use base_alloy_evm::OpEvmConfig;
-use base_revm::OpNextBlockEnvAttributes;
-use base_revm::L1BlockInfo;
+use base_revm::{L1BlockInfo, OpNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_primitives_traits::{Account, SealedHeader};

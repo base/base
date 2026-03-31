@@ -6,7 +6,7 @@ use base_alloy_chains::BaseUpgrades;
 use reth_execution_errors::BlockExecutionError;
 use reth_primitives_traits::BlockBody;
 
-use crate::{L1BlockInfoError, L1BlockInfo, OpBlockExecutionError, OpSpecId};
+use crate::{L1BlockInfo, L1BlockInfoError, OpBlockExecutionError, OpSpecId};
 
 /// The function selector of the "setL1BlockValuesEcotone" function in the `L1Block` contract.
 const L1_BLOCK_ECOTONE_SELECTOR: [u8; 4] = hex!("440a5e20");

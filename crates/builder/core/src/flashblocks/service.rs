@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use base_builder_publish::WebSocketPublisher;
 use base_alloy_evm::OpEvmConfig;
+use base_builder_publish::WebSocketPublisher;
 use base_node_core::{
     OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder, node::OpPoolBuilder,
 };

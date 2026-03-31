@@ -426,8 +426,8 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{TxKind, U256};
     use base_alloy_consensus::TxDeposit;
-    use base_execution_chainspec::BASE_MAINNET;
     use base_alloy_evm::OpEvmConfig;
+    use base_execution_chainspec::BASE_MAINNET;
     use base_execution_primitives::{OpPrimitives, OpTransactionSigned};
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{

@@ -11,12 +11,11 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{EMPTY_ROOT_HASH, TrieAccount, root::state_root_unhashed};
 use base_alloy_chains::BaseUpgrade;
-use base_alloy_consensus::{OpBlock, OpTxEnvelope};
+use base_alloy_consensus::{EIP1559ParamError, OpBlock, OpTxEnvelope};
+use base_alloy_evm::OpEvmConfig;
 use base_alloy_rpc_types_engine::{OpExecutionPayload, OpNetworkPayloadEnvelope, PayloadHash};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_execution_chainspec::OpChainSpecBuilder;
-use base_alloy_consensus::EIP1559ParamError;
-use base_alloy_evm::OpEvmConfig;
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo, OpAttributesWithParent};
 use base_revm::OpTransaction;
 use reth_evm::{ConfigureEvm, Evm as _, FromRecoveredTx};
@@ -692,8 +691,9 @@ impl StatefulL2Executor {
             let sender = tx_sender(tx, TEST_ACCOUNT_ADDRESS);
             let op_tx: OpTransaction<TxEnv> = OpTransaction::from_recovered_tx(tx, sender);
 
-            let evm_env =
-                evm_config.evm_env(&header).map_err(|e: EIP1559ParamError| L2SequencerError::Evm(e.to_string()))?;
+            let evm_env = evm_config
+                .evm_env(&header)
+                .map_err(|e: EIP1559ParamError| L2SequencerError::Evm(e.to_string()))?;
             let mut evm = evm_config.evm_with_env(&mut self.db, evm_env);
             match evm.transact(op_tx) {
                 Ok(ResultAndState { state, result }) => {

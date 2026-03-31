@@ -12,13 +12,11 @@ use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::{OpDepositReceipt, OpReceipt, OpTxType};
-use base_alloy_evm::OpReceiptBuilder;
+use base_alloy_evm::{OpEvmConfig, OpReceiptBuilder};
 use base_execution_chainspec::OpChainSpec;
-use base_alloy_evm::OpEvmConfig;
-use base_revm::OpNextBlockEnvAttributes;
 use base_execution_payload_builder::{OpPayloadBuilderAttributes, error::OpPayloadBuilderError};
 use base_execution_primitives::OpTransactionSigned;
-use base_revm::{L1BlockInfo, OpSpecId};
+use base_revm::{L1BlockInfo, OpNextBlockEnvAttributes, OpSpecId};
 use base_txpool::{
     BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
 };

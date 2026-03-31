@@ -397,11 +397,11 @@ mod tests {
     use alloy_primitives::{Address, B256, TxKind, U256, address};
     use alloy_rpc_types_engine::PayloadId;
     use base_alloy_consensus::OpTxEnvelope;
+    use base_alloy_evm::OpEvmConfig;
     use base_alloy_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
     use base_execution_chainspec::OpChainSpecBuilder;
-    use base_alloy_evm::OpEvmConfig;
     use base_revm::L1BlockInfo;
     use reth_evm::ConfigureEvm;
     use reth_revm::State;

@@ -1,19 +1,19 @@
-//! Base EVM configuration: OpEvmConfig and OpExecutorProvider.
+//! Base EVM configuration: `OpEvmConfig` and `OpExecutorProvider`.
 
-use std::sync::Arc;
 use core::fmt::Debug;
+use std::sync::Arc;
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::EIP1559ParamError;
-use base_revm::{OpSpecId, OpTransaction};
 use base_execution_chainspec::OpChainSpec;
 use base_execution_primitives::{DepositReceipt, OpPrimitives};
+use base_revm::{OpSpecId, OpTransaction};
 use reth_chainspec::EthChainSpec;
-use reth_evm::{ConfigureEvm, EvmEnv, TransactionEnv, precompiles::PrecompilesMap};
 #[cfg(feature = "std")]
 use reth_evm::{ConfigureEngineEvm, ExecutableTxIterator};
+use reth_evm::{ConfigureEvm, EvmEnv, TransactionEnv, precompiles::PrecompilesMap};
 use reth_primitives_traits::{NodePrimitives, SealedBlock, SealedHeader, SignedTransaction};
 use revm::context::{BlockEnv, TxEnv};
 #[allow(unused_imports)]
@@ -31,8 +31,9 @@ use {
 };
 
 use crate::{
-    OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvmFactory, OpReceiptBuilder, OpTxEnv,
-    OpRethReceiptBuilder, spec_by_timestamp_after_bedrock as revm_spec_by_timestamp_after_bedrock,
+    OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvmFactory, OpReceiptBuilder,
+    OpRethReceiptBuilder, OpTxEnv,
+    spec_by_timestamp_after_bedrock as revm_spec_by_timestamp_after_bedrock,
 };
 
 /// Builds an [`EvmEnv`] for a given block header using [`crate`]'s spec resolution.
@@ -319,9 +320,11 @@ pub type OpExecutorProvider = OpEvmConfig;
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, str::FromStr};
-    use std::collections::BTreeMap;
-    use std::sync::Arc;
+    use std::{
+        collections::{BTreeMap, HashMap},
+        str::FromStr,
+        sync::Arc,
+    };
 
     use alloy_consensus::{Block, BlockBody, Header, Receipt, SignableTransaction, TxEip1559};
     use alloy_eips::eip7685::Requests;
@@ -333,8 +336,12 @@ mod tests {
     use base_alloy_consensus::{OpBlock, OpReceipt, TxDeposit};
     use base_execution_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
     use base_execution_primitives::{OpPrimitives, OpTransactionSigned};
+    use base_revm::{L1_BLOCK_CONTRACT, OpSpecId};
     use reth_chainspec::{ChainSpec, MIN_TRANSACTION_GAS};
-    use reth_evm::{ConfigureEvm, EvmEnv, execute::{BasicBlockExecutor, Executor, ProviderError}};
+    use reth_evm::{
+        ConfigureEvm, EvmEnv,
+        execute::{BasicBlockExecutor, Executor, ProviderError},
+    };
     use reth_execution_types::{
         AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
     };
@@ -349,7 +356,6 @@ mod tests {
         state::AccountInfo,
     };
 
-    use base_revm::{L1_BLOCK_CONTRACT, OpSpecId};
     use crate::{OpEvmConfig, OpRethReceiptBuilder};
 
     fn create_op_state_provider() -> StateProviderTest {

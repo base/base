@@ -20,8 +20,8 @@ pub struct OpNextBlockEnvAttributes {
 }
 
 #[cfg(feature = "rpc")]
-impl<H: alloy_consensus::BlockHeader>
-    reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv<H> for OpNextBlockEnvAttributes
+impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv<H>
+    for OpNextBlockEnvAttributes
 {
     fn build_pending_env(parent: &reth_primitives_traits::SealedHeader<H>) -> Self {
         Self {

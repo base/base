@@ -3,9 +3,8 @@
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use base_alloy_consensus::{OpReceipt, OpTxEnvelope, OpTxType};
-use base_alloy_evm::{OpBlockExecutor, OpTxResult};
+use base_alloy_evm::{OpBlockExecutor, OpRethReceiptBuilder, OpTxResult};
 use base_execution_chainspec::OpChainSpec;
-use base_alloy_evm::OpRethReceiptBuilder;
 use base_flashblocks::{FlashblocksAPI, FlashblocksState};
 use base_revm::{OpHaltReason, OpTransaction};
 use reth_errors::BlockExecutionError;

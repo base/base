@@ -130,8 +130,8 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::{Address, Log, LogData, TxKind, address};
     use base_alloy_consensus::TxDeposit;
-    use base_execution_chainspec::OpChainSpecBuilder;
     use base_alloy_evm::OpEvmConfig;
+    use base_execution_chainspec::OpChainSpecBuilder;
     use base_revm::OpHaltReason;
     use reth_evm::ConfigureEvm;
     use revm::database::InMemoryDB;
