@@ -43,7 +43,7 @@ where
     /// The state machine controlling when derivation can occur.
     derivation_state_machine: DerivationStateMachine,
     /// The [`L2Finalizer`] tracks derived L2 blocks awaiting finalization.
-    pub(crate) finalizer: L2Finalizer,
+    pub finalizer: L2Finalizer,
     /// The safe head database listener for recording L1→L2 safe head mappings.
     safe_head_listener: Arc<dyn SafeHeadListener>,
     /// The L1 inclusion block for the most recently sent (unconfirmed) payload attributes.

@@ -7,12 +7,12 @@ mod config;
 pub use config::SequencerConfig;
 
 mod origin_selector;
+#[cfg(test)]
+pub use origin_selector::MockOriginSelector;
 pub use origin_selector::{
     DelayedL1OriginSelectorProvider, L1OriginSelector, L1OriginSelectorError,
     L1OriginSelectorProvider, OriginSelector,
 };
-#[cfg(test)]
-pub use origin_selector::MockOriginSelector;
 
 mod recovery;
 pub use recovery::RecoveryModeGuard;

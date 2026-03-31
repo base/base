@@ -19,11 +19,11 @@ mod error;
 pub use error::NetworkBuilderError;
 
 mod gossip;
+#[cfg(test)]
+pub use gossip::MockUnsafePayloadGossipClient;
 pub use gossip::{
     QueuedUnsafePayloadGossipClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
 };
-#[cfg(test)]
-pub use gossip::MockUnsafePayloadGossipClient;
 
 mod handler;
 pub use handler::NetworkHandler;
