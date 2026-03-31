@@ -9,7 +9,9 @@ use tokio::sync::mpsc;
 use crate::{
     app::{Action, Resources, View},
     commands::common::COLOR_BASE_BLUE,
-    rpc::{ConductorNodeStatus, ValidatorNodeStatus, restart_conductor_node, transfer_conductor_leader},
+    rpc::{
+        ConductorNodeStatus, ValidatorNodeStatus, restart_conductor_node, transfer_conductor_leader,
+    },
     tui::{Keybinding, Toast},
 };
 
@@ -529,11 +531,7 @@ fn render_cluster_table(
     f.render_stateful_widget(table, inner, &mut TableState::default());
 }
 
-fn render_validator_table(
-    f: &mut Frame<'_>,
-    area: Rect,
-    nodes: &[ValidatorNodeStatus],
-) {
+fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeStatus]) {
     let block = Block::default()
         .title(" Validators ")
         .borders(Borders::ALL)
@@ -570,10 +568,10 @@ fn render_validator_table(
             .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
     ];
     for node in nodes {
-        let (label, style) = match node.unsafe_l2_block {
-            Some(n) => (format!("   #{n}"), Style::default().fg(Color::White)),
-            None => ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
-        };
+        let (label, style) = node.unsafe_l2_block.map_or_else(
+            || ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+            |n| (format!("   #{n}"), Style::default().fg(Color::White)),
+        );
         l2_cells.push(Cell::from(label).style(style));
     }
     let l2_row = Row::new(l2_cells).height(1);
@@ -584,13 +582,13 @@ fn render_validator_table(
             .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
     ];
     for node in nodes {
-        let (label, style) = match node.unsafe_l2_hash {
-            Some(h) => {
+        let (label, style) = node.unsafe_l2_hash.map_or_else(
+            || ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+            |h| {
                 let hex = format!("{h:x}");
                 (format!("   0x{}…", &hex[..8]), Style::default().fg(Color::White))
-            }
-            None => ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
-        };
+            },
+        );
         l2_hash_cells.push(Cell::from(label).style(style));
     }
     let l2_hash_row = Row::new(l2_hash_cells).height(1);
@@ -601,10 +599,10 @@ fn render_validator_table(
             .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
     ];
     for node in nodes {
-        let (label, style) = match node.safe_l2_block {
-            Some(n) => (format!("   #{n}"), Style::default().fg(Color::White)),
-            None => ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
-        };
+        let (label, style) = node.safe_l2_block.map_or_else(
+            || ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+            |n| (format!("   #{n}"), Style::default().fg(Color::White)),
+        );
         safe_l2_cells.push(Cell::from(label).style(style));
     }
     let safe_l2_row = Row::new(safe_l2_cells).height(1);
@@ -615,13 +613,13 @@ fn render_validator_table(
             .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
     ];
     for node in nodes {
-        let (label, style) = match node.safe_l2_hash {
-            Some(h) => {
+        let (label, style) = node.safe_l2_hash.map_or_else(
+            || ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+            |h| {
                 let hex = format!("{h:x}");
                 (format!("   0x{}…", &hex[..8]), Style::default().fg(Color::White))
-            }
-            None => ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
-        };
+            },
+        );
         safe_hash_cells.push(Cell::from(label).style(style));
     }
     let safe_hash_row = Row::new(safe_hash_cells).height(1);
@@ -632,10 +630,10 @@ fn render_validator_table(
             .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
     ];
     for node in nodes {
-        let (label, style) = match node.finalized_l2_block {
-            Some(n) => (format!("   #{n}"), Style::default().fg(Color::White)),
-            None => ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
-        };
+        let (label, style) = node.finalized_l2_block.map_or_else(
+            || ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+            |n| (format!("   #{n}"), Style::default().fg(Color::White)),
+        );
         finalized_l2_cells.push(Cell::from(label).style(style));
     }
     let finalized_l2_row = Row::new(finalized_l2_cells).height(1);
@@ -681,10 +679,10 @@ fn render_validator_table(
         Cell::from("  Block").style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
     ];
     for node in nodes {
-        let (label, style) = match node.el_block {
-            Some(n) => (format!("   #{n}"), Style::default().fg(Color::White)),
-            None => ("   -".to_string(), Style::default().fg(Color::DarkGray)),
-        };
+        let (label, style) = node.el_block.map_or_else(
+            || ("   -".to_string(), Style::default().fg(Color::DarkGray)),
+            |n| (format!("   #{n}"), Style::default().fg(Color::White)),
+        );
         el_block_cells.push(Cell::from(label).style(style));
     }
     let el_block_row = Row::new(el_block_cells).height(1);
