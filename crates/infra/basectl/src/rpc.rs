@@ -16,7 +16,10 @@ use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::connect_async;
 use tracing::warn;
 
-use crate::{config::{ConductorNodeConfig, ValidatorNodeConfig}, tui::Toast};
+use crate::{
+    config::{ConductorNodeConfig, ValidatorNodeConfig},
+    tui::Toast,
+};
 
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
 const WS_RECONNECT_INITIAL_DELAY: Duration = Duration::from_secs(1);
