@@ -20,7 +20,7 @@ Upgrade activation flows through three layers:
 
 ### 1. Add the variant to the `BaseUpgrade` enum
 
-**File:** [`crates/alloy/chains/src/hardfork.rs`](../../crates/alloy/chains/src/hardfork.rs)
+**File:** [`crates/core/chains/src/hardfork.rs`](../../crates/core/chains/src/hardfork.rs)
 
 Inside the `hardfork!` macro, append the new variant after the current last entry:
 
@@ -74,7 +74,7 @@ Update `check_base_upgrade_from_str` in the test module to include the new upgra
 
 ### 2. Add the `BaseChainUpgrades` index arm
 
-**File:** [`crates/alloy/chains/src/chain.rs`](../../crates/alloy/chains/src/chain.rs)
+**File:** [`crates/core/chains/src/chain.rs`](../../crates/core/chains/src/chain.rs)
 
 Add `V1` to the `use BaseUpgrade::{...}` import and add a match arm to `Index<BaseUpgrade>`:
 
@@ -196,7 +196,7 @@ For **cascading** upgrades, replace the previous arm's `unwrap_or(ForkCondition:
 
 ### 5. Add the trait method
 
-**File:** [`crates/alloy/chains/src/hardforks.rs`](../../crates/alloy/chains/src/hardforks.rs)
+**File:** [`crates/core/chains/src/hardforks.rs`](../../crates/core/chains/src/hardforks.rs)
 
 ```rust
 /// Returns `true` if [`V1`](BaseUpgrade::V1) is active at given block timestamp.
@@ -210,8 +210,8 @@ fn is_base_v1_active_at_timestamp(&self, timestamp: u64) -> bool {
 ### 6. Update timestamp constants and test fixtures
 
 **Files:**
-- [`crates/alloy/chains/src/hardfork.rs`](../../crates/alloy/chains/src/hardfork.rs) (mainnet, sepolia, devnet constants)
-- [`crates/alloy/chains/src/lib.rs`](../../crates/alloy/chains/src/lib.rs)
+- [`crates/core/chains/src/hardfork.rs`](../../crates/core/chains/src/hardfork.rs) (mainnet, sepolia, devnet constants)
+- [`crates/core/chains/src/lib.rs`](../../crates/core/chains/src/lib.rs)
 - [`crates/consensus/registry/src/test_utils/mod.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/mod.rs)
 
 Add named constants once an activation timestamp is confirmed:
@@ -330,7 +330,7 @@ OpSpecId::BASE_V1 => Self::base_v1(),
 
 ### 11. Update spec resolution
 
-**File:** [`crates/alloy/evm/src/spec_id.rs`](https://github.com/base/base/blob/main/crates/alloy/evm/src/spec_id.rs)
+**File:** [`crates/core/evm/src/spec_id.rs`](https://github.com/base/base/blob/main/crates/core/evm/src/spec_id.rs)
 
 Add the new upgrade as the first check (newest upgrade wins):
 
