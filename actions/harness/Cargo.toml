@@ -36,6 +36,7 @@ alloy-eips.workspace = true
 alloy-rlp.workspace = true
 
 # base-alloy
+base-alloy-evm = { workspace = true, features = ["std", "execution"] }
 base-alloy-consensus = { workspace = true, features = ["std", "evm"] }
 base-alloy-rpc-types-engine.workspace = true
 base-alloy-rpc-types.workspace = true
