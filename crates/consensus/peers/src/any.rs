@@ -4,7 +4,7 @@ use derive_more::From;
 use discv5::{Enr, enr::EnrPublicKey};
 use libp2p::swarm::dial_opts::DialOpts;
 
-use super::utils::peer_id_to_secp256k1_pubkey;
+use super::utils::PeerUtils;
 use crate::{NodeRecord, PeerId};
 
 /// A peer that can come in [`Enr`] or [`NodeRecord`] form.
@@ -41,7 +41,7 @@ impl AnyNode {
 
     /// Converts the [`AnyNode`] into [`DialOpts`].
     pub fn as_dial_opts(&self) -> Result<DialOpts, DialOptsError> {
-        let pub_key = &peer_id_to_secp256k1_pubkey(self.peer_id())
+        let pub_key = &PeerUtils::peer_id_to_secp256k1_pubkey(self.peer_id())
             .map_err(DialOptsError::InvalidPeerId)?
             .serialize();
 

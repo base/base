@@ -2,7 +2,7 @@
 
 use backon::{ExponentialBuilder, RetryableWithContext};
 use base_consensus_peers::{
-    BootNode, BootNodes, BootStore, BootStoreFile, EnrValidation, enr_to_multiaddr,
+    BootNode, BootNodes, BootStore, BootStoreFile, EnrValidation, PeerUtils,
 };
 use derive_more::Debug;
 use discv5::{Config, Discv5, Enr, enr::NodeId};
@@ -256,7 +256,7 @@ impl Discv5Driver {
                                     let enrs = self.disc.table_entries_enr();
 
                                     for enr in enrs {
-                                        let Some(multi_addr) = enr_to_multiaddr(&enr) else {
+                                        let Some(multi_addr) = PeerUtils::enr_to_multiaddr(&enr) else {
                                             continue;
                                         };
 
