@@ -223,7 +223,6 @@ impl BatcherArgs {
             batch_type: self.batch_type.into(),
             da_type: self.da_type,
             approx_compr_ratio: self.approx_compr_ratio,
-            ..base_batcher_encoder::EncoderConfig::default()
         };
         encoder_config.validate()?;
         Ok(BatcherConfig {
