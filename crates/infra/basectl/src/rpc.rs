@@ -748,8 +748,6 @@ pub(crate) async fn transfer_conductor_leader(
     let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
 }
 
-
-
 /// Peers saved when a sequencer node is paused, used to restore connectivity on unpause.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PausedPeers {
