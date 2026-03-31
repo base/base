@@ -115,7 +115,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         // see the new forkchoice immediately, without waiting for a task to pass through drain().
         self.state_sender.send_replace(self.state);
 
-        base_metrics::inc!(counter, Metrics::ENGINE_RESET_COUNT);
+        Metrics::engine_reset_count().increment(1);
 
         Ok(start.safe)
     }
