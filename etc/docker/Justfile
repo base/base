@@ -24,7 +24,7 @@ profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
 # Stops devnet and deletes all data
 down:
     -docker compose {{ _env }} {{ _ha }} --profile profiling down
-    -docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
+    -docker run --rm -v "$(pwd)/.devnet:/devnet" public.ecr.aws/docker/library/alpine sh -c 'rm -rf /devnet/*'
 
 # Shows devnet block numbers and sync status
 status:
@@ -85,7 +85,7 @@ ingress: ingress-down _build-setup-image (_build-rust-images "ingress" "dev")
 # Stops devnet+ingress and deletes all data
 ingress-down:
     -docker compose {{ _env }} {{ _ha }} -f etc/docker/docker-compose.ingress.yml down
-    -docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
+    -docker run --rm -v "$(pwd)/.devnet:/devnet" public.ecr.aws/docker/library/alpine sh -c 'rm -rf /devnet/*'
 
 # Stream logs from devnet+ingress containers (optionally specify container names)
 ingress-logs *containers:
