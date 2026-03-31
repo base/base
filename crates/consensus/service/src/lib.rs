@@ -37,7 +37,7 @@ pub use actors::{
     RecoveryModeGuard, ResetRequest, RpcActor, RpcActorError, RpcContext, SealRequest, SealState,
     SealStepError, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
     SequencerEngineClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
-    UnsealedPayloadHandle,
+    UnsealedPayloadHandle, L2Finalizer,
 };
 
 mod metrics;

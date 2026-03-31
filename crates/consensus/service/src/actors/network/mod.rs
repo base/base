@@ -22,10 +22,10 @@ mod gossip;
 pub use gossip::{
     QueuedUnsafePayloadGossipClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
 };
-
-mod handler;
 #[cfg(test)]
 pub use gossip::MockUnsafePayloadGossipClient;
+
+mod handler;
 pub use handler::NetworkHandler;
 
 mod transport;
