@@ -846,6 +846,130 @@ pub(crate) async fn restart_conductor_node(
     let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
 }
 
+/// Peers saved when a sequencer node is paused, used to restore connectivity on unpause.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PausedPeers {
+    /// Multiaddrs of the CL peers that were connected before pausing.
+    /// Used to reconnect them on unpause via `opp2p_connectPeer`.
+    pub cl_addrs: Vec<String>,
+    /// Enode URLs of the EL peers that were connected before pausing.
+    /// Used to re-add them on unpause via `admin_addPeer`.
+    pub el_enodes: Vec<String>,
+}
+
+/// Disconnects all p2p peers from the CL and EL of a node so that neither layer
+/// can advance.  Returns the saved peer addresses so they can be restored later
+/// via [`unpause_sequencer_node`].
+pub(crate) async fn pause_sequencer_node(
+    node: ConductorNodeConfig,
+    result_tx: mpsc::Sender<Result<(String, PausedPeers), String>>,
+) {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    let outcome: anyhow::Result<(String, PausedPeers)> = async {
+        let cl_client = HttpClientBuilder::default()
+            .request_timeout(TIMEOUT)
+            .build(node.cl_rpc.as_str())
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        // Snapshot connected CL peers before disconnecting so we can restore them.
+        let dump = OpP2PApiClient::opp2p_peers(&cl_client, true)
+            .await
+            .map_err(|e| anyhow::anyhow!("opp2p_peers: {e}"))?;
+
+        let mut cl_addrs = Vec::new();
+        for (peer_id, info) in dump.peers {
+            let _ = OpP2PApiClient::opp2p_disconnect_peer(&cl_client, peer_id).await;
+            if let Some(addr) = info.addresses.into_iter().next() {
+                cl_addrs.push(addr);
+            }
+        }
+
+        // Remove EL peers (best-effort; skip if EL not configured).
+        let mut el_enodes = Vec::new();
+        if let Some(ref el_rpc) = node.el_rpc {
+            let el_client = HttpClientBuilder::default()
+                .request_timeout(TIMEOUT)
+                .build(el_rpc.as_str())
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            let peers: Vec<serde_json::Value> =
+                ClientT::request(&el_client, "admin_peers", rpc_params![])
+                    .await
+                    .unwrap_or_default();
+
+            for peer in &peers {
+                if let Some(enode) = peer.get("enode").and_then(|v| v.as_str()) {
+                    let _: Result<bool, _> =
+                        ClientT::request(&el_client, "admin_removePeer", rpc_params![enode]).await;
+                    el_enodes.push(enode.to_string());
+                }
+            }
+        }
+
+        let msg = format!(
+            "paused {} — disconnected {} CL peer(s), {} EL peer(s)",
+            node.name,
+            cl_addrs.len(),
+            el_enodes.len()
+        );
+        Ok((msg, PausedPeers { cl_addrs, el_enodes }))
+    }
+    .await;
+
+    let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
+}
+
+/// Reconnects the CL and EL peers that were saved by [`pause_sequencer_node`],
+/// allowing the node to resume syncing to tip.
+pub(crate) async fn unpause_sequencer_node(
+    node: ConductorNodeConfig,
+    peers: PausedPeers,
+    result_tx: mpsc::Sender<Result<String, String>>,
+) {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    let outcome: anyhow::Result<String> = async {
+        let cl_client = HttpClientBuilder::default()
+            .request_timeout(TIMEOUT)
+            .build(node.cl_rpc.as_str())
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let mut cl_ok = 0usize;
+        for addr in &peers.cl_addrs {
+            if OpP2PApiClient::opp2p_connect_peer(&cl_client, addr.clone()).await.is_ok() {
+                cl_ok += 1;
+            }
+        }
+
+        let mut el_ok = 0usize;
+        if let Some(ref el_rpc) = node.el_rpc {
+            let el_client = HttpClientBuilder::default()
+                .request_timeout(TIMEOUT)
+                .build(el_rpc.as_str())
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            for enode in &peers.el_enodes {
+                let r: Result<bool, _> =
+                    ClientT::request(&el_client, "admin_addPeer", rpc_params![enode]).await;
+                if r.is_ok() {
+                    el_ok += 1;
+                }
+            }
+        }
+
+        Ok(format!(
+            "unpaused {} — reconnected {cl_ok}/{} CL peer(s), {el_ok}/{} EL peer(s)",
+            node.name,
+            peers.cl_addrs.len(),
+            peers.el_enodes.len()
+        ))
+    }
+    .await;
+
+    let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
+}
+
 /// Polls all conductor nodes every 200 ms and forwards status snapshots.
 ///
 /// Builds one pair of HTTP clients per node (conductor RPC + CL RPC) before

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -10,7 +12,8 @@ use crate::{
     app::{Action, Resources, View},
     commands::common::COLOR_BASE_BLUE,
     rpc::{
-        ConductorNodeStatus, ValidatorNodeStatus, restart_conductor_node, transfer_conductor_leader,
+        ConductorNodeStatus, PausedPeers, ValidatorNodeStatus, pause_sequencer_node,
+        restart_conductor_node, transfer_conductor_leader, unpause_sequencer_node,
     },
     tui::{Keybinding, Toast},
 };
@@ -20,6 +23,7 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "t", description: "Transfer (any peer)" },
     Keybinding { key: "Enter", description: "Transfer to selected" },
     Keybinding { key: "r", description: "Restart selected node" },
+    Keybinding { key: "p", description: "Pause/unpause conductor" },
     Keybinding { key: "Esc", description: "Back to home" },
     Keybinding { key: "?", description: "Toggle help" },
 ];
@@ -36,7 +40,16 @@ const KEYBINDINGS: &[Keybinding] = &[
 pub(crate) struct ConductorView {
     selected: usize,
     op_pending: bool,
+    /// In-flight result channel for transfer / restart operations.
     op_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// In-flight result channel for pause operations.
+    /// Carries `(node_name, result)` where `Ok` includes the peers that were saved.
+    pause_rx: Option<(String, mpsc::Receiver<Result<(String, PausedPeers), String>>)>,
+    /// In-flight result channel for unpause operations.
+    unpause_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Saved peer lists for each paused node, keyed by node name.
+    /// Presence in this map means the node is currently paused.
+    paused_node_peers: HashMap<String, PausedPeers>,
 }
 
 impl ConductorView {
@@ -62,6 +75,24 @@ impl ConductorView {
         self.op_pending = true;
         tokio::spawn(restart_conductor_node(node, tx));
     }
+
+    fn start_pause_toggle(&mut self, resources: &Resources) {
+        let Some(ref nodes) = resources.config.conductors else { return };
+        let idx = self.selected.min(nodes.len().saturating_sub(1));
+        let node = nodes[idx].clone();
+        self.op_pending = true;
+        if let Some(peers) = self.paused_node_peers.remove(&node.name) {
+            // Already paused — unpause by reconnecting saved peers.
+            let (tx, rx) = mpsc::channel(1);
+            self.unpause_rx = Some(rx);
+            tokio::spawn(unpause_sequencer_node(node, peers, tx));
+        } else {
+            // Not paused — disconnect all peers and save them.
+            let (tx, rx) = mpsc::channel(1);
+            self.pause_rx = Some((node.name.clone(), rx));
+            tokio::spawn(pause_sequencer_node(node, tx));
+        }
+    }
 }
 
 impl View for ConductorView {
@@ -70,15 +101,42 @@ impl View for ConductorView {
     }
 
     fn tick(&mut self, resources: &mut Resources) -> Action {
-        let Some(ref mut rx) = self.op_rx else { return Action::None };
-        if let Ok(result) = rx.try_recv() {
-            self.op_pending = false;
-            self.op_rx = None;
-            match result {
-                Ok(msg) => resources.toasts.push(Toast::info(msg)),
-                Err(msg) => resources.toasts.push(Toast::warning(msg)),
+        if let Some(ref mut rx) = self.op_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.op_pending = false;
+                self.op_rx = None;
+                match result {
+                    Ok(msg) => resources.toasts.push(Toast::info(msg)),
+                    Err(msg) => resources.toasts.push(Toast::warning(msg)),
+                }
             }
         }
+
+        if let Some((ref node_name, ref mut rx)) = self.pause_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.op_pending = false;
+                match result {
+                    Ok((msg, peers)) => {
+                        self.paused_node_peers.insert(node_name.clone(), peers);
+                        resources.toasts.push(Toast::info(msg));
+                    }
+                    Err(msg) => resources.toasts.push(Toast::warning(msg)),
+                }
+                self.pause_rx = None;
+            }
+        }
+
+        if let Some(ref mut rx) = self.unpause_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.op_pending = false;
+                self.unpause_rx = None;
+                match result {
+                    Ok(msg) => resources.toasts.push(Toast::info(msg)),
+                    Err(msg) => resources.toasts.push(Toast::warning(msg)),
+                }
+            }
+        }
+
         Action::None
     }
 
@@ -103,6 +161,9 @@ impl View for ConductorView {
             KeyCode::Char('r') if !self.op_pending && node_count > 0 => {
                 self.start_restart(resources);
             }
+            KeyCode::Char('p') if !self.op_pending && node_count > 0 => {
+                self.start_pause_toggle(resources);
+            }
             _ => {}
         }
 
@@ -126,7 +187,14 @@ impl View for ConductorView {
                 render_unconfigured(frame, content_area);
             } else {
                 let selected = self.selected.min(nodes.len().saturating_sub(1));
-                render_cluster_table(frame, content_area, nodes, selected, self.op_pending);
+                render_cluster_table(
+                    frame,
+                    content_area,
+                    nodes,
+                    selected,
+                    self.op_pending,
+                    &self.paused_node_peers,
+                );
             }
         } else {
             // Conductor table: 2 border + 1 header + 16 data rows = 19 lines.
@@ -146,7 +214,14 @@ impl View for ConductorView {
                 render_unconfigured(frame, sections[0]);
             } else {
                 let selected = self.selected.min(nodes.len().saturating_sub(1));
-                render_cluster_table(frame, sections[0], nodes, selected, self.op_pending);
+                render_cluster_table(
+                    frame,
+                    sections[0],
+                    nodes,
+                    selected,
+                    self.op_pending,
+                    &self.paused_node_peers,
+                );
             }
             render_validator_table(frame, sections[1], validators);
         }
@@ -208,6 +283,10 @@ fn render_footer(f: &mut Frame<'_>, area: Rect, op_pending: bool) {
         spans.push(Span::styled("[r]", key_style));
         spans.push(Span::raw(" "));
         spans.push(Span::styled("restart selected", desc_style));
+        spans.push(sep.clone());
+        spans.push(Span::styled("[p]", key_style));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled("pause/unpause conductor", desc_style));
     }
 
     spans.push(sep);
@@ -225,6 +304,7 @@ fn render_cluster_table(
     nodes: &[ConductorNodeStatus],
     selected: usize,
     op_pending: bool,
+    paused_nodes: &HashMap<String, PausedPeers>,
 ) {
     let title = if op_pending { " HA Conductor [working…] " } else { " HA Conductor " };
 
@@ -280,12 +360,16 @@ fn render_cluster_table(
         Cell::from("  Role").style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
     ];
     for node in nodes {
-        let (label, style) = match node.is_leader {
-            Some(true) => {
-                ("★  LEADER", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        let (label, style) = if paused_nodes.contains_key(&node.name) {
+            ("⏸  paused", Style::default().fg(Color::Cyan))
+        } else {
+            match node.is_leader {
+                Some(true) => {
+                    ("★  LEADER", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                }
+                Some(false) => ("   follower", Style::default().fg(Color::DarkGray)),
+                None => ("   offline", Style::default().fg(Color::Red)),
             }
-            Some(false) => ("   follower", Style::default().fg(Color::DarkGray)),
-            None => ("   offline", Style::default().fg(Color::Red)),
         };
         role_cells.push(Cell::from(label).style(style));
     }
@@ -406,12 +490,16 @@ fn render_cluster_table(
             .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
     ];
     for node in nodes {
-        let (label, style) = match (node.is_leader, node.conductor_active) {
-            (Some(true), Some(true)) => ("   yes", Style::default().fg(Color::Green)),
-            (Some(true), Some(false)) => ("   no", Style::default().fg(Color::Red)),
-            (Some(false), Some(false)) => ("   stopped", Style::default().fg(Color::DarkGray)),
-            (Some(false), Some(true)) => ("   active?", Style::default().fg(Color::Yellow)),
-            _ => ("   ?", Style::default().fg(Color::DarkGray)),
+        let (label, style) = if paused_nodes.contains_key(&node.name) {
+            ("   paused", Style::default().fg(Color::Cyan))
+        } else {
+            match (node.is_leader, node.conductor_active) {
+                (Some(true), Some(true)) => ("   yes", Style::default().fg(Color::Green)),
+                (Some(true), Some(false)) => ("   no", Style::default().fg(Color::Red)),
+                (Some(false), Some(false)) => ("   stopped", Style::default().fg(Color::DarkGray)),
+                (Some(false), Some(true)) => ("   active?", Style::default().fg(Color::Yellow)),
+                _ => ("   ?", Style::default().fg(Color::DarkGray)),
+            }
         };
         active_cells.push(Cell::from(label).style(style));
     }

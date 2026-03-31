@@ -17,8 +17,9 @@ pub use service::{
 
 mod actors;
 pub use actors::{
-    AlloyL1BlockFetcher, BlockStream, BuildRequest, CancellableContext, Conductor, ConductorClient,
-    ConductorError, DelayedL1OriginSelectorProvider, DelegateDerivationActor, DelegateL2Client,
+    AlloyL1BlockFetcher, BlockStream, BootstrapRole, BuildRequest, CancellableContext, Conductor,
+    ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
+    DelegateL2Client,
     DelegateL2ClientError, DelegateL2DerivationActor, DerivationActor, DerivationActorRequest,
     DerivationClientError, DerivationClientResult, DerivationDelegateClient,
     DerivationDelegateClientError, DerivationEngineClient, DerivationError, DerivationState,
@@ -43,6 +44,7 @@ pub use actors::{
 mod metrics;
 #[cfg(test)]
 pub use actors::{
-    MockConductor, MockOriginSelector, MockSequencerEngineClient, MockUnsafePayloadGossipClient,
+    MockConductor, MockEngineDerivationClient, MockOriginSelector, MockSequencerEngineClient,
+    MockUnsafePayloadGossipClient,
 };
 pub use metrics::Metrics;

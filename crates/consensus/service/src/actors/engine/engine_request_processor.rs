@@ -50,6 +50,21 @@ pub enum EngineProcessingRequest {
     Seal(Box<SealRequest>),
 }
 
+/// Classifies the bootstrap behavior for the [`EngineProcessor`].
+///
+/// Determined once at startup from the node's configuration and (if applicable)
+/// a live conductor leadership check.  Each variant maps to a distinct bootstrap
+/// path in [`EngineProcessor::start`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootstrapRole {
+    /// Pure validator — seed engine state from reth's latest head, no forkchoice update.
+    Validator,
+    /// Active sequencer — drive forkchoice at genesis or probe the EL with real heads.
+    ActiveSequencer,
+    /// Conductor follower or stopped sequencer — probe the EL with zeroed safe/finalized heads.
+    ConductorFollower,
+}
+
 /// Responsible for managing the operations sent to the execution layer's Engine API. To accomplish
 /// this, it uses the [`Engine`] task queue to order Engine API  interactions based off of
 /// the [`Ord`] implementation of [`EngineTask`].
@@ -63,6 +78,13 @@ where
     derivation_client: DerivationClient,
     /// Whether the EL sync is complete. This should only ever go from false to true.
     el_sync_complete: bool,
+    /// Whether the sequencer was started in a stopped state (`--sequencer.stopped`).
+    ///
+    /// When `true`, the node is configured as a sequencer but should not begin producing
+    /// blocks until `admin_startSequencer` is called.  During bootstrap the node behaves
+    /// like a [`BootstrapRole::ConductorFollower`] so it does not issue an active-sequencer
+    /// forkchoice update before being explicitly started.
+    sequencer_stopped: bool,
     /// The last safe head update sent.
     last_safe_head_sent: L2BlockInfo,
     /// The [`RollupConfig`] .
@@ -100,6 +122,7 @@ where
         engine: Engine<EngineClient_>,
         unsafe_head_tx: Option<watch::Sender<L2BlockInfo>>,
         conductor: Option<Arc<dyn Conductor>>,
+        sequencer_stopped: bool,
     ) -> Self {
         Self {
             client,
@@ -109,6 +132,7 @@ where
             engine,
             last_safe_head_sent: L2BlockInfo::default(),
             rollup: config,
+            sequencer_stopped,
             unsafe_head_tx,
         }
     }
@@ -238,6 +262,215 @@ where
             envelope.execution_payload.timestamp(),
         );
     }
+
+    /// Classifies the bootstrap role from configuration alone (no I/O).
+    ///
+    /// Decision table:
+    ///
+    /// | `unsafe_head_tx` | `sequencer_stopped` | result |
+    /// |-----------------|---------------------|--------|
+    /// | `None`          | any                 | [`BootstrapRole::Validator`] |
+    /// | `Some`          | `true`              | [`BootstrapRole::ConductorFollower`] |
+    /// | `Some`          | `false`             | [`BootstrapRole::ActiveSequencer`]* |
+    ///
+    /// *Subject to downgrade to [`BootstrapRole::ConductorFollower`] by
+    /// [`Self::resolve_bootstrap_role`] if a conductor reports this node is not the leader.
+    pub fn config_bootstrap_role(&self) -> BootstrapRole {
+        if self.unsafe_head_tx.is_none() {
+            BootstrapRole::Validator
+        } else if self.sequencer_stopped {
+            BootstrapRole::ConductorFollower
+        } else {
+            BootstrapRole::ActiveSequencer
+        }
+    }
+
+    /// Resolves the bootstrap role, performing a conductor leadership check when needed.
+    ///
+    /// Calls [`Self::config_bootstrap_role`] first; only nodes that config-classify as
+    /// [`BootstrapRole::ActiveSequencer`] with a conductor configured will make a network
+    /// call.  A conductor check failure is treated conservatively as follower.
+    pub async fn resolve_bootstrap_role(&self) -> BootstrapRole {
+        match self.config_bootstrap_role() {
+            role @ (BootstrapRole::Validator | BootstrapRole::ConductorFollower) => role,
+            BootstrapRole::ActiveSequencer => match &self.conductor {
+                None => BootstrapRole::ActiveSequencer,
+                Some(conductor) => match conductor.leader().await {
+                    Ok(true) => BootstrapRole::ActiveSequencer,
+                    Ok(false) => BootstrapRole::ConductorFollower,
+                    Err(err) => {
+                        warn!(
+                            target: "engine",
+                            error = %err,
+                            "Bootstrap: conductor leadership check failed, assuming follower"
+                        );
+                        BootstrapRole::ConductorFollower
+                    }
+                },
+            },
+        }
+    }
+
+    /// Bootstrap path for pure validators.
+    ///
+    /// Seeds engine state from reth's current head so `op_syncStatus` never returns
+    /// zeros, but intentionally skips sending a forkchoice update.  `el_sync_finished`
+    /// is left `false` and will be set by the first gossip `InsertTask` FCU.
+    async fn bootstrap_validator(&mut self, head: Option<L2BlockInfo>) {
+        let Some(head) = head else { return };
+        let seed = EngineSyncStateUpdate {
+            unsafe_head: Some(head),
+            cross_unsafe_head: Some(head),
+            ..Default::default()
+        };
+        self.engine.seed_state(seed);
+        info!(
+            target: "engine",
+            unsafe_head = %head.block_info.number,
+            "Bootstrap: validator seeded engine state, awaiting gossip for EL sync"
+        );
+    }
+
+    /// Bootstrap path for conductor followers and stopped sequencers.
+    ///
+    /// Probes the EL with reth's current head as unsafe, but zeroed safe/finalized, so
+    /// that `el_sync_finished` can be set when reth responds `Valid`.  Unlike pure
+    /// validators, conductor followers must have derivation running so they are ready
+    /// for leadership transfer; the zeroed safe/finalized avoids disrupting EL sync.
+    async fn bootstrap_conductor_follower(&mut self, head: Option<L2BlockInfo>) {
+        let Some(head) = head else { return };
+
+        let follower_update = EngineSyncStateUpdate {
+            unsafe_head: Some(head),
+            cross_unsafe_head: Some(head),
+            ..Default::default()
+        };
+
+        let el_confirmed = match self
+            .engine
+            .probe_el_sync(
+                Arc::clone(&self.client),
+                Arc::clone(&self.rollup),
+                follower_update,
+            )
+            .await
+        {
+            Ok(c) => c,
+            Err(err) => {
+                warn!(
+                    target: "engine",
+                    error = ?err,
+                    "Bootstrap: conductor follower probe failed, seeding state"
+                );
+                false
+            }
+        };
+
+        if !el_confirmed {
+            self.engine.seed_state(follower_update);
+        }
+
+        if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
+            let new_head = self.engine.state().sync_state.unsafe_head();
+            unsafe_head_tx.send_if_modified(|val| {
+                (*val != new_head).then(|| *val = new_head).is_some()
+            });
+        }
+
+        info!(
+            target: "engine",
+            el_confirmed,
+            unsafe_head = %head.block_info.number,
+            "Bootstrap: conductor follower probed EL sync"
+        );
+    }
+
+    /// Bootstrap path for the active sequencer.
+    ///
+    /// - At genesis: calls `engine.reset()` to FCU with all heads set to genesis.
+    /// - Beyond genesis: probes the EL with reth's own safe/finalized labels so that
+    ///   `el_sync_finished` can be set immediately, unblocking the initial derivation reset.
+    async fn bootstrap_active_sequencer(&mut self, head: Option<L2BlockInfo>, at_genesis: bool) {
+        if at_genesis {
+            match self.engine.reset(Arc::clone(&self.client), Arc::clone(&self.rollup)).await {
+                Ok(_) => {
+                    if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
+                        let new_head = self.engine.state().sync_state.unsafe_head();
+                        unsafe_head_tx.send_if_modified(|val| {
+                            (*val != new_head).then(|| *val = new_head).is_some()
+                        });
+                    }
+                }
+                Err(err) => {
+                    warn!(target: "engine", ?err, "Engine startup bootstrap failed; will initialize on first task");
+                }
+            }
+        } else if let Some(head) = head {
+            let safe = self
+                .client
+                .l2_block_info_by_label(BlockNumberOrTag::Safe)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            let finalized = self
+                .client
+                .l2_block_info_by_label(BlockNumberOrTag::Finalized)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+
+            let probe_update = EngineSyncStateUpdate {
+                unsafe_head: Some(head),
+                cross_unsafe_head: Some(head),
+                local_safe_head: Some(safe),
+                safe_head: Some(safe),
+                finalized_head: Some(finalized),
+            };
+
+            let el_confirmed = match self
+                .engine
+                .probe_el_sync(Arc::clone(&self.client), Arc::clone(&self.rollup), probe_update)
+                .await
+            {
+                Ok(c) => c,
+                Err(err) => {
+                    warn!(
+                        target: "engine",
+                        error = ?err,
+                        "Bootstrap: FCU probe failed, treating EL as syncing"
+                    );
+                    false
+                }
+            };
+
+            if !el_confirmed {
+                self.engine.seed_state(probe_update);
+            }
+
+            if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
+                let new_head = self.engine.state().sync_state.unsafe_head();
+                unsafe_head_tx.send_if_modified(|val| {
+                    (*val != new_head).then(|| *val = new_head).is_some()
+                });
+            }
+
+            if el_confirmed {
+                info!(
+                    target: "engine",
+                    unsafe_head = %head.block_info.number,
+                    "Bootstrap: EL confirmed canonical chain, el_sync_finished = true"
+                );
+            } else {
+                info!(
+                    target: "engine",
+                    unsafe_head = %head.block_info.number,
+                    "Bootstrap: EL sync pending, seeded engine state"
+                );
+            }
+        }
+    }
 }
 
 impl<EngineClient_, DerivationClient> EngineRequestReceiver
@@ -276,199 +509,15 @@ where
                 }
             };
 
-            // Determine whether this node is the active conductor leader.
-            //
-            // Hoisted before the at_genesis / beyond_genesis split so both branches
-            // can use it.
-            //
-            // Decision matrix:
-            //   • validator (unsafe_head_tx = None)         → follower path always
-            //   • standalone sequencer (no conductor)        → active path
-            //   • conductor leader                           → active path
-            //   • conductor follower / check failed          → follower path
-            let is_active_sequencer = if self.unsafe_head_tx.is_none() {
-                false
-            } else {
-                match &self.conductor {
-                    None => true,
-                    Some(conductor) => match conductor.leader().await {
-                        Ok(is_leader) => is_leader,
-                        Err(err) => {
-                            warn!(
-                                target: "engine",
-                                error = %err,
-                                "Bootstrap: conductor leadership check failed, assuming follower"
-                            );
-                            false
-                        }
-                    },
+            let role = self.resolve_bootstrap_role().await;
+            let opt_head = reth_head.ok().flatten();
+            match role {
+                BootstrapRole::Validator => self.bootstrap_validator(opt_head).await,
+                BootstrapRole::ConductorFollower => {
+                    self.bootstrap_conductor_follower(opt_head).await
                 }
-            };
-
-            if self.unsafe_head_tx.is_none() {
-                // Pure validator: seed the engine state so `op_syncStatus` never
-                // observes zeros, but do NOT send a bootstrap FCU or set
-                // `el_sync_finished`.
-                //
-                // Sending reth's own head in a bootstrap FCU would trivially return
-                // `Valid` (reth already has its own canonical tip), prematurely setting
-                // `el_sync_finished = true` and firing the engine reset that queries
-                // reth's stale safe/finalized labels.
-                //
-                // Instead, the first real FCU comes from a gossip-received unsafe block
-                // via `InsertTask`.  That block is ahead of reth's snapshot, so reth
-                // responds `Syncing` and begins EL peer-to-peer sync.  Only when reth
-                // catches up and responds `Valid` does `el_sync_finished` become true.
-                if let Ok(Some(head)) = &reth_head {
-                    let seed = EngineSyncStateUpdate {
-                        unsafe_head: Some(*head),
-                        cross_unsafe_head: Some(*head),
-                        ..Default::default()
-                    };
-                    self.engine.seed_state(seed);
-                    info!(
-                        target: "engine",
-                        unsafe_head = %head.block_info.number,
-                        "Bootstrap: validator seeded engine state, awaiting gossip for EL sync"
-                    );
-                }
-                // reth_head = Ok(None) | Err(_): nothing to seed, will initialize on
-                // first incoming task.
-            } else if !is_active_sequencer {
-                // Conductor follower sequencer: probe the EL with zeroed
-                // safe/finalized so that `el_sync_finished` is set when reth
-                // responds `Valid`.  Unlike pure validators, conductor followers
-                // must be ready for leadership transfer — they need derivation
-                // running, which requires `el_sync_finished = true`.
-                //
-                // Conductor followers typically start alongside the leader and share
-                // the same chain state, so reth responding `Valid` to its own head
-                // is legitimate.
-                if let Ok(Some(head)) = &reth_head {
-                    let follower_update = EngineSyncStateUpdate {
-                        unsafe_head: Some(*head),
-                        cross_unsafe_head: Some(*head),
-                        ..Default::default()
-                    };
-
-                    let el_confirmed = match self
-                        .engine
-                        .probe_el_sync(
-                            Arc::clone(&self.client),
-                            Arc::clone(&self.rollup),
-                            follower_update,
-                        )
-                        .await
-                    {
-                        Ok(c) => c,
-                        Err(err) => {
-                            warn!(
-                                target: "engine",
-                                error = ?err,
-                                "Bootstrap: conductor follower probe failed, seeding state"
-                            );
-                            false
-                        }
-                    };
-
-                    if !el_confirmed {
-                        self.engine.seed_state(follower_update);
-                    }
-
-                    if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
-                        let new_head = self.engine.state().sync_state.unsafe_head();
-                        unsafe_head_tx.send_if_modified(|val| {
-                            (*val != new_head).then(|| *val = new_head).is_some()
-                        });
-                    }
-
-                    info!(
-                        target: "engine",
-                        el_confirmed,
-                        unsafe_head = %head.block_info.number,
-                        "Bootstrap: conductor follower probed EL sync"
-                    );
-                }
-            } else if at_genesis {
-                // Active sequencer starting a new network — genesis is the correct
-                // forkchoice.  engine.reset() FCUs with all heads set to genesis.
-                match self.engine.reset(Arc::clone(&self.client), Arc::clone(&self.rollup)).await {
-                    Ok(_) => {
-                        if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
-                            let new_head = self.engine.state().sync_state.unsafe_head();
-                            unsafe_head_tx.send_if_modified(|val| {
-                                (*val != new_head).then(|| *val = new_head).is_some()
-                            });
-                        }
-                    }
-                    Err(err) => {
-                        warn!(target: "engine", ?err, "Engine startup bootstrap failed; will initialize on first task");
-                    }
-                }
-            } else if let Ok(Some(head)) = reth_head {
-                // Active sequencer beyond genesis: probe the EL with reth's own
-                // canonical heads (including safe/finalized) so that el_sync_finished
-                // can be set immediately, unblocking schedule_initial_reset.
-                let safe = self
-                    .client
-                    .l2_block_info_by_label(BlockNumberOrTag::Safe)
-                    .await
-                    .ok()
-                    .flatten()
-                    .unwrap_or_default();
-                let finalized = self
-                    .client
-                    .l2_block_info_by_label(BlockNumberOrTag::Finalized)
-                    .await
-                    .ok()
-                    .flatten()
-                    .unwrap_or_default();
-
-                let probe_update = EngineSyncStateUpdate {
-                    unsafe_head: Some(head),
-                    safe_head: Some(safe),
-                    finalized_head: Some(finalized),
-                };
-
-                let el_confirmed = match self
-                    .engine
-                    .probe_el_sync(Arc::clone(&self.client), Arc::clone(&self.rollup), probe_update)
-                    .await
-                {
-                    Ok(c) => c,
-                    Err(err) => {
-                        warn!(
-                            target: "engine",
-                            error = ?err,
-                            "Bootstrap: FCU probe failed, treating EL as syncing"
-                        );
-                        false
-                    }
-                };
-
-                if !el_confirmed {
-                    self.engine.seed_state(probe_update);
-                }
-
-                if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
-                    let new_head = self.engine.state().sync_state.unsafe_head();
-                    unsafe_head_tx.send_if_modified(|val| {
-                        (*val != new_head).then(|| *val = new_head).is_some()
-                    });
-                }
-
-                if el_confirmed {
-                    info!(
-                        target: "engine",
-                        unsafe_head = %head.block_info.number,
-                        "Bootstrap: EL confirmed canonical chain, el_sync_finished = true"
-                    );
-                } else {
-                    info!(
-                        target: "engine",
-                        unsafe_head = %head.block_info.number,
-                        "Bootstrap: EL sync pending, seeded engine state"
-                    );
+                BootstrapRole::ActiveSequencer => {
+                    self.bootstrap_active_sequencer(opt_head, at_genesis).await
                 }
             }
 
@@ -681,6 +730,7 @@ mod tests {
             engine,
             Some(unsafe_head_tx),
             None, // no conductor — standalone sequencer (active by default)
+            false,
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
@@ -743,6 +793,7 @@ mod tests {
             engine,
             Some(unsafe_head_tx),
             None, // no conductor — standalone sequencer (active by default)
+            false,
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
@@ -817,6 +868,7 @@ mod tests {
             engine,
             Some(unsafe_head_tx),
             Some(Arc::new(mock_conductor)),
+            false,
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
@@ -876,6 +928,7 @@ mod tests {
             engine,
             None, // validator mode
             None, // no conductor
+            false,
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
@@ -907,6 +960,104 @@ mod tests {
             "finalized head must remain zeroed"
         );
     }
+
+    // ── config_bootstrap_role / resolve_bootstrap_role unit tests ─────────────────────────
+
+    /// Builds a minimal `EngineProcessor` for testing `config_bootstrap_role` and
+    /// `resolve_bootstrap_role` without spinning up a live engine or derivation actor.
+    fn test_processor(
+        is_sequencer: bool,
+        sequencer_stopped: bool,
+        conductor: Option<Arc<dyn crate::Conductor>>,
+    ) -> EngineProcessor<
+        base_consensus_engine::test_utils::MockEngineClient,
+        MockEngineDerivationClient,
+    > {
+        let client = Arc::new(test_engine_client_builder().build());
+        let config = Arc::new(RollupConfig::default());
+        let derivation_client = MockEngineDerivationClient::new();
+        let (state_tx, _) = watch::channel(base_consensus_engine::EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(base_consensus_engine::EngineState::default(), state_tx, queue_tx);
+        let unsafe_head_tx = if is_sequencer {
+            let (tx, _) = watch::channel(L2BlockInfo::default());
+            Some(tx)
+        } else {
+            None
+        };
+        EngineProcessor::new(client, config, derivation_client, engine, unsafe_head_tx, conductor, sequencer_stopped)
+    }
+
+    #[test]
+    fn config_bootstrap_role_validator() {
+        let p = test_processor(false, false, None);
+        assert_eq!(p.config_bootstrap_role(), super::BootstrapRole::Validator);
+    }
+
+    #[test]
+    fn config_bootstrap_role_stopped_sequencer_is_follower() {
+        let p = test_processor(true, true, None);
+        assert_eq!(p.config_bootstrap_role(), super::BootstrapRole::ConductorFollower);
+    }
+
+    #[test]
+    fn config_bootstrap_role_active_sequencer() {
+        let p = test_processor(true, false, None);
+        assert_eq!(p.config_bootstrap_role(), super::BootstrapRole::ActiveSequencer);
+    }
+
+    #[tokio::test]
+    async fn resolve_bootstrap_role_validator_skips_conductor() {
+        // Even with a conductor present, a validator must stay Validator without calling leader().
+        let mut mock_conductor = MockConductor::new();
+        mock_conductor.expect_leader().never();
+        let p = test_processor(false, false, Some(Arc::new(mock_conductor)));
+        assert_eq!(p.resolve_bootstrap_role().await, super::BootstrapRole::Validator);
+    }
+
+    #[tokio::test]
+    async fn resolve_bootstrap_role_stopped_sequencer_skips_conductor() {
+        // A stopped sequencer must stay ConductorFollower without calling leader().
+        let mut mock_conductor = MockConductor::new();
+        mock_conductor.expect_leader().never();
+        let p = test_processor(true, true, Some(Arc::new(mock_conductor)));
+        assert_eq!(p.resolve_bootstrap_role().await, super::BootstrapRole::ConductorFollower);
+    }
+
+    #[tokio::test]
+    async fn resolve_bootstrap_role_no_conductor_is_active() {
+        let p = test_processor(true, false, None);
+        assert_eq!(p.resolve_bootstrap_role().await, super::BootstrapRole::ActiveSequencer);
+    }
+
+    #[tokio::test]
+    async fn resolve_bootstrap_role_conductor_leader_true() {
+        let mut mock_conductor = MockConductor::new();
+        mock_conductor.expect_leader().once().returning(|| Ok(true));
+        let p = test_processor(true, false, Some(Arc::new(mock_conductor)));
+        assert_eq!(p.resolve_bootstrap_role().await, super::BootstrapRole::ActiveSequencer);
+    }
+
+    #[tokio::test]
+    async fn resolve_bootstrap_role_conductor_leader_false() {
+        let mut mock_conductor = MockConductor::new();
+        mock_conductor.expect_leader().once().returning(|| Ok(false));
+        let p = test_processor(true, false, Some(Arc::new(mock_conductor)));
+        assert_eq!(p.resolve_bootstrap_role().await, super::BootstrapRole::ConductorFollower);
+    }
+
+    #[tokio::test]
+    async fn resolve_bootstrap_role_conductor_error_is_follower() {
+        use jsonrpsee::core::ClientError;
+        let mut mock_conductor = MockConductor::new();
+        mock_conductor.expect_leader().once().returning(|| {
+            Err(crate::ConductorError::Rpc(ClientError::Custom("timeout".into())))
+        });
+        let p = test_processor(true, false, Some(Arc::new(mock_conductor)));
+        assert_eq!(p.resolve_bootstrap_role().await, super::BootstrapRole::ConductorFollower);
+    }
+
+    // ── existing bootstrap integration tests ────────────────────────────────────────────
 
     /// Verifies that a validator node at genesis seeds the engine state without sending
     /// a FCU or setting `el_sync_finished`.
@@ -945,6 +1096,7 @@ mod tests {
             engine,
             None, // validator mode
             None, // no conductor
+            false,
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);

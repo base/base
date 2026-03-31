@@ -229,6 +229,7 @@ impl RollupNode {
             engine,
             if self.mode().is_sequencer() { Some(unsafe_head_tx) } else { None },
             conductor,
+            self.sequencer_config.sequencer_stopped,
         );
 
         let engine_rpc_processor = EngineRpcProcessor::new(

@@ -88,7 +88,8 @@ impl FollowNode {
             derivation_client,
             engine,
             None,
-            None, // no conductor in follow mode
+            None,  // no conductor in follow mode
+            false, // sequencer_stopped irrelevant for validator/follow mode
         );
 
         let engine_rpc_processor = EngineRpcProcessor::new(
