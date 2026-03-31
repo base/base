@@ -383,8 +383,7 @@ impl P2pRpcRequest {
                 .map(|(id, peer_id)| {
                     let (maybe_enr, maybe_status) = node_to_table_infos.get(id).cloned().unzip();
 
-                    let base_enr =
-                        maybe_enr.clone().and_then(|enr| BaseEnr::try_from(&enr).ok());
+                    let base_enr = maybe_enr.clone().and_then(|enr| BaseEnr::try_from(&enr).ok());
 
                     let direction = maybe_status
                         .map(|status| {

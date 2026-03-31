@@ -74,9 +74,7 @@ impl PeerUtils {
     /// [`libp2p::PeerId`] is a more complex representation, involving protobuf encoding and
     /// bitcoin encoding, defined here:
     /// <https://github.com/libp2p/specs/blob/master/peer-ids/peer-ids.md>).
-    pub fn local_id_to_p2p_id(
-        peer_id: PeerId,
-    ) -> Result<libp2p::PeerId, PeerIdConversionError> {
+    pub fn local_id_to_p2p_id(peer_id: PeerId) -> Result<libp2p::PeerId, PeerIdConversionError> {
         // The libp2p library works with compressed public keys.
         let encoded_pk_bytes = Self::peer_id_to_secp256k1_pubkey(peer_id)
             .map_err(PeerIdConversionError::InvalidPeerId)?
