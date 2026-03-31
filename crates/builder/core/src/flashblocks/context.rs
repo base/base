@@ -705,7 +705,7 @@ impl OpPayloadBuilderCtx {
                 let tx_age_ms = now_ms.saturating_sub(tx_received_at_ms);
                 if tx_age_ms < wait_duration.as_millis() {
                     log_txn(Err(TxnExecutionError::MeteringDataPending));
-                    self.metrics.metering_data_pending_skip.increment(1);
+                    BuilderMetrics::metering_data_pending_skip().increment(1);
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
                 }
