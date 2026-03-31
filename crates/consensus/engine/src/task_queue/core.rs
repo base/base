@@ -90,7 +90,6 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             Arc::clone(&config),
             EngineSyncStateUpdate {
                 unsafe_head: Some(start.un_safe),
-                local_safe_head: Some(start.safe),
                 safe_head: Some(start.safe),
                 finalized_head: Some(start.finalized),
             },
@@ -272,7 +271,6 @@ mod tests {
         let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
         let update = EngineSyncStateUpdate {
             unsafe_head: Some(head),
-            local_safe_head: Some(safe),
             safe_head: Some(safe),
             finalized_head: Some(finalized),
         };
