@@ -30,6 +30,7 @@ revm-database.workspace = true
 
 # base-revm
 base-revm = { workspace = true, features = ["execution"] }
+base-alloy-evm = { workspace = true, features = ["execution"] }
 
 # alloy
 alloy-primitives.workspace = true

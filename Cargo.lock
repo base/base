@@ -4171,6 +4171,7 @@ dependencies = [
  "alloy-sol-types",
  "arc-swap",
  "base-alloy-consensus",
+ "base-alloy-evm",
  "base-alloy-flashblocks",
  "base-alloy-flz",
  "base-alloy-rpc-types",
