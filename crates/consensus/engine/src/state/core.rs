@@ -17,18 +17,15 @@ use crate::Metrics;
 /// The state tracks blocks at different safety levels, listed from least to most safe:
 ///
 /// 1. **Unsafe** - Most recent blocks from P2P network (unverified)
-/// 2. **Cross-unsafe** - Unsafe blocks with cross-layer verification
-/// 3. **Local-safe** - Derived from L1 data, completed span-batch
-/// 4. **Safe** - Cross-verified with safe L1 dependencies
-/// 5. **Finalized** - Derived from finalized L1 data only
+/// 2. **Local-safe** - Derived from L1 data, completed span-batch
+/// 3. **Safe** - Derived from L1 data and cross-verified to have safe L1 dependencies
+/// 4. **Finalized** - Derived from finalized L1 data only
 ///
 /// See the [Base specifications](https://specs.optimism.io) for detailed safety definitions.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub struct EngineSyncState {
     /// Most recent block found on the P2P network (lowest safety level).
     unsafe_head: L2BlockInfo,
-    /// Cross-verified unsafe head.
-    cross_unsafe_head: L2BlockInfo,
     /// Derived from L1 data as a completed span-batch, but not yet cross-verified.
     local_safe_head: L2BlockInfo,
     /// Derived from L1 data and cross-verified to have safe L1 dependencies.
@@ -41,11 +38,6 @@ impl EngineSyncState {
     /// Returns the current unsafe head.
     pub const fn unsafe_head(&self) -> L2BlockInfo {
         self.unsafe_head
-    }
-
-    /// Returns the current cross-verified unsafe head.
-    pub const fn cross_unsafe_head(&self) -> L2BlockInfo {
-        self.cross_unsafe_head
     }
 
     /// Returns the current local safe head.
@@ -85,10 +77,6 @@ impl EngineSyncState {
             Metrics::block_labels(Metrics::UNSAFE_BLOCK_LABEL)
                 .set(unsafe_head.block_info.number as f64);
         }
-        if let Some(cross_unsafe_head) = sync_state_update.cross_unsafe_head {
-            Metrics::block_labels(Metrics::CROSS_UNSAFE_BLOCK_LABEL)
-                .set(cross_unsafe_head.block_info.number as f64);
-        }
         if let Some(local_safe_head) = sync_state_update.local_safe_head {
             Metrics::block_labels(Metrics::LOCAL_SAFE_BLOCK_LABEL)
                 .set(local_safe_head.block_info.number as f64);
@@ -104,9 +92,6 @@ impl EngineSyncState {
 
         Self {
             unsafe_head: sync_state_update.unsafe_head.unwrap_or(self.unsafe_head),
-            cross_unsafe_head: sync_state_update
-                .cross_unsafe_head
-                .unwrap_or(self.cross_unsafe_head),
             local_safe_head: sync_state_update.local_safe_head.unwrap_or(self.local_safe_head),
             safe_head: sync_state_update.safe_head.unwrap_or(self.safe_head),
             finalized_head: sync_state_update.finalized_head.unwrap_or(self.finalized_head),
@@ -119,8 +104,6 @@ impl EngineSyncState {
 pub struct EngineSyncStateUpdate {
     /// Most recent block found on the p2p network
     pub unsafe_head: Option<L2BlockInfo>,
-    /// Cross-verified unsafe head
-    pub cross_unsafe_head: Option<L2BlockInfo>,
     /// Derived from L1, and known to be a completed span-batch,
     /// but not cross-verified yet.
     pub local_safe_head: Option<L2BlockInfo>,
@@ -181,14 +164,6 @@ mod tests {
             });
         }
 
-        /// Set the cross-verified unsafe head.
-        pub fn set_cross_unsafe_head(&mut self, cross_unsafe_head: L2BlockInfo) {
-            self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
-                cross_unsafe_head: Some(cross_unsafe_head),
-                ..Default::default()
-            });
-        }
-
         /// Set the local safe head.
         pub fn set_local_safe_head(&mut self, local_safe_head: L2BlockInfo) {
             self.sync_state = self.sync_state.apply_update(EngineSyncStateUpdate {
@@ -216,14 +191,9 @@ mod tests {
 
     #[rstest]
     #[case::set_unsafe(EngineState::set_unsafe_head, Metrics::UNSAFE_BLOCK_LABEL, 1)]
-    #[case::set_cross_unsafe(
-        EngineState::set_cross_unsafe_head,
-        Metrics::CROSS_UNSAFE_BLOCK_LABEL,
-        2
-    )]
-    #[case::set_local_safe(EngineState::set_local_safe_head, Metrics::LOCAL_SAFE_BLOCK_LABEL, 3)]
-    #[case::set_safe_head(EngineState::set_safe_head, Metrics::SAFE_BLOCK_LABEL, 4)]
-    #[case::set_finalized_head(EngineState::set_finalized_head, Metrics::FINALIZED_BLOCK_LABEL, 5)]
+    #[case::set_local_safe(EngineState::set_local_safe_head, Metrics::LOCAL_SAFE_BLOCK_LABEL, 2)]
+    #[case::set_safe_head(EngineState::set_safe_head, Metrics::SAFE_BLOCK_LABEL, 3)]
+    #[case::set_finalized_head(EngineState::set_finalized_head, Metrics::FINALIZED_BLOCK_LABEL, 4)]
     #[cfg(feature = "metrics")]
     fn test_chain_label_metrics(
         #[case] set_fn: impl Fn(&mut EngineState, L2BlockInfo),

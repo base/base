@@ -320,7 +320,6 @@ where
                 // do nothing, leaving el_sync_finished = false permanently.
                 let probe_update = EngineSyncStateUpdate {
                     unsafe_head: Some(head),
-                    cross_unsafe_head: Some(head),
                     local_safe_head: Some(safe),
                     safe_head: Some(safe),
                     finalized_head: Some(finalized),

@@ -90,7 +90,6 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             Arc::clone(&config),
             EngineSyncStateUpdate {
                 unsafe_head: Some(start.un_safe),
-                cross_unsafe_head: Some(start.un_safe),
                 local_safe_head: Some(start.safe),
                 safe_head: Some(start.safe),
                 finalized_head: Some(start.finalized),
@@ -273,7 +272,6 @@ mod tests {
         let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
         let update = EngineSyncStateUpdate {
             unsafe_head: Some(head),
-            cross_unsafe_head: Some(head),
             local_safe_head: Some(safe),
             safe_head: Some(safe),
             finalized_head: Some(finalized),
@@ -333,11 +331,7 @@ mod tests {
             test_engine_client_builder().with_fork_choice_updated_v3_response(valid_fcu()).build(),
         );
 
-        let update = EngineSyncStateUpdate {
-            unsafe_head: Some(head),
-            cross_unsafe_head: Some(head),
-            ..Default::default()
-        };
+        let update = EngineSyncStateUpdate { unsafe_head: Some(head), ..Default::default() };
 
         let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
         engine.seed_state(update); // seed first — the wrong order
