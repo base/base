@@ -101,8 +101,8 @@ impl View for ConductorView {
     }
 
     fn tick(&mut self, resources: &mut Resources) -> Action {
-        if let Some(ref mut rx) = self.op_rx {
-            if let Ok(result) = rx.try_recv() {
+        if let Some(ref mut rx) = self.op_rx
+            && let Ok(result) = rx.try_recv() {
                 self.op_pending = false;
                 self.op_rx = None;
                 match result {
@@ -110,10 +110,9 @@ impl View for ConductorView {
                     Err(msg) => resources.toasts.push(Toast::warning(msg)),
                 }
             }
-        }
 
-        if let Some((ref node_name, ref mut rx)) = self.pause_rx {
-            if let Ok(result) = rx.try_recv() {
+        if let Some((ref node_name, ref mut rx)) = self.pause_rx
+            && let Ok(result) = rx.try_recv() {
                 self.op_pending = false;
                 match result {
                     Ok((msg, peers)) => {
@@ -124,10 +123,9 @@ impl View for ConductorView {
                 }
                 self.pause_rx = None;
             }
-        }
 
-        if let Some(ref mut rx) = self.unpause_rx {
-            if let Ok(result) = rx.try_recv() {
+        if let Some(ref mut rx) = self.unpause_rx
+            && let Ok(result) = rx.try_recv() {
                 self.op_pending = false;
                 self.unpause_rx = None;
                 match result {
@@ -135,7 +133,6 @@ impl View for ConductorView {
                     Err(msg) => resources.toasts.push(Toast::warning(msg)),
                 }
             }
-        }
 
         Action::None
     }

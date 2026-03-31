@@ -6,6 +6,8 @@ mod traits;
 pub use traits::{CancellableContext, NodeActor};
 
 mod engine;
+#[cfg(test)]
+pub use engine::MockEngineDerivationClient;
 pub use engine::{
     BootstrapRole, BuildRequest, EngineActor, EngineActorRequest, EngineClientError,
     EngineClientResult, EngineConfig, EngineDerivationClient, EngineError, EngineProcessingRequest,
@@ -13,8 +15,6 @@ pub use engine::{
     EngineRpcRequestReceiver, GetPayloadRequest, QueuedEngineDerivationClient, ResetRequest,
     SealRequest,
 };
-#[cfg(test)]
-pub use engine::MockEngineDerivationClient;
 
 mod rpc;
 pub use rpc::{
