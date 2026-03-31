@@ -1657,7 +1657,9 @@ mod tests {
 
         // Run until idle, force-close, and drain submissions.
         loop {
-            if encoder.step().expect("step") == StepResult::Idle { break }
+            if encoder.step().expect("step") == StepResult::Idle {
+                break;
+            }
         }
         encoder.force_close_channel();
 
