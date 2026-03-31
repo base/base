@@ -194,7 +194,7 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "admin-port", env = "BATCHER_ADMIN_PORT")]
     pub admin_port: Option<u16>,
 
-    /// Start in a paused state, deferring batch submission until `admin_startBatcher` is called.
+    /// Start in a stopped state, deferring batch submission until `admin_startBatcher` is called.
     ///
     /// The batcher connects to all endpoints and is fully observable but will not
     /// submit any batches until activated via the admin API. Useful for staged

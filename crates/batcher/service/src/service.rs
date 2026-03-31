@@ -259,7 +259,7 @@ impl BatcherService {
 
         if self.config.stopped && self.config.admin_addr.is_none() {
             eyre::bail!(
-                "--stopped requires --admin-port: the batcher would start paused with no way to \
+                "--stopped requires --admin-port: the batcher would start stopped with no way to \
                  resume because the admin JSON-RPC server is not enabled"
             );
         }
@@ -475,7 +475,7 @@ impl BatcherService {
             l1_head_source,
         )
         .with_safe_head_rx(safe_head_rx)
-        .with_paused(self.config.stopped);
+        .with_stopped(self.config.stopped);
 
         let admin_server = match self.config.admin_addr {
             Some(addr) => {
