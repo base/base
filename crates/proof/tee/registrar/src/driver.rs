@@ -15,7 +15,7 @@ use base_tx_manager::{TxCandidate, TxManager};
 use futures::stream::StreamExt;
 use rand::random;
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, info, info_span, warn};
+use tracing::{Instrument, debug, error, info, info_span, warn};
 
 use crate::{
     InstanceDiscovery, ProverClient, ProverInstance, RegistrarError, RegistrarMetrics,
@@ -300,7 +300,7 @@ where
             if let Err(e) =
                 self.try_register(instance, signer_address, idx, &all_attestations[idx]).await
             {
-                warn!(
+                error!(
                     error = %e,
                     error_source = e.source().map(|s| s.to_string()).unwrap_or_default(),
                     error_debug = ?e,
