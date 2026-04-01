@@ -11,7 +11,7 @@ use base_alloy_flashblocks::Flashblock;
 use base_alloy_network::Base;
 use base_consensus_rpc::{ConductorApiClient, OpP2PApiClient, RollupNodeApiClient};
 use futures::{StreamExt, stream};
-use jsonrpsee::http_client::HttpClientBuilder;
+use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::connect_async;
 use tracing::warn;
@@ -787,27 +787,8 @@ pub(crate) async fn pause_sequencer_node(
             }
         }
 
-        // Remove EL peers (best-effort; skip if EL not configured).
-        let mut el_enodes = Vec::new();
-        if let Some(ref el_rpc) = node.el_rpc {
-            let el_client = HttpClientBuilder::default()
-                .request_timeout(TIMEOUT)
-                .build(el_rpc.as_str())
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-            let peers: Vec<serde_json::Value> =
-                ClientT::request(&el_client, "admin_peers", rpc_params![])
-                    .await
-                    .unwrap_or_default();
-
-            for peer in &peers {
-                if let Some(enode) = peer.get("enode").and_then(|v| v.as_str()) {
-                    let _: Result<bool, _> =
-                        ClientT::request(&el_client, "admin_removePeer", rpc_params![enode]).await;
-                    el_enodes.push(enode.to_string());
-                }
-            }
-        }
+        // EL peer removal not supported on v0.7.0 (no el_rpc field in config).
+        let el_enodes: Vec<String> = Vec::new();
 
         let msg = format!(
             "paused {} — disconnected {} CL peer(s), {} EL peer(s)",
@@ -844,21 +825,8 @@ pub(crate) async fn unpause_sequencer_node(
             }
         }
 
-        let mut el_ok = 0usize;
-        if let Some(ref el_rpc) = node.el_rpc {
-            let el_client = HttpClientBuilder::default()
-                .request_timeout(TIMEOUT)
-                .build(el_rpc.as_str())
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-            for enode in &peers.el_enodes {
-                let r: Result<bool, _> =
-                    ClientT::request(&el_client, "admin_addPeer", rpc_params![enode]).await;
-                if r.is_ok() {
-                    el_ok += 1;
-                }
-            }
-        }
+        // EL peer reconnection not supported on v0.7.0 (no el_rpc field in config).
+        let el_ok = 0usize;
 
         Ok(format!(
             "unpaused {} — reconnected {cl_ok}/{} CL peer(s), {el_ok}/{} EL peer(s)",

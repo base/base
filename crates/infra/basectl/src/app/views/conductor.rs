@@ -202,14 +202,6 @@ fn render_cluster_table(
         constraints.push(Constraint::Percentage(node_pct));
     }
 
-    // ── Fork detection: find leader's unsafe and safe hashes ──────────────
-    let leader_unsafe: Option<(u64, alloy_primitives::B256)> = nodes.iter().find_map(|n| {
-        if n.is_leader == Some(true) { n.unsafe_l2_block.zip(n.unsafe_l2_hash) } else { None }
-    });
-    let leader_safe: Option<(u64, alloy_primitives::B256)> = nodes.iter().find_map(|n| {
-        if n.is_leader == Some(true) { n.safe_l2_block.zip(n.safe_l2_hash) } else { None }
-    });
-
     // ── Header row: node names ─────────────────────────────────────────────
     let mut header_cells = vec![Cell::from("")];
     for (i, node) in nodes.iter().enumerate() {
