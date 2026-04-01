@@ -1,6 +1,9 @@
 //! Flashblock subscription and transaction tracking.
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::{VecDeque, hash_map::Entry},
+    time::{Duration, Instant},
+};
 
 use alloy_primitives::{TxHash, keccak256};
 use base_alloy_flashblocks::Flashblock;
@@ -57,6 +60,8 @@ impl FlashblockTracker {
 
                     let (_, mut read) = ws_stream.split();
 
+                    let mut eviction_queue = VecDeque::new();
+
                     loop {
                         tokio::select! {
                             biased;
@@ -68,10 +73,10 @@ impl FlashblockTracker {
                             msg = read.next() => {
                                 match msg {
                                     Some(Ok(Message::Binary(data))) => {
-                                        self.process_message(data);
+                                        self.process_message(data, &mut eviction_queue);
                                     }
                                     Some(Ok(Message::Text(data))) => {
-                                        self.process_message(Bytes::from(data));
+                                        self.process_message(Bytes::from(data), &mut eviction_queue);
                                     }
                                     Some(Ok(Message::Close(_))) => {
                                         info!("flashblock websocket closed by server");
@@ -112,7 +117,7 @@ impl FlashblockTracker {
         debug!("flashblock tracker stopped");
     }
 
-    fn process_message(&self, bytes: Bytes) {
+    fn process_message(&self, bytes: Bytes, eviction_queue: &mut VecDeque<TxHash>) {
         let now = Instant::now();
 
         match Flashblock::try_decode_message(bytes) {
@@ -129,15 +134,17 @@ impl FlashblockTracker {
 
                 let mut times = self.flashblock_times.write();
                 for tx_hash in tx_hashes {
-                    times.entry(tx_hash).or_insert(now);
+                    if let Entry::Vacant(e) = times.entry(tx_hash) {
+                        e.insert(now);
+                        eviction_queue.push_back(tx_hash);
+                    }
                 }
 
-                // Prune to exactly MAX_FLASHBLOCK_CACHE_SIZE, keeping newest entries.
-                if times.len() > MAX_FLASHBLOCK_CACHE_SIZE {
-                    let mut entries: Vec<(TxHash, Instant)> = times.drain().collect();
-                    let cutoff_idx = entries.len() - MAX_FLASHBLOCK_CACHE_SIZE;
-                    entries.select_nth_unstable_by_key(cutoff_idx, |&(_, t)| t);
-                    times.extend(entries.into_iter().skip(cutoff_idx));
+                while times.len() > MAX_FLASHBLOCK_CACHE_SIZE {
+                    match eviction_queue.pop_front() {
+                        Some(old) => { times.remove(&old); }
+                        None => break,
+                    }
                 }
             }
             Err(e) => {

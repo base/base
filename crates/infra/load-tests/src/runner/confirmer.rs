@@ -259,9 +259,15 @@ impl Confirmer {
         let confirmed_hashes: HashSet<TxHash> = confirmed.iter().map(|(hash, _)| *hash).collect();
 
         if !confirmed.is_empty() {
-            let mut fb_times = self.flashblock_times.write();
-            for (tx_hash, _) in &confirmed {
-                fb_times.remove(tx_hash);
+            let to_remove: Vec<TxHash> = {
+                let fb_times = self.flashblock_times.read();
+                confirmed.iter().filter_map(|(h, _)| fb_times.contains_key(h).then_some(*h)).collect()
+            };
+            if !to_remove.is_empty() {
+                let mut fb_times = self.flashblock_times.write();
+                for tx_hash in &to_remove {
+                    fb_times.remove(tx_hash);
+                }
             }
         }
 
@@ -380,11 +386,12 @@ impl Confirmer {
         }
 
         let now = Instant::now();
-        let resolved = {
-            let block_times = self.block_first_seen.read();
-            let mut indices = Vec::new();
+        let mut still_pending = Vec::new();
+        let mut to_send = Vec::new();
 
-            for (i, deferred) in self.deferred_block_latencies.iter_mut().enumerate() {
+        {
+            let block_times = self.block_first_seen.read();
+            for mut deferred in self.deferred_block_latencies.drain(..) {
                 let block_latency = block_times
                     .get(&deferred.block_number)
                     .map(|t| t.saturating_duration_since(deferred.submit_time));
@@ -397,7 +404,7 @@ impl Confirmer {
                         block_latency_ms = latency.as_millis(),
                         "deferred block latency resolved"
                     );
-                    indices.push(i);
+                    to_send.push(deferred.metrics);
                 } else if flush
                     || now.duration_since(deferred.deferred_at) > BLOCK_LATENCY_DEFER_TIMEOUT
                 {
@@ -406,16 +413,17 @@ impl Confirmer {
                         block = deferred.block_number,
                         "deferred block latency timed out"
                     );
-                    indices.push(i);
+                    to_send.push(deferred.metrics);
+                } else {
+                    still_pending.push(deferred);
                 }
             }
+        }
 
-            indices
-        };
+        self.deferred_block_latencies = still_pending;
 
-        for i in resolved.into_iter().rev() {
-            let deferred = self.deferred_block_latencies.swap_remove(i);
-            let _ = self.metrics_tx.send(deferred.metrics).await;
+        for metrics in to_send {
+            let _ = self.metrics_tx.send(metrics).await;
         }
     }
 

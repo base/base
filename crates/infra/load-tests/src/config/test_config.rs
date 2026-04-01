@@ -262,12 +262,6 @@ impl TestConfig {
         if self.sender_count == 0 {
             return Err(BaselineError::Config("sender_count must be > 0".into()));
         }
-        if self.ws_url.is_empty() {
-            return Err(BaselineError::Config("ws_url is required".into()));
-        }
-        if self.flashblocks_url.is_empty() {
-            return Err(BaselineError::Config("flashblocks_url is required".into()));
-        }
         Ok(())
     }
 

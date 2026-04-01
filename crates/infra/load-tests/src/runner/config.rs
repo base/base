@@ -110,8 +110,8 @@ impl LoadConfig {
             batch_size: 5,
             batch_timeout: Duration::from_millis(50),
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
-            ws_url: "ws://localhost:8546".parse().unwrap(),
-            flashblocks_url: "ws://localhost:7111".parse().unwrap(),
+            ws_url: "ws://localhost:8546".parse().expect("valid default ws_url"),
+            flashblocks_url: "ws://localhost:7111".parse().expect("valid default flashblocks_url"),
         }
     }
 
