@@ -70,7 +70,15 @@ impl ActionL2ChainProvider {
             seq_num: 0,
         };
 
-        let genesis_config = rollup_config.genesis.system_config.unwrap_or_default();
+        // Use the rollup config's genesis system config, falling back to a harness
+        // default with a non-zero gas_limit. `SystemConfig::default()` has gas_limit=0
+        // (derived Default), which causes the production payload builder to reject all
+        // transactions. Tests that use `RollupConfig::default()` (no explicit system
+        // config) need a workable gas_limit to build blocks.
+        let genesis_config = rollup_config
+            .genesis
+            .system_config
+            .unwrap_or_else(|| SystemConfig { gas_limit: 30_000_000, ..Default::default() });
 
         provider.insert_block(genesis_l2);
         provider.insert_system_config(rollup_config.genesis.l2.number, genesis_config);

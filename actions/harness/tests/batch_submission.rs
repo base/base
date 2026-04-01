@@ -16,7 +16,7 @@ async fn batcher_mines_block_with_submissions() {
     let mut h = ActionTestHarness::default();
     let cfg = BatcherConfig::default();
 
-    let source = h.create_l2_source(3);
+    let source = h.create_l2_source(3).await;
     let mut batcher = Batcher::new(source, &h.rollup_config, cfg);
     batcher.advance(&mut h.l1).await;
 
@@ -33,7 +33,7 @@ async fn batcher_span_batch_mode() {
     let mut h = ActionTestHarness::default();
     let cfg = BatcherConfig { batch_type: BatchType::Span, ..Default::default() };
 
-    let source = h.create_l2_source(3);
+    let source = h.create_l2_source(3).await;
     let mut batcher = Batcher::new(source, &h.rollup_config, cfg);
     batcher.advance(&mut h.l1).await;
 
@@ -89,7 +89,7 @@ async fn batcher_reorg_during_submission() {
     // Build L2 block 1.
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block_with_single_transaction();
+    let block = sequencer.build_next_block_with_single_transaction().await;
 
     let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,

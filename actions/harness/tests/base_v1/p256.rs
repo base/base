@@ -70,16 +70,9 @@ async fn base_v1_p256_verify_gas_cost_increase() {
             100_000,
         )
     };
-    let block1 = builder.build_next_block_with_transactions(vec![deploy_tx]);
+    let block1 = builder.build_next_block_with_transactions(vec![deploy_tx]).await;
 
-    {
-        let db = builder.db();
-        let acct = db.cache.accounts.get(&contract_addr).expect("contract must exist in DB");
-        assert!(
-            acct.info.code.as_ref().is_some_and(|c| !c.is_empty()),
-            "deployed contract must have non-empty code"
-        );
-    }
+    assert!(builder.has_code(contract_addr), "deployed contract must have non-empty code");
 
     // Empty calldata — the precompile returns empty output (invalid sig) but
     // still charges its base gas fee, which is what we measure.
@@ -96,15 +89,13 @@ async fn base_v1_p256_verify_gas_cost_increase() {
             100_000,
         )
     };
-    let block2 = builder.build_next_block_with_transactions(vec![call_pre]);
+    let block2 = builder.build_next_block_with_transactions(vec![call_pre]).await;
 
     let gas_delta_pre;
     {
-        let db = builder.db();
-        let acct = db.cache.accounts.get(&contract_addr).expect("contract must exist");
-        let sentinel = acct.storage.get(&P256_SENTINEL_SLOT).copied().unwrap_or(U256::ZERO);
-        let success = acct.storage.get(&P256_SUCCESS_SLOT).copied().unwrap_or(U256::ZERO);
-        gas_delta_pre = acct.storage.get(&P256_GAS_DELTA_SLOT).copied().unwrap_or(U256::ZERO);
+        let sentinel = builder.storage_at(contract_addr, P256_SENTINEL_SLOT);
+        let success = builder.storage_at(contract_addr, P256_SUCCESS_SLOT);
+        gas_delta_pre = builder.storage_at(contract_addr, P256_GAS_DELTA_SLOT);
         assert_eq!(sentinel, U256::from(1), "sentinel must be 1: probe completed pre-fork");
         assert_eq!(success, U256::from(1), "P256VERIFY must succeed pre-fork");
     }
@@ -114,14 +105,12 @@ async fn base_v1_p256_verify_gas_cost_increase() {
         let mut acct = account.lock().expect("test account lock");
         acct.create_tx(chain_id, TxKind::Call(contract_addr), p256_input, U256::ZERO, 100_000)
     };
-    let block3 = builder.build_next_block_with_transactions(vec![call_post]);
+    let block3 = builder.build_next_block_with_transactions(vec![call_post]).await;
 
     let gas_delta_post;
     {
-        let db = builder.db();
-        let acct = db.cache.accounts.get(&contract_addr).expect("contract must exist");
-        let success = acct.storage.get(&P256_SUCCESS_SLOT).copied().unwrap_or(U256::ZERO);
-        gas_delta_post = acct.storage.get(&P256_GAS_DELTA_SLOT).copied().unwrap_or(U256::ZERO);
+        let success = builder.storage_at(contract_addr, P256_SUCCESS_SLOT);
+        gas_delta_post = builder.storage_at(contract_addr, P256_GAS_DELTA_SLOT);
         assert_eq!(success, U256::from(1), "P256VERIFY must succeed post-fork");
     }
 

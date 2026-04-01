@@ -111,16 +111,9 @@ async fn base_v1_modexp_upper_bound() {
             100_000,
         )
     };
-    let block1 = builder.build_next_block_with_transactions(vec![deploy_tx]);
+    let block1 = builder.build_next_block_with_transactions(vec![deploy_tx]).await;
 
-    {
-        let db = builder.db();
-        let acct = db.cache.accounts.get(&contract_addr).expect("contract must exist in DB");
-        assert!(
-            acct.info.code.as_ref().is_some_and(|c| !c.is_empty()),
-            "deployed contract must have non-empty code"
-        );
-    }
+    assert!(builder.has_code(contract_addr), "deployed contract must have non-empty code");
 
     // Oversized input: base_len = 1025 (> 1024-byte EIP-7823 limit).
     let oversized_input = modexp_input(&vec![0u8; 1025], &[], &[2]);
@@ -136,14 +129,12 @@ async fn base_v1_modexp_upper_bound() {
             1_000_000,
         )
     };
-    let block2 = builder.build_next_block_with_transactions(vec![call_pre]);
+    let block2 = builder.build_next_block_with_transactions(vec![call_pre]).await;
 
     // Pre-fork: oversized MODEXP succeeds.
     {
-        let db = builder.db();
-        let acct = db.cache.accounts.get(&contract_addr).expect("contract must exist");
-        let sentinel = acct.storage.get(&MODEXP_SENTINEL_SLOT).copied().unwrap_or(U256::ZERO);
-        let success = acct.storage.get(&MODEXP_SUCCESS_SLOT).copied().unwrap_or(U256::ZERO);
+        let sentinel = builder.storage_at(contract_addr, MODEXP_SENTINEL_SLOT);
+        let success = builder.storage_at(contract_addr, MODEXP_SUCCESS_SLOT);
         assert_eq!(sentinel, U256::from(1), "sentinel must be 1: probe completed pre-fork");
         assert_eq!(success, U256::from(1), "MODEXP with oversized input must succeed pre-fork");
     }
@@ -159,13 +150,11 @@ async fn base_v1_modexp_upper_bound() {
             1_000_000,
         )
     };
-    let block3 = builder.build_next_block_with_transactions(vec![call_post]);
+    let block3 = builder.build_next_block_with_transactions(vec![call_post]).await;
 
     // Post-fork: oversized MODEXP must fail (EIP-7823).
     {
-        let db = builder.db();
-        let acct = db.cache.accounts.get(&contract_addr).expect("contract must exist");
-        let success = acct.storage.get(&MODEXP_SUCCESS_SLOT).copied().unwrap_or(U256::ZERO);
+        let success = builder.storage_at(contract_addr, MODEXP_SUCCESS_SLOT);
         assert_eq!(
             success,
             U256::ZERO,
@@ -237,16 +226,9 @@ async fn base_v1_modexp_gas_cost_increase() {
             100_000,
         )
     };
-    let block1 = builder.build_next_block_with_transactions(vec![deploy_tx]);
+    let block1 = builder.build_next_block_with_transactions(vec![deploy_tx]).await;
 
-    {
-        let db = builder.db();
-        let acct = db.cache.accounts.get(&contract_addr).expect("contract must exist in DB");
-        assert!(
-            acct.info.code.as_ref().is_some_and(|c| !c.is_empty()),
-            "deployed contract must have non-empty code"
-        );
-    }
+    assert!(builder.has_code(contract_addr), "deployed contract must have non-empty code");
 
     // Small valid input: 2^3 mod 5 (= 3).
     let small_input = modexp_input(&[2], &[3], &[5]);
@@ -262,15 +244,13 @@ async fn base_v1_modexp_gas_cost_increase() {
             100_000,
         )
     };
-    let block2 = builder.build_next_block_with_transactions(vec![call_pre]);
+    let block2 = builder.build_next_block_with_transactions(vec![call_pre]).await;
 
     let gas_delta_pre;
     {
-        let db = builder.db();
-        let acct = db.cache.accounts.get(&contract_addr).expect("contract must exist");
-        let sentinel = acct.storage.get(&MODEXP_SENTINEL_SLOT).copied().unwrap_or(U256::ZERO);
-        let success = acct.storage.get(&MODEXP_SUCCESS_SLOT).copied().unwrap_or(U256::ZERO);
-        gas_delta_pre = acct.storage.get(&MODEXP_GAS_DELTA_SLOT).copied().unwrap_or(U256::ZERO);
+        let sentinel = builder.storage_at(contract_addr, MODEXP_SENTINEL_SLOT);
+        let success = builder.storage_at(contract_addr, MODEXP_SUCCESS_SLOT);
+        gas_delta_pre = builder.storage_at(contract_addr, MODEXP_GAS_DELTA_SLOT);
         assert_eq!(sentinel, U256::from(1), "sentinel must be 1: probe completed pre-fork");
         assert_eq!(success, U256::from(1), "MODEXP must succeed pre-fork");
     }
@@ -286,14 +266,12 @@ async fn base_v1_modexp_gas_cost_increase() {
             100_000,
         )
     };
-    let block3 = builder.build_next_block_with_transactions(vec![call_post]);
+    let block3 = builder.build_next_block_with_transactions(vec![call_post]).await;
 
     let gas_delta_post;
     {
-        let db = builder.db();
-        let acct = db.cache.accounts.get(&contract_addr).expect("contract must exist");
-        let success = acct.storage.get(&MODEXP_SUCCESS_SLOT).copied().unwrap_or(U256::ZERO);
-        gas_delta_post = acct.storage.get(&MODEXP_GAS_DELTA_SLOT).copied().unwrap_or(U256::ZERO);
+        let success = builder.storage_at(contract_addr, MODEXP_SUCCESS_SLOT);
+        gas_delta_post = builder.storage_at(contract_addr, MODEXP_GAS_DELTA_SLOT);
         assert_eq!(success, U256::from(1), "MODEXP must succeed post-fork");
     }
 

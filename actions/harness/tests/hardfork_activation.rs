@@ -270,8 +270,8 @@ async fn span_batch_rejected_before_delta() {
 
     // Both blocks in one source, one advance produces a span batch.
     let mut source = ActionL2Source::new();
-    source.push(builder.build_next_block_with_single_transaction());
-    source.push(builder.build_next_block_with_single_transaction());
+    source.push(builder.build_next_block_with_single_transaction().await);
+    source.push(builder.build_next_block_with_single_transaction().await);
     let mut batcher = Batcher::new(source, &h.rollup_config, span_cfg);
     batcher.advance(&mut h.l1).await;
 
@@ -314,8 +314,8 @@ async fn span_batch_derives_after_delta() {
 
     // Both blocks in one source → one span batch in one L1 block.
     let mut source = ActionL2Source::new();
-    source.push(builder.build_next_block_with_single_transaction());
-    source.push(builder.build_next_block_with_single_transaction());
+    source.push(builder.build_next_block_with_single_transaction().await);
+    source.push(builder.build_next_block_with_single_transaction().await);
     let mut batcher = Batcher::new(source, &h.rollup_config, span_cfg);
     batcher.advance(&mut h.l1).await;
 
@@ -349,7 +349,7 @@ async fn single_batch_derives_with_fjord() {
 
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 0..2 {
-        batcher.push_block(builder.build_next_block_with_single_transaction());
+        batcher.push_block(builder.build_next_block_with_single_transaction().await);
         batcher.advance(&mut h.l1).await;
     }
 
@@ -410,9 +410,9 @@ async fn jovian_derivation_crosses_activation_boundary() {
     for i in 1..=4u64 {
         let block = if i == 3 {
             // First Jovian block: must contain no user transactions.
-            builder.build_empty_block()
+            builder.build_empty_block().await
         } else {
-            builder.build_next_block_with_single_transaction()
+            builder.build_next_block_with_single_transaction().await
         };
         block_hashes[i as usize] = block.header.hash_slow();
         batcher.push_block(block);

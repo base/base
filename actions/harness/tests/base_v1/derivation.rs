@@ -34,7 +34,7 @@ async fn base_v1_derivation_crosses_activation_boundary() {
 
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 1..=4u64 {
-        batcher.push_block(builder.build_next_block_with_single_transaction());
+        batcher.push_block(builder.build_next_block_with_single_transaction().await);
         batcher.advance(&mut h.l1).await;
     }
 

@@ -1,5 +1,6 @@
 use std::{
     any::Any,
+    future::Future,
     panic::{self, AssertUnwindSafe},
 };
 
@@ -106,6 +107,17 @@ impl ForkMatrix {
             if let Err(e) = panic::catch_unwind(AssertUnwindSafe(|| test(name, config))) {
                 Self::panic_with_fork_context(name, e);
             }
+        }
+    }
+
+    /// Async version of [`run`](ForkMatrix::run) for tests that call async sequencer methods.
+    pub async fn run_async<F, Fut>(&self, mut test: F)
+    where
+        F: FnMut(&'static str, HardForkConfig) -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        for (name, config) in self.iter() {
+            test(name, config).await;
         }
     }
 

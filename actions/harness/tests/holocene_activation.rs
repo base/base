@@ -63,7 +63,7 @@ async fn holocene_derivation_crosses_activation_boundary() {
     // so user txs are valid in all blocks including block 3.
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 1..=4u64 {
-        batcher.push_block(builder.build_next_block_with_single_transaction());
+        batcher.push_block(builder.build_next_block_with_single_transaction().await);
         batcher.advance(&mut h.l1).await;
         chain.push(h.l1.tip().clone());
     }
@@ -130,7 +130,7 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block_with_single_transaction();
+    let block = sequencer.build_next_block_with_single_transaction().await;
 
     // Encode the block into frames without mining.
     let mut source = ActionL2Source::new();
@@ -237,8 +237,8 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
 
-    let block_a = sequencer.build_next_block_with_single_transaction();
-    let block_b = sequencer.build_next_block_with_single_transaction();
+    let block_a = sequencer.build_next_block_with_single_transaction().await;
+    let block_b = sequencer.build_next_block_with_single_transaction().await;
 
     // Encode channel A (block A) and channel B (block B) separately.
     // Each Batcher instance generates a distinct random channel ID.
@@ -349,7 +349,7 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block_with_single_transaction();
+    let block = sequencer.build_next_block_with_single_transaction().await;
 
     // Encode the block into frames without mining.
     let mut source = ActionL2Source::new();

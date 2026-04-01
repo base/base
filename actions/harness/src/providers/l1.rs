@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use base_consensus_derive::{
     ChainProvider, DataAvailabilityProvider, PipelineError, PipelineErrorKind, PipelineResult,
 };
+use base_consensus_node::{L1OriginSelectorError, L1OriginSelectorProvider};
 use base_protocol::BlockInfo;
 
 use crate::{L1Block, miner::block_info_from};
@@ -58,6 +59,23 @@ impl SharedL1Chain {
     fn with<R>(&self, f: impl FnOnce(&[L1Block]) -> R) -> R {
         let g = self.0.lock().expect("chain lock poisoned");
         f(&g)
+    }
+}
+
+#[async_trait]
+impl L1OriginSelectorProvider for SharedL1Chain {
+    async fn get_block_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<BlockInfo>, L1OriginSelectorError> {
+        Ok(self.block_by_hash(hash).map(|b| block_info_from(&b)))
+    }
+
+    async fn get_block_by_number(
+        &self,
+        number: u64,
+    ) -> Result<Option<BlockInfo>, L1OriginSelectorError> {
+        Ok(self.get_block(number).map(|b| block_info_from(&b)))
     }
 }
 
