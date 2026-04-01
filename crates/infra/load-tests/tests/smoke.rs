@@ -107,7 +107,7 @@ fn metrics_collector_counts() {
 
 #[test]
 fn metrics_summary_latency() {
-    use std::time::Duration;
+    // Duration imported at file top
 
     let mut collector = MetricsCollector::new();
     collector.start();
