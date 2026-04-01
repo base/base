@@ -7,7 +7,7 @@ use base_alloy_flashblocks::Flashblock;
 use futures::StreamExt;
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{Bytes, protocol::Message},
+    tungstenite::protocol::Message,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
@@ -73,7 +73,7 @@ impl FlashblockTracker {
                                         self.process_message(data.into());
                                     }
                                     Some(Ok(Message::Text(data))) => {
-                                        self.process_message(Bytes::from(data).into());
+                                        self.process_message(data.as_bytes().to_vec());
                                     }
                                     Some(Ok(Message::Close(_))) => {
                                         info!("flashblock websocket closed by server");
@@ -136,15 +136,12 @@ impl FlashblockTracker {
                     times.entry(tx_hash).or_insert(now);
                 }
 
-                // Prune using retain with a cutoff instead of drain/sort/re-insert
+                // Prune using retain with a cutoff 
                 if times.len() > MAX_FLASHBLOCK_CACHE_SIZE {
-                    // Find the cutoff time: keep entries newer than this
                     let mut timestamps: Vec<Instant> = times.values().copied().collect();
-                    timestamps.sort_unstable();
-                    let keep_count = MAX_FLASHBLOCK_CACHE_SIZE;
-                    let cutoff_idx = timestamps.len().saturating_sub(keep_count);
+                    let cutoff_idx = timestamps.len().saturating_sub(MAX_FLASHBLOCK_CACHE_SIZE);
+                    timestamps.select_nth_unstable(cutoff_idx);
                     let cutoff_time = timestamps[cutoff_idx];
-
                     times.retain(|_, &mut t| t > cutoff_time);
                 }
             }
