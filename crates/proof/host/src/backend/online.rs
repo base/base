@@ -87,7 +87,7 @@ impl PreimageFetcher for OnlineHostBackend {
                         .await;
 
                 if let Err(e) = value {
-                    error!(target: "host_backend", error = %e, "failed to prefetch hint");
+                    error!(target: "host_backend", error = %e, hint = ?hint, "failed to prefetch hint");
                     continue;
                 }
 
