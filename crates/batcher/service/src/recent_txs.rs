@@ -15,6 +15,12 @@ use tracing::{debug, info};
 /// Matches the limit used by op-batcher's `--check-recent-txs-depth` flag.
 pub const MAX_CHECK_RECENT_TXS_DEPTH: u64 = 128;
 
+/// Maximum number of L1 block fetches in flight during the startup scan.
+///
+/// Bounds peak memory to roughly this many full L1 blocks while still
+/// achieving significant speedup over sequential fetching.
+pub const SCAN_FETCH_CONCURRENCY: usize = 16;
+
 /// Scans recent L1 blocks on startup to find the highest submitted L2 block.
 ///
 /// When the batcher restarts after an unclean shutdown, in-memory channel state
@@ -80,7 +86,7 @@ impl RecentTxScanner {
                     eyre::Ok((block_num, block))
                 }
             })
-            .buffered(16);
+            .buffered(SCAN_FETCH_CONCURRENCY);
         futures::pin_mut!(block_stream);
 
         while let Some(result) = block_stream.next().await {
