@@ -115,10 +115,9 @@ pub struct TestConfig {
     #[serde(default)]
     pub looper_contract: Option<String>,
 
-    /// WebSocket RPC URL for block subscription (inclusion latency tracking).
+    /// WebSocket URL for block subscription.
     pub ws_url: String,
-
-    /// WebSocket URL for flashblocks subscription (flashblocks latency tracking).
+    /// WebSocket URL for flashblocks subscription.
     pub flashblocks_url: String,
 }
 

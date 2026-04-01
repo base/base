@@ -125,9 +125,9 @@ impl<'a> MetricsAggregator<'a> {
 /// Summary of all collected metrics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MetricsSummary {
-    /// Block production latency via newHeads WebSocket.
+    /// Block production latency.
     pub block_latency: LatencyMetrics,
-    /// Sequencer acceptance latency via flashblocks WebSocket.
+    /// Flashblocks sequencer latency.
     pub flashblocks_latency: FlashblocksLatencyMetrics,
     /// Throughput statistics.
     pub throughput: ThroughputMetrics,

@@ -108,7 +108,7 @@ impl MetricsCollector {
         self.rolling.p50_p99()
     }
 
-    /// Returns the rolling 30s (p50, p99) flashblocks latency percentiles.
+    /// Rolling 30s flashblocks (p50, p99).
     pub fn rolling_flashblocks_p50_p99(&mut self) -> (std::time::Duration, std::time::Duration) {
         self.flashblocks_rolling.p50_p99()
     }

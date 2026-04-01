@@ -643,6 +643,7 @@ impl LoadRunner {
             debug!(submitted, "final batch submitted");
         }
 
+        // stop_flag drains the confirmer; cancel_token stops the WebSocket watchers.
         self.stop_flag.store(true, Ordering::SeqCst);
         self.cancel_token.cancel();
 

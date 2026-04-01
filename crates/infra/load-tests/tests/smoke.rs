@@ -1,5 +1,7 @@
 //! Smoke tests for load testing core functionality.
 
+use std::time::Duration;
+
 use alloy_primitives::{Address, TxHash, TxKind, U256};
 use base_load_tests::{
     AccountPool, MetricsCollector, Payload, SeededRng, TransactionMetrics, TransferPayload,
@@ -95,7 +97,7 @@ fn metrics_collector_counts() {
         None,
         21000,
         1_000_000_000,
-        1,
+        Some(1),
     ));
 
     collector.record_failed(TxHash::repeat_byte(1), "timeout");
@@ -120,7 +122,7 @@ fn metrics_summary_latency() {
             Some(Duration::from_millis(*ms / 2)),
             21000,
             1_000_000_000,
-            i as u64,
+            Some(i as u64),
         ));
     }
 
@@ -148,7 +150,7 @@ fn metrics_summary_gas() {
         None,
         21000,
         1_000_000_000,
-        1,
+        Some(1),
     ));
 
     collector.record_confirmed(TransactionMetrics::new(
@@ -157,7 +159,7 @@ fn metrics_summary_gas() {
         None,
         42000,
         2_000_000_000,
-        2,
+        Some(2),
     ));
 
     let summary = collector.summarize();
@@ -177,7 +179,7 @@ fn metrics_summary_json_serialization() {
         None,
         21000,
         1_000_000_000,
-        1,
+        Some(1),
     ));
 
     let summary = collector.summarize();

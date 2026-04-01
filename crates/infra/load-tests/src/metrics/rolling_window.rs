@@ -27,9 +27,6 @@ impl RollingWindow {
     }
 
     /// Records a latency-only event (no gas tracking).
-    ///
-    /// Useful for secondary latency streams (e.g. flashblock sequencer latency)
-    /// where only percentile computation is needed.
     pub fn push_latency(&mut self, latency: Duration) {
         let now = Instant::now();
         self.latency_events.push_back((now, latency));

@@ -43,7 +43,6 @@ pub struct Confirmer {
     deferred_block_latencies: Vec<DeferredBlockLatency>,
 }
 
-/// A confirmed transaction waiting for its block to appear in the block watcher map.
 struct DeferredBlockLatency {
     metrics: TransactionMetrics,
     block_number: u64,
@@ -51,8 +50,7 @@ struct DeferredBlockLatency {
     deferred_at: Instant,
 }
 
-/// Maximum time to wait for a block to appear in the block watcher before
-/// sending metrics without block latency.
+/// Max wait for a block to appear before sending metrics without block latency.
 const BLOCK_LATENCY_DEFER_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl std::fmt::Debug for Confirmer {
@@ -72,7 +70,7 @@ struct PendingTx {
     from: Address,
     submit_time: Instant,
     /// Set when the tx is first seen in a pending/latest block.
-    /// Used as the definitive latency endpoint.
+    /// Triggers eager receipt fetching rather than waiting for straggler timeout.
     included_at: Option<Instant>,
 }
 
@@ -138,7 +136,7 @@ impl Confirmer {
         )
     }
 
-    /// Creates a new confirmer with shared flashblock and block timing data.
+    /// Creates a confirmer with shared timing data from the WebSocket watchers.
     pub fn with_timing_data(
         sender_addresses: &[Address],
         metrics_tx: mpsc::Sender<TransactionMetrics>,
@@ -255,17 +253,11 @@ impl Confirmer {
             }
         }
 
-        // Phase 1: Check pending block for tx inclusion.
-        // Records the inclusion timestamp but doesn't yet have gas metrics.
         self.check_pending_block(client).await;
-
-        // Phase 2: Fetch receipts for txns that have been included (have included_at set)
-        // or are old enough to be stragglers.
         self.fetch_receipts(client, &mut confirmed).await;
 
         let confirmed_hashes: HashSet<TxHash> = confirmed.iter().map(|(hash, _)| *hash).collect();
 
-        // Prune confirmed transactions from shared timing maps to prevent unbounded growth.
         if !confirmed.is_empty() {
             let mut fb_times = self.flashblock_times.write();
             for (tx_hash, _) in &confirmed {
@@ -354,7 +346,7 @@ impl Confirmer {
                         flashblocks_latency,
                         receipt.inner.gas_used,
                         receipt.inner.effective_gas_price,
-                        block_num.unwrap_or(0),
+                        block_num,
                     );
                     if let (None, Some(bn)) = (block_latency, block_num) {
                         debug!(tx_hash = %tx_hash, block = bn, "block latency deferred");

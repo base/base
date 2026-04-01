@@ -87,7 +87,7 @@ pub struct LoadConfig {
     pub batch_timeout: Duration,
     /// Maximum gas price cap to prevent overspending during congestion.
     pub max_gas_price: u128,
-    /// WebSocket RPC URL for block subscription (newHeads).
+    /// WebSocket URL for block subscription.
     pub ws_url: Url,
     /// WebSocket URL for flashblocks subscription.
     pub flashblocks_url: Url,
