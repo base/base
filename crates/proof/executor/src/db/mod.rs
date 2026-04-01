@@ -178,7 +178,7 @@ where
 
             // If the account was destroyed, delete it from the trie.
             if bundle_account.was_destroyed() {
-                self.root_node.delete(&account_path, &self.fetcher, &self.hinter)?;
+                self.root_node.delete(&account_path, &self.fetcher)?;
                 self.storage_roots.remove(address);
                 continue;
             }
@@ -209,13 +209,7 @@ where
             sorted_storage.sort_by_key(|(slot, _)| *slot);
 
             sorted_storage.into_iter().try_for_each(|(hashed_key, value)| {
-                Self::change_storage(
-                    acc_storage_root,
-                    hashed_key,
-                    value,
-                    &self.fetcher,
-                    &self.hinter,
-                )
+                Self::change_storage(acc_storage_root, hashed_key, value, &self.fetcher)
             })?;
 
             // Recompute the account storage root.
@@ -239,7 +233,6 @@ where
         hashed_key: B256,
         value: &StorageSlot,
         fetcher: &F,
-        hinter: &H,
     ) -> TrieDBResult<()> {
         if !value.is_changed() {
             return Ok(());
@@ -248,7 +241,7 @@ where
         let hashed_slot_key = Nibbles::unpack(hashed_key.as_slice());
         if value.present_value.is_zero() {
             // If the storage slot is being set to zero, prune it from the trie.
-            storage_root.delete(&hashed_slot_key, fetcher, hinter)?;
+            storage_root.delete(&hashed_slot_key, fetcher)?;
         } else {
             // RLP encode the storage slot value and update the trie.
             let mut rlp_buf = Vec::with_capacity(value.present_value.length());

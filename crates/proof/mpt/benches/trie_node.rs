@@ -2,7 +2,7 @@
 //! Benchmarks for the [`TrieNode`].
 
 use alloy_trie::Nibbles;
-use base_proof_mpt::{NoopTrieHinter, NoopTrieProvider, TrieNode};
+use base_proof_mpt::{NoopTrieProvider, TrieNode};
 use criterion::{Criterion, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng, seq::IteratorRandom};
 
@@ -55,7 +55,7 @@ fn trie(c: &mut Criterion) {
         b.iter(|| {
             let trie = &mut trie.clone();
             for key in &keys_to_delete {
-                trie.delete(key, &NoopTrieProvider, &NoopTrieHinter).unwrap();
+                trie.delete(key, &NoopTrieProvider).unwrap();
             }
         });
     });
@@ -75,7 +75,7 @@ fn trie(c: &mut Criterion) {
         b.iter(|| {
             let trie = &mut trie.clone();
             for key in &keys_to_delete {
-                trie.delete(key, &NoopTrieProvider, &NoopTrieHinter).unwrap();
+                trie.delete(key, &NoopTrieProvider).unwrap();
             }
         });
     });
