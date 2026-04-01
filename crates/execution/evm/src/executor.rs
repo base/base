@@ -16,14 +16,16 @@ use alloy_primitives::Address;
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::OpDepositReceipt;
 use base_alloy_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
-use crate::{DEPOSIT_TRANSACTION_TYPE, L1_BLOCK_CONTRACT, L1BlockInfo};
 use revm::{
     Database as _, DatabaseCommit,
     context::{Block, result::ResultAndState},
     database::DatabaseCommitExt,
 };
 
-use crate::{OpBlockExecutionCtx, OpBlockExecutionError, OpReceiptBuilder, OpTxEnv, canyon};
+use crate::{
+    DEPOSIT_TRANSACTION_TYPE, L1_BLOCK_CONTRACT, L1BlockInfo, OpBlockExecutionCtx,
+    OpBlockExecutionError, OpReceiptBuilder, OpTxEnv, canyon,
+};
 
 /// The result of executing an OP transaction.
 #[derive(Debug)]
@@ -316,11 +318,8 @@ where
             })
         })?;
 
-        let legacy_gas_used = self
-            .receipts
-            .last()
-            .map(|r: &R::Receipt| r.cumulative_gas_used())
-            .unwrap_or_default();
+        let legacy_gas_used =
+            self.receipts.last().map(|r: &R::Receipt| r.cumulative_gas_used()).unwrap_or_default();
 
         Ok((
             self.evm,
@@ -361,11 +360,6 @@ mod tests {
     use alloy_primitives::{Address, Signature, U256, uint};
     use base_alloy_chains::{BaseChainUpgrades, BaseUpgrade};
     use base_alloy_consensus::OpTxEnvelope;
-    use crate::{
-        BASE_FEE_SCALAR_OFFSET, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
-        ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, L1BlockInfo,
-        OPERATOR_FEE_SCALARS_SLOT, OpBuilder, OpSpecId,
-    };
     use revm::{
         Context,
         context::BlockEnv,
@@ -376,7 +370,12 @@ mod tests {
     };
 
     use super::*;
-    use crate::{OpAlloyReceiptBuilder, OpBlockExecutorFactory, OpEvm, OpEvmFactory};
+    use crate::{
+        BASE_FEE_SCALAR_OFFSET, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
+        ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, L1BlockInfo,
+        OPERATOR_FEE_SCALARS_SLOT, OpAlloyReceiptBuilder, OpBlockExecutorFactory, OpBuilder, OpEvm,
+        OpEvmFactory, OpSpecId,
+    };
 
     #[test]
     fn test_with_encoded() {

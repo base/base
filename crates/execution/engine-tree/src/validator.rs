@@ -18,15 +18,15 @@ use alloy_eips::eip2718::Decodable2718;
 use alloy_evm::Evm;
 use alloy_primitives::B256;
 use base_alloy_consensus::{OpBlock, OpReceipt, OpTxType};
-use base_evm::{
-    OpBlockExecutor, OpBlockExecutorFactory, OpEvm, OpEvmFactory, OpRethReceiptBuilder, OpTxResult,
-};
 use base_alloy_rpc_types_engine::OpExecutionData;
+use base_evm::{
+    OpBlockExecutor, OpBlockExecutorFactory, OpEvm, OpEvmFactory, OpHaltReason,
+    OpRethReceiptBuilder, OpTxResult,
+};
 use base_execution_chainspec::OpChainSpec;
 use base_execution_primitives::{OpPrimitives, OpTransactionSigned};
 use base_flashblocks::FlashblocksState;
 use base_node_core::OpEngineTypes;
-use base_evm::OpHaltReason;
 use reth_chain_state::{DeferredTrieData, ExecutedBlock, LazyOverlay};
 use reth_consensus::{ConsensusError, FullConsensus, ReceiptRootBloom};
 use reth_engine_primitives::{

@@ -51,9 +51,9 @@ pub use next_block::OpNextBlockEnvAttributes;
 mod l1_reth;
 #[cfg(feature = "reth")]
 pub use l1_reth::{
-    RethL1BlockInfo, extract_l1_info, extract_l1_info_from_tx,
-    parse_l1_info, parse_l1_info_tx_bedrock, parse_l1_info_tx_ecotone,
-    parse_l1_info_tx_isthmus, parse_l1_info_tx_jovian,
+    RethL1BlockInfo, extract_l1_info, extract_l1_info_from_tx, parse_l1_info,
+    parse_l1_info_tx_bedrock, parse_l1_info_tx_ecotone, parse_l1_info_tx_isthmus,
+    parse_l1_info_tx_jovian,
 };
 
 #[cfg(feature = "alloy")]

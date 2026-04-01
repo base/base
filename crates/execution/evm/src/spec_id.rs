@@ -1,5 +1,6 @@
 use alloy_consensus::BlockHeader;
 use base_alloy_chains::BaseUpgrades;
+
 use crate::OpSpecId;
 
 /// Map the latest active hardfork at the given header to a revm [`OpSpecId`].

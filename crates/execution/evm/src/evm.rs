@@ -2,15 +2,16 @@ use core::ops::{Deref, DerefMut};
 
 use alloy_evm::{Database, Evm, EvmEnv};
 use alloy_primitives::{Address, Bytes};
-use crate::{
-    BasePrecompiles, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
-};
 use revm::{
     ExecuteEvm, InspectEvm, Inspector, SystemCallEvm,
     context::{BlockEnv, TxEnv},
     context_interface::result::{EVMError, ResultAndState},
     handler::{PrecompileProvider, instructions::EthInstructions},
     interpreter::{InterpreterResult, interpreter::EthInterpreter},
+};
+
+use crate::{
+    BasePrecompiles, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
 };
 
 /// OP EVM implementation.
@@ -142,12 +143,11 @@ mod tests {
         precompiles::{Precompile, PrecompileInput},
     };
     use alloy_primitives::{Address, U256};
-    use crate::{bls12_381, bn254_pair};
     use revm::{context::CfgEnv, database::EmptyDB};
     use rstest::rstest;
 
     use super::*;
-    use crate::OpEvmFactory;
+    use crate::{OpEvmFactory, bls12_381, bn254_pair};
 
     #[rstest]
     #[case::bn254_pair(*bn254_pair::JOVIAN.address(), bn254_pair::JOVIAN_MAX_INPUT_SIZE)]

@@ -158,7 +158,6 @@ impl RollupConfig {
     }
 }
 
-
 impl RollupConfig {
     /// Returns true if Regolith is active at the given timestamp.
     pub fn is_regolith_active(&self, timestamp: u64) -> bool {

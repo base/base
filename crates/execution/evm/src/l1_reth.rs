@@ -34,9 +34,7 @@ pub fn extract_l1_info<B: BlockBody>(body: &B) -> Result<L1BlockInfo, OpL1BlockE
 /// block.
 ///
 /// Returns an error if the calldata is shorter than 4 bytes.
-pub fn extract_l1_info_from_tx<T: Transaction>(
-    tx: &T,
-) -> Result<L1BlockInfo, OpL1BlockError> {
+pub fn extract_l1_info_from_tx<T: Transaction>(tx: &T) -> Result<L1BlockInfo, OpL1BlockError> {
     let l1_info_tx_data = tx.input();
     if l1_info_tx_data.len() < 4 {
         return Err(OpL1BlockError::L1BlockInfo(L1BlockInfoError::InvalidCalldata));
@@ -139,9 +137,8 @@ pub fn parse_l1_info_tx_ecotone(data: &[u8]) -> Result<L1BlockInfo, OpL1BlockErr
 
     let l1_base_fee_scalar = U256::try_from_be_slice(&data[..4])
         .ok_or(OpL1BlockError::L1BlockInfo(L1BlockInfoError::BaseFeeScalarConversion))?;
-    let l1_blob_base_fee_scalar = U256::try_from_be_slice(&data[4..8]).ok_or({
-        OpL1BlockError::L1BlockInfo(L1BlockInfoError::BlobBaseFeeScalarConversion)
-    })?;
+    let l1_blob_base_fee_scalar = U256::try_from_be_slice(&data[4..8])
+        .ok_or({ OpL1BlockError::L1BlockInfo(L1BlockInfoError::BlobBaseFeeScalarConversion) })?;
     let l1_base_fee = U256::try_from_be_slice(&data[32..64])
         .ok_or(OpL1BlockError::L1BlockInfo(L1BlockInfoError::BaseFeeConversion))?;
     let l1_blob_base_fee = U256::try_from_be_slice(&data[64..96])
@@ -194,19 +191,16 @@ pub fn parse_l1_info_tx_isthmus(data: &[u8]) -> Result<L1BlockInfo, OpL1BlockErr
 
     let l1_base_fee_scalar = U256::try_from_be_slice(&data[..4])
         .ok_or(OpL1BlockError::L1BlockInfo(L1BlockInfoError::BaseFeeScalarConversion))?;
-    let l1_blob_base_fee_scalar = U256::try_from_be_slice(&data[4..8]).ok_or({
-        OpL1BlockError::L1BlockInfo(L1BlockInfoError::BlobBaseFeeScalarConversion)
-    })?;
+    let l1_blob_base_fee_scalar = U256::try_from_be_slice(&data[4..8])
+        .ok_or({ OpL1BlockError::L1BlockInfo(L1BlockInfoError::BlobBaseFeeScalarConversion) })?;
     let l1_base_fee = U256::try_from_be_slice(&data[32..64])
         .ok_or(OpL1BlockError::L1BlockInfo(L1BlockInfoError::BaseFeeConversion))?;
     let l1_blob_base_fee = U256::try_from_be_slice(&data[64..96])
         .ok_or(OpL1BlockError::L1BlockInfo(L1BlockInfoError::BlobBaseFeeConversion))?;
-    let operator_fee_scalar = U256::try_from_be_slice(&data[160..164]).ok_or({
-        OpL1BlockError::L1BlockInfo(L1BlockInfoError::OperatorFeeScalarConversion)
-    })?;
-    let operator_fee_constant = U256::try_from_be_slice(&data[164..172]).ok_or({
-        OpL1BlockError::L1BlockInfo(L1BlockInfoError::OperatorFeeConstantConversion)
-    })?;
+    let operator_fee_scalar = U256::try_from_be_slice(&data[160..164])
+        .ok_or({ OpL1BlockError::L1BlockInfo(L1BlockInfoError::OperatorFeeScalarConversion) })?;
+    let operator_fee_constant = U256::try_from_be_slice(&data[164..172])
+        .ok_or({ OpL1BlockError::L1BlockInfo(L1BlockInfoError::OperatorFeeConstantConversion) })?;
 
     Ok(L1BlockInfo {
         l1_base_fee,
@@ -259,23 +253,18 @@ pub fn parse_l1_info_tx_jovian(data: &[u8]) -> Result<L1BlockInfo, OpL1BlockErro
 
     let l1_base_fee_scalar = U256::try_from_be_slice(&data[..4])
         .ok_or(OpL1BlockError::L1BlockInfo(L1BlockInfoError::BaseFeeScalarConversion))?;
-    let l1_blob_base_fee_scalar = U256::try_from_be_slice(&data[4..8]).ok_or({
-        OpL1BlockError::L1BlockInfo(L1BlockInfoError::BlobBaseFeeScalarConversion)
-    })?;
+    let l1_blob_base_fee_scalar = U256::try_from_be_slice(&data[4..8])
+        .ok_or({ OpL1BlockError::L1BlockInfo(L1BlockInfoError::BlobBaseFeeScalarConversion) })?;
     let l1_base_fee = U256::try_from_be_slice(&data[32..64])
         .ok_or(OpL1BlockError::L1BlockInfo(L1BlockInfoError::BaseFeeConversion))?;
     let l1_blob_base_fee = U256::try_from_be_slice(&data[64..96])
         .ok_or(OpL1BlockError::L1BlockInfo(L1BlockInfoError::BlobBaseFeeConversion))?;
-    let operator_fee_scalar = U256::try_from_be_slice(&data[160..164]).ok_or({
-        OpL1BlockError::L1BlockInfo(L1BlockInfoError::OperatorFeeScalarConversion)
-    })?;
-    let operator_fee_constant = U256::try_from_be_slice(&data[164..172]).ok_or({
-        OpL1BlockError::L1BlockInfo(L1BlockInfoError::OperatorFeeConstantConversion)
-    })?;
+    let operator_fee_scalar = U256::try_from_be_slice(&data[160..164])
+        .ok_or({ OpL1BlockError::L1BlockInfo(L1BlockInfoError::OperatorFeeScalarConversion) })?;
+    let operator_fee_constant = U256::try_from_be_slice(&data[164..172])
+        .ok_or({ OpL1BlockError::L1BlockInfo(L1BlockInfoError::OperatorFeeConstantConversion) })?;
     let da_footprint_gas_scalar: u16 = U16::try_from_be_slice(&data[172..174])
-        .ok_or({
-            OpL1BlockError::L1BlockInfo(L1BlockInfoError::DaFootprintGasScalarConversion)
-        })?
+        .ok_or({ OpL1BlockError::L1BlockInfo(L1BlockInfoError::DaFootprintGasScalarConversion) })?
         .to();
 
     Ok(L1BlockInfo {

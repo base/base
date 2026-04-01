@@ -14,12 +14,11 @@ use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::{OpReceipt, OpTxEnvelope};
-use base_evm::ensure_create2_deployer;
 use base_alloy_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
+use base_evm::{L1_BLOCK_CONTRACT, L1BlockInfo, OpHaltReason, ensure_create2_deployer};
 use base_execution_primitives::OpPrimitives;
 use base_execution_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
-use base_evm::{L1_BLOCK_CONTRACT, L1BlockInfo, OpHaltReason};
 use reth_evm::{Evm, FromRecoveredTx};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use revm::{
@@ -400,8 +399,8 @@ mod tests {
     use base_alloy_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
-    use base_execution_chainspec::OpChainSpecBuilder;
     use base_evm::{L1BlockInfo, OpEvmConfig};
+    use base_execution_chainspec::OpChainSpecBuilder;
     use reth_evm::ConfigureEvm;
     use reth_revm::State;
     use revm::{

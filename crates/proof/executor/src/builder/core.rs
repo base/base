@@ -13,11 +13,12 @@ use alloy_evm::{
     block::{BlockExecutionResult, BlockExecutor, BlockExecutorFactory},
 };
 use base_alloy_consensus::{OpReceiptEnvelope, OpTxEnvelope};
-use base_evm::{OpAlloyReceiptBuilder, OpBlockExecutionCtx, OpBlockExecutorFactory, OpTxEnv};
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_consensus_genesis::RollupConfig;
+use base_evm::{
+    OpAlloyReceiptBuilder, OpBlockExecutionCtx, OpBlockExecutorFactory, OpSpecId, OpTxEnv,
+};
 use base_proof_mpt::TrieHinter;
-use base_evm::OpSpecId;
 use revm::{
     context::BlockEnv,
     database::{State, states::bundle_state::BundleRetention},

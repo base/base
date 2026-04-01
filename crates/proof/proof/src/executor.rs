@@ -8,13 +8,12 @@ use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded, revm::context::B
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_alloy_consensus::OpTxEnvelope;
-use base_evm::OpTxEnv;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_consensus_genesis::RollupConfig;
+use base_evm::{OpSpecId, OpTxEnv};
 use base_proof_driver::Executor;
 use base_proof_executor::{BlockBuildingOutcome, StatelessL2Builder, TrieDBProvider};
 use base_proof_mpt::TrieHinter;
-use base_evm::OpSpecId;
 
 /// An executor wrapper type.
 #[derive(Debug)]

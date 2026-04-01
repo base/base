@@ -7,9 +7,9 @@ use alloy_primitives::{B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_alloy_chains::BaseUpgrades;
+use base_evm::{L1_BLOCK_CONTRACT, L1BlockInfo};
 use base_execution_primitives::transaction::OpTransaction;
 use base_protocol::Predeploys;
-use base_evm::{L1_BLOCK_CONTRACT, L1BlockInfo};
 use base_txpool::{OpPooledTx, estimated_da_size::DataAvailabilitySized};
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,

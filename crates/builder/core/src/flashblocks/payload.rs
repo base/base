@@ -15,15 +15,14 @@ use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::Ha
 use base_access_lists::{FlashblockAccessList, FlashblockAccessListBuilder};
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::OpReceipt;
-use base_evm::OpEvmConfig;
 use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
 use base_builder_publish::WebSocketPublisher;
+use base_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use base_execution_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use base_execution_payload_builder::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use base_execution_primitives::OpTransactionSigned;
-use base_evm::OpNextBlockEnvAttributes;
 use either::Either;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;

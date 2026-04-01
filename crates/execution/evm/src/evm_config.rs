@@ -7,7 +7,6 @@ use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::EIP1559ParamError;
-use crate::{OpSpecId, OpTransaction};
 use base_execution_chainspec::OpChainSpec;
 use base_execution_primitives::{DepositReceipt, OpPrimitives};
 use reth_chainspec::EthChainSpec;
@@ -32,7 +31,7 @@ use {
 
 use crate::{
     OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvmFactory, OpReceiptBuilder,
-    OpRethReceiptBuilder, OpTxEnv,
+    OpRethReceiptBuilder, OpSpecId, OpTransaction, OpTxEnv,
     spec_by_timestamp_after_bedrock as revm_spec_by_timestamp_after_bedrock,
 };
 
@@ -356,10 +355,6 @@ mod tests {
         state::AccountInfo,
     };
 
-<<<<<<< HEAD:crates/core/evm/src/evm_config.rs
-=======
-    use crate::{L1_BLOCK_CONTRACT, OpSpecId};
->>>>>>> 4851abc6b (feat(execution): merge base-revm and base-alloy-evm into base-evm):crates/execution/evm/src/evm_config.rs
     use crate::{OpEvmConfig, OpRethReceiptBuilder};
 
     fn create_op_state_provider() -> StateProviderTest {

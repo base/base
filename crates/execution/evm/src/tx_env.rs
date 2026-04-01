@@ -1,4 +1,5 @@
 use alloy_primitives::Bytes;
+
 use crate::OpTransaction;
 
 /// Trait for OP transaction environments. Allows to recover the transaction encoded bytes if

@@ -19,8 +19,8 @@ use revm::{
 };
 
 use crate::{
-    L1BlockInfo, OpHaltReason, OpSpecId, OpTransactionError, core_evm::OpRevmEvm, handler::OpHandler,
-    transaction::OpTxTr,
+    L1BlockInfo, OpHaltReason, OpSpecId, OpTransactionError, core_evm::OpRevmEvm,
+    handler::OpHandler, transaction::OpTxTr,
 };
 
 /// Type alias for Base context
