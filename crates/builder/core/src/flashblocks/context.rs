@@ -843,8 +843,7 @@ impl OpPayloadBuilderCtx {
 
             // Record state modification counts (trie work proxy)
             let accounts_modified = state.len();
-            let storage_slots_modified: usize =
-                state.values().map(|a| a.storage.len()).sum();
+            let storage_slots_modified: usize = state.values().map(|a| a.storage.len()).sum();
             BuilderMetrics::tx_accounts_modified().record(accounts_modified as f64);
             BuilderMetrics::tx_storage_slots_modified().record(storage_slots_modified as f64);
 
