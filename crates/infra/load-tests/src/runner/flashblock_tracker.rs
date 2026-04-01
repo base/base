@@ -1,17 +1,12 @@
 //! Flashblock subscription and transaction tracking.
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use alloy_primitives::{TxHash, keccak256};
 use base_alloy_flashblocks::Flashblock;
 use futures::StreamExt;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 use url::Url;
 
@@ -27,7 +22,7 @@ const MAX_FLASHBLOCK_CACHE_SIZE: usize = 50_000;
 pub struct FlashblockTracker {
     ws_url: Url,
     flashblock_times: FlashblockTimes,
-    stop_flag: Arc<AtomicBool>,
+    cancel_token: CancellationToken,
 }
 
 impl FlashblockTracker {
@@ -35,9 +30,9 @@ impl FlashblockTracker {
     pub const fn new(
         ws_url: Url,
         flashblock_times: FlashblockTimes,
-        stop_flag: Arc<AtomicBool>,
+        cancel_token: CancellationToken,
     ) -> Self {
-        Self { ws_url, flashblock_times, stop_flag }
+        Self { ws_url, flashblock_times, cancel_token }
     }
 
     /// Starts the flashblock subscription in a background task.
@@ -53,7 +48,7 @@ impl FlashblockTracker {
         let mut backoff = Duration::from_millis(100);
         let max_backoff = Duration::from_secs(5);
 
-        while !self.stop_flag.load(Ordering::SeqCst) {
+        while !self.cancel_token.is_cancelled() {
             match connect_async(self.ws_url.as_str()).await {
                 Ok((ws_stream, _)) => {
                     info!("flashblock websocket connected");
@@ -62,12 +57,13 @@ impl FlashblockTracker {
                     let (_, mut read) = ws_stream.split();
 
                     loop {
-                        if self.stop_flag.load(Ordering::SeqCst) {
-                            debug!("flashblock tracker stopping");
-                            return;
-                        }
-
                         tokio::select! {
+                            biased;
+
+                            _ = self.cancel_token.cancelled() => {
+                                debug!("flashblock tracker stopping");
+                                return;
+                            }
                             msg = read.next() => {
                                 match msg {
                                     Some(Ok(Message::Binary(data))) => {
@@ -91,25 +87,23 @@ impl FlashblockTracker {
                                     }
                                 }
                             }
-                            _ = tokio::time::sleep(Duration::from_millis(100)) => {
-                                if self.stop_flag.load(Ordering::SeqCst) {
-                                    debug!("flashblock tracker stopping");
-                                    return;
-                                }
-                            }
                         }
                     }
                 }
                 Err(e) => {
-                    if self.stop_flag.load(Ordering::SeqCst) {
+                    if self.cancel_token.is_cancelled() {
                         return;
                     }
                     error!(error = %e, backoff_ms = backoff.as_millis(), "flashblock connection failed, retrying");
                 }
             }
 
-            if !self.stop_flag.load(Ordering::SeqCst) {
-                tokio::time::sleep(backoff).await;
+            if !self.cancel_token.is_cancelled() {
+                tokio::select! {
+                    biased;
+                    _ = self.cancel_token.cancelled() => return,
+                    _ = tokio::time::sleep(backoff) => {}
+                }
                 backoff = (backoff * 2).min(max_backoff);
             }
         }
@@ -125,18 +119,30 @@ impl FlashblockTracker {
                 let tx_count = flashblock.diff.transactions.len();
                 trace!(index = flashblock.index, tx_count, "received flashblock");
 
+                // Compute tx hashes outside the lock (keccak256 is pure)
+                let tx_hashes: Vec<TxHash> = flashblock
+                    .diff
+                    .transactions
+                    .iter()
+                    .filter_map(|tx_bytes| Self::extract_tx_hash(tx_bytes).ok())
+                    .collect();
+
+                // Acquire lock only for insertion + pruning
                 let mut times = self.flashblock_times.write();
-                for tx_bytes in &flashblock.diff.transactions {
-                    if let Ok(tx_hash) = Self::extract_tx_hash(tx_bytes) {
-                        times.entry(tx_hash).or_insert(now);
-                    }
+                for tx_hash in tx_hashes {
+                    times.entry(tx_hash).or_insert(now);
                 }
 
+                // Prune using retain with a cutoff instead of drain/sort/re-insert
                 if times.len() > MAX_FLASHBLOCK_CACHE_SIZE {
-                    let mut entries: Vec<_> = times.drain().collect();
-                    entries.sort_by_key(|(_, t)| *t);
-                    let keep_from = entries.len().saturating_sub(MAX_FLASHBLOCK_CACHE_SIZE);
-                    times.extend(entries.into_iter().skip(keep_from));
+                    // Find the cutoff time: keep entries newer than this
+                    let mut timestamps: Vec<Instant> = times.values().copied().collect();
+                    timestamps.sort_unstable();
+                    let keep_count = MAX_FLASHBLOCK_CACHE_SIZE;
+                    let cutoff_idx = timestamps.len().saturating_sub(keep_count);
+                    let cutoff_time = timestamps[cutoff_idx];
+
+                    times.retain(|_, &mut t| t >= cutoff_time);
                 }
             }
             Err(e) => {

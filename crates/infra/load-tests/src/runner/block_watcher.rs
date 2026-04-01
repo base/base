@@ -6,23 +6,20 @@
 
 use std::{
     collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use parking_lot::RwLock;
 use serde::Deserialize;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 use url::Url;
 
 /// Shared map of block numbers to their first-seen timestamps.
 pub type BlockFirstSeen = Arc<RwLock<HashMap<u64, Instant>>>;
 
-/// JSON-RPC subscription message for newHeads.
 #[derive(Debug, Deserialize)]
 struct SubscriptionResponse {
     #[serde(default)]
@@ -49,7 +46,7 @@ const MAX_BLOCK_CACHE_SIZE: usize = 1000;
 pub struct BlockWatcher {
     ws_url: Url,
     block_first_seen: BlockFirstSeen,
-    stop_flag: Arc<AtomicBool>,
+    cancel_token: CancellationToken,
 }
 
 impl BlockWatcher {
@@ -57,9 +54,9 @@ impl BlockWatcher {
     pub const fn new(
         ws_url: Url,
         block_first_seen: BlockFirstSeen,
-        stop_flag: Arc<AtomicBool>,
+        cancel_token: CancellationToken,
     ) -> Self {
-        Self { ws_url, block_first_seen, stop_flag }
+        Self { ws_url, block_first_seen, cancel_token }
     }
 
     /// Starts the block watcher in a background task.
@@ -75,7 +72,7 @@ impl BlockWatcher {
         let mut backoff = Duration::from_millis(100);
         let max_backoff = Duration::from_secs(5);
 
-        while !self.stop_flag.load(Ordering::SeqCst) {
+        while !self.cancel_token.is_cancelled() {
             match connect_async(self.ws_url.as_str()).await {
                 Ok((ws_stream, _)) => {
                     info!("block watcher websocket connected");
@@ -83,7 +80,6 @@ impl BlockWatcher {
 
                     let (mut write, mut read) = futures::StreamExt::split(ws_stream);
 
-                    // Subscribe to newHeads
                     let subscribe_msg = r#"{"jsonrpc":"2.0","id":1,"method":"eth_subscribe","params":["newHeads"]}"#;
                     if let Err(e) = futures::SinkExt::send(
                         &mut write,
@@ -96,12 +92,13 @@ impl BlockWatcher {
                     }
 
                     loop {
-                        if self.stop_flag.load(Ordering::SeqCst) {
-                            debug!("block watcher stopping");
-                            return;
-                        }
-
                         tokio::select! {
+                            biased;
+
+                            _ = self.cancel_token.cancelled() => {
+                                debug!("block watcher stopping");
+                                return;
+                            }
                             msg = futures::StreamExt::next(&mut read) => {
                                 match msg {
                                     Some(Ok(Message::Text(data))) => {
@@ -122,25 +119,23 @@ impl BlockWatcher {
                                     }
                                 }
                             }
-                            _ = tokio::time::sleep(Duration::from_millis(100)) => {
-                                if self.stop_flag.load(Ordering::SeqCst) {
-                                    debug!("block watcher stopping");
-                                    return;
-                                }
-                            }
                         }
                     }
                 }
                 Err(e) => {
-                    if self.stop_flag.load(Ordering::SeqCst) {
+                    if self.cancel_token.is_cancelled() {
                         return;
                     }
                     error!(error = %e, backoff_ms = backoff.as_millis(), "block watcher connection failed, retrying");
                 }
             }
 
-            if !self.stop_flag.load(Ordering::SeqCst) {
-                tokio::time::sleep(backoff).await;
+            if !self.cancel_token.is_cancelled() {
+                tokio::select! {
+                    biased;
+                    _ = self.cancel_token.cancelled() => return,
+                    _ = tokio::time::sleep(backoff) => {}
+                }
                 backoff = (backoff * 2).min(max_backoff);
             }
         }
@@ -154,7 +149,6 @@ impl BlockWatcher {
         let response: SubscriptionResponse = match serde_json::from_str(data) {
             Ok(r) => r,
             Err(e) => {
-                // Subscription confirmation messages don't have params
                 if data.contains("\"result\":\"0x") {
                     debug!("received subscription confirmation");
                     return;
@@ -164,7 +158,6 @@ impl BlockWatcher {
             }
         };
 
-        // Handle subscription notification
         if let Some(params) = response.params {
             let block_number = match parse_hex_u64(&params.result.number) {
                 Ok(n) => n,
@@ -179,7 +172,6 @@ impl BlockWatcher {
             let mut blocks = self.block_first_seen.write();
             blocks.entry(block_number).or_insert(now);
 
-            // Prune old blocks to prevent unbounded memory growth
             if blocks.len() > MAX_BLOCK_CACHE_SIZE {
                 let cutoff = block_number.saturating_sub(MAX_BLOCK_CACHE_SIZE as u64);
                 blocks.retain(|&num, _| num > cutoff);
@@ -188,7 +180,6 @@ impl BlockWatcher {
     }
 }
 
-/// Parses a hex string (with 0x prefix) to u64.
 fn parse_hex_u64(s: &str) -> Result<u64, std::num::ParseIntError> {
     u64::from_str_radix(s.trim_start_matches("0x"), 16)
 }
