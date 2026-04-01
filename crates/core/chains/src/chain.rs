@@ -316,7 +316,7 @@ mod tests {
         let zeronet_forks = BaseChainUpgrades::zeronet();
         assert_eq!(
             zeronet_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
-            ForkCondition::Timestamp(1_775_079_000)
+            ForkCondition::Timestamp(1_775_152_800)
         );
     }
 
