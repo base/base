@@ -69,6 +69,9 @@ pub struct BoundlessProver {
     pub timeout: Duration,
     /// Number of trusted certificates in the chain (typically 1 for root-only).
     pub trusted_certs_prefix_len: u8,
+    /// Maximum number of deterministic request-ID slots to probe when
+    /// recovering in-flight proofs after an instance rotation.
+    pub max_recovery_attempts: u32,
     /// Serialises the `submit_onchain` call so that concurrent proof
     /// requests do not race on the Boundless wallet nonce. The lock is
     /// released immediately after submission, allowing the long-running
@@ -89,19 +92,12 @@ impl fmt::Debug for BoundlessProver {
             .field("poll_interval", &self.poll_interval)
             .field("timeout", &self.timeout)
             .field("trusted_certs_prefix_len", &self.trusted_certs_prefix_len)
+            .field("max_recovery_attempts", &self.max_recovery_attempts)
             .finish()
     }
 }
 
 impl BoundlessProver {
-    /// Maximum number of deterministic request-ID slots to probe when
-    /// attempting to recover an in-flight Boundless proof after instance
-    /// rotation. Each slot is cheap (a single `get_status` RPC call), so
-    /// a small number keeps startup fast while providing room for multiple
-    /// consecutive failures (e.g. expired proofs) before the registrar
-    /// falls through to a fresh submission.
-    pub const MAX_RECOVERY_ATTEMPTS: u32 = 5;
-
     /// Derives a deterministic `u32` index for a Boundless request ID
     /// from the target signer address and an attempt counter.
     ///
@@ -112,8 +108,8 @@ impl BoundlessProver {
     ///
     /// Note: the index is compressed to 32 bits, so collisions are
     /// theoretically possible but astronomically unlikely for the small
-    /// number of slots probed per signer (at most
-    /// [`MAX_RECOVERY_ATTEMPTS`](Self::MAX_RECOVERY_ATTEMPTS)).
+    /// number of slots probed per signer (governed by
+    /// [`max_recovery_attempts`](Self::max_recovery_attempts)).
     pub fn derive_request_index(signer_address: Address, attempt: u32) -> u32 {
         let mut buf = [0u8; 24]; // 20 bytes address + 4 bytes attempt
         buf[..20].copy_from_slice(signer_address.as_slice());
@@ -394,7 +390,7 @@ impl AttestationProofProvider for BoundlessProver {
 
         // Probe deterministic request-ID slots for recovery.
         let mut first_unknown_attempt: Option<u32> = None;
-        for attempt in 0..Self::MAX_RECOVERY_ATTEMPTS {
+        for attempt in 0..self.max_recovery_attempts {
             let index = Self::derive_request_index(signer_address, attempt);
             let rid = RequestId::new(self.signer.address(), index);
             let request_id = alloy_primitives::U256::from(rid);
@@ -548,7 +544,7 @@ impl AttestationProofProvider for BoundlessProver {
             None => {
                 warn!(
                     target_signer = %signer_address,
-                    max_attempts = Self::MAX_RECOVERY_ATTEMPTS,
+                    max_attempts = self.max_recovery_attempts,
                     "all deterministic slots occupied, \
                      falling back to random request ID (non-recoverable)"
                 );
@@ -578,6 +574,7 @@ mod tests {
     const TEST_POLL_INTERVAL: Duration = Duration::from_secs(5);
     const TEST_TIMEOUT: Duration = Duration::from_secs(300);
     const DEFAULT_TRUSTED_PREFIX: u8 = 1;
+    const TEST_MAX_RECOVERY_ATTEMPTS: u32 = 5;
 
     #[fixture]
     fn prover() -> BoundlessProver {
@@ -589,6 +586,7 @@ mod tests {
             poll_interval: TEST_POLL_INTERVAL,
             timeout: TEST_TIMEOUT,
             trusted_certs_prefix_len: DEFAULT_TRUSTED_PREFIX,
+            max_recovery_attempts: TEST_MAX_RECOVERY_ATTEMPTS,
             submit_lock: Arc::new(Mutex::new(())),
         }
     }
@@ -615,6 +613,7 @@ mod tests {
         assert_eq!(prover.poll_interval, TEST_POLL_INTERVAL);
         assert_eq!(prover.timeout, TEST_TIMEOUT);
         assert_eq!(prover.trusted_certs_prefix_len, DEFAULT_TRUSTED_PREFIX);
+        assert_eq!(prover.max_recovery_attempts, TEST_MAX_RECOVERY_ATTEMPTS);
     }
 
     // ── Clone ───────────────────────────────────────────────────────────
@@ -687,7 +686,7 @@ mod tests {
     #[case::typical_address(SIGNER_A)]
     #[case::zero_address(Address::ZERO)]
     fn derive_index_varies_with_attempt(#[case] addr: Address) {
-        let indices: Vec<u32> = (0..BoundlessProver::MAX_RECOVERY_ATTEMPTS)
+        let indices: Vec<u32> = (0..TEST_MAX_RECOVERY_ATTEMPTS)
             .map(|a| BoundlessProver::derive_request_index(addr, a))
             .collect();
         // All indices should be distinct (collision probability is negligible

@@ -19,8 +19,9 @@ use base_proof_tee_nitro_attestation_prover::{
 };
 use base_proof_tee_registrar::{
     AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, DEFAULT_MAX_CONCURRENCY,
-    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, DriverConfig, ProverClient, ProvingConfig,
-    RegistrarConfig, RegistrarError, RegistrarMetrics, RegistrationDriver, RegistryContractClient,
+    DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
+    DriverConfig, ProverClient, ProvingConfig, RegistrarConfig, RegistrarError, RegistrarMetrics,
+    RegistrationDriver, RegistryContractClient,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use clap::{Args, Parser, ValueEnum};
@@ -178,6 +179,15 @@ struct BoundlessArgs {
     #[arg(long, env = cli_env!("BOUNDLESS_TIMEOUT_SECS"), default_value_t = 600)]
     boundless_timeout_secs: u64,
 
+    /// Maximum number of deterministic request-ID slots to probe when
+    /// recovering in-flight proofs after an instance rotation.
+    #[arg(
+        long,
+        env = cli_env!("BOUNDLESS_MAX_RECOVERY_ATTEMPTS"),
+        default_value_t = DEFAULT_MAX_RECOVERY_ATTEMPTS
+    )]
+    boundless_max_recovery_attempts: u32,
+
     /// `NitroEnclaveVerifier` contract address for certificate caching (optional).
     #[arg(long, env = cli_env!("NITRO_VERIFIER_ADDRESS"))]
     nitro_verifier_address: Option<Address>,
@@ -261,6 +271,7 @@ impl Cli {
                     poll_interval: Duration::from_secs(self.boundless.boundless_poll_interval_secs),
                     timeout: Duration::from_secs(self.boundless.boundless_timeout_secs),
                     nitro_verifier_address: self.boundless.nitro_verifier_address,
+                    max_recovery_attempts: self.boundless.boundless_max_recovery_attempts,
                 }))
             }
             ProvingMode::Direct => {
@@ -388,6 +399,7 @@ impl Cli {
                 poll_interval: boundless.poll_interval,
                 timeout: boundless.timeout,
                 trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX,
+                max_recovery_attempts: boundless.max_recovery_attempts,
                 submit_lock: Arc::new(tokio::sync::Mutex::new(())),
             }),
             ProvingConfig::Direct { ref elf_path } => {

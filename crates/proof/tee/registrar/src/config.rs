@@ -21,6 +21,10 @@ pub struct AwsDiscoveryConfig {
     pub port: u16,
 }
 
+/// Default number of deterministic request-ID slots to probe when
+/// recovering in-flight Boundless proofs after an instance rotation.
+pub const DEFAULT_MAX_RECOVERY_ATTEMPTS: u32 = 5;
+
 /// Boundless Network configuration for ZK proof generation.
 #[derive(Clone)]
 pub struct BoundlessConfig {
@@ -39,6 +43,9 @@ pub struct BoundlessConfig {
     pub timeout: Duration,
     /// `NitroEnclaveVerifier` contract address for certificate caching (optional).
     pub nitro_verifier_address: Option<Address>,
+    /// Maximum number of deterministic request-ID slots to probe when
+    /// recovering in-flight proofs after an instance rotation.
+    pub max_recovery_attempts: u32,
 }
 
 impl std::fmt::Debug for BoundlessConfig {
@@ -51,6 +58,7 @@ impl std::fmt::Debug for BoundlessConfig {
             .field("poll_interval", &self.poll_interval)
             .field("timeout", &self.timeout)
             .field("nitro_verifier_address", &self.nitro_verifier_address)
+            .field("max_recovery_attempts", &self.max_recovery_attempts)
             .finish()
     }
 }
