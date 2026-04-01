@@ -3,7 +3,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    FbSequencerLatencyMetrics, GasMetrics, LatencyMetrics, ThroughputMetrics, TransactionMetrics,
+    FlashblocksSequencerLatencyMetrics, GasMetrics, LatencyMetrics, ThroughputMetrics,
+    TransactionMetrics,
 };
 
 /// Aggregates raw transaction metrics into summary statistics.
@@ -22,7 +23,7 @@ impl<'a> MetricsAggregator<'a> {
     pub fn summarize(&self, duration: Duration, submitted: u64, failed: u64) -> MetricsSummary {
         MetricsSummary {
             block_latency: self.compute_block_latency(),
-            fb_sequencer_latency: self.compute_fb_sequencer_latency(),
+            flashblocks_sequencer_latency: self.compute_flashblocks_sequencer_latency(),
             throughput: self.compute_throughput(duration, submitted, failed),
             gas: self.compute_gas(),
         }
@@ -52,9 +53,9 @@ impl<'a> MetricsAggregator<'a> {
         })
     }
 
-    fn compute_fb_sequencer_latency(&self) -> Option<FbSequencerLatencyMetrics> {
+    fn compute_flashblocks_sequencer_latency(&self) -> Option<FlashblocksSequencerLatencyMetrics> {
         let mut latencies: Vec<Duration> =
-            self.transactions.iter().filter_map(|t| t.fb_sequencer_latency).collect();
+            self.transactions.iter().filter_map(|t| t.flashblocks_sequencer_latency).collect();
 
         if latencies.is_empty() {
             return None;
@@ -62,7 +63,7 @@ impl<'a> MetricsAggregator<'a> {
 
         latencies.sort();
 
-        Some(FbSequencerLatencyMetrics {
+        Some(FlashblocksSequencerLatencyMetrics {
             count: latencies.len() as u64,
             p50: Self::percentile(&latencies, 50),
             p90: Self::percentile(&latencies, 90),
@@ -128,7 +129,7 @@ pub struct MetricsSummary {
     /// Block production latency via newHeads WebSocket.
     pub block_latency: Option<LatencyMetrics>,
     /// Sequencer acceptance latency via flashblocks WebSocket.
-    pub fb_sequencer_latency: Option<FbSequencerLatencyMetrics>,
+    pub flashblocks_sequencer_latency: Option<FlashblocksSequencerLatencyMetrics>,
     /// Throughput statistics.
     pub throughput: ThroughputMetrics,
     /// Gas usage statistics.

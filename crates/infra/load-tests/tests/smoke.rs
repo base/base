@@ -133,7 +133,9 @@ fn metrics_summary_latency() {
     assert_eq!(block_latency.max, Duration::from_millis(500));
     assert_eq!(block_latency.p50, Duration::from_millis(300));
 
-    let fb_latency = summary.fb_sequencer_latency.expect("fb_sequencer_latency should be present");
+    let fb_latency = summary
+        .flashblocks_sequencer_latency
+        .expect("flashblocks_sequencer_latency should be present");
     assert_eq!(fb_latency.p50, Duration::from_millis(150));
 }
 

@@ -96,9 +96,9 @@ async fn main() -> Result<()> {
         summary.throughput.gps,
         summary.throughput.success_rate()
     );
-    if let Some(seq) = &summary.fb_sequencer_latency {
+    if let Some(seq) = &summary.flashblocks_sequencer_latency {
         println!(
-            "Sequencer Latency: p50={:.1?}  p90={:.1?}  p99={:.1?}  (n={})",
+            "Flashblocks Sequencer Latency: p50={:.1?}  p90={:.1?}  p99={:.1?}  (n={})",
             seq.p50, seq.p90, seq.p99, seq.count
         );
     }
