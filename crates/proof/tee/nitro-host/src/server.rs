@@ -56,8 +56,11 @@ impl NitroProverServer {
 
         let mut module = RpcModule::new(());
         module.merge(
-            NitroProverRpc { service: self.service, proof_request_timeout: self.proof_request_timeout }
-                .into_rpc(),
+            NitroProverRpc {
+                service: self.service,
+                proof_request_timeout: self.proof_request_timeout,
+            }
+            .into_rpc(),
         )?;
         module.merge(NitroSignerRpc { transport: self.transport }.into_rpc())?;
         module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc())?;
