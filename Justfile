@@ -24,13 +24,13 @@ alias wt := watch-test
 alias wc := watch-check
 alias ldc := load-test-devnet-continuous
 
+# Default to display help menu
+default:
+    @just --list
+
 # Load test devnet in continuous mode (Ctrl-C to stop)
 load-test-devnet-continuous:
     just load-test devnet-continuous
-
-# Default to display help menu
-default:
-    @just --list --list-submodules
 
 # Runs the specs docs locally
 specs:
