@@ -474,6 +474,14 @@ impl AttestationProofProvider for BoundlessProver {
                     }
                 }
                 RequestStatus::Fulfilled => {
+                    // Safety: the recovered proof is guaranteed to match
+                    // the current `attestation_bytes` because the request-
+                    // ID slots are keyed on `signer_address`, which is
+                    // derived from the enclave's key pair. If the enclave
+                    // restarts it gets a new key pair → new signer address
+                    // → entirely different slots. Same signer address
+                    // therefore implies the same enclave instance and the
+                    // same attestation document.
                     info!(
                         attempt,
                         request_id = %request_id,
@@ -496,6 +504,17 @@ impl AttestationProofProvider for BoundlessProver {
                     }
                 }
                 RequestStatus::Expired => {
+                    // Note: expired slots are never reclaimed. After
+                    // `max_recovery_attempts` consecutive expirations for
+                    // a given signer (across any number of restarts), all
+                    // deterministic slots will be permanently Expired and
+                    // subsequent calls will fall back to random, non-
+                    // recoverable request IDs. This is acceptable because
+                    // repeated expirations indicate a systemic issue
+                    // (misconfigured timeout, marketplace problems) that
+                    // requires operator intervention regardless. The
+                    // "falling back to random request ID" warning serves
+                    // as the monitoring signal for this condition.
                     debug!(
                         attempt,
                         request_id = %request_id,
