@@ -553,6 +553,8 @@ impl LoadRunner {
             if use_live_display {
                 if last_progress_report.elapsed() >= DISPLAY_RENDER_INTERVAL {
                     let (p50, p99) = self.collector.rolling_p50_p99();
+                    let (flashblocks_p50, flashblocks_p99) =
+                        self.collector.rolling_flashblocks_p50_p99();
                     let snap = DisplaySnapshot {
                         elapsed: start.elapsed(),
                         duration: self.config.duration,
@@ -567,6 +569,8 @@ impl LoadRunner {
                         rolling_gps: self.collector.rolling_gps(),
                         p50_latency: p50,
                         p99_latency: p99,
+                        flashblocks_p50_latency: flashblocks_p50,
+                        flashblocks_p99_latency: flashblocks_p99,
                         gas_price_gwei: self.gas_price as f64 / 1e9,
                         total_eth: self.last_total_eth.clone(),
                         min_eth: self.last_min_eth.clone(),
@@ -582,6 +586,8 @@ impl LoadRunner {
                 let failed = self.collector.failed_count();
                 let in_flight = confirmer_handle.total_in_flight();
                 let senders_blocked = confirmer_handle.senders_at_limit(max_in_flight_per_sender);
+                let (flashblocks_p50, flashblocks_p99) =
+                    self.collector.rolling_flashblocks_p50_p99();
                 info!(
                     elapsed_secs,
                     submitted,
@@ -590,6 +596,8 @@ impl LoadRunner {
                     in_flight,
                     senders_blocked,
                     gas_price = self.gas_price,
+                    flashblocks_seq_p50_ms = flashblocks_p50.as_millis() as u64,
+                    flashblocks_seq_p99_ms = flashblocks_p99.as_millis() as u64,
                     "progress"
                 );
                 last_progress_report = Instant::now();

@@ -13,8 +13,8 @@ pub use rpc::{ReceiptProvider, RpcClient, WalletProvider, create_wallet_provider
 
 mod metrics;
 pub use metrics::{
-    FbSequencerLatencyMetrics, GasMetrics, LatencyMetrics, MetricsAggregator, MetricsCollector,
-    MetricsSummary, RollingWindow, ThroughputMetrics, TransactionMetrics,
+    FlashblocksSequencerLatencyMetrics, GasMetrics, LatencyMetrics, MetricsAggregator,
+    MetricsCollector, MetricsSummary, RollingWindow, ThroughputMetrics, TransactionMetrics,
 };
 
 mod workload;

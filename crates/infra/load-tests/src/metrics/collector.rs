@@ -13,6 +13,7 @@ pub struct MetricsCollector {
     submitted_count: u64,
     failed_count: u64,
     rolling: RollingWindow,
+    flashblocks_rolling: RollingWindow,
 }
 
 impl MetricsCollector {
@@ -24,6 +25,7 @@ impl MetricsCollector {
             submitted_count: 0,
             failed_count: 0,
             rolling: RollingWindow::new(),
+            flashblocks_rolling: RollingWindow::new(),
         }
     }
 
@@ -43,6 +45,9 @@ impl MetricsCollector {
         debug!(tx_hash = %metrics.tx_hash, block_latency_ms = ?metrics.block_latency.map(|d| d.as_millis()), "tx confirmed");
         if let Some(latency) = metrics.block_latency {
             self.rolling.push(metrics.gas_used, latency);
+        }
+        if let Some(flashblocks_latency) = metrics.flashblocks_sequencer_latency {
+            self.flashblocks_rolling.push_latency(flashblocks_latency);
         }
         self.transactions.push(metrics);
     }
@@ -85,6 +90,7 @@ impl MetricsCollector {
         self.submitted_count = 0;
         self.failed_count = 0;
         self.rolling = RollingWindow::new();
+        self.flashblocks_rolling = RollingWindow::new();
     }
 
     /// Returns the rolling 30s TPS.
@@ -100,6 +106,11 @@ impl MetricsCollector {
     /// Returns the rolling 30s (p50, p99) latency percentiles.
     pub fn rolling_p50_p99(&mut self) -> (std::time::Duration, std::time::Duration) {
         self.rolling.p50_p99()
+    }
+
+    /// Returns the rolling 30s (p50, p99) flashblocks sequencer latency percentiles.
+    pub fn rolling_flashblocks_p50_p99(&mut self) -> (std::time::Duration, std::time::Duration) {
+        self.flashblocks_rolling.p50_p99()
     }
 
     /// Returns the average gas used per confirmed transaction.

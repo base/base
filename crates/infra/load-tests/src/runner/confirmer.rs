@@ -156,7 +156,11 @@ impl Confirmer {
         }
     }
 
-    fn get_fb_sequencer_latency(&self, tx_hash: &TxHash, pending: &PendingTx) -> Option<Duration> {
+    fn get_flashblocks_sequencer_latency(
+        &self,
+        tx_hash: &TxHash,
+        pending: &PendingTx,
+    ) -> Option<Duration> {
         self.flashblock_times
             .read()
             .get(tx_hash)
@@ -326,11 +330,12 @@ impl Confirmer {
                 Ok(Some(receipt)) => {
                     let block_num = receipt.inner.block_number.unwrap_or(0);
                     let block_latency = self.get_block_latency(block_num, pending);
-                    let fb_sequencer_latency = self.get_fb_sequencer_latency(&tx_hash, pending);
+                    let flashblocks_sequencer_latency =
+                        self.get_flashblocks_sequencer_latency(&tx_hash, pending);
                     let metrics = TransactionMetrics::new(
                         tx_hash,
                         block_latency,
-                        fb_sequencer_latency,
+                        flashblocks_sequencer_latency,
                         receipt.inner.gas_used,
                         receipt.inner.effective_gas_price,
                         block_num,
