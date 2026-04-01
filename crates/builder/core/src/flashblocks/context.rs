@@ -871,9 +871,10 @@ impl OpPayloadBuilderCtx {
             info.cumulative_da_bytes_used += tx_da_size;
             // record uncompressed tx size
             info.cumulative_uncompressed_bytes += tx_uncompressed_size;
-            // record execution time (use predicted time if available, fall back to actual)
-            info.flashblock_execution_time_us +=
-                predicted_execution_time_us.unwrap_or(actual_execution_time_us);
+            // record execution time (only from predictions; unmetered txs count as zero)
+            if let Some(execution_time) = predicted_execution_time_us {
+                info.flashblock_execution_time_us += execution_time;
+            }
             // record state root gas (only from predictions)
             if let Some(sr_gas) = state_root_gas {
                 info.cumulative_state_root_gas += sr_gas;
