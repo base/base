@@ -197,7 +197,6 @@ mod tests {
         fn on_handshake_error(&self) {}
     }
 
-
     async fn bind_listener() -> (TcpListener, SocketAddr) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

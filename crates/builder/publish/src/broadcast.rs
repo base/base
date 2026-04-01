@@ -139,12 +139,11 @@ impl BroadcastLoop {
         // per entry. Lock hold time is bounded by entry count, not payload size.
         let (snapshot, stale) = {
             let buf = self.ring_buffer.read();
+            let stale = buf.oldest_position().is_some_and(|oldest| cutoff < oldest);
             let snapshot: Vec<_> = buf
                 .positioned_entries_after(cutoff)
                 .map(|(pos, val)| (*pos, val.clone()))
                 .collect();
-            let stale =
-                snapshot.is_empty() && buf.oldest_position().is_some_and(|oldest| cutoff < oldest);
             (snapshot, stale)
         };
         if stale {
@@ -233,12 +232,13 @@ mod tests {
     }
 
     struct MockMetrics {
-        sent: std::sync::atomic::AtomicU64,
-        lagged: std::sync::atomic::AtomicU64,
+        sent: AtomicU64,
+        lagged: AtomicU64,
+        stale: AtomicU64,
     }
     impl MockMetrics {
         fn new() -> Self {
-            Self { sent: AtomicU64::new(0), lagged: AtomicU64::new(0) }
+            Self { sent: AtomicU64::new(0), lagged: AtomicU64::new(0), stale: AtomicU64::new(0) }
         }
     }
 
@@ -254,6 +254,9 @@ mod tests {
         fn on_payload_size(&self, _size: usize) {}
         fn on_send_error(&self) {}
         fn on_handshake_error(&self) {}
+        fn on_replay_stale_position(&self) {
+            self.stale.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     #[tokio::test]
@@ -398,5 +401,115 @@ mod tests {
         drop(tx);
 
         server_handle.await.unwrap();
+    }
+
+    /// `on_replay_stale_position` must NOT fire when the client's cutoff is
+    /// at or after the latest ring buffer entry (client is up-to-date).
+    #[tokio::test]
+    async fn stale_metric_not_fired_when_client_is_up_to_date() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (_tx, rx) = broadcast::channel::<PositionedPayload>(16);
+        let cancel = CancellationToken::new();
+        let metrics = Arc::new(MockMetrics::new());
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(4))));
+
+        {
+            let mut buf = ring_buffer.write();
+            buf.push(
+                FlashblockPosition { block_number: 1, flashblock_index: 0 },
+                Utf8Bytes::from("a"),
+            );
+            buf.push(
+                FlashblockPosition { block_number: 1, flashblock_index: 1 },
+                Utf8Bytes::from("b"),
+            );
+            buf.push(
+                FlashblockPosition { block_number: 2, flashblock_index: 0 },
+                Utf8Bytes::from("c"),
+            );
+        }
+
+        // cutoff == latest entry: no entries to replay, not stale.
+        let resume_from = Some(FlashblockPosition { block_number: 2, flashblock_index: 0 });
+
+        let server_handle = tokio::spawn({
+            let metrics = Arc::clone(&metrics) as Arc<dyn crate::PublisherMetrics>;
+            let cancel = cancel.clone();
+            let ring_buffer = Arc::clone(&ring_buffer);
+            async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let ws = accept_async(stream).await.unwrap();
+                BroadcastLoop::new(ws, metrics, cancel, rx, ring_buffer, resume_from).run().await;
+            }
+        });
+
+        let (_client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        assert_eq!(
+            metrics.stale.load(Ordering::Relaxed),
+            0,
+            "false positive: stale fired for up-to-date client"
+        );
+
+        cancel.cancel();
+        let _ = server_handle.await;
+    }
+
+    /// `on_replay_stale_position` must fire when the client's cutoff is
+    /// before the oldest entry in the ring buffer (eviction gap).
+    #[tokio::test]
+    async fn stale_metric_fired_when_cutoff_before_oldest() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (_tx, rx) = broadcast::channel::<PositionedPayload>(16);
+        let cancel = CancellationToken::new();
+        let metrics = Arc::new(MockMetrics::new());
+        // capacity 2: after three pushes the first entry is evicted.
+        let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(2))));
+
+        {
+            let mut buf = ring_buffer.write();
+            buf.push(
+                FlashblockPosition { block_number: 1, flashblock_index: 0 },
+                Utf8Bytes::from("a"),
+            );
+            buf.push(
+                FlashblockPosition { block_number: 2, flashblock_index: 0 },
+                Utf8Bytes::from("b"),
+            );
+            buf.push(
+                FlashblockPosition { block_number: 3, flashblock_index: 0 },
+                Utf8Bytes::from("c"),
+            );
+            // oldest is now (2, 0); (1, 0) was evicted
+        }
+
+        // cutoff before oldest → stale
+        let resume_from = Some(FlashblockPosition { block_number: 1, flashblock_index: 0 });
+
+        let server_handle = tokio::spawn({
+            let metrics = Arc::clone(&metrics) as Arc<dyn crate::PublisherMetrics>;
+            let cancel = cancel.clone();
+            let ring_buffer = Arc::clone(&ring_buffer);
+            async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let ws = accept_async(stream).await.unwrap();
+                BroadcastLoop::new(ws, metrics, cancel, rx, ring_buffer, resume_from).run().await;
+            }
+        });
+
+        let (_client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        assert_eq!(
+            metrics.stale.load(Ordering::Relaxed),
+            1,
+            "stale not fired for cutoff before oldest"
+        );
+
+        cancel.cancel();
+        let _ = server_handle.await;
     }
 }

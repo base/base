@@ -55,41 +55,27 @@ impl PublisherMetrics for NoopPublisherMetrics {
     fn on_handshake_error(&self) {}
 }
 
-/// Concrete [`PublisherMetrics`] implementation backed by the [`metrics`] crate.
-///
-/// Registers counters, gauges, and histograms under the `base_builder` scope
-/// in the global metrics recorder. Created automatically by
-/// [`WebSocketPublisher::new`](crate::WebSocketPublisher::new).
-pub struct PublishingMetrics {
-    messages_sent_count: metrics::Counter,
-    replay_messages_sent_count: metrics::Counter,
-    replay_stale_position_count: metrics::Counter,
-    ws_connections_active: metrics::Gauge,
-    ws_lagged_count: metrics::Counter,
-    ws_payload_byte_size: metrics::Histogram,
-    ws_send_error_count: metrics::Counter,
-    ws_handshake_error_count: metrics::Counter,
-    ws_connection_duration: metrics::Histogram,
-}
-
-impl Default for PublishingMetrics {
-    fn default() -> Self {
-        Self {
-            messages_sent_count: metrics::counter!("base_builder_messages_sent_count"),
-            replay_messages_sent_count: metrics::counter!(
-                "base_builder_replay_messages_sent_count"
-            ),
-            replay_stale_position_count: metrics::counter!(
-                "base_builder_replay_stale_position_count"
-            ),
-            ws_connections_active: metrics::gauge!("base_builder_ws_connections_active"),
-            ws_lagged_count: metrics::counter!("base_builder_ws_lagged_count"),
-            ws_payload_byte_size: metrics::histogram!("base_builder_ws_payload_byte_size"),
-            ws_send_error_count: metrics::counter!("base_builder_ws_send_error_count"),
-            ws_handshake_error_count: metrics::counter!("base_builder_ws_handshake_error_count"),
-            ws_connection_duration: metrics::histogram!("base_builder_ws_connection_duration"),
-        }
-    }
+base_metrics::define_metrics! {
+    base_builder,
+    struct = PublishingMetrics,
+    #[describe("Total messages sent to subscribers")]
+    messages_sent_count: counter,
+    #[describe("Total replay messages sent during reconnection")]
+    replay_messages_sent_count: counter,
+    #[describe("Total stale-position replays (eviction gaps)")]
+    replay_stale_position_count: counter,
+    #[describe("Active WebSocket connections")]
+    ws_connections_active: gauge,
+    #[describe("Total lagged messages dropped")]
+    ws_lagged_count: counter,
+    #[describe("Payload byte size histogram")]
+    ws_payload_byte_size: histogram,
+    #[describe("Total WebSocket send errors")]
+    ws_send_error_count: counter,
+    #[describe("Total WebSocket handshake errors")]
+    ws_handshake_error_count: counter,
+    #[describe("WebSocket connection duration")]
+    ws_connection_duration: histogram,
 }
 
 impl Debug for PublishingMetrics {
@@ -100,40 +86,40 @@ impl Debug for PublishingMetrics {
 
 impl PublisherMetrics for PublishingMetrics {
     fn on_message_sent(&self) {
-        self.messages_sent_count.increment(1);
+        Self::messages_sent_count().increment(1);
     }
 
     fn on_replay_message_sent(&self) {
-        self.replay_messages_sent_count.increment(1);
+        Self::replay_messages_sent_count().increment(1);
     }
 
     fn on_connection_opened(&self) {
-        self.ws_connections_active.increment(1.0);
+        Self::ws_connections_active().increment(1.0);
     }
 
     fn on_connection_closed(&self, duration: Duration) {
-        self.ws_connections_active.decrement(1.0);
-        self.ws_connection_duration.record(duration.as_secs_f64());
+        Self::ws_connections_active().decrement(1.0);
+        Self::ws_connection_duration().record(duration.as_secs_f64());
     }
 
     fn on_lagged(&self, skipped: u64) {
-        self.ws_lagged_count.increment(skipped);
+        Self::ws_lagged_count().increment(skipped);
     }
 
     fn on_payload_size(&self, size: usize) {
-        self.ws_payload_byte_size.record(size as f64);
+        Self::ws_payload_byte_size().record(size as f64);
     }
 
     fn on_send_error(&self) {
-        self.ws_send_error_count.increment(1);
+        Self::ws_send_error_count().increment(1);
     }
 
     fn on_handshake_error(&self) {
-        self.ws_handshake_error_count.increment(1);
+        Self::ws_handshake_error_count().increment(1);
     }
 
     fn on_replay_stale_position(&self) {
-        self.replay_stale_position_count.increment(1);
+        Self::replay_stale_position_count().increment(1);
     }
 }
 
@@ -157,7 +143,7 @@ mod tests {
 
     #[test]
     fn publishing_metrics_can_be_constructed_and_called() {
-        let metrics = PublishingMetrics::default();
+        let metrics = PublishingMetrics;
         metrics.on_message_sent();
         metrics.on_replay_message_sent();
         metrics.on_connection_opened();

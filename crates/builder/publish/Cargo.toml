@@ -18,20 +18,23 @@ futures.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 tokio-util.workspace = true
-base-metrics.workspace = true
 parking_lot.workspace = true
+base-metrics.workspace = true
 base-ring-buffer.workspace = true
 tokio-tungstenite.workspace = true
+metrics = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["net", "sync", "macros", "rt", "time"] }
 
 [dev-dependencies]
 criterion.workspace = true
-metrics.workspace = true
 tokio-tungstenite.workspace = true
-metrics-exporter-prometheus.workspace = true
 tokio = { workspace = true, features = ["net", "sync", "macros", "rt", "rt-multi-thread", "test-util"] }
 
 [[bench]]
 name = "publisher"
 harness = false
+
+[features]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]

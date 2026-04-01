@@ -635,7 +635,8 @@ mod tests {
     #[test]
     fn connect_uri_without_position() {
         let uri: Uri = "ws://localhost:9999/ws".parse().unwrap();
-        let subscriber = WebsocketSubscriber::new(uri.clone(), |_: String| {}, SubscriberOptions::default());
+        let subscriber =
+            WebsocketSubscriber::new(uri.clone(), |_: String| {}, SubscriberOptions::default());
         assert_eq!(subscriber.connect_uri(), uri);
     }
 

@@ -9,7 +9,7 @@ use tokio_tungstenite::tungstenite::Utf8Bytes;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::{Listener, PublishingMetrics};
+use crate::{Listener, PublisherMetrics, PublishingMetrics};
 
 /// Position key for a flashblock within a block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
