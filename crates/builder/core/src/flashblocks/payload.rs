@@ -1229,6 +1229,99 @@ mod tests {
         assert_eq!(fb_payload.diff.block_hash, payload.block().hash(), "hash mismatch");
     }
 
+    /// Verify that [`build_block`] exercises the state root calculation path
+    /// when `calculate_state_root = true`.
+    ///
+    /// With [`NoopProvider`], both `hashed_post_state` and
+    /// `state_root_with_updates` return defaults, so the state root ends up
+    /// as [`B256::ZERO`].  The important property under test is that the
+    /// `calculate_state_root = true` branch runs without error and the
+    /// resulting header carries the computed root.
+    #[test]
+    fn build_block_empty_with_state_root() {
+        let chain_spec = minimal_chain_spec();
+        let parent = genesis_header();
+        let ctx = OpPayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
+
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+
+        let (payload, _fb_payload) =
+            build_block::<_, NoopProvider>(&mut state, &ctx, &mut info, true)
+                .expect("build_block with state root should succeed");
+
+        // NoopProvider returns B256::default() for all state root queries,
+        // which equals B256::ZERO.
+        assert_eq!(
+            payload.block().state_root,
+            B256::ZERO,
+            "NoopProvider should yield a zero state root"
+        );
+
+        assert_eq!(payload.block().number, parent.number + 1);
+    }
+
+    /// [`build_block`] must return an error when the EVM environment's block
+    /// number does not match `parent.number + 1`.
+    ///
+    /// In production this would indicate a bug in context construction or a
+    /// stale parent header.  The guard at the top of `build_block` exists to
+    /// catch exactly this class of misconfiguration.
+    #[test]
+    fn build_block_rejects_block_number_mismatch() {
+        let chain_spec = minimal_chain_spec();
+        let parent = genesis_header();
+        let mut ctx = OpPayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
+
+        // Tamper with the EVM block number so it disagrees with parent + 1.
+        // parent.number is 0, so the expected block number is 1.
+        // Setting it to 99 should trigger the mismatch guard.
+        ctx.evm_env.block_env.number = U256::from(99);
+
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+
+        let err = build_block::<_, NoopProvider>(&mut state, &ctx, &mut info, false)
+            .expect_err("build_block should fail on block number mismatch");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("block number mismatch"),
+            "error should mention block number mismatch, got: {msg}"
+        );
+    }
+
+    /// [`build_block`] must return an error when the payload attributes lack
+    /// a `parent_beacon_block_root`.
+    ///
+    /// The flashblocks payload construction unconditionally reads this field,
+    /// so a `None` value is an unrecoverable configuration error that should
+    /// surface clearly rather than panicking.
+    #[test]
+    fn build_block_rejects_missing_beacon_block_root() {
+        let chain_spec = minimal_chain_spec();
+        let parent = genesis_header();
+        let mut ctx = OpPayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
+
+        // Clear the parent beacon block root that for_test() sets.
+        ctx.config.attributes.payload_attributes.parent_beacon_block_root = None;
+
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+
+        let err = build_block::<_, NoopProvider>(&mut state, &ctx, &mut info, false)
+            .expect_err("build_block should fail without beacon block root");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("parent beacon block root not found"),
+            "error should mention missing beacon block root, got: {msg}"
+        );
+    }
+
     /// Pin the JSON field names and structure of [`FlashblocksMetadata`].
     ///
     /// This struct is serialized into the `metadata` field of the flashblocks
