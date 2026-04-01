@@ -7,7 +7,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionTrait};
 use base_consensus_genesis::RollupConfig;
 use base_protocol::{Batch, BatchReader, BlockInfo, Channel, ChannelId, Frame};
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use tracing::{debug, info};
 
 /// Maximum depth allowed for the recent-transaction startup scan.
@@ -65,10 +65,10 @@ impl RecentTxScanner {
         let mut highest_l2: Option<u64> = None;
 
         // Fetch blocks in parallel with bounded concurrency, preserving L1 order.
-        // Each future returns a `Result`, and `try_collect` short-circuits on
-        // the first RPC failure — matching the original sequential behavior
-        // instead of waiting for all in-flight requests to complete or time out.
-        let fetched: Vec<(u64, _)> = futures::stream::iter(scan_start..=current_l1)
+        // Blocks are processed as the stream yields them so peak memory is
+        // bounded by the concurrency limit (~16 blocks) rather than the full
+        // scan depth (~128 blocks).
+        let block_stream = futures::stream::iter(scan_start..=current_l1)
             .map(|block_num| {
                 let provider = l1_provider.clone();
                 async move {
@@ -80,11 +80,11 @@ impl RecentTxScanner {
                     eyre::Ok((block_num, block))
                 }
             })
-            .buffered(16)
-            .try_collect()
-            .await?;
+            .buffered(16);
+        futures::pin_mut!(block_stream);
 
-        for (block_num, block) in fetched {
+        while let Some(result) = block_stream.next().await {
+            let (block_num, block) = result?;
             let block = match block {
                 Some(b) => b,
                 None => {
