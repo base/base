@@ -107,14 +107,17 @@ fn metrics_collector_counts() {
 
 #[test]
 fn metrics_summary_latency() {
+    use std::time::Duration;
+
     let mut collector = MetricsCollector::new();
     collector.start();
 
-    for i in 0..5 {
+    let latencies_ms = [100, 200, 300, 400, 500];
+    for (i, ms) in latencies_ms.iter().enumerate() {
         collector.record_confirmed(TransactionMetrics::new(
             TxHash::repeat_byte(i as u8),
-            None,
-            None,
+            Some(Duration::from_millis(*ms)),
+            Some(Duration::from_millis(*ms / 2)),
             21000,
             1_000_000_000,
             i as u64,
@@ -124,6 +127,14 @@ fn metrics_summary_latency() {
     let summary = collector.summarize();
 
     assert_eq!(summary.throughput.total_confirmed, 5);
+
+    let block_latency = summary.block_latency.expect("block_latency should be present");
+    assert_eq!(block_latency.min, Duration::from_millis(100));
+    assert_eq!(block_latency.max, Duration::from_millis(500));
+    assert_eq!(block_latency.p50, Duration::from_millis(300));
+
+    let fb_latency = summary.fb_sequencer_latency.expect("fb_sequencer_latency should be present");
+    assert_eq!(fb_latency.p50, Duration::from_millis(150));
 }
 
 #[test]
