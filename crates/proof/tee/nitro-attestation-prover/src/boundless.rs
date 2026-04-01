@@ -2,16 +2,30 @@
 //!
 //! Submits proof requests to the Boundless decentralised proving marketplace
 //! and polls for fulfillment with a configurable timeout.
+//!
+//! # Proof recovery
+//!
+//! When the registrar's instance rotates mid-proof (e.g. during an ASG
+//! deployment), in-flight Boundless proofs would normally be lost — the
+//! new instance has no memory of the old request and submits (and pays
+//! for) a brand-new one. The recovery mechanism avoids this by deriving
+//! request IDs deterministically from the target signer address, so
+//! that the new instance can rediscover and resume any in-flight proof
+//! without external state.
+//!
+//! See [`BoundlessProver::derive_request_index`] and the
+//! [`generate_proof_for_signer`](AttestationProofProvider::generate_proof_for_signer)
+//! override on [`BoundlessProver`] for details.
 
 use std::{fmt, sync::Arc, time::Duration};
 
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_signer_local::PrivateKeySigner;
 use base_proof_tee_nitro_verifier::VerifierInput;
 use boundless_market::{
-    Client,
-    contracts::Predicate,
-    request_builder::{RequestParams, RequirementParams},
+    Client, NotProvided,
+    contracts::{Predicate, RequestId, RequestStatus},
+    request_builder::{RequestParams, RequirementParams, StandardRequestBuilder},
 };
 use risc0_zkvm::sha::Digest;
 use tokio::sync::Mutex;
@@ -19,6 +33,21 @@ use tracing::{debug, info, warn};
 use url::Url;
 
 use crate::{AttestationProof, AttestationProofProvider, ProverError, Result};
+
+/// Concrete [`Client`] type produced by the builder chain used in
+/// [`BoundlessProver`]. The uploader is [`NotProvided`] because we
+/// use inline inputs (stdin) rather than uploading to external storage.
+type BoundlessClient = Client<
+    boundless_market::DynProvider,
+    NotProvided,
+    boundless_market::StandardDownloader,
+    StandardRequestBuilder<
+        boundless_market::DynProvider,
+        NotProvided,
+        boundless_market::StandardDownloader,
+    >,
+    PrivateKeySigner,
+>;
 
 /// Attestation prover using the Boundless marketplace.
 ///
@@ -52,7 +81,10 @@ impl fmt::Debug for BoundlessProver {
         f.debug_struct("BoundlessProver")
             .field("rpc_url", &self.rpc_url.origin().unicode_serialization())
             .field("signer", &self.signer.address())
-            .field("verifier_program_url", &self.verifier_program_url)
+            .field(
+                "verifier_program_url",
+                &self.verifier_program_url.origin().unicode_serialization(),
+            )
             .field("image_id", &self.image_id)
             .field("poll_interval", &self.poll_interval)
             .field("timeout", &self.timeout)
@@ -62,6 +94,33 @@ impl fmt::Debug for BoundlessProver {
 }
 
 impl BoundlessProver {
+    /// Maximum number of deterministic request-ID slots to probe when
+    /// attempting to recover an in-flight Boundless proof after instance
+    /// rotation. Each slot is cheap (a single `get_status` RPC call), so
+    /// a small number keeps startup fast while providing room for multiple
+    /// consecutive failures (e.g. expired proofs) before the registrar
+    /// falls through to a fresh submission.
+    pub const MAX_RECOVERY_ATTEMPTS: u32 = 5;
+
+    /// Derives a deterministic `u32` index for a Boundless request ID
+    /// from the target signer address and an attempt counter.
+    ///
+    /// The index is the first 4 bytes of `keccak256(signer_address ||
+    /// attempt)` interpreted as big-endian `u32`. This gives each
+    /// (signer, attempt) pair a collision-resistant slot in the Boundless
+    /// request-ID space without requiring any persisted state.
+    ///
+    /// Note: the index is compressed to 32 bits, so collisions are
+    /// theoretically possible but astronomically unlikely for the small
+    /// number of slots probed per signer (at most
+    /// [`MAX_RECOVERY_ATTEMPTS`](Self::MAX_RECOVERY_ATTEMPTS)).
+    pub fn derive_request_index(signer_address: Address, attempt: u32) -> u32 {
+        let mut buf = [0u8; 24]; // 20 bytes address + 4 bytes attempt
+        buf[..20].copy_from_slice(signer_address.as_slice());
+        buf[20..].copy_from_slice(&attempt.to_be_bytes());
+        let hash = keccak256(buf);
+        u32::from_be_bytes([hash[0], hash[1], hash[2], hash[3]])
+    }
     /// Checks whether an error from the Boundless SDK is the
     /// `RequestIsNotLocked` revert caused by the TOCTOU race in
     /// `get_status()`.
@@ -79,120 +138,62 @@ impl BoundlessProver {
         let debug = format!("{e:?}");
         debug.to_ascii_lowercase().contains(NEEDLE)
     }
-}
 
-#[async_trait::async_trait]
-impl AttestationProofProvider for BoundlessProver {
-    async fn generate_proof(&self, attestation_bytes: &[u8]) -> Result<AttestationProof> {
-        let input = VerifierInput {
-            trustedCertsPrefixLen: self.trusted_certs_prefix_len,
-            attestationReport: Bytes::copy_from_slice(attestation_bytes),
-        };
-        let input_bytes = input.encode();
-
-        let image_id = Digest::from(self.image_id);
-
-        info!(
-            image_id = ?self.image_id,
-            input_len = input_bytes.len(),
-            attestation_len = attestation_bytes.len(),
-            rpc_url = %self.rpc_url.origin().unicode_serialization(),
-            signer_address = %self.signer.address(),
-            program_url = %self.verifier_program_url,
-            timeout = ?self.timeout,
-            poll_interval = ?self.poll_interval,
-            trusted_certs_prefix_len = self.trusted_certs_prefix_len,
-            "submitting proof request to Boundless"
-        );
-
-        let client = Client::builder()
-            .with_rpc_url(self.rpc_url.clone())
-            .with_private_key(self.signer.clone())
-            .config_storage_layer(|c| c.inline_input_max_bytes(8192))
-            .build()
+    /// Fetches and ABI-encodes the set inclusion receipt for a fulfilled
+    /// Boundless request. Shared between the recovery and fresh-submission
+    /// paths.
+    async fn fetch_and_encode_receipt(
+        &self,
+        client: &BoundlessClient,
+        request_id: alloy_primitives::U256,
+    ) -> Result<AttestationProof> {
+        let image_id_bytes: [u8; 32] = Digest::from(self.image_id).into();
+        let image_id_b256 = B256::from(image_id_bytes);
+        let (journal, receipt) = client
+            .fetch_set_inclusion_receipt(request_id, image_id_b256, None, None)
             .await
             .map_err(|e| {
                 warn!(
                     error = %e,
                     error_debug = ?e,
-                    rpc_url = %self.rpc_url.origin().unicode_serialization(),
-                    signer_address = %self.signer.address(),
-                    "failed to build Boundless client"
+                    request_id = %request_id,
+                    image_id = ?self.image_id,
+                    "failed to fetch set inclusion receipt"
                 );
-                ProverError::Boundless(format!("failed to build client: {e}"))
+                ProverError::Boundless(format!("failed to fetch set inclusion receipt: {e}"))
             })?;
 
-        debug!("Boundless client built successfully");
-
-        // Build request parameters: program URL + stdin input + predicate.
-        let params = RequestParams::new()
-            .with_program_url(self.verifier_program_url.clone())
-            .map_err(|e| {
-                warn!(
-                    error = %e,
-                    error_debug = ?e,
-                    program_url = %self.verifier_program_url,
-                    "invalid Boundless program URL"
-                );
-                ProverError::Boundless(format!("invalid program URL: {e}"))
-            })?
-            .with_stdin(input_bytes)
-            .with_image_id(image_id)
-            .with_requirements(
-                RequirementParams::builder().predicate(Predicate::prefix_match(image_id, [])),
+        let encoded_seal = receipt.abi_encode_seal().map_err(|e| {
+            warn!(
+                error = %e,
+                error_debug = ?e,
+                request_id = %request_id,
+                "failed to ABI-encode set inclusion seal"
             );
+            ProverError::Boundless(format!("failed to encode set inclusion seal: {e}"))
+        })?;
 
-        // Acquire the submit lock to serialise on-chain submissions and
-        // prevent nonce races when multiple proofs are generated concurrently.
-        // The lock is dropped immediately after submission so that the
-        // long-running fulfillment poll runs concurrently.
-        let (request_id, expires_at) = {
-            let _guard = self.submit_lock.lock().await;
-            client.submit_onchain(params).await.map_err(|e| {
-                warn!(
-                    error = %e,
-                    error_debug = ?e,
-                    image_id = ?self.image_id,
-                    signer_address = %self.signer.address(),
-                    "failed to submit Boundless proof request on-chain"
-                );
-                ProverError::Boundless(format!("failed to submit request: {e}"))
-            })?
-        };
+        let proof_bytes = Bytes::from(encoded_seal);
 
         info!(
             request_id = %request_id,
-            expires_at,
-            "proof request submitted, waiting for fulfillment"
+            journal_len = journal.len(),
+            seal_len = proof_bytes.len(),
+            "set inclusion receipt fetched and seal encoded successfully"
         );
 
-        // Compute the expiry from timeout: pick the sooner of expires_at and
-        // now + timeout.
-        let timeout_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            .saturating_add(self.timeout.as_secs());
-        let effective_expiry = expires_at.min(timeout_at);
+        Ok(AttestationProof { output: journal, proof_bytes })
+    }
 
-        debug!(
-            timeout_at,
-            effective_expiry,
-            request_id = %request_id,
-            poll_interval = ?self.poll_interval,
-            "waiting for fulfillment with computed expiry"
-        );
-
-        // Wait for marketplace fulfillment (prover completes the proof).
-        //
-        // The Boundless SDK has a race condition in `get_status()`: it calls
-        // `is_locked()` then `requestDeadline()` as separate RPC calls. If
-        // the request is fulfilled between these calls, `requestDeadline()`
-        // reverts with `RequestIsNotLocked` and the SDK treats it as fatal.
-        // We retry immediately on this specific error since the next poll
-        // will find the request fulfilled via the `is_fulfilled()` check
-        // that runs first. No sleep is needed — the request is already
-        // fulfilled; we just need the SDK to re-enter its poll loop.
+    /// Waits for fulfillment of a locked request with the TOCTOU retry
+    /// logic, then fetches the set inclusion receipt. Shared between the
+    /// recovery and fresh-submission paths.
+    async fn wait_and_fetch(
+        &self,
+        client: &BoundlessClient,
+        request_id: alloy_primitives::U256,
+        effective_expiry: u64,
+    ) -> Result<AttestationProof> {
         const MAX_RACE_RETRIES: u32 = 3;
         let mut race_retries = 0;
         let _fulfillment = loop {
@@ -228,53 +229,334 @@ impl AttestationProofProvider for BoundlessProver {
         };
 
         info!(request_id = %request_id, "fulfillment confirmed, fetching set inclusion receipt");
+        self.fetch_and_encode_receipt(client, request_id).await
+    }
 
-        // Fetch the set inclusion receipt, which contains the Merkle inclusion
-        // path and root Groth16 proof needed for on-chain verification.
-        // The raw fulfillment.seal is a marketplace seal — NOT an
-        // independently-verifiable proof. The on-chain NitroEnclaveVerifier
-        // routes proofs by the first 4 bytes (selector) to either a Groth16
-        // verifier or a SetVerifier, so we must encode the seal correctly.
-        let image_id_bytes: [u8; 32] = Digest::from(self.image_id).into();
-        let image_id_b256 = B256::from(image_id_bytes);
-        let (journal, receipt) = client
-            .fetch_set_inclusion_receipt(request_id, image_id_b256, None, None)
+    /// Builds the Boundless [`Client`] and [`RequestParams`] from the
+    /// attestation bytes. Shared between `generate_proof` and
+    /// `generate_proof_for_signer` to avoid duplicating the setup logic.
+    async fn build_client_and_params(
+        &self,
+        attestation_bytes: &[u8],
+    ) -> Result<(BoundlessClient, RequestParams)> {
+        let input = VerifierInput {
+            trustedCertsPrefixLen: self.trusted_certs_prefix_len,
+            attestationReport: Bytes::copy_from_slice(attestation_bytes),
+        };
+        let input_bytes = input.encode();
+        let image_id = Digest::from(self.image_id);
+
+        info!(
+            image_id = ?self.image_id,
+            input_len = input_bytes.len(),
+            attestation_len = attestation_bytes.len(),
+            rpc_url = %self.rpc_url.origin().unicode_serialization(),
+            boundless_wallet = %self.signer.address(),
+            program_url = %self.verifier_program_url,
+            timeout = ?self.timeout,
+            poll_interval = ?self.poll_interval,
+            trusted_certs_prefix_len = self.trusted_certs_prefix_len,
+            "building Boundless client and request params"
+        );
+
+        let client = Client::builder()
+            .with_rpc_url(self.rpc_url.clone())
+            .with_private_key(self.signer.clone())
+            .config_storage_layer(|c| c.inline_input_max_bytes(8192))
+            .build()
             .await
             .map_err(|e| {
                 warn!(
                     error = %e,
                     error_debug = ?e,
-                    request_id = %request_id,
-                    image_id = ?self.image_id,
-                    "failed to fetch set inclusion receipt"
+                    rpc_url = %self.rpc_url.origin().unicode_serialization(),
+                    boundless_wallet = %self.signer.address(),
+                    "failed to build Boundless client"
                 );
-                ProverError::Boundless(format!("failed to fetch set inclusion receipt: {e}"))
+                ProverError::Boundless(format!("failed to build client: {e}"))
             })?;
 
-        // ABI-encode the seal: 4-byte selector + ABI-encoded Seal struct
-        // (Merkle path + root Groth16 seal). This is the format expected by
-        // the on-chain RiscZeroSetVerifier.
-        let encoded_seal = receipt.abi_encode_seal().map_err(|e| {
-            warn!(
-                error = %e,
-                error_debug = ?e,
-                request_id = %request_id,
-                "failed to ABI-encode set inclusion seal"
-            );
-            ProverError::Boundless(format!("failed to encode set inclusion seal: {e}"))
-        })?;
+        debug!("Boundless client built successfully");
 
-        let output = Bytes::copy_from_slice(&journal);
-        let proof_bytes = Bytes::from(encoded_seal);
+        let params = RequestParams::new()
+            .with_program_url(self.verifier_program_url.clone())
+            .map_err(|e| {
+                warn!(
+                    error = %e,
+                    error_debug = ?e,
+                    program_url = %self.verifier_program_url,
+                    "invalid Boundless program URL"
+                );
+                ProverError::Boundless(format!("invalid program URL: {e}"))
+            })?
+            .with_stdin(input_bytes)
+            .with_image_id(image_id)
+            .with_requirements(
+                RequirementParams::builder().predicate(Predicate::prefix_match(image_id, [])),
+            );
+
+        Ok((client, params))
+    }
+
+    /// Computes the effective expiry timestamp from the current time and
+    /// the prover's timeout, taking the minimum with the on-chain expiry
+    /// if provided.
+    fn effective_expiry(&self, on_chain_expiry: Option<u64>) -> u64 {
+        let timeout_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .saturating_add(self.timeout.as_secs());
+        match on_chain_expiry {
+            Some(e) => e.min(timeout_at),
+            None => timeout_at,
+        }
+    }
+
+    /// Acquires the submit lock, submits a proof request on-chain, then
+    /// waits for fulfillment and fetches the set inclusion receipt.
+    ///
+    /// Shared between [`generate_proof`](AttestationProofProvider::generate_proof)
+    /// and the fresh-submission tail of
+    /// [`generate_proof_for_signer`](AttestationProofProvider::generate_proof_for_signer).
+    async fn submit_and_wait(
+        &self,
+        client: &BoundlessClient,
+        params: RequestParams,
+    ) -> Result<AttestationProof> {
+        let (request_id, expires_at) = {
+            let _guard = self.submit_lock.lock().await;
+            client.submit_onchain(params).await.map_err(|e| {
+                warn!(
+                    error = %e,
+                    error_debug = ?e,
+                    image_id = ?self.image_id,
+                    boundless_wallet = %self.signer.address(),
+                    "failed to submit Boundless proof request on-chain"
+                );
+                ProverError::Boundless(format!("failed to submit request: {e}"))
+            })?
+        };
 
         info!(
             request_id = %request_id,
-            journal_len = output.len(),
-            seal_len = proof_bytes.len(),
-            "set inclusion receipt fetched and seal encoded successfully"
+            expires_at,
+            "proof request submitted, waiting for fulfillment"
         );
 
-        Ok(AttestationProof { output, proof_bytes })
+        let effective_expiry = self.effective_expiry(Some(expires_at));
+        debug!(
+            effective_expiry,
+            request_id = %request_id,
+            poll_interval = ?self.poll_interval,
+            "waiting for fulfillment with computed expiry"
+        );
+
+        self.wait_and_fetch(client, request_id, effective_expiry).await
+    }
+}
+
+#[async_trait::async_trait]
+impl AttestationProofProvider for BoundlessProver {
+    async fn generate_proof(&self, attestation_bytes: &[u8]) -> Result<AttestationProof> {
+        let (client, params) = self.build_client_and_params(attestation_bytes).await?;
+        self.submit_and_wait(&client, params).await
+    }
+
+    /// Generates a proof with deterministic request-ID recovery.
+    ///
+    /// Before submitting a new proof request, this method probes up to
+    /// [`MAX_RECOVERY_ATTEMPTS`] deterministic request-ID slots derived
+    /// from `signer_address` to find any in-flight or fulfilled proof
+    /// from a previous instance. This allows the registrar to survive
+    /// instance rotations without paying for duplicate proofs.
+    ///
+    /// Recovery outcomes per slot:
+    /// - **`Locked`** — an in-flight proof is being worked on by a
+    ///   Boundless prover. Resume polling for fulfillment.
+    /// - **`Fulfilled`** — a previous instance's proof completed. Fetch
+    ///   the receipt directly.
+    /// - **`Expired`** — the slot was used but the proof expired. Skip
+    ///   to the next attempt.
+    /// - **`Unknown`** — the slot is unused. Submit a new request with
+    ///   this deterministic ID.
+    ///
+    /// If recovery fails for any reason (RPC errors, receipt fetch
+    /// failures, etc.), the method logs a warning and falls through to
+    /// submit a fresh proof — the same graceful degradation as the
+    /// non-recovery path.
+    async fn generate_proof_for_signer(
+        &self,
+        attestation_bytes: &[u8],
+        signer_address: Address,
+    ) -> Result<AttestationProof> {
+        let (client, params) = self.build_client_and_params(attestation_bytes).await?;
+
+        // Probe deterministic request-ID slots for recovery.
+        let mut first_unknown_attempt: Option<u32> = None;
+        for attempt in 0..Self::MAX_RECOVERY_ATTEMPTS {
+            let index = Self::derive_request_index(signer_address, attempt);
+            let rid = RequestId::new(self.signer.address(), index);
+            let request_id = alloy_primitives::U256::from(rid);
+
+            debug!(
+                attempt,
+                index,
+                request_id = %request_id,
+                target_signer = %signer_address,
+                "probing deterministic request-ID slot"
+            );
+
+            let status = match client.boundless_market.get_status(request_id, None).await {
+                Ok(s) => s,
+                Err(e) => {
+                    // The same TOCTOU race that affects
+                    // wait_for_request_fulfillment can also hit
+                    // get_status: the request transitions from Locked
+                    // to Fulfilled between the is_locked and
+                    // requestDeadline calls, causing a
+                    // RequestIsNotLocked revert. Treat this as
+                    // evidence the request is in-flight/fulfilled and
+                    // jump directly to wait_and_fetch.
+                    if Self::is_request_not_locked_error(&*e) {
+                        info!(
+                            attempt,
+                            request_id = %request_id,
+                            target_signer = %signer_address,
+                            "RequestIsNotLocked during recovery scan, \
+                             treating as in-flight"
+                        );
+                        let effective_expiry = self.effective_expiry(None);
+                        match self.wait_and_fetch(&client, request_id, effective_expiry).await {
+                            Ok(proof) => return Ok(proof),
+                            Err(e) => {
+                                warn!(
+                                    error = %e,
+                                    attempt,
+                                    request_id = %request_id,
+                                    target_signer = %signer_address,
+                                    "recovery after TOCTOU failed, \
+                                     falling through to fresh submission"
+                                );
+                                break;
+                            }
+                        }
+                    }
+                    warn!(
+                        error = %e,
+                        attempt,
+                        request_id = %request_id,
+                        target_signer = %signer_address,
+                        "failed to query request status during recovery, \
+                         falling through to fresh submission"
+                    );
+                    break;
+                }
+            };
+
+            match status {
+                RequestStatus::Locked => {
+                    info!(
+                        attempt,
+                        request_id = %request_id,
+                        target_signer = %signer_address,
+                        "recovered in-flight proof (Locked), resuming fulfillment poll"
+                    );
+                    let effective_expiry = self.effective_expiry(None);
+                    match self.wait_and_fetch(&client, request_id, effective_expiry).await {
+                        Ok(proof) => return Ok(proof),
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                attempt,
+                                request_id = %request_id,
+                                target_signer = %signer_address,
+                                "recovery poll failed, falling through to fresh submission"
+                            );
+                            break;
+                        }
+                    }
+                }
+                RequestStatus::Fulfilled => {
+                    info!(
+                        attempt,
+                        request_id = %request_id,
+                        target_signer = %signer_address,
+                        "recovered fulfilled proof, fetching receipt"
+                    );
+                    match self.fetch_and_encode_receipt(&client, request_id).await {
+                        Ok(proof) => return Ok(proof),
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                attempt,
+                                request_id = %request_id,
+                                target_signer = %signer_address,
+                                "recovery receipt fetch failed, \
+                                 falling through to fresh submission"
+                            );
+                            break;
+                        }
+                    }
+                }
+                RequestStatus::Expired => {
+                    debug!(
+                        attempt,
+                        request_id = %request_id,
+                        target_signer = %signer_address,
+                        "slot expired, trying next attempt"
+                    );
+                    continue;
+                }
+                RequestStatus::Unknown => {
+                    if first_unknown_attempt.is_none() {
+                        first_unknown_attempt = Some(attempt);
+                    }
+                    debug!(
+                        attempt,
+                        request_id = %request_id,
+                        target_signer = %signer_address,
+                        "slot unused, will use for fresh submission if no recovery found"
+                    );
+                    // Continue scanning — a later slot might be Locked or
+                    // Fulfilled from a previous instance that used a higher
+                    // attempt counter.
+                    continue;
+                }
+            }
+        }
+
+        // No recoverable proof found — submit a new request. If an unused
+        // slot was found during the scan, use it as a deterministic ID so
+        // future restarts can discover this proof. Otherwise (all slots
+        // occupied/expired), fall through to SDK-generated random ID —
+        // this request won't be recoverable but avoids colliding with an
+        // existing request.
+        let params = match first_unknown_attempt {
+            Some(submit_attempt) => {
+                let index = Self::derive_request_index(signer_address, submit_attempt);
+                let rid = RequestId::new(self.signer.address(), index);
+                info!(
+                    attempt = submit_attempt,
+                    index,
+                    request_id = %alloy_primitives::U256::from(rid.clone()),
+                    target_signer = %signer_address,
+                    "submitting with deterministic request ID"
+                );
+                params.with_request_id(rid)
+            }
+            None => {
+                warn!(
+                    target_signer = %signer_address,
+                    max_attempts = Self::MAX_RECOVERY_ATTEMPTS,
+                    "all deterministic slots occupied, \
+                     falling back to random request ID (non-recoverable)"
+                );
+                params
+            }
+        };
+
+        self.submit_and_wait(&client, params).await
     }
 }
 
@@ -282,6 +564,7 @@ impl AttestationProofProvider for BoundlessProver {
 mod tests {
     use std::str::FromStr;
 
+    use alloy_primitives::Address;
     use rstest::{fixture, rstest};
 
     use super::*;
@@ -370,6 +653,121 @@ mod tests {
         assert!(
             !debug.contains(TEST_PRIVATE_KEY),
             "raw private key must not appear in Debug output"
+        );
+    }
+
+    // ── derive_request_index ──────────────────────────────────────────────
+
+    /// Synthetic signer addresses for deterministic-ID tests.
+    const SIGNER_A: Address = Address::repeat_byte(0xAA);
+    const SIGNER_B: Address = Address::repeat_byte(0xBB);
+
+    /// Computes the expected index via the reference algorithm so tests
+    /// can assert against it without duplicating the constant `24`.
+    fn expected_index(addr: Address, attempt: u32) -> u32 {
+        let mut buf = [0u8; 24];
+        buf[..20].copy_from_slice(addr.as_slice());
+        buf[20..].copy_from_slice(&attempt.to_be_bytes());
+        let hash = keccak256(buf);
+        u32::from_be_bytes([hash[0], hash[1], hash[2], hash[3]])
+    }
+
+    #[rstest]
+    #[case::typical_address(SIGNER_A, 0)]
+    #[case::zero_address(Address::ZERO, 0)]
+    #[case::max_attempt(SIGNER_A, u32::MAX)]
+    #[case::zero_address_max_attempt(Address::ZERO, u32::MAX)]
+    fn derive_index_is_deterministic(#[case] addr: Address, #[case] attempt: u32) {
+        let a = BoundlessProver::derive_request_index(addr, attempt);
+        let b = BoundlessProver::derive_request_index(addr, attempt);
+        assert_eq!(a, b, "same inputs must produce the same index");
+    }
+
+    #[rstest]
+    #[case::typical_address(SIGNER_A)]
+    #[case::zero_address(Address::ZERO)]
+    fn derive_index_varies_with_attempt(#[case] addr: Address) {
+        let indices: Vec<u32> = (0..BoundlessProver::MAX_RECOVERY_ATTEMPTS)
+            .map(|a| BoundlessProver::derive_request_index(addr, a))
+            .collect();
+        // All indices should be distinct (collision probability is negligible
+        // for 5 values in a 2^32 space).
+        let unique: std::collections::HashSet<u32> = indices.iter().copied().collect();
+        assert_eq!(unique.len(), indices.len(), "each attempt should produce a distinct index");
+    }
+
+    #[rstest]
+    #[case::distinct_addresses(SIGNER_A, SIGNER_B, 0)]
+    #[case::zero_vs_nonzero(Address::ZERO, SIGNER_A, 0)]
+    #[case::same_attempt_different_addr(SIGNER_A, SIGNER_B, 3)]
+    fn derive_index_varies_with_address(
+        #[case] addr_a: Address,
+        #[case] addr_b: Address,
+        #[case] attempt: u32,
+    ) {
+        let a = BoundlessProver::derive_request_index(addr_a, attempt);
+        let b = BoundlessProver::derive_request_index(addr_b, attempt);
+        assert_ne!(a, b, "different addresses should produce different indices");
+    }
+
+    /// Verifies the implementation matches a manual `keccak256(addr || attempt)`
+    /// computation across multiple (address, attempt) pairs.
+    #[rstest]
+    #[case::typical(SIGNER_A, 0)]
+    #[case::nonzero_attempt(SIGNER_B, 7)]
+    #[case::zero_address(Address::ZERO, 1)]
+    #[case::max_attempt(SIGNER_A, u32::MAX)]
+    fn derive_index_matches_manual_keccak(#[case] addr: Address, #[case] attempt: u32) {
+        assert_eq!(
+            BoundlessProver::derive_request_index(addr, attempt),
+            expected_index(addr, attempt)
+        );
+    }
+
+    // ── effective_expiry ────────────────────────────────────────────────
+
+    /// When an on-chain expiry is provided and is sooner than the
+    /// timeout, the effective expiry equals the on-chain value.
+    #[rstest]
+    fn effective_expiry_picks_on_chain_when_sooner(prover: BoundlessProver) {
+        // Use a very near on-chain expiry (1 second from now).
+        let now =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let on_chain = now + 1;
+        let result = prover.effective_expiry(Some(on_chain));
+        assert_eq!(result, on_chain, "should pick the nearer on-chain expiry");
+    }
+
+    /// When no on-chain expiry is provided, the effective expiry is
+    /// `now + timeout`.
+    #[rstest]
+    fn effective_expiry_uses_timeout_when_none(prover: BoundlessProver) {
+        let before =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let result = prover.effective_expiry(None);
+        let after =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        // Result should be in [before + timeout, after + timeout].
+        let timeout_secs = prover.timeout.as_secs();
+        assert!(
+            result >= before + timeout_secs && result <= after + timeout_secs,
+            "expected ~now + {timeout_secs}, got {result} (now ≈ {before})"
+        );
+    }
+
+    /// When the on-chain expiry is far in the future, the effective
+    /// expiry is clamped to `now + timeout`.
+    #[rstest]
+    fn effective_expiry_clamps_to_timeout(prover: BoundlessProver) {
+        let far_future = u64::MAX;
+        let before =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let result = prover.effective_expiry(Some(far_future));
+        let timeout_secs = prover.timeout.as_secs();
+        // Should be clamped to approximately now + timeout, not u64::MAX.
+        assert!(
+            result <= before + timeout_secs + 1,
+            "expected ≤ now + {timeout_secs}, got {result}"
         );
     }
 

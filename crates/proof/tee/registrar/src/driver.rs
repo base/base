@@ -368,7 +368,10 @@ where
             "generating proof for unregistered signer"
         );
 
-        let proof = self.proof_provider.generate_proof(attestation_bytes).await?;
+        let proof = self
+            .proof_provider
+            .generate_proof_for_signer(attestation_bytes, signer_address)
+            .await?;
 
         // Check cancellation before submitting the transaction — avoid starting
         // new on-chain work if shutdown is in progress.
