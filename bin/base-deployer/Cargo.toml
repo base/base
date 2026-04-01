@@ -16,7 +16,17 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+alloy-primitives = { workspace = true, features = ["std"] }
+alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 base-cli-utils.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 eyre.workspace = true
+hex.workspace = true
+rand.workspace = true
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
+toml = { workspace = true, features = ["parse", "serde"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
+
+[dev-dependencies]
+tempfile.workspace = true
