@@ -72,6 +72,12 @@ pub struct EncoderConfig {
     ///
     /// Default: `0.6` (matches op-batcher's `--approx-compr-ratio` default).
     pub approx_compr_ratio: f64,
+
+    /// Maximum number of L1 blocks to include in a single span batch. Only applies when
+    /// `batch_type == BatchType::Span`. Set to 0 to disable this limit and rely solely on
+    /// the `target_frame_size` limit to trigger batch submission.
+    /// Default: 0 (no limit).
+    pub max_blocks_per_span_batch: u64,
 }
 
 impl Default for EncoderConfig {
@@ -85,6 +91,7 @@ impl Default for EncoderConfig {
             batch_type: BatchType::Single,
             da_type: DaType::Blob,
             approx_compr_ratio: 0.6,
+            max_blocks_per_span_batch: 0,
         }
     }
 }

@@ -115,6 +115,16 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "approx-compr-ratio", default_value = "0.6", env = "BATCHER_APPROX_COMPR_RATIO")]
     pub approx_compr_ratio: f64,
 
+    /// Maximum number of L1 blocks to include in a single span batch. Only applies when
+    /// `--batch-type=span`. Set to 0 to disable this limit and rely solely on the
+    /// `--target-frame-size` limit to trigger batch submission. Default: 0 (no limit).
+    #[arg(
+        long = "max-blocks-per-span-batch",
+        default_value = "0",
+        env = "BATCHER_MAX_BLOCKS_PER_SPAN_BATCH"
+    )]
+    pub max_blocks_per_span_batch: u64,
+
     /// Maximum number of in-flight (unconfirmed) transactions.
     #[arg(
         long = "max-pending-transactions",
@@ -205,6 +215,7 @@ impl BatcherArgs {
             target_num_frames: self.target_num_frames,
             batch_type: self.batch_type.into(),
             approx_compr_ratio: self.approx_compr_ratio,
+            max_blocks_per_span_batch: self.max_blocks_per_span_batch,
             ..base_batcher_encoder::EncoderConfig::default()
         };
         encoder_config.validate()?;

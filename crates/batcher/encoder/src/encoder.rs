@@ -386,6 +386,18 @@ impl BatchPipeline for BatchEncoder {
                     + single_batch.transactions.iter().map(|tx| tx.len()).sum::<usize>();
                 self.span_raw_bytes += block_raw_bytes;
                 self.span_accumulator.push((single_batch, seq_num));
+                // check against `max_block_per_span_batch` if configured, and flush if exceeded.
+                if self.config.max_blocks_per_span_batch > 0
+                    && self.span_accumulator.len() as u64 == self.config.max_blocks_per_span_batch
+                {
+                    debug!(
+                        span_len = self.span_accumulator.len(),
+                        max_blocks_per_span_batch = self.config.max_blocks_per_span_batch,
+                        "span accumulator exceeded max blocks limit, closing channel"
+                    );
+                    self.close_current_channel("max_blocks_per_span_batch");
+                    return Ok(StepResult::ChannelClosed);
+                }
                 self.block_cursor += 1;
 
                 // Track the L1 head at which the first block of this span was accumulated.
@@ -1570,5 +1582,34 @@ mod tests {
             "expected at least 3 frames with max_frame_size=80, got {}",
             frames.len()
         );
+    }
+
+    #[rstest]
+    #[case(0, 3)] // Default: (no limit)
+    #[case(2, 3)] // blocks exceeds limt, 3 > 2
+    fn test_max_block_per_span_batch_config(
+        #[case] max_blocks_per_span_batch: u64,
+        #[case] num_blocks: u64,
+    ) {
+        let rollup_config = Arc::new(RollupConfig::default());
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            max_blocks_per_span_batch,
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(rollup_config, config);
+
+        let mut parent_hash = B256::ZERO;
+        for i in 0..num_blocks {
+            let block = make_block_with_user_tx(parent_hash);
+            parent_hash = block.header.hash_slow();
+            encoder.add_block(block).expect("add block");
+
+            if max_blocks_per_span_batch > 0 && (i + 1) == max_blocks_per_span_batch {
+                assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
+            } else {
+                assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+            }
+        }
     }
 }
