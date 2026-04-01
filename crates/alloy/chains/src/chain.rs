@@ -285,11 +285,11 @@ mod tests {
         assert!(devnet0_forks.is_base_v1_active_at_timestamp(1_774_890_000));
         assert!(devnet0_forks.is_base_v1_active_at_timestamp(u64::MAX));
 
-        // V1 is scheduled on zeronet at 1775079000
+        // V1 is scheduled on zeronet at 1775152800
         let zeronet_forks = BaseChainUpgrades::zeronet();
         assert!(!zeronet_forks.is_base_v1_active_at_timestamp(0));
-        assert!(!zeronet_forks.is_base_v1_active_at_timestamp(1_775_078_999));
-        assert!(zeronet_forks.is_base_v1_active_at_timestamp(1_775_079_000));
+        assert!(!zeronet_forks.is_base_v1_active_at_timestamp(1_775_152_799));
+        assert!(zeronet_forks.is_base_v1_active_at_timestamp(1_775_152_800));
         assert!(zeronet_forks.is_base_v1_active_at_timestamp(u64::MAX));
     }
 
@@ -316,7 +316,7 @@ mod tests {
         let zeronet_forks = BaseChainUpgrades::zeronet();
         assert_eq!(
             zeronet_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
-            ForkCondition::Timestamp(1_775_079_000)
+            ForkCondition::Timestamp(1_775_152_800)
         );
     }
 
