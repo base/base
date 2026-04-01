@@ -5,10 +5,7 @@ use std::time::{Duration, Instant};
 use alloy_primitives::{TxHash, keccak256};
 use base_alloy_flashblocks::Flashblock;
 use futures::StreamExt;
-use tokio_tungstenite::{
-    connect_async,
-    tungstenite::protocol::Message,
-};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 use url::Url;
@@ -136,7 +133,7 @@ impl FlashblockTracker {
                     times.entry(tx_hash).or_insert(now);
                 }
 
-                // Prune using retain with a cutoff 
+                // Prune using retain with a cutoff
                 if times.len() > MAX_FLASHBLOCK_CACHE_SIZE {
                     let mut timestamps: Vec<Instant> = times.values().copied().collect();
                     let cutoff_idx = timestamps.len().saturating_sub(MAX_FLASHBLOCK_CACHE_SIZE);
