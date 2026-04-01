@@ -103,14 +103,6 @@ pub enum HostError {
     /// Preimage server panicked during witness capture.
     #[error("preimage server panicked: {0}")]
     ServerPanicked(tokio::task::JoinError),
-    /// Proof request exceeded the configured timeout.
-    #[error("proof request timed out after {timeout_secs}s for L2 block {l2_block}")]
-    Timeout {
-        /// The timeout that was exceeded, in seconds.
-        timeout_secs: u64,
-        /// The L2 block number being proved.
-        l2_block: u64,
-    },
     /// Witness oracle error.
     #[error("Witness oracle error: {0}")]
     WitnessOracle(#[from] WitnessOracleError),

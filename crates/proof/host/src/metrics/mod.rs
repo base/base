@@ -64,9 +64,6 @@ impl Metrics {
     /// Backend proving error outcome.
     pub const OUTCOME_PROVE_ERROR: &str = "prove_error";
 
-    /// Proof request timed out.
-    pub const OUTCOME_TIMEOUT: &str = "timeout";
-
     /// Future was cancelled (dropped) before completion.
     pub const OUTCOME_DROPPED: &str = "dropped";
 }

@@ -3,6 +3,8 @@
 use std::net::SocketAddr;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use std::sync::Arc;
+#[cfg(any(target_os = "linux", feature = "local"))]
+use std::time::Duration;
 
 use base_cli_utils::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -137,11 +139,11 @@ impl ServerArgs {
             rollup_config,
             l1_config,
             enable_experimental_witness_endpoint: self.server.enable_experimental_witness_endpoint,
-            proof_request_timeout_secs: self.server.proof_request_timeout_secs,
         };
 
         let transport = Arc::new(NitroTransport::vsock(self.vsock_cid, VSOCK_PORT));
-        let server = NitroProverServer::new(config, transport);
+        let timeout = Duration::from_secs(self.server.proof_request_timeout_secs);
+        let server = NitroProverServer::new(config, transport, timeout);
 
         info!(addr = %self.server.listen_addr, "starting nitro prover host server");
         let handle = server.run(self.server.listen_addr).await?;
@@ -177,12 +179,12 @@ impl LocalArgs {
             rollup_config,
             l1_config,
             enable_experimental_witness_endpoint: self.server.enable_experimental_witness_endpoint,
-            proof_request_timeout_secs: self.server.proof_request_timeout_secs,
         };
 
         let enclave_server = Arc::new(EnclaveServer::new_local()?);
         let transport = Arc::new(NitroTransport::local(enclave_server));
-        let server = NitroProverServer::new(prover_config, transport);
+        let timeout = Duration::from_secs(self.server.proof_request_timeout_secs);
+        let server = NitroProverServer::new(prover_config, transport, timeout);
 
         info!(addr = %self.server.listen_addr, "starting nitro prover server (local mode)");
         let handle = server.run(self.server.listen_addr).await?;

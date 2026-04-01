@@ -37,8 +37,6 @@ pub struct ProverConfig {
     pub l1_config: L1ChainConfig,
     /// Enables `debug_executePayload` for execution witness collection.
     pub enable_experimental_witness_endpoint: bool,
-    /// Maximum seconds for a single proof request before it is aborted.
-    pub proof_request_timeout_secs: u64,
 }
 
 /// Configuration for the proof host.

@@ -1,7 +1,7 @@
-use std::{fmt, time::Duration};
+use std::fmt;
 
 use base_proof_primitives::{ProofRequest, ProofResult, ProverBackend};
-use tracing::{Instrument, info, info_span, warn};
+use tracing::{Instrument, info, info_span};
 
 use crate::{Host, HostConfig, HostError, Metrics, ProverConfig, metrics::proof_guard};
 
@@ -38,39 +38,19 @@ impl<B: ProverBackend> ProverService<B> {
     /// 3. Creates a backend-specific oracle via [`ProverBackend::create_oracle`]
     /// 4. Runs witness generation via [`Host::build_witness`]
     /// 5. Hands the populated oracle to [`ProverBackend::prove`]
-    ///
-    /// The entire operation is bounded by the configured `proof_request_timeout_secs`.
-    /// If witness generation or proving gets stuck (e.g. infinite prefetch
-    /// retry loops), the timeout fires and a clean error is returned.
     pub async fn prove_block(&self, request: ProofRequest) -> Result<ProofResult, ProverError<B>> {
         Metrics::requests_total(Metrics::MODE_ONLINE).increment(1);
         let mut guard = proof_guard!();
         let _proof_timer = base_metrics::timed!(Metrics::proof_duration_seconds());
 
         let l2_block = request.claimed_l2_block_number;
-        let timeout = Duration::from_secs(self.config.proof_request_timeout_secs);
-
-        let result = match tokio::time::timeout(
-            timeout,
-            Box::pin(
-                self.prove_block_inner(request).instrument(info_span!("proof_request", l2_block)),
-            ),
+        let result = Box::pin(
+            self.prove_block_inner(request).instrument(info_span!("proof_request", l2_block)),
         )
-        .await
-        {
-            Ok(inner) => inner,
-            Err(_elapsed) => {
-                warn!(l2_block, timeout_secs = timeout.as_secs(), "proof request timed out");
-                Err(ProverError::Host(HostError::Timeout {
-                    timeout_secs: timeout.as_secs(),
-                    l2_block,
-                }))
-            }
-        };
+        .await;
 
         guard.set_outcome(match &result {
             Ok(_) => Metrics::OUTCOME_SUCCESS,
-            Err(ProverError::Host(HostError::Timeout { .. })) => Metrics::OUTCOME_TIMEOUT,
             Err(ProverError::Host(_)) => Metrics::OUTCOME_WITNESS_ERROR,
             Err(ProverError::Backend(_)) => Metrics::OUTCOME_PROVE_ERROR,
         });
