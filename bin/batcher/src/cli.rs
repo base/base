@@ -234,7 +234,6 @@ impl BatcherArgs {
             da_type: self.da_type,
             approx_compr_ratio: self.approx_compr_ratio,
             max_blocks_per_span_batch: self.max_blocks_per_span_batch,
-            ..base_batcher_encoder::EncoderConfig::default()
         };
         encoder_config.validate()?;
         Ok(BatcherConfig {
