@@ -664,6 +664,8 @@ mod tests {
         assert_eq!(config.poll_interval, Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS));
         assert_eq!(config.prover_timeout, Duration::from_secs(DEFAULT_PROVER_TIMEOUT_SECS));
         assert_eq!(config.max_concurrency, DEFAULT_MAX_CONCURRENCY);
+        assert_eq!(config.max_tx_retries, DEFAULT_MAX_TX_RETRIES);
+        assert_eq!(config.tx_retry_delay, Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS));
     }
 
     #[rstest]
