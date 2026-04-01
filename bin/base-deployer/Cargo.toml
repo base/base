@@ -1,0 +1,22 @@
+[package]
+name = "base-deployer"
+description = "Base devnet and deployment orchestration CLI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-deployer"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+base-cli-utils.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+eyre.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
