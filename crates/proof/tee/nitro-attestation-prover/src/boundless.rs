@@ -22,6 +22,10 @@ use std::{fmt, sync::Arc, time::Duration};
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_signer_local::PrivateKeySigner;
 use base_proof_tee_nitro_verifier::VerifierInput;
+// `boundless-market` re-exports `alloy` (`pub use alloy`) but does not
+// re-export `DynProvider` directly — access it via the SDK's alloy so
+// the type in our alias matches the one inside `Client`.
+use boundless_market::alloy::providers::DynProvider;
 use boundless_market::{
     Client, NotProvided,
     contracts::{Predicate, RequestId, RequestStatus},
@@ -37,15 +41,16 @@ use crate::{AttestationProof, AttestationProofProvider, ProverError, Result};
 /// Concrete [`Client`] type produced by the builder chain used in
 /// [`BoundlessProver`]. The uploader is [`NotProvided`] because we
 /// use inline inputs (stdin) rather than uploading to external storage.
+///
+/// NOTE: `DynProvider` and `StandardDownloader` must come from the
+/// same crate versions that `boundless-market` uses internally.
+/// `DynProvider` is accessed via the SDK's `alloy` re-export;
+/// `StandardDownloader` is directly re-exported by `boundless-market`.
 type BoundlessClient = Client<
-    boundless_market::DynProvider,
+    DynProvider,
     NotProvided,
     boundless_market::StandardDownloader,
-    StandardRequestBuilder<
-        boundless_market::DynProvider,
-        NotProvided,
-        boundless_market::StandardDownloader,
-    >,
+    StandardRequestBuilder<DynProvider, NotProvided, boundless_market::StandardDownloader>,
     PrivateKeySigner,
 >;
 
@@ -248,7 +253,7 @@ impl BoundlessProver {
             attestation_len = attestation_bytes.len(),
             rpc_url = %self.rpc_url.origin().unicode_serialization(),
             boundless_wallet = %self.signer.address(),
-            program_url = %self.verifier_program_url,
+            program_url = %self.verifier_program_url.origin().unicode_serialization(),
             timeout = ?self.timeout,
             poll_interval = ?self.poll_interval,
             trusted_certs_prefix_len = self.trusted_certs_prefix_len,
@@ -280,7 +285,7 @@ impl BoundlessProver {
                 warn!(
                     error = %e,
                     error_debug = ?e,
-                    program_url = %self.verifier_program_url,
+                    program_url = %self.verifier_program_url.origin().unicode_serialization(),
                     "invalid Boundless program URL"
                 );
                 ProverError::Boundless(format!("invalid program URL: {e}"))
@@ -303,10 +308,7 @@ impl BoundlessProver {
             .unwrap_or_default()
             .as_secs()
             .saturating_add(self.timeout.as_secs());
-        match on_chain_expiry {
-            Some(e) => e.min(timeout_at),
-            None => timeout_at,
-        }
+        on_chain_expiry.map_or(timeout_at, |e| e.min(timeout_at))
     }
 
     /// Acquires the submit lock, submits a proof request on-chain, then
@@ -392,8 +394,12 @@ impl AttestationProofProvider for BoundlessProver {
         let mut first_unknown_attempt: Option<u32> = None;
         for attempt in 0..self.max_recovery_attempts {
             let index = Self::derive_request_index(signer_address, attempt);
+            // RequestId is keyed on the Boundless wallet (fee-payer,
+            // `self.signer`), not the enclave signer (`signer_address`).
+            // The index is derived from signer_address so that different
+            // enclave signers occupy different slots.
             let rid = RequestId::new(self.signer.address(), index);
-            let request_id = alloy_primitives::U256::from(rid);
+            let request_id: alloy_primitives::U256 = rid.into();
 
             debug!(
                 attempt,
@@ -403,6 +409,11 @@ impl AttestationProofProvider for BoundlessProver {
                 "probing deterministic request-ID slot"
             );
 
+            // NOTE: `get_status` is not exposed on `Client` directly;
+            // we reach into the public `boundless_market` field. If a
+            // future SDK release makes this field private, this will
+            // fail at compile time — check whether `Client` gained a
+            // `get_status` method and migrate accordingly.
             let status = match client.boundless_market.get_status(request_id, None).await {
                 Ok(s) => s,
                 Err(e) => {
@@ -414,7 +425,7 @@ impl AttestationProofProvider for BoundlessProver {
                     // RequestIsNotLocked revert. Treat this as
                     // evidence the request is in-flight/fulfilled and
                     // jump directly to wait_and_fetch.
-                    if Self::is_request_not_locked_error(&*e) {
+                    if Self::is_request_not_locked_error(&e) {
                         info!(
                             attempt,
                             request_id = %request_id,
@@ -551,10 +562,11 @@ impl AttestationProofProvider for BoundlessProver {
             Some(submit_attempt) => {
                 let index = Self::derive_request_index(signer_address, submit_attempt);
                 let rid = RequestId::new(self.signer.address(), index);
+                let request_id_u256: alloy_primitives::U256 = rid.clone().into();
                 info!(
                     attempt = submit_attempt,
                     index,
-                    request_id = %alloy_primitives::U256::from(rid.clone()),
+                    request_id = %request_id_u256,
                     target_signer = %signer_address,
                     "submitting with deterministic request ID"
                 );

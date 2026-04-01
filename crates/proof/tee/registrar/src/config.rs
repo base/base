@@ -53,7 +53,7 @@ impl std::fmt::Debug for BoundlessConfig {
         f.debug_struct("BoundlessConfig")
             .field("rpc_url", &url_origin(&self.rpc_url))
             .field("signer", &self.signer.address())
-            .field("verifier_program_url", &self.verifier_program_url)
+            .field("verifier_program_url", &url_origin(&self.verifier_program_url))
             .field("image_id", &self.image_id)
             .field("poll_interval", &self.poll_interval)
             .field("timeout", &self.timeout)
