@@ -1,7 +1,7 @@
 use std::{fmt, time::Duration};
 
 use base_proof_primitives::{ProofRequest, ProofResult, ProverBackend};
-use tracing::{Instrument, info, info_span};
+use tracing::{Instrument, info, info_span, warn};
 
 use crate::{Host, HostConfig, HostError, Metrics, ProverConfig, metrics::proof_guard};
 
@@ -59,10 +59,13 @@ impl<B: ProverBackend> ProverService<B> {
         .await
         {
             Ok(inner) => inner,
-            Err(_elapsed) => Err(ProverError::Host(HostError::Custom(format!(
-                "proof request timed out after {}s for L2 block {l2_block}",
-                timeout.as_secs()
-            )))),
+            Err(_elapsed) => {
+                warn!(l2_block, timeout_secs = timeout.as_secs(), "proof request timed out");
+                Err(ProverError::Host(HostError::Custom(format!(
+                    "proof request timed out after {}s for L2 block {l2_block}",
+                    timeout.as_secs()
+                ))))
+            }
         };
 
         guard.set_outcome(match &result {
