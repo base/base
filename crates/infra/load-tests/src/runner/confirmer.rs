@@ -40,7 +40,20 @@ pub struct Confirmer {
     pending_tx: mpsc::Sender<PendingTx>,
     flashblock_times: FlashblockTimes,
     block_first_seen: BlockFirstSeen,
+    deferred_block_latencies: Vec<DeferredBlockLatency>,
 }
+
+/// A confirmed transaction waiting for its block to appear in the block watcher map.
+struct DeferredBlockLatency {
+    metrics: TransactionMetrics,
+    block_number: u64,
+    submit_time: Instant,
+    deferred_at: Instant,
+}
+
+/// Maximum time to wait for a block to appear in the block watcher before
+/// sending metrics without block latency.
+const BLOCK_LATENCY_DEFER_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl std::fmt::Debug for Confirmer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -153,6 +166,7 @@ impl Confirmer {
             pending_tx,
             flashblock_times,
             block_first_seen,
+            deferred_block_latencies: Vec::new(),
         }
     }
 
@@ -163,11 +177,15 @@ impl Confirmer {
             .map(|fb_time| fb_time.saturating_duration_since(pending.submit_time))
     }
 
-    fn get_block_latency(&self, block_number: u64, pending: &PendingTx) -> Option<Duration> {
+    fn get_block_latency(
+        &self,
+        block_number: u64,
+        pending_submit_time: Instant,
+    ) -> Option<Duration> {
         self.block_first_seen
             .read()
             .get(&block_number)
-            .map(|block_time| block_time.saturating_duration_since(pending.submit_time))
+            .map(|block_time| block_time.saturating_duration_since(pending_submit_time))
     }
 
     /// Creates a handle for submitting transactions.
@@ -199,11 +217,11 @@ impl Confirmer {
             }
 
             let stopped = self.stop_flag.load(Ordering::SeqCst);
-            if stopped && self.pending.is_empty() {
+            if stopped && self.pending.is_empty() && self.deferred_block_latencies.is_empty() {
                 while let Ok(pending) = pending_rx.try_recv() {
                     self.pending.insert(pending.tx_hash, pending);
                 }
-                if self.pending.is_empty() {
+                if self.pending.is_empty() && self.deferred_block_latencies.is_empty() {
                     break;
                 }
             }
@@ -221,6 +239,8 @@ impl Confirmer {
     }
 
     async fn poll_confirmations(&mut self, client: &impl ReceiptProvider) {
+        self.resolve_deferred_block_latencies().await;
+
         if self.pending.is_empty() {
             return;
         }
@@ -293,7 +313,7 @@ impl Confirmer {
     /// Fetches individual receipts for transactions that have been included in a block
     /// or have been pending long enough to be stragglers.
     async fn fetch_receipts(
-        &self,
+        &mut self,
         client: &impl ReceiptProvider,
         confirmed: &mut Vec<(TxHash, Address)>,
     ) {
@@ -324,8 +344,9 @@ impl Confirmer {
 
             match result {
                 Ok(Some(receipt)) => {
-                    let block_num = receipt.inner.block_number.unwrap_or(0);
-                    let block_latency = self.get_block_latency(block_num, pending);
+                    let block_num = receipt.inner.block_number;
+                    let block_latency =
+                        block_num.and_then(|n| self.get_block_latency(n, pending.submit_time));
                     let flashblocks_latency = self.get_flashblocks_latency(&tx_hash, pending);
                     let metrics = TransactionMetrics::new(
                         tx_hash,
@@ -333,14 +354,24 @@ impl Confirmer {
                         flashblocks_latency,
                         receipt.inner.gas_used,
                         receipt.inner.effective_gas_price,
-                        block_num,
+                        block_num.unwrap_or(0),
                     );
-                    debug!(
-                        tx_hash = %tx_hash,
-                        block_latency_ms = block_latency.map(|d| d.as_millis()),
-                        "tx confirmed"
-                    );
-                    let _ = self.metrics_tx.send(metrics).await;
+                    if let (None, Some(bn)) = (block_latency, block_num) {
+                        debug!(tx_hash = %tx_hash, block = bn, "block latency deferred");
+                        self.deferred_block_latencies.push(DeferredBlockLatency {
+                            metrics,
+                            block_number: bn,
+                            submit_time: pending.submit_time,
+                            deferred_at: Instant::now(),
+                        });
+                    } else {
+                        debug!(
+                            tx_hash = %tx_hash,
+                            block_latency_ms = ?block_latency.map(|d| d.as_millis()),
+                            "tx confirmed"
+                        );
+                        let _ = self.metrics_tx.send(metrics).await;
+                    }
                     confirmed.push((tx_hash, pending.from));
                 }
                 Ok(None) => {}
@@ -348,6 +379,49 @@ impl Confirmer {
                     warn!(tx_hash = %tx_hash, error = %e, "receipt lookup failed");
                 }
             }
+        }
+    }
+
+    async fn resolve_deferred_block_latencies(&mut self) {
+        if self.deferred_block_latencies.is_empty() {
+            return;
+        }
+
+        let now = Instant::now();
+        let resolved = {
+            let block_times = self.block_first_seen.read();
+            let mut indices = Vec::new();
+
+            for (i, deferred) in self.deferred_block_latencies.iter_mut().enumerate() {
+                let block_latency = block_times
+                    .get(&deferred.block_number)
+                    .map(|t| t.saturating_duration_since(deferred.submit_time));
+
+                if let Some(latency) = block_latency {
+                    deferred.metrics.block_latency = Some(latency);
+                    debug!(
+                        tx_hash = %deferred.metrics.tx_hash,
+                        block = deferred.block_number,
+                        block_latency_ms = latency.as_millis(),
+                        "deferred block latency resolved"
+                    );
+                    indices.push(i);
+                } else if now.duration_since(deferred.deferred_at) > BLOCK_LATENCY_DEFER_TIMEOUT {
+                    debug!(
+                        tx_hash = %deferred.metrics.tx_hash,
+                        block = deferred.block_number,
+                        "deferred block latency timed out"
+                    );
+                    indices.push(i);
+                }
+            }
+
+            indices
+        };
+
+        for i in resolved.into_iter().rev() {
+            let deferred = self.deferred_block_latencies.swap_remove(i);
+            let _ = self.metrics_tx.send(deferred.metrics).await;
         }
     }
 

@@ -5,7 +5,10 @@ use std::time::{Duration, Instant};
 use alloy_primitives::{TxHash, keccak256};
 use base_alloy_flashblocks::Flashblock;
 use futures::StreamExt;
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::{Bytes, protocol::Message},
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 use url::Url;
@@ -67,10 +70,10 @@ impl FlashblockTracker {
                             msg = read.next() => {
                                 match msg {
                                     Some(Ok(Message::Binary(data))) => {
-                                        self.process_message(data.to_vec());
+                                        self.process_message(data.into());
                                     }
                                     Some(Ok(Message::Text(data))) => {
-                                        self.process_message(data.as_bytes().to_vec());
+                                        self.process_message(Bytes::from(data).into());
                                     }
                                     Some(Ok(Message::Close(_))) => {
                                         info!("flashblock websocket closed by server");
@@ -142,7 +145,7 @@ impl FlashblockTracker {
                     let cutoff_idx = timestamps.len().saturating_sub(keep_count);
                     let cutoff_time = timestamps[cutoff_idx];
 
-                    times.retain(|_, &mut t| t >= cutoff_time);
+                    times.retain(|_, &mut t| t > cutoff_time);
                 }
             }
             Err(e) => {
