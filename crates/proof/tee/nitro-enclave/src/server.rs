@@ -40,10 +40,7 @@ static CONFIG_HASHES: LazyLock<HashMap<u64, B256>> = LazyLock::new(|| {
 
 /// Look up the config hash for a supported chain.
 fn config_hash_for_chain(chain_id: u64) -> Result<B256> {
-    CONFIG_HASHES
-        .get(&chain_id)
-        .copied()
-        .ok_or(NitroError::UnsupportedChain(chain_id))
+    CONFIG_HASHES.get(&chain_id).copied().ok_or(NitroError::UnsupportedChain(chain_id))
 }
 
 /// The enclave server.
