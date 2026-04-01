@@ -33,14 +33,25 @@ RUN git clone https://github.com/protolambda/eth2-val-tools.git --branch "${ETH2
     test "$(git rev-parse HEAD)" = "${ETH2_VAL_TOOLS_COMMIT}"
 RUN go build -o /go/bin/eth2-val-tools .
 
-FROM public.ecr.aws/docker/library/alpine:3.21.3
+FROM public.ecr.aws/docker/library/rust:1.93-trixie AS rust-builder
+WORKDIR /app
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends pkg-config libssl-dev && \
+    rm -rf /var/lib/apt/lists/*
+COPY . .
+RUN cargo build --release -p base-deployer
 
-RUN apk add --no-cache bash jq openssl curl gettext
+FROM public.ecr.aws/docker/library/debian:trixie-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates bash jq openssl curl gettext-base && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy the built binaries
 COPY --from=builder /go/bin/eth-genesis-state-generator /usr/local/bin/
 COPY --from=builder /go/bin/eth2-val-tools /usr/local/bin/
 COPY --from=builder /go/bin/op-deployer /usr/local/bin/
+COPY --from=rust-builder /app/target/release/base-deployer /usr/local/bin/
 
 # Create working directories
 RUN mkdir -p /config /output /shared /templates

@@ -13,16 +13,17 @@ services:
     container_name: setup-l1
     env_file: devnet-env
     volumes:
-      - ../../.devnet/l1/configs:/output
+      - ../../.devnet:/output
       - ../../.devnet/l1/reth:/data/l1-reth
       - ../../.devnet/l1/lighthouse:/data/l1-lighthouse
     environment:
-      - CHAIN_ID=${L1_CHAIN_ID}
+      - L1_CHAIN_ID=${L1_CHAIN_ID}
+      - L2_CHAIN_ID=${L2_CHAIN_ID}
       - SLOT_DURATION=4
       - OUTPUT_DIR=/output
       - SHARED_DIR=/output
       - L1_DATA_DIR=/data
-    entrypoint: ["/usr/local/bin/setup-l1.sh"]
+    entrypoint: ["/usr/local/bin/base-deployer", "genesis"]
 
   l1-el:
     image: ghcr.io/paradigmxyz/reth:v1.11.3
@@ -37,7 +38,7 @@ services:
       - "${L1_P2P_PORT}:${L1_P2P_PORT}"     # P2P
     volumes:
       - ../../.devnet/l1/reth:/data
-      - ../../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l1:/genesis:ro
     entrypoint: /usr/local/bin/reth
     command:
       - node
@@ -80,7 +81,7 @@ services:
       - "${L1_CL_P2P_PORT}:${L1_CL_P2P_PORT}/udp"   # P2P UDP
     volumes:
       - ../../.devnet/l1/lighthouse:/data
-      - ../../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l1:/genesis:ro
     command:
       - lighthouse
       - bn
@@ -120,7 +121,7 @@ services:
       l1-cl:
         condition: service_healthy
     volumes:
-      - ../../.devnet/l1/configs:/genesis
+      - ../../.devnet/l1:/genesis
     command:
       - lighthouse
       - vc
@@ -152,7 +153,7 @@ services:
       - L1_CHAIN_ID=${L1_CHAIN_ID}
       - L2_CHAIN_ID=${L2_CHAIN_ID}
       - L2_BASE_V1_BLOCK=${L2_BASE_V1_BLOCK-}
-      - OUTPUT_DIR=/devnet/l2/configs
+      - OUTPUT_DIR=/devnet
       - L2_DATA_DIR=/data
       - DEPLOYER_ADDR=${DEPLOYER_ADDR}
       - DEPLOYER_KEY=${DEPLOYER_KEY}
@@ -162,7 +163,7 @@ services:
       - CHALLENGER_ADDR=${CHALLENGER_ADDR}
       - BUILDER_P2P_KEY=${BUILDER_P2P_KEY}
       - BUILDER_ENODE_ID=${BUILDER_ENODE_ID}
-    entrypoint: ["/usr/local/bin/setup-l2.sh"]
+    entrypoint: ["/usr/local/bin/base-deployer", "deploy-l2"]
 
   base-builder:
     image: base-builder:local
@@ -182,8 +183,8 @@ services:
       - "${L2_BUILDER_METRICS_PORT}:${L2_BUILDER_METRICS_PORT}"     # Metrics
     volumes:
       - ../../.devnet/l2/builder:/data
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/l1:/genesis:ro
+      - ../../.devnet/l2:/genesis/l2:ro
     environment:
       - OTEL_SERVICE_NAME=base-builder
     entrypoint: /app/base-builder
@@ -246,8 +247,8 @@ services:
       - "${L2_BUILDER_CL_METRICS_PORT}:${L2_BUILDER_CL_METRICS_PORT}"  # Metrics
     volumes:
       - ../../.devnet/l2/builder-cl:/data
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/l1:/genesis:ro
+      - ../../.devnet/l2:/genesis/l2:ro
     entrypoint: /app/base-consensus
     command:
       - node
@@ -352,8 +353,8 @@ services:
       - "${L2_CLIENT_METRICS_PORT}:${L2_CLIENT_METRICS_PORT}"  # Metrics
     volumes:
       - ../../.devnet/l2/client:/data
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/l1:/genesis:ro
+      - ../../.devnet/l2:/genesis/l2:ro
     environment:
       - OTEL_SERVICE_NAME=base-client
     entrypoint: /app/base-client
@@ -422,8 +423,8 @@ services:
       - "${L2_CLIENT_CL_METRICS_PORT}:${L2_CLIENT_CL_METRICS_PORT}"  # Metrics
     volumes:
       - ../../.devnet/l2/client-cl:/data
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/l1:/genesis:ro
+      - ../../.devnet/l2:/genesis/l2:ro
     entrypoint: /app/base-consensus
     command:
       - node
