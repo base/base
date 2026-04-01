@@ -4684,6 +4684,7 @@ dependencies = [
  "async-trait",
  "aws-nitro-enclaves-cose",
  "aws-nitro-enclaves-nsm-api",
+ "base-alloy-chains",
  "base-alloy-evm",
  "base-consensus-genesis",
  "base-consensus-registry",
