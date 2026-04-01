@@ -379,7 +379,7 @@ const ZERONET: BaseChainConfig = BaseChainConfig {
     pectra_blob_schedule_timestamp: None,
     isthmus_timestamp: 0,
     jovian_timestamp: 0,
-    base_v1_timestamp: None,
+    base_v1_timestamp: Some(1_775_079_000),
 
     genesis_l1_hash: b256!("b7d4b69971ff31d5179be5e1b83f5a4f438f4cd1db886a6630623b7047f32cfd"),
     genesis_l1_number: 2_450_277,
