@@ -15,6 +15,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::NonceManager;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 
 use super::{
@@ -58,16 +59,13 @@ pub struct LoadRunner {
     generator: WorkloadGenerator,
     collector: MetricsCollector,
     stop_flag: Arc<AtomicBool>,
+    cancel_token: CancellationToken,
     nonce_managers: HashMap<Address, NonceManager<NonceProvider>>,
     providers: HashMap<Address, WalletProvider>,
     gas_price: u128,
-    /// Optional live status display for TTY terminals.
     display: Option<LoadTestDisplay>,
-    /// Last observed total ETH across all sender accounts (formatted).
     last_total_eth: Option<String>,
-    /// Last observed minimum ETH in any single sender account (formatted).
     last_min_eth: Option<String>,
-    /// Whether any account was below the low-balance threshold on the last check.
     last_funds_low: bool,
 }
 
@@ -114,6 +112,7 @@ impl LoadRunner {
             generator,
             collector: MetricsCollector::new(),
             stop_flag: Arc::new(AtomicBool::new(false)),
+            cancel_token: CancellationToken::new(),
             nonce_managers: HashMap::new(),
             providers,
             gas_price: 0,
@@ -395,7 +394,7 @@ impl LoadRunner {
         let flashblock_tracker_task = FlashblockTracker::new(
             self.config.flashblocks_url.clone(),
             Arc::clone(&flashblock_times),
-            Arc::clone(&self.stop_flag),
+            self.cancel_token.clone(),
         )
         .start();
 
@@ -403,7 +402,7 @@ impl LoadRunner {
         let block_watcher_task = BlockWatcher::new(
             self.config.ws_url.clone(),
             Arc::clone(&block_first_seen),
-            Arc::clone(&self.stop_flag),
+            self.cancel_token.clone(),
         )
         .start();
 
@@ -610,6 +609,7 @@ impl LoadRunner {
         }
 
         self.stop_flag.store(true, Ordering::SeqCst);
+        self.cancel_token.cancel();
 
         if let Some(display) = &self.display {
             display.finish();
@@ -933,6 +933,7 @@ impl LoadRunner {
     /// Signals the load test to stop.
     pub fn stop(&self) {
         self.stop_flag.store(true, Ordering::SeqCst);
+        self.cancel_token.cancel();
     }
 
     /// Returns a clone of the stop flag for external coordination.
