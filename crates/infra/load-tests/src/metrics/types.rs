@@ -11,7 +11,7 @@ pub struct TransactionMetrics {
     /// Time from submission to block production via newHeads WebSocket.
     pub block_latency: Option<Duration>,
     /// Time from submission to sequencer acceptance via flashblocks WebSocket.
-    pub flashblocks_sequencer_latency: Option<Duration>,
+    pub flashblocks_latency: Option<Duration>,
     /// Gas used by the transaction.
     pub gas_used: u64,
     /// Gas price in wei.
@@ -25,19 +25,12 @@ impl TransactionMetrics {
     pub const fn new(
         tx_hash: TxHash,
         block_latency: Option<Duration>,
-        flashblocks_sequencer_latency: Option<Duration>,
+        flashblocks_latency: Option<Duration>,
         gas_used: u64,
         gas_price: u128,
         block_number: u64,
     ) -> Self {
-        Self {
-            tx_hash,
-            block_latency,
-            flashblocks_sequencer_latency,
-            gas_used,
-            gas_price,
-            block_number,
-        }
+        Self { tx_hash, block_latency, flashblocks_latency, gas_used, gas_price, block_number }
     }
 
     /// Returns the transaction cost in wei.
@@ -103,9 +96,9 @@ pub struct GasMetrics {
     pub avg_gas_price: u128,
 }
 
-/// Aggregated flashblocks sequencer latency metrics.
+/// Aggregated flashblocks latency metrics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct FlashblocksSequencerLatencyMetrics {
+pub struct FlashblocksLatencyMetrics {
     /// Number of transactions with sequencer latency data.
     pub count: u64,
     /// Median sequencer latency (p50).

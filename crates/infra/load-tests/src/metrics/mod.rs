@@ -2,8 +2,7 @@
 
 mod types;
 pub use types::{
-    FlashblocksSequencerLatencyMetrics, GasMetrics, LatencyMetrics, ThroughputMetrics,
-    TransactionMetrics,
+    FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics, ThroughputMetrics, TransactionMetrics,
 };
 
 mod rolling_window;

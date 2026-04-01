@@ -32,9 +32,9 @@ pub struct DisplaySnapshot {
     pub p50_latency: Duration,
     /// Rolling 30s p99 latency.
     pub p99_latency: Duration,
-    /// Rolling 30s flashblocks sequencer p50 latency.
+    /// Rolling 30s flashblocks p50 latency.
     pub flashblocks_p50_latency: Duration,
-    /// Rolling 30s flashblocks sequencer p99 latency.
+    /// Rolling 30s flashblocks p99 latency.
     pub flashblocks_p99_latency: Duration,
     /// Current gas price in gwei.
     pub gas_price_gwei: f64,
@@ -214,7 +214,7 @@ impl LoadTestDisplay {
             || snap.flashblocks_p99_latency > Duration::ZERO
         {
             self.flashblocks_lat.set_message(format!(
-                "flashblocks sequencer latency p50 {}   p99 {}",
+                "flashblocks latency p50 {}   p99 {}",
                 fmt_latency(snap.flashblocks_p50_latency),
                 fmt_latency(snap.flashblocks_p99_latency),
             ));
