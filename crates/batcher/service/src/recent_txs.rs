@@ -7,7 +7,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionTrait};
 use base_consensus_genesis::RollupConfig;
 use base_protocol::{Batch, BatchReader, BlockInfo, Channel, ChannelId, Frame};
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use tracing::{debug, info};
 
 /// Maximum depth allowed for the recent-transaction startup scan.
@@ -65,32 +65,31 @@ impl RecentTxScanner {
         let mut highest_l2: Option<u64> = None;
 
         // Fetch blocks in parallel with bounded concurrency, preserving L1 order.
-        // RootProvider is cheaply cloneable (inner Arc), so we clone once up-front.
-        let provider = l1_provider.clone();
-        let fetched: Vec<_> = futures::stream::iter(scan_start..=current_l1)
+        // Each future returns a `Result`, and `try_collect` short-circuits on
+        // the first RPC failure — matching the original sequential behavior
+        // instead of waiting for all in-flight requests to complete or time out.
+        let fetched: Vec<(u64, _)> = futures::stream::iter(scan_start..=current_l1)
             .map(|block_num| {
-                let provider = provider.clone();
+                let provider = l1_provider.clone();
                 async move {
-                    let result = provider
+                    let block = provider
                         .get_block_by_number(BlockNumberOrTag::Number(block_num))
                         .full()
-                        .await;
-                    (block_num, result)
+                        .await
+                        .map_err(|e| eyre::eyre!("failed to fetch L1 block {block_num}: {e}"))?;
+                    eyre::Ok((block_num, block))
                 }
             })
             .buffered(16)
-            .collect()
-            .await;
+            .try_collect()
+            .await?;
 
-        for (block_num, result) in fetched {
-            let block = match result {
-                Ok(Some(b)) => b,
-                Ok(None) => {
+        for (block_num, block) in fetched {
+            let block = match block {
+                Some(b) => b,
+                None => {
                     debug!(block = %block_num, "L1 block not found during recent tx scan");
                     continue;
-                }
-                Err(e) => {
-                    return Err(eyre::eyre!("failed to fetch L1 block {block_num}: {e}"));
                 }
             };
 
