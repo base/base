@@ -12,6 +12,7 @@ resolver = "2"
 members = [
   "bin/audit-archiver",
   "bin/basectl",
+  "bin/base-deployer",
   "bin/based",
   "bin/batcher",
   "bin/builder",
