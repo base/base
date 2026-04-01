@@ -566,7 +566,7 @@ impl L1Miner {
         let blobs =
             BlobEncoder::encode_frames(frames).expect("frame data fits within blob capacity");
         for blob in blobs {
-            self.enqueue_blob(B256::ZERO, Box::new(blob));
+            self.enqueue_blob(B256::ZERO, blob);
         }
     }
 
