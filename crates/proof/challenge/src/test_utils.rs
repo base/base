@@ -41,8 +41,12 @@ pub struct MockGameState {
     pub game_info: GameInfo,
     /// Starting block number for this game.
     pub starting_block_number: u64,
+    /// L1 head block hash stored at game creation time.
+    pub l1_head: B256,
     /// Intermediate output roots for this game.
     pub intermediate_output_roots: Vec<B256>,
+    /// 1-based index of the challenged intermediate root (`0` = unchallenged).
+    pub countered_index: u64,
 }
 
 /// Mock dispute game factory with configurable per-index game data.
@@ -118,6 +122,13 @@ impl AggregateVerifierClient for MockAggregateVerifier {
             .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
     }
 
+    async fn l1_head(&self, game_address: Address) -> Result<B256, ContractError> {
+        self.games
+            .get(&game_address)
+            .map(|s| s.l1_head)
+            .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
+    }
+
     async fn read_block_interval(&self, _impl_address: Address) -> Result<u64, ContractError> {
         Ok(10)
     }
@@ -138,6 +149,13 @@ impl AggregateVerifierClient for MockAggregateVerifier {
             .map(|s| s.intermediate_output_roots.clone())
             .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
     }
+
+    async fn countered_index(&self, game_address: Address) -> Result<u64, ContractError> {
+        self.games
+            .get(&game_address)
+            .map(|s| s.countered_index)
+            .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
+    }
 }
 
 /// Helper to create an address from a `u64` index.
@@ -152,9 +170,22 @@ pub fn factory_game(index: u64, game_type: u32) -> GameAtIndex {
     GameAtIndex { game_type, timestamp: 1_000_000 + index, proxy: addr(index) }
 }
 
+/// Default TEE prover address used by [`mock_state`].
+///
+/// Every game in the multiproof system is initialized with at least one
+/// prover, so the default mock state uses a non-zero TEE prover to match
+/// the production invariant.
+pub const DEFAULT_TEE_PROVER: Address = Address::new([0xEE; 20]);
+
+/// Default L1 head hash used by [`mock_state`].
+pub const DEFAULT_L1_HEAD: B256 = B256::repeat_byte(0xAA);
+
 /// Helper to build mock game state for the verifier.
+///
+/// Uses [`DEFAULT_TEE_PROVER`] as the TEE prover address. Use
+/// [`mock_state_with_tee`] to override.
 pub const fn mock_state(status: u8, zk_prover: Address, block_number: u64) -> MockGameState {
-    mock_state_with_tee(status, zk_prover, Address::ZERO, block_number)
+    mock_state_with_tee(status, zk_prover, DEFAULT_TEE_PROVER, block_number)
 }
 
 /// Helper to build mock game state with an explicit TEE prover address.
@@ -174,7 +205,9 @@ pub const fn mock_state_with_tee(
             parent_index: 0,
         },
         starting_block_number: block_number.saturating_sub(10),
+        l1_head: DEFAULT_L1_HEAD,
         intermediate_output_roots: vec![],
+        countered_index: 0,
     }
 }
 
@@ -357,30 +390,46 @@ impl ProverClient for MockTeeProofProvider {
 /// Mock L1 head provider for testing the driver.
 #[derive(Debug)]
 pub struct MockL1HeadProvider {
-    /// Queue of results returned by [`finalized_head`](L1HeadProvider::finalized_head).
-    pub results: Mutex<VecDeque<eyre::Result<(B256, u64)>>>,
+    /// Queue of `(expected_hash, result)` pairs returned by
+    /// [`block_number_by_hash`](L1HeadProvider::block_number_by_hash).
+    /// When `expected_hash` is `Some`, the mock asserts that the caller
+    /// passes the correct hash.
+    pub block_number_results: Mutex<VecDeque<(Option<B256>, eyre::Result<u64>)>>,
 }
 
 impl MockL1HeadProvider {
-    /// Creates a mock that returns a single successful hash and block number.
+    /// Creates a mock whose [`block_number_by_hash`](L1HeadProvider::block_number_by_hash)
+    /// returns `number` and asserts it is called with `hash`.
     pub fn success(hash: B256, number: u64) -> Self {
-        let mut q = VecDeque::new();
-        q.push_back(Ok((hash, number)));
-        Self { results: Mutex::new(q) }
+        let mut bq = VecDeque::new();
+        bq.push_back((Some(hash), Ok(number)));
+        Self { block_number_results: Mutex::new(bq) }
     }
 
     /// Creates a mock that returns a single error.
     pub fn failure(msg: &str) -> Self {
-        let mut q = VecDeque::new();
-        q.push_back(Err(eyre::eyre!("{msg}")));
-        Self { results: Mutex::new(q) }
+        let mut bq = VecDeque::new();
+        bq.push_back((None, Err(eyre::eyre!("{msg}"))));
+        Self { block_number_results: Mutex::new(bq) }
     }
 }
 
 #[async_trait]
 impl L1HeadProvider for MockL1HeadProvider {
-    async fn finalized_head(&self) -> eyre::Result<(B256, u64)> {
-        self.results.lock().unwrap().pop_front().expect("MockL1HeadProvider has no more results")
+    async fn block_number_by_hash(&self, hash: B256) -> eyre::Result<u64> {
+        let (expected_hash, result) = self
+            .block_number_results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("MockL1HeadProvider has no more block_number_by_hash results");
+        if let Some(expected) = expected_hash {
+            assert_eq!(
+                hash, expected,
+                "MockL1HeadProvider::block_number_by_hash called with unexpected hash"
+            );
+        }
+        result
     }
 }
 
@@ -706,9 +755,9 @@ mod tests {
 
     /// Games with a non-zero TEE prover but zero ZK prover are still candidates.
     ///
-    /// The scanner currently filters only on `zk_prover`; a TEE proof alone does
-    /// not mark a game as challenged. This test guards that behaviour so a future
-    /// change to the filtering logic will surface as a test failure.
+    /// A non-zero `teeProver` with `zkProver == ZERO` is the normal initial
+    /// state for an unchallenged game. The scanner should return these as
+    /// candidates.
     #[tokio::test]
     async fn test_scan_tee_prover_nonzero_still_candidate() {
         let tee_addr = Address::repeat_byte(0xEE);
@@ -718,9 +767,9 @@ mod tests {
         });
 
         let mut verifier_games = HashMap::new();
-        // Game 0: IN_PROGRESS, no ZK prover, but has a TEE prover -> still a candidate
+        // Game 0: IN_PROGRESS, no ZK prover, has a TEE prover -> candidate
         verifier_games.insert(addr(0), mock_state_with_tee(0, Address::ZERO, tee_addr, 100));
-        // Game 1: IN_PROGRESS, no ZK prover, no TEE prover -> candidate
+        // Game 1: IN_PROGRESS, no ZK prover, has default TEE prover -> candidate
         verifier_games.insert(addr(1), mock_state(0, Address::ZERO, 200));
 
         let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
@@ -756,5 +805,126 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].index, 1);
         assert_eq!(new_last_scanned, None);
+    }
+
+    /// A challenged game (TEE + ZK provers non-zero, `countered_index` > 0) is
+    /// returned as a [`GameCategory::FraudulentZkChallenge`] candidate.
+    #[tokio::test]
+    async fn test_scan_challenged_game_returns_fraudulent_zk_challenge() {
+        use crate::scanner::GameCategory;
+
+        let tee_addr = Address::repeat_byte(0xEE);
+        let zk_addr = Address::repeat_byte(0xCC);
+
+        let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+
+        let mut verifier_games = HashMap::new();
+        let mut state = mock_state_with_tee(0, zk_addr, tee_addr, 100);
+        state.countered_index = 3; // 1-based: challenged at 0-based index 2
+        verifier_games.insert(addr(0), state);
+
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+
+        let (candidates, _) = scanner.scan(None).await.unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].category,
+            GameCategory::FraudulentZkChallenge { challenged_index: 2 }
+        );
+    }
+
+    /// A ZK-proposed game (`tee_prover` == 0, `zk_prover` != 0, unchallenged) is
+    /// returned as a [`GameCategory::InvalidZkProposal`] candidate.
+    #[tokio::test]
+    async fn test_scan_zk_proposal_returns_invalid_zk_proposal() {
+        use crate::scanner::GameCategory;
+
+        let zk_addr = Address::repeat_byte(0xCC);
+
+        let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+
+        let mut verifier_games = HashMap::new();
+        // tee_prover == ZERO, zk_prover != ZERO, countered_index == 0
+        verifier_games.insert(addr(0), mock_state_with_tee(0, zk_addr, Address::ZERO, 100));
+
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+
+        let (candidates, _) = scanner.scan(None).await.unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].category, GameCategory::InvalidZkProposal);
+    }
+
+    /// A TEE-proposed unchallenged game is returned as
+    /// [`GameCategory::InvalidTeeProposal`].
+    #[tokio::test]
+    async fn test_scan_tee_proposal_returns_invalid_tee_proposal() {
+        use crate::scanner::GameCategory;
+
+        let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+
+        let mut verifier_games = HashMap::new();
+        verifier_games.insert(addr(0), mock_state(0, Address::ZERO, 100));
+
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+
+        let (candidates, _) = scanner.scan(None).await.unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].category, GameCategory::InvalidTeeProposal);
+    }
+
+    /// A game with both proofs verified (TEE + ZK, no challenge) is skipped.
+    #[tokio::test]
+    async fn test_scan_both_proofs_verified_skipped() {
+        let tee_addr = Address::repeat_byte(0xEE);
+        let zk_addr = Address::repeat_byte(0xCC);
+
+        let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+
+        let mut verifier_games = HashMap::new();
+        // Both provers non-zero, countered_index == 0 (added via verifyProposalProof)
+        verifier_games.insert(addr(0), mock_state_with_tee(0, zk_addr, tee_addr, 100));
+
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+
+        let (candidates, _) = scanner.scan(None).await.unwrap();
+
+        assert!(candidates.is_empty(), "game with both proofs should be skipped");
+    }
+
+    /// Games with both `teeProver` and `zkProver` at `Address::ZERO` are
+    /// filtered out. Every game is initialized with at least one prover, so
+    /// both being zero indicates a prior nullification.
+    #[tokio::test]
+    async fn test_scan_filters_nullified_games() {
+        let tee_addr = Address::repeat_byte(0xEE);
+
+        let factory = Arc::new(MockDisputeGameFactory {
+            games: vec![factory_game(0, 1), factory_game(1, 1), factory_game(2, 1)],
+        });
+
+        let mut verifier_games = HashMap::new();
+        // Game 0: both provers zeroed (nullified) → filtered out
+        verifier_games.insert(addr(0), mock_state_with_tee(0, Address::ZERO, Address::ZERO, 100));
+        // Game 1: TEE prover active, ZK prover zero → candidate
+        verifier_games.insert(addr(1), mock_state_with_tee(0, Address::ZERO, tee_addr, 200));
+        // Game 2: both provers zeroed (nullified) → filtered out
+        verifier_games.insert(addr(2), mock_state_with_tee(0, Address::ZERO, Address::ZERO, 300));
+
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+
+        let (candidates, new_last_scanned) = scanner.scan(None).await.unwrap();
+
+        assert_eq!(candidates.len(), 1, "only the non-nullified game should be a candidate");
+        assert_eq!(candidates[0].index, 1);
+        assert_eq!(new_last_scanned, Some(2));
     }
 }

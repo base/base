@@ -4,12 +4,13 @@
 
 use alloc::{boxed::Box, vec::Vec};
 
+use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
+use base_consensus_genesis::SystemConfig;
 use base_protocol::{Batch, BlockInfo};
 
 use crate::{
-    BatchStreamProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, Signal,
-    SignalReceiver,
+    BatchStreamProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult, StageReset,
 };
 
 /// A mock provider for the [`BatchStream`] stage.
@@ -57,13 +58,22 @@ impl OriginAdvancer for TestBatchStreamProvider {
 }
 
 #[async_trait]
-impl SignalReceiver for TestBatchStreamProvider {
-    async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
-        match signal {
-            Signal::Reset { .. } => self.reset = true,
-            Signal::FlushChannel => self.flushed = true,
-            _ => {}
-        }
+impl StageReset for TestBatchStreamProvider {
+    async fn reset(&mut self, _: BlockNumHash, _: SystemConfig) -> PipelineResult<()> {
+        self.reset = true;
+        Ok(())
+    }
+
+    async fn activate(&mut self) -> PipelineResult<()> {
+        Ok(())
+    }
+
+    async fn flush_channel(&mut self) -> PipelineResult<()> {
+        self.flushed = true;
+        Ok(())
+    }
+
+    async fn provide_block(&mut self, _: BlockInfo) -> PipelineResult<()> {
         Ok(())
     }
 }

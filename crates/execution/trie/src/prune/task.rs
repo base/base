@@ -24,7 +24,7 @@ where
     H: BlockHashReader,
 {
     /// Initialize a new [`OpProofStoragePrunerTask`]
-    pub fn new(
+    pub const fn new(
         provider: OpProofsStorage<P>,
         hash_reader: H,
         min_block_interval: u64,

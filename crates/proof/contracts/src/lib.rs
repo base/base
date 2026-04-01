@@ -8,7 +8,8 @@
 
 mod aggregate_verifier;
 pub use aggregate_verifier::{
-    AggregateVerifierClient, AggregateVerifierContractClient, GameInfo, encode_nullify_calldata,
+    AggregateVerifierClient, AggregateVerifierContractClient, GameInfo, encode_challenge_calldata,
+    encode_nullify_calldata,
 };
 
 mod anchor_state_registry;

@@ -8,8 +8,6 @@ use crate::{EngineState, EngineSyncStateUpdate};
 #[derive(Debug)]
 pub struct TestEngineStateBuilder {
     unsafe_head: L2BlockInfo,
-    cross_unsafe_head: Option<L2BlockInfo>,
-    local_safe_head: Option<L2BlockInfo>,
     safe_head: Option<L2BlockInfo>,
     finalized_head: Option<L2BlockInfo>,
     el_sync_finished: bool,
@@ -30,26 +28,12 @@ impl TestEngineStateBuilder {
             seq_num: 0,
         };
 
-        Self {
-            unsafe_head: genesis,
-            cross_unsafe_head: None,
-            local_safe_head: None,
-            safe_head: None,
-            finalized_head: None,
-            el_sync_finished: true,
-        }
+        Self { unsafe_head: genesis, safe_head: None, finalized_head: None, el_sync_finished: true }
     }
 
     /// Sets the unsafe head
     pub const fn with_unsafe_head(mut self, block: L2BlockInfo) -> Self {
         self.unsafe_head = block;
-        self
-    }
-
-    /// Sets the cross-unsafe head
-    #[allow(dead_code)]
-    pub const fn with_cross_unsafe_head(mut self, block: L2BlockInfo) -> Self {
-        self.cross_unsafe_head = Some(block);
         self
     }
 
@@ -76,11 +60,8 @@ impl TestEngineStateBuilder {
     pub fn build(self) -> EngineState {
         let mut state = EngineState::default();
 
-        // Set unsafe head (required)
         state.sync_state = state.sync_state.apply_update(EngineSyncStateUpdate {
             unsafe_head: Some(self.unsafe_head),
-            cross_unsafe_head: Some(self.cross_unsafe_head.unwrap_or(self.unsafe_head)),
-            local_safe_head: Some(self.local_safe_head.unwrap_or(self.unsafe_head)),
             safe_head: Some(self.safe_head.unwrap_or(self.unsafe_head)),
             finalized_head: Some(self.finalized_head.unwrap_or(self.unsafe_head)),
         });

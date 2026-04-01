@@ -9,7 +9,7 @@ mod config;
 pub use config::ConsumerConfig;
 
 mod metrics;
-pub use metrics::ConsumerMetrics;
+pub use metrics::Metrics as ConsumerMetrics;
 
 mod validator;
 pub use validator::RecentlySent;
@@ -37,10 +37,8 @@ where
     pub fn spawn(pool: P, config: ConsumerConfig, executor: &TaskExecutor) -> Self {
         let (sender, _) = broadcast::channel(config.channel_capacity);
         let broadcast_sender = sender.clone();
-        let metrics = ConsumerMetrics::default();
         let cancel = CancellationToken::new();
-        let mut consumer =
-            Consumer::new(pool, config, broadcast_sender, metrics, cancel.child_token());
+        let mut consumer = Consumer::new(pool, config, broadcast_sender, cancel.child_token());
 
         executor.spawn_blocking_task(Box::pin(async move {
             consumer.run();

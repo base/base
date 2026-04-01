@@ -15,7 +15,7 @@ use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_proof_driver::{DriverPipeline, PipelineCursor};
 use base_proof_executor::TrieDBProvider;
 use base_proof_preimage::{CommsClient, FlushableCache};
-use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo, OpAttributesWithParent};
 use spin::RwLock;
 
 use crate::{
@@ -64,16 +64,17 @@ where
         caching_oracle: Arc<O>,
         da_provider: DA,
         chain_provider: L1,
-        mut l2_chain_provider: L2,
-    ) -> PipelineResult<Self> {
+        l2_chain_provider: L2,
+    ) -> PipelineResult<Self>
+    where
+        <L2 as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
+    {
         let attributes = StatefulAttributesBuilder::new(
             Arc::clone(&cfg),
             l1_cfg,
             l2_chain_provider.clone(),
             chain_provider.clone(),
         );
-
-        let cfg_for_reset = Arc::clone(&cfg);
 
         let mut pipeline = PipelineBuilder::new()
             .rollup_config(cfg)
@@ -84,21 +85,9 @@ where
             .origin(sync_start.read().origin())
             .build_polled();
 
-        // Reset the pipeline to populate the initial system configuration in L1 Traversal.
+        // Reset the pipeline to populate the initial L1/L2 cursor in L1 Traversal.
         let l2_safe_head = *sync_start.read().l2_safe_head();
-        pipeline
-            .signal(
-                ResetSignal {
-                    l2_safe_head,
-                    l1_origin: sync_start.read().origin(),
-                    system_config: l2_chain_provider
-                        .system_config_by_number(l2_safe_head.block_info.number, cfg_for_reset)
-                        .await
-                        .ok(),
-                }
-                .signal(),
-            )
-            .await?;
+        pipeline.signal(ResetSignal { l2_safe_head }.signal()).await?;
 
         Ok(Self { pipeline, caching_oracle })
     }
@@ -169,6 +158,7 @@ where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
+    <L2 as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
 {
     /// Flushes the cache on re-org.
     fn flush(&mut self) {
@@ -183,6 +173,7 @@ where
     L1: ChainProvider + Send + Sync + Debug + Clone,
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
+    <L2 as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
 {
     /// Receives a signal from the driver.
     async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {

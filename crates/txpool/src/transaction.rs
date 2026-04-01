@@ -139,7 +139,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     }
 
     /// Returns the timestamp (millis since Unix epoch) when this transaction was received.
-    pub const fn received_at(&self) -> u128 {
+    const fn inner_received_at(&self) -> u128 {
         self.received_at
     }
 }
@@ -337,10 +337,10 @@ where
     }
 }
 
-/// Trait for transactions that expose their timestamp.
+/// Trait for transactions that expose their received-at timestamp.
 pub trait TimestampedTransaction {
-    /// Returns the timestamp (millis since Unix epoch) when this transaction was received.
-    fn timestamp(&self) -> u128;
+    /// Returns the time (millis since Unix epoch) when this transaction was received.
+    fn received_at(&self) -> u128;
 }
 
 impl<Cons, Pooled> TimestampedTransaction for BasePooledTransaction<Cons, Pooled>
@@ -348,8 +348,8 @@ where
     Cons: SignedTransaction,
     Pooled: Send + Sync + 'static,
 {
-    fn timestamp(&self) -> u128 {
-        self.received_at()
+    fn received_at(&self) -> u128 {
+        self.inner_received_at()
     }
 }
 

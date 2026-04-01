@@ -81,18 +81,22 @@ thiserror.workspace = true
 derive_more = { workspace = true, features = ["constructor"] }
 
 # metrics
-metrics.workspace = true
-reth-metrics.workspace = true
-
-# enum
-strum.workspace = true
+metrics = { workspace = true, optional = true }
+base-metrics.workspace = true
 
 [dev-dependencies]
 base-execution-chainspec.workspace = true
 
 [features]
+default = [ "metrics" ]
 client = [
 	"jsonrpsee/async-client",
 	"jsonrpsee/client",
 	"reth-rpc-eth-api/client",
+]
+metrics = [
+	"base-execution-trie/metrics",
+	"base-metrics/metrics",
+	"dep:metrics",
+	"reth-evm/metrics",
 ]

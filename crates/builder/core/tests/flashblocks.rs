@@ -220,7 +220,7 @@ async fn smoke_dynamic_base() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn smoke_dynamic_unichain() -> eyre::Result<()> {
+async fn smoke_dynamic_one_second_blocks() -> eyre::Result<()> {
     let config = BuilderConfig::for_tests().with_block_time_ms(1000);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;
@@ -244,7 +244,7 @@ async fn smoke_dynamic_unichain() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn smoke_classic_unichain() -> eyre::Result<()> {
+async fn smoke_classic_one_second_blocks() -> eyre::Result<()> {
     let config =
         BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks_leeway_time_ms(50);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
@@ -293,7 +293,7 @@ async fn smoke_classic_base() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn unichain_dynamic_with_lag() -> eyre::Result<()> {
+async fn dynamic_one_second_blocks_with_lag() -> eyre::Result<()> {
     let config = BuilderConfig::for_tests().with_block_time_ms(1000);
     let rbuilder = setup_test_instance_with_builder_config(config).await?;
     let driver = rbuilder.driver().await?;

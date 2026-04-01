@@ -10,7 +10,7 @@ use base_protocol::{BlockInfo, Frame};
 
 use crate::{
     Metrics, NextFrameProvider, OriginAdvancer, OriginProvider, PipelineError, PipelineResult,
-    Signal, SignalReceiver,
+    StageReset,
 };
 
 /// Provides data frames for the [`FrameQueue`] stage.
@@ -32,7 +32,7 @@ pub trait FrameQueueProvider {
 #[derive(Debug)]
 pub struct FrameQueue<P>
 where
-    P: FrameQueueProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: FrameQueueProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     /// The previous stage in the pipeline.
     pub prev: P,
@@ -44,7 +44,7 @@ where
 
 impl<P> FrameQueue<P>
 where
-    P: FrameQueueProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: FrameQueueProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     /// Create a new [`FrameQueue`] stage with the given previous [`L1Retrieval`] stage.
     ///
@@ -149,7 +149,7 @@ where
 #[async_trait]
 impl<P> OriginAdvancer for FrameQueue<P>
 where
-    P: FrameQueueProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: FrameQueueProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
     async fn advance_origin(&mut self) -> PipelineResult<()> {
         self.prev.advance_origin().await
@@ -159,7 +159,7 @@ where
 #[async_trait]
 impl<P> NextFrameProvider for FrameQueue<P>
 where
-    P: FrameQueueProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: FrameQueueProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
     async fn next_frame(&mut self) -> PipelineResult<Frame> {
         self.load_frames().await?;
@@ -176,7 +176,7 @@ where
 
 impl<P> OriginProvider for FrameQueue<P>
 where
-    P: FrameQueueProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: FrameQueueProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     fn origin(&self) -> Option<BlockInfo> {
         self.prev.origin()
@@ -184,12 +184,34 @@ where
 }
 
 #[async_trait]
-impl<P> SignalReceiver for FrameQueue<P>
+impl<P> StageReset for FrameQueue<P>
 where
-    P: FrameQueueProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: FrameQueueProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
-    async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
-        self.prev.signal(signal).await?;
+    async fn reset(
+        &mut self,
+        l1_origin: alloy_eips::BlockNumHash,
+        system_config: base_consensus_genesis::SystemConfig,
+    ) -> PipelineResult<()> {
+        self.prev.reset(l1_origin, system_config).await?;
+        self.queue = VecDeque::default();
+        Ok(())
+    }
+
+    async fn activate(&mut self) -> PipelineResult<()> {
+        self.prev.activate().await?;
+        self.queue = VecDeque::default();
+        Ok(())
+    }
+
+    async fn flush_channel(&mut self) -> PipelineResult<()> {
+        self.prev.flush_channel().await?;
+        self.queue = VecDeque::default();
+        Ok(())
+    }
+
+    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
+        self.prev.provide_block(block).await?;
         self.queue = VecDeque::default();
         Ok(())
     }
@@ -199,17 +221,18 @@ where
 pub(crate) mod tests {
     use alloc::vec;
 
-    use base_consensus_genesis::HardForkConfig;
+    use alloy_eips::BlockNumHash;
+    use base_consensus_genesis::{HardForkConfig, SystemConfig};
 
     use super::*;
-    use crate::{test_utils::TestFrameQueueProvider, types::ResetSignal};
+    use crate::test_utils::TestFrameQueueProvider;
 
     #[tokio::test]
     async fn test_frame_queue_reset() {
         let mock = TestFrameQueueProvider::new(vec![]);
         let mut frame_queue = FrameQueue::new(mock, Default::default());
         assert!(!frame_queue.prev.reset);
-        frame_queue.signal(ResetSignal::default().signal()).await.unwrap();
+        frame_queue.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();
         assert_eq!(frame_queue.queue.len(), 0);
         assert!(frame_queue.prev.reset);
     }

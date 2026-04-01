@@ -117,18 +117,16 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
 
         let fcu_start = Instant::now();
 
-        // We intentionally set unsafe_head and cross_unsafe_head to safe_l2 to ensure the
-        // engine observes a self-consistent head state. This is required to correctly handle
-        // reorgs (where unsafe may be ahead on a non-canonical fork) and to trigger EL sync when
-        // the local unsafe head lags behind the safe head.
+        // We intentionally set unsafe_head to safe_l2 to ensure the engine observes a
+        // self-consistent head state. This is required to correctly handle reorgs (where unsafe
+        // may be ahead on a non-canonical fork) and to trigger EL sync when the local unsafe head
+        // lags behind the safe head.
         SynchronizeTask::new(
             Arc::clone(&self.client),
             Arc::clone(&self.cfg),
             EngineSyncStateUpdate {
                 unsafe_head: Some(*safe_l2),
-                cross_unsafe_head: Some(*safe_l2),
                 safe_head: Some(*safe_l2),
-                local_safe_head: Some(*safe_l2),
                 ..Default::default()
             },
         )
@@ -208,7 +206,6 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                     // Apply a transient update to the safe head.
                     state.sync_state = state.sync_state.apply_update(EngineSyncStateUpdate {
                         safe_head: Some(block_info),
-                        local_safe_head: Some(block_info),
                         ..Default::default()
                     });
 
@@ -229,11 +226,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
                     SynchronizeTask::new(
                         Arc::clone(&self.client),
                         Arc::clone(&self.cfg),
-                        EngineSyncStateUpdate {
-                            safe_head: Some(block_info),
-                            local_safe_head: Some(block_info),
-                            ..Default::default()
-                        },
+                        EngineSyncStateUpdate { safe_head: Some(block_info), ..Default::default() },
                     )
                     .execute(state)
                     .await

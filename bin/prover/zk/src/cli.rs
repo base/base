@@ -38,8 +38,8 @@ pub(crate) struct Cli {
 /// ZK prover service for proving Base blocks.
 #[derive(Parser, Debug)]
 struct ZkArgs {
-    #[arg(long, env = "OP_NODE_ADDRESS")]
-    op_node_address: String,
+    #[arg(long, env = "BASE_CONSENSUS_ADDRESS")]
+    base_consensus_address: String,
 
     #[arg(long, env = "L1_NODE_ADDRESS")]
     l1_node_address: String,
@@ -182,7 +182,7 @@ impl ZkArgs {
         let artifact_storage = self.resolve_artifact_storage()?;
 
         let config = BackendConfig::GenericZkvm {
-            op_node_url: self.op_node_address.clone(),
+            base_consensus_url: self.base_consensus_address.clone(),
             l1_node_url: l1_url.clone(),
             l1_beacon_url: beacon_url.clone(),
             l2_node_url: l2_url.clone(),

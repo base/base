@@ -186,7 +186,8 @@ async fn main() {
             builder = builder.add_global_label(key, value);
         }
 
-        builder.install().expect("failed to setup Prometheus endpoint")
+        builder.install().expect("failed to setup Prometheus endpoint");
+        base_metrics::initialize_registered_metrics();
     }
 
     // Validate that we have at least one upstream URI
@@ -197,9 +198,6 @@ async fn main() {
 
     info!(message = "using upstream URIs", uris = ?args.upstream_ws);
 
-    let metrics = Arc::new(Metrics::default());
-    let metrics_clone = Arc::clone(&metrics);
-
     let (send, _rec) = broadcast::channel(args.message_buffer_size);
     let sender = send.clone();
 
@@ -207,7 +205,7 @@ async fn main() {
         trace!(message = "received data", data = data);
         // Subtract one from receiver count, as we have to keep one receiver open at all times (see _rec)
         // to avoid the channel being closed. However this is not an active client connection.
-        metrics_clone.active_connections.set((send.receiver_count() - 1) as f64);
+        Metrics::active_connections().set((send.receiver_count() - 1) as f64);
 
         let message_data = if args.enable_compression {
             let data_bytes = data.as_bytes();
@@ -224,7 +222,7 @@ async fn main() {
 
         match send.send(message_data.into()) {
             Ok(_) => {
-                metrics_clone.broadcast_queue_size.set(send.len() as f64);
+                Metrics::broadcast_queue_size().set(send.len() as f64);
             }
             Err(e) => error!(message = "failed to send data", error = e.to_string()),
         }
@@ -238,7 +236,6 @@ async fn main() {
         let uri_clone = uri.clone();
         let listener_clone = listener.clone();
         let token_clone = token.clone();
-        let metrics_clone = Arc::clone(&metrics);
 
         let options = SubscriberOptions::default()
             .with_max_backoff_interval(Duration::from_millis(args.subscriber_max_interval_ms))
@@ -247,8 +244,7 @@ async fn main() {
             .with_backoff_initial_interval(Duration::from_millis(500))
             .with_initial_grace_period(Duration::from_secs(5));
 
-        let mut subscriber =
-            WebsocketSubscriber::new(uri_clone.clone(), listener_clone, metrics_clone, options);
+        let mut subscriber = WebsocketSubscriber::new(uri_clone.clone(), listener_clone, options);
 
         let task = tokio::spawn(async move {
             info!(message = "starting subscriber", index = index, uri = uri_clone.to_string());
@@ -262,7 +258,6 @@ async fn main() {
         let ping_sender = sender.clone();
         let ping_token = token.clone();
         let ping_interval = args.client_ping_interval_ms;
-        let ping_metrics = Arc::clone(&metrics);
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_millis(ping_interval));
@@ -274,7 +269,7 @@ async fn main() {
                         match ping_sender.send(Message::Ping(vec![].into())) {
                             Ok(_) => {
                                 trace!(message = "sent ping to all clients");
-                                ping_metrics.broadcast_queue_size.set(ping_sender.len() as f64);
+                                Metrics::broadcast_queue_size().set(ping_sender.len() as f64);
                             }
                             Err(e) => error!(message = "failed to send ping", error = e.to_string()),
                         }
@@ -292,7 +287,6 @@ async fn main() {
 
     let registry = Registry::new(
         sender,
-        Arc::clone(&metrics),
         args.enable_compression,
         args.client_ping_enabled,
         args.client_pong_timeout_ms,
@@ -307,7 +301,6 @@ async fn main() {
     let server = Server::new(
         args.listen_addr,
         registry.clone(),
-        metrics,
         rate_limiter,
         authentication,
         args.ip_addr_http_header,

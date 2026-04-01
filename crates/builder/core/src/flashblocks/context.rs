@@ -1,10 +1,13 @@
 use core::fmt::Debug;
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Instant, SystemTime},
+};
 
 use alloy_consensus::{Eip658Value, Transaction};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
-use alloy_primitives::{BlockHash, Bytes, U256};
+use alloy_primitives::{B256, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
 use base_alloy_chains::BaseUpgrades;
@@ -15,7 +18,9 @@ use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use base_execution_payload_builder::{OpPayloadBuilderAttributes, error::OpPayloadBuilderError};
 use base_execution_primitives::OpTransactionSigned;
 use base_revm::{L1BlockInfo, OpSpecId};
-use base_txpool::{BundleTransaction, estimated_da_size::DataAvailabilitySized};
+use base_txpool::{
+    BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
+};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
@@ -47,6 +52,7 @@ fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64
         TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
             "block_uncompressed_size_exceeded"
         }
+        TxnExecutionError::MeteringDataPending => "metering_data_pending",
         TxnExecutionError::ExecutionMeteringLimitExceeded(inner) => match inner {
             ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
                 "tx_execution_time_exceeded"
@@ -67,8 +73,7 @@ fn record_rejected_tx_priority_fee(reason: &TxnExecutionError, priority_fee: f64
         TxnExecutionError::EvmError => "evm_error",
         TxnExecutionError::MaxGasUsageExceeded => "max_gas_usage_exceeded",
     };
-    reth_metrics::metrics::histogram!("base_builder_rejected_tx_priority_fee", "reason" => r)
-        .record(priority_fee);
+    BuilderMetrics::rejected_tx_priority_fee(r).record(priority_fee);
 }
 
 /// Diagnostics captured during a single flashblock's transaction execution.
@@ -96,6 +101,7 @@ impl FlashblockSelectionOutcome {
     }
 }
 
+/// Per-flashblock diagnostics summarizing transaction selection outcomes.
 #[derive(Debug, Default)]
 pub struct FlashblockDiagnostics {
     /// Whether the flashblock timer or block cancel fired during execution.
@@ -116,6 +122,8 @@ pub struct FlashblockDiagnostics {
     pub txs_rejected_state_root_time: u64,
     /// Number rejected by uncompressed size limit.
     pub txs_rejected_uncompressed_size: u64,
+    /// Number skipped because metering data has not yet arrived.
+    pub txs_rejected_metering_data_pending: u64,
     /// Number rejected or skipped for other reasons.
     pub txs_rejected_other: u64,
     /// Minimum effective priority fee (tip per gas) among included transactions.
@@ -135,7 +143,7 @@ impl FlashblockDiagnostics {
     }
 
     /// Returns the rejection counts keyed by their metric/log reason labels.
-    pub const fn rejection_counts(&self) -> [(&'static str, u64); 7] {
+    pub const fn rejection_counts(&self) -> [(&'static str, u64); 8] {
         [
             ("gas_limit", self.txs_rejected_gas),
             ("da_size", self.txs_rejected_da),
@@ -143,6 +151,7 @@ impl FlashblockDiagnostics {
             ("execution_time", self.txs_rejected_execution_time),
             ("state_root_time", self.txs_rejected_state_root_time),
             ("uncompressed_size", self.txs_rejected_uncompressed_size),
+            ("metering_data_pending", self.txs_rejected_metering_data_pending),
             ("other", self.txs_rejected_other),
         ]
     }
@@ -155,7 +164,7 @@ impl FlashblockDiagnostics {
             .collect()
     }
 
-    /// Total number of rejected transactions across all limit types.
+    /// Total number of rejected or skipped transactions across all tracked categories.
     pub const fn txs_rejected_total(&self) -> u64 {
         self.txs_rejected_gas
             + self.txs_rejected_da
@@ -163,6 +172,7 @@ impl FlashblockDiagnostics {
             + self.txs_rejected_execution_time
             + self.txs_rejected_state_root_time
             + self.txs_rejected_uncompressed_size
+            + self.txs_rejected_metering_data_pending
             + self.txs_rejected_other
     }
 
@@ -192,6 +202,9 @@ impl FlashblockDiagnostics {
                     self.txs_rejected_state_root_time += 1;
                 }
             },
+            TxnExecutionError::MeteringDataPending => {
+                self.txs_rejected_metering_data_pending += 1;
+            }
             TxnExecutionError::SequencerTransaction
             | TxnExecutionError::NonceTooLow
             | TxnExecutionError::InternalError(_)
@@ -275,8 +288,6 @@ pub struct OpPayloadBuilderCtx {
     pub block_env_attributes: OpNextBlockEnvAttributes,
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancellationToken,
-    /// The metrics for the builder
-    pub metrics: Arc<BuilderMetrics>,
     /// Extra context for the payload builder
     pub extra: FlashblocksExtraCtx,
     /// Builder configuration containing limits and metering settings.
@@ -596,7 +607,7 @@ impl OpPayloadBuilderCtx {
         let mut num_txs_simulated = 0;
         let mut num_txs_simulated_success = 0;
         let mut num_txs_simulated_fail = 0;
-        let mut reverted_gas_used = 0;
+        let mut reverted_gas_used: u64 = 0;
         let base_fee = self.base_fee();
         let mut diag = FlashblockDiagnostics::default();
 
@@ -659,6 +670,7 @@ impl OpPayloadBuilderCtx {
             }
 
             let tx_da_size = tx.estimated_da_size();
+            let tx_received_at_ms = tx.received_at();
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
             let tx_uncompressed_size = tx.encode_2718_len() as u64;
@@ -680,6 +692,24 @@ impl OpPayloadBuilderCtx {
             num_txs_considered += 1;
 
             let resource_usage = self.builder_config.metering_provider.get(&tx_hash);
+
+            // Skip transactions that are too young and don't have metering data yet
+            if self.builder_config.metering_provider.is_enabled()
+                && resource_usage.is_none()
+                && let Some(wait_duration) = self.builder_config.metering_wait_duration
+            {
+                let now_ms = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
+                let tx_age_ms = now_ms.saturating_sub(tx_received_at_ms);
+                if tx_age_ms < wait_duration.as_millis() {
+                    log_txn(Err(TxnExecutionError::MeteringDataPending));
+                    BuilderMetrics::metering_data_pending_skip().increment(1);
+                    best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    continue;
+                }
+            }
 
             // Extract predicted execution and state root times from metering data
             let predicted_execution_time_us =
@@ -743,10 +773,10 @@ impl OpPayloadBuilderCtx {
 
             // Record execution time prediction accuracy metrics
             if let Some(predicted_us) = predicted_execution_time_us {
-                self.metrics.tx_predicted_execution_time_us.record(predicted_us as f64);
+                BuilderMetrics::tx_predicted_execution_time_us().record(predicted_us as f64);
             }
             if let Some(predicted_us) = predicted_state_root_time_us {
-                self.metrics.tx_predicted_state_root_time_us.record(predicted_us as f64);
+                BuilderMetrics::tx_predicted_state_root_time_us().record(predicted_us as f64);
             }
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
@@ -806,15 +836,27 @@ impl OpPayloadBuilderCtx {
 
             let actual_execution_time_us = tx_simulation_start_time.elapsed().as_micros();
 
-            self.metrics.tx_simulation_duration.record(tx_simulation_start_time.elapsed());
-            self.metrics.tx_byte_size.record(tx.inner().size() as f64);
-            self.metrics.tx_actual_execution_time_us.record(actual_execution_time_us as f64);
+            BuilderMetrics::tx_simulation_duration().record(tx_simulation_start_time.elapsed());
+            BuilderMetrics::tx_byte_size().record(tx.inner().size() as f64);
+            BuilderMetrics::tx_actual_execution_time_us().record(actual_execution_time_us as f64);
             num_txs_simulated += 1;
+
+            // Record state modification counts (trie work proxy)
+            let accounts_modified = state.len();
+            let storage_slots_modified: usize = state.values().map(|a| a.storage.len()).sum();
+            BuilderMetrics::tx_accounts_modified().record(accounts_modified as f64);
+            BuilderMetrics::tx_storage_slots_modified().record(storage_slots_modified as f64);
+
+            // Record execution time for unmetered transactions (race condition indicator)
+            if resource_usage.is_none() {
+                BuilderMetrics::unmetered_tx_actual_execution_time_us()
+                    .record(actual_execution_time_us as f64);
+            }
 
             // Record prediction accuracy
             if let Some(predicted_us) = predicted_execution_time_us {
                 let error = predicted_us as f64 - actual_execution_time_us as f64;
-                self.metrics.execution_time_prediction_error_us.record(error);
+                BuilderMetrics::execution_time_prediction_error_us().record(error);
             }
 
             let gas_used = result.gas_used();
@@ -822,12 +864,12 @@ impl OpPayloadBuilderCtx {
             if is_success {
                 log_txn(Ok(TxnOutcome::Success));
                 num_txs_simulated_success += 1;
-                self.metrics.successful_tx_gas_used.record(gas_used as f64);
+                BuilderMetrics::successful_tx_gas_used().record(gas_used as f64);
             } else {
                 log_txn(Ok(TxnOutcome::Reverted));
                 num_txs_simulated_fail += 1;
-                reverted_gas_used += gas_used as i32;
-                self.metrics.reverted_tx_gas_used.record(gas_used as f64);
+                reverted_gas_used += gas_used;
+                BuilderMetrics::reverted_tx_gas_used().record(gas_used as f64);
             }
 
             // add gas used by the transaction to cumulative gas used, before creating the
@@ -859,7 +901,7 @@ impl OpPayloadBuilderCtx {
                 // Record state root time / gas ratio for anomaly detection
                 if gas_used > 0 {
                     let ratio = state_root_time as f64 / gas_used as f64;
-                    self.metrics.state_root_time_per_gas_ratio.record(ratio);
+                    BuilderMetrics::state_root_time_per_gas_ratio().record(ratio);
                 }
             }
 
@@ -904,19 +946,18 @@ impl OpPayloadBuilderCtx {
 
         // Record cumulative predicted state root time for the block
         if info.cumulative_state_root_time_us > 0 {
-            self.metrics
-                .block_predicted_state_root_time_us
+            BuilderMetrics::block_predicted_state_root_time_us()
                 .record(info.cumulative_state_root_time_us as f64);
         }
 
         let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
-        self.metrics.set_payload_builder_metrics(
-            payload_transaction_simulation_time,
+        BuilderMetrics::set_payload_builder_metrics(
+            payload_transaction_simulation_time.as_secs_f64(),
             num_txs_considered as f64,
-            num_txs_simulated,
-            num_txs_simulated_success,
-            num_txs_simulated_fail,
-            reverted_gas_used,
+            num_txs_simulated as f64,
+            num_txs_simulated_success as f64,
+            num_txs_simulated_fail as f64,
+            reverted_gas_used as f64,
         );
 
         diag.txs_considered = num_txs_considered;
@@ -936,19 +977,19 @@ impl OpPayloadBuilderCtx {
     fn record_static_limit_exceeded(&self, err: &TxnExecutionError) {
         match err {
             TxnExecutionError::TransactionDASizeExceeded(_, _) => {
-                self.metrics.tx_da_size_exceeded_total.increment(1);
+                BuilderMetrics::tx_da_size_exceeded_total().increment(1);
             }
             TxnExecutionError::BlockDASizeExceeded { .. } => {
-                self.metrics.block_da_size_exceeded_total.increment(1);
+                BuilderMetrics::block_da_size_exceeded_total().increment(1);
             }
             TxnExecutionError::DAFootprintLimitExceeded { .. } => {
-                self.metrics.da_footprint_exceeded_total.increment(1);
+                BuilderMetrics::da_footprint_exceeded_total().increment(1);
             }
             TxnExecutionError::TransactionGasLimitExceeded { .. } => {
-                self.metrics.gas_limit_exceeded_total.increment(1);
+                BuilderMetrics::gas_limit_exceeded_total().increment(1);
             }
             TxnExecutionError::BlockUncompressedSizeExceeded { .. } => {
-                self.metrics.block_uncompressed_size_exceeded_total.increment(1);
+                BuilderMetrics::block_uncompressed_size_exceeded_total().increment(1);
             }
             _ => {}
         }
@@ -956,20 +997,70 @@ impl OpPayloadBuilderCtx {
 
     /// Record metrics for a limit that requires execution data (enforcement is configurable).
     fn record_execution_metering_limit_exceeded(&self, limit: &ExecutionMeteringLimitExceeded) {
-        self.metrics.resource_limit_would_reject_total.increment(1);
+        BuilderMetrics::resource_limit_would_reject_total().increment(1);
         match limit {
             ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _) => {
-                self.metrics.tx_execution_time_exceeded_total.increment(1);
+                BuilderMetrics::tx_execution_time_exceeded_total().increment(1);
             }
             ExecutionMeteringLimitExceeded::FlashblockExecutionTime(_, _, _) => {
-                self.metrics.flashblock_execution_time_exceeded_total.increment(1);
+                BuilderMetrics::flashblock_execution_time_exceeded_total().increment(1);
             }
             ExecutionMeteringLimitExceeded::TransactionStateRootTime(_, _) => {
-                self.metrics.tx_state_root_time_exceeded_total.increment(1);
+                BuilderMetrics::tx_state_root_time_exceeded_total().increment(1);
             }
             ExecutionMeteringLimitExceeded::BlockStateRootTime(_, _, _) => {
-                self.metrics.block_state_root_time_exceeded_total.increment(1);
+                BuilderMetrics::block_state_root_time_exceeded_total().increment(1);
             }
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl OpPayloadBuilderCtx {
+    /// Creates a minimal [`OpPayloadBuilderCtx`] for unit tests.
+    ///
+    /// Derives the EVM environment from the given chain spec and parent header,
+    /// using default builder attributes and a no-op cancellation token.
+    pub fn for_test(chain_spec: Arc<OpChainSpec>, parent: Arc<SealedHeader>) -> Self {
+        let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
+        let timestamp = parent.timestamp + 2;
+
+        let attributes = OpPayloadBuilderAttributes {
+            payload_attributes: reth_payload_builder::EthPayloadBuilderAttributes {
+                id: PayloadId::new([0; 8]),
+                parent: parent.hash(),
+                timestamp,
+                parent_beacon_block_root: Some(B256::ZERO),
+                ..Default::default()
+            },
+            gas_limit: Some(parent.gas_limit),
+            ..Default::default()
+        };
+
+        let block_env_attributes = OpNextBlockEnvAttributes {
+            timestamp,
+            suggested_fee_recipient: Default::default(),
+            prev_randao: Default::default(),
+            gas_limit: parent.gas_limit,
+            parent_beacon_block_root: Some(B256::ZERO),
+            extra_data: Default::default(),
+        };
+
+        let evm_env = evm_config
+            .next_evm_env(&parent, &block_env_attributes)
+            .expect("failed to create test evm env");
+
+        let config = PayloadConfig::new(parent, attributes);
+
+        Self {
+            evm_config,
+            chain_spec,
+            config,
+            evm_env,
+            block_env_attributes,
+            cancel: CancellationToken::new(),
+            extra: FlashblocksExtraCtx::default(),
+            builder_config: crate::BuilderConfig::default(),
         }
     }
 }
@@ -1021,6 +1112,7 @@ mod tests {
                 ("execution_time", 0),
                 ("state_root_time", 1),
                 ("uncompressed_size", 0),
+                ("metering_data_pending", 0),
                 ("other", 0),
             ]
         );
@@ -1032,9 +1124,11 @@ mod tests {
         diag.record_rejection(&TxnExecutionError::SequencerTransaction);
         diag.record_rejection(&TxnExecutionError::NonceTooLow);
         diag.record_rejection(&TxnExecutionError::MaxGasUsageExceeded);
+        diag.record_rejection(&TxnExecutionError::MeteringDataPending);
 
+        assert_eq!(diag.txs_rejected_metering_data_pending, 1);
         assert_eq!(diag.txs_rejected_other, 3);
-        assert_eq!(diag.txs_rejected_total(), 3);
+        assert_eq!(diag.txs_rejected_total(), 4);
     }
 
     #[test]

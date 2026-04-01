@@ -257,6 +257,13 @@ impl BatcherService {
     pub async fn setup(self, runtime: TokioRuntime) -> eyre::Result<ReadyBatcher> {
         self.config.encoder_config.validate()?;
 
+        if self.config.stopped && self.config.admin_addr.is_none() {
+            eyre::bail!(
+                "--stopped requires --admin-port: the batcher would start stopped with no way to \
+                 resume because the admin JSON-RPC server is not enabled"
+            );
+        }
+
         info!(
             l1_rpc = %self.config.l1_rpc_url,
             l2_rpc = %self.config.l2_rpc_url,
@@ -305,6 +312,9 @@ impl BatcherService {
             .await
             .map_err(|e| eyre::eyre!("optimism_syncStatus RPC failed: {e}"))?;
         let safe_l2_number = sync_status.safe_l2.block_info.number;
+        let next_l2_timestamp =
+            sync_status.safe_l2.block_info.timestamp.saturating_add(rollup_config.block_time);
+        self.config.encoder_config.validate_for_rollup_config(&rollup_config, next_l2_timestamp)?;
         info!(safe_l2 = %safe_l2_number, "fetched safe L2 head");
 
         // Validate the recent-tx scan depth against the maximum. Do this early so
@@ -464,7 +474,8 @@ impl BatcherService {
             DaThrottle::new(throttle, throttle_client),
             l1_head_source,
         )
-        .with_safe_head_rx(safe_head_rx);
+        .with_safe_head_rx(safe_head_rx)
+        .with_stopped(self.config.stopped);
 
         let admin_server = match self.config.admin_addr {
             Some(addr) => {

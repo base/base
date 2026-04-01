@@ -96,6 +96,7 @@ metrics = [
 	"base-consensus-gossip/metrics",
 	"base-consensus-providers/metrics",
 	"base-consensus-rpc/metrics",
+	"base-metrics/metrics",
 	"dep:metrics",
 	"libp2p/metrics",
 ]

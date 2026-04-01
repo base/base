@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use alloy_primitives::TxHash;
 use tracing::debug;
 
-use super::{MetricsAggregator, MetricsSummary, TransactionMetrics};
+use super::{MetricsAggregator, MetricsSummary, RollingWindow, TransactionMetrics};
 
 /// Collects transaction metrics during test execution.
 #[derive(Debug)]
@@ -12,12 +12,19 @@ pub struct MetricsCollector {
     transactions: Vec<TransactionMetrics>,
     submitted_count: u64,
     failed_count: u64,
+    rolling: RollingWindow,
 }
 
 impl MetricsCollector {
     /// Creates a new metrics collector.
     pub const fn new() -> Self {
-        Self { start_time: None, transactions: Vec::new(), submitted_count: 0, failed_count: 0 }
+        Self {
+            start_time: None,
+            transactions: Vec::new(),
+            submitted_count: 0,
+            failed_count: 0,
+            rolling: RollingWindow::new(),
+        }
     }
 
     /// Starts the metrics collection timer.
@@ -33,7 +40,10 @@ impl MetricsCollector {
 
     /// Records a confirmed transaction with metrics.
     pub fn record_confirmed(&mut self, metrics: TransactionMetrics) {
-        debug!(tx_hash = %metrics.tx_hash, "tx confirmed");
+        debug!(tx_hash = %metrics.tx_hash, block_latency_ms = ?metrics.block_latency.map(|d| d.as_millis()), "tx confirmed");
+        if let Some(latency) = metrics.block_latency {
+            self.rolling.push(metrics.gas_used, latency);
+        }
         self.transactions.push(metrics);
     }
 
@@ -74,6 +84,22 @@ impl MetricsCollector {
         self.transactions.clear();
         self.submitted_count = 0;
         self.failed_count = 0;
+        self.rolling = RollingWindow::new();
+    }
+
+    /// Returns the rolling 30s TPS.
+    pub fn rolling_tps(&mut self) -> f64 {
+        self.rolling.tps()
+    }
+
+    /// Returns the rolling 30s GPS.
+    pub fn rolling_gps(&mut self) -> f64 {
+        self.rolling.gps()
+    }
+
+    /// Returns the rolling 30s (p50, p99) latency percentiles.
+    pub fn rolling_p50_p99(&mut self) -> (std::time::Duration, std::time::Duration) {
+        self.rolling.p50_p99()
     }
 
     /// Returns the average gas used per confirmed transaction.

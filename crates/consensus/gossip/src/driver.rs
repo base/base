@@ -9,7 +9,7 @@ use std::{
 use alloy_primitives::{Address, hex};
 use base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
 use base_consensus_genesis::RollupConfig;
-use base_consensus_peers::{EnrValidation, PeerMonitoring, enr_to_multiaddr};
+use base_consensus_peers::{EnrValidation, PeerMonitoring, PeerUtils};
 use derive_more::Debug;
 use discv5::Enr;
 use futures::{AsyncReadExt, AsyncWriteExt, stream::StreamExt};
@@ -237,7 +237,7 @@ where
             trace!(target: "gossip", chain_id = %self.handler.rollup_config.l2_chain_id.id(), validation = %validation, "Invalid Base ENR");
             return;
         }
-        let Some(multiaddr) = enr_to_multiaddr(&enr) else {
+        let Some(multiaddr) = PeerUtils::enr_to_multiaddr(&enr) else {
             debug!(target: "gossip", enr = ?enr, "Failed to extract tcp socket from enr");
             Metrics::dial_peer_error("invalid_enr").increment(1.0);
             return;

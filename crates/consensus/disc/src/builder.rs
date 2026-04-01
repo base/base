@@ -3,7 +3,7 @@
 use std::net::IpAddr;
 
 use alloy_rlp::Encodable;
-use base_consensus_peers::{BootNodes, BootStoreFile, OpStackEnr};
+use base_consensus_peers::{BaseEnr, BootNodes, BootStoreFile};
 use discv5::{Config, Discv5, Enr, enr::k256};
 use tokio::time::Duration;
 
@@ -50,12 +50,12 @@ impl LocalNode {
     /// [the op-node implementation](https://github.com/ethereum-optimism/optimism/blob/174e55f0a1e73b49b80a561fd3fedd4fea5770c6/op-node/p2p/discovery.go#L61-L97)
     /// for the go equivalent
     fn build_enr(self, chain_id: u64) -> Result<Enr, discv5::enr::Error> {
-        let opstack = OpStackEnr::from_chain_id(chain_id);
-        let mut opstack_data = Vec::new();
-        opstack.encode(&mut opstack_data);
+        let base_enr = BaseEnr::from_chain_id(chain_id);
+        let mut base_enr_data = Vec::new();
+        base_enr.encode(&mut base_enr_data);
 
         let mut enr_builder = Enr::builder();
-        enr_builder.add_value_rlp(OpStackEnr::OP_CL_KEY, opstack_data.into());
+        enr_builder.add_value_rlp(BaseEnr::OP_CL_KEY, base_enr_data.into());
         match self.ip {
             IpAddr::V4(addr) => {
                 enr_builder.ip4(addr).tcp4(self.tcp_port).udp4(self.udp_port);

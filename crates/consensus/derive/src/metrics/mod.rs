@@ -40,7 +40,7 @@ base_metrics::define_metrics! {
     pipeline_batch_mem: gauge,
 
     #[describe("The read batches")]
-    #[label(r#type)]
+    #[label(name = "type", default = ["single", "span"])]
     pipeline_read_batches: gauge,
 
     #[describe("The total number of pipeline steps on the derivation pipeline")]
@@ -50,7 +50,7 @@ base_metrics::define_metrics! {
     pipeline_prepared_attributes: gauge,
 
     #[describe("Number of times the pipeline has been signalled")]
-    #[label(r#type)]
+    #[label(name = "type", default = ["reset", "activation", "flush_channel"])]
     pipeline_signals: gauge,
 
     #[describe("Earliest l1 blocks height")]
@@ -66,7 +66,7 @@ base_metrics::define_metrics! {
     pipeline_latest_payload_tx_count: gauge,
 
     #[describe("The source of pipeline data")]
-    #[label(source)]
+    #[label(name = "source", default = ["blobs", "calldata"])]
     pipeline_data_availability_provider: gauge,
 
     #[describe("The validity of the batch being processed")]
@@ -93,49 +93,4 @@ base_metrics::define_metrics! {
 
     #[describe("The latest decompressed batch type")]
     pipeline_latest_decompressed_batch_type: gauge,
-}
-
-impl Metrics {
-    /// Initializes metrics.
-    ///
-    /// This does two things:
-    /// * Describes various metrics.
-    /// * Initializes metrics to 0 so they can be queried immediately.
-    pub fn init() {
-        Self::describe();
-        Self::zero();
-    }
-
-    /// Initializes metrics to 0 so they can be queried immediately.
-    pub fn zero() {
-        // The batch reader is by default not set.
-        Self::pipeline_batch_reader_set().set(0);
-
-        // No source data is initially read.
-        Self::pipeline_data_availability_provider("blobs").set(0);
-        Self::pipeline_data_availability_provider("calldata").set(0);
-
-        // Manually translate a value of `0` for sys config update as no update yet.
-        Self::pipeline_latest_sys_config_update().set(0);
-        Self::pipeline_sys_config_update_error().set(0);
-
-        // Pipeline signals start at zero.
-        Self::pipeline_signals("reset").set(0);
-        Self::pipeline_signals("activation").set(0);
-        Self::pipeline_signals("flush_channel").set(0);
-
-        // No batches are initially read.
-        Self::pipeline_read_batches("single").set(0);
-        Self::pipeline_read_batches("span").set(0);
-
-        // Cumulative counters start at zero.
-        Self::pipeline_steps().set(0);
-        Self::pipeline_prepared_attributes().set(0);
-
-        // All buffers can be zeroed out since they are expected to return to zero.
-        Self::pipeline_batch_buffer().set(0);
-        Self::pipeline_channel_buffer().set(0);
-        Self::pipeline_frame_queue_buffer().set(0);
-        Self::pipeline_payload_attributes_buffer().set(0);
-    }
 }

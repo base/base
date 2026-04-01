@@ -12,11 +12,11 @@ workspace = true
 
 [dependencies]
 bytes.workspace = true
-metrics.workspace = true
-futures = { workspace = true }
+futures.workspace = true
 base-bundles.workspace = true
 async-trait.workspace = true
-metrics-derive.workspace = true
+metrics = { workspace = true, optional = true }
+base-metrics = { workspace = true, features = ["metrics"] }
 tokio = { workspace = true, features = ["full"] }
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
@@ -33,3 +33,7 @@ base-bundles = { workspace = true, features = ["test-utils"] }
 testcontainers = { workspace = true, features = ["blocking"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 testcontainers-modules = { workspace = true, features = ["postgres", "kafka", "minio"] }
+
+[features]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]

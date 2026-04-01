@@ -24,7 +24,7 @@ pub use derivation::{
     DerivationActor, DerivationActorRequest, DerivationClientError, DerivationClientResult,
     DerivationDelegateClient, DerivationDelegateClientError, DerivationEngineClient,
     DerivationError, DerivationState, DerivationStateMachine, DerivationStateTransitionError,
-    DerivationStateUpdate, L2SourceClient, QueuedDerivationEngineClient,
+    DerivationStateUpdate, L2Finalizer, L2SourceClient, QueuedDerivationEngineClient,
 };
 
 mod l1_watcher;
@@ -34,6 +34,8 @@ pub use l1_watcher::{
 };
 
 mod network;
+#[cfg(test)]
+pub use network::MockUnsafePayloadGossipClient;
 pub use network::{
     GossipTransport, NetworkActor, NetworkActorError, NetworkBuilder, NetworkBuilderError,
     NetworkConfig, NetworkDriver, NetworkDriverError, NetworkEngineClient, NetworkHandler,
@@ -42,8 +44,6 @@ pub use network::{
 };
 
 mod sequencer;
-#[cfg(test)]
-pub use network::MockUnsafePayloadGossipClient;
 pub use sequencer::{
     Conductor, ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, L1OriginSelector,
     L1OriginSelectorError, L1OriginSelectorProvider, OriginSelector, PayloadBuilder, PayloadSealer,

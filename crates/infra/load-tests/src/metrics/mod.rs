@@ -5,6 +5,9 @@ pub use types::{
     FbSequencerLatencyMetrics, GasMetrics, LatencyMetrics, ThroughputMetrics, TransactionMetrics,
 };
 
+mod rolling_window;
+pub use rolling_window::RollingWindow;
+
 mod collector;
 pub use collector::MetricsCollector;
 

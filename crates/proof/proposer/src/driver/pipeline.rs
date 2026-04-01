@@ -24,7 +24,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use alloy_primitives::{Address, B256, Signature, U256, keccak256};
+use alloy_primitives::{Address, B256, Signature, keccak256};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient,
@@ -36,13 +36,13 @@ use eyre::Result;
 use futures::{StreamExt, stream};
 use tokio::{task::JoinSet, time::sleep};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use super::core::{DriverConfig, RecoveredState};
 use crate::{
+    Metrics,
     constants::{NO_PARENT_INDEX, PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY},
     error::ProposerError,
-    metrics as proposer_metrics,
     output_proposer::{OutputProposer, is_game_already_exists},
 };
 
@@ -106,6 +106,13 @@ impl PipelineState {
         self.proved.clear();
         self.retry_counts.clear();
         self.cached_recovery = None;
+        self.record_gauges();
+    }
+
+    fn record_gauges(&self) {
+        Metrics::inflight_proofs().set(self.inflight.len() as f64);
+        Metrics::proved_queue_depth().set(self.proved.len() as f64);
+        Metrics::pipeline_retries().set(self.retry_counts.values().sum::<u32>() as f64);
     }
 
     fn prune_stale(&mut self, recovered_block: u64) {
@@ -255,8 +262,7 @@ where
         Ok(())
     }
 
-    /// Executes one pipeline tick: recover state, dispatch new proofs, submit
-    /// completed results.
+    #[instrument(skip_all)]
     async fn tick(&self, state: &mut PipelineState) -> Result<()> {
         if !self.is_v1_hardfork_active() {
             debug!(
@@ -266,9 +272,12 @@ where
             return Ok(());
         }
 
+        let _tick_timer = base_metrics::timed!(Metrics::tick_duration_seconds());
+
         if let Some((recovered, safe_head)) =
             self.try_recover_and_plan(&mut state.cached_recovery).await
         {
+            Metrics::safe_head().set(safe_head as f64);
             state.prune_stale(recovered.l2_block_number);
             self.dispatch_proofs(&recovered, safe_head, state).await?;
             self.try_submit(recovered, state).await?;
@@ -276,6 +285,10 @@ where
         Ok(())
     }
 
+    #[instrument(skip_all, fields(
+        recovered_block = recovered.l2_block_number,
+        safe_head = safe_head,
+    ))]
     async fn dispatch_proofs(
         &self,
         recovered: &RecoveredState,
@@ -308,14 +321,24 @@ where
                     let target = cursor;
                     let cancel = self.cancel.child_token();
 
-                    info!(request = ?request, "Dispatching proof task");
+                    info!(
+                        from_block = start_block,
+                        to_block = target,
+                        blocks = target.saturating_sub(start_block),
+                        "Dispatching proof task"
+                    );
                     state.inflight.insert(target);
+                    state.record_gauges();
                     state.prove_tasks.spawn(async move {
+                        let mut proof_timer =
+                            base_metrics::timed!(Metrics::proof_duration_seconds());
                         tokio::select! {
                             () = cancel.cancelled() => {
+                                proof_timer.disarm();
                                 (target, Err(ProposerError::Internal("cancelled".into())))
                             }
                             result = prover.prove(request) => {
+                                drop(proof_timer);
                                 (target, result.map_err(|e| ProposerError::Prover(e.to_string())))
                             }
                         }
@@ -337,6 +360,7 @@ where
         Ok(())
     }
 
+    #[instrument(skip_all, fields(next_block))]
     async fn try_submit(&self, initial: RecoveredState, state: &mut PipelineState) -> Result<()> {
         let mut recovered = initial;
         loop {
@@ -356,13 +380,18 @@ where
                 None => return Ok(()),
             };
 
-            match self
-                .validate_and_submit(&proof_result, next_to_submit, recovered.game_index)
-                .await
-            {
+            tracing::Span::current().record("next_block", next_to_submit);
+
+            let mut submit_timer = base_metrics::timed!(Metrics::submission_duration_seconds());
+            let submit_result =
+                self.validate_and_submit(&proof_result, next_to_submit, recovered.game_index).await;
+            match submit_result {
                 Ok(()) => {
+                    drop(submit_timer);
                     info!(target_block = next_to_submit, "Submission successful");
+                    Metrics::last_proposed_block().set(next_to_submit as f64);
                     state.retry_counts.remove(&next_to_submit);
+                    state.record_gauges();
                     recovered = match self.recover_latest_state(&mut state.cached_recovery).await {
                         Ok(r) => r,
                         Err(e) => {
@@ -372,14 +401,18 @@ where
                     };
                 }
                 Err(SubmitAction::Reorg) => {
+                    submit_timer.disarm();
                     warn!(
                         target_block = next_to_submit,
                         "Reorg detected at submit time, resetting pipeline"
                     );
+                    Metrics::reorgs_total().increment(1);
                     state.reset();
                     return Ok(());
                 }
                 Err(SubmitAction::Failed(e)) => {
+                    submit_timer.disarm();
+                    Metrics::errors_total(e.metric_label()).increment(1);
                     warn!(
                         error = %e,
                         target_block = next_to_submit,
@@ -389,14 +422,13 @@ where
                     return Ok(());
                 }
                 Err(SubmitAction::Discard(e)) => {
+                    submit_timer.disarm();
+                    Metrics::errors_total(e.metric_label()).increment(1);
                     warn!(
                         error = %e,
                         target_block = next_to_submit,
                         "Proof discarded, will re-prove next tick"
                     );
-                    // Don't re-insert the proof — it's permanently invalid.
-                    // The block leaves `proved` and `inflight`, so the next
-                    // tick will re-dispatch a proof task for it.
                     return Ok(());
                 }
             }
@@ -413,9 +445,11 @@ where
                 state.inflight.remove(&target);
                 state.retry_counts.remove(&target);
                 state.proved.insert(target, proof_result);
+                state.record_gauges();
                 info!(target_block = target, "Proof completed successfully");
             }
             Ok((target, Err(e))) => {
+                Metrics::errors_total(e.metric_label()).increment(1);
                 state.inflight.remove(&target);
                 let count = state.retry_counts.entry(target).or_insert(0);
                 *count += 1;
@@ -434,6 +468,7 @@ where
                         error = %e,
                         "Proof failed, will retry next tick"
                     );
+                    state.record_gauges();
                 }
             }
             Err(join_err) => {
@@ -603,38 +638,68 @@ where
         // Fetch game_at_index concurrently with order-preserving buffering.
         // Because indices are emitted highest-first, the first type-match is
         // the best — stop consuming the stream immediately.
-        let mut stream = std::pin::pin!(stream::iter(0..len)
-            .map(|i| {
-                let factory = &self.factory_client;
-                async move {
-                    let game_index = count - 1 - i;
-                    let result = factory.game_at_index(game_index).await;
-                    (game_index, result)
-                }
-            })
-            .buffered(RECOVERY_SCAN_CONCURRENCY)
-            .filter_map(|(idx, result)| async move {
-                match result {
-                    Ok(game) if game.game_type == game_type => Some((idx, game)),
-                    Ok(_) => None,
-                    Err(e) => {
-                        warn!(error = %e, game_index = idx, "Failed to read game at index during recovery");
-                        None
+        //
+        // RPC failures are propagated as errors rather than silently skipped,
+        // so the caller does not advance the cache watermark past games that
+        // were never successfully read.
+        let mut stream = std::pin::pin!(
+            stream::iter(0..len)
+                .map(|i| {
+                    let factory = &self.factory_client;
+                    async move {
+                        let game_index = count - 1 - i;
+                        let result = factory.game_at_index(game_index).await;
+                        (game_index, result)
                     }
-                }
-            }));
+                })
+                .buffered(RECOVERY_SCAN_CONCURRENCY)
+        );
 
-        // Try each matching game in order (most-recent first). If
-        // `game_info` fails for one match, fall through to the next rather
-        // than giving up entirely.
-        while let Some((game_index, game)) = stream.next().await {
+        // Try each game in order (most-recent first).
+        while let Some((game_index, result)) = stream.next().await {
+            let game = match result {
+                Ok(game) if game.game_type == game_type => game,
+                Ok(_) => continue,
+                Err(e) => {
+                    warn!(error = %e, game_index, "Failed to read game at index during recovery");
+                    return Err(e.into());
+                }
+            };
+
             let game_info = match self.verifier_client.game_info(game.proxy).await {
                 Ok(info) => info,
                 Err(e) => {
-                    warn!(error = %e, game_index, "Failed to read game_info during recovery, trying next match");
-                    continue;
+                    warn!(error = %e, game_index, game_proxy = %game.proxy, "Failed to read game_info during recovery");
+                    return Err(e.into());
                 }
             };
+
+            // Verify the on-chain root_claim matches the canonical output root
+            // from the rollup node.  Games with mismatched roots are skipped so
+            // we never chain off an incorrect proposal.
+            match self.rollup_client.output_at_block(game_info.l2_block_number).await {
+                // Root matches — safe to chain off this game.
+                Ok(canonical) if canonical.output_root == game_info.root_claim => {}
+                // Mismatch — this game proposed an incorrect root. Skip it and
+                // keep scanning for an older game with a valid root.
+                Ok(canonical) => {
+                    warn!(
+                        game_index,
+                        game_proxy = %game.proxy,
+                        on_chain_root = ?game_info.root_claim,
+                        canonical_root = ?canonical.output_root,
+                        l2_block_number = game_info.l2_block_number,
+                        "Output root mismatch, skipping game"
+                    );
+                    continue;
+                }
+                // RPC failure is transient — bubble up so the caller retries
+                // the entire recovery on the next tick rather than silently
+                // skipping a potentially valid game.
+                Err(e) => {
+                    return Err(ProposerError::Rpc(e));
+                }
+            }
 
             let idx: u32 = game_index.try_into().map_err(|_| {
                 ProposerError::Contract(format!("game index {game_index} exceeds u32"))
@@ -719,7 +784,7 @@ where
             proposer: self.config.driver.proposer_address,
             l1_origin_hash: aggregate_proposal.l1_origin_hash,
             prev_output_root: aggregate_proposal.prev_output_root,
-            starting_l2_block: U256::from(starting_block_number),
+            starting_l2_block: starting_block_number,
             output_root: aggregate_proposal.output_root,
             ending_l2_block: aggregate_proposal.l2_block_number,
             intermediate_roots: intermediate_roots.to_vec(),
@@ -756,6 +821,7 @@ where
         Ok(is_valid)
     }
 
+    #[instrument(skip_all, fields(target_block = target_block, parent_index = parent_index))]
     async fn validate_and_submit(
         &self,
         proof_result: &ProofResult,
@@ -820,7 +886,7 @@ where
                     // this proof so the pipeline re-proves with a (potentially
                     // different, registered) enclave on the next attempt.
                     warn!(target_block, "TEE signer is not valid on-chain, discarding proof");
-                    metrics::counter!(proposer_metrics::TEE_SIGNER_INVALID_TOTAL).increment(1);
+                    Metrics::tee_signer_invalid_total().increment(1);
                     return Err(SubmitAction::Discard(ProposerError::Internal(
                         "TEE signer not registered on-chain".into(),
                     )));
@@ -860,7 +926,7 @@ where
         {
             Ok(Ok(())) => {
                 info!(target_block, "Dispute game created successfully");
-                metrics::counter!(proposer_metrics::L2_OUTPUT_PROPOSALS_TOTAL).increment(1);
+                Metrics::l2_output_proposals_total().increment(1);
                 Ok(())
             }
             Ok(Err(e)) => {
@@ -948,9 +1014,13 @@ impl std::fmt::Display for SubmitAction {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc, time::Duration};
+    use std::{
+        collections::{HashMap, HashSet},
+        sync::Arc,
+        time::Duration,
+    };
 
-    use alloy_primitives::{Address, B256, Bytes, U256};
+    use alloy_primitives::{Address, B256, Bytes};
     use async_trait::async_trait;
     use base_proof_contracts::{GameAtIndex, GameInfo};
     use base_proof_primitives::{ProofResult, Proposal, ProverClient};
@@ -970,8 +1040,8 @@ mod tests {
             output_root: B256::repeat_byte(block_number as u8),
             signature: Bytes::from(vec![0xab; 65]),
             l1_origin_hash: B256::repeat_byte(0x02),
-            l1_origin_number: U256::from(100 + block_number),
-            l2_block_number: U256::from(block_number),
+            l1_origin_number: 100 + block_number,
+            l2_block_number: block_number,
             prev_output_root: B256::repeat_byte(0x03),
             config_hash: B256::repeat_byte(0x04),
         }
@@ -996,8 +1066,8 @@ mod tests {
                 output_root: B256::repeat_byte(block_number as u8),
                 signature: Bytes::from(vec![0xab; 65]),
                 l1_origin_hash: B256::repeat_byte(0x02),
-                l1_origin_number: U256::from(100 + block_number),
-                l2_block_number: U256::from(block_number),
+                l1_origin_number: 100 + block_number,
+                l2_block_number: block_number,
                 prev_output_root: B256::repeat_byte(0x03),
                 config_hash: B256::repeat_byte(0x04),
             };
@@ -1028,6 +1098,7 @@ mod tests {
             Arc::new(MockProver { delay: Duration::from_millis(10) });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_block_number, B256::ZERO),
+            output_roots: HashMap::new(),
         });
         let anchor_registry =
             Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
@@ -1256,12 +1327,30 @@ mod tests {
         MockAnchorStateRegistry,
         MockDisputeGameFactory,
     > {
+        recovery_pipeline_with_roots(game_type, factory, verifier, HashMap::new())
+    }
+
+    fn recovery_pipeline_with_roots(
+        game_type: u32,
+        factory: MockDisputeGameFactory,
+        verifier: MockAggregateVerifier,
+        output_roots: HashMap<u64, B256>,
+    ) -> ProvingPipeline<
+        MockL1,
+        MockL2,
+        MockRollupClient,
+        MockAnchorStateRegistry,
+        MockDisputeGameFactory,
+    > {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
         let prover: Arc<dyn ProverClient> =
             Arc::new(MockProver { delay: Duration::from_millis(1) });
-        let rollup = Arc::new(MockRollupClient { sync_status: test_sync_status(0, B256::ZERO) });
+        let rollup = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(0, B256::ZERO),
+            output_roots,
+        });
         let anchor_registry =
             Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
 
@@ -1301,6 +1390,7 @@ mod tests {
     async fn test_scan_range_finds_matching_game() {
         let target_game_type = 42u32;
         let matching_proxy = proxy_addr(2);
+        let root = B256::repeat_byte(0xAA);
 
         // 3 games: indices 0, 1 have wrong type; index 2 matches.
         let games = vec![
@@ -1312,25 +1402,31 @@ mod tests {
         let mut info_map = HashMap::new();
         info_map.insert(
             matching_proxy,
-            GameInfo { root_claim: B256::repeat_byte(0xAA), l2_block_number: 512, parent_index: 0 },
+            GameInfo { root_claim: root, l2_block_number: 512, parent_index: 0 },
         );
 
-        let pipeline = recovery_pipeline(
+        let mut output_roots = HashMap::new();
+        output_roots.insert(512, root);
+
+        let pipeline = recovery_pipeline_with_roots(
             target_game_type,
             MockDisputeGameFactory::with_games(games),
             MockAggregateVerifier::with_game_info(info_map),
+            output_roots,
         );
 
         let result = pipeline.scan_range_for_recovery(3, 3).await.unwrap();
         let state = result.expect("should find the matching game");
         assert_eq!(state.game_index, 2);
         assert_eq!(state.l2_block_number, 512);
-        assert_eq!(state.output_root, B256::repeat_byte(0xAA));
+        assert_eq!(state.output_root, root);
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_scan_range_returns_most_recent_match() {
         let target_game_type = 42u32;
+        let root_1 = B256::repeat_byte(0x01);
+        let root_3 = B256::repeat_byte(0x03);
 
         // Two matching games: index 1 and index 3.  Scan should return index 3
         // (most recent) because indices are walked highest-first.
@@ -1344,17 +1440,22 @@ mod tests {
         let mut info_map = HashMap::new();
         info_map.insert(
             proxy_addr(1),
-            GameInfo { root_claim: B256::repeat_byte(0x01), l2_block_number: 100, parent_index: 0 },
+            GameInfo { root_claim: root_1, l2_block_number: 100, parent_index: 0 },
         );
         info_map.insert(
             proxy_addr(3),
-            GameInfo { root_claim: B256::repeat_byte(0x03), l2_block_number: 300, parent_index: 1 },
+            GameInfo { root_claim: root_3, l2_block_number: 300, parent_index: 1 },
         );
 
-        let pipeline = recovery_pipeline(
+        let mut output_roots = HashMap::new();
+        output_roots.insert(100, root_1);
+        output_roots.insert(300, root_3);
+
+        let pipeline = recovery_pipeline_with_roots(
             target_game_type,
             MockDisputeGameFactory::with_games(games),
             MockAggregateVerifier::with_game_info(info_map),
+            output_roots,
         );
 
         let result = pipeline.scan_range_for_recovery(4, 4).await.unwrap();
@@ -1383,9 +1484,84 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_scan_range_skips_mismatched_output_root() {
+        let target_game_type = 42u32;
+        let valid_root = B256::repeat_byte(0xBB);
+
+        // Two matching games by type: index 1 (mismatched root) and index 0
+        // (valid root).  Scan should skip index 1 and return index 0.
+        let games = vec![
+            GameAtIndex { game_type: target_game_type, timestamp: 1, proxy: proxy_addr(0) },
+            GameAtIndex { game_type: target_game_type, timestamp: 2, proxy: proxy_addr(1) },
+        ];
+
+        let mut info_map = HashMap::new();
+        info_map.insert(
+            proxy_addr(0),
+            GameInfo { root_claim: valid_root, l2_block_number: 100, parent_index: 0 },
+        );
+        info_map.insert(
+            proxy_addr(1),
+            GameInfo { root_claim: B256::repeat_byte(0xDE), l2_block_number: 200, parent_index: 0 },
+        );
+
+        let mut output_roots = HashMap::new();
+        output_roots.insert(100, valid_root);
+        output_roots.insert(200, B256::repeat_byte(0xAB));
+
+        let pipeline = recovery_pipeline_with_roots(
+            target_game_type,
+            MockDisputeGameFactory::with_games(games),
+            MockAggregateVerifier::with_game_info(info_map),
+            output_roots,
+        );
+
+        let result = pipeline.scan_range_for_recovery(2, 2).await.unwrap();
+        let state = result.expect("should find valid match after skipping mismatch");
+        assert_eq!(state.game_index, 0);
+        assert_eq!(state.l2_block_number, 100);
+        assert_eq!(state.output_root, valid_root);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_scan_range_returns_none_when_all_roots_mismatch() {
+        let target_game_type = 42u32;
+
+        let games = vec![
+            GameAtIndex { game_type: target_game_type, timestamp: 1, proxy: proxy_addr(0) },
+            GameAtIndex { game_type: target_game_type, timestamp: 2, proxy: proxy_addr(1) },
+        ];
+
+        let mut info_map = HashMap::new();
+        info_map.insert(
+            proxy_addr(0),
+            GameInfo { root_claim: B256::repeat_byte(0xAA), l2_block_number: 100, parent_index: 0 },
+        );
+        info_map.insert(
+            proxy_addr(1),
+            GameInfo { root_claim: B256::repeat_byte(0xBB), l2_block_number: 200, parent_index: 0 },
+        );
+
+        let mut output_roots = HashMap::new();
+        output_roots.insert(100, B256::repeat_byte(0x11));
+        output_roots.insert(200, B256::repeat_byte(0x22));
+
+        let pipeline = recovery_pipeline_with_roots(
+            target_game_type,
+            MockDisputeGameFactory::with_games(games),
+            MockAggregateVerifier::with_game_info(info_map),
+            output_roots,
+        );
+
+        let result = pipeline.scan_range_for_recovery(2, 2).await.unwrap();
+        assert!(result.is_none(), "all roots mismatch — should return None");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_recovery_cache_hit_equal_game_count() {
         let target_game_type = 42u32;
         let matching_proxy = proxy_addr(0);
+        let root = B256::repeat_byte(0xBB);
 
         let games =
             vec![GameAtIndex { game_type: target_game_type, timestamp: 1, proxy: matching_proxy }];
@@ -1393,13 +1569,17 @@ mod tests {
         let mut info_map = HashMap::new();
         info_map.insert(
             matching_proxy,
-            GameInfo { root_claim: B256::repeat_byte(0xBB), l2_block_number: 256, parent_index: 0 },
+            GameInfo { root_claim: root, l2_block_number: 256, parent_index: 0 },
         );
 
-        let pipeline = recovery_pipeline(
+        let mut output_roots = HashMap::new();
+        output_roots.insert(256, root);
+
+        let pipeline = recovery_pipeline_with_roots(
             target_game_type,
             MockDisputeGameFactory::with_games(games),
             MockAggregateVerifier::with_game_info(info_map),
+            output_roots,
         );
 
         // First call: cold start, populates the cache.
@@ -1421,6 +1601,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_recovery_incremental_new_matching_game() {
         let target_game_type = 42u32;
+        let root_0 = B256::repeat_byte(0x01);
+        let root_1 = B256::repeat_byte(0x02);
 
         // Start with one matching game.
         let games = vec![
@@ -1432,21 +1614,26 @@ mod tests {
         let mut info_map = HashMap::new();
         info_map.insert(
             proxy_addr(0),
-            GameInfo { root_claim: B256::repeat_byte(0x01), l2_block_number: 100, parent_index: 0 },
+            GameInfo { root_claim: root_0, l2_block_number: 100, parent_index: 0 },
         );
         info_map.insert(
             proxy_addr(1),
-            GameInfo { root_claim: B256::repeat_byte(0x02), l2_block_number: 200, parent_index: 0 },
+            GameInfo { root_claim: root_1, l2_block_number: 200, parent_index: 0 },
         );
+
+        let mut output_roots = HashMap::new();
+        output_roots.insert(100, root_0);
+        output_roots.insert(200, root_1);
 
         // Build factory with override: first call sees count=1, but the full
         // Vec has 2 entries so game_at_index(1) works.
         let factory = MockDisputeGameFactory { games: games.clone(), game_count_override: Some(1) };
 
-        let pipeline = recovery_pipeline(
+        let pipeline = recovery_pipeline_with_roots(
             target_game_type,
             factory,
             MockAggregateVerifier::with_game_info(info_map),
+            output_roots.clone(),
         );
 
         // First call: cold start with count=1, finds game at index 0.
@@ -1462,29 +1649,22 @@ mod tests {
         // build a new pipeline with game_count_override=2.
         let factory2 = MockDisputeGameFactory { games, game_count_override: Some(2) };
 
-        let pipeline2 = recovery_pipeline(
+        let pipeline2 = recovery_pipeline_with_roots(
             target_game_type,
             factory2,
             MockAggregateVerifier::with_game_info({
                 let mut m = HashMap::new();
                 m.insert(
                     proxy_addr(0),
-                    GameInfo {
-                        root_claim: B256::repeat_byte(0x01),
-                        l2_block_number: 100,
-                        parent_index: 0,
-                    },
+                    GameInfo { root_claim: root_0, l2_block_number: 100, parent_index: 0 },
                 );
                 m.insert(
                     proxy_addr(1),
-                    GameInfo {
-                        root_claim: B256::repeat_byte(0x02),
-                        l2_block_number: 200,
-                        parent_index: 0,
-                    },
+                    GameInfo { root_claim: root_1, l2_block_number: 200, parent_index: 0 },
                 );
                 m
             }),
+            output_roots,
         );
 
         // Incremental scan: cache says count was 1, now it's 2.  The new game
@@ -1498,6 +1678,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_recovery_incremental_no_new_match_returns_cached() {
         let target_game_type = 42u32;
+        let root = B256::repeat_byte(0xCC);
 
         // Game at index 0 matches, game at index 1 does NOT match.
         let games = vec![
@@ -1508,16 +1689,20 @@ mod tests {
         let mut info_map = HashMap::new();
         info_map.insert(
             proxy_addr(0),
-            GameInfo { root_claim: B256::repeat_byte(0xCC), l2_block_number: 512, parent_index: 0 },
+            GameInfo { root_claim: root, l2_block_number: 512, parent_index: 0 },
         );
+
+        let mut output_roots = HashMap::new();
+        output_roots.insert(512, root);
 
         // First call: factory reports count=1, finds game at index 0.
         let factory1 =
             MockDisputeGameFactory { games: games.clone(), game_count_override: Some(1) };
-        let pipeline1 = recovery_pipeline(
+        let pipeline1 = recovery_pipeline_with_roots(
             target_game_type,
             factory1,
             MockAggregateVerifier::with_game_info(info_map.clone()),
+            output_roots.clone(),
         );
 
         let mut cache: Option<CachedRecovery> = None;
@@ -1527,10 +1712,11 @@ mod tests {
         // Second call: factory reports count=2, but the new game (index 1) has
         // a different type.  Should return cached state.
         let factory2 = MockDisputeGameFactory { games, game_count_override: Some(2) };
-        let pipeline2 = recovery_pipeline(
+        let pipeline2 = recovery_pipeline_with_roots(
             target_game_type,
             factory2,
             MockAggregateVerifier::with_game_info(info_map),
+            output_roots,
         );
 
         let state2 = pipeline2.recover_latest_state(&mut cache).await.unwrap();
@@ -1545,6 +1731,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_recovery_cache_invalidation_count_decreased() {
         let target_game_type = 42u32;
+        let root_0 = B256::repeat_byte(0x10);
+        let root_2 = B256::repeat_byte(0x30);
 
         // Seed the cache as if count was 5 and we found a game.
         let mut cache = Some(CachedRecovery {
@@ -1567,17 +1755,22 @@ mod tests {
         let mut info_map = HashMap::new();
         info_map.insert(
             proxy_addr(0),
-            GameInfo { root_claim: B256::repeat_byte(0x10), l2_block_number: 100, parent_index: 0 },
+            GameInfo { root_claim: root_0, l2_block_number: 100, parent_index: 0 },
         );
         info_map.insert(
             proxy_addr(2),
-            GameInfo { root_claim: B256::repeat_byte(0x30), l2_block_number: 300, parent_index: 0 },
+            GameInfo { root_claim: root_2, l2_block_number: 300, parent_index: 0 },
         );
 
-        let pipeline = recovery_pipeline(
+        let mut output_roots = HashMap::new();
+        output_roots.insert(100, root_0);
+        output_roots.insert(300, root_2);
+
+        let pipeline = recovery_pipeline_with_roots(
             target_game_type,
             MockDisputeGameFactory::with_games(games),
             MockAggregateVerifier::with_game_info(info_map),
+            output_roots,
         );
 
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
@@ -1633,6 +1826,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_recovery_incremental_delta_exceeds_lookback_triggers_full_scan() {
         let target_game_type = 42u32;
+        let root = B256::repeat_byte(0xFF);
 
         // Seed the cache as if count was 1.
         let mut cache = Some(CachedRecovery {
@@ -1661,17 +1855,17 @@ mod tests {
         let mut info_map = HashMap::new();
         info_map.insert(
             proxy_addr(last_idx as u64),
-            GameInfo {
-                root_claim: B256::repeat_byte(0xFF),
-                l2_block_number: 9999,
-                parent_index: 0,
-            },
+            GameInfo { root_claim: root, l2_block_number: 9999, parent_index: 0 },
         );
 
-        let pipeline = recovery_pipeline(
+        let mut output_roots = HashMap::new();
+        output_roots.insert(9999, root);
+
+        let pipeline = recovery_pipeline_with_roots(
             target_game_type,
             MockDisputeGameFactory::with_games(games),
             MockAggregateVerifier::with_game_info(info_map),
+            output_roots,
         );
 
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
@@ -1694,5 +1888,95 @@ mod tests {
 
         state.reset();
         assert!(state.cached_recovery.is_none(), "reset() should clear cached_recovery");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_scan_range_returns_err_on_game_at_index_failure() {
+        let target_game_type = 42u32;
+
+        // Factory reports count=3 but only has 1 game. Index 2 (first scanned,
+        // since scan walks highest-first) will fail with out-of-bounds.
+        let games =
+            vec![GameAtIndex { game_type: target_game_type, timestamp: 1, proxy: proxy_addr(0) }];
+        let factory = MockDisputeGameFactory { games, game_count_override: Some(3) };
+
+        let pipeline = recovery_pipeline(target_game_type, factory, MockAggregateVerifier::empty());
+
+        let result = pipeline.scan_range_for_recovery(3, 3).await;
+        assert!(result.is_err(), "game_at_index failure should propagate as Err");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_scan_range_returns_err_on_game_info_failure() {
+        let target_game_type = 42u32;
+        let failing_proxy = proxy_addr(0);
+
+        let games =
+            vec![GameAtIndex { game_type: target_game_type, timestamp: 1, proxy: failing_proxy }];
+
+        let mut failing = HashSet::new();
+        failing.insert(failing_proxy);
+
+        let verifier =
+            MockAggregateVerifier { game_info_map: HashMap::new(), failing_addresses: failing };
+
+        let pipeline = recovery_pipeline(
+            target_game_type,
+            MockDisputeGameFactory::with_games(games),
+            verifier,
+        );
+
+        let result = pipeline.scan_range_for_recovery(1, 1).await;
+        assert!(result.is_err(), "game_info failure should propagate as Err");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_incremental_rpc_error_preserves_cache() {
+        let target_game_type = 42u32;
+        let root = B256::repeat_byte(0xAA);
+
+        // Seed the cache: we found a game at index 0 with game_count=1.
+        let mut cache = Some(CachedRecovery {
+            game_count: 1,
+            state: RecoveredState { game_index: 0, output_root: root, l2_block_number: 512 },
+        });
+
+        // Factory now reports count=2. The new game at index 1 matches our type
+        // but game_info will fail for its proxy address.
+        let failing_proxy = proxy_addr(1);
+        let games = vec![
+            GameAtIndex { game_type: target_game_type, timestamp: 1, proxy: proxy_addr(0) },
+            GameAtIndex { game_type: target_game_type, timestamp: 2, proxy: failing_proxy },
+        ];
+
+        let mut info_map = HashMap::new();
+        info_map.insert(
+            proxy_addr(0),
+            GameInfo { root_claim: root, l2_block_number: 512, parent_index: 0 },
+        );
+
+        let mut failing = HashSet::new();
+        failing.insert(failing_proxy);
+
+        let mut output_roots = HashMap::new();
+        output_roots.insert(512, root);
+
+        let pipeline = recovery_pipeline_with_roots(
+            target_game_type,
+            MockDisputeGameFactory { games, game_count_override: Some(2) },
+            MockAggregateVerifier { game_info_map: info_map, failing_addresses: failing },
+            output_roots,
+        );
+
+        // The incremental scan should fail because game_info errors for the
+        // new game. The error propagates, so recover_latest_state returns Err
+        // and the cache remains untouched at game_count=1.
+        let result = pipeline.recover_latest_state(&mut cache).await;
+        assert!(result.is_err(), "RPC error should propagate from incremental scan");
+        assert_eq!(
+            cache.as_ref().unwrap().game_count,
+            1,
+            "cache watermark must not advance past the failed scan"
+        );
     }
 }

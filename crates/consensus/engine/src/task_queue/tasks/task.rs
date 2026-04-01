@@ -12,7 +12,7 @@ use tokio::task::yield_now;
 use super::{BuildTask, ConsolidateTask, FinalizeTask, GetPayloadTask, InsertTask};
 use crate::{
     BuildTaskError, ConsolidateTaskError, EngineClient, EngineState, FinalizeTaskError,
-    InsertTaskError,
+    InsertTaskError, Metrics,
     task_queue::{SealTask, SealTaskError},
 };
 
@@ -77,6 +77,18 @@ pub enum EngineTaskErrors {
     Finalize(#[from] FinalizeTaskError),
 }
 
+impl EngineTaskErrorSeverity {
+    /// Returns a static string label for use in metrics.
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::Temporary => "temporary",
+            Self::Critical => "critical",
+            Self::Reset => "reset",
+            Self::Flush => "flush",
+        }
+    }
+}
+
 impl EngineTaskError for EngineTaskErrors {
     fn severity(&self) -> EngineTaskErrorSeverity {
         match self {
@@ -127,15 +139,14 @@ impl<EngineClient_: EngineClient> EngineTask<EngineClient_> {
         Ok(())
     }
 
-    #[cfg(feature = "metrics")]
     const fn task_metrics_label(&self) -> &'static str {
         match self {
-            Self::Insert(_) => crate::Metrics::INSERT_TASK_LABEL,
-            Self::Consolidate(_) => crate::Metrics::CONSOLIDATE_TASK_LABEL,
-            Self::Build(_) => crate::Metrics::BUILD_TASK_LABEL,
-            Self::Seal(_) => crate::Metrics::SEAL_TASK_LABEL,
-            Self::GetPayload(_) => crate::Metrics::GET_PAYLOAD_TASK_LABEL,
-            Self::Finalize(_) => crate::Metrics::FINALIZE_TASK_LABEL,
+            Self::Insert(_) => Metrics::INSERT_TASK_LABEL,
+            Self::Consolidate(_) => Metrics::CONSOLIDATE_TASK_LABEL,
+            Self::Build(_) => Metrics::BUILD_TASK_LABEL,
+            Self::Seal(_) => Metrics::SEAL_TASK_LABEL,
+            Self::GetPayload(_) => Metrics::GET_PAYLOAD_TASK_LABEL,
+            Self::Finalize(_) => Metrics::FINALIZE_TASK_LABEL,
         }
     }
 }
@@ -220,11 +231,8 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
         while let Err(e) = self.execute_inner(state).await {
             let severity = e.severity();
 
-            base_metrics::inc!(
-                counter,
-                crate::Metrics::ENGINE_TASK_FAILURE,
-                self.task_metrics_label() => severity.to_string()
-            );
+            Metrics::engine_task_failure(self.task_metrics_label(), severity.as_label())
+                .increment(1);
 
             match severity {
                 EngineTaskErrorSeverity::Temporary => {
@@ -250,7 +258,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
             }
         }
 
-        base_metrics::inc!(counter, crate::Metrics::ENGINE_TASK_SUCCESS, self.task_metrics_label());
+        Metrics::engine_task_count(self.task_metrics_label()).increment(1);
 
         Ok(())
     }

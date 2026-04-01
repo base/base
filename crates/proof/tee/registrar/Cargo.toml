@@ -38,15 +38,17 @@ jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 
 # Async
-async-trait.workspace = true
+futures.workspace = true
 tokio-util.workspace = true
+async-trait.workspace = true
 tokio = { workspace = true, features = ["net", "time", "macros"] }
 
 # Error
 thiserror.workspace = true
 
 # Metrics
-metrics.workspace = true
+base-metrics.workspace = true
+metrics = { workspace = true, optional = true }
 
 # Tracing
 tracing.workspace = true
@@ -60,5 +62,7 @@ hex-literal.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
 k256 = { workspace = true, features = ["ecdsa"] }
-tokio = { workspace = true, features = ["rt", "macros"] }
+tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 
+[features]
+metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]

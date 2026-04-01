@@ -37,7 +37,7 @@ impl Convert {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, U256, address, b256};
+    use alloy_primitives::{B256, address, b256};
     use base_proof_primitives::ProofJournal as PrimitivesJournal;
     use base_proof_tee_nitro_enclave::ProofJournal as EnclaveJournal;
 
@@ -54,9 +54,9 @@ mod tests {
             prev_output_root: b256!(
                 "3333333333333333333333333333333333333333333333333333333333333333"
             ),
-            starting_l2_block: U256::from(999),
+            starting_l2_block: 999,
             output_root: b256!("4444444444444444444444444444444444444444444444444444444444444444"),
-            ending_l2_block: U256::from(1000),
+            ending_l2_block: 1000,
             intermediate_roots: vec![
                 b256!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
                 b256!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
@@ -89,9 +89,9 @@ mod tests {
             proposer: address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
             l1_origin_hash: B256::ZERO,
             prev_output_root: B256::ZERO,
-            starting_l2_block: U256::ZERO,
+            starting_l2_block: 0,
             output_root: B256::ZERO,
-            ending_l2_block: U256::ZERO,
+            ending_l2_block: 0,
             intermediate_roots: vec![],
             config_hash: B256::ZERO,
             tee_image_hash: B256::ZERO,

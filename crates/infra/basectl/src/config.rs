@@ -8,6 +8,24 @@ use base_consensus_registry::Registry;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+/// Configuration for a single validator (non-sequencing) node in the local devnet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidatorNodeConfig {
+    /// Human-readable name for this node (e.g. "base-client").
+    pub name: String,
+    /// Consensus-layer JSON-RPC endpoint (serves `optimism_*` and `opp2p_*` methods).
+    pub cl_rpc: Url,
+    /// Execution-layer JSON-RPC endpoint for this node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub el_rpc: Option<Url>,
+    /// Docker container name for the EL process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_el: Option<String>,
+    /// Docker container name for the CL process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_cl: Option<String>,
+}
+
 /// Configuration for a single node in an HA conductor cluster.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConductorNodeConfig {
@@ -21,6 +39,27 @@ pub struct ConductorNodeConfig {
     pub server_id: String,
     /// Raft peer address (`host:port`) used when targeting this node for leadership transfer.
     pub raft_addr: String,
+    /// Execution-layer JSON-RPC endpoint for this sequencer's EL node.
+    ///
+    /// If set, the TUI polls `net_peerCount` on this endpoint to show the EL
+    /// peer count separately from the CL P2P peer count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub el_rpc: Option<Url>,
+    /// Docker container name for the conductor process.
+    ///
+    /// If set, the TUI can restart this container with `r`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_conductor: Option<String>,
+    /// Docker container name for the EL (execution layer) process.
+    ///
+    /// If set, the TUI can restart this container with `r`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_el: Option<String>,
+    /// Docker container name for the CL (consensus layer) process.
+    ///
+    /// If set, the TUI can restart this container with `r`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_cl: Option<String>,
     /// Flashblocks WebSocket endpoint for this sequencer's builder node.
     ///
     /// When set, the command center will automatically reconnect its flashblocks
@@ -66,6 +105,9 @@ pub struct ChainConfig {
     /// HA conductor cluster nodes, if this chain runs an op-conductor setup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conductors: Option<Vec<ConductorNodeConfig>>,
+    /// Validator (non-sequencing) nodes to monitor alongside the conductor cluster.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validators: Option<Vec<ValidatorNodeConfig>>,
 }
 
 impl ChainConfig {
@@ -105,6 +147,7 @@ struct ChainConfigOverride {
     batcher_address: Option<Address>,
     l1_blob_target: Option<u64>,
     conductors: Option<Vec<ConductorNodeConfig>>,
+    validators: Option<Vec<ValidatorNodeConfig>>,
 }
 
 impl ChainConfig {
@@ -122,6 +165,7 @@ impl ChainConfig {
             batcher_address: Some("0x5050F69a9786F081509234F1a7F4684b5E5b76C9".parse().unwrap()),
             l1_blob_target: 14,
             conductors: None,
+            validators: None,
         }
     }
 
@@ -139,6 +183,7 @@ impl ChainConfig {
             batcher_address: Some("0xfc56E7272EEBBBA5bC6c544e159483C4a38f8bA3".parse().unwrap()),
             l1_blob_target: 14,
             conductors: None,
+            validators: None,
         }
     }
 
@@ -168,6 +213,10 @@ impl ChainConfig {
                     cl_rpc: Url::parse("http://localhost:7549").unwrap(),
                     server_id: "sequencer-0".to_string(),
                     raft_addr: "op-conductor-0:5050".to_string(),
+                    el_rpc: Some(Url::parse("http://localhost:7545").unwrap()),
+                    docker_conductor: Some("op-conductor-0".to_string()),
+                    docker_el: Some("base-builder".to_string()),
+                    docker_cl: Some("base-builder-cl".to_string()),
                     flashblocks_ws: Some(Url::parse("ws://localhost:7111").unwrap()),
                 },
                 ConductorNodeConfig {
@@ -176,6 +225,10 @@ impl ChainConfig {
                     cl_rpc: Url::parse("http://localhost:10549").unwrap(),
                     server_id: "sequencer-1".to_string(),
                     raft_addr: "op-conductor-1:5051".to_string(),
+                    el_rpc: Some(Url::parse("http://localhost:10545").unwrap()),
+                    docker_conductor: Some("op-conductor-1".to_string()),
+                    docker_el: Some("base-sequencer-1".to_string()),
+                    docker_cl: Some("base-sequencer-1-cl".to_string()),
                     flashblocks_ws: Some(Url::parse("ws://localhost:10111").unwrap()),
                 },
                 ConductorNodeConfig {
@@ -184,9 +237,20 @@ impl ChainConfig {
                     cl_rpc: Url::parse("http://localhost:11549").unwrap(),
                     server_id: "sequencer-2".to_string(),
                     raft_addr: "op-conductor-2:5052".to_string(),
+                    el_rpc: Some(Url::parse("http://localhost:11545").unwrap()),
+                    docker_conductor: Some("op-conductor-2".to_string()),
+                    docker_el: Some("base-sequencer-2".to_string()),
+                    docker_cl: Some("base-sequencer-2-cl".to_string()),
                     flashblocks_ws: Some(Url::parse("ws://localhost:11111").unwrap()),
                 },
             ]),
+            validators: Some(vec![ValidatorNodeConfig {
+                name: "base-client".to_string(),
+                cl_rpc: Url::parse("http://localhost:8549").unwrap(),
+                el_rpc: Some(Url::parse("http://localhost:8545").unwrap()),
+                docker_el: Some("base-client".to_string()),
+                docker_cl: Some("base-client-cl".to_string()),
+            }]),
         }
     }
 
@@ -290,6 +354,7 @@ impl ChainConfig {
             batcher_address: overrides.batcher_address.or(base.batcher_address),
             l1_blob_target: overrides.l1_blob_target.unwrap_or(base.l1_blob_target),
             conductors: overrides.conductors.or(base.conductors),
+            validators: overrides.validators.or(base.validators),
         })
     }
 

@@ -4,7 +4,7 @@ use std::{net::IpAddr, num::TryFromIntError, sync::Arc};
 
 use alloy_primitives::map::{HashMap, HashSet};
 use base_consensus_disc::Discv5Handler;
-use base_consensus_peers::OpStackEnr;
+use base_consensus_peers::BaseEnr;
 use discv5::{
     enr::{NodeId, k256::ecdsa},
     multiaddr::Protocol,
@@ -383,8 +383,7 @@ impl P2pRpcRequest {
                 .map(|(id, peer_id)| {
                     let (maybe_enr, maybe_status) = node_to_table_infos.get(id).cloned().unzip();
 
-                    let opstack_enr =
-                        maybe_enr.clone().and_then(|enr| OpStackEnr::try_from(&enr).ok());
+                    let base_enr = maybe_enr.clone().and_then(|enr| BaseEnr::try_from(&enr).ok());
 
                     let direction = maybe_status
                         .map(|status| {
@@ -419,7 +418,7 @@ impl P2pRpcRequest {
                             direction,
                             // Note: we use the chain id from the ENR if it exists, otherwise we
                             // use 0 to be consistent with op-node's behavior (`<https://github.com/ethereum-optimism/optimism/blob/6a8b2349c29c2a14f948fcb8aefb90526130acec/op-service/apis/p2p.go#L55>`).
-                            chain_id: opstack_enr.map(|enr| enr.chain_id).unwrap_or(0),
+                            chain_id: base_enr.map(|enr| enr.chain_id).unwrap_or(0),
                             gossip_blocks: peer_gossip_info.contains(peer_id),
                             protected: protected_peers.contains(peer_id),
                             latency,

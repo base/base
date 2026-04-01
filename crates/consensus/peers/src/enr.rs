@@ -9,7 +9,7 @@ use unsigned_varint::{decode, encode};
 pub enum EnrValidation {
     /// Conversion error.
     #[display("Conversion error: {_0}")]
-    ConversionError(OpStackEnrError),
+    ConversionError(BaseEnrError),
     /// Invalid Chain ID.
     #[display("Invalid Chain ID: {_0}")]
     InvalidChainId(u64),
@@ -22,13 +22,13 @@ pub enum EnrValidation {
 impl EnrValidation {
     /// Validates the [`Enr`] for Base.
     pub fn validate(enr: &Enr, chain_id: u64) -> Self {
-        let opstack_enr = match OpStackEnr::try_from(enr) {
-            Ok(opstack_enr) => opstack_enr,
+        let base_enr = match BaseEnr::try_from(enr) {
+            Ok(base_enr) => base_enr,
             Err(e) => return Self::ConversionError(e),
         };
 
-        if opstack_enr.chain_id != chain_id {
-            return Self::InvalidChainId(opstack_enr.chain_id);
+        if base_enr.chain_id != chain_id {
+            return Self::InvalidChainId(base_enr.chain_id);
         }
 
         Self::Valid
@@ -48,16 +48,16 @@ impl EnrValidation {
 /// The unique L2 network identifier
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub struct OpStackEnr {
+pub struct BaseEnr {
     /// Chain ID
     pub chain_id: u64,
     /// The version. Always set to 0.
     pub version: u64,
 }
 
-/// The error type that can be returned when trying to convert an [`Enr`] to an [`OpStackEnr`].
+/// The error type that can be returned when trying to convert an [`Enr`] to a [`BaseEnr`].
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
-pub enum OpStackEnrError {
+pub enum BaseEnrError {
     /// Missing Base ENR key.
     #[error("Missing Base ENR key")]
     MissingKey,
@@ -69,34 +69,34 @@ pub enum OpStackEnrError {
     InvalidVersion(u64),
 }
 
-impl TryFrom<&Enr> for OpStackEnr {
-    type Error = OpStackEnrError;
+impl TryFrom<&Enr> for BaseEnr {
+    type Error = BaseEnrError;
     fn try_from(enr: &Enr) -> Result<Self, Self::Error> {
         let Some(mut opstack) = enr.get_raw_rlp(Self::OP_CL_KEY) else {
-            return Err(OpStackEnrError::MissingKey);
+            return Err(BaseEnrError::MissingKey);
         };
-        let opstack_enr =
-            Self::decode(&mut opstack).map_err(|e| OpStackEnrError::DecodeError(e.to_string()))?;
+        let base_enr =
+            Self::decode(&mut opstack).map_err(|e| BaseEnrError::DecodeError(e.to_string()))?;
 
-        if opstack_enr.version != 0 {
-            return Err(OpStackEnrError::InvalidVersion(opstack_enr.version));
+        if base_enr.version != 0 {
+            return Err(BaseEnrError::InvalidVersion(base_enr.version));
         }
 
-        Ok(opstack_enr)
+        Ok(base_enr)
     }
 }
 
-impl OpStackEnr {
+impl BaseEnr {
     /// The [`Enr`] key literal string for the consensus layer.
     pub const OP_CL_KEY: &str = "opstack";
 
-    /// Constructs an [`OpStackEnr`] from a chain id.
+    /// Constructs a [`BaseEnr`] from a chain id.
     pub const fn from_chain_id(chain_id: u64) -> Self {
         Self { chain_id, version: 0 }
     }
 }
 
-impl Encodable for OpStackEnr {
+impl Encodable for BaseEnr {
     fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
         let mut chain_id_buf = encode::u128_buffer();
         let chain_id_slice = encode::u128(self.chain_id as u128, &mut chain_id_buf);
@@ -104,12 +104,12 @@ impl Encodable for OpStackEnr {
         let mut version_buf = encode::u128_buffer();
         let version_slice = encode::u128(self.version as u128, &mut version_buf);
 
-        let opstack = [chain_id_slice, version_slice].concat();
-        alloy_primitives::Bytes::from(opstack).encode(out);
+        let payload = [chain_id_slice, version_slice].concat();
+        alloy_primitives::Bytes::from(payload).encode(out);
     }
 }
 
-impl Decodable for OpStackEnr {
+impl Decodable for BaseEnr {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         let bytes = alloy_primitives::Bytes::decode(buf)?;
         let (chain_id, rest) = decode::u64(&bytes)
@@ -129,12 +129,12 @@ mod tests {
 
     #[test]
     #[cfg(feature = "arbitrary")]
-    fn roundtrip_op_stack_enr() {
+    fn roundtrip_base_enr() {
         arbtest::arbtest(|u| {
-            let op_stack_enr = OpStackEnr::from_chain_id(u.arbitrary()?);
-            let bytes = alloy_rlp::encode(op_stack_enr);
-            let decoded = OpStackEnr::decode(&mut &bytes[..]).unwrap();
-            assert_eq!(decoded, op_stack_enr);
+            let base_enr = BaseEnr::from_chain_id(u.arbitrary()?);
+            let bytes = alloy_rlp::encode(base_enr);
+            let decoded = BaseEnr::decode(&mut &bytes[..]).unwrap();
+            assert_eq!(decoded, base_enr);
             Ok(())
         });
     }
@@ -143,10 +143,10 @@ mod tests {
     fn test_enr_validation() {
         let key = CombinedKey::generate_secp256k1();
         let mut enr = Enr::builder().build(&key).unwrap();
-        let op_stack_enr = OpStackEnr::from_chain_id(8453);
-        let mut op_stack_bytes = Vec::new();
-        op_stack_enr.encode(&mut op_stack_bytes);
-        enr.insert_raw_rlp(OpStackEnr::OP_CL_KEY, op_stack_bytes.into(), &key).unwrap();
+        let base_enr = BaseEnr::from_chain_id(8453);
+        let mut base_enr_bytes = Vec::new();
+        base_enr.encode(&mut base_enr_bytes);
+        enr.insert_raw_rlp(BaseEnr::OP_CL_KEY, base_enr_bytes.into(), &key).unwrap();
         assert!(EnrValidation::validate(&enr, 8453).is_valid());
         assert!(EnrValidation::validate(&enr, 84532).is_invalid());
     }
@@ -155,20 +155,20 @@ mod tests {
     fn test_enr_validation_invalid_version() {
         let key = CombinedKey::generate_secp256k1();
         let mut enr = Enr::builder().build(&key).unwrap();
-        let mut op_stack_enr = OpStackEnr::from_chain_id(8453);
-        op_stack_enr.version = 1;
-        let mut op_stack_bytes = Vec::new();
-        op_stack_enr.encode(&mut op_stack_bytes);
-        enr.insert_raw_rlp(OpStackEnr::OP_CL_KEY, op_stack_bytes.into(), &key).unwrap();
+        let mut base_enr = BaseEnr::from_chain_id(8453);
+        base_enr.version = 1;
+        let mut base_enr_bytes = Vec::new();
+        base_enr.encode(&mut base_enr_bytes);
+        enr.insert_raw_rlp(BaseEnr::OP_CL_KEY, base_enr_bytes.into(), &key).unwrap();
         assert!(EnrValidation::validate(&enr, 8453).is_invalid());
     }
 
     #[test]
     fn test_base_mainnet_enr() {
-        let base_enr = OpStackEnr::from_chain_id(8453);
+        let base_enr = BaseEnr::from_chain_id(8453);
         let bytes = alloy_rlp::encode(base_enr);
         assert_eq!(Bytes::from(bytes.clone()), bytes!("83854200"));
-        let decoded = OpStackEnr::decode(&mut &bytes[..]).unwrap();
+        let decoded = BaseEnr::decode(&mut &bytes[..]).unwrap();
         assert_eq!(decoded, base_enr);
     }
 }

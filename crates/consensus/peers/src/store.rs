@@ -128,16 +128,16 @@ impl BootStore {
     }
 
     /// Returns the number of peers in the bootstore that
-    /// have the [`crate::OpStackEnr::OP_CL_KEY`] in the ENR.
+    /// have the [`crate::BaseEnr::OP_CL_KEY`] in the ENR.
     pub fn valid_peers(&self) -> Vec<&Enr> {
         self.peers
             .iter()
-            .filter(|enr| enr.get_raw_rlp(crate::OpStackEnr::OP_CL_KEY.as_bytes()).is_some())
+            .filter(|enr| enr.get_raw_rlp(crate::BaseEnr::OP_CL_KEY.as_bytes()).is_some())
             .collect()
     }
 
     /// Returns the number of peers that contain the
-    /// [`crate::OpStackEnr::OP_CL_KEY`] in the ENR *and*
+    /// [`crate::BaseEnr::OP_CL_KEY`] in the ENR *and*
     /// have the correct chain id and version.
     pub fn valid_peers_with_chain_id(&self, chain_id: u64) -> Vec<&Enr> {
         self.peers

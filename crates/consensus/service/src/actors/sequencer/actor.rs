@@ -18,7 +18,7 @@ use tokio::{
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
 use crate::{
-    CancellableContext, NodeActor, SequencerAdminQuery, UnsafePayloadGossipClient,
+    CancellableContext, Metrics, NodeActor, SequencerAdminQuery, UnsafePayloadGossipClient,
     actors::{
         SequencerEngineClient,
         engine::EngineClientError,
@@ -26,10 +26,6 @@ use crate::{
             build::{PayloadBuilder, UnsealedPayloadHandle},
             conductor::Conductor,
             error::SequencerActorError,
-            metrics::{
-                inc_seal_error, inc_stale_build_discarded, update_seal_duration_metrics,
-                update_total_transactions_sequenced,
-            },
             origin_selector::OriginSelector,
             recovery::RecoveryModeGuard,
             seal::PayloadSealer,
@@ -124,8 +120,9 @@ where
             .get_sealed_payload(handle.payload_id, handle.attributes_with_parent.clone())
             .await?;
 
-        update_seal_duration_metrics(seal_request_start.elapsed());
-        update_total_transactions_sequenced(handle.attributes_with_parent.count_transactions());
+        Metrics::sequencer_block_building_seal_task_duration().set(seal_request_start.elapsed());
+        Metrics::sequencer_total_transactions_sequenced()
+            .increment(handle.attributes_with_parent.count_transactions());
 
         Ok(PayloadSealer::new(envelope))
     }
@@ -153,7 +150,7 @@ where
                 current_head_num = current_head.block_info.number,
                 "Stale build detected: unsafe head advanced past build parent, discarding"
             );
-            inc_stale_build_discarded();
+            Metrics::sequencer_stale_build_discarded_total().increment(1);
             return Ok(None);
         }
 
@@ -167,7 +164,7 @@ where
                 actual_hash = %current_head.block_info.hash,
                 "Stale build detected: unsafe head reorged at same height, discarding"
             );
-            inc_stale_build_discarded();
+            Metrics::sequencer_stale_build_discarded_total().increment(1);
             return Ok(None);
         }
 
@@ -180,14 +177,14 @@ where
             Err(SequencerActorError::EngineError(EngineClientError::SealError(err))) => {
                 if err.is_fatal() {
                     error!(target: "sequencer", error = ?err, "Critical seal task error occurred");
-                    inc_seal_error(true);
+                    Metrics::sequencer_seal_errors_total("true").increment(1);
                     self.cancellation_token.cancel();
                     return Err(SequencerActorError::EngineError(EngineClientError::SealError(
                         err,
                     )));
                 }
                 warn!(target: "sequencer", error = ?err, "Non-fatal seal error, dropping block");
-                inc_seal_error(false);
+                Metrics::sequencer_seal_errors_total("false").increment(1);
                 Ok(None)
             }
             Err(other_err) => {

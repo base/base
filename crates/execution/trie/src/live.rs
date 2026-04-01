@@ -15,7 +15,9 @@ use reth_trie_common::{HashedPostStateSorted, updates::TrieUpdatesSorted};
 use tracing::info;
 
 use crate::{
-    BlockStateDiff, OpProofsStorage, OpProofsStorageError, OpProofsStore, api::OperationDurations,
+    BlockStateDiff, OpProofsStorage, OpProofsStorageError, OpProofsStore,
+    api::{OperationDurations, WriteCounts},
+    metrics::BlockMetrics,
     provider::OpProofsStateProviderRef,
 };
 
@@ -37,6 +39,16 @@ where
     Provider: StateReader + DatabaseProviderFactory + StateProviderFactory,
     Store: 'tx + OpProofsStore + Clone + 'static,
 {
+    fn record_storage_metrics(
+        operation_durations: &OperationDurations,
+        write_counts: Option<&WriteCounts>,
+    ) {
+        BlockMetrics::record_operation_durations(operation_durations);
+        if let Some(write_counts) = write_counts {
+            BlockMetrics::increment_write_counts(write_counts);
+        }
+    }
+
     /// Execute a block and store the updates in the storage.
     pub fn execute_and_store_block_updates(
         &self,
@@ -111,12 +123,7 @@ where
             - operation_durations.state_root_duration_seconds
             - operation_durations.execution_duration_seconds;
 
-        #[cfg(feature = "metrics")]
-        {
-            let block_metrics = self.storage.metrics().block_metrics();
-            block_metrics.record_operation_durations(&operation_durations);
-            block_metrics.increment_write_counts(&update_result);
-        }
+        Self::record_storage_metrics(&operation_durations, Some(&update_result));
 
         info!(
             block_number = block.number(),
@@ -146,12 +153,7 @@ where
         operation_durations.total_duration_seconds = write_duration;
         operation_durations.write_duration_seconds = write_duration;
 
-        #[cfg(feature = "metrics")]
-        {
-            let block_metrics = self.storage.metrics().block_metrics();
-            block_metrics.record_operation_durations(&operation_durations);
-            block_metrics.increment_write_counts(&storage_result);
-        }
+        Self::record_storage_metrics(&operation_durations, Some(&storage_result));
 
         info!(
             block_number = block.block.number,
@@ -204,11 +206,7 @@ where
         operation_durations.total_duration_seconds = write_duration;
         operation_durations.write_duration_seconds = write_duration;
 
-        #[cfg(feature = "metrics")]
-        {
-            let block_metrics = self.storage.metrics().block_metrics();
-            block_metrics.record_operation_durations(&operation_durations);
-        }
+        Self::record_storage_metrics(&operation_durations, None);
 
         info!(
             start_block_number = block_updates.first().map(|(b, _, _)| b.block.number),

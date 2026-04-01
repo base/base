@@ -7,6 +7,8 @@ mod config;
 pub use config::SequencerConfig;
 
 mod origin_selector;
+#[cfg(test)]
+pub use origin_selector::MockOriginSelector;
 pub use origin_selector::{
     DelayedL1OriginSelectorProvider, L1OriginSelector, L1OriginSelectorError,
     L1OriginSelectorProvider, OriginSelector,
@@ -33,17 +35,15 @@ mod error;
 pub use error::SequencerActorError;
 
 mod conductor;
-
+#[cfg(test)]
+pub use conductor::MockConductor;
 pub use conductor::{Conductor, ConductorClient, ConductorError};
 
 mod engine_client;
-#[cfg(test)]
-pub use conductor::MockConductor;
+
 #[cfg(test)]
 pub use engine_client::MockSequencerEngineClient;
 pub use engine_client::{QueuedSequencerEngineClient, SequencerEngineClient};
-#[cfg(test)]
-pub use origin_selector::MockOriginSelector;
 
 #[cfg(test)]
 mod tests;

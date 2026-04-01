@@ -18,9 +18,9 @@ use base_proof_tee_nitro_attestation_prover::{
     AttestationProofProvider, BoundlessProver, DirectProver,
 };
 use base_proof_tee_registrar::{
-    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, DriverConfig, ProverClient,
-    ProvingConfig, RegistrarConfig, RegistrarError, RegistrarMetrics, RegistrationDriver,
-    RegistryContractClient,
+    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, DEFAULT_MAX_CONCURRENCY,
+    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, DriverConfig, ProverClient, ProvingConfig,
+    RegistrarConfig, RegistrarError, RegistrarMetrics, RegistrationDriver, RegistryContractClient,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use clap::{Args, Parser, ValueEnum};
@@ -106,6 +106,21 @@ pub(crate) struct Cli {
     #[arg(long, env = cli_env!("PROVER_TIMEOUT_SECS"), default_value_t = 30)]
     prover_timeout_secs: u64,
 
+    /// Maximum number of instances to process concurrently within a single
+    /// registration cycle. Each instance may trigger a ~20-minute proof
+    /// generation, so this limits concurrent proof work.
+    #[arg(long, env = cli_env!("MAX_CONCURRENCY"), default_value_t = DEFAULT_MAX_CONCURRENCY)]
+    max_concurrency: usize,
+
+    // ── Tx Retry ──────────────────────────────────────────────────────────────
+    /// Maximum number of transaction submission retries for transient errors.
+    #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
+    max_tx_retries: u32,
+
+    /// Delay between transaction submission retries, in seconds.
+    #[arg(long, env = cli_env!("TX_RETRY_DELAY_SECS"), default_value_t = DEFAULT_TX_RETRY_DELAY_SECS)]
+    tx_retry_delay_secs: u64,
+
     // ── Health Server ─────────────────────────────────────────────────────────
     #[command(flatten)]
     health: HealthArgs,
@@ -147,17 +162,13 @@ struct BoundlessArgs {
     )]
     boundless_private_key: Option<String>,
 
-    /// IPFS URL of the Nitro attestation verifier ELF uploaded via `nitro-attest-cli`.
+    /// HTTP(S) URL of the Nitro attestation verifier ELF (e.g. Pinata IPFS gateway URL).
     #[arg(
         long,
         env = cli_env!("BOUNDLESS_VERIFIER_PROGRAM_URL"),
         required_if_eq("proving_mode", "boundless")
     )]
     boundless_verifier_program_url: Option<Url>,
-
-    /// Maximum price in wei per cycle for Boundless proof requests.
-    #[arg(long, env = cli_env!("BOUNDLESS_MAX_PRICE"), default_value_t = 1_000_000)]
-    boundless_max_price: u64,
 
     /// Interval between Boundless fulfillment status checks, in seconds.
     #[arg(long, env = cli_env!("BOUNDLESS_POLL_INTERVAL_SECS"), default_value_t = 5)]
@@ -195,7 +206,7 @@ fn parse_image_id(s: &str) -> std::result::Result<[u32; 8], RegistrarError> {
 
     let mut id = [0u32; 8];
     for (i, chunk) in bytes.chunks_exact(4).enumerate() {
-        id[i] = u32::from_be_bytes(chunk.try_into().unwrap());
+        id[i] = u32::from_le_bytes(chunk.try_into().unwrap());
     }
     Ok(id)
 }
@@ -247,7 +258,6 @@ impl Cli {
                             )
                         })?,
                     image_id: parse_image_id(image_id_hex)?,
-                    max_price: self.boundless.boundless_max_price,
                     poll_interval: Duration::from_secs(self.boundless.boundless_poll_interval_secs),
                     timeout: Duration::from_secs(self.boundless.boundless_timeout_secs),
                     nitro_verifier_address: self.boundless.nitro_verifier_address,
@@ -273,6 +283,16 @@ impl Cli {
             ));
         }
 
+        if self.max_concurrency == 0 {
+            return Err(RegistrarError::Config("--max-concurrency must be greater than 0".into()));
+        }
+
+        if self.tx_retry_delay_secs == 0 {
+            return Err(RegistrarError::Config(
+                "--tx-retry-delay-secs must be greater than 0".into(),
+            ));
+        }
+
         if self.health.port == 0 {
             return Err(RegistrarError::Config("health server port must be non-zero".into()));
         }
@@ -289,6 +309,9 @@ impl Cli {
             proving,
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             prover_timeout: Duration::from_secs(self.prover_timeout_secs),
+            max_concurrency: self.max_concurrency,
+            max_tx_retries: self.max_tx_retries,
+            tx_retry_delay: Duration::from_secs(self.tx_retry_delay_secs),
             health_addr,
         })
     }
@@ -318,7 +341,7 @@ impl Cli {
         metrics_config
             .init_with(|| {
                 base_cli_utils::register_version_metrics!();
-                RegistrarMetrics::record_startup(env!("CARGO_PKG_VERSION"));
+                RegistrarMetrics::up().set(1.0);
             })
             .wrap_err("failed to install Prometheus recorder")?;
 
@@ -362,10 +385,10 @@ impl Cli {
                 signer: boundless.signer.clone(),
                 verifier_program_url: boundless.verifier_program_url.clone(),
                 image_id: boundless.image_id,
-                max_price: boundless.max_price,
                 poll_interval: boundless.poll_interval,
                 timeout: boundless.timeout,
                 trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX,
+                submit_lock: Arc::new(tokio::sync::Mutex::new(())),
             }),
             ProvingConfig::Direct { ref elf_path } => {
                 let elf = std::fs::read(elf_path).map_err(|e| {
@@ -393,6 +416,9 @@ impl Cli {
             registry_address: config.tee_prover_registry_address,
             poll_interval: config.poll_interval,
             cancel: cancel.clone(),
+            max_concurrency: config.max_concurrency,
+            max_tx_retries: config.max_tx_retries,
+            tx_retry_delay: config.tx_retry_delay,
         };
 
         // Mark the service as ready. This signals "initialised and running", not
@@ -459,10 +485,9 @@ mod tests {
     const TEST_BOUNDLESS_RPC: &str = "http://localhost:9545";
     const TEST_BOUNDLESS_KEY: &str =
         "0202020202020202020202020202020202020202020202020202020202020202";
-    const TEST_VERIFIER_URL: &str =
-        "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+    const TEST_VERIFIER_URL: &str = "https://gateway.pinata.cloud/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
     const TEST_IMAGE_ID: &str =
-        "0x0000000100000002000000030000000400000005000000060000000700000008";
+        "0x0100000002000000030000000400000005000000060000000700000008000000";
     const TEST_ELF_PATH: &str = "/tmp/guest.elf";
     const TEST_SIGNER_ENDPOINT: &str = "http://localhost:8546";
     const TEST_SIGNER_ADDR: &str = "0x0000000000000000000000000000000000000002";
@@ -614,6 +639,8 @@ mod tests {
     #[case::zero_poll_interval("--poll-interval-secs", "0")]
     #[case::zero_prover_timeout("--prover-timeout-secs", "0")]
     #[case::zero_boundless_timeout("--boundless-timeout-secs", "0")]
+    #[case::zero_max_concurrency("--max-concurrency", "0")]
+    #[case::zero_tx_retry_delay("--tx-retry-delay-secs", "0")]
     fn zero_duration_fails_into_config(#[case] flag: &str, #[case] value: &str) {
         let mut args = boundless_args();
         args.extend([flag, value]);
@@ -632,10 +659,13 @@ mod tests {
     // ── Field value checks ──────────────────────────────────────────────
 
     #[rstest]
-    fn default_durations() {
+    fn default_durations_and_concurrency() {
         let config = Cli::parse_from(boundless_args()).into_config().unwrap();
         assert_eq!(config.poll_interval, Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS));
         assert_eq!(config.prover_timeout, Duration::from_secs(DEFAULT_PROVER_TIMEOUT_SECS));
+        assert_eq!(config.max_concurrency, DEFAULT_MAX_CONCURRENCY);
+        assert_eq!(config.max_tx_retries, DEFAULT_MAX_TX_RETRIES);
+        assert_eq!(config.tx_retry_delay, Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS));
     }
 
     #[rstest]
@@ -695,8 +725,8 @@ mod tests {
     // ── parse_image_id unit tests ───────────────────────────────────────
 
     #[rstest]
-    #[case::with_prefix("0x0000000100000002000000030000000400000005000000060000000700000008", [1,2,3,4,5,6,7,8])]
-    #[case::without_prefix("0000000100000002000000030000000400000005000000060000000700000008", [1,2,3,4,5,6,7,8])]
+    #[case::with_prefix("0x0100000002000000030000000400000005000000060000000700000008000000", [1,2,3,4,5,6,7,8])]
+    #[case::without_prefix("0100000002000000030000000400000005000000060000000700000008000000", [1,2,3,4,5,6,7,8])]
     fn parse_image_id_valid(#[case] input: &str, #[case] expected: [u32; 8]) {
         assert_eq!(parse_image_id(input).unwrap(), expected);
     }

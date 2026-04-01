@@ -7,7 +7,6 @@ use base_node_core::{
 };
 use base_node_runner::{BaseNode, OpNodeTypes, PayloadServiceBuilder as BasePayloadServiceBuilder};
 use derive_more::Debug;
-use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
 use reth_node_api::NodeTypes;
 use reth_node_builder::{
     BuilderContext,
@@ -20,7 +19,6 @@ use tracing::info;
 use super::{PayloadHandler, generator::BlockPayloadJobGenerator, payload::OpPayloadBuilder};
 use crate::{
     BuilderConfig,
-    metrics::BuilderMetrics,
     traits::{NodeBounds, PoolBounds},
 };
 
@@ -42,7 +40,6 @@ impl FlashblocksServiceBuilder {
         Node: NodeBounds,
         Pool: PoolBounds,
     {
-        let metrics = Arc::new(BuilderMetrics::default());
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
         let ws_pub: Arc<WebSocketPublisher> =
@@ -54,14 +51,10 @@ impl FlashblocksServiceBuilder {
             self.0.clone(),
             built_payload_tx,
             ws_pub,
-            metrics,
         );
-        let payload_job_config = BasicPayloadJobGeneratorConfig::default();
-
         let payload_generator = BlockPayloadJobGenerator::with_builder(
             ctx.provider().clone(),
             ctx.task_executor().clone(),
-            payload_job_config,
             payload_builder,
             true,
             self.0.block_time_leeway,

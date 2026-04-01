@@ -30,7 +30,7 @@ reth-ethereum-primitives = { workspace = true, optional = true }
 
 # `metrics` feature
 metrics = { workspace = true, optional = true }
-reth-metrics = { workspace = true, features = ["common"], optional = true }
+base-metrics.workspace = true
 
 # ethereum
 alloy-eips.workspace = true
@@ -91,9 +91,9 @@ serde-bincode-compat = [
 	"reth-trie/serde-bincode-compat",
 ]
 metrics = [
+	"base-metrics/metrics",
 	"dep:eyre",
 	"dep:metrics",
-	"dep:reth-metrics",
 	"reth-evm/metrics",
 	"reth-trie/metrics",
 ]

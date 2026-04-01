@@ -3,14 +3,15 @@
 
 use alloc::{boxed::Box, sync::Arc};
 
-use base_consensus_genesis::RollupConfig;
+use alloy_eips::BlockNumHash;
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
 
 // Re-export these types used internally to the test pipeline.
 use crate::{
     AttributesQueue, BatchStream, ChannelProvider, ChannelReader, DerivationPipeline, FrameQueue,
     L1Retrieval, NextAttributes, OriginAdvancer, OriginProvider, PipelineBuilder, PipelineError,
-    PollingTraversal, Signal, SignalReceiver,
+    PollingTraversal, StageReset,
     test_utils::{TestAttributesBuilder, TestDAP},
 };
 use crate::{
@@ -26,9 +27,20 @@ pub struct TestNextAttributes {
 }
 
 #[async_trait::async_trait]
-impl SignalReceiver for TestNextAttributes {
-    /// Resets the derivation stage to its initial state.
-    async fn signal(&mut self, _: Signal) -> PipelineResult<()> {
+impl StageReset for TestNextAttributes {
+    async fn reset(&mut self, _: BlockNumHash, _: SystemConfig) -> PipelineResult<()> {
+        Ok(())
+    }
+
+    async fn activate(&mut self) -> PipelineResult<()> {
+        Ok(())
+    }
+
+    async fn flush_channel(&mut self) -> PipelineResult<()> {
+        Ok(())
+    }
+
+    async fn provide_block(&mut self, _: BlockInfo) -> PipelineResult<()> {
         Ok(())
     }
 }

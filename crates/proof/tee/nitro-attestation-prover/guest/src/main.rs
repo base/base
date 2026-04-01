@@ -4,9 +4,11 @@
 // with the risc0 toolchain:
 //
 //   rzup install
-//   cargo +risc0 build --release --target riscv32im-risc0-zkvm-elf
+//   cargo +risc0 build --release --target riscv32im-risc0-zkvm-elf --ignore-rust-version
 //
 // The resulting ELF is loaded at runtime by DirectProver / BoundlessProver.
+
+mod atomic_shims;
 
 use std::io::Read;
 

@@ -89,6 +89,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 
 // public test api
 impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
+    /// Builds a new block using only sequencer-injected transactions, skipping the mempool.
     pub async fn build_new_block_with_no_tx_pool(&self) -> eyre::Result<Block<Transaction>> {
         self.build_new_block_with_txs_timestamp(vec![], Some(true), None, None, Some(0)).await
     }

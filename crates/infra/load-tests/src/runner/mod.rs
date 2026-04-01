@@ -18,5 +18,8 @@ pub use flashblock_tracker::FlashblockTracker;
 mod block_watcher;
 pub use block_watcher::{BlockFirstSeen, BlockWatcher};
 
+mod status;
+pub use status::{DisplaySnapshot, LoadTestDisplay};
+
 mod load_runner;
 pub use load_runner::LoadRunner;

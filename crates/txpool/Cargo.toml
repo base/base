@@ -20,7 +20,6 @@ alloy-primitives.workspace = true
 # reth
 reth-evm.workspace = true
 reth-tasks.workspace = true
-reth-metrics.workspace = true
 reth-node-api.workspace = true
 reth-provider.workspace = true
 reth-chainspec.workspace = true
@@ -37,19 +36,21 @@ base-execution-evm.workspace = true
 base-alloy-consensus.workspace = true
 base-execution-primitives.workspace = true
 
+# metrics
+metrics = { workspace = true, optional = true }
+base-metrics.workspace = true
+
 # misc
 futures.workspace = true
 url.workspace = true
 serde.workspace = true
 c-kzg.workspace = true
-metrics.workspace = true
 tracing.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
 derive_more.workspace = true
 parking_lot.workspace = true
 tokio-stream.workspace = true
-metrics-derive.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
 
@@ -59,3 +60,7 @@ base-execution-chainspec.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros"] }
+
+[features]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics", "reth-evm/metrics" ]

@@ -12,21 +12,28 @@ workspace = true
 
 [dependencies]
 # General
-async-trait.workspace = true
 thiserror.workspace = true
+async-trait.workspace = true
+alloy-eips = { workspace = true }
+alloy-chains = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-preimage = { workspace = true }
+base-consensus-genesis = { workspace = true }
 serde = { workspace = true, optional = true, features = ["derive"] }
 jsonrpsee = { workspace = true, optional = true }
 
 [dev-dependencies]
+hex.workspace = true
 rstest.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 
 [features]
 default = []
 std = [
+	"alloy-chains/std",
+	"alloy-eips/std",
 	"alloy-primitives/std",
+	"base-consensus-genesis/std",
 	"base-proof-preimage/std",
 	"serde?/std",
 	"thiserror/std",

@@ -36,3 +36,6 @@ tokio-vsock.workspace = true
 [dev-dependencies]
 alloy-primitives.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
+
+[features]
+metrics = [ "base-proof-host/metrics" ]

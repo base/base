@@ -10,7 +10,7 @@ use base_protocol::{BlockInfo, Channel, ChannelId, Frame};
 
 use crate::{
     ChannelReaderProvider, NextFrameProvider, OriginAdvancer, OriginProvider, PipelineError,
-    PipelineErrorKind, PipelineResult, Signal, SignalReceiver,
+    PipelineErrorKind, PipelineResult, StageReset,
 };
 
 /// The maximum size of a channel bank.
@@ -33,7 +33,7 @@ pub(crate) const FJORD_MAX_CHANNEL_BANK_SIZE: usize = 1_000_000_000;
 #[derive(Debug)]
 pub struct ChannelBank<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     /// The rollup configuration.
     pub cfg: Arc<RollupConfig>,
@@ -47,7 +47,7 @@ where
 
 impl<P> ChannelBank<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     /// Create a new [`ChannelBank`] stage.
     pub fn new(cfg: Arc<RollupConfig>, prev: P) -> Self {
@@ -182,7 +182,7 @@ where
 #[async_trait]
 impl<P> OriginAdvancer for ChannelBank<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
     async fn advance_origin(&mut self) -> PipelineResult<()> {
         self.prev.advance_origin().await
@@ -192,7 +192,7 @@ where
 #[async_trait]
 impl<P> ChannelReaderProvider for ChannelBank<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
     async fn next_data(&mut self) -> PipelineResult<Option<Bytes>> {
         match self.read() {
@@ -219,7 +219,7 @@ where
 
 impl<P> OriginProvider for ChannelBank<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     fn origin(&self) -> Option<BlockInfo> {
         self.prev.origin()
@@ -227,14 +227,12 @@ where
 }
 
 #[async_trait]
-impl<P> SignalReceiver for ChannelBank<P>
+impl<P> StageReset for ChannelBank<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
-    /// Handle a pipeline signal.
-    ///
-    /// `Reset`, `Activation`, and `FlushChannel` clear the channel bank because they represent
-    /// a discontinuity in the L1 data stream (reorg, hardfork boundary, or explicit flush).
+    /// Reset clears all buffered channel state. This represents a discontinuity in the L1 data
+    /// stream (reorg, hardfork boundary, or explicit flush).
     ///
     /// `ProvideBlock` is intentionally **not** cleared here, diverging from kona's upstream
     /// `ChannelBank` which clears unconditionally on all signals. Channels can span multiple
@@ -242,18 +240,33 @@ where
     /// channels before their frames have all arrived, breaking channel timeout detection.
     /// This matches op-node's `channel_bank.go`, where only `Reset()` discards channel state
     /// and normal L1 block advancement leaves channels intact.
-    async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
-        match signal {
-            Signal::Reset(_) | Signal::Activation(_) | Signal::FlushChannel => {
-                self.prev.signal(signal).await?;
-                self.channels.clear();
-                self.channel_queue = VecDeque::with_capacity(10);
-            }
-            Signal::ProvideBlock(_) => {
-                self.prev.signal(signal).await?;
-            }
-        }
+    async fn reset(
+        &mut self,
+        l1_origin: alloy_eips::BlockNumHash,
+        system_config: base_consensus_genesis::SystemConfig,
+    ) -> PipelineResult<()> {
+        self.prev.reset(l1_origin, system_config).await?;
+        self.channels.clear();
+        self.channel_queue = VecDeque::with_capacity(10);
         Ok(())
+    }
+
+    async fn activate(&mut self) -> PipelineResult<()> {
+        self.prev.activate().await?;
+        self.channels.clear();
+        self.channel_queue = VecDeque::with_capacity(10);
+        Ok(())
+    }
+
+    async fn flush_channel(&mut self) -> PipelineResult<()> {
+        self.prev.flush_channel().await?;
+        self.channels.clear();
+        self.channel_queue = VecDeque::with_capacity(10);
+        Ok(())
+    }
+
+    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
+        self.prev.provide_block(block).await
     }
 }
 
@@ -261,15 +274,13 @@ where
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use base_consensus_genesis::HardForkConfig;
+    use alloy_eips::BlockNumHash;
+    use base_consensus_genesis::{HardForkConfig, SystemConfig};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
-    use crate::{
-        test_utils::{CollectingLayer, TestNextFrameProvider, TraceStorage},
-        types::{ActivationSignal, ResetSignal},
-    };
+    use crate::test_utils::{CollectingLayer, TestNextFrameProvider, TraceStorage};
 
     #[test]
     fn test_try_read_channel_at_index_missing_channel() {
@@ -432,7 +443,7 @@ mod tests {
         channel_bank.channels.insert([0xFF; 16], Channel::default());
         channel_bank.channel_queue.push_back([0xFF; 16]);
         assert!(!channel_bank.prev.reset);
-        channel_bank.signal(ResetSignal::default().signal()).await.unwrap();
+        channel_bank.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();
         assert_eq!(channel_bank.channels.len(), 0);
         assert_eq!(channel_bank.channel_queue.len(), 0);
         assert!(channel_bank.prev.reset);
@@ -448,7 +459,7 @@ mod tests {
         channel_bank.channels.insert([0xFF; 16], Channel::default());
         channel_bank.channel_queue.push_back([0xFF; 16]);
         assert!(!channel_bank.prev.reset);
-        channel_bank.signal(ActivationSignal::default().signal()).await.unwrap();
+        channel_bank.activate().await.unwrap();
         assert_eq!(channel_bank.channels.len(), 0, "Activation must clear channels");
         assert_eq!(channel_bank.channel_queue.len(), 0, "Activation must clear channel queue");
         assert!(channel_bank.prev.reset, "Activation must propagate to prev stage");
@@ -464,7 +475,7 @@ mod tests {
         channel_bank.channels.insert([0xFF; 16], Channel::default());
         channel_bank.channel_queue.push_back([0xFF; 16]);
         assert!(!channel_bank.prev.reset);
-        channel_bank.signal(Signal::FlushChannel).await.unwrap();
+        channel_bank.flush_channel().await.unwrap();
         assert_eq!(channel_bank.channels.len(), 0, "FlushChannel must clear channels");
         assert_eq!(channel_bank.channel_queue.len(), 0, "FlushChannel must clear channel queue");
         assert!(channel_bank.prev.reset, "FlushChannel must propagate to prev stage");
@@ -483,7 +494,7 @@ mod tests {
         channel_bank.channels.insert([0xFF; 16], Channel::default());
         channel_bank.channel_queue.push_back([0xFF; 16]);
         assert!(!channel_bank.prev.reset);
-        channel_bank.signal(Signal::ProvideBlock(BlockInfo::default())).await.unwrap();
+        channel_bank.provide_block(BlockInfo::default()).await.unwrap();
         assert_eq!(channel_bank.channels.len(), 1, "ProvideBlock must not clear channels");
         assert_eq!(
             channel_bank.channel_queue.len(),
@@ -504,7 +515,7 @@ mod tests {
         channel_bank.channel_queue.push_back([0xAA; 16]);
         for i in 0u64..5 {
             channel_bank
-                .signal(Signal::ProvideBlock(BlockInfo { number: i, ..Default::default() }))
+                .provide_block(BlockInfo { number: i, ..Default::default() })
                 .await
                 .unwrap();
             assert_eq!(channel_bank.channels.len(), 1, "channels must survive ProvideBlock #{i}");
@@ -528,13 +539,13 @@ mod tests {
         // Advance a few L1 blocks — channels must survive.
         for i in 0u64..3 {
             channel_bank
-                .signal(Signal::ProvideBlock(BlockInfo { number: i, ..Default::default() }))
+                .provide_block(BlockInfo { number: i, ..Default::default() })
                 .await
                 .unwrap();
         }
         assert_eq!(channel_bank.channels.len(), 1, "channels must survive ProvideBlock signals");
         // A Reset (e.g. reorg) must now clear everything.
-        channel_bank.signal(ResetSignal::default().signal()).await.unwrap();
+        channel_bank.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();
         assert_eq!(channel_bank.channels.len(), 0, "Reset must clear channels after ProvideBlock");
         assert_eq!(
             channel_bank.channel_queue.len(),

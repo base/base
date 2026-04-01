@@ -12,6 +12,17 @@ TEE prover host server for AWS Nitro Enclaves.
 **Remotely (from your local machine):**
 
 ```bash
+# Get the enclave signer's Ethereum address
+just tee signer-address https://<PROVER_RPC_URL>
+
+# Get PCR0 and teeImageHash (requires: pip3 install cbor2)
+just tee remote-pcr0 https://<PROVER_RPC_URL>
+```
+
+<details>
+<summary>Manual steps (what the recipes do under the hood)</summary>
+
+```bash
 # Get the enclave's signer public key
 cast rpc enclave_signerPublicKey -r https://<PROVER_RPC_URL>
 
@@ -29,6 +40,8 @@ python3 -c "import cbor2; data=bytes([<PASTE_BYTE_ARRAY>]); _, _, payload, _ = c
 # Compute the teeImageHash (keccak of raw PCR0 bytes)
 cast keccak 0x<PCR0_HEX>
 ```
+
+</details>
 
 **Via SSH (on the EC2 host):**
 

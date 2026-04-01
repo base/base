@@ -1,48 +1,37 @@
 //! RPC metrics unique for Base.
 
-use core::time::Duration;
 use std::time::Instant;
 
-use alloy_primitives::map::HashMap;
-use metrics::{Counter, Histogram};
-use reth_metrics::Metrics;
-use strum::{EnumCount, EnumIter, IntoEnumIterator};
-
-/// Base sequencer metrics
-#[derive(Metrics, Clone)]
-#[metrics(scope = "base_rpc.sequencer")]
-pub struct SequencerMetrics {
-    /// How long it takes to forward a transaction to the sequencer
-    pub(crate) sequencer_forward_latency: Histogram,
+base_metrics::define_metrics! {
+    base_rpc.sequencer,
+    struct = SequencerMetrics,
+    #[describe("How long it takes to forward a transaction to the sequencer")]
+    sequencer_forward_latency: histogram,
 }
 
 impl SequencerMetrics {
-    /// Records the duration it took to forward a transaction
+    /// Records the duration it took to forward a transaction.
     #[inline]
-    pub fn record_forward_latency(&self, duration: Duration) {
-        self.sequencer_forward_latency.record(duration.as_secs_f64());
+    pub fn record_forward_latency(duration: core::time::Duration) {
+        Self::sequencer_forward_latency().record(duration.as_secs_f64());
     }
 }
 
-/// Base ETH API extension metrics
-#[derive(Metrics, Clone)]
-#[metrics(scope = "base_rpc.eth_api_ext")]
-pub struct EthApiExtMetrics {
-    /// How long it takes to handle a `eth_getProof` request successfully
-    pub(crate) get_proof_latency: Histogram,
-
-    /// Total number of `eth_getProof` requests
-    pub(crate) get_proof_requests: Counter,
-
-    /// Total number of successful `eth_getProof` responses
-    pub(crate) get_proof_successful_responses: Counter,
-
-    /// Total number of failures handling `eth_getProof` requests
-    pub(crate) get_proof_failures: Counter,
+base_metrics::define_metrics! {
+    base_rpc.eth_api_ext,
+    struct = EthApiExtMetrics,
+    #[describe("How long it takes to handle a eth_getProof request successfully")]
+    get_proof_latency: histogram,
+    #[describe("Total number of eth_getProof requests")]
+    get_proof_requests: counter,
+    #[describe("Total number of successful eth_getProof responses")]
+    get_proof_successful_responses: counter,
+    #[describe("Total number of failures handling eth_getProof requests")]
+    get_proof_failures: counter,
 }
 
 /// Types of debug apis
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, EnumCount, EnumIter)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum DebugApis {
     /// `DebugExecutePayload` Api
     DebugExecutePayload,
@@ -60,75 +49,43 @@ impl DebugApis {
     }
 }
 
+base_metrics::define_metrics! {
+    base_rpc.debug_api_ext,
+    struct = DebugApiExtRpcMetrics,
+    #[describe("End-to-end time to handle this API call")]
+    #[label(api)]
+    latency: histogram,
+    #[describe("Total number of requests for this API")]
+    #[label(api)]
+    requests: counter,
+    #[describe("Total number of successful responses for this API")]
+    #[label(api)]
+    successful_responses: counter,
+    #[describe("Total number of failures for this API")]
+    #[label(api)]
+    failures: counter,
+}
+
 /// Metrics for Debug API extension calls.
 #[derive(Debug)]
-pub struct DebugApiExtMetrics {
-    /// Per-api metrics handles
-    apis: HashMap<DebugApis, DebugApiExtRpcMetrics>,
-}
+pub struct DebugApiExtMetrics;
 
 impl DebugApiExtMetrics {
-    /// Initializes new `DebugApiExtMetrics`
-    pub fn new() -> Self {
-        let mut apis = HashMap::default();
-        for api in DebugApis::iter() {
-            apis.insert(api, DebugApiExtRpcMetrics::new_with_labels(&[("api", api.as_str())]));
-        }
-        Self { apis }
-    }
-
     /// Record a Debug API call async (tracks latency, requests, success, failures).
-    pub async fn record_operation_async<F, T, E>(&self, api: DebugApis, f: F) -> Result<T, E>
+    pub async fn record_operation_async<F, T, E>(api: DebugApis, f: F) -> Result<T, E>
     where
         F: Future<Output = Result<T, E>>,
     {
-        if let Some(metrics) = self.apis.get(&api) {
-            metrics.record_async(f).await
-        } else {
-            f.await
-        }
-    }
-}
-
-impl Default for DebugApiExtMetrics {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Base Debug API extension metrics
-#[derive(Metrics, Clone)]
-#[metrics(scope = "base_rpc.debug_api_ext")]
-pub struct DebugApiExtRpcMetrics {
-    /// End-to-end time to handle this API call
-    pub(crate) latency: Histogram,
-
-    /// Total number of requests for this API
-    pub(crate) requests: Counter,
-
-    /// Total number of successful responses for this API
-    pub(crate) successful_responses: Counter,
-
-    /// Total number of failures for this API
-    pub(crate) failures: Counter,
-}
-
-impl DebugApiExtRpcMetrics {
-    /// Record rpc api call async.
-    async fn record_async<T, E, F>(&self, f: F) -> Result<T, E>
-    where
-        F: Future<Output = Result<T, E>>,
-    {
+        let label = api.as_str();
         let start = Instant::now();
         let result = f.await;
-
-        self.latency.record(start.elapsed().as_secs_f64());
-        self.requests.increment(1);
+        DebugApiExtRpcMetrics::latency(label).record(start.elapsed().as_secs_f64());
+        DebugApiExtRpcMetrics::requests(label).increment(1);
 
         if result.is_ok() {
-            self.successful_responses.increment(1);
+            DebugApiExtRpcMetrics::successful_responses(label).increment(1);
         } else {
-            self.failures.increment(1);
+            DebugApiExtRpcMetrics::failures(label).increment(1);
         }
 
         result

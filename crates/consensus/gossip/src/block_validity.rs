@@ -910,14 +910,9 @@ pub(crate) mod tests {
     #[test]
     #[cfg(feature = "metrics")]
     fn test_metrics_instrumentation() {
-        use crate::Metrics;
-
         // This test verifies that metrics code compiles and doesn't panic
         // The actual metric values would require a metrics registry setup in a real test
         // environment
-
-        // Initialize metrics (this should not panic)
-        Metrics::init();
 
         let block = v1_valid_block();
         let v1 = ExecutionPayloadV1::from_block_slow(&block);

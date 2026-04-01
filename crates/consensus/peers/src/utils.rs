@@ -9,46 +9,6 @@ use libp2p::Multiaddr;
 
 use super::PeerId;
 
-/// Converts an [`Enr`] into a [`Multiaddr`].
-pub fn enr_to_multiaddr(enr: &Enr) -> Option<Multiaddr> {
-    let mut addr = if let Some(socket) = enr.tcp4_socket() {
-        let mut addr = Multiaddr::from(*socket.ip());
-        addr.push(Protocol::Tcp(socket.port()));
-        addr
-    } else if let Some(socket) = enr.tcp6_socket() {
-        let mut addr = Multiaddr::from(*socket.ip());
-        addr.push(Protocol::Tcp(socket.port()));
-        addr
-    } else {
-        return None;
-    };
-
-    let CombinedPublicKey::Secp256k1(pub_key) = enr.public_key() else {
-        return None;
-    };
-
-    let pub_key = libp2p_identity::secp256k1::PublicKey::try_from_bytes(&pub_key.encode()).ok()?;
-    let pub_key = libp2p_identity::PublicKey::from(pub_key);
-
-    addr.push(Protocol::P2p(libp2p::PeerId::from_public_key(&pub_key)));
-
-    Some(addr)
-}
-
-/// Converts an uncompressed [`PeerId`] to a [`secp256k1::PublicKey`] by prepending the [`PeerId`]
-/// bytes with the `SECP256K1_TAG_PUBKEY_UNCOMPRESSED` tag.
-pub fn peer_id_to_secp256k1_pubkey(id: PeerId) -> Result<secp256k1::PublicKey, secp256k1::Error> {
-    /// Tags the public key as uncompressed.
-    ///
-    /// See: <https://github.com/bitcoin-core/secp256k1/blob/master/include/secp256k1.h#L211>
-    const SECP256K1_TAG_PUBKEY_UNCOMPRESSED: u8 = 4;
-
-    let mut full_pubkey = [0u8; secp256k1::constants::UNCOMPRESSED_PUBLIC_KEY_SIZE];
-    full_pubkey[0] = SECP256K1_TAG_PUBKEY_UNCOMPRESSED;
-    full_pubkey[1..].copy_from_slice(id.as_slice());
-    secp256k1::PublicKey::from_slice(&full_pubkey)
-}
-
 /// An error that can occur when converting a [`PeerId`] to a [`libp2p::PeerId`].
 #[derive(Debug, thiserror::Error)]
 pub enum PeerIdConversionError {
@@ -60,19 +20,71 @@ pub enum PeerIdConversionError {
     InvalidPublicKey(#[from] discv5::libp2p_identity::DecodingError),
 }
 
-/// Converts an uncoded [`PeerId`] to a [`libp2p::PeerId`]. These two types represent the same
-/// underlying concept (secp256k1 public key) but using different encodings (the local [`PeerId`] is
-/// the uncompressed representation of the public key, while the "p2plib" [`libp2p::PeerId`] is a
-/// more complex representation, involving protobuf encoding and bitcoin encoding,  defined here: <https://github.com/libp2p/specs/blob/master/peer-ids/peer-ids.md>).
-pub fn local_id_to_p2p_id(peer_id: PeerId) -> Result<libp2p::PeerId, PeerIdConversionError> {
-    // The libp2p library works with compressed public keys.
-    let encoded_pk_bytes = peer_id_to_secp256k1_pubkey(peer_id)
-        .map_err(PeerIdConversionError::InvalidPeerId)?
-        .serialize();
-    let pk: discv5::libp2p_identity::PublicKey =
-        discv5::libp2p_identity::secp256k1::PublicKey::try_from_bytes(&encoded_pk_bytes)?.into();
+/// Utility methods for converting between peer network identity and address types.
+#[derive(Debug)]
+pub struct PeerUtils;
 
-    Ok(pk.to_peer_id())
+impl PeerUtils {
+    /// Converts an [`Enr`] into a [`Multiaddr`].
+    pub fn enr_to_multiaddr(enr: &Enr) -> Option<Multiaddr> {
+        let mut addr = if let Some(socket) = enr.tcp4_socket() {
+            let mut addr = Multiaddr::from(*socket.ip());
+            addr.push(Protocol::Tcp(socket.port()));
+            addr
+        } else if let Some(socket) = enr.tcp6_socket() {
+            let mut addr = Multiaddr::from(*socket.ip());
+            addr.push(Protocol::Tcp(socket.port()));
+            addr
+        } else {
+            return None;
+        };
+
+        let CombinedPublicKey::Secp256k1(pub_key) = enr.public_key() else {
+            return None;
+        };
+
+        let pub_key =
+            libp2p_identity::secp256k1::PublicKey::try_from_bytes(&pub_key.encode()).ok()?;
+        let pub_key = libp2p_identity::PublicKey::from(pub_key);
+
+        addr.push(Protocol::P2p(libp2p::PeerId::from_public_key(&pub_key)));
+
+        Some(addr)
+    }
+
+    /// Converts an uncompressed [`PeerId`] to a [`secp256k1::PublicKey`] by prepending the
+    /// [`PeerId`] bytes with the `SECP256K1_TAG_PUBKEY_UNCOMPRESSED` tag.
+    ///
+    /// See: <https://github.com/bitcoin-core/secp256k1/blob/master/include/secp256k1.h#L211>
+    pub fn peer_id_to_secp256k1_pubkey(
+        id: PeerId,
+    ) -> Result<secp256k1::PublicKey, secp256k1::Error> {
+        /// Tags the public key as uncompressed.
+        const SECP256K1_TAG_PUBKEY_UNCOMPRESSED: u8 = 4;
+
+        let mut full_pubkey = [0u8; secp256k1::constants::UNCOMPRESSED_PUBLIC_KEY_SIZE];
+        full_pubkey[0] = SECP256K1_TAG_PUBKEY_UNCOMPRESSED;
+        full_pubkey[1..].copy_from_slice(id.as_slice());
+        secp256k1::PublicKey::from_slice(&full_pubkey)
+    }
+
+    /// Converts an uncoded [`PeerId`] to a [`libp2p::PeerId`]. These two types represent the same
+    /// underlying concept (secp256k1 public key) but using different encodings (the local
+    /// [`PeerId`] is the uncompressed representation of the public key, while the "libp2p"
+    /// [`libp2p::PeerId`] is a more complex representation, involving protobuf encoding and
+    /// bitcoin encoding, defined here:
+    /// <https://github.com/libp2p/specs/blob/master/peer-ids/peer-ids.md>).
+    pub fn local_id_to_p2p_id(peer_id: PeerId) -> Result<libp2p::PeerId, PeerIdConversionError> {
+        // The libp2p library works with compressed public keys.
+        let encoded_pk_bytes = Self::peer_id_to_secp256k1_pubkey(peer_id)
+            .map_err(PeerIdConversionError::InvalidPeerId)?
+            .serialize();
+        let pk: discv5::libp2p_identity::PublicKey =
+            discv5::libp2p_identity::secp256k1::PublicKey::try_from_bytes(&encoded_pk_bytes)?
+                .into();
+
+        Ok(pk.to_peer_id())
+    }
 }
 
 #[cfg(test)]
@@ -99,7 +111,7 @@ mod tests {
 
         let enr = Enr::builder().ip4(ip).tcp4(tcp_port).udp4(udp_port).build(&private_key).unwrap();
 
-        let multiaddr = enr_to_multiaddr(&enr).unwrap();
+        let multiaddr = PeerUtils::enr_to_multiaddr(&enr).unwrap();
 
         let mut received_ip = None;
         let mut received_tcp_port = None;
@@ -140,7 +152,7 @@ mod tests {
 
         let enr = Enr::builder().ip6(ip).tcp6(tcp_port).udp6(udp_port).build(&private_key).unwrap();
 
-        let multiaddr = enr_to_multiaddr(&enr).unwrap();
+        let multiaddr = PeerUtils::enr_to_multiaddr(&enr).unwrap();
 
         let mut received_ip = None;
         let mut received_tcp_port = None;
@@ -175,7 +187,7 @@ mod tests {
 
         // We need to convert the local peer id (uncompressed secp256k1 public key) to a libp2p
         // peer id (protocol buffer encoded public key).
-        let peer_id = local_id_to_p2p_id(local_peer_id).unwrap();
+        let peer_id = PeerUtils::local_id_to_p2p_id(local_peer_id).unwrap();
 
         let p2p_public_key: discv5::libp2p_identity::PublicKey =
             p2p_keypair.public().clone().into();
@@ -190,9 +202,9 @@ mod tests {
 
         // We need to convert the local peer id (uncompressed secp256k1 public key) to a libp2p
         // peer id (protocol buffer encoded public key).
-        let peer_id = local_id_to_p2p_id(pub_key).unwrap();
+        let peer_id = PeerUtils::local_id_to_p2p_id(pub_key).unwrap();
 
-        let uncompressed_pub_key = peer_id_to_secp256k1_pubkey(pub_key).unwrap();
+        let uncompressed_pub_key = PeerUtils::peer_id_to_secp256k1_pubkey(pub_key).unwrap();
 
         let p2p_public_key: discv5::libp2p_identity::PublicKey =
             discv5::libp2p_identity::secp256k1::PublicKey::try_from_bytes(

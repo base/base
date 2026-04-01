@@ -1,5 +1,5 @@
 use core::fmt::{Debug, Formatter};
-use std::{io, net::SocketAddr, sync::Arc};
+use std::{io, net::SocketAddr};
 
 use serde::Serialize;
 use tokio::sync::broadcast;
@@ -7,7 +7,7 @@ use tokio_tungstenite::tungstenite::Utf8Bytes;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::{Listener, PublisherMetrics, PublishingMetrics};
+use crate::{Listener, PublishingMetrics};
 
 /// Default broadcast channel capacity.
 const DEFAULT_CHANNEL_CAPACITY: usize = 100;
@@ -23,7 +23,6 @@ const DEFAULT_CHANNEL_CAPACITY: usize = 100;
 pub struct WebSocketPublisher {
     cancel: CancellationToken,
     pipe: broadcast::Sender<Utf8Bytes>,
-    metrics: Arc<dyn PublisherMetrics>,
 }
 
 impl WebSocketPublisher {
@@ -45,18 +44,14 @@ impl WebSocketPublisher {
     pub fn with_capacity(addr: SocketAddr, capacity: usize) -> io::Result<Self> {
         let (pipe, _) = broadcast::channel(capacity);
         let cancel = CancellationToken::new();
-        let metrics: Arc<dyn PublisherMetrics> = Arc::new(PublishingMetrics::default());
 
         let std_listener = std::net::TcpListener::bind(addr)?;
         std_listener.set_nonblocking(true)?;
         let listener = tokio::net::TcpListener::from_std(std_listener)?;
 
-        tokio::spawn(
-            Listener::new(listener, Arc::clone(&metrics), pipe.subscribe(), cancel.child_token())
-                .run(),
-        );
+        tokio::spawn(Listener::new(listener, pipe.subscribe(), cancel.child_token()).run());
 
-        Ok(Self { cancel, pipe, metrics })
+        Ok(Self { cancel, pipe })
     }
 
     /// Serializes the payload to JSON and broadcasts it to all connected subscribers.
@@ -69,7 +64,7 @@ impl WebSocketPublisher {
         self.pipe
             .send(utf8_bytes)
             .map_err(|e| io::Error::new(io::ErrorKind::ConnectionAborted, e))?;
-        self.metrics.on_payload_size(size);
+        PublishingMetrics::ws_payload_byte_size().record(size as f64);
         Ok(size)
     }
 }

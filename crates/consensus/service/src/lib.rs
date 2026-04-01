@@ -28,7 +28,7 @@ pub use actors::{
     EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest, EngineRpcRequestReceiver,
     GetPayloadRequest, GossipTransport, L1BlockFetcher, L1OriginSelector, L1OriginSelectorError,
     L1OriginSelectorProvider, L1WatcherActor, L1WatcherActorError, L1WatcherDerivationClient,
-    L2SourceClient, LogRetrier, NetworkActor, NetworkActorError, NetworkBuilder,
+    L2Finalizer, L2SourceClient, LogRetrier, NetworkActor, NetworkActorError, NetworkBuilder,
     NetworkBuilderError, NetworkConfig, NetworkDriver, NetworkDriverError, NetworkEngineClient,
     NetworkHandler, NetworkInboundData, NodeActor, OriginSelector, PayloadBuilder, PayloadSealer,
     PendingStopSender, PoolActivation, QueuedDerivationEngineClient, QueuedEngineDerivationClient,

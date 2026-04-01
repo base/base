@@ -59,5 +59,5 @@ rand = {workspace = true, features = ["thread_rng"]}
 base-alloy-rpc-types = {workspace = true, features = ["arbitrary", "k256"]}
 
 [features]
-metrics = [ "dep:metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]
 test-utils = [ "base-protocol/test-utils" ]

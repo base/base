@@ -57,8 +57,9 @@ fn assert_single_histogram(snap: &[SnapEntry], name: &str, min: f64) {
     }
 }
 
-base_metrics::define_metrics_struct! {
-    AppMetrics, test_app,
+base_metrics::define_metrics! {
+    test_app,
+    struct = AppMetrics,
     #[describe("Total requests")]
     requests_total: counter,
 
@@ -135,8 +136,9 @@ fn describe_registers_descriptions() {
     });
 }
 
-base_metrics::define_metrics_struct! {
-    CustomMetrics, my_service,
+base_metrics::define_metrics! {
+    my_service,
+    struct = CustomMetrics,
     #[describe("Events processed")]
     events: counter,
 }
@@ -154,8 +156,9 @@ fn named_struct() {
     });
 }
 
-base_metrics::define_metrics_struct! {
-    LabeledMetrics, labeled_app,
+base_metrics::define_metrics! {
+    labeled_app,
+    struct = LabeledMetrics,
 
     #[describe("Requests by method")]
     #[label(method)]
@@ -234,8 +237,9 @@ fn single_label_gauge() {
     });
 }
 
-base_metrics::define_metrics_struct! {
-    TwoLabelMetrics, multi_label,
+base_metrics::define_metrics! {
+    multi_label,
+    struct = TwoLabelMetrics,
 
     #[describe("Errors by kind and reason")]
     #[label(kind)]
@@ -271,8 +275,9 @@ fn two_label_counter() {
     });
 }
 
-base_metrics::define_metrics_struct! {
-    TimerMetrics, timer_test,
+base_metrics::define_metrics! {
+    timer_test,
+    struct = TimerMetrics,
     #[describe("Duration")]
     duration: histogram,
 }
@@ -318,8 +323,9 @@ fn timed_stop_is_idempotent() {
     });
 }
 
-base_metrics::define_metrics_struct! {
-    TimeBlockMetrics, time_block,
+base_metrics::define_metrics! {
+    time_block,
+    struct = TimeBlockMetrics,
     #[describe("Duration")]
     duration: histogram,
 }
@@ -337,8 +343,9 @@ fn time_block_records_and_returns_value() {
     });
 }
 
-base_metrics::define_metrics_struct! {
-    InflightMetrics, inflight_test,
+base_metrics::define_metrics! {
+    inflight_test,
+    struct = InflightMetrics,
     #[describe("In-flight operations")]
     in_flight: gauge,
 }
@@ -367,8 +374,8 @@ fn inflight_increments_and_decrements_gauge() {
 
 #[test]
 fn metric_names_use_dot_separator() {
-    base_metrics::define_metrics_struct! {
-        ScopeMetrics, scope_test,
+    base_metrics::define_metrics! {
+        scope_test
         #[describe("A counter")]
         my_counter: counter,
         #[describe("A gauge")]
@@ -378,9 +385,9 @@ fn metric_names_use_dot_separator() {
     }
 
     with_recorder(|snap| {
-        ScopeMetrics::my_counter().increment(1);
-        ScopeMetrics::my_gauge().set(1.0);
-        ScopeMetrics::my_histogram().record(1.0);
+        Metrics::my_counter().increment(1);
+        Metrics::my_gauge().set(1.0);
+        Metrics::my_histogram().record(1.0);
 
         let snapshot = snap.snapshot().into_vec();
         let names: Vec<&str> = snapshot.iter().map(|(ck, _, _, _)| ck.key().name()).collect();
@@ -390,8 +397,9 @@ fn metric_names_use_dot_separator() {
     });
 }
 
-base_metrics::define_metrics_struct! {
-    ParamMetrics, param_test,
+base_metrics::define_metrics! {
+    param_test,
+    struct = ParamMetrics,
 
     #[describe("Counter with string label")]
     #[label(endpoint)]
@@ -422,6 +430,197 @@ fn label_accepts_string() {
                 &[("endpoint", "/api/v2")]
             ),
             Some(&DebugValue::Counter(2)),
+        );
+    });
+}
+
+base_metrics::define_metrics! {
+    named_label_test,
+    struct = NamedLabelMetrics,
+
+    #[describe("Counter with explicit label name")]
+    #[label(name = "endpoint")]
+    requests: counter,
+}
+
+#[test]
+fn explicit_label_name_without_defaults_works() {
+    with_recorder(|snap| {
+        NamedLabelMetrics::requests("/ready").increment(4);
+        NamedLabelMetrics::zero();
+
+        let snapshot = snap.snapshot().into_vec();
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Counter,
+                "named_label_test.requests",
+                &[("endpoint", "/ready")]
+            ),
+            Some(&DebugValue::Counter(4)),
+        );
+    });
+}
+
+base_metrics::define_metrics! {
+    zero_test,
+    struct = ZeroMetrics,
+
+    #[describe("Unlabeled counter")]
+    unlabeled_counter: counter,
+
+    #[describe("Unlabeled gauge")]
+    unlabeled_gauge: gauge,
+
+    #[describe("Counter with defaults")]
+    #[label(name = "status", default = ["ok", "error"])]
+    labeled_counter: counter,
+
+    #[describe("Gauge with defaults")]
+    #[label(name = "state", default = ["open", "closed"])]
+    labeled_gauge: gauge,
+
+    #[describe("Two label counter with defaults")]
+    #[label(name = "kind", default = ["network", "storage"])]
+    #[label(name = "reason", default = ["timeout", "reset"])]
+    multi_counter: counter,
+
+    #[describe("Histogram with defaults")]
+    #[label(name = "endpoint", default = ["/health"])]
+    labeled_histogram: histogram,
+}
+
+#[test]
+fn zero_initializes_unlabeled_and_labeled_metrics() {
+    with_recorder(|snap| {
+        ZeroMetrics::zero();
+
+        let snapshot = snap.snapshot().into_vec();
+        assert_eq!(
+            find_metric(&snapshot, MetricKind::Counter, "zero_test.unlabeled_counter"),
+            Some(&DebugValue::Counter(0)),
+        );
+        assert_eq!(
+            find_metric(&snapshot, MetricKind::Gauge, "zero_test.unlabeled_gauge"),
+            Some(&DebugValue::Gauge(OrderedFloat(0.0))),
+        );
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Counter,
+                "zero_test.labeled_counter",
+                &[("status", "ok")]
+            ),
+            Some(&DebugValue::Counter(0)),
+        );
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Counter,
+                "zero_test.labeled_counter",
+                &[("status", "error")]
+            ),
+            Some(&DebugValue::Counter(0)),
+        );
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Gauge,
+                "zero_test.labeled_gauge",
+                &[("state", "open")]
+            ),
+            Some(&DebugValue::Gauge(OrderedFloat(0.0))),
+        );
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Gauge,
+                "zero_test.labeled_gauge",
+                &[("state", "closed")]
+            ),
+            Some(&DebugValue::Gauge(OrderedFloat(0.0))),
+        );
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Counter,
+                "zero_test.multi_counter",
+                &[("kind", "network"), ("reason", "timeout")]
+            ),
+            Some(&DebugValue::Counter(0)),
+        );
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Counter,
+                "zero_test.multi_counter",
+                &[("kind", "network"), ("reason", "reset")]
+            ),
+            Some(&DebugValue::Counter(0)),
+        );
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Counter,
+                "zero_test.multi_counter",
+                &[("kind", "storage"), ("reason", "timeout")]
+            ),
+            Some(&DebugValue::Counter(0)),
+        );
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Counter,
+                "zero_test.multi_counter",
+                &[("kind", "storage"), ("reason", "reset")]
+            ),
+            Some(&DebugValue::Counter(0)),
+        );
+        assert_eq!(
+            find_metric(&snapshot, MetricKind::Histogram, "zero_test.labeled_histogram"),
+            None,
+        );
+    });
+}
+
+#[test]
+fn init_describes_and_zeroes_metrics() {
+    with_recorder(|snap| {
+        ZeroMetrics::init();
+        ZeroMetrics::labeled_histogram("/health").record(0.25);
+
+        let snapshot = snap.snapshot().into_vec();
+        assert_eq!(
+            find_description(&snapshot, MetricKind::Counter, "zero_test.unlabeled_counter")
+                .as_deref(),
+            Some("Unlabeled counter"),
+        );
+        assert_eq!(
+            find_description(&snapshot, MetricKind::Gauge, "zero_test.labeled_gauge").as_deref(),
+            Some("Gauge with defaults"),
+        );
+        assert_eq!(
+            find_description(&snapshot, MetricKind::Histogram, "zero_test.labeled_histogram")
+                .as_deref(),
+            Some("Histogram with defaults"),
+        );
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Counter,
+                "zero_test.labeled_counter",
+                &[("status", "ok")]
+            ),
+            Some(&DebugValue::Counter(0)),
+        );
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Histogram,
+                "zero_test.labeled_histogram",
+                &[("endpoint", "/health")]
+            ),
+            Some(&DebugValue::Histogram(vec![OrderedFloat(0.25)])),
         );
     });
 }

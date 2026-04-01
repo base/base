@@ -14,6 +14,7 @@ workspace = true
 
 [dependencies]
 metrics = { workspace = true, optional = true }
+ctor = { workspace = true, optional = true }
 
 [dev-dependencies]
 metrics = { workspace = true }
@@ -21,6 +22,5 @@ ordered-float = { workspace = true }
 metrics-util = { workspace = true, features = ["debugging"] }
 
 [features]
-default = []
 std = []
-metrics = [ "dep:metrics", "std" ]
+metrics = [ "dep:ctor", "dep:metrics", "std" ]

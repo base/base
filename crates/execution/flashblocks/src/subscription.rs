@@ -8,9 +8,8 @@ use tokio::{sync::mpsc, time::interval};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use url::Url;
 
-use crate::{FlashblocksReceiver, Metrics};
+use crate::{FlashblocksReceiver, metrics::Metrics};
 
-// Simplify actor messages to just handle shutdown
 #[derive(Debug)]
 enum ActorMessage {
     BestPayload { payload: Flashblock },
@@ -20,7 +19,6 @@ enum ActorMessage {
 #[derive(Debug)]
 pub struct FlashblocksSubscriber<Receiver> {
     flashblocks_state: Arc<Receiver>,
-    metrics: Metrics,
     ws_url: Url,
 }
 
@@ -35,8 +33,8 @@ where
     pub const MAX_BACKOFF: Duration = Duration::from_secs(10);
 
     /// Creates a new flashblocks subscriber.
-    pub fn new(flashblocks_state: Arc<Receiver>, ws_url: Url) -> Self {
-        Self { ws_url, flashblocks_state, metrics: Metrics::default() }
+    pub const fn new(flashblocks_state: Arc<Receiver>, ws_url: Url) -> Self {
+        Self { ws_url, flashblocks_state }
     }
 
     /// Starts the WebSocket subscription to receive flashblocks.
@@ -50,7 +48,6 @@ where
 
         let (sender, mut mailbox) = mpsc::channel(100);
 
-        let metrics = self.metrics.clone();
         tokio::spawn(async move {
             let mut backoff = Duration::from_secs(1);
 
@@ -69,7 +66,7 @@ where
                         'conn: loop {
                             tokio::select! {
                                 Some(msg) = read.next() => {
-                                    metrics.upstream_messages.increment(1);
+                                    Metrics::upstream_messages().increment(1);
 
                                     match msg {
                                         Ok(msg @ (Message::Binary(_) | Message::Text(_))) => {
@@ -100,7 +97,7 @@ where
                                             awaiting_pong_resp = false
                                         }
                                         Err(e) => {
-                                            metrics.upstream_errors.increment(1);
+                                            Metrics::upstream_errors().increment(1);
                                             error!(
                                                 message = "error receiving message",
                                                 error = %e
@@ -119,7 +116,7 @@ where
                                             "No pong response from upstream, reconnecting",
                                         );
 
-                                        backoff = Self::sleep(&metrics, backoff).await;
+                                        backoff = Self::sleep(backoff).await;
                                         break 'conn;
                                     }
 
@@ -135,7 +132,7 @@ where
                                             "WebSocket connection lost, reconnecting",
                                         );
 
-                                        backoff = Self::sleep(&metrics, backoff).await;
+                                        backoff = Self::sleep(backoff).await;
                                         break 'conn;
                                     }
                                     awaiting_pong_resp = true
@@ -150,7 +147,7 @@ where
                             error = %e
                         );
 
-                        backoff = Self::sleep(&metrics, backoff).await;
+                        backoff = Self::sleep(backoff).await;
                         continue;
                     }
                 }
@@ -170,8 +167,8 @@ where
     }
 
     /// Sleeps for given backoff duration. Returns incremented backoff duration, capped at [`MAX_BACKOFF`].
-    async fn sleep(metrics: &Metrics, backoff: Duration) -> Duration {
-        metrics.reconnect_attempts.increment(1);
+    async fn sleep(backoff: Duration) -> Duration {
+        Metrics::reconnect_attempts().increment(1);
         tokio::time::sleep(backoff).await;
         std::cmp::min(backoff * 2, Self::MAX_BACKOFF)
     }

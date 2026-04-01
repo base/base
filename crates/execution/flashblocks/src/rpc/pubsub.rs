@@ -156,6 +156,38 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
         )
     }
 
+    /// Returns a stream that yields full transactions with logs from only the latest flashblock,
+    /// filtered to include only transactions where at least one log matches the filter.
+    fn new_flashblock_transactions_filtered_stream(
+        flashblocks_state: Arc<FB>,
+        filter: Filter,
+    ) -> impl Stream<Item = TransactionWithLogs>
+    where
+        FB: FlashblocksAPI + Send + Sync + 'static,
+    {
+        futures::StreamExt::flat_map(
+            StreamExt::filter_map(
+                BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()),
+                move |result| {
+                    let pending_blocks = match result {
+                        Ok(blocks) => blocks,
+                        Err(err) => {
+                            error!(
+                                message = "Error in flashblocks stream for filtered transactions",
+                                error = %err
+                            );
+                            return None;
+                        }
+                    };
+                    let txs = pending_blocks
+                        .get_latest_flashblock_transactions_with_logs_filtered(&filter);
+                    if txs.is_empty() { None } else { Some(txs) }
+                },
+            ),
+            stream::iter,
+        )
+    }
+
     /// Returns a stream that yields individual transaction hashes from only the latest flashblock.
     ///
     /// Each hash is emitted as a separate stream item (one hash per WebSocket message).
@@ -240,21 +272,25 @@ where
                     pipe_from_stream(sink, stream).await;
                 });
             }
-            BaseSubscriptionKind::NewFlashblockTransactions => {
-                // Extract full_transactions param, default to false (hash only)
-                let full = match params {
-                    Some(Params::Bool(full)) => full,
-                    _ => false,
-                };
-
-                if full {
+            BaseSubscriptionKind::NewFlashblockTransactions => match params {
+                Some(Params::Logs(filter)) => {
+                    let stream = Self::new_flashblock_transactions_filtered_stream(
+                        Arc::clone(&self.flashblocks_state),
+                        *filter,
+                    );
+                    tokio::spawn(async move {
+                        pipe_from_stream(sink, stream).await;
+                    });
+                }
+                Some(Params::Bool(true)) => {
                     let stream = Self::new_flashblock_transactions_full_stream(Arc::clone(
                         &self.flashblocks_state,
                     ));
                     tokio::spawn(async move {
                         pipe_from_stream(sink, stream).await;
                     });
-                } else {
+                }
+                _ => {
                     let stream = Self::new_flashblock_transactions_hash_stream(Arc::clone(
                         &self.flashblocks_state,
                     ));
@@ -262,7 +298,7 @@ where
                         pipe_from_stream(sink, stream).await;
                     });
                 }
-            }
+            },
         }
 
         Ok(())

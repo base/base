@@ -14,12 +14,10 @@ use thiserror::Error;
 use tokio::{select, sync::mpsc};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
-#[cfg(feature = "metrics")]
-use crate::Metrics;
 use crate::{
     CancellableContext, DerivationActorRequest, DerivationEngineClient, DerivationState,
-    DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate, NodeActor,
-    actors::derivation::L2Finalizer,
+    DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate, Metrics,
+    NodeActor, actors::derivation::L2Finalizer,
 };
 
 /// The [`NodeActor`] for the derivation sub-routine.
@@ -45,7 +43,7 @@ where
     /// The state machine controlling when derivation can occur.
     derivation_state_machine: DerivationStateMachine,
     /// The [`L2Finalizer`] tracks derived L2 blocks awaiting finalization.
-    pub(crate) finalizer: L2Finalizer,
+    pub finalizer: L2Finalizer,
     /// The safe head database listener for recording L1→L2 safe head mappings.
     safe_head_listener: Arc<dyn SafeHeadListener>,
     /// The L1 inclusion block for the most recently sent (unconfirmed) payload attributes.
@@ -98,8 +96,8 @@ where
 
     /// Handles a [`Signal`] received over the derivation signal receiver channel.
     async fn signal(&mut self, signal: Signal) {
-        if let Signal::Reset(ResetSignal { l1_origin: _l1_origin, .. }) = signal {
-            base_metrics::set!(counter, Metrics::DERIVATION_L1_ORIGIN, _l1_origin.number);
+        if let Signal::Reset(ResetSignal { l2_safe_head: _reset_safe_head }) = signal {
+            Metrics::derivation_l1_origin().absolute(_reset_safe_head.l1_origin.number);
             // Clear the finalization queue on reset.
             self.finalizer.clear();
             // Discard any in-flight derived_from so that a stale pre-reset L1 inclusion
@@ -146,7 +144,7 @@ where
                     let origin =
                         self.pipeline.origin().ok_or(PipelineError::MissingOrigin.crit())?.number;
 
-                    base_metrics::set!(counter, Metrics::DERIVATION_L1_ORIGIN, origin);
+                    Metrics::derivation_l1_origin().absolute(origin);
                     debug!(target: "derivation", l1_block = origin, "Advanced L1 origin");
                 }
                 StepResult::OriginAdvanceErr(e) | StepResult::StepFailed(e) => {
@@ -167,30 +165,13 @@ where
                         PipelineErrorKind::Reset(e) => {
                             warn!(target: "derivation", error = %e, "Derivation pipeline is being reset");
 
-                            let system_config = self
-                                .pipeline
-                                .system_config_by_number(
-                                    self.derivation_state_machine
-                                        .last_confirmed_safe_head()
-                                        .block_info
-                                        .number,
-                                )
-                                .await?;
-
                             if matches!(e, ResetError::HoloceneActivation) {
-                                let l1_origin = self
-                                    .pipeline
-                                    .origin()
-                                    .ok_or(PipelineError::MissingOrigin.crit())?;
-
                                 self.pipeline
                                     .signal(
                                         ActivationSignal {
                                             l2_safe_head: self
                                                 .derivation_state_machine
                                                 .last_confirmed_safe_head(),
-                                            l1_origin,
-                                            system_config: Some(system_config),
                                         }
                                         .signal(),
                                     )
@@ -202,7 +183,7 @@ where
                                         "L1 reorg detected! Expected: {expected} | New: {new}"
                                     );
 
-                                    base_metrics::inc!(counter, Metrics::L1_REORG_COUNT);
+                                    Metrics::l1_reorg_count().increment(1);
                                 }
                                 self.engine_client.reset_engine_forkchoice().await.map_err(|e| {
                                     error!(target: "derivation", ?e, "Failed to send reset request");
@@ -215,7 +196,7 @@ where
                         }
                         PipelineErrorKind::Critical(_) => {
                             error!(target: "derivation", error = %e, "Critical derivation error");
-                            base_metrics::inc!(counter, Metrics::DERIVATION_CRITICAL_ERROR);
+                            Metrics::derivation_critical_errors().increment(1);
                             return Err(e.into());
                         }
                     }

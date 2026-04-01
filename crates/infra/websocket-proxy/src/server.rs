@@ -31,7 +31,6 @@ use crate::{
 struct ServerState {
     registry: Registry,
     rate_limiter: Arc<dyn RateLimit>,
-    metrics: Arc<Metrics>,
     auth: Authentication,
     ip_addr_http_header: String,
 }
@@ -43,7 +42,6 @@ pub struct Server {
     listen_addr: SocketAddr,
     registry: Registry,
     rate_limiter: Arc<dyn RateLimit>,
-    metrics: Arc<Metrics>,
     ip_addr_http_header: String,
     authentication: Option<Authentication>,
     public_access_enabled: bool,
@@ -54,7 +52,6 @@ impl fmt::Debug for Server {
         f.debug_struct("Server")
             .field("listen_addr", &self.listen_addr)
             .field("registry", &self.registry)
-            .field("metrics", &self.metrics)
             .field("ip_addr_http_header", &self.ip_addr_http_header)
             .field("authentication", &self.authentication)
             .field("public_access_enabled", &self.public_access_enabled)
@@ -74,7 +71,6 @@ impl Server {
     pub fn new(
         listen_addr: SocketAddr,
         registry: Registry,
-        metrics: Arc<Metrics>,
         rate_limiter: Arc<dyn RateLimit>,
         authentication: Option<Authentication>,
         ip_addr_http_header: String,
@@ -84,7 +80,6 @@ impl Server {
             listen_addr,
             registry,
             rate_limiter,
-            metrics,
             authentication,
             ip_addr_http_header,
             public_access_enabled,
@@ -114,7 +109,6 @@ impl Server {
         let router = router.with_state(ServerState {
             registry: self.registry.clone(),
             rate_limiter: Arc::clone(&self.rate_limiter),
-            metrics: Arc::clone(&self.metrics),
             auth: self.authentication.clone().unwrap_or_else(Authentication::none),
             ip_addr_http_header: self.ip_addr_http_header.clone(),
         });
@@ -175,22 +169,22 @@ async fn authenticated_websocket_handler(
     headers: HeaderMap,
     Path(api_key): Path<String>,
 ) -> impl IntoResponse {
-    let application = state.auth.get_application_for_key(&api_key);
+    let application = state.auth.get_application_for_key(&api_key).cloned();
 
-    match application {
-        None => {
-            state.metrics.unauthorized_requests.increment(1);
+    application.map_or_else(
+        || {
+            Metrics::unauthorized_requests().increment(1);
 
             Response::builder()
                 .status(StatusCode::UNAUTHORIZED)
                 .body(Body::from(json!({"message": "Invalid API key"}).to_string()))
                 .unwrap()
-        }
-        Some(app) => {
-            state.metrics.proxy_connections_by_app(app);
+        },
+        |app| {
+            Metrics::connections_by_app(app).increment(1);
             websocket_handler(state, ws, addr, headers, FilterType::None)
-        }
-    }
+        },
+    )
 }
 
 async fn authenticated_filter_websocket_handler(
@@ -201,23 +195,23 @@ async fn authenticated_filter_websocket_handler(
     Path(api_key): Path<String>,
     query: Query<FilterQuery>,
 ) -> impl IntoResponse {
-    let application = state.auth.get_application_for_key(&api_key);
+    let application = state.auth.get_application_for_key(&api_key).cloned();
 
-    match application {
-        None => {
-            state.metrics.unauthorized_requests.increment(1);
+    application.map_or_else(
+        || {
+            Metrics::unauthorized_requests().increment(1);
 
             Response::builder()
                 .status(StatusCode::UNAUTHORIZED)
                 .body(Body::from(json!({"message": "Invalid API key"}).to_string()))
                 .unwrap()
-        }
-        Some(app) => {
-            state.metrics.proxy_connections_by_app(app);
+        },
+        |app| {
+            Metrics::connections_by_app(app).increment(1);
             let filter = create_filter_from_query(query.0);
             websocket_handler(state, ws, addr, headers, filter)
-        }
-    }
+        },
+    )
 }
 
 async fn unauthenticated_websocket_handler(
@@ -252,10 +246,10 @@ fn websocket_handler(
                         client_ip = client_addr.to_string(),
                         reason = reason
                     );
-                    state.metrics.per_ip_rate_limited_requests.increment(1);
+                    Metrics::per_ip_rate_limited_requests().increment(1);
                 }
                 RateLimitType::Global => {
-                    state.metrics.global_rate_limited_requests.increment(1);
+                    Metrics::global_rate_limited_requests().increment(1);
                 }
             }
 

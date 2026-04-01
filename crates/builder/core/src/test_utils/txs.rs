@@ -17,6 +17,7 @@ use tracing::debug;
 
 use super::{PrivateKeySigner, funded_signer, sign_op_tx};
 
+/// Builder for constructing and sending EIP-1559 transactions in tests.
 #[derive(Clone, Debug)]
 pub struct TransactionBuilder {
     provider: RootProvider<Base>,
@@ -27,6 +28,7 @@ pub struct TransactionBuilder {
 }
 
 impl TransactionBuilder {
+    /// Creates a new builder with default EIP-1559 parameters for the test chain (chain ID 901).
     pub fn new(provider: RootProvider<Base>) -> Self {
         Self {
             provider,
@@ -37,61 +39,74 @@ impl TransactionBuilder {
         }
     }
 
+    /// Sets the transaction recipient address.
     pub const fn with_to(mut self, to: Address) -> Self {
         self.tx.to = TxKind::Call(to);
         self
     }
 
+    /// Sets the transaction to a contract creation (no recipient).
     pub const fn with_create(mut self) -> Self {
         self.tx.to = TxKind::Create;
         self
     }
 
+    /// Sets the transfer value in wei.
     pub fn with_value(mut self, value: u128) -> Self {
         self.tx.value = U256::from(value);
         self
     }
 
+    /// Sets the private key used to sign the transaction.
     pub fn with_signer(mut self, signer: &PrivateKeySigner) -> Self {
         self.signer = Some(signer.clone());
         self
     }
 
+    /// Overrides the chain ID (default: 901).
     pub const fn with_chain_id(mut self, chain_id: u64) -> Self {
         self.tx.chain_id = chain_id;
         self
     }
 
+    /// Sets an explicit nonce instead of fetching it from the provider.
     pub const fn with_nonce(mut self, nonce: u64) -> Self {
         self.tx.nonce = nonce;
         self
     }
 
+    /// Sets the gas limit for the transaction.
     pub const fn with_gas_limit(mut self, gas_limit: u64) -> Self {
         self.tx.gas_limit = gas_limit;
         self
     }
 
+    /// Sets the EIP-1559 max fee per gas.
     pub const fn with_max_fee_per_gas(mut self, max_fee_per_gas: u128) -> Self {
         self.tx.max_fee_per_gas = max_fee_per_gas;
         self
     }
 
+    /// Sets the EIP-1559 max priority fee per gas (tip).
     pub const fn with_max_priority_fee_per_gas(mut self, max_priority_fee_per_gas: u128) -> Self {
         self.tx.max_priority_fee_per_gas = max_priority_fee_per_gas;
         self
     }
 
+    /// Sets the calldata input bytes.
     pub fn with_input(mut self, input: Bytes) -> Self {
         self.tx.input = input;
         self
     }
 
+    /// Sets calldata that immediately reverts (`PUSH1 0 PUSH1 0 REVERT`).
     pub fn with_revert(mut self) -> Self {
         self.tx.input = hex!("60006000fd").into();
         self
     }
 
+    /// Signs the transaction and returns it as a recovered envelope. Auto-fetches nonce and base
+    /// fee from the provider when not explicitly set.
     pub async fn build(mut self) -> Recovered<OpTxEnvelope> {
         let signer = self.signer.unwrap_or_else(funded_signer);
 
@@ -132,6 +147,7 @@ impl TransactionBuilder {
             .expect("Failed to sign transaction")
     }
 
+    /// Builds, signs, and broadcasts the transaction, returning a pending transaction handle.
     pub async fn send(self) -> eyre::Result<PendingTransactionBuilder<Base>> {
         let provider = self.provider.clone();
         let transaction = self.build().await;
@@ -143,6 +159,8 @@ impl TransactionBuilder {
 
 type ObservationsMap = DashMap<TxHash, VecDeque<TransactionEvent>>;
 
+/// Monitors transaction pool events in the background, recording per-transaction lifecycle
+/// history.
 #[derive(Debug)]
 pub struct TransactionPoolObserver {
     /// Stores a mapping of all observed transactions to their history of events.
@@ -163,6 +181,7 @@ impl Drop for TransactionPoolObserver {
 }
 
 impl TransactionPoolObserver {
+    /// Spawns a background listener that records all pool events from the given stream.
     pub fn new(stream: AllTransactionsEvents<BasePooledTransaction>) -> Self {
         let mut stream = stream;
         let observations = Arc::new(ObservationsMap::new());
@@ -216,34 +235,42 @@ impl TransactionPoolObserver {
         Self { observations, term: Some(term) }
     }
 
+    /// Returns the most recent pool event for the given transaction hash.
     pub fn tx_status(&self, txhash: TxHash) -> Option<TransactionEvent> {
         self.observations.get(&txhash).and_then(|history| history.back().cloned())
     }
 
+    /// Returns `true` if the transaction is currently in the pending sub-pool.
     pub fn is_pending(&self, txhash: TxHash) -> bool {
         matches!(self.tx_status(txhash), Some(TransactionEvent::Pending))
     }
 
+    /// Returns `true` if the transaction is currently queued.
     pub fn is_queued(&self, txhash: TxHash) -> bool {
         matches!(self.tx_status(txhash), Some(TransactionEvent::Queued))
     }
 
+    /// Returns `true` if the transaction has been discarded from the pool.
     pub fn is_dropped(&self, txhash: TxHash) -> bool {
         matches!(self.tx_status(txhash), Some(TransactionEvent::Discarded))
     }
 
+    /// Counts how many observed transactions currently have the given status.
     pub fn count(&self, status: TransactionEvent) -> usize {
         self.observations.iter().filter(|tx| tx.value().back() == Some(&status)).count()
     }
 
+    /// Returns the number of transactions in the pending state.
     pub fn pending_count(&self) -> usize {
         self.count(TransactionEvent::Pending)
     }
 
+    /// Returns the number of transactions in the queued state.
     pub fn queued_count(&self) -> usize {
         self.count(TransactionEvent::Queued)
     }
 
+    /// Returns the number of discarded transactions.
     pub fn dropped_count(&self) -> usize {
         self.count(TransactionEvent::Discarded)
     }
@@ -253,10 +280,12 @@ impl TransactionPoolObserver {
         self.observations.get(&txhash).map(|history| history.iter().cloned().collect())
     }
 
+    /// Logs all observed transaction pool events at debug level.
     pub fn print_all(&self) {
         debug!(observations = ?self.observations, "TxPool");
     }
 
+    /// Returns `true` if the transaction is either pending or queued in the pool.
     pub fn exists(&self, txhash: TxHash) -> bool {
         matches!(
             self.tx_status(txhash),

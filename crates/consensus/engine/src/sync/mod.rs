@@ -127,22 +127,22 @@ mod tests {
     use base_consensus_genesis::ChainGenesis;
     use base_protocol::L2BlockInfo;
 
-    const OP_SEPOLIA_GENESIS_HASH: B256 =
-        b256!("102de6ffb001480cc9b8b548fd05c34cd4f46ae4aa91759393db90ea0409887d");
-    const OP_SEPOLIA_GENESIS_RPC_RESPONSE: &str = "{\"hash\":\"0x102de6ffb001480cc9b8b548fd05c34cd4f46ae4aa91759393db90ea0409887d\",\"parentHash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"sha3Uncles\":\"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347\",\"miner\":\"0x4200000000000000000000000000000000000011\",\"stateRoot\":\"0x06787a17a3ed87c339a39dbbeeb311578a0c83ed29daa2db95da62b28efce8a9\",\"transactionsRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\",\"receiptsRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\",\"logsBloom\":\"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\",\"difficulty\":\"0x0\",\"number\":\"0x0\",\"gasLimit\":\"0x1c9c380\",\"gasUsed\":\"0x0\",\"timestamp\":\"0x64d6dbac\",\"extraData\":\"0x424544524f434b\",\"mixHash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"nonce\":\"0x0000000000000000\",\"baseFeePerGas\":\"0x3b9aca00\",\"size\":\"0x209\",\"uncles\":[],\"transactions\":[]}";
+    const BASE_SEPOLIA_GENESIS_HASH: B256 =
+        b256!("0dcc9e089e30b90ddfc55be9a37dd15bc551aeee999d2e2b51414c54eaf934e4");
+    const BASE_SEPOLIA_GENESIS_RPC_RESPONSE: &str = "{\"hash\":\"0x0dcc9e089e30b90ddfc55be9a37dd15bc551aeee999d2e2b51414c54eaf934e4\",\"parentHash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"sha3Uncles\":\"0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347\",\"miner\":\"0x4200000000000000000000000000000000000011\",\"stateRoot\":\"0x907f339ca16b3e45a89a7f4cc29d4430c8d4178d73b370ec9180e04a0dd7fcf3\",\"transactionsRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\",\"receiptsRoot\":\"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\",\"logsBloom\":\"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\",\"difficulty\":\"0x0\",\"number\":\"0x0\",\"gasLimit\":\"0x17d7840\",\"gasUsed\":\"0x0\",\"timestamp\":\"0x65135ee0\",\"extraData\":\"0x424544524f434b\",\"mixHash\":\"0x0000000000000000000000000000000000000000000000000000000000000000\",\"nonce\":\"0x0000000000000000\",\"baseFeePerGas\":\"0x3b9aca00\",\"size\":\"0x209\",\"uncles\":[],\"transactions\":[]}";
 
     /// Sanity regression test - `alloy_rpc_types`' `Block::into_consensus` failed to saturate the
     /// header of the `alloy_consensus::Header` type on an old version. This test covers the
-    /// conversion to ensure an OP genesis block's conversion to the consensus type works for
+    /// conversion to ensure a Base Sepolia genesis block's conversion to the consensus type works for
     /// the sake of `L2BlockInfo::from_block_and_genesis`.
     #[tokio::test]
     async fn test_genesis_block_hash() {
         let genesis = ChainGenesis {
-            l2: BlockNumHash { number: 0, hash: OP_SEPOLIA_GENESIS_HASH },
+            l2: BlockNumHash { number: 0, hash: BASE_SEPOLIA_GENESIS_HASH },
             ..Default::default()
         };
         let genesis_block: Block<<Base as Network>::TransactionResponse> =
-            serde_json::from_str(OP_SEPOLIA_GENESIS_RPC_RESPONSE).unwrap();
+            serde_json::from_str(BASE_SEPOLIA_GENESIS_RPC_RESPONSE).unwrap();
 
         let rpc_reported_hash = genesis_block.header.hash;
         let consensus_block = genesis_block.into_consensus();

@@ -63,5 +63,9 @@ proptest.workspace = true
 
 [features]
 disk = [ "dep:rocksdb" ]
-metrics = [ "base-consensus-providers/metrics", "dep:metrics" ]
+metrics = [
+	"base-consensus-providers/metrics",
+	"base-metrics/metrics",
+	"dep:metrics",
+]
 precompiles = [ "dep:revm" ]

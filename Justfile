@@ -22,6 +22,11 @@ alias h := hack
 alias u := check-udeps
 alias wt := watch-test
 alias wc := watch-check
+alias ldc := load-test-devnet-continuous
+
+# Load test devnet in continuous mode (Ctrl-C to stop)
+load-test-devnet-continuous:
+    just load-test devnet-continuous
 
 # Default to display help menu
 default:
@@ -107,7 +112,7 @@ zepter-fix:
 
 # Installs cargo-nextest if not present
 install-nextest:
-    @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
+    @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest --locked
 
 # Runs tests across workspace with all features enabled (excludes devnet)
 test: install-nextest build-contracts

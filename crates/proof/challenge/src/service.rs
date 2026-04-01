@@ -19,8 +19,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    ChallengeSubmitter, ChallengerConfig, Driver, DriverConfig, GameScanner, OutputValidator,
-    ScannerConfig,
+    ChallengeSubmitter, ChallengerConfig, ChallengerMetrics, Driver, DriverConfig, GameScanner,
+    OutputValidator, ScannerConfig,
 };
 
 /// Top-level challenger service.
@@ -62,10 +62,11 @@ impl ChallengerService {
         // ── 2. Metrics recorder (if enabled) ─────────────────────────────────
         config
             .metrics
-            .init()
+            .init_with(|| {
+                base_cli_utils::register_version_metrics!();
+                ChallengerMetrics::up().set(1.0);
+            })
             .map_err(|e| eyre::eyre!("failed to install Prometheus recorder: {e}"))?;
-
-        crate::ChallengerMetrics::record_startup(env!("CARGO_PKG_VERSION"));
 
         // ── 3. Construct tx-manager and challenge submitter ──────────────────
         let l1_provider = RootProvider::new_http(config.l1_eth_rpc.as_ref().clone());

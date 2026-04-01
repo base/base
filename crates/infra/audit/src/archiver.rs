@@ -26,7 +26,6 @@ where
 {
     reader: R,
     event_tx: mpsc::Sender<Event>,
-    metrics: Metrics,
     _phantom: PhantomData<W>,
 }
 
@@ -54,17 +53,15 @@ where
         noop_archive: bool,
     ) -> Self {
         let (event_tx, event_rx) = mpsc::channel(channel_buffer_size);
-        let metrics = Metrics::default();
 
-        Self::spawn_workers(writer, event_rx, metrics.clone(), worker_pool_size, noop_archive);
+        Self::spawn_workers(writer, event_rx, worker_pool_size, noop_archive);
 
-        Self { reader, event_tx, metrics, _phantom: PhantomData }
+        Self { reader, event_tx, _phantom: PhantomData }
     }
 
     fn spawn_workers(
         writer: W,
         event_rx: mpsc::Receiver<Event>,
-        metrics: Metrics,
         worker_pool_size: usize,
         noop_archive: bool,
     ) {
@@ -72,7 +69,6 @@ where
 
         for worker_id in 0..worker_pool_size {
             let writer = writer.clone();
-            let metrics = metrics.clone();
             let event_rx = Arc::clone(&event_rx);
 
             tokio::spawn(async move {
@@ -95,19 +91,18 @@ where
                                     timestamp = event.timestamp,
                                     "Noop archive - skipping event"
                                 );
-                                metrics.events_processed.increment(1);
-                                metrics.in_flight_archive_tasks.decrement(1.0);
+                                Metrics::events_processed().increment(1);
+                                Metrics::in_flight_archive_tasks().decrement(1.0);
                                 continue;
                             }
                             if let Err(e) = writer.archive_event(event).await {
                                 error!(worker_id, error = %e, "Failed to write event");
                             } else {
-                                metrics
-                                    .archive_event_duration
+                                Metrics::archive_event_duration()
                                     .record(archive_start.elapsed().as_secs_f64());
-                                metrics.events_processed.increment(1);
+                                Metrics::events_processed().increment(1);
                             }
-                            metrics.in_flight_archive_tasks.decrement(1.0);
+                            Metrics::in_flight_archive_tasks().decrement(1.0);
                         }
                         None => {
                             info!(worker_id, "Worker stopped - channel closed");
@@ -125,26 +120,26 @@ where
             let read_start = Instant::now();
             match self.reader.read_event().await {
                 Ok(event) => {
-                    self.metrics.kafka_read_duration.record(read_start.elapsed().as_secs_f64());
+                    Metrics::kafka_read_duration().record(read_start.elapsed().as_secs_f64());
 
                     let now_ms = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_millis() as i64;
                     let event_age_ms = now_ms.saturating_sub(event.timestamp);
-                    self.metrics.event_age.record(event_age_ms as f64);
+                    Metrics::event_age().record(event_age_ms as f64);
 
-                    self.metrics.in_flight_archive_tasks.increment(1.0);
+                    Metrics::in_flight_archive_tasks().increment(1.0);
                     if let Err(e) = self.event_tx.send(event).await {
                         error!(error = %e, "Failed to send event to worker pool");
-                        self.metrics.in_flight_archive_tasks.decrement(1.0);
+                        Metrics::in_flight_archive_tasks().decrement(1.0);
                     }
 
                     let commit_start = Instant::now();
                     if let Err(e) = self.reader.commit().await {
                         error!(error = %e, "Failed to commit message");
                     }
-                    self.metrics.kafka_commit_duration.record(commit_start.elapsed().as_secs_f64());
+                    Metrics::kafka_commit_duration().record(commit_start.elapsed().as_secs_f64());
                 }
                 Err(e) => {
                     error!(error = %e, "Error reading events");

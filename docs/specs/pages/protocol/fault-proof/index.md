@@ -432,14 +432,14 @@ This hint is used only when the interop hard fork is active.
 
 Requests the host to prepare the L2 smart-contract code with the given `<codehash>`.
 
-The `<chainID>` is optionally concatenated after the `<blockHash>` as a big endian uint64 value to specify which L2
+The `<chainID>` is optionally concatenated after the `<codehash>` as a big endian uint64 value to specify which L2
 chain to retrieve data from. `<chainID>` must be specified when the interop hard fork is active.
 
 #### `l2-state-node <nodehash> <chainID>?`
 
 Requests the host to prepare the L2 MPT node preimage with the given `<nodehash>`.
 
-The `<chainID>` is optionally concatenated after the `<blockHash>` as a big endian uint64 value to specify which L2
+The `<chainID>` is optionally concatenated after the `<nodehash>` as a big endian uint64 value to specify which L2
 chain to retrieve data from. `<chainID>` must be specified when the interop hard fork is active.
 
 #### `l2-output <outputroot> <chainID>?`
@@ -448,7 +448,7 @@ Requests the host to prepare the L2 Output at the l2 output root `<outputroot>`.
 The L2 Output is the preimage of a
 [computed output root](proposer.md#l2-output-commitment-construction).
 
-The `<chainID>` is optionally concatenated after the `<blockHash>` as a big endian uint64 value to specify which L2
+The `<chainID>` is optionally concatenated after the `<outputroot>` as a big endian uint64 value to specify which L2
 chain to retrieve data from. `<chainID>` must be specified when the interop hard fork is active.
 
 #### `l2-payload-witness <payload_attributes>`

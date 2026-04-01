@@ -11,8 +11,20 @@ pub trait MeteringProvider: Debug + Send + Sync + 'static {
     /// Retrieves the metering data for a given transaction hash.
     fn get(&self, tx_hash: &TxHash) -> Option<MeterBundleResponse>;
 
+    /// Returns whether resource metering is currently enabled.
+    fn is_enabled(&self) -> bool {
+        false
+    }
+
     /// Inserts metering information for a transaction.
     fn insert(&self, _tx_hash: TxHash, _metering: MeterBundleResponse) {}
+
+    /// Removes metering data for the given transaction hashes.
+    ///
+    /// Used to eagerly evict entries for transactions that have been included in
+    /// a flashblock so they don't occupy LRU slots that should go to pending
+    /// transactions.
+    fn remove(&self, _tx_hashes: &[TxHash]) {}
 
     /// Clears all stored metering data.
     fn clear(&self) {}

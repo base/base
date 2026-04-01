@@ -1,48 +1,30 @@
-use metrics::{Counter, Gauge, Histogram, Label, counter, gauge, histogram};
+//! Metrics for the transaction forwarder.
 
-/// Prometheus metrics for a single forwarder instance, labeled by builder URL.
-#[derive(Clone)]
-pub struct ForwarderMetrics {
-    /// Total RPC batches sent successfully.
-    pub batches_sent: Counter,
-    /// Total individual transactions forwarded.
-    pub txs_forwarded: Counter,
-    /// Total RPC send errors (after all retries exhausted).
-    pub rpc_errors: Counter,
-    /// Total number of transactions rejected by the builder's pool within successful batch calls.
-    pub num_tx_rejected_in_batch: Counter,
-    /// Total lag events from the broadcast receiver.
-    pub batches_lagged: Counter,
-    /// Total individual transactions skipped due to lag.
-    pub txs_lagged: Counter,
-    /// RPC round-trip latency in seconds (including retries).
-    pub rpc_latency: Histogram,
-    /// Current number of transactions buffered and awaiting send.
-    pub buffer_size: Gauge,
-}
-
-impl ForwarderMetrics {
-    /// Creates metrics labeled with the given builder URL.
-    pub fn new(builder_url: &str) -> Self {
-        let labels = vec![Label::new("builder_url", builder_url.to_string())];
-        Self {
-            batches_sent: counter!("txpool.forwarder.batches_sent", labels.clone()),
-            txs_forwarded: counter!("txpool.forwarder.txs_forwarded", labels.clone()),
-            rpc_errors: counter!("txpool.forwarder.rpc_errors", labels.clone()),
-            num_tx_rejected_in_batch: counter!(
-                "txpool.forwarder.num_tx_rejected_in_batch",
-                labels.clone()
-            ),
-            batches_lagged: counter!("txpool.forwarder.batches_lagged", labels.clone()),
-            txs_lagged: counter!("txpool.forwarder.txs_lagged", labels.clone()),
-            rpc_latency: histogram!("txpool.forwarder.rpc_latency", labels.clone()),
-            buffer_size: gauge!("txpool.forwarder.buffer_size", labels),
-        }
-    }
-}
-
-impl std::fmt::Debug for ForwarderMetrics {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ForwarderMetrics").finish_non_exhaustive()
-    }
+base_metrics::define_metrics! {
+    txpool.forwarder,
+    struct = ForwarderMetrics,
+    #[describe("Total RPC batches sent successfully")]
+    #[label(builder_url)]
+    batches_sent: counter,
+    #[describe("Total individual transactions forwarded")]
+    #[label(builder_url)]
+    txs_forwarded: counter,
+    #[describe("Total RPC send errors (after all retries exhausted)")]
+    #[label(builder_url)]
+    rpc_errors: counter,
+    #[describe("Total number of transactions rejected by the builder's pool within successful batch calls")]
+    #[label(builder_url)]
+    num_tx_rejected_in_batch: counter,
+    #[describe("Total lag events from the broadcast receiver")]
+    #[label(builder_url)]
+    batches_lagged: counter,
+    #[describe("Total individual transactions skipped due to lag")]
+    #[label(builder_url)]
+    txs_lagged: counter,
+    #[describe("RPC round-trip latency in seconds (including retries)")]
+    #[label(builder_url)]
+    rpc_latency: histogram,
+    #[describe("Current number of transactions buffered and awaiting send")]
+    #[label(builder_url)]
+    buffer_size: gauge,
 }

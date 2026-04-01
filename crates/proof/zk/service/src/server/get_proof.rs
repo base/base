@@ -16,7 +16,7 @@ fn get_receipt_by_type(
             .stark_receipt
             .clone()
             .ok_or_else(|| Status::not_found("STARK receipt not available")),
-        ReceiptType::Snark => proof_req
+        ReceiptType::Snark | ReceiptType::OnChainSnark => proof_req
             .snark_receipt
             .clone()
             .ok_or_else(|| Status::not_found("SNARK receipt not available")),

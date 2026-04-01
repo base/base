@@ -14,7 +14,6 @@ use base_comp::{
 };
 use base_consensus_genesis::RollupConfig;
 use base_protocol::{Batch, ChannelId, Frame, SingleBatch, SpanBatch};
-use metrics::{counter, gauge, histogram};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, warn};
 
@@ -204,7 +203,8 @@ impl BatchEncoder {
                     // `ready_channels`, where it can never be confirmed and never removed,
                     // leaking memory and growing the O(N) scan in `next_submission`.
                     // Emit a closed counter to keep opened/closed balanced.
-                    counter!(BatcherMetrics::CHANNEL_CLOSED_TOTAL, "reason" => BatcherMetrics::REASON_DISCARD).increment(1);
+                    BatcherMetrics::channel_closed_total(BatcherMetrics::REASON_DISCARD)
+                        .increment(1);
                     self.current_channel = None;
                 }
             }
@@ -263,14 +263,14 @@ impl BatchEncoder {
         );
 
         // Emit close counter and channel lifetime / compression ratio histograms.
-        counter!(BatcherMetrics::CHANNEL_CLOSED_TOTAL, "reason" => close_reason).increment(1);
-        histogram!(BatcherMetrics::CHANNEL_DURATION_BLOCKS).record(duration_blocks as f64);
+        BatcherMetrics::channel_closed_total(close_reason).increment(1);
+        BatcherMetrics::channel_duration_blocks().record(duration_blocks as f64);
         if input_bytes > 0 {
             let ratio = compressed_bytes as f64 / input_bytes as f64;
-            histogram!(BatcherMetrics::CHANNEL_COMPRESSION_RATIO).record(ratio);
+            BatcherMetrics::channel_compression_ratio().record(ratio);
         }
         // All frames from this channel are now pending submission.
-        gauge!(BatcherMetrics::PENDING_FRAMES).increment(frame_count as f64);
+        BatcherMetrics::pending_frames().increment(frame_count as f64);
 
         self.ready_channels.push_back(ReadyChannel {
             id: channel_id,
@@ -298,7 +298,7 @@ impl BatchEncoder {
         let channel_out = ChannelOut::new(id, Arc::clone(&self.rollup_config), compressor);
 
         debug!(channel_id = ?id, l1_head = %self.l1_head, "opened new channel");
-        counter!(BatcherMetrics::CHANNEL_OPENED_TOTAL).increment(1);
+        BatcherMetrics::channel_opened_total().increment(1);
 
         self.current_channel = Some(OpenChannel { out: channel_out, opened_at_l1: self.l1_head });
     }
@@ -349,7 +349,7 @@ impl BatchPipeline for BatchEncoder {
         let hash = block.header.hash_slow();
         self.tip = hash;
         self.blocks.push_back(block);
-        gauge!(BatcherMetrics::PENDING_BLOCKS).increment(1.0);
+        BatcherMetrics::pending_blocks().increment(1.0);
 
         debug!(block = %number, pending_blocks = %self.blocks.len(), "block added to encoder queue");
 
@@ -484,7 +484,7 @@ impl BatchPipeline for BatchEncoder {
                     .insert(id, PendingRef { channel_idx: chan_idx, frame_start, frame_count });
 
                 // Frames move from pending → in-flight; decrement the pending gauge.
-                gauge!(BatcherMetrics::PENDING_FRAMES).decrement(frame_count as f64);
+                BatcherMetrics::pending_frames().decrement(frame_count as f64);
                 debug!(
                     id = %id.0,
                     frame_count = %frame_count,
@@ -546,7 +546,7 @@ impl BatchPipeline for BatchEncoder {
             if prune_count > 0 {
                 self.blocks.drain(..prune_count);
                 self.block_cursor = self.block_cursor.saturating_sub(prune_count);
-                gauge!(BatcherMetrics::PENDING_BLOCKS).decrement(prune_count as f64);
+                BatcherMetrics::pending_blocks().decrement(prune_count as f64);
 
                 debug!(prune_count = %prune_count, "pruned confirmed blocks from encoder queue");
 
@@ -586,7 +586,7 @@ impl BatchPipeline for BatchEncoder {
             channel.cursor = pending_ref.frame_start;
         }
         // Frames are back in pending state; re-increment the gauge.
-        gauge!(BatcherMetrics::PENDING_FRAMES).increment(pending_ref.frame_count as f64);
+        BatcherMetrics::pending_frames().increment(pending_ref.frame_count as f64);
 
         debug!(
             id = ?id,
@@ -632,8 +632,8 @@ impl BatchPipeline for BatchEncoder {
         self.rng = SmallRng::from_os_rng();
 
         // Zero out state gauges — all buffered data has been discarded.
-        gauge!(BatcherMetrics::PENDING_BLOCKS).set(0.0);
-        gauge!(BatcherMetrics::PENDING_FRAMES).set(0.0);
+        BatcherMetrics::pending_blocks().set(0.0);
+        BatcherMetrics::pending_frames().set(0.0);
     }
 
     fn prune_safe(&mut self, safe_l2_number: u64) {
@@ -655,7 +655,7 @@ impl BatchPipeline for BatchEncoder {
 
         self.blocks.drain(..prune_count);
         self.block_cursor -= prune_count;
-        gauge!(BatcherMetrics::PENDING_BLOCKS).decrement(prune_count as f64);
+        BatcherMetrics::pending_blocks().decrement(prune_count as f64);
 
         // Adjust block_range high-water marks in ready channels so that confirm()
         // does not over-prune later. This mirrors the adjustment in confirm().

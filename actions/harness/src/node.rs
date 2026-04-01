@@ -15,7 +15,7 @@ use base_consensus_derive::{
     PipelineErrorKind, ResetSignal, Signal, SignalReceiver, StatefulAttributesBuilder, StepResult,
 };
 use base_consensus_engine::{EngineForkchoiceVersion, EngineNewPayloadVersion};
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_consensus_genesis::RollupConfig;
 use base_consensus_safedb::{
     SafeDB, SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse,
 };
@@ -230,12 +230,8 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     /// [`step`]: TestRollupNode::step
     /// [`run_until_idle`]: TestRollupNode::run_until_idle
     pub async fn initialize(&mut self) {
-        let l1_origin = self.pipeline.origin().unwrap_or_default();
         self.pipeline
-            .signal(
-                ActivationSignal { l2_safe_head: self.safe_head, l1_origin, system_config: None }
-                    .signal(),
-            )
+            .signal(ActivationSignal { l2_safe_head: self.safe_head }.signal())
             .await
             .expect("TestRollupNode: initialize signal failed");
         self.run_until_idle().await;
@@ -386,17 +382,9 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     /// Sends a [`ResetSignal`] to the pipeline, resets all head pointers,
     /// clears all per-block metadata, and replaces the engine with a fresh
     /// instance that will re-execute from genesis on the new fork.
-    pub async fn act_reset(
-        &mut self,
-        l1_origin: BlockInfo,
-        l2_safe_head: L2BlockInfo,
-        system_config: SystemConfig,
-    ) {
+    pub async fn act_reset(&mut self, l2_safe_head: L2BlockInfo) {
         self.pipeline
-            .signal(
-                ResetSignal { l1_origin, l2_safe_head, system_config: Some(system_config) }
-                    .signal(),
-            )
+            .signal(ResetSignal { l2_safe_head }.signal())
             .await
             .expect("TestRollupNode: act_reset signal failed");
         self.safe_head = l2_safe_head;

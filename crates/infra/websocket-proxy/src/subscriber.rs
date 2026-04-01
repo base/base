@@ -1,7 +1,4 @@
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use axum::http::Uri;
 use backoff::{ExponentialBackoff, backoff::Backoff};
@@ -87,7 +84,6 @@ where
     uri: Uri,
     handler: F,
     backoff: ExponentialBackoff,
-    metrics: Arc<Metrics>,
     options: SubscriberOptions,
 }
 
@@ -108,7 +104,7 @@ where
     F: Fn(String) + Send + Sync + 'static,
 {
     /// Creates a new subscriber targeting the given URI with the provided message handler.
-    pub fn new(uri: Uri, handler: F, metrics: Arc<Metrics>, options: SubscriberOptions) -> Self {
+    pub fn new(uri: Uri, handler: F, options: SubscriberOptions) -> Self {
         let backoff = ExponentialBackoff {
             initial_interval: options.backoff_initial_interval,
             max_interval: options.max_backoff_interval,
@@ -116,7 +112,7 @@ where
             ..Default::default()
         };
 
-        Self { uri, handler, backoff, metrics, options }
+        Self { uri, handler, backoff, options }
     }
 
     /// Runs the subscriber loop, reconnecting on failure until the token is cancelled.
@@ -145,7 +141,7 @@ where
                                 uri = %self.uri,
                                 error = e.to_string()
                             );
-                            self.metrics.upstream_errors.increment(1);
+                            Metrics::upstream_errors().increment(1);
 
                             if let Some(duration) = self.backoff.next_backoff() {
                                 warn!(
@@ -174,43 +170,42 @@ where
     async fn connect_and_listen(&mut self) -> Result<(), Error> {
         info!(message = "connecting to websocket", uri = %self.uri);
 
-        self.metrics.upstream_connection_attempts.increment(1);
+        Metrics::upstream_connection_attempts().increment(1);
 
         let (ws_stream, _) = match connect_async(&self.uri).await {
             Ok(connection) => {
-                self.metrics.upstream_connection_successes.increment(1);
+                Metrics::upstream_connection_successes().increment(1);
                 connection
             }
             Err(e) => {
-                self.metrics.upstream_connection_failures.increment(1);
+                Metrics::upstream_connection_failures().increment(1);
                 return Err(e);
             }
         };
 
         info!(message = "websocket connection established", uri = %self.uri);
 
-        self.metrics.upstream_connections.increment(1);
+        Metrics::upstream_connections().increment(1);
         self.backoff.reset();
 
         let (mut write, mut read) = ws_stream.split();
 
         let (ping_error_tx, mut ping_error_rx) = oneshot::channel();
         let options = self.options.clone();
-        let metrics = Arc::clone(&self.metrics);
         let mut pong_deadline = Instant::now() + options.initial_grace_period;
 
         let ping_task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(options.ping_interval);
             loop {
                 interval.tick().await;
-                metrics.ping_attempts.increment(1);
+                Metrics::ping_attempts().increment(1);
                 if let Err(e) = write.send(Message::Ping(bytes::Bytes::new())).await {
                     error!(message = "failed to send ping to upstream", error = e.to_string());
-                    metrics.ping_failures.increment(1);
+                    Metrics::ping_failures().increment(1);
                     let _ = ping_error_tx.send(e);
                     break;
                 }
-                metrics.ping_sent.increment(1);
+                Metrics::ping_sent().increment(1);
             }
         });
 
@@ -242,7 +237,7 @@ where
         };
 
         ping_task.abort();
-        self.metrics.upstream_connections.decrement(1);
+        Metrics::upstream_connections().decrement(1);
         result
     }
 
@@ -271,7 +266,7 @@ where
                     uri = %self.uri,
                     payload = text.as_str()
                 );
-                self.metrics.message_received_from_upstream(self.uri.to_string().as_str());
+                Metrics::upstream_messages(self.uri.to_string()).increment(1);
                 (self.handler)(text.to_string());
             }
             Message::Binary(data) => {
@@ -313,7 +308,6 @@ mod tests {
     use tokio_tungstenite::{accept_async, tungstenite::Message};
 
     use super::*;
-    use crate::metrics::Metrics;
 
     struct MockServer {
         addr: SocketAddr,
@@ -461,8 +455,7 @@ mod tests {
             .with_pong_timeout(Duration::from_millis(200))
             .with_initial_grace_period(Duration::from_millis(50));
 
-        let mut subscriber =
-            WebsocketSubscriber::new(uri, listener_fn, Arc::new(Metrics::default()), options);
+        let mut subscriber = WebsocketSubscriber::new(uri, listener_fn, options);
 
         let subscriber_task = {
             let token_clone = shutdown.clone();
@@ -498,33 +491,21 @@ mod tests {
             }
         };
 
-        let metrics = Arc::new(Metrics::default());
-
         let token = CancellationToken::new();
         let token_clone1 = token.clone();
         let token_clone2 = token.clone();
 
         let uri1 = server1.uri();
         let listener_clone1 = listener.clone();
-        let metrics_clone1 = Arc::clone(&metrics);
 
-        let mut subscriber1 = WebsocketSubscriber::new(
-            uri1.clone(),
-            listener_clone1,
-            metrics_clone1,
-            SubscriberOptions::default(),
-        );
+        let mut subscriber1 =
+            WebsocketSubscriber::new(uri1.clone(), listener_clone1, SubscriberOptions::default());
 
         let uri2 = server2.uri();
         let listener_clone2 = listener.clone();
-        let metrics_clone2 = Arc::clone(&metrics);
 
-        let mut subscriber2 = WebsocketSubscriber::new(
-            uri2.clone(),
-            listener_clone2,
-            metrics_clone2,
-            SubscriberOptions::default(),
-        );
+        let mut subscriber2 =
+            WebsocketSubscriber::new(uri2.clone(), listener_clone2, SubscriberOptions::default());
 
         let task1 = tokio::spawn(async move {
             subscriber1.run(token_clone1).await;

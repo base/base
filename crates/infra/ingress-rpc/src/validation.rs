@@ -16,7 +16,7 @@ use reth_rpc_eth_types::{EthApiError, SignError};
 use tokio::time::Instant;
 use tracing::warn;
 
-use crate::metrics::record_histogram;
+use crate::metrics::Metrics;
 
 const MAX_BUNDLE_GAS: u64 = 25_000_000;
 
@@ -47,7 +47,7 @@ impl AccountInfoLookup for RootProvider<Base> {
             .get_account(address)
             .await
             .map_err(|_| EthApiError::Signing(SignError::NoAccount))?;
-        record_histogram(start.elapsed(), "eth_getAccount".to_string());
+        Metrics::rpc_latency("eth_getAccount").record(start.elapsed().as_secs_f64());
 
         Ok(AccountInfo {
             balance: account.balance,
@@ -81,7 +81,7 @@ impl L1BlockInfoLookup for RootProvider<Base> {
                 warn!(message = "empty latest block returned");
                 EthApiError::InternalEthError.into_rpc_err()
             })?;
-        record_histogram(start.elapsed(), "eth_getBlockByNumber".to_string());
+        Metrics::rpc_latency("eth_getBlockByNumber").record(start.elapsed().as_secs_f64());
 
         let txs = block.transactions;
         let first_tx = txs.first_transaction().ok_or_else(|| {

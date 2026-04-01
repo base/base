@@ -5,10 +5,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base_consensus_derive::{
-    DerivationPipeline, EthereumDataSource, IndexedAttributesQueueStage, L2ChainProvider,
-    OriginProvider, Pipeline, PipelineBuilder, PipelineErrorKind, PipelineResult,
-    PolledAttributesQueueStage, ResetSignal, Signal, SignalReceiver, StatefulAttributesBuilder,
-    StepResult,
+    DerivationPipeline, EthereumDataSource, IndexedAttributesQueueStage, OriginProvider, Pipeline,
+    PipelineBuilder, PipelineErrorKind, PipelineResult, PolledAttributesQueueStage, ResetSignal,
+    Signal, SignalReceiver, StatefulAttributesBuilder, StepResult,
 };
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
@@ -60,34 +59,21 @@ impl OnlinePipeline {
         cfg: Arc<RollupConfig>,
         l1_cfg: Arc<L1ChainConfig>,
         l2_safe_head: L2BlockInfo,
-        l1_origin: BlockInfo,
         blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
         chain_provider: AlloyChainProvider,
-        mut l2_chain_provider: AlloyL2ChainProvider,
+        l2_chain_provider: AlloyL2ChainProvider,
     ) -> PipelineResult<Self> {
         let mut pipeline = Self::new_polled(
             Arc::clone(&cfg),
             Arc::clone(&l1_cfg),
             blob_provider,
             chain_provider,
-            l2_chain_provider.clone(),
+            l2_chain_provider,
         );
 
         // Reset the pipeline to populate the initial L1/L2 cursor and system configuration in L1
         // Traversal.
-        pipeline
-            .signal(
-                ResetSignal {
-                    l2_safe_head,
-                    l1_origin,
-                    system_config: l2_chain_provider
-                        .system_config_by_number(l2_safe_head.block_info.number, Arc::clone(&cfg))
-                        .await
-                        .ok(),
-                }
-                .signal(),
-            )
-            .await?;
+        pipeline.signal(ResetSignal { l2_safe_head }.signal()).await?;
 
         Ok(pipeline)
     }

@@ -71,8 +71,8 @@ jsonrpsee-types.workspace = true
 serde = { workspace = true, features = ["std"] }
 
 # metrics
-metrics.workspace = true
-metrics-derive.workspace = true
+metrics = { workspace = true, optional = true }
+base-metrics.workspace = true
 
 # misc
 url.workspace = true
@@ -85,4 +85,9 @@ derive_more = { workspace = true, features = ["from"] }
 [dev-dependencies]
 rstest.workspace = true
 alloy-eips.workspace = true
+serde_json.workspace = true
 base-execution-chainspec.workspace = true
+
+[features]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics", "reth-evm/metrics" ]

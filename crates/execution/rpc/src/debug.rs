@@ -114,7 +114,6 @@ pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider, EvmConfig, Attrs
     task_spawner: Box<dyn TaskSpawner>,
     semaphore: Semaphore,
     _attrs: PhantomData<Attrs>,
-    metrics: DebugApiExtMetrics,
 }
 
 impl<Eth, P, Provider, EvmConfig, Attrs> DebugApiExtInner<Eth, P, Provider, EvmConfig, Attrs>
@@ -140,7 +139,6 @@ where
             task_spawner,
             semaphore: Semaphore::new(3),
             _attrs: PhantomData,
-            metrics: DebugApiExtMetrics::new(),
         }
     }
 }
@@ -194,123 +192,117 @@ where
         parent_block_hash: B256,
         attributes: Attrs::RpcPayloadAttributes,
     ) -> RpcResult<ExecutionWitness> {
-        self.inner
-            .metrics
-            .record_operation_async(DebugApis::DebugExecutePayload, async {
-                let _permit = self.inner.semaphore.acquire().await;
+        DebugApiExtMetrics::record_operation_async(DebugApis::DebugExecutePayload, async {
+            let _permit = self.inner.semaphore.acquire().await;
 
-                let parent_header = self.parent_header(parent_block_hash).to_rpc_result()?;
+            let parent_header = self.parent_header(parent_block_hash).to_rpc_result()?;
 
-                let (tx, rx) = oneshot::channel();
-                let this = Arc::clone(&self.inner);
-                self.inner.task_spawner.spawn_blocking_task(Box::pin(async move {
-                    let result = async {
-                        let parent_hash = parent_header.hash();
-                        let attributes = Attrs::try_new(parent_hash, attributes, 3)
-                            .map_err(PayloadBuilderError::other)?;
+            let (tx, rx) = oneshot::channel();
+            let this = Arc::clone(&self.inner);
+            self.inner.task_spawner.spawn_blocking_task(Box::pin(async move {
+                let result = async {
+                    let parent_hash = parent_header.hash();
+                    let attributes = Attrs::try_new(parent_hash, attributes, 3)
+                        .map_err(PayloadBuilderError::other)?;
 
-                        let config =
-                            PayloadConfig { parent_header: Arc::new(parent_header), attributes };
-                        let ctx = OpPayloadBuilderCtx {
-                            evm_config: this.evm_config.clone(),
-                            chain_spec: this.provider.chain_spec(),
-                            config,
-                            cancel: Default::default(),
-                            best_payload: Default::default(),
-                            builder_config: Default::default(),
-                        };
-
-                        let state_provider = this
-                            .state_provider_factory
-                            .state_provider(Some(BlockId::Hash(parent_hash.into())))
-                            .await
-                            .map_err(PayloadBuilderError::other)?;
-
-                        let builder = OpBuilder::new(|_| {
-                            NoopPayloadTransactions::<
-                                BasePooledTransaction<
-                                    <N as OpPayloadPrimitives>::_TX,
-                                    base_alloy_consensus::OpPooledTransaction,
-                                >,
-                            >::default()
-                        });
-
-                        builder.witness(state_provider, &ctx).map_err(PayloadBuilderError::other)
+                    let config =
+                        PayloadConfig { parent_header: Arc::new(parent_header), attributes };
+                    let ctx = OpPayloadBuilderCtx {
+                        evm_config: this.evm_config.clone(),
+                        chain_spec: this.provider.chain_spec(),
+                        config,
+                        cancel: Default::default(),
+                        best_payload: Default::default(),
+                        builder_config: Default::default(),
                     };
 
-                    let _ = tx.send(result.await);
-                }));
+                    let state_provider = this
+                        .state_provider_factory
+                        .state_provider(Some(BlockId::Hash(parent_hash.into())))
+                        .await
+                        .map_err(PayloadBuilderError::other)?;
 
-                rx.await
-                    .map_err(|err| internal_rpc_err(err.to_string()))?
-                    .map_err(|err| internal_rpc_err(err.to_string()))
-            })
-            .await
+                    let builder = OpBuilder::new(|_| {
+                        NoopPayloadTransactions::<
+                            BasePooledTransaction<
+                                <N as OpPayloadPrimitives>::_TX,
+                                base_alloy_consensus::OpPooledTransaction,
+                            >,
+                        >::default()
+                    });
+
+                    builder.witness(state_provider, &ctx).map_err(PayloadBuilderError::other)
+                };
+
+                let _ = tx.send(result.await);
+            }));
+
+            rx.await
+                .map_err(|err| internal_rpc_err(err.to_string()))?
+                .map_err(|err| internal_rpc_err(err.to_string()))
+        })
+        .await
     }
 
     async fn execution_witness(&self, block_id: BlockNumberOrTag) -> RpcResult<ExecutionWitness> {
-        self.inner
-            .metrics
-            .record_operation_async(DebugApis::DebugExecutionWitness, async {
-                let _permit = self.inner.semaphore.acquire().await;
+        DebugApiExtMetrics::record_operation_async(DebugApis::DebugExecutionWitness, async {
+            let _permit = self.inner.semaphore.acquire().await;
 
-                let block = self
-                    .inner
-                    .eth_api
-                    .recovered_block(block_id.into())
-                    .await?
-                    .ok_or(EthApiError::HeaderNotFound(block_id.into()))?;
+            let block = self
+                .inner
+                .eth_api
+                .recovered_block(block_id.into())
+                .await?
+                .ok_or(EthApiError::HeaderNotFound(block_id.into()))?;
 
-                let this = Arc::clone(&self.inner);
-                let block_number = block.header().number();
+            let this = Arc::clone(&self.inner);
+            let block_number = block.header().number();
 
-                let state_provider = this
-                    .state_provider_factory
-                    .state_provider(Some(BlockId::Number(block.parent_num_hash().number.into())))
-                    .await
-                    .map_err(EthApiError::from)?;
-                let db = StateProviderDatabase::new(&state_provider);
-                let block_executor = this.eth_api.evm_config().executor(db);
+            let state_provider = this
+                .state_provider_factory
+                .state_provider(Some(BlockId::Number(block.parent_num_hash().number.into())))
+                .await
+                .map_err(EthApiError::from)?;
+            let db = StateProviderDatabase::new(&state_provider);
+            let block_executor = this.eth_api.evm_config().executor(db);
 
-                let mut witness_record = ExecutionWitnessRecord::default();
+            let mut witness_record = ExecutionWitnessRecord::default();
 
-                let _ = block_executor
-                    .execute_with_state_closure(&block, |statedb: &State<_>| {
-                        witness_record.record_executed_state(statedb);
-                    })
-                    .map_err(EthApiError::from)?;
+            let _ = block_executor
+                .execute_with_state_closure(&block, |statedb: &State<_>| {
+                    witness_record.record_executed_state(statedb);
+                })
+                .map_err(EthApiError::from)?;
 
-                let ExecutionWitnessRecord { hashed_state, codes, keys, lowest_block_number } =
-                    witness_record;
+            let ExecutionWitnessRecord { hashed_state, codes, keys, lowest_block_number } =
+                witness_record;
 
-                let state = state_provider
-                    .witness(Default::default(), hashed_state)
-                    .map_err(EthApiError::from)?;
-                let mut exec_witness =
-                    ExecutionWitness { state, codes, keys, ..Default::default() };
+            let state = state_provider
+                .witness(Default::default(), hashed_state)
+                .map_err(EthApiError::from)?;
+            let mut exec_witness = ExecutionWitness { state, codes, keys, ..Default::default() };
 
-                // If there were no calls to the BLOCKHASH opcode, return only the
-                // parent header.
-                let smallest =
-                    lowest_block_number.unwrap_or_else(|| block_number.saturating_sub(1));
+            // If there were no calls to the BLOCKHASH opcode, return only the
+            // parent header.
+            let smallest = lowest_block_number.unwrap_or_else(|| block_number.saturating_sub(1));
 
-                let range = smallest..block_number;
-                exec_witness.headers = self
-                    .inner
-                    .provider
-                    .headers_range(range)
-                    .map_err(EthApiError::from)?
-                    .into_iter()
-                    .map(|header| {
-                        let mut serialized_header = Vec::new();
-                        header.encode(&mut serialized_header);
-                        serialized_header.into()
-                    })
-                    .collect();
+            let range = smallest..block_number;
+            exec_witness.headers = self
+                .inner
+                .provider
+                .headers_range(range)
+                .map_err(EthApiError::from)?
+                .into_iter()
+                .map(|header| {
+                    let mut serialized_header = Vec::new();
+                    header.encode(&mut serialized_header);
+                    serialized_header.into()
+                })
+                .collect();
 
-                Ok(exec_witness)
-            })
-            .await
+            Ok(exec_witness)
+        })
+        .await
     }
 
     async fn proofs_sync_status(&self) -> RpcResult<ProofsSyncStatus> {

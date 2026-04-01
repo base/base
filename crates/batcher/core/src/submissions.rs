@@ -7,7 +7,6 @@ use base_batcher_encoder::{BatchPipeline, BatcherMetrics, DaType, FrameEncoder, 
 use base_blobs::BlobEncoder;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use futures::stream::{FuturesUnordered, StreamExt};
-use metrics::{counter, gauge};
 use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
@@ -139,10 +138,10 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                 frame_bytes = %frame_bytes,
                 "submitting packed batch frames to L1"
             );
-            counter!(BatcherMetrics::SUBMISSION_TOTAL, "outcome" => BatcherMetrics::OUTCOME_SUBMITTED).increment(ids.len() as u64);
-            counter!(BatcherMetrics::DA_BYTES_SUBMITTED_TOTAL, "da_type" => da_type_label)
-                .increment(frame_bytes as u64);
-            gauge!(BatcherMetrics::IN_FLIGHT_SUBMISSIONS).increment(1.0);
+            BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_SUBMITTED)
+                .increment(ids.len() as u64);
+            BatcherMetrics::da_bytes_submitted_total(da_type_label).increment(frame_bytes as u64);
+            BatcherMetrics::in_flight_submissions().increment(1.0);
             let handle = self.tx_manager.send_async(candidate).await;
             let fut: Pin<Box<dyn Future<Output = (Vec<SubmissionId>, TxOutcome)> + Send>> =
                 Box::pin(async move {
@@ -200,14 +199,15 @@ impl<TM: TxManager> SubmissionQueue<TM> {
         ids: Vec<SubmissionId>,
         outcome: TxOutcome,
     ) {
-        gauge!(BatcherMetrics::IN_FLIGHT_SUBMISSIONS).decrement(1.0);
+        BatcherMetrics::in_flight_submissions().decrement(1.0);
         match outcome {
             TxOutcome::Confirmed { l1_block } => {
                 for id in &ids {
                     pipeline.confirm(*id, l1_block);
                 }
                 pipeline.advance_l1_head(l1_block);
-                counter!(BatcherMetrics::SUBMISSION_TOTAL, "outcome" => BatcherMetrics::OUTCOME_CONFIRMED).increment(ids.len() as u64);
+                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_CONFIRMED)
+                    .increment(ids.len() as u64);
                 info!(submissions = %ids.len(), l1_block = %l1_block, "submission confirmed on L1");
             }
             TxOutcome::Failed => {
@@ -215,7 +215,8 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                 for id in ids {
                     pipeline.requeue(id);
                 }
-                counter!(BatcherMetrics::SUBMISSION_TOTAL, "outcome" => BatcherMetrics::OUTCOME_FAILED).increment(count as u64);
+                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_FAILED)
+                    .increment(count as u64);
                 warn!(submissions = %count, "submission failed, requeued for retry");
             }
             TxOutcome::TxpoolBlocked => {
@@ -224,7 +225,8 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                     pipeline.requeue(id);
                 }
                 self.txpool_blocked = true;
-                counter!(BatcherMetrics::SUBMISSION_TOTAL, "outcome" => BatcherMetrics::OUTCOME_REQUEUED).increment(count as u64);
+                BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_REQUEUED)
+                    .increment(count as u64);
                 warn!(submissions = %count, "submission blocked by txpool nonce slot, requeued");
             }
         }
@@ -250,22 +252,22 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                     break;
                 }
                 Some((ids, outcome)) = self.in_flight.next() => {
-                    gauge!(BatcherMetrics::IN_FLIGHT_SUBMISSIONS).decrement(1.0);
+                    BatcherMetrics::in_flight_submissions().decrement(1.0);
                     match outcome {
                         TxOutcome::Confirmed { l1_block } => {
                             for id in &ids {
                                 pipeline.confirm(*id, l1_block);
                             }
                             pipeline.advance_l1_head(l1_block);
-                            counter!(BatcherMetrics::SUBMISSION_TOTAL, "outcome" => BatcherMetrics::OUTCOME_CONFIRMED).increment(ids.len() as u64);
+                            BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_CONFIRMED).increment(ids.len() as u64);
                             info!(submissions = %ids.len(), l1_block = %l1_block, "submission confirmed on L1 during drain");
                         }
                         TxOutcome::Failed => {
-                            counter!(BatcherMetrics::SUBMISSION_TOTAL, "outcome" => BatcherMetrics::OUTCOME_FAILED).increment(ids.len() as u64);
+                            BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_FAILED).increment(ids.len() as u64);
                             warn!(submissions = %ids.len(), "submission failed during drain, abandoning");
                         }
                         TxOutcome::TxpoolBlocked => {
-                            counter!(BatcherMetrics::SUBMISSION_TOTAL, "outcome" => BatcherMetrics::OUTCOME_REQUEUED).increment(ids.len() as u64);
+                            BatcherMetrics::submission_total(BatcherMetrics::OUTCOME_REQUEUED).increment(ids.len() as u64);
                             warn!(submissions = %ids.len(), "submission txpool-blocked during drain, abandoning");
                         }
                     }
@@ -282,7 +284,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
         let discarded = self.in_flight.len();
         if discarded > 0 {
             warn!(discarded = %discarded, "discarding in-flight submissions due to reorg");
-            gauge!(BatcherMetrics::IN_FLIGHT_SUBMISSIONS).set(0.0);
+            BatcherMetrics::in_flight_submissions().set(0.0);
         }
         self.in_flight = FuturesUnordered::new();
     }

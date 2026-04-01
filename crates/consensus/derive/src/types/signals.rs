@@ -4,7 +4,6 @@
 //! of the pipeline. They allow the pipeline driver to perform actions such as
 //! resetting all stages in the pipeline through message passing.
 
-use base_consensus_genesis::SystemConfig;
 use base_protocol::{BlockInfo, L2BlockInfo};
 
 /// A signal to send to the pipeline.
@@ -31,38 +30,17 @@ impl core::fmt::Display for Signal {
     }
 }
 
-impl Signal {
-    /// Sets the [`SystemConfig`] for the signal.
-    pub const fn with_system_config(self, system_config: SystemConfig) -> Self {
-        match self {
-            Self::Reset(reset) => reset.with_system_config(system_config).signal(),
-            Self::Activation(activation) => activation.with_system_config(system_config).signal(),
-            Self::FlushChannel => Self::FlushChannel,
-            Self::ProvideBlock(block) => Self::ProvideBlock(block),
-        }
-    }
-}
-
 /// A pipeline reset signal.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ResetSignal {
     /// The L2 safe head to reset to.
     pub l2_safe_head: L2BlockInfo,
-    /// The L1 origin to reset to.
-    pub l1_origin: BlockInfo,
-    /// The optional [`SystemConfig`] to reset with.
-    pub system_config: Option<SystemConfig>,
 }
 
 impl ResetSignal {
     /// Creates a new [`Signal::Reset`] from the [`ResetSignal`].
     pub const fn signal(self) -> Signal {
         Signal::Reset(self)
-    }
-
-    /// Sets the [`SystemConfig`] for the signal.
-    pub const fn with_system_config(self, system_config: SystemConfig) -> Self {
-        Self { system_config: Some(system_config), ..self }
     }
 }
 
@@ -71,21 +49,12 @@ impl ResetSignal {
 pub struct ActivationSignal {
     /// The L2 safe head to reset to.
     pub l2_safe_head: L2BlockInfo,
-    /// The L1 origin to reset to.
-    pub l1_origin: BlockInfo,
-    /// The optional [`SystemConfig`] to reset with.
-    pub system_config: Option<SystemConfig>,
 }
 
 impl ActivationSignal {
     /// Creates a new [`Signal::Activation`] from the [`ActivationSignal`].
     pub const fn signal(self) -> Signal {
         Signal::Activation(self)
-    }
-
-    /// Sets the [`SystemConfig`] for the signal.
-    pub const fn with_system_config(self, system_config: SystemConfig) -> Self {
-        Self { system_config: Some(system_config), ..self }
     }
 }
 
@@ -103,24 +72,5 @@ mod tests {
     fn test_activation_signal() {
         let signal = ActivationSignal::default();
         assert_eq!(signal.signal(), Signal::Activation(signal));
-    }
-
-    #[test]
-    fn test_signal_with_system_config() {
-        let signal = ResetSignal::default();
-        let system_config = SystemConfig::default();
-        assert_eq!(
-            signal.with_system_config(system_config).signal(),
-            Signal::Reset(ResetSignal { system_config: Some(system_config), ..signal })
-        );
-
-        let signal = ActivationSignal::default();
-        let system_config = SystemConfig::default();
-        assert_eq!(
-            signal.with_system_config(system_config).signal(),
-            Signal::Activation(ActivationSignal { system_config: Some(system_config), ..signal })
-        );
-
-        assert_eq!(Signal::FlushChannel.with_system_config(system_config), Signal::FlushChannel);
     }
 }

@@ -81,9 +81,9 @@ impl L2Provider for MockL2 {
     }
 }
 
-/// Mock rollup client that returns a configurable `SyncStatus`.
 pub(crate) struct MockRollupClient {
     pub sync_status: SyncStatus,
+    pub output_roots: std::collections::HashMap<u64, B256>,
 }
 
 #[async_trait]
@@ -95,10 +95,12 @@ impl RollupProvider for MockRollupClient {
         Ok(self.sync_status.clone())
     }
     async fn output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
-        Ok(OutputAtBlock {
-            output_root: B256::repeat_byte(block_number as u8),
-            block_ref: test_l2_block_ref(block_number, B256::repeat_byte(block_number as u8)),
-        })
+        let root = self
+            .output_roots
+            .get(&block_number)
+            .copied()
+            .unwrap_or_else(|| B256::repeat_byte(block_number as u8));
+        Ok(OutputAtBlock { output_root: root, block_ref: test_l2_block_ref(block_number, root) })
     }
 }
 
@@ -168,25 +170,37 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
 ///
 /// When `game_info_map` is empty, all queries return a default `GameInfo`.
 /// When populated, `game_info` looks up the address in the map.
+///
+/// Addresses in `failing_addresses` will return a `ContractError::Validation`
+/// to simulate transient RPC failures.
 pub(crate) struct MockAggregateVerifier {
     pub game_info_map: std::collections::HashMap<Address, GameInfo>,
+    pub failing_addresses: std::collections::HashSet<Address>,
 }
 
 impl MockAggregateVerifier {
     /// Creates a verifier that returns default values for all addresses.
     pub(crate) fn empty() -> Self {
-        Self { game_info_map: std::collections::HashMap::new() }
+        Self {
+            game_info_map: std::collections::HashMap::new(),
+            failing_addresses: std::collections::HashSet::new(),
+        }
     }
 
     /// Creates a verifier backed by an explicit address-to-info map.
     pub(crate) fn with_game_info(map: std::collections::HashMap<Address, GameInfo>) -> Self {
-        Self { game_info_map: map }
+        Self { game_info_map: map, failing_addresses: std::collections::HashSet::new() }
     }
 }
 
 #[async_trait]
 impl AggregateVerifierClient for MockAggregateVerifier {
     async fn game_info(&self, addr: Address) -> Result<GameInfo, ContractError> {
+        if self.failing_addresses.contains(&addr) {
+            return Err(ContractError::Validation(format!(
+                "mock: simulated game_info failure for {addr}"
+            )));
+        }
         Ok(self.game_info_map.get(&addr).cloned().unwrap_or(GameInfo {
             root_claim: B256::ZERO,
             l2_block_number: 0,
@@ -205,6 +219,9 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn starting_block_number(&self, _: Address) -> Result<u64, ContractError> {
         Ok(0)
     }
+    async fn l1_head(&self, _: Address) -> Result<B256, ContractError> {
+        Ok(B256::ZERO)
+    }
     async fn read_block_interval(&self, _: Address) -> Result<u64, ContractError> {
         Ok(512)
     }
@@ -213,6 +230,9 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
     async fn intermediate_output_roots(&self, _: Address) -> Result<Vec<B256>, ContractError> {
         Ok(vec![])
+    }
+    async fn countered_index(&self, _: Address) -> Result<u64, ContractError> {
+        Ok(0)
     }
 }
 

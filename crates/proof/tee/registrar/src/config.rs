@@ -28,12 +28,11 @@ pub struct BoundlessConfig {
     pub rpc_url: Url,
     /// Signer for Boundless Network proving fees.
     pub signer: PrivateKeySigner,
-    /// IPFS URL of the Nitro attestation verifier ELF uploaded via `nitro-attest-cli`.
+    /// HTTP(S) URL of the Nitro attestation verifier ELF uploaded via `nitro-attest-cli`
+    /// (e.g. a Pinata or Boundless IPFS gateway URL).
     pub verifier_program_url: Url,
     /// Expected image ID of the guest program (hex-encoded `[u32; 8]`).
     pub image_id: [u32; 8],
-    /// Maximum price in wei per cycle for Boundless proof requests.
-    pub max_price: u64,
     /// Interval between fulfillment status checks.
     pub poll_interval: Duration,
     /// Proof generation timeout.
@@ -49,7 +48,6 @@ impl std::fmt::Debug for BoundlessConfig {
             .field("signer", &self.signer.address())
             .field("verifier_program_url", &self.verifier_program_url)
             .field("image_id", &self.image_id)
-            .field("max_price", &self.max_price)
             .field("poll_interval", &self.poll_interval)
             .field("timeout", &self.timeout)
             .field("nitro_verifier_address", &self.nitro_verifier_address)
@@ -97,6 +95,14 @@ pub struct RegistrarConfig {
     pub poll_interval: Duration,
     /// Timeout for JSON-RPC calls to prover instances.
     pub prover_timeout: Duration,
+    /// Maximum number of instances to process concurrently within a single
+    /// registration cycle. Each instance may trigger a ~20-minute proof
+    /// generation, so this limits concurrent proof work and nonce acquisition.
+    pub max_concurrency: usize,
+    /// Maximum number of transaction submission retries for transient errors.
+    pub max_tx_retries: u32,
+    /// Delay between transaction submission retries.
+    pub tx_retry_delay: Duration,
     /// Health server socket address.
     pub health_addr: SocketAddr,
 }
@@ -113,6 +119,9 @@ impl std::fmt::Debug for RegistrarConfig {
             .field("proving", &self.proving)
             .field("poll_interval", &self.poll_interval)
             .field("prover_timeout", &self.prover_timeout)
+            .field("max_concurrency", &self.max_concurrency)
+            .field("max_tx_retries", &self.max_tx_retries)
+            .field("tx_retry_delay", &self.tx_retry_delay)
             .field("health_addr", &self.health_addr)
             .finish()
     }

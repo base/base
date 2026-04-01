@@ -29,9 +29,10 @@ base-alloy-signer.workspace = true
 # misc
 url.workspace = true
 backon.workspace = true
-metrics.workspace = true
 thiserror.workspace = true
 tracing = { workspace = true, features = ["std"] }
+base-metrics.workspace = true
+metrics = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 
 [dev-dependencies]
@@ -46,3 +47,6 @@ alloy-json-rpc.workspace = true
 alloy-node-bindings.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread"] }
+
+[features]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]

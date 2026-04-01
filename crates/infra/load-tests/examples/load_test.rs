@@ -3,20 +3,34 @@
 use std::path::PathBuf;
 
 use alloy_primitives::utils::format_ether;
-use base_load_tests::{LoadRunner, RpcClient, TestConfig, init_tracing};
+use base_load_tests::{LoadRunner, LoadTestDisplay, RpcClient, TestConfig};
 use eyre::{Result, bail};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    init_tracing();
+    let mp = LoadTestDisplay::init_tracing();
 
-    let config_path = match std::env::args().nth(1) {
-        Some(path) => PathBuf::from(path),
-        None => match option_env!("CARGO_MANIFEST_DIR") {
-            Some(dir) => PathBuf::from(dir).join("examples/devnet.yaml"),
-            None => bail!("usage: load_test <config.yaml>"),
-        },
-    };
+    let mut args = std::env::args().skip(1).peekable();
+    let mut config_path: Option<PathBuf> = None;
+    let mut continuous = false;
+
+    for arg in args.by_ref() {
+        match arg.as_str() {
+            "--continuous" => continuous = true,
+            other => {
+                if config_path.is_none() {
+                    config_path = Some(PathBuf::from(other));
+                }
+            }
+        }
+    }
+
+    let config_path = config_path
+        .or_else(|| {
+            option_env!("CARGO_MANIFEST_DIR")
+                .map(|dir| PathBuf::from(dir).join("examples/devnet.yaml"))
+        })
+        .ok_or_else(|| eyre::eyre!("usage: load_test [--continuous] <config.yaml>"))?;
 
     if !config_path.exists() {
         bail!("config file not found: {}", config_path.display());
@@ -30,7 +44,10 @@ async fn main() -> Result<()> {
     let rpc_chain_id =
         if test_config.chain_id.is_none() { Some(client.chain_id().await?) } else { None };
 
-    let load_config = test_config.to_load_config(rpc_chain_id)?;
+    let load_config = {
+        let cfg = test_config.to_load_config(rpc_chain_id)?;
+        if continuous { cfg.with_continuous() } else { cfg }
+    };
 
     println!(
         "Config: {} | RPC: {} | Chain: {}",
@@ -38,16 +55,18 @@ async fn main() -> Result<()> {
         test_config.rpc,
         load_config.chain_id
     );
+    let duration_display =
+        load_config.duration.map_or_else(|| "continuous".to_string(), |d| format!("{d:?}"));
     println!(
-        "Target: {} GPS | Duration: {:?} | Accounts: {}",
-        load_config.target_gps, load_config.duration, load_config.account_count
+        "Target: {} GPS | Duration: {} | Accounts: {}",
+        load_config.target_gps, duration_display, load_config.account_count
     );
     println!();
 
-    let mut runner = LoadRunner::new(load_config)?;
-
     let funding_key = TestConfig::funder_key()?;
     let funding_amount = test_config.parse_funding_amount()?;
+
+    let mut runner = LoadRunner::new(load_config.clone())?;
 
     println!("Funding test accounts...");
     runner.fund_accounts(funding_key.clone(), funding_amount).await?;
@@ -55,6 +74,12 @@ async fn main() -> Result<()> {
     println!();
 
     println!("Running load test...");
+
+    // Create bars after all pre-run println output so setup text doesn't
+    // interleave with the live display.
+    let display = LoadTestDisplay::new(&mp, load_config.duration);
+    runner.set_display(display);
+
     let summary = runner.run().await?;
 
     println!();

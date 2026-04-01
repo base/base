@@ -9,7 +9,7 @@ use crate::{
     config::{ChainConfig, ConductorNodeConfig},
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, L1BlockInfo, L1ConnectionMode,
-        TimestampedFlashblock,
+        TimestampedFlashblock, ValidatorNodeStatus,
     },
     tui::ToastState,
 };
@@ -89,6 +89,29 @@ impl ConductorState {
     }
 }
 
+/// State for validator node monitoring.
+#[derive(Debug, Default)]
+pub(crate) struct ValidatorState {
+    /// Most recent status snapshot for each validator node.
+    pub nodes: Vec<ValidatorNodeStatus>,
+    rx: Option<mpsc::Receiver<Vec<ValidatorNodeStatus>>>,
+}
+
+impl ValidatorState {
+    /// Sets the channel for receiving validator status updates.
+    pub(crate) fn set_channel(&mut self, rx: mpsc::Receiver<Vec<ValidatorNodeStatus>>) {
+        self.rx = Some(rx);
+    }
+
+    /// Drains the latest status snapshot from the background poller.
+    pub(crate) fn poll(&mut self) {
+        let Some(ref mut rx) = self.rx else { return };
+        while let Ok(statuses) = rx.try_recv() {
+            self.nodes = statuses;
+        }
+    }
+}
+
 /// Shared resources available to all TUI views.
 #[derive(Debug)]
 pub(crate) struct Resources {
@@ -102,6 +125,8 @@ pub(crate) struct Resources {
     pub toasts: ToastState,
     /// HA conductor cluster monitoring state.
     pub conductor: ConductorState,
+    /// Validator node monitoring state.
+    pub validators: ValidatorState,
     /// L1 system config fetched from the contract.
     pub system_config: Option<SystemConfig>,
     sys_config_rx: Option<mpsc::Receiver<SystemConfig>>,
@@ -160,6 +185,7 @@ impl Resources {
             flash: FlashState::new(),
             toasts: ToastState::new(),
             conductor: ConductorState::default(),
+            validators: ValidatorState::default(),
             system_config: None,
             sys_config_rx: None,
         }

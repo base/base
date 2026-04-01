@@ -2,14 +2,16 @@
 
 use alloc::{boxed::Box, vec::Vec};
 
+use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
+use base_consensus_genesis::SystemConfig;
 use base_protocol::{Batch, BlockInfo, L2BlockInfo};
 
 use crate::{
     errors::PipelineError,
     stages::NextBatchProvider,
-    traits::{OriginAdvancer, OriginProvider, SignalReceiver},
-    types::{PipelineResult, Signal},
+    traits::{OriginAdvancer, OriginProvider, StageReset},
+    types::PipelineResult,
 };
 
 /// A mock provider for the [`NextBatchProvider`] stage.
@@ -65,13 +67,22 @@ impl OriginAdvancer for TestNextBatchProvider {
 }
 
 #[async_trait]
-impl SignalReceiver for TestNextBatchProvider {
-    async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
-        match signal {
-            Signal::Reset { .. } => self.reset = true,
-            Signal::FlushChannel => self.flushed = true,
-            _ => {}
-        }
+impl StageReset for TestNextBatchProvider {
+    async fn reset(&mut self, _: BlockNumHash, _: SystemConfig) -> PipelineResult<()> {
+        self.reset = true;
+        Ok(())
+    }
+
+    async fn activate(&mut self) -> PipelineResult<()> {
+        Ok(())
+    }
+
+    async fn flush_channel(&mut self) -> PipelineResult<()> {
+        self.flushed = true;
+        Ok(())
+    }
+
+    async fn provide_block(&mut self, _: BlockInfo) -> PipelineResult<()> {
         Ok(())
     }
 }

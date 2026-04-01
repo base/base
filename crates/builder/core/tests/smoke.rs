@@ -233,3 +233,28 @@ async fn chain_produces_big_tx_without_gas_limit() -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn metering_wait_duration_does_not_delay_txs_when_metering_is_disabled() -> eyre::Result<()> {
+    let config =
+        BuilderConfig::for_tests().with_metering_wait_duration(Some(Duration::from_secs(60)));
+    let rbuilder = setup_test_instance_with_builder_config(config).await?;
+    let driver = rbuilder.driver().await?;
+
+    let tx = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .send()
+        .await
+        .expect("Failed to send transaction");
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    let txs = block.transactions;
+
+    assert!(
+        txs.hashes().any(|hash| hash == *tx.tx_hash()),
+        "fresh tx should not be delayed when metering is disabled"
+    );
+
+    Ok(())
+}

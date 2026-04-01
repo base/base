@@ -1,0 +1,6 @@
+# The risc0 toolchain ships an older rustc (1.91) than the workspace MSRV (1.93).
+# The --ignore-rust-version flag is required when invoking cargo build.
+
+[build]
+# Tell getrandom 0.3 to use the "custom" backend provided by risc0-zkvm-platform.
+rustflags = ['--cfg', 'getrandom_backend="custom"']

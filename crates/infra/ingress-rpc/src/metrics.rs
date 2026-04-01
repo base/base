@@ -1,66 +1,34 @@
-use metrics::{Counter, Gauge, Histogram};
-use metrics_derive::Metrics;
-use tokio::time::Duration;
+//! Prometheus metrics for the tips ingress RPC service.
 
-/// Records an RPC latency histogram sample for the given method name.
-pub fn record_histogram(rpc_latency: Duration, rpc: String) {
-    metrics::histogram!("tips_ingress_rpc_rpc_latency", "rpc" => rpc)
-        .record(rpc_latency.as_secs_f64());
-}
-
-/// Prometheus metrics for the tips ingress RPC service.
-#[derive(Metrics, Clone)]
-#[metrics(scope = "tips_ingress_rpc")]
-pub struct Metrics {
-    /// Number of valid transactions received.
-    #[metric(describe = "Number of valid transactions received")]
-    pub transactions_received: Counter,
-
-    /// Number of valid bundles parsed.
-    #[metric(describe = "Number of valid bundles parsed")]
-    pub bundles_parsed: Counter,
-
-    /// Number of bundles successfully simulated.
-    #[metric(describe = "Number of bundles simulated")]
-    pub successful_simulations: Counter,
-
-    /// Number of bundles that failed simulation.
-    #[metric(describe = "Number of bundles that failed simulation")]
-    pub failed_simulations: Counter,
-
-    /// Number of bundles sent to Kafka.
-    #[metric(describe = "Number of bundles sent to kafka")]
-    pub sent_to_kafka: Counter,
-
-    /// Number of transactions sent to the mempool.
-    #[metric(describe = "Number of transactions sent to mempool")]
-    pub sent_to_mempool: Counter,
-
-    /// Duration of transaction validation.
-    #[metric(describe = "Duration of validate_tx")]
-    pub validate_tx_duration: Histogram,
-
-    /// Duration of bundle validation.
-    #[metric(describe = "Duration of validate_bundle")]
-    pub validate_bundle_duration: Histogram,
-
-    /// Duration of bundle metering.
-    #[metric(describe = "Duration of meter_bundle")]
-    pub meter_bundle_duration: Histogram,
-
-    /// Duration of send raw transaction.
-    #[metric(describe = "Duration of send_raw_transaction")]
-    pub send_raw_transaction_duration: Histogram,
-
-    /// Total raw transactions forwarded to additional endpoint.
-    #[metric(describe = "Total raw transactions forwarded to additional endpoint")]
-    pub raw_tx_forwards_total: Counter,
-
-    /// Number of bundles that exceeded the metering time.
-    #[metric(describe = "Number of bundles that exceeded the metering time")]
-    pub bundles_exceeded_metering_time: Counter,
-
-    /// Size of the buffered `MeterBundleResponse` channel.
-    #[metric(describe = "Size of buffered meter bundle responses")]
-    pub buffered_meter_bundle_responses_size: Gauge,
+base_metrics::define_metrics! {
+    tips_ingress_rpc
+    #[describe("Number of valid transactions received")]
+    transactions_received: counter,
+    #[describe("Number of valid bundles parsed")]
+    bundles_parsed: counter,
+    #[describe("Number of bundles simulated")]
+    successful_simulations: counter,
+    #[describe("Number of bundles that failed simulation")]
+    failed_simulations: counter,
+    #[describe("Number of bundles sent to kafka")]
+    sent_to_kafka: counter,
+    #[describe("Number of transactions sent to mempool")]
+    sent_to_mempool: counter,
+    #[describe("Duration of validate_tx")]
+    validate_tx_duration: histogram,
+    #[describe("Duration of validate_bundle")]
+    validate_bundle_duration: histogram,
+    #[describe("Duration of meter_bundle")]
+    meter_bundle_duration: histogram,
+    #[describe("Duration of send_raw_transaction")]
+    send_raw_transaction_duration: histogram,
+    #[describe("Total raw transactions forwarded to additional endpoint")]
+    raw_tx_forwards_total: counter,
+    #[describe("Number of bundles that exceeded the metering time")]
+    bundles_exceeded_metering_time: counter,
+    #[describe("Size of buffered meter bundle responses")]
+    buffered_meter_bundle_responses_size: gauge,
+    #[describe("RPC call latency")]
+    #[label(rpc)]
+    rpc_latency: histogram,
 }

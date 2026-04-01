@@ -1,5 +1,5 @@
 /// Enclave server — manages keys, attestation, signing, and proof execution.
-use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, b256, keccak256};
 use alloy_signer_local::PrivateKeySigner;
 use base_alloy_evm::OpEvmFactory;
 use base_proof_client::{BootInfo, Prologue};
@@ -145,7 +145,7 @@ impl Server {
         &self,
         preimages: impl IntoIterator<Item = (PreimageKey, Vec<u8>)>,
     ) -> Result<TeeProofResult> {
-        let oracle = Oracle::new(preimages);
+        let oracle = Oracle::new(preimages)?;
 
         let boot_info =
             BootInfo::load(&oracle).await.map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
@@ -172,14 +172,14 @@ impl Server {
         let l1_origin_hash = boot_info.l1_head;
         let l1_origin_number = boot_info.l1_head_number;
         for (l2_info, output_root) in &block_results {
-            let l2_block_number = U256::from(l2_info.block_info.number);
+            let l2_block_number = l2_info.block_info.number;
 
             let journal = ProofJournal {
                 proposer: boot_info.proposer,
                 l1_origin_hash,
                 prev_output_root,
                 starting_l2_block: l2_block_number
-                    .checked_sub(U256::from(1))
+                    .checked_sub(1)
                     .ok_or_else(|| NitroError::ProofPipeline("l2_block_number is 0".into()))?,
                 output_root: *output_root,
                 ending_l2_block: l2_block_number,
@@ -195,7 +195,7 @@ impl Server {
                 output_root: *output_root,
                 signature: Bytes::from(signature.to_vec()),
                 l1_origin_hash,
-                l1_origin_number: U256::from(l1_origin_number),
+                l1_origin_number,
                 l2_block_number,
                 prev_output_root,
                 config_hash,
@@ -225,7 +225,7 @@ impl Server {
                 prev_output_root: agreed_l2_output_root,
                 starting_l2_block: first
                     .l2_block_number
-                    .checked_sub(U256::from(1))
+                    .checked_sub(1)
                     .ok_or_else(|| NitroError::ProofPipeline("l2_block_number is 0".into()))?,
                 output_root: last.output_root,
                 ending_l2_block: last.l2_block_number,
@@ -241,7 +241,7 @@ impl Server {
                 output_root: last.output_root,
                 signature: Bytes::from(signature.to_vec()),
                 l1_origin_hash,
-                l1_origin_number: U256::from(l1_origin_number),
+                l1_origin_number,
                 l2_block_number: last.l2_block_number,
                 prev_output_root: agreed_l2_output_root,
                 config_hash,

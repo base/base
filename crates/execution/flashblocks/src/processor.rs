@@ -26,8 +26,9 @@ use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
 use crate::{
-    BlockAssembler, ExecutionError, FlashblockCache, Metrics, PendingBlocks, PendingBlocksBuilder,
+    BlockAssembler, ExecutionError, FlashblockCache, PendingBlocks, PendingBlocksBuilder,
     PendingStateBuilder, ProviderError, Result, StateProcessorError,
+    metrics::Metrics,
     validation::{
         CanonicalBlockReconciler, FlashblockSequenceValidator, ReconciliationStrategy,
         ReorgDetector, SequenceValidationResult,
@@ -50,7 +51,6 @@ pub struct StateProcessor<Client> {
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
     max_depth: u64,
     simulate_state_root: bool,
-    metrics: Metrics,
     client: Client,
     sender: Sender<Arc<PendingBlocks>>,
     cache: Arc<Mutex<FlashblockCache>>,
@@ -78,7 +78,6 @@ where
             .map_or_else(|_| FlashblockCache::new(0), FlashblockCache::new);
 
         Self {
-            metrics: Metrics::default(),
             pending_blocks,
             client,
             max_depth,
@@ -146,7 +145,7 @@ where
                     _ = self.sender.send(Arc::clone(pb));
                 }
                 self.pending_blocks.swap(new_pending_blocks);
-                self.metrics.block_processing_duration.record(start_time.elapsed());
+                Metrics::block_processing_duration().record(start_time.elapsed());
             }
             Err(e) => {
                 match e {
@@ -178,7 +177,7 @@ where
                 }
 
                 error!(message = "could not process Flashblock", error = %e);
-                self.metrics.block_processing_error.increment(1);
+                Metrics::block_processing_error().increment(1);
             }
         }
     }
@@ -200,8 +199,8 @@ where
         let mut flashblocks = pending_blocks.get_flashblocks();
         let num_flashblocks_for_canon =
             flashblocks.iter().filter(|fb| fb.metadata.block_number == block.number).count();
-        self.metrics.flashblocks_in_block.record(num_flashblocks_for_canon as f64);
-        self.metrics.pending_snapshot_height.set(pending_blocks.latest_block_number() as f64);
+        Metrics::flashblocks_in_block().record(num_flashblocks_for_canon as f64);
+        Metrics::pending_snapshot_height().set(pending_blocks.latest_block_number() as f64);
 
         // Check for reorg by comparing transaction sets
         let tracked_txns = pending_blocks.get_transactions_for_block(block.number);
@@ -227,9 +226,8 @@ where
                     latest_pending_block = pending_blocks.latest_block_number(),
                     canonical_block = block.number,
                 );
-                self.metrics.pending_clear_catchup.increment(1);
-                self.metrics
-                    .pending_snapshot_fb_index
+                Metrics::pending_clear_catchup().increment(1);
+                Metrics::pending_snapshot_fb_index()
                     .set(pending_blocks.latest_flashblock_index() as f64);
                 Ok(None)
             }
@@ -239,7 +237,7 @@ where
                     tracked_txn_hashes = ?tracked_txn_hashes,
                     block_txn_hashes = ?block_txn_hashes,
                 );
-                self.metrics.pending_clear_reorg.increment(1);
+                Metrics::pending_clear_reorg().increment(1);
 
                 // If there is a reorg, we re-process all future flashblocks without reusing the existing pending state
                 flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
@@ -318,7 +316,7 @@ where
             }
             SequenceValidationResult::Duplicate => {
                 // We have received a duplicate flashblock for the current block
-                self.metrics.unexpected_block_order.increment(1);
+                Metrics::unexpected_block_order().increment(1);
                 warn!(
                     message = "Received duplicate Flashblock for current block, ignoring",
                     curr_block = %pending_blocks.latest_block_number(),
@@ -328,7 +326,7 @@ where
             }
             SequenceValidationResult::InvalidNewBlockIndex { block_number, index: _ } => {
                 // We have received a non-zero flashblock for a new block
-                self.metrics.unexpected_block_order.increment(1);
+                Metrics::unexpected_block_order().increment(1);
                 error!(
                     message = "Received non-zero index Flashblock for new block, zeroing Flashblocks until we receive a base Flashblock",
                     curr_block = %pending_blocks.latest_block_number(),
@@ -338,7 +336,7 @@ where
             }
             SequenceValidationResult::NonSequentialGap { expected: _, actual: _ } => {
                 // We have received a non-sequential Flashblock for the current block
-                self.metrics.unexpected_block_order.increment(1);
+                Metrics::unexpected_block_order().increment(1);
                 error!(
                     message = "Received non-sequential Flashblock for current block, zeroing Flashblocks until we receive a base Flashblock",
                     curr_block = %pending_blocks.latest_block_number(),
@@ -440,7 +438,7 @@ where
                     Ok((tx, sender))
                 })
                 .collect::<Result<_>>()?;
-            self.metrics.sender_recovery_duration.record(recovery_start.elapsed());
+            Metrics::sender_recovery_duration().record(recovery_start.elapsed());
 
             // Clone header before moving block to avoid cloning the entire block
             let block_header = assembled.block.header.clone();

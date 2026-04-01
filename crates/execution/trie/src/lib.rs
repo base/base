@@ -25,7 +25,6 @@ pub use in_memory::{
 pub mod db;
 pub use db::{MdbxAccountCursor, MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCursor};
 
-#[cfg(feature = "metrics")]
 pub mod metrics;
 #[cfg(feature = "metrics")]
 pub use metrics::{

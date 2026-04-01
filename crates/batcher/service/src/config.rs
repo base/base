@@ -65,6 +65,11 @@ pub struct BatcherConfig {
     /// When set, the batcher exposes the `admin_*` RPC namespace on this address.
     /// When `None` (the default), the admin server is disabled.
     pub admin_addr: Option<SocketAddr>,
+    /// If `true`, start in a stopped state and defer batch submission until
+    /// `admin_startBatcher` is called via the admin API.
+    ///
+    /// Matches op-batcher's `--stopped` / `OP_BATCHER_STOPPED` behaviour (env: `BATCHER_STOPPED`).
+    pub stopped: bool,
 }
 
 impl Default for BatcherConfig {
@@ -84,6 +89,7 @@ impl Default for BatcherConfig {
             throttle: Some(ThrottleConfig::default()),
             check_recent_txs_depth: 0,
             admin_addr: None,
+            stopped: false,
         }
     }
 }
