@@ -5,13 +5,6 @@ use tracing::{Instrument, info, info_span};
 
 use crate::{Host, HostConfig, HostError, Metrics, ProverConfig, metrics::proof_guard};
 
-/// Default timeout for an entire proof request (witness generation + proving).
-///
-/// Must be shorter than the caller's HTTP request timeout (30 min on the
-/// proposer) so the server returns a clean error instead of the client seeing
-/// a dropped connection.
-const DEFAULT_PROOF_REQUEST_TIMEOUT: Duration = Duration::from_secs(29 * 60);
-
 /// Orchestrates witness generation ([`Host`]) and proving ([`ProverBackend`]).
 ///
 /// Long-lived — holds static config and a backend instance.
@@ -19,29 +12,18 @@ const DEFAULT_PROOF_REQUEST_TIMEOUT: Duration = Duration::from_secs(29 * 60);
 pub struct ProverService<B> {
     config: ProverConfig,
     backend: B,
-    /// Maximum wall-clock time for a single proof request before it is aborted.
-    proof_request_timeout: Duration,
 }
 
 impl<B: ProverBackend> fmt::Debug for ProverService<B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProverService")
-            .field("config", &self.config)
-            .field("proof_request_timeout", &self.proof_request_timeout)
-            .finish_non_exhaustive()
+        f.debug_struct("ProverService").field("config", &self.config).finish_non_exhaustive()
     }
 }
 
 impl<B: ProverBackend> ProverService<B> {
-    /// Creates a new prover service with the default proof request timeout.
+    /// Creates a new prover service.
     pub const fn new(config: ProverConfig, backend: B) -> Self {
-        Self { config, backend, proof_request_timeout: DEFAULT_PROOF_REQUEST_TIMEOUT }
-    }
-
-    /// Sets the proof request timeout.
-    pub const fn with_proof_request_timeout(mut self, timeout: Duration) -> Self {
-        self.proof_request_timeout = timeout;
-        self
+        Self { config, backend }
     }
 
     /// Returns a reference to the prover configuration.
@@ -66,7 +48,7 @@ impl<B: ProverBackend> ProverService<B> {
         let _proof_timer = base_metrics::timed!(Metrics::proof_duration_seconds());
 
         let l2_block = request.claimed_l2_block_number;
-        let timeout = self.proof_request_timeout;
+        let timeout = Duration::from_secs(self.config.proof_request_timeout_secs);
 
         let result = match tokio::time::timeout(
             timeout,

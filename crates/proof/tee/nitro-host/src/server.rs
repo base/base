@@ -1,4 +1,4 @@
-use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
+use std::{fmt, net::SocketAddr, sync::Arc};
 
 use base_health::{HealthzApiServer, HealthzRpc};
 use base_proof_host::{ProverConfig, ProverService};
@@ -39,12 +39,6 @@ impl NitroProverServer {
     pub fn new(config: ProverConfig, transport: Arc<NitroTransport>) -> Self {
         let backend = NitroBackend::new(Arc::clone(&transport));
         Self { service: ProverService::new(config, backend), transport }
-    }
-
-    /// Sets the proof request timeout, overriding the default.
-    pub fn with_proof_request_timeout(mut self, timeout: Duration) -> Self {
-        self.service = self.service.with_proof_request_timeout(timeout);
-        self
     }
 
     /// Start the JSON-RPC HTTP server on the given address.
