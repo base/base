@@ -18,7 +18,7 @@ use url::Url;
 use super::FlashblockTimes;
 
 /// Maximum number of transaction entries to retain in the flashblock times map.
-/// Entries beyond this limit are evicted oldest-first to prevent unbounded growth,
+/// When exceeded, the oldest entries by timestamp are dropped to enforce this cap,
 /// since the map receives every transaction in every flashblock (not just ours).
 const MAX_FLASHBLOCK_CACHE_SIZE: usize = 50_000;
 
@@ -133,8 +133,10 @@ impl FlashblockTracker {
                 }
 
                 if times.len() > MAX_FLASHBLOCK_CACHE_SIZE {
-                    let cutoff = now - Duration::from_secs(120);
-                    times.retain(|_, t| *t > cutoff);
+                    let mut entries: Vec<_> = times.drain().collect();
+                    entries.sort_by_key(|(_, t)| *t);
+                    let keep_from = entries.len().saturating_sub(MAX_FLASHBLOCK_CACHE_SIZE);
+                    times.extend(entries.into_iter().skip(keep_from));
                 }
             }
             Err(e) => {
