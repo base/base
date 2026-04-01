@@ -46,7 +46,7 @@ impl MetricsCollector {
         if let Some(latency) = metrics.block_latency {
             self.rolling.push(metrics.gas_used, latency);
         }
-        if let Some(flashblocks_latency) = metrics.flashblocks_sequencer_latency {
+        if let Some(flashblocks_latency) = metrics.flashblocks_latency {
             self.flashblocks_rolling.push_latency(flashblocks_latency);
         }
         self.transactions.push(metrics);
@@ -108,7 +108,7 @@ impl MetricsCollector {
         self.rolling.p50_p99()
     }
 
-    /// Returns the rolling 30s (p50, p99) flashblocks sequencer latency percentiles.
+    /// Returns the rolling 30s (p50, p99) flashblocks latency percentiles.
     pub fn rolling_flashblocks_p50_p99(&mut self) -> (std::time::Duration, std::time::Duration) {
         self.flashblocks_rolling.p50_p99()
     }

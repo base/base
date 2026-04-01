@@ -3,8 +3,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    FlashblocksSequencerLatencyMetrics, GasMetrics, LatencyMetrics, ThroughputMetrics,
-    TransactionMetrics,
+    FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics, ThroughputMetrics, TransactionMetrics,
 };
 
 /// Aggregates raw transaction metrics into summary statistics.
@@ -23,18 +22,18 @@ impl<'a> MetricsAggregator<'a> {
     pub fn summarize(&self, duration: Duration, submitted: u64, failed: u64) -> MetricsSummary {
         MetricsSummary {
             block_latency: self.compute_block_latency(),
-            flashblocks_sequencer_latency: self.compute_flashblocks_sequencer_latency(),
+            flashblocks_latency: self.compute_flashblocks_latency(),
             throughput: self.compute_throughput(duration, submitted, failed),
             gas: self.compute_gas(),
         }
     }
 
-    fn compute_block_latency(&self) -> Option<LatencyMetrics> {
+    fn compute_block_latency(&self) -> LatencyMetrics {
         let mut latencies: Vec<Duration> =
             self.transactions.iter().filter_map(|t| t.block_latency).collect();
 
         if latencies.is_empty() {
-            return None;
+            return LatencyMetrics::default();
         }
 
         latencies.sort();
@@ -43,32 +42,32 @@ impl<'a> MetricsAggregator<'a> {
         let sum: Duration = latencies.iter().sum();
         let mean = Duration::from_nanos((sum.as_nanos() / len as u128) as u64);
 
-        Some(LatencyMetrics {
+        LatencyMetrics {
             min: latencies[0],
             max: latencies[len - 1],
             mean,
             p50: Self::percentile(&latencies, 50),
             p95: Self::percentile(&latencies, 95),
             p99: Self::percentile(&latencies, 99),
-        })
+        }
     }
 
-    fn compute_flashblocks_sequencer_latency(&self) -> Option<FlashblocksSequencerLatencyMetrics> {
+    fn compute_flashblocks_latency(&self) -> FlashblocksLatencyMetrics {
         let mut latencies: Vec<Duration> =
-            self.transactions.iter().filter_map(|t| t.flashblocks_sequencer_latency).collect();
+            self.transactions.iter().filter_map(|t| t.flashblocks_latency).collect();
 
         if latencies.is_empty() {
-            return None;
+            return FlashblocksLatencyMetrics::default();
         }
 
         latencies.sort();
 
-        Some(FlashblocksSequencerLatencyMetrics {
+        FlashblocksLatencyMetrics {
             count: latencies.len() as u64,
             p50: Self::percentile(&latencies, 50),
             p90: Self::percentile(&latencies, 90),
             p99: Self::percentile(&latencies, 99),
-        })
+        }
     }
 
     fn compute_throughput(
@@ -127,9 +126,9 @@ impl<'a> MetricsAggregator<'a> {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MetricsSummary {
     /// Block production latency via newHeads WebSocket.
-    pub block_latency: Option<LatencyMetrics>,
+    pub block_latency: LatencyMetrics,
     /// Sequencer acceptance latency via flashblocks WebSocket.
-    pub flashblocks_sequencer_latency: Option<FlashblocksSequencerLatencyMetrics>,
+    pub flashblocks_latency: FlashblocksLatencyMetrics,
     /// Throughput statistics.
     pub throughput: ThroughputMetrics,
     /// Gas usage statistics.

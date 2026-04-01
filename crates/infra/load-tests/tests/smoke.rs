@@ -128,14 +128,12 @@ fn metrics_summary_latency() {
 
     assert_eq!(summary.throughput.total_confirmed, 5);
 
-    let block_latency = summary.block_latency.expect("block_latency should be present");
+    let block_latency = &summary.block_latency;
     assert_eq!(block_latency.min, Duration::from_millis(100));
     assert_eq!(block_latency.max, Duration::from_millis(500));
     assert_eq!(block_latency.p50, Duration::from_millis(300));
 
-    let fb_latency = summary
-        .flashblocks_sequencer_latency
-        .expect("flashblocks_sequencer_latency should be present");
+    let fb_latency = &summary.flashblocks_latency;
     assert_eq!(fb_latency.p50, Duration::from_millis(150));
 }
 

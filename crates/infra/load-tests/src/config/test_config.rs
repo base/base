@@ -115,13 +115,11 @@ pub struct TestConfig {
     #[serde(default)]
     pub looper_contract: Option<String>,
 
-    /// WebSocket RPC URL for block subscription (enables inclusion latency tracking).
-    #[serde(default)]
-    pub ws_url: Option<String>,
+    /// WebSocket RPC URL for block subscription (inclusion latency tracking).
+    pub ws_url: String,
 
-    /// WebSocket URL for flashblocks subscription (enables flashblock latency tracking).
-    #[serde(default)]
-    pub flashblocks_url: Option<String>,
+    /// WebSocket URL for flashblocks subscription (flashblocks latency tracking).
+    pub flashblocks_url: String,
 }
 
 impl Default for TestConfig {
@@ -139,8 +137,8 @@ impl Default for TestConfig {
             chain_id: None,
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
             looper_contract: None,
-            ws_url: None,
-            flashblocks_url: None,
+            ws_url: "ws://localhost:8546".to_string(),
+            flashblocks_url: "ws://localhost:7111".to_string(),
         }
     }
 }
@@ -246,6 +244,12 @@ impl TestConfig {
         if self.sender_count == 0 {
             return Err(BaselineError::Config("sender_count must be > 0".into()));
         }
+        if self.ws_url.is_empty() {
+            return Err(BaselineError::Config("ws_url is required".into()));
+        }
+        if self.flashblocks_url.is_empty() {
+            return Err(BaselineError::Config("flashblocks_url is required".into()));
+        }
         Ok(())
     }
 
@@ -298,22 +302,15 @@ impl TestConfig {
 
         let ws_url = self
             .ws_url
-            .as_ref()
-            .map(|s| {
-                s.parse::<Url>()
-                    .map_err(|e| BaselineError::Config(format!("invalid ws_url '{s}': {e}")))
-            })
-            .transpose()?;
+            .parse::<Url>()
+            .map_err(|e| BaselineError::Config(format!("invalid ws_url '{}': {e}", self.ws_url)))?;
 
-        let flashblocks_url = self
-            .flashblocks_url
-            .as_ref()
-            .map(|s| {
-                s.parse::<Url>().map_err(|e| {
-                    BaselineError::Config(format!("invalid flashblocks_url '{s}': {e}"))
-                })
-            })
-            .transpose()?;
+        let flashblocks_url = self.flashblocks_url.parse::<Url>().map_err(|e| {
+            BaselineError::Config(format!(
+                "invalid flashblocks_url '{}': {e}",
+                self.flashblocks_url
+            ))
+        })?;
 
         Ok(crate::runner::LoadConfig {
             rpc_url,

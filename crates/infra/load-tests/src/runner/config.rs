@@ -80,9 +80,9 @@ pub struct LoadConfig {
     /// Maximum gas price cap to prevent overspending during congestion.
     pub max_gas_price: u128,
     /// WebSocket RPC URL for block subscription (newHeads).
-    pub ws_url: Option<Url>,
+    pub ws_url: Url,
     /// WebSocket URL for flashblocks subscription.
-    pub flashblocks_url: Option<Url>,
+    pub flashblocks_url: Url,
 }
 
 impl LoadConfig {
@@ -102,8 +102,8 @@ impl LoadConfig {
             batch_size: 5,
             batch_timeout: Duration::from_millis(50),
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
-            ws_url: None,
-            flashblocks_url: None,
+            ws_url: "ws://localhost:8546".parse().unwrap(),
+            flashblocks_url: "ws://localhost:7111".parse().unwrap(),
         }
     }
 
@@ -123,8 +123,8 @@ impl LoadConfig {
             batch_size: 5,
             batch_timeout: Duration::from_millis(50),
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
-            ws_url: None,
-            flashblocks_url: None,
+            ws_url: "wss://base-sepolia-alpha.cbhq.net".parse().unwrap(),
+            flashblocks_url: "wss://sepolia-alpha.flashblocks.base.org/ws".parse().unwrap(),
         }
     }
 

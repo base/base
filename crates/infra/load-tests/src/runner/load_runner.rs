@@ -391,25 +391,21 @@ impl LoadRunner {
         let flashblock_times: FlashblockTimes = Arc::new(RwLock::new(HashMap::new()));
         let block_first_seen: BlockFirstSeen = Arc::new(RwLock::new(HashMap::new()));
 
-        let flashblock_tracker_task = self.config.flashblocks_url.as_ref().map(|url| {
-            info!(url = %url, "starting flashblock tracker");
-            let tracker = FlashblockTracker::new(
-                url.clone(),
-                Arc::clone(&flashblock_times),
-                Arc::clone(&self.stop_flag),
-            );
-            tracker.start()
-        });
+        info!(url = %self.config.flashblocks_url, "starting flashblock tracker");
+        let flashblock_tracker_task = FlashblockTracker::new(
+            self.config.flashblocks_url.clone(),
+            Arc::clone(&flashblock_times),
+            Arc::clone(&self.stop_flag),
+        )
+        .start();
 
-        let block_watcher_task = self.config.ws_url.as_ref().map(|url| {
-            info!(url = %url, "starting block watcher");
-            let watcher = BlockWatcher::new(
-                url.clone(),
-                Arc::clone(&block_first_seen),
-                Arc::clone(&self.stop_flag),
-            );
-            watcher.start()
-        });
+        info!(url = %self.config.ws_url, "starting block watcher");
+        let block_watcher_task = BlockWatcher::new(
+            self.config.ws_url.clone(),
+            Arc::clone(&block_first_seen),
+            Arc::clone(&self.stop_flag),
+        )
+        .start();
 
         let sender_addresses: Vec<_> = self.accounts.accounts().iter().map(|a| a.address).collect();
         let mut confirmer = Confirmer::with_timing_data(
@@ -586,6 +582,7 @@ impl LoadRunner {
                 let failed = self.collector.failed_count();
                 let in_flight = confirmer_handle.total_in_flight();
                 let senders_blocked = confirmer_handle.senders_at_limit(max_in_flight_per_sender);
+                let (p50, p99) = self.collector.rolling_p50_p99();
                 let (flashblocks_p50, flashblocks_p99) =
                     self.collector.rolling_flashblocks_p50_p99();
                 info!(
@@ -596,8 +593,10 @@ impl LoadRunner {
                     in_flight,
                     senders_blocked,
                     gas_price = self.gas_price,
-                    flashblocks_seq_p50_ms = flashblocks_p50.as_millis() as u64,
-                    flashblocks_seq_p99_ms = flashblocks_p99.as_millis() as u64,
+                    p50_ms = p50.as_millis() as u64,
+                    p99_ms = p99.as_millis() as u64,
+                    flashblocks_p50_ms = flashblocks_p50.as_millis() as u64,
+                    flashblocks_p99_ms = flashblocks_p99.as_millis() as u64,
                     "progress"
                 );
                 last_progress_report = Instant::now();
@@ -653,14 +652,8 @@ impl LoadRunner {
         }
 
         confirmer_task.abort();
-
-        if let Some(tracker_task) = flashblock_tracker_task {
-            tracker_task.abort();
-        }
-
-        if let Some(watcher_task) = block_watcher_task {
-            watcher_task.abort();
-        }
+        flashblock_tracker_task.abort();
+        block_watcher_task.abort();
 
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");
