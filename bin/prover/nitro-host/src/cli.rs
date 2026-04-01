@@ -83,7 +83,7 @@ struct ProverServerArgs {
     enable_experimental_witness_endpoint: bool,
 
     /// Maximum seconds for a single proof request before it is aborted.
-    #[arg(long, env = "PROOF_REQUEST_TIMEOUT_SECS", default_value = "1740")]
+    #[arg(long, env = "PROOF_REQUEST_TIMEOUT_SECS", default_value = "1740", value_parser = clap::value_parser!(u64).range(1..))]
     proof_request_timeout_secs: u64,
 }
 
