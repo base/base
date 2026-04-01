@@ -82,6 +82,7 @@ std = [
 	"base-proof-mpt/std",
 	"base-proof-preimage/std",
 	"base-protocol/std",
+	"dep:c-kzg",
 	"dep:tokio",
 	"serde/std",
 	"serde_json/std",

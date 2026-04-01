@@ -74,8 +74,8 @@ std = [
 	"alloy-primitives?/std",
 	"base-alloy-consensus?/std",
 	"base-alloy-flz/std",
-	"base-alloy-rpc-types?/std",
 	"base-alloy-rpc-types-engine?/std",
+	"base-alloy-rpc-types?/std",
 	"base-execution-chainspec?/std",
 	"base-execution-consensus?/std",
 	"base-execution-primitives?/std",
@@ -122,7 +122,12 @@ reth = [
 	"dep:reth-storage-errors",
 	"std",
 ]
-rpc = [ "alloy-evm?/rpc", "dep:base-alloy-rpc-types", "dep:reth-rpc-eth-api", "reth" ]
+rpc = [
+	"alloy-evm?/rpc",
+	"dep:base-alloy-rpc-types",
+	"dep:reth-rpc-eth-api",
+	"reth",
+]
 bn = [ "revm/bn" ]
 blst = [ "revm/blst" ]
 c-kzg = [ "revm/c-kzg" ]

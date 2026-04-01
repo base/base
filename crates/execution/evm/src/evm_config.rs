@@ -335,7 +335,6 @@ mod tests {
     use base_alloy_consensus::{OpBlock, OpReceipt, TxDeposit};
     use base_execution_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
     use base_execution_primitives::{OpPrimitives, OpTransactionSigned};
-    use base_revm::{L1_BLOCK_CONTRACT, OpSpecId};
     use reth_chainspec::{ChainSpec, MIN_TRANSACTION_GAS};
     use reth_evm::{
         ConfigureEvm, EvmEnv,
@@ -355,7 +354,7 @@ mod tests {
         state::AccountInfo,
     };
 
-    use crate::{OpEvmConfig, OpRethReceiptBuilder};
+    use crate::{L1_BLOCK_CONTRACT, OpEvmConfig, OpRethReceiptBuilder, OpSpecId};
 
     fn create_op_state_provider() -> StateProviderTest {
         let mut db = StateProviderTest::default();

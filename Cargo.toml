@@ -96,6 +96,9 @@ unreachable-pub = "warn"
 unused-must-use = "deny"
 rust-2018-idioms = "deny"
 unnameable-types = "warn"
+# base_metrics::define_metrics! uses cfg(feature = "metrics") in macro expansions
+# which are evaluated in the destination crate's context, not the defining crate's.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("metrics"))'] }
 
 [workspace.lints.rustdoc]
 all = "warn"

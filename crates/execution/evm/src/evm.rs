@@ -136,8 +136,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
-
     use alloy_evm::{
         EvmFactory, EvmInternals,
         precompiles::{Precompile, PrecompileInput},

@@ -16,7 +16,9 @@ use base_evm::{L1BlockInfo, OpEvmConfig, OpNextBlockEnvAttributes, OpReceiptBuil
 use base_execution_chainspec::OpChainSpec;
 use base_execution_payload_builder::{OpPayloadBuilderAttributes, error::OpPayloadBuilderError};
 use base_execution_primitives::OpTransactionSigned;
-use base_txpool::{BundleTransaction, estimated_da_size::DataAvailabilitySized};
+use base_txpool::{
+    BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
+};
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
