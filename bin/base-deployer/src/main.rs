@@ -6,10 +6,12 @@
 mod cli;
 mod config;
 mod devnet;
+mod deploy;
+mod external;
 mod genesis;
 
 use clap::Parser;
-use eyre::{Result, WrapErr, bail};
+use eyre::{ContextCompat, Result, WrapErr, bail};
 
 use self::cli::{Cli, Commands};
 
@@ -35,8 +37,27 @@ async fn run() -> Result<()> {
             println!("Generated devnet genesis artifacts in {}", artifacts.output_dir.display());
             Ok(())
         }
-        Commands::DeployL1 { .. } => bail!("`base-deployer deploy-l1` is not implemented yet"),
-        Commands::DeployL2 { .. } => bail!("`base-deployer deploy-l2` is not implemented yet"),
+        Commands::DeployL1 { l1_rpc } => {
+            let l1_rpc = l1_rpc.context("`base-deployer deploy-l1` requires --l1-rpc")?;
+            let output = deploy::deploy_l1(config, cli.output_dir, &l1_rpc)
+                .await
+                .wrap_err("Failed to deploy L1 contracts")?;
+            println!(
+                "Deployed L1 contracts. Manifest: {}",
+                output.manifest_path.display()
+            );
+            Ok(())
+        }
+        Commands::DeployL2 { l1_rpc } => {
+            let output = deploy::deploy_l2(config, cli.output_dir, l1_rpc.as_deref())
+                .await
+                .wrap_err("Failed to extract L2 deployment artifacts")?;
+            println!(
+                "Generated L2 deployment artifacts. Genesis: {}",
+                output.genesis_path.display()
+            );
+            Ok(())
+        }
         Commands::Devnet { .. } => bail!("`base-deployer devnet` is not implemented yet"),
         Commands::Status { .. } => bail!("`base-deployer status` is not implemented yet"),
     }

@@ -9,6 +9,8 @@ const PREFUND_CONTRACT_CODE: &str = "0x7ffffffffffffffffffffffffffffffffffffffff
 
 /// Standard mnemonic used for local devnets.
 pub(crate) const TEST_MNEMONIC: &str = "test test test test test test test test test test test junk";
+/// Deterministic builder enode ID used by the existing devnet setup.
+pub(crate) const BUILDER_ENODE_ID: &str = "3255458e24278e31d5940f304b16300fdff3f6efd3e2a030b5818310ac67af45e28d057e6a332d07e0c5ab09d6947fd4eed1a646edbf224e2d2fec6f49f90abc";
 
 /// Derived devnet account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +54,12 @@ pub(crate) fn role_accounts() -> RoleAccounts {
         challenger: accounts[8],
         builder: accounts[9],
     }
+}
+
+/// Returns the deterministic sequencer P2P keys used by the docker devnet.
+pub(crate) fn sequencer_p2p_keys() -> [B256; 2] {
+    let accounts = derived_accounts();
+    [accounts[3].private_key, accounts[4].private_key]
 }
 
 /// Generates the L1 execution layer genesis JSON.

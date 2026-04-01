@@ -91,13 +91,62 @@ impl DeployerConfig {
 
     /// Resolves defaults, random chain IDs, and output directory safety checks.
     pub(crate) fn resolve(self, output_dir_override: Option<PathBuf>) -> Result<ResolvedConfig> {
-        let chain_ids = resolve_chain_ids(self.l1_chain_id, self.l2_chain_id);
+        let output_dir = self.output_dir(output_dir_override)?;
+        let chain_ids = self.resolve_chain_ids(&output_dir, None)?;
+        self.finish_resolution(output_dir, chain_ids)
+    }
+
+    /// Resolves defaults while pinning the L1 chain ID to a detected live value.
+    pub(crate) fn resolve_with_l1_chain_id(
+        self,
+        output_dir_override: Option<PathBuf>,
+        detected_l1_chain_id: u64,
+    ) -> Result<ResolvedConfig> {
+        let output_dir = self.output_dir(output_dir_override)?;
+        let chain_ids = self.resolve_chain_ids(&output_dir, Some(detected_l1_chain_id))?;
+        self.finish_resolution(output_dir, chain_ids)
+    }
+}
+
+impl ResolvedConfig {
+    /// Returns the chain ID bundle.
+    pub(crate) const fn chain_ids(&self) -> ChainIds {
+        ChainIds { l1_chain_id: self.l1_chain_id, l2_chain_id: self.l2_chain_id }
+    }
+}
+
+impl DeployerConfig {
+    fn output_dir(&self, output_dir_override: Option<PathBuf>) -> Result<PathBuf> {
         let output_dir = output_dir_override
-            .or(self.output_dir)
+            .or_else(|| self.output_dir.clone())
             .unwrap_or_else(|| PathBuf::from(DEFAULT_OUTPUT_DIR));
-
         ensure_output_dir_is_safe(&output_dir)?;
+        Ok(output_dir)
+    }
 
+    fn resolve_chain_ids(
+        &self,
+        output_dir: &Path,
+        detected_l1_chain_id: Option<u64>,
+    ) -> Result<ChainIds> {
+        let existing = load_existing_chain_ids(output_dir)?;
+        let explicit_l1 = self.l1_chain_id.or(existing.map(|ids| ids.l1_chain_id));
+        let explicit_l2 = self.l2_chain_id.or(existing.map(|ids| ids.l2_chain_id));
+
+        if let (Some(expected), Some(detected)) = (explicit_l1, detected_l1_chain_id)
+            && expected != detected
+        {
+            bail!(
+                "Configured L1 chain ID {} does not match detected live L1 chain ID {}",
+                expected,
+                detected
+            );
+        }
+
+        Ok(resolve_chain_ids(explicit_l1.or(detected_l1_chain_id), explicit_l2))
+    }
+
+    fn finish_resolution(self, output_dir: PathBuf, chain_ids: ChainIds) -> Result<ResolvedConfig> {
         Ok(ResolvedConfig {
             output_dir,
             l1_chain_id: chain_ids.l1_chain_id,
@@ -107,13 +156,6 @@ impl DeployerConfig {
             prefund_balance: parse_balance(self.prefund_balance.as_deref())?,
             l2_base_v1_block: self.l2_base_v1_block,
         })
-    }
-}
-
-impl ResolvedConfig {
-    /// Returns the chain ID bundle.
-    pub(crate) const fn chain_ids(&self) -> ChainIds {
-        ChainIds { l1_chain_id: self.l1_chain_id, l2_chain_id: self.l2_chain_id }
     }
 }
 
@@ -131,6 +173,20 @@ fn resolve_chain_ids(l1_chain_id: Option<u64>, l2_chain_id: Option<u64>) -> Chai
     });
 
     ChainIds { l1_chain_id: l1, l2_chain_id: l2 }
+}
+
+/// Loads chain IDs from an existing artifact bundle, if present.
+pub(crate) fn load_existing_chain_ids(output_dir: &Path) -> Result<Option<ChainIds>> {
+    let path = output_dir.join("chain-ids.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let contents = std::fs::read_to_string(&path)
+        .wrap_err_with(|| format!("Failed to read existing chain IDs at {}", path.display()))?;
+    serde_json::from_str(&contents)
+        .map(Some)
+        .wrap_err_with(|| format!("Failed to parse existing chain IDs at {}", path.display()))
 }
 
 fn ensure_output_dir_is_safe(output_dir: &Path) -> Result<()> {

@@ -3,10 +3,10 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
 };
 
-use eyre::{ContextCompat, Result, WrapErr, ensure};
+use eyre::{ContextCompat, Result, WrapErr};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -14,6 +14,7 @@ use crate::config::{ChainIds, ResolvedConfig};
 use crate::devnet::{
     TEST_MNEMONIC, derived_accounts, l1_beacon_config_yaml, l1_el_genesis, l2_intent_toml,
 };
+use crate::external::{capture_stdout_to_path, run_command};
 
 /// Paths to genesis artifacts produced by `base-deployer genesis`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -377,53 +378,11 @@ fn patch_base_v1_activation(config: &ResolvedConfig, paths: &GenesisPaths) -> Re
         return Ok(());
     };
 
-    let mut rollup: Value = read_json(&paths.l2_rollup)?;
-    let mut genesis: Value = read_json(&paths.l2_genesis)?;
-
-    let block_time = rollup
-        .get("block_time")
-        .and_then(Value::as_u64)
-        .context("rollup.json is missing `block_time`")?;
-    let l2_genesis_time = rollup
-        .get("genesis")
-        .and_then(Value::as_object)
-        .and_then(|genesis| genesis.get("l2_time"))
-        .and_then(Value::as_u64)
-        .context("rollup.json is missing `genesis.l2_time`")?;
-
-    let base_v1_time = l2_genesis_time + (block_time * base_v1_block);
-    let rollup_base = rollup
-        .as_object_mut()
-        .expect("rollup config should be a JSON object")
-        .entry("base")
-        .or_insert_with(|| json!({}));
-    rollup_base
-        .as_object_mut()
-        .expect("rollup base config should be an object")
-        .insert("v1".to_string(), Value::from(base_v1_time));
-
-    let genesis_config = genesis
-        .get_mut("config")
-        .and_then(Value::as_object_mut)
-        .context("genesis.json is missing `config`")?;
-    genesis_config.insert("osakaTime".to_string(), Value::from(base_v1_time));
-    let base_config = genesis_config.entry("base".to_string()).or_insert_with(|| json!({}));
-    base_config
-        .as_object_mut()
-        .expect("genesis base config should be an object")
-        .insert("v1".to_string(), Value::from(base_v1_time));
-
-    write_json(&paths.l2_rollup, &rollup)?;
-    write_json(&paths.l2_genesis, &genesis)?;
-    Ok(())
+    patch_base_v1_activation_files(&paths.l2_rollup, &paths.l2_genesis, base_v1_block)
 }
 
 fn write_rollup_conductor(paths: &GenesisPaths) -> Result<()> {
-    let mut rollup: Value = read_json(&paths.l2_rollup)?;
-    if let Some(object) = rollup.as_object_mut() {
-        object.remove("base");
-    }
-    write_json(&paths.l2_rollup_conductor, &rollup)
+    write_rollup_conductor_file(&paths.l2_rollup, &paths.l2_rollup_conductor)
 }
 
 fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
@@ -478,25 +437,62 @@ fn reorganize_validator_data(validator_keys_dir: &Path, validator_data_dir: &Pat
     Ok(())
 }
 
-fn run_command(command: &mut Command, purpose: &str) -> Result<()> {
-    command.stdout(Stdio::null()).stderr(Stdio::piped());
-    let output = command.output().wrap_err_with(|| format!("Failed to {purpose}"))?;
-    ensure!(
-        output.status.success(),
-        "{purpose} failed: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
-    Ok(())
+/// Applies the optional Base V1 activation timestamp to rollup and genesis files.
+pub(crate) fn patch_base_v1_activation_files(
+    rollup_path: &Path,
+    genesis_path: &Path,
+    base_v1_block: u64,
+) -> Result<()> {
+    let mut rollup: Value = read_json(rollup_path)?;
+    let mut genesis: Value = read_json(genesis_path)?;
+
+    let block_time = rollup
+        .get("block_time")
+        .and_then(Value::as_u64)
+        .context("rollup.json is missing `block_time`")?;
+    let l2_genesis_time = rollup
+        .get("genesis")
+        .and_then(Value::as_object)
+        .and_then(|genesis| genesis.get("l2_time"))
+        .and_then(Value::as_u64)
+        .context("rollup.json is missing `genesis.l2_time`")?;
+
+    let base_v1_time = l2_genesis_time + (block_time * base_v1_block);
+    let rollup_base = rollup
+        .as_object_mut()
+        .expect("rollup config should be a JSON object")
+        .entry("base")
+        .or_insert_with(|| json!({}));
+    rollup_base
+        .as_object_mut()
+        .expect("rollup base config should be an object")
+        .insert("v1".to_string(), Value::from(base_v1_time));
+
+    let genesis_config = genesis
+        .get_mut("config")
+        .and_then(Value::as_object_mut)
+        .context("genesis.json is missing `config`")?;
+    genesis_config.insert("osakaTime".to_string(), Value::from(base_v1_time));
+    let base_config = genesis_config.entry("base".to_string()).or_insert_with(|| json!({}));
+    base_config
+        .as_object_mut()
+        .expect("genesis base config should be an object")
+        .insert("v1".to_string(), Value::from(base_v1_time));
+
+    write_json(rollup_path, &rollup)?;
+    write_json(genesis_path, &genesis)
 }
 
-fn capture_stdout_to_path(command: &mut Command, path: &Path, purpose: &str) -> Result<()> {
-    let output = command.output().wrap_err_with(|| format!("Failed to {purpose}"))?;
-    ensure!(
-        output.status.success(),
-        "{purpose} failed: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
-    fs::write(path, output.stdout).wrap_err_with(|| format!("Failed to write {}", path.display()))
+/// Writes an op-conductor compatible rollup config by stripping Base-specific fields.
+pub(crate) fn write_rollup_conductor_file(
+    rollup_path: &Path,
+    conductor_path: &Path,
+) -> Result<()> {
+    let mut rollup: Value = read_json(rollup_path)?;
+    if let Some(object) = rollup.as_object_mut() {
+        object.remove("base");
+    }
+    write_json(conductor_path, &rollup)
 }
 
 #[cfg(test)]
