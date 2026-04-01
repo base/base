@@ -39,7 +39,7 @@ impl<B: ProverBackend> ProverService<B> {
     /// 4. Runs witness generation via [`Host::build_witness`]
     /// 5. Hands the populated oracle to [`ProverBackend::prove`]
     ///
-    /// The entire operation is bounded by [`Self::proof_request_timeout`].
+    /// The entire operation is bounded by the configured `proof_request_timeout_secs`.
     /// If witness generation or proving gets stuck (e.g. infinite prefetch
     /// retry loops), the timeout fires and a clean error is returned.
     pub async fn prove_block(&self, request: ProofRequest) -> Result<ProofResult, ProverError<B>> {
@@ -61,15 +61,16 @@ impl<B: ProverBackend> ProverService<B> {
             Ok(inner) => inner,
             Err(_elapsed) => {
                 warn!(l2_block, timeout_secs = timeout.as_secs(), "proof request timed out");
-                Err(ProverError::Host(HostError::Custom(format!(
-                    "proof request timed out after {}s for L2 block {l2_block}",
-                    timeout.as_secs()
-                ))))
+                Err(ProverError::Host(HostError::Timeout {
+                    timeout_secs: timeout.as_secs(),
+                    l2_block,
+                }))
             }
         };
 
         guard.set_outcome(match &result {
             Ok(_) => Metrics::OUTCOME_SUCCESS,
+            Err(ProverError::Host(HostError::Timeout { .. })) => Metrics::OUTCOME_TIMEOUT,
             Err(ProverError::Host(_)) => Metrics::OUTCOME_WITNESS_ERROR,
             Err(ProverError::Backend(_)) => Metrics::OUTCOME_PROVE_ERROR,
         });
