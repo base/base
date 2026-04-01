@@ -174,6 +174,14 @@ pub struct BuilderMetrics {
     // === State Root Time / Gas Ratio (Anomaly Detection) ===
     /// Ratio of `state_root_time_us` / `gas_used` for each transaction.
     pub state_root_time_per_gas_ratio: Histogram,
+
+    // === Execution Observability for Unmetered Transactions ===
+    /// Actual execution time for transactions without metering data (microseconds)
+    pub unmetered_tx_actual_execution_time_us: Histogram,
+    /// Number of accounts modified by a transaction (from EVM post-state)
+    pub tx_accounts_modified: Histogram,
+    /// Number of storage slots modified by a transaction (from EVM post-state)
+    pub tx_storage_slots_modified: Histogram,
 }
 
 impl BuilderMetrics {
