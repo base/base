@@ -142,7 +142,9 @@ impl FlashblockTracker {
 
                 while times.len() > MAX_FLASHBLOCK_CACHE_SIZE {
                     match eviction_queue.pop_front() {
-                        Some(old) => { times.remove(&old); }
+                        Some(old) => {
+                            times.remove(&old);
+                        }
                         None => break,
                     }
                 }
