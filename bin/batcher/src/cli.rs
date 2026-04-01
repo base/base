@@ -197,6 +197,7 @@ impl BatcherArgs {
             sub_safety_margin: self.sub_safety_margin,
             target_num_frames: self.target_num_frames,
             approx_compr_ratio: self.approx_compr_ratio,
+            ..base_batcher_encoder::EncoderConfig::default()
         };
         encoder_config.validate()?;
         Ok(BatcherConfig {
