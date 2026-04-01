@@ -841,6 +841,19 @@ impl OpPayloadBuilderCtx {
             BuilderMetrics::tx_actual_execution_time_us().record(actual_execution_time_us as f64);
             num_txs_simulated += 1;
 
+            // Record state modification counts (trie work proxy)
+            let accounts_modified = state.len();
+            let storage_slots_modified: usize =
+                state.values().map(|a| a.storage.len()).sum();
+            BuilderMetrics::tx_accounts_modified().record(accounts_modified as f64);
+            BuilderMetrics::tx_storage_slots_modified().record(storage_slots_modified as f64);
+
+            // Record execution time for unmetered transactions (race condition indicator)
+            if resource_usage.is_none() {
+                BuilderMetrics::unmetered_tx_actual_execution_time_us()
+                    .record(actual_execution_time_us as f64);
+            }
+
             // Record prediction accuracy
             if let Some(predicted_us) = predicted_execution_time_us {
                 let error = predicted_us as f64 - actual_execution_time_us as f64;

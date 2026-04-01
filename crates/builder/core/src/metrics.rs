@@ -185,6 +185,12 @@ base_metrics::define_metrics! {
     #[describe("Priority fee of rejected transactions")]
     #[label(reason)]
     rejected_tx_priority_fee: histogram,
+    #[describe("Actual execution time for transactions without metering data (microseconds)")]
+    unmetered_tx_actual_execution_time_us: histogram,
+    #[describe("Number of accounts modified by a transaction (from EVM post-state)")]
+    tx_accounts_modified: histogram,
+    #[describe("Number of storage slots modified by a transaction (from EVM post-state)")]
+    tx_storage_slots_modified: histogram,
 }
 
 impl BuilderMetrics {
