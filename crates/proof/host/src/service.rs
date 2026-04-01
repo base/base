@@ -71,8 +71,7 @@ impl<B: ProverBackend> ProverService<B> {
         let result = match tokio::time::timeout(
             timeout,
             Box::pin(
-                self.prove_block_inner(request)
-                    .instrument(info_span!("proof_request", l2_block)),
+                self.prove_block_inner(request).instrument(info_span!("proof_request", l2_block)),
             ),
         )
         .await
