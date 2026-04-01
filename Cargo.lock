@@ -3611,6 +3611,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-deployer"
+version = "0.0.0"
+dependencies = [
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-signer-local",
+ "base-cli-utils",
+ "clap",
+ "eyre",
+ "hex",
+ "rand 0.9.2",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml 1.0.7+spec-1.1.0",
+ "url",
+]
+
+[[package]]
 name = "base-engine-tree"
 version = "0.0.0"
 dependencies = [
