@@ -4,6 +4,24 @@ Thanks for your interest in improving Base.
 
 This document will help you get started. **Do not let this document intimidate you**. It should be considered as a guide to help you navigate the process.
 
+## Contributor Trust System
+
+We use [vouch](https://github.com/mitchellh/vouch) to manage contributor trust. This helps us maintain code quality by gating pull requests behind an explicit trust list.
+
+**What this means for you:**
+
+- **Issues** are open to everyone — no restrictions.
+- **Pull requests** require you to be vouched. PRs from unvouched users are auto-closed.
+- **Org collaborators** with write access bypass this check automatically.
+
+**How to get vouched:**
+
+1. Open an issue describing the bug or feature you'd like to work on.
+2. A maintainer will review and comment `vouch` to add you to the trust list.
+3. Once vouched, you can open pull requests.
+
+The trust list lives in [`.github/VOUCHED.td`](.github/VOUCHED.td).
+
 ## Ways to Contribute
 
 There are three ways an individual can contribute:
