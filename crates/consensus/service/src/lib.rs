@@ -17,14 +17,14 @@ pub use service::{
 
 mod actors;
 pub use actors::{
-    AlloyL1BlockFetcher, BlockStream, BuildRequest, CancellableContext, Conductor, ConductorClient,
-    ConductorError, DelayedL1OriginSelectorProvider, DelegateDerivationActor, DelegateL2Client,
-    DelegateL2ClientError, DelegateL2DerivationActor, DerivationActor, DerivationActorRequest,
-    DerivationClientError, DerivationClientResult, DerivationDelegateClient,
-    DerivationDelegateClientError, DerivationEngineClient, DerivationError, DerivationState,
-    DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate, EngineActor,
-    EngineActorRequest, EngineClientError, EngineClientResult, EngineConfig,
-    EngineDerivationClient, EngineError, EngineProcessingRequest, EngineProcessor,
+    AlloyL1BlockFetcher, BlockStream, BootstrapRole, BuildRequest, CancellableContext, Conductor,
+    ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
+    DelegateL2Client, DelegateL2ClientError, DelegateL2DerivationActor, DerivationActor,
+    DerivationActorRequest, DerivationClientError, DerivationClientResult,
+    DerivationDelegateClient, DerivationDelegateClientError, DerivationEngineClient,
+    DerivationError, DerivationState, DerivationStateMachine, DerivationStateTransitionError,
+    DerivationStateUpdate, EngineActor, EngineActorRequest, EngineClientError, EngineClientResult,
+    EngineConfig, EngineDerivationClient, EngineError, EngineProcessingRequest, EngineProcessor,
     EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest, EngineRpcRequestReceiver,
     GetPayloadRequest, GossipTransport, L1BlockFetcher, L1OriginSelector, L1OriginSelectorError,
     L1OriginSelectorProvider, L1WatcherActor, L1WatcherActorError, L1WatcherDerivationClient,
@@ -43,6 +43,7 @@ pub use actors::{
 mod metrics;
 #[cfg(test)]
 pub use actors::{
-    MockConductor, MockOriginSelector, MockSequencerEngineClient, MockUnsafePayloadGossipClient,
+    MockConductor, MockEngineDerivationClient, MockOriginSelector, MockSequencerEngineClient,
+    MockUnsafePayloadGossipClient,
 };
 pub use metrics::Metrics;

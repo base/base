@@ -96,8 +96,8 @@ where
 
     /// Handles a [`Signal`] received over the derivation signal receiver channel.
     async fn signal(&mut self, signal: Signal) {
-        if let Signal::Reset(ResetSignal { l1_origin: _l1_origin, .. }) = signal {
-            Metrics::derivation_l1_origin().absolute(_l1_origin.number);
+        if let Signal::Reset(ResetSignal { l2_safe_head: _reset_safe_head }) = signal {
+            Metrics::derivation_l1_origin().absolute(_reset_safe_head.l1_origin.number);
             // Clear the finalization queue on reset.
             self.finalizer.clear();
             // Discard any in-flight derived_from so that a stale pre-reset L1 inclusion
@@ -165,30 +165,13 @@ where
                         PipelineErrorKind::Reset(e) => {
                             warn!(target: "derivation", error = %e, "Derivation pipeline is being reset");
 
-                            let system_config = self
-                                .pipeline
-                                .system_config_by_number(
-                                    self.derivation_state_machine
-                                        .last_confirmed_safe_head()
-                                        .block_info
-                                        .number,
-                                )
-                                .await?;
-
                             if matches!(e, ResetError::HoloceneActivation) {
-                                let l1_origin = self
-                                    .pipeline
-                                    .origin()
-                                    .ok_or(PipelineError::MissingOrigin.crit())?;
-
                                 self.pipeline
                                     .signal(
                                         ActivationSignal {
                                             l2_safe_head: self
                                                 .derivation_state_machine
                                                 .last_confirmed_safe_head(),
-                                            l1_origin,
-                                            system_config: Some(system_config),
                                         }
                                         .signal(),
                                     )

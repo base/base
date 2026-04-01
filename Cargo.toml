@@ -62,7 +62,7 @@ members = [
   "crates/infra/mempool-rebroadcaster",
   "crates/infra/websocket-proxy",
   "crates/infra/load-tests",
-  "crates/alloy/*",
+  "crates/core/*",
   "crates/execution/*",
   "crates/txpool",
   "etc/tools/*",
@@ -173,19 +173,19 @@ incremental = false
 
 [workspace.dependencies]
 # Base Primitives
-base-bundles = { path = "crates/alloy/bundles" }
-base-alloy-signer = { path = "crates/alloy/signer" }
-base-alloy-network = { path = "crates/alloy/network" }
-base-alloy-provider = { path = "crates/alloy/provider" }
-base-alloy-chains = { path = "crates/alloy/chains" }
-base-alloy-rpc-types = { path = "crates/alloy/rpc-types" }
-base-access-lists = { path = "crates/alloy/access-lists" }
-base-alloy-flashblocks = { path = "crates/alloy/flashblocks" }
-base-alloy-rpc-jsonrpsee = { path = "crates/alloy/rpc-jsonrpsee" }
-base-alloy-evm = { path = "crates/alloy/evm", default-features = false }
-base-alloy-flz = { path = "crates/alloy/flz", default-features = false }
-base-alloy-consensus = { path = "crates/alloy/consensus", default-features = false }
-base-alloy-rpc-types-engine = { path = "crates/alloy/rpc-types-engine", default-features = false }
+base-bundles = { path = "crates/core/bundles" }
+base-alloy-signer = { path = "crates/core/signer" }
+base-alloy-network = { path = "crates/core/network" }
+base-alloy-provider = { path = "crates/core/provider" }
+base-alloy-chains = { path = "crates/core/chains" }
+base-alloy-rpc-types = { path = "crates/core/rpc-types" }
+base-access-lists = { path = "crates/core/access-lists" }
+base-alloy-flashblocks = { path = "crates/core/flashblocks" }
+base-alloy-rpc-jsonrpsee = { path = "crates/core/rpc-jsonrpsee" }
+base-alloy-evm = { path = "crates/core/evm", default-features = false }
+base-alloy-flz = { path = "crates/core/flz", default-features = false }
+base-alloy-consensus = { path = "crates/core/consensus", default-features = false }
+base-alloy-rpc-types-engine = { path = "crates/core/rpc-types-engine", default-features = false }
 
 # Builder
 base-builder-core = { path = "crates/builder/core" }

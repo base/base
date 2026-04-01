@@ -55,8 +55,8 @@ where
     /// Maximum wall-clock time to wait for in-flight submissions to settle
     /// when draining on cancellation or source exhaustion.
     drain_timeout: Duration,
-    /// Whether block ingestion is currently paused via the admin API.
-    paused: bool,
+    /// Whether block ingestion is currently stopped (paused via admin or `--stopped` flag).
+    stopped: bool,
     /// Admin command channel, wired in via [`Self::with_admin_rx`].
     admin_rx: Option<mpsc::Receiver<AdminCommand>>,
 }
@@ -98,7 +98,7 @@ where
             l1_head_source: Some(l1_head_source),
             safe_head_rx: None,
             drain_timeout: config.drain_timeout,
-            paused: false,
+            stopped: false,
             admin_rx: None,
         }
     }
@@ -123,6 +123,17 @@ where
         self
     }
 
+    /// Start the driver in a stopped state, deferring block ingestion until
+    /// [`AdminCommand::Resume`] is received via the admin API.
+    ///
+    /// Equivalent to the batcher starting normally and immediately receiving
+    /// a pause command, but without discarding any in-flight submissions.
+    /// Use this when the `--stopped` flag is set at startup.
+    pub const fn with_stopped(mut self, stopped: bool) -> Self {
+        self.stopped = stopped;
+        self
+    }
+
     /// Run the batch driver loop.
     ///
     /// Each iteration has two phases:
@@ -132,6 +143,12 @@ where
     /// When draining (after cancellation or source exhaustion), the I/O phase is
     /// replaced by a bounded drain of all in-flight receipts.
     pub async fn run(mut self) -> Result<(), BatchDriverError> {
+        if self.stopped {
+            info!(
+                stopped = true,
+                "batcher starting in stopped state; call admin_startBatcher to begin submission"
+            );
+        }
         let mut draining = false;
         loop {
             self.drain_encoding()?;
@@ -278,8 +295,8 @@ where
                         AdminCommand::Pause => {
                             self.submissions.discard();
                             self.pipeline.reset();
-                            self.paused = true;
-                            info!(paused = true, "batcher paused via admin");
+                            self.stopped = true;
+                            info!(stopped = true, "batcher paused via admin");
                         }
                         AdminCommand::Resume => {
                             let safe_head =
@@ -287,14 +304,14 @@ where
                             if let Some(n) = safe_head {
                                 self.source.reset_catchup(n + 1);
                                 info!(
-                                    paused = false,
+                                    stopped = false,
                                     catchup_from = %(n + 1),
                                     "batcher resumed via admin, catching up from safe head"
                                 );
                             } else {
-                                info!(paused = false, "batcher resumed via admin");
+                                info!(stopped = false, "batcher resumed via admin");
                             }
-                            self.paused = false;
+                            self.stopped = false;
                         }
                         AdminCommand::SetThrottle { strategy, config } => {
                             self.throttle.set_controller(
@@ -313,7 +330,7 @@ where
                         }
                         AdminCommand::GetStatus { reply } => {
                             let _ = reply.send(BatcherStatus {
-                                paused: self.paused,
+                                stopped: self.stopped,
                                 in_flight: self.submissions.in_flight_count(),
                                 da_backlog_bytes: self.pipeline.da_backlog_bytes(),
                             });
@@ -324,7 +341,7 @@ where
                 }
 
                 event = self.source.next() => match event {
-                    Ok(L2BlockEvent::Block(_) | L2BlockEvent::Flush) if self.paused => {
+                    Ok(L2BlockEvent::Block(_) | L2BlockEvent::Flush) if self.stopped => {
                         continue;
                     }
                     Ok(L2BlockEvent::Block(block)) => DriverEvent::Block(block),

@@ -111,6 +111,7 @@ pub struct TeeProofResult {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, b256};
+    use base_alloy_chains::BaseChainConfig;
     use base_consensus_registry::Registry;
 
     use super::*;
@@ -199,16 +200,24 @@ mod tests {
     #[test]
     #[ignore]
     fn print_real_config_hashes() {
-        let chains: &[(u64, &str)] =
-            &[(8453, "Base Mainnet"), (84532, "Base Sepolia"), (11763072, "Sepolia Alpha")];
-
-        for &(chain_id, name) in chains {
-            let rollup = Registry::rollup_config(chain_id)
-                .unwrap_or_else(|| panic!("missing rollup config for {name} ({chain_id})"));
-            let mut per_chain = PerChainConfig::from_rollup_config(rollup)
-                .unwrap_or_else(|| panic!("missing system_config for {name} ({chain_id})"));
+        for cfg in BaseChainConfig::all() {
+            let chain_id = cfg.chain_id;
+            let rollup = match Registry::rollup_config(chain_id) {
+                Some(r) => r,
+                None => {
+                    println!("chain {chain_id}: skipped (no rollup config)");
+                    continue;
+                }
+            };
+            let mut per_chain = match PerChainConfig::from_rollup_config(rollup) {
+                Some(pc) => pc,
+                None => {
+                    println!("chain {chain_id}: skipped (no system_config)");
+                    continue;
+                }
+            };
             per_chain.force_defaults();
-            println!("{name} ({chain_id}): {:?}", per_chain.hash());
+            println!("chain {chain_id}: {:?}", per_chain.hash());
         }
     }
 }

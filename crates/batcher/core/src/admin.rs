@@ -15,8 +15,8 @@ pub const ADMIN_CHANNEL_CAPACITY: usize = 32;
 /// Serialised directly as the `admin_getBatcherStatus` JSON-RPC response.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BatcherStatus {
-    /// Whether block ingestion is currently paused via the admin API.
-    pub paused: bool,
+    /// Whether block ingestion is currently stopped (paused via admin or `--stopped` flag).
+    pub stopped: bool,
     /// Number of L1 transactions submitted but not yet confirmed.
     pub in_flight: usize,
     /// Estimated unsubmitted DA backlog in bytes.

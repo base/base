@@ -19,8 +19,8 @@ use base_proof_tee_nitro_attestation_prover::{
 };
 use base_proof_tee_registrar::{
     AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, DEFAULT_MAX_CONCURRENCY,
-    DriverConfig, ProverClient, ProvingConfig, RegistrarConfig, RegistrarError, RegistrarMetrics,
-    RegistrationDriver, RegistryContractClient,
+    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, DriverConfig, ProverClient, ProvingConfig,
+    RegistrarConfig, RegistrarError, RegistrarMetrics, RegistrationDriver, RegistryContractClient,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use clap::{Args, Parser, ValueEnum};
@@ -111,6 +111,15 @@ pub(crate) struct Cli {
     /// generation, so this limits concurrent proof work.
     #[arg(long, env = cli_env!("MAX_CONCURRENCY"), default_value_t = DEFAULT_MAX_CONCURRENCY)]
     max_concurrency: usize,
+
+    // ── Tx Retry ──────────────────────────────────────────────────────────────
+    /// Maximum number of transaction submission retries for transient errors.
+    #[arg(long, env = cli_env!("MAX_TX_RETRIES"), default_value_t = DEFAULT_MAX_TX_RETRIES)]
+    max_tx_retries: u32,
+
+    /// Delay between transaction submission retries, in seconds.
+    #[arg(long, env = cli_env!("TX_RETRY_DELAY_SECS"), default_value_t = DEFAULT_TX_RETRY_DELAY_SECS)]
+    tx_retry_delay_secs: u64,
 
     // ── Health Server ─────────────────────────────────────────────────────────
     #[command(flatten)]
@@ -278,6 +287,12 @@ impl Cli {
             return Err(RegistrarError::Config("--max-concurrency must be greater than 0".into()));
         }
 
+        if self.tx_retry_delay_secs == 0 {
+            return Err(RegistrarError::Config(
+                "--tx-retry-delay-secs must be greater than 0".into(),
+            ));
+        }
+
         if self.health.port == 0 {
             return Err(RegistrarError::Config("health server port must be non-zero".into()));
         }
@@ -295,6 +310,8 @@ impl Cli {
             poll_interval: Duration::from_secs(self.poll_interval_secs),
             prover_timeout: Duration::from_secs(self.prover_timeout_secs),
             max_concurrency: self.max_concurrency,
+            max_tx_retries: self.max_tx_retries,
+            tx_retry_delay: Duration::from_secs(self.tx_retry_delay_secs),
             health_addr,
         })
     }
@@ -400,6 +417,8 @@ impl Cli {
             poll_interval: config.poll_interval,
             cancel: cancel.clone(),
             max_concurrency: config.max_concurrency,
+            max_tx_retries: config.max_tx_retries,
+            tx_retry_delay: config.tx_retry_delay,
         };
 
         // Mark the service as ready. This signals "initialised and running", not
@@ -621,6 +640,7 @@ mod tests {
     #[case::zero_prover_timeout("--prover-timeout-secs", "0")]
     #[case::zero_boundless_timeout("--boundless-timeout-secs", "0")]
     #[case::zero_max_concurrency("--max-concurrency", "0")]
+    #[case::zero_tx_retry_delay("--tx-retry-delay-secs", "0")]
     fn zero_duration_fails_into_config(#[case] flag: &str, #[case] value: &str) {
         let mut args = boundless_args();
         args.extend([flag, value]);
@@ -644,6 +664,8 @@ mod tests {
         assert_eq!(config.poll_interval, Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS));
         assert_eq!(config.prover_timeout, Duration::from_secs(DEFAULT_PROVER_TIMEOUT_SECS));
         assert_eq!(config.max_concurrency, DEFAULT_MAX_CONCURRENCY);
+        assert_eq!(config.max_tx_retries, DEFAULT_MAX_TX_RETRIES);
+        assert_eq!(config.tx_retry_delay, Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS));
     }
 
     #[rstest]

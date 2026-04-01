@@ -51,10 +51,6 @@ pub struct SyncStatus {
     /// This points to the L2 block that was derived fully from finalized L1 information, thus
     /// irreversible.
     pub finalized_l2: L2BlockInfo,
-    /// Local safe L2 block ref.
-    ///
-    /// This is an L2 block derived from L1, not yet cross-verified.
-    pub local_safe_l2: L2BlockInfo,
 }
 
 #[cfg(test)]
@@ -115,7 +111,6 @@ mod tests {
             ),
             safe_l2: L2BlockInfo::default(),
             finalized_l2: L2BlockInfo::default(),
-            local_safe_l2: L2BlockInfo::default(),
         };
 
         let json = serde_json::to_string(&status).unwrap();

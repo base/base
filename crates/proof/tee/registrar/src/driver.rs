@@ -15,7 +15,7 @@ use base_tx_manager::{TxCandidate, TxManager};
 use futures::stream::StreamExt;
 use rand::random;
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, info, info_span, warn};
+use tracing::{Instrument, debug, error, info, info_span, warn};
 
 use crate::{
     InstanceDiscovery, ProverClient, ProverInstance, RegistrarError, RegistrarMetrics,
@@ -29,6 +29,13 @@ use crate::{
 /// nonce management tractable. The default allows moderate parallelism
 /// while keeping resource usage bounded.
 pub const DEFAULT_MAX_CONCURRENCY: usize = 4;
+
+/// Default maximum number of transaction submission retries for transient
+/// errors before giving up.
+pub const DEFAULT_MAX_TX_RETRIES: u32 = 3;
+
+/// Default delay between transaction submission retries.
+pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
 
 /// Runtime parameters for the [`RegistrationDriver`] that are not
 /// trait-based dependencies.
@@ -44,6 +51,12 @@ pub struct DriverConfig {
     /// may trigger proof generation, so this bounds concurrent proof work
     /// and nonce acquisition. Defaults to [`DEFAULT_MAX_CONCURRENCY`].
     pub max_concurrency: usize,
+    /// Maximum number of transaction submission retries for transient errors.
+    /// Defaults to [`DEFAULT_MAX_TX_RETRIES`].
+    pub max_tx_retries: u32,
+    /// Delay between transaction submission retries.
+    /// Defaults to [`DEFAULT_TX_RETRY_DELAY_SECS`] seconds.
+    pub tx_retry_delay: Duration,
 }
 
 /// Core registration loop tying together discovery, attestation polling,
@@ -300,7 +313,7 @@ where
             if let Err(e) =
                 self.try_register(instance, signer_address, idx, &all_attestations[idx]).await
             {
-                warn!(
+                error!(
                     error = %e,
                     error_source = e.source().map(|s| s.to_string()).unwrap_or_default(),
                     error_debug = ?e,
@@ -399,8 +412,8 @@ where
         // reverted, insufficient funds, config errors, fee limits, etc.)
         // abort immediately since retrying with the same calldata and
         // state cannot succeed.
-        const MAX_TX_RETRIES: u32 = 3;
-        const TX_RETRY_DELAY: Duration = Duration::from_secs(5);
+        let max_tx_retries = self.config.max_tx_retries;
+        let tx_retry_delay = self.config.tx_retry_delay;
         let mut tx_retries = 0;
 
         let receipt = loop {
@@ -445,7 +458,7 @@ where
                     }
 
                     tx_retries += 1;
-                    if tx_retries > MAX_TX_RETRIES {
+                    if tx_retries > max_tx_retries {
                         return Err(RegistrarError::from(e));
                     }
 
@@ -453,7 +466,7 @@ where
                         error = %e,
                         signer = %signer_address,
                         retry = tx_retries,
-                        max_retries = MAX_TX_RETRIES,
+                        max_retries = max_tx_retries,
                         "tx submission failed, retrying with same proof"
                     );
 
@@ -464,7 +477,7 @@ where
                             debug!("shutdown requested during retry delay");
                             return Err(RegistrarError::from(e));
                         }
-                        () = tokio::time::sleep(TX_RETRY_DELAY) => {}
+                        () = tokio::time::sleep(tx_retry_delay) => {}
                     }
                 }
             }
@@ -958,6 +971,8 @@ mod tests {
             poll_interval: Duration::from_secs(1),
             cancel,
             max_concurrency: DEFAULT_MAX_CONCURRENCY,
+            max_tx_retries: DEFAULT_MAX_TX_RETRIES,
+            tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
         }
     }
 
@@ -1009,9 +1024,8 @@ mod tests {
 
     // ── Configurable mock types for retry tests ────────────────────────
 
-    /// Maximum number of tx submission retries in `try_register`.
-    /// Mirrors the constant in production code.
-    const MAX_TX_RETRIES: u32 = 3;
+    /// Maximum number of tx submission retries used by `default_config`.
+    const MAX_TX_RETRIES: u32 = DEFAULT_MAX_TX_RETRIES;
 
     /// Proof provider that counts `generate_proof` invocations.
     ///

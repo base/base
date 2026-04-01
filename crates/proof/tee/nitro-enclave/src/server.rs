@@ -1,13 +1,18 @@
 /// Enclave server — manages keys, attestation, signing, and proof execution.
-use alloy_primitives::{Address, B256, Bytes, b256, keccak256};
+use std::sync::LazyLock;
+
+use alloy_primitives::{Address, B256, Bytes, keccak256, map::HashMap};
 use alloy_signer_local::PrivateKeySigner;
+use base_alloy_chains::BaseChainConfig;
 use base_alloy_evm::OpEvmFactory;
+use base_consensus_genesis::RollupConfig;
 use base_proof_client::{BootInfo, Prologue};
 use base_proof_preimage::PreimageKey;
 use tracing::info;
 
 use crate::{
-    Ecdsa, NsmRng, NsmSession, Oracle, ProofJournal, Proposal, Signing, TeeProofResult,
+    Ecdsa, NsmRng, NsmSession, Oracle, PerChainConfig, ProofJournal, Proposal, Signing,
+    TeeProofResult,
     error::{NitroError, NsmError, ProposalError, Result},
 };
 
@@ -17,32 +22,25 @@ const SIGNER_KEY_ENV_VAR: &str = "OP_ENCLAVE_SIGNER_KEY";
 /// PCR0 is a SHA-384 hash (48 bytes) per the AWS Nitro Enclaves specification.
 const PCR0_LENGTH: usize = 48;
 
-/// `keccak256(PerChainConfig::marshal_binary())` for Base Mainnet (chain 8453).
+/// Per-chain config hashes derived from [`BaseChainConfig::all`] at first access.
 ///
-/// Produced by `print_real_config_hashes` in `types.rs`.
-const CONFIG_HASH_BASE_MAINNET: B256 =
-    b256!("1607709d90d40904f790574404e2ad614eac858f6162faa0ec34c6bf5e5f3c57");
-
-/// `keccak256(PerChainConfig::marshal_binary())` for Base Sepolia (chain 84532).
-///
-/// Produced by `print_real_config_hashes` in `types.rs`.
-const CONFIG_HASH_BASE_SEPOLIA: B256 =
-    b256!("12e9c45f19f9817c6d4385fad29e7a70c355502cf0883e76a9a7e478a85d1360");
-
-/// `keccak256(PerChainConfig::marshal_binary())` for Sepolia Alpha (chain 11763072).
-///
-/// Produced by `print_real_config_hashes` in `types.rs`.
-const CONFIG_HASH_SEPOLIA_ALPHA: B256 =
-    b256!("4600cdaa81262bf5f124bd9276f605264e2ded951e34923bc838e81c442f0fa4");
-
-/// Look up the hardcoded config hash for a supported chain.
-const fn config_hash_for_chain(chain_id: u64) -> Result<B256> {
-    match chain_id {
-        8453 => Ok(CONFIG_HASH_BASE_MAINNET),
-        84532 => Ok(CONFIG_HASH_BASE_SEPOLIA),
-        11763072 => Ok(CONFIG_HASH_SEPOLIA_ALPHA),
-        _ => Err(NitroError::UnsupportedChain(chain_id)),
+/// Each entry is `keccak256(PerChainConfig::marshal_binary())` with defaults applied.
+/// Chains that lack a `system_config` in their rollup config are skipped.
+static CONFIG_HASHES: LazyLock<HashMap<u64, B256>> = LazyLock::new(|| {
+    let mut map = HashMap::default();
+    for cfg in BaseChainConfig::all() {
+        let rollup = RollupConfig::from(cfg);
+        if let Some(mut per_chain) = PerChainConfig::from_rollup_config(&rollup) {
+            per_chain.force_defaults();
+            map.insert(cfg.chain_id, per_chain.hash());
+        }
     }
+    map
+});
+
+/// Look up the config hash for a supported chain.
+fn config_hash_for_chain(chain_id: u64) -> Result<B256> {
+    CONFIG_HASHES.get(&chain_id).copied().ok_or(NitroError::UnsupportedChain(chain_id))
 }
 
 /// The enclave server.
@@ -254,10 +252,10 @@ impl Server {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::b256;
     use base_consensus_registry::Registry;
 
     use super::*;
-    use crate::PerChainConfig;
 
     #[test]
     fn test_server_new_local_mode() {
@@ -296,20 +294,41 @@ mod tests {
 
     #[test]
     fn config_hashes_match_registry() {
-        let chains: &[(u64, B256)] = &[
-            (8453, CONFIG_HASH_BASE_MAINNET),
-            (84532, CONFIG_HASH_BASE_SEPOLIA),
-            (11763072, CONFIG_HASH_SEPOLIA_ALPHA),
-        ];
-
-        for &(chain_id, expected) in chains {
-            let rollup = Registry::rollup_config(chain_id)
-                .unwrap_or_else(|| panic!("missing rollup config for chain {chain_id}"));
-            let mut per_chain = PerChainConfig::from_rollup_config(rollup)
-                .unwrap_or_else(|| panic!("missing system_config for chain {chain_id}"));
+        for cfg in BaseChainConfig::all() {
+            let chain_id = cfg.chain_id;
+            let Some(rollup) = Registry::rollup_config(chain_id) else { continue };
+            let Some(mut per_chain) = PerChainConfig::from_rollup_config(rollup) else {
+                continue;
+            };
             per_chain.force_defaults();
 
-            assert_eq!(per_chain.hash(), expected, "config hash mismatch for chain {chain_id}");
+            let cached = config_hash_for_chain(chain_id)
+                .unwrap_or_else(|_| panic!("missing config hash for chain {chain_id}"));
+            assert_eq!(per_chain.hash(), cached, "config hash mismatch for chain {chain_id}");
         }
+    }
+
+    #[test]
+    fn config_hash_known_values() {
+        assert_eq!(
+            config_hash_for_chain(8453).unwrap(),
+            b256!("1607709d90d40904f790574404e2ad614eac858f6162faa0ec34c6bf5e5f3c57"),
+        );
+        assert_eq!(
+            config_hash_for_chain(84532).unwrap(),
+            b256!("12e9c45f19f9817c6d4385fad29e7a70c355502cf0883e76a9a7e478a85d1360"),
+        );
+        assert_eq!(
+            config_hash_for_chain(11763072).unwrap(),
+            b256!("4600cdaa81262bf5f124bd9276f605264e2ded951e34923bc838e81c442f0fa4"),
+        );
+        assert_eq!(
+            config_hash_for_chain(1337).unwrap(),
+            b256!("1bb15c380e7cf5cfd303807cc1dff6cd5275a6facc7628091d8b3a7ab6d631b1"),
+        );
+        assert_eq!(
+            config_hash_for_chain(763360).unwrap(),
+            b256!("ab64b3118d2d030a3fd3fe3005239a2f332e48848bbedddca9e10df77ac7303e"),
+        );
     }
 }

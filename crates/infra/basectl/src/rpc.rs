@@ -16,7 +16,10 @@ use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::connect_async;
 use tracing::warn;
 
-use crate::{config::ConductorNodeConfig, tui::Toast};
+use crate::{
+    config::{ConductorNodeConfig, ValidatorNodeConfig},
+    tui::Toast,
+};
 
 const CONCURRENT_BLOCK_FETCHES: usize = 16;
 const WS_RECONNECT_INITIAL_DELAY: Duration = Duration::from_secs(1);
@@ -843,6 +846,130 @@ pub(crate) async fn restart_conductor_node(
     let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
 }
 
+/// Peers saved when a sequencer node is paused, used to restore connectivity on unpause.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PausedPeers {
+    /// Multiaddrs of the CL peers that were connected before pausing.
+    /// Used to reconnect them on unpause via `opp2p_connectPeer`.
+    pub cl_addrs: Vec<String>,
+    /// Enode URLs of the EL peers that were connected before pausing.
+    /// Used to re-add them on unpause via `admin_addPeer`.
+    pub el_enodes: Vec<String>,
+}
+
+/// Disconnects all p2p peers from the CL and EL of a node so that neither layer
+/// can advance.  Returns the saved peer addresses so they can be restored later
+/// via [`unpause_sequencer_node`].
+pub(crate) async fn pause_sequencer_node(
+    node: ConductorNodeConfig,
+    result_tx: mpsc::Sender<Result<(String, PausedPeers), String>>,
+) {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    let outcome: anyhow::Result<(String, PausedPeers)> = async {
+        let cl_client = HttpClientBuilder::default()
+            .request_timeout(TIMEOUT)
+            .build(node.cl_rpc.as_str())
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        // Snapshot connected CL peers before disconnecting so we can restore them.
+        let dump = OpP2PApiClient::opp2p_peers(&cl_client, true)
+            .await
+            .map_err(|e| anyhow::anyhow!("opp2p_peers: {e}"))?;
+
+        let mut cl_addrs = Vec::new();
+        for (peer_id, info) in dump.peers {
+            let _ = OpP2PApiClient::opp2p_disconnect_peer(&cl_client, peer_id).await;
+            if let Some(addr) = info.addresses.into_iter().next() {
+                cl_addrs.push(addr);
+            }
+        }
+
+        // Remove EL peers (best-effort; skip if EL not configured).
+        let mut el_enodes = Vec::new();
+        if let Some(ref el_rpc) = node.el_rpc {
+            let el_client = HttpClientBuilder::default()
+                .request_timeout(TIMEOUT)
+                .build(el_rpc.as_str())
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            let peers: Vec<serde_json::Value> =
+                ClientT::request(&el_client, "admin_peers", rpc_params![])
+                    .await
+                    .unwrap_or_default();
+
+            for peer in &peers {
+                if let Some(enode) = peer.get("enode").and_then(|v| v.as_str()) {
+                    let _: Result<bool, _> =
+                        ClientT::request(&el_client, "admin_removePeer", rpc_params![enode]).await;
+                    el_enodes.push(enode.to_string());
+                }
+            }
+        }
+
+        let msg = format!(
+            "paused {} — disconnected {} CL peer(s), {} EL peer(s)",
+            node.name,
+            cl_addrs.len(),
+            el_enodes.len()
+        );
+        Ok((msg, PausedPeers { cl_addrs, el_enodes }))
+    }
+    .await;
+
+    let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
+}
+
+/// Reconnects the CL and EL peers that were saved by [`pause_sequencer_node`],
+/// allowing the node to resume syncing to tip.
+pub(crate) async fn unpause_sequencer_node(
+    node: ConductorNodeConfig,
+    peers: PausedPeers,
+    result_tx: mpsc::Sender<Result<String, String>>,
+) {
+    const TIMEOUT: Duration = Duration::from_secs(5);
+
+    let outcome: anyhow::Result<String> = async {
+        let cl_client = HttpClientBuilder::default()
+            .request_timeout(TIMEOUT)
+            .build(node.cl_rpc.as_str())
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let mut cl_ok = 0usize;
+        for addr in &peers.cl_addrs {
+            if OpP2PApiClient::opp2p_connect_peer(&cl_client, addr.clone()).await.is_ok() {
+                cl_ok += 1;
+            }
+        }
+
+        let mut el_ok = 0usize;
+        if let Some(ref el_rpc) = node.el_rpc {
+            let el_client = HttpClientBuilder::default()
+                .request_timeout(TIMEOUT)
+                .build(el_rpc.as_str())
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            for enode in &peers.el_enodes {
+                let r: Result<bool, _> =
+                    ClientT::request(&el_client, "admin_addPeer", rpc_params![enode]).await;
+                if r.is_ok() {
+                    el_ok += 1;
+                }
+            }
+        }
+
+        Ok(format!(
+            "unpaused {} — reconnected {cl_ok}/{} CL peer(s), {el_ok}/{} EL peer(s)",
+            node.name,
+            peers.cl_addrs.len(),
+            peers.el_enodes.len()
+        ))
+    }
+    .await;
+
+    let _ = result_tx.send(outcome.map_err(|e| e.to_string())).await;
+}
+
 /// Polls all conductor nodes every 200 ms and forwards status snapshots.
 ///
 /// Builds one pair of HTTP clients per node (conductor RPC + CL RPC) before
@@ -944,6 +1071,135 @@ pub(crate) async fn run_conductor_poller(
                     name: name.clone(),
                     is_leader: is_leader.ok(),
                     conductor_active: conductor_active.ok(),
+                    unsafe_l2_block: sync.as_ref().map(|s| s.unsafe_l2.block_info.number),
+                    unsafe_l2_hash: sync.as_ref().map(|s| s.unsafe_l2.block_info.hash),
+                    safe_l2_block: sync.as_ref().map(|s| s.safe_l2.block_info.number),
+                    safe_l2_hash: sync.as_ref().map(|s| s.safe_l2.block_info.hash),
+                    finalized_l2_block: sync.as_ref().map(|s| s.finalized_l2.block_info.number),
+                    current_l1_block: sync.as_ref().map(|s| s.current_l1.number),
+                    head_l1_block: sync.as_ref().map(|s| s.head_l1.number),
+                    cl_peer_count: cl_peer_stats.ok().map(|s| s.connected),
+                    el_block: el_block_r,
+                    el_syncing: el_syncing_r,
+                    el_peer_count: el_peers_r,
+                }
+            },
+        ))
+        .await;
+
+        if tx.send(statuses).await.is_err() {
+            break;
+        }
+    }
+}
+
+/// Live status snapshot for a single validator (non-sequencing) node.
+#[derive(Debug, Clone)]
+pub(crate) struct ValidatorNodeStatus {
+    /// Human-readable name for this node.
+    pub name: String,
+
+    // ── CL (consensus layer) ─────────────────────────────────────────────
+    /// Unsafe L2 block number from `optimism_syncStatus`.
+    pub unsafe_l2_block: Option<u64>,
+    /// Unsafe L2 block hash from `optimism_syncStatus`.
+    pub unsafe_l2_hash: Option<alloy_primitives::B256>,
+    /// Safe L2 block number from `optimism_syncStatus`.
+    pub safe_l2_block: Option<u64>,
+    /// Safe L2 block hash from `optimism_syncStatus`.
+    pub safe_l2_hash: Option<alloy_primitives::B256>,
+    /// Finalized L2 block number from `optimism_syncStatus`.
+    pub finalized_l2_block: Option<u64>,
+    /// L1 derivation cursor block number (`current_l1`).
+    pub current_l1_block: Option<u64>,
+    /// L1 chain head block number (`head_l1`).
+    pub head_l1_block: Option<u64>,
+    /// Number of connected CL libp2p peers from `opp2p_peerStats`.
+    pub cl_peer_count: Option<u32>,
+
+    // ── EL (execution layer) ─────────────────────────────────────────────
+    /// Latest block number from `eth_blockNumber`. `None` if `el_rpc` not configured.
+    pub el_block: Option<u64>,
+    /// Whether the EL is snap-syncing. `None` if not configured.
+    pub el_syncing: Option<bool>,
+    /// Number of connected EL devp2p peers from `net_peerCount`. `None` if not configured.
+    pub el_peer_count: Option<u32>,
+}
+
+/// Polls all validator nodes every 200 ms and forwards status snapshots.
+pub(crate) async fn run_validator_poller(
+    nodes: Vec<ValidatorNodeConfig>,
+    tx: mpsc::Sender<Vec<ValidatorNodeStatus>>,
+) {
+    const POLL_INTERVAL: Duration = Duration::from_millis(200);
+    const RPC_TIMEOUT: Duration = Duration::from_millis(500);
+
+    let clients: Vec<(String, _, _)> = nodes
+        .into_iter()
+        .filter_map(|node| {
+            let cl_client = HttpClientBuilder::default()
+                .request_timeout(RPC_TIMEOUT)
+                .build(node.cl_rpc.as_str())
+                .inspect_err(|e| {
+                    warn!(error = %e, node = %node.name, "failed to build validator CL HTTP client");
+                })
+                .ok()?;
+            let el_client = node.el_rpc.as_ref().and_then(|url| {
+                HttpClientBuilder::default()
+                    .request_timeout(RPC_TIMEOUT)
+                    .build(url.as_str())
+                    .inspect_err(|e| {
+                        warn!(error = %e, node = %node.name, "failed to build validator EL HTTP client");
+                    })
+                    .ok()
+            });
+            Some((node.name, cl_client, el_client))
+        })
+        .collect();
+
+    let mut interval = tokio::time::interval(POLL_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        interval.tick().await;
+
+        let statuses = futures::future::join_all(clients.iter().map(
+            |(name, cl_client, el_client)| async move {
+                let (sync, cl_peer_stats, el_block_r, el_syncing_r, el_peers_r) = tokio::join!(
+                    RollupNodeApiClient::op_sync_status(cl_client),
+                    OpP2PApiClient::opp2p_peer_stats(cl_client),
+                    async {
+                        if let Some(el) = el_client {
+                            let r: Result<alloy_primitives::U64, _> =
+                                ClientT::request(el, "eth_blockNumber", rpc_params![]).await;
+                            r.ok().map(|v| v.to::<u64>())
+                        } else {
+                            None
+                        }
+                    },
+                    async {
+                        if let Some(el) = el_client {
+                            let r: Result<serde_json::Value, _> =
+                                ClientT::request(el, "eth_syncing", rpc_params![]).await;
+                            r.ok().map(|v| !matches!(v, serde_json::Value::Bool(false)))
+                        } else {
+                            None
+                        }
+                    },
+                    async {
+                        if let Some(el) = el_client {
+                            let r: Result<alloy_primitives::U64, _> =
+                                ClientT::request(el, "net_peerCount", rpc_params![]).await;
+                            r.ok().map(|v| v.to::<u32>())
+                        } else {
+                            None
+                        }
+                    },
+                );
+
+                let sync = sync.ok();
+                ValidatorNodeStatus {
+                    name: name.clone(),
                     unsafe_l2_block: sync.as_ref().map(|s| s.unsafe_l2.block_info.number),
                     unsafe_l2_hash: sync.as_ref().map(|s| s.unsafe_l2.block_info.hash),
                     safe_l2_block: sync.as_ref().map(|s| s.safe_l2.block_info.number),

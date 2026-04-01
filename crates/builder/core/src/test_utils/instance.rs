@@ -296,7 +296,9 @@ pub fn default_node_config() -> NodeConfig<OpChainSpec> {
     node_config_with_chain_spec(chain_spec())
 }
 
-fn chain_spec() -> Arc<OpChainSpec> {
+/// Returns the default test chain spec, lazily initialized from the embedded
+/// genesis template.
+pub fn chain_spec() -> Arc<OpChainSpec> {
     static CHAIN_SPEC: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
         let genesis = include_str!("./artifacts/genesis.json.tmpl");
         let genesis = serde_json::from_str(genesis).expect("invalid genesis JSON");

@@ -2,14 +2,15 @@
 
 use alloc::{boxed::Box, sync::Arc};
 
+use alloy_eips::BlockNumHash;
 use alloy_primitives::Address;
 use async_trait::async_trait;
 use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::BlockInfo;
 
 use crate::{
-    ActivationSignal, ChainProvider, L1RetrievalProvider, Metrics, OriginAdvancer, OriginProvider,
-    PipelineError, PipelineResult, ResetError, ResetSignal, Signal, SignalReceiver,
+    ChainProvider, L1RetrievalProvider, Metrics, OriginAdvancer, OriginProvider, PipelineError,
+    PipelineResult, ResetError, StageReset,
 };
 
 /// The [`PollingTraversal`] stage of the derivation pipeline.
@@ -131,23 +132,32 @@ impl<F: ChainProvider> OriginProvider for PollingTraversal<F> {
 }
 
 #[async_trait]
-impl<F: ChainProvider + Send> SignalReceiver for PollingTraversal<F> {
-    async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
-        match signal {
-            Signal::Reset(ResetSignal { l1_origin, system_config, .. })
-            | Signal::Activation(ActivationSignal { l1_origin, system_config, .. }) => {
-                self.update_origin(l1_origin);
-                self.system_config = system_config.expect("System config must be provided.");
-            }
-            Signal::ProvideBlock(_) => {
-                /* Not supported in this stage. */
-                warn!(target: "traversal", "ProvideBlock signal not supported in PollingTraversal stage.");
-                return Err(PipelineError::UnsupportedSignal.temp());
-            }
-            _ => {}
-        }
-
+impl<F: ChainProvider + Send> StageReset for PollingTraversal<F> {
+    async fn reset(
+        &mut self,
+        l1_origin: BlockNumHash,
+        system_config: SystemConfig,
+    ) -> PipelineResult<()> {
+        let block =
+            self.data_source.block_info_by_number(l1_origin.number).await.map_err(Into::into)?;
+        self.update_origin(block);
+        self.system_config = system_config;
         Ok(())
+    }
+
+    async fn activate(&mut self) -> PipelineResult<()> {
+        // Activation is a no-op for the traversal stage: the L1 origin and system config
+        // are preserved as-is; only higher stages need to clear their buffers.
+        Ok(())
+    }
+
+    async fn flush_channel(&mut self) -> PipelineResult<()> {
+        Ok(())
+    }
+
+    async fn provide_block(&mut self, _block: BlockInfo) -> PipelineResult<()> {
+        warn!(target: "traversal", "ProvideBlock signal not supported in PollingTraversal stage.");
+        Err(PipelineError::UnsupportedSignal.temp())
     }
 }
 
@@ -155,6 +165,7 @@ impl<F: ChainProvider + Send> SignalReceiver for PollingTraversal<F> {
 pub(crate) mod tests {
     use alloc::vec;
 
+    use alloy_eips::BlockNumHash;
     use alloy_primitives::{address, b256};
 
     use super::*;
@@ -174,7 +185,7 @@ pub(crate) mod tests {
         let mut traversal = TraversalTestHelper::new_from_blocks(blocks, receipts);
         assert!(traversal.advance_origin().await.is_ok());
         traversal.done = true;
-        assert!(traversal.signal(Signal::FlushChannel).await.is_ok());
+        assert!(traversal.flush_channel().await.is_ok());
         assert_eq!(traversal.origin(), Some(BlockInfo::default()));
         assert!(traversal.done);
     }
@@ -185,19 +196,13 @@ pub(crate) mod tests {
         let receipts = TraversalTestHelper::new_receipts();
         let mut traversal = TraversalTestHelper::new_from_blocks(blocks, receipts);
         assert!(traversal.advance_origin().await.is_ok());
-        let cfg = SystemConfig::default();
+        let cfg = traversal.system_config;
         traversal.done = true;
-        assert!(
-            traversal
-                .signal(
-                    ActivationSignal { system_config: Some(cfg), ..Default::default() }.signal()
-                )
-                .await
-                .is_ok()
-        );
+        assert!(traversal.activate().await.is_ok());
+        // activate() is a no-op — origin and done flag remain unchanged.
         assert_eq!(traversal.origin(), Some(BlockInfo::default()));
         assert_eq!(traversal.system_config, cfg);
-        assert!(!traversal.done);
+        assert!(traversal.done);
     }
 
     #[tokio::test]
@@ -208,12 +213,7 @@ pub(crate) mod tests {
         assert!(traversal.advance_origin().await.is_ok());
         let cfg = SystemConfig::default();
         traversal.done = true;
-        assert!(
-            traversal
-                .signal(ResetSignal { system_config: Some(cfg), ..Default::default() }.signal())
-                .await
-                .is_ok()
-        );
+        assert!(traversal.reset(BlockNumHash::default(), cfg).await.is_ok());
         assert_eq!(traversal.origin(), Some(BlockInfo::default()));
         assert_eq!(traversal.system_config, cfg);
         assert!(!traversal.done);

@@ -189,7 +189,7 @@ See ["Air-gap"](#air-gap)
 #### Changed Invariants - `finalizeWithdrawalTransaction`
 
 **Output Proposal Validity**
-Instead of checking if the proven withdrawal's output proposal has existed for longer the legacy finalization period,
+Instead of checking if the proven withdrawal's output proposal has existed for longer than the legacy finalization period,
 we check if the dispute game has resolved in the root claim's favor. A `FaultDisputeGame` must never be considered to
 have resolved in the `rootClaim`'s favor unless its `status()` is equal to `DEFENDER_WINS`.
 

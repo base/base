@@ -257,6 +257,13 @@ impl BatcherService {
     pub async fn setup(self, runtime: TokioRuntime) -> eyre::Result<ReadyBatcher> {
         self.config.encoder_config.validate()?;
 
+        if self.config.stopped && self.config.admin_addr.is_none() {
+            eyre::bail!(
+                "--stopped requires --admin-port: the batcher would start stopped with no way to \
+                 resume because the admin JSON-RPC server is not enabled"
+            );
+        }
+
         info!(
             l1_rpc = %self.config.l1_rpc_url,
             l2_rpc = %self.config.l2_rpc_url,
@@ -467,7 +474,8 @@ impl BatcherService {
             DaThrottle::new(throttle, throttle_client),
             l1_head_source,
         )
-        .with_safe_head_rx(safe_head_rx);
+        .with_safe_head_rx(safe_head_rx)
+        .with_stopped(self.config.stopped);
 
         let admin_server = match self.config.admin_addr {
             Some(addr) => {

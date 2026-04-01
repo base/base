@@ -14,8 +14,8 @@ use super::{ChannelReaderProvider, NextFrameProvider};
 use crate::{
     Metrics,
     errors::PipelineError,
-    traits::{OriginAdvancer, OriginProvider, SignalReceiver},
-    types::{PipelineResult, Signal},
+    traits::{OriginAdvancer, OriginProvider, StageReset},
+    types::PipelineResult,
 };
 
 /// The [`ChannelAssembler`] stage is responsible for assembling the [`Frame`]s from the
@@ -27,7 +27,7 @@ use crate::{
 #[derive(Debug)]
 pub struct ChannelAssembler<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     /// The rollup configuration.
     pub cfg: Arc<RollupConfig>,
@@ -39,7 +39,7 @@ where
 
 impl<P> ChannelAssembler<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     /// Creates a new [`ChannelAssembler`] stage with the given configuration and previous stage.
     pub const fn new(cfg: Arc<RollupConfig>, prev: P) -> Self {
@@ -64,7 +64,7 @@ where
 #[async_trait]
 impl<P> ChannelReaderProvider for ChannelAssembler<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
     async fn next_data(&mut self) -> PipelineResult<Option<Bytes>> {
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
@@ -171,7 +171,7 @@ where
 #[async_trait]
 impl<P> OriginAdvancer for ChannelAssembler<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
     async fn advance_origin(&mut self) -> PipelineResult<()> {
         self.prev.advance_origin().await
@@ -180,7 +180,7 @@ where
 
 impl<P> OriginProvider for ChannelAssembler<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     fn origin(&self) -> Option<BlockInfo> {
         self.prev.origin()
@@ -188,12 +188,34 @@ where
 }
 
 #[async_trait]
-impl<P> SignalReceiver for ChannelAssembler<P>
+impl<P> StageReset for ChannelAssembler<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
-    async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
-        self.prev.signal(signal).await?;
+    async fn reset(
+        &mut self,
+        l1_origin: alloy_eips::BlockNumHash,
+        system_config: base_consensus_genesis::SystemConfig,
+    ) -> PipelineResult<()> {
+        self.prev.reset(l1_origin, system_config).await?;
+        self.channel = None;
+        Ok(())
+    }
+
+    async fn activate(&mut self) -> PipelineResult<()> {
+        self.prev.activate().await?;
+        self.channel = None;
+        Ok(())
+    }
+
+    async fn flush_channel(&mut self) -> PipelineResult<()> {
+        self.prev.flush_channel().await?;
+        self.channel = None;
+        Ok(())
+    }
+
+    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
+        self.prev.provide_block(block).await?;
         self.channel = None;
         Ok(())
     }

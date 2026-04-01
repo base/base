@@ -98,6 +98,8 @@ base_metrics::define_metrics! {
     metering_unknown_transaction: counter,
     #[describe("Number of LRU evictions from MeteringStore")]
     metering_store_lru_evictions: counter,
+    #[describe("Size of MeteringStore")]
+    metering_store_size: gauge,
     #[describe("Transactions skipped because metering data has not yet arrived")]
     metering_data_pending_skip: counter,
     #[describe("Transactions rejected by per-tx DA size limit")]
@@ -118,20 +120,20 @@ base_metrics::define_metrics! {
     tx_execution_time_exceeded_total: counter,
     #[describe("Transactions that exceeded flashblock execution time budget")]
     flashblock_execution_time_exceeded_total: counter,
-    #[describe("Transactions that exceeded per-tx state root time limit")]
-    tx_state_root_time_exceeded_total: counter,
-    #[describe("Transactions that exceeded block state root time budget")]
-    block_state_root_time_exceeded_total: counter,
+    #[describe("Transactions that exceeded block state root gas limit")]
+    block_state_root_gas_exceeded_total: counter,
     #[describe("Histogram of (predicted - actual) execution time per transaction in microseconds")]
     execution_time_prediction_error_us: histogram,
     #[describe("Distribution of predicted execution times from metering service (microseconds)")]
     tx_predicted_execution_time_us: histogram,
     #[describe("Distribution of actual execution times (microseconds)")]
     tx_actual_execution_time_us: histogram,
+    #[describe("Per-transaction state root gas (computed from metering data)")]
+    tx_state_root_gas: histogram,
+    #[describe("Cumulative state root gas per block")]
+    block_state_root_gas: histogram,
     #[describe("Distribution of predicted state root times from metering service (microseconds)")]
     tx_predicted_state_root_time_us: histogram,
-    #[describe("Cumulative predicted state root time per block (microseconds)")]
-    block_predicted_state_root_time_us: histogram,
     #[describe("Ratio of state_root_time_us / gas_used for each transaction")]
     state_root_time_per_gas_ratio: histogram,
     #[describe("Flashblock selection total")]
@@ -185,6 +187,12 @@ base_metrics::define_metrics! {
     #[describe("Priority fee of rejected transactions")]
     #[label(reason)]
     rejected_tx_priority_fee: histogram,
+    #[describe("Actual execution time for transactions without metering data (microseconds)")]
+    unmetered_tx_actual_execution_time_us: histogram,
+    #[describe("Number of accounts modified by a transaction (from EVM post-state)")]
+    tx_accounts_modified: histogram,
+    #[describe("Number of storage slots modified by a transaction (from EVM post-state)")]
+    tx_storage_slots_modified: histogram,
 }
 
 impl BuilderMetrics {
@@ -247,12 +255,11 @@ impl BuilderMetrics {
         }
 
         Self::flashblock_state_root_time_used_us(flashblock_index.clone())
-            .record(info.cumulative_state_root_time_us as f64);
-        if let Some(block_state_root_time_limit_us) = limits.block_state_root_time_limit_us {
-            Self::flashblock_state_root_time_headroom_us(flashblock_index.clone()).record(
-                block_state_root_time_limit_us.saturating_sub(info.cumulative_state_root_time_us)
-                    as f64,
-            );
+            .record(info.cumulative_state_root_gas as f64);
+        if let Some(block_state_root_gas_limit) = limits.block_state_root_gas_limit {
+            Self::flashblock_state_root_time_headroom_us(flashblock_index.clone())
+                .record(block_state_root_gas_limit.saturating_sub(info.cumulative_state_root_gas)
+                    as f64);
         }
 
         for (reason, count) in diag.rejection_counts() {
@@ -309,14 +316,14 @@ mod tests {
             cumulative_gas_used: 60,
             cumulative_da_bytes_used: 15,
             flashblock_execution_time_us: 40,
-            cumulative_state_root_time_us: 90,
+            cumulative_state_root_gas: 90,
             ..Default::default()
         };
         let limits = ResourceLimits {
             block_gas_limit: 100,
             block_data_limit: Some(20),
             flashblock_execution_time_limit_us: Some(50),
-            block_state_root_time_limit_us: Some(100),
+            block_state_root_gas_limit: Some(100),
             ..Default::default()
         };
 

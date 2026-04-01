@@ -3,16 +3,17 @@
 use alloc::{boxed::Box, sync::Arc};
 use core::fmt::Debug;
 
+use alloy_eips::BlockNumHash;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_consensus_genesis::RollupConfig;
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::BlockInfo;
 
 use super::{ChannelAssembler, ChannelBank, ChannelReaderProvider, NextFrameProvider};
 use crate::{
     errors::PipelineError,
-    traits::{OriginAdvancer, OriginProvider, SignalReceiver},
-    types::{PipelineResult, Signal},
+    traits::{OriginAdvancer, OriginProvider, StageReset},
+    types::PipelineResult,
 };
 
 /// The [`ChannelProvider`] stage is a mux between the [`ChannelBank`] and [`ChannelAssembler`]
@@ -24,7 +25,7 @@ use crate::{
 #[derive(Debug)]
 pub struct ChannelProvider<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     /// The rollup configuration.
     pub cfg: Arc<RollupConfig>,
@@ -47,7 +48,7 @@ where
 
 impl<P> ChannelProvider<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     /// Creates a new [`ChannelProvider`] with the given configuration and previous stage.
     pub const fn new(cfg: Arc<RollupConfig>, prev: P) -> Self {
@@ -88,7 +89,7 @@ where
 #[async_trait]
 impl<P> OriginAdvancer for ChannelProvider<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
     async fn advance_origin(&mut self) -> PipelineResult<()> {
         self.attempt_update()?;
@@ -105,7 +106,7 @@ where
 
 impl<P> OriginProvider for ChannelProvider<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
 {
     fn origin(&self) -> Option<BlockInfo> {
         self.channel_assembler.as_ref().map_or_else(
@@ -121,17 +122,57 @@ where
 }
 
 #[async_trait]
-impl<P> SignalReceiver for ChannelProvider<P>
+impl<P> StageReset for ChannelProvider<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
-    async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
+    async fn reset(
+        &mut self,
+        l1_origin: BlockNumHash,
+        system_config: SystemConfig,
+    ) -> PipelineResult<()> {
         self.attempt_update()?;
 
         if let Some(channel_assembler) = self.channel_assembler.as_mut() {
-            channel_assembler.signal(signal).await
+            channel_assembler.reset(l1_origin, system_config).await
         } else if let Some(channel_bank) = self.channel_bank.as_mut() {
-            channel_bank.signal(signal).await
+            channel_bank.reset(l1_origin, system_config).await
+        } else {
+            Err(PipelineError::NotEnoughData.temp())
+        }
+    }
+
+    async fn activate(&mut self) -> PipelineResult<()> {
+        self.attempt_update()?;
+
+        if let Some(channel_assembler) = self.channel_assembler.as_mut() {
+            channel_assembler.activate().await
+        } else if let Some(channel_bank) = self.channel_bank.as_mut() {
+            channel_bank.activate().await
+        } else {
+            Err(PipelineError::NotEnoughData.temp())
+        }
+    }
+
+    async fn flush_channel(&mut self) -> PipelineResult<()> {
+        self.attempt_update()?;
+
+        if let Some(channel_assembler) = self.channel_assembler.as_mut() {
+            channel_assembler.flush_channel().await
+        } else if let Some(channel_bank) = self.channel_bank.as_mut() {
+            channel_bank.flush_channel().await
+        } else {
+            Err(PipelineError::NotEnoughData.temp())
+        }
+    }
+
+    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
+        self.attempt_update()?;
+
+        if let Some(channel_assembler) = self.channel_assembler.as_mut() {
+            channel_assembler.provide_block(block).await
+        } else if let Some(channel_bank) = self.channel_bank.as_mut() {
+            channel_bank.provide_block(block).await
         } else {
             Err(PipelineError::NotEnoughData.temp())
         }
@@ -141,7 +182,7 @@ where
 #[async_trait]
 impl<P> ChannelReaderProvider for ChannelProvider<P>
 where
-    P: NextFrameProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
 {
     async fn next_data(&mut self) -> PipelineResult<Option<Bytes>> {
         self.attempt_update()?;
@@ -160,12 +201,13 @@ where
 mod tests {
     use alloc::{sync::Arc, vec};
 
-    use base_consensus_genesis::{HardForkConfig, RollupConfig};
+    use alloy_eips::BlockNumHash;
+    use base_consensus_genesis::{HardForkConfig, RollupConfig, SystemConfig};
     use base_protocol::BlockInfo;
 
     use crate::{
-        ChannelProvider, ChannelReaderProvider, OriginProvider, PipelineError, ResetSignal,
-        SignalReceiver, test_utils::TestNextFrameProvider,
+        ChannelProvider, ChannelReaderProvider, OriginProvider, PipelineError, StageReset,
+        test_utils::TestNextFrameProvider,
     };
 
     #[test]
@@ -324,7 +366,7 @@ mod tests {
         assert!(channel_bank.channel_queue.len() == 1);
 
         // Reset the channel provider.
-        channel_provider.signal(ResetSignal::default().signal()).await.unwrap();
+        channel_provider.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();
 
         // Ensure the channel queue is empty after reset.
         let Some(channel_bank) = channel_provider.channel_bank.as_mut() else {
@@ -358,7 +400,7 @@ mod tests {
         assert!(channel_assembler.channel.is_some());
 
         // Reset the channel provider.
-        channel_provider.signal(ResetSignal::default().signal()).await.unwrap();
+        channel_provider.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();
 
         // Ensure the channel assembler is empty after reset.
         let Some(channel_assembler) = channel_provider.channel_assembler.as_mut() else {

@@ -106,6 +106,15 @@ pub(crate) struct BatcherArgs {
     /// to be active for the next L2 block at startup.
     #[arg(long = "batch-type", default_value = "single", env = "BATCHER_BATCH_TYPE")]
     batch_type: BatchTypeArg,
+    /// Data availability mode for L1 submissions.
+    ///
+    /// Accepts `blobs` (default) or `calldata`.
+    #[arg(
+        long = "data-availability-type",
+        default_value = "blobs",
+        env = "BATCHER_DATA_AVAILABILITY_TYPE"
+    )]
+    da_type: base_batcher_encoder::DaType,
 
     /// Approximate compression ratio used for span batch size estimation.
     ///
@@ -195,6 +204,14 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "admin-port", env = "BATCHER_ADMIN_PORT")]
     pub admin_port: Option<u16>,
 
+    /// Start in a stopped state, deferring batch submission until `admin_startBatcher` is called.
+    ///
+    /// The batcher connects to all endpoints and is fully observable but will not
+    /// submit any batches until activated via the admin API. Useful for staged
+    /// rollouts, controlled restarts, and debugging.
+    #[arg(long = "stopped", env = "BATCHER_STOPPED")]
+    pub stopped: bool,
+
     /// Logging configuration.
     #[command(flatten)]
     pub logging: LogArgs,
@@ -214,6 +231,7 @@ impl BatcherArgs {
             sub_safety_margin: self.sub_safety_margin,
             target_num_frames: self.target_num_frames,
             batch_type: self.batch_type.into(),
+            da_type: self.da_type,
             approx_compr_ratio: self.approx_compr_ratio,
             max_blocks_per_span_batch: self.max_blocks_per_span_batch,
             ..base_batcher_encoder::EncoderConfig::default()
@@ -242,6 +260,7 @@ impl BatcherArgs {
             },
             check_recent_txs_depth: self.check_recent_txs_depth,
             admin_addr: self.admin_port.map(|port| SocketAddr::new(self.admin_addr, port)),
+            stopped: self.stopped,
         })
     }
 
@@ -278,7 +297,6 @@ impl From<BatchTypeArg> for base_batcher_encoder::BatchType {
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -319,5 +337,45 @@ mod tests {
         let config = cli.args.into_config().expect("config should build");
 
         assert_eq!(config.encoder_config.batch_type, base_batcher_encoder::BatchType::Span);
+    }
+
+    #[test]
+    fn into_config_defaults_to_blob_da() {
+        let cli = parse_cli(&[]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Blob);
+    }
+
+    #[test]
+    fn into_config_accepts_calldata_da_mode() {
+        let cli = parse_cli(&["--data-availability-type", "calldata"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Calldata);
+    }
+
+    #[test]
+    fn cli_rejects_auto_da_mode_for_now() {
+        let mut args = base_args();
+        args.extend_from_slice(["--data-availability-type", "auto"].as_slice());
+
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+
+    #[test]
+    fn stopped_defaults_to_false() {
+        let cli = parse_cli(&[]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert!(!config.stopped);
+    }
+
+    #[test]
+    fn stopped_flag_sets_stopped_in_config() {
+        let cli = parse_cli(&["--stopped"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert!(config.stopped);
     }
 }

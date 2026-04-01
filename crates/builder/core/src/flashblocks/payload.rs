@@ -345,10 +345,10 @@ where
         let da_footprint_per_batch =
             info.da_footprint_scalar.map(|_| ctx.block_gas_limit() / flashblocks_per_block);
         let execution_time_per_batch_us = ctx.builder_config.flashblock_execution_time_budget_us;
-        let state_root_time_per_batch_us = ctx
+        let state_root_gas_per_batch = ctx
             .builder_config
-            .block_state_root_time_budget_us
-            .map(|budget| budget / flashblocks_per_block as u128);
+            .block_state_root_gas_limit
+            .map(|limit| limit / flashblocks_per_block);
 
         let extra = FlashblocksExtraCtx {
             flashblock_index: 1,
@@ -357,12 +357,12 @@ where
             target_da_for_batch: da_per_batch,
             target_da_footprint_for_batch: da_footprint_per_batch,
             target_execution_time_for_batch_us: execution_time_per_batch_us,
-            target_state_root_time_for_batch_us: state_root_time_per_batch_us,
+            target_state_root_gas_for_batch: state_root_gas_per_batch,
             gas_per_batch,
             da_per_batch,
             da_footprint_per_batch,
             execution_time_per_batch_us,
-            state_root_time_per_batch_us,
+            state_root_gas_per_batch,
         };
 
         let mut fb_cancel = block_cancel.child_token();
@@ -516,9 +516,8 @@ where
         let target_gas_for_batch = ctx.extra.target_gas_for_batch;
         let mut target_da_for_batch = ctx.extra.target_da_for_batch;
         let mut target_da_footprint_for_batch = ctx.extra.target_da_footprint_for_batch;
-        let mut target_state_root_time_for_batch_us = ctx.extra.target_state_root_time_for_batch_us;
+        let mut target_state_root_gas_for_batch = ctx.extra.target_state_root_gas_for_batch;
         let flashblock_execution_time_limit_us = ctx.extra.execution_time_per_batch_us;
-        let block_state_root_time_limit_us = target_state_root_time_for_batch_us;
 
         info!(
             target: "payload_builder",
@@ -531,7 +530,7 @@ where
             block_gas_used = ctx.block_gas_limit(),
             target_da_footprint = target_da_footprint_for_batch,
             flashblock_execution_time_limit_us = ?flashblock_execution_time_limit_us,
-            target_state_root_time_for_batch_us = ?target_state_root_time_for_batch_us,
+            target_state_root_gas_for_batch = ?target_state_root_gas_for_batch,
             "Building flashblock",
         );
         let flashblock_build_start_time = Instant::now();
@@ -577,8 +576,7 @@ where
             block_da_footprint_limit: target_da_footprint_for_batch,
             tx_execution_time_limit_us: ctx.builder_config.max_execution_time_per_tx_us,
             flashblock_execution_time_limit_us,
-            tx_state_root_time_limit_us: ctx.builder_config.max_state_root_time_per_tx_us,
-            block_state_root_time_limit_us,
+            block_state_root_gas_limit: target_state_root_gas_for_batch,
             block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
         };
         let diag = ctx
@@ -706,10 +704,9 @@ where
                     *footprint += da_footprint_limit;
                 }
 
-                if let (Some(time), Some(time_per_batch)) = (
-                    target_state_root_time_for_batch_us.as_mut(),
-                    ctx.extra.state_root_time_per_batch_us,
-                ) {
+                if let (Some(time), Some(time_per_batch)) =
+                    (target_state_root_gas_for_batch.as_mut(), ctx.extra.state_root_gas_per_batch)
+                {
                     *time += time_per_batch;
                 }
 
@@ -718,7 +715,7 @@ where
                     target_da_for_batch,
                     target_da_footprint_for_batch,
                     ctx.extra.execution_time_per_batch_us,
-                    target_state_root_time_for_batch_us,
+                    target_state_root_gas_for_batch,
                 );
 
                 let gas_headroom_pct = if limits.block_gas_limit > 0 {
@@ -750,8 +747,8 @@ where
                     current_da = info.cumulative_da_bytes_used,
                     flashblock_exec_time_us = info.flashblock_execution_time_us,
                     exec_time_limit_us = ?limits.flashblock_execution_time_limit_us,
-                    cumulative_state_root_time_us = info.cumulative_state_root_time_us,
-                    state_root_time_limit_us = ?limits.block_state_root_time_limit_us,
+                    cumulative_state_root_gas = info.cumulative_state_root_gas,
+                    state_root_gas_limit = ?limits.block_state_root_gas_limit,
                     target_flashblocks = ctx.target_flashblock_count(),
                 );
 
@@ -776,10 +773,9 @@ where
         BuilderMetrics::payload_num_tx().record(info.executed_transactions.len() as f64);
         BuilderMetrics::payload_num_tx_gauge().set(info.executed_transactions.len() as f64);
 
-        // Record cumulative predicted state root time for the block (observation metric)
-        if info.cumulative_state_root_time_us > 0 {
-            BuilderMetrics::block_predicted_state_root_time_us()
-                .record(info.cumulative_state_root_time_us as f64);
+        // Record cumulative state root gas for the block
+        if info.cumulative_state_root_gas > 0 {
+            BuilderMetrics::block_state_root_gas().record(info.cumulative_state_root_gas as f64);
         }
 
         // Record cumulative uncompressed block size
@@ -900,7 +896,7 @@ struct FlashblocksMetadata {
     access_list: Option<FlashblockAccessList>,
 }
 
-fn execute_pre_steps<DB>(
+pub(crate) fn execute_pre_steps<DB>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx,
 ) -> Result<ExecutionInfo, PayloadBuilderError>
@@ -919,7 +915,7 @@ where
     Ok(info)
 }
 
-pub(super) fn build_block<DB, P>(
+pub(crate) fn build_block<DB, P>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx,
     info: &mut ExecutionInfo,
@@ -1162,12 +1158,76 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Receipt;
+    use std::sync::Arc;
+
+    use alloy_consensus::{Header, Receipt};
     use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
     use base_alloy_consensus::OpReceipt;
     use base_alloy_flashblocks::Metadata;
+    use base_execution_chainspec::OpChainSpec;
+    use reth_chainspec::ChainSpec;
+    use reth_primitives_traits::SealedHeader;
+    use reth_provider::noop::NoopProvider;
+    use reth_revm::{State, database::StateProviderDatabase};
 
-    use super::FlashblocksMetadata;
+    use super::{FlashblocksMetadata, build_block};
+    use crate::{ExecutionInfo, flashblocks::context::OpPayloadBuilderCtx};
+
+    /// Creates a minimal [`OpChainSpec`] with all L1 hardforks through Cancun
+    /// active at genesis but **no** OP-specific hardforks (Bedrock, Canyon,
+    /// Ecotone, Holocene, Isthmus, Jovian are all absent).
+    ///
+    /// This keeps `build_block` on the simplest code paths: no blob fields,
+    /// default extra data, no withdrawals root calculation.
+    fn minimal_chain_spec() -> Arc<OpChainSpec> {
+        let genesis: serde_json::Value = serde_json::json!({
+            "config": { "chainId": 901 },
+            "gasLimit": "0x1C9C380",
+            "timestamp": "0x0"
+        });
+        let genesis = serde_json::from_value(genesis).expect("valid genesis");
+
+        let inner =
+            ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
+
+        Arc::new(OpChainSpec { inner })
+    }
+
+    /// Builds a sealed genesis header consistent with [`minimal_chain_spec`].
+    fn genesis_header() -> Arc<SealedHeader> {
+        let header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
+        Arc::new(SealedHeader::seal_slow(header))
+    }
+
+    /// Verify that [`build_block`] produces a valid empty block when called
+    /// with no transactions and `calculate_state_root = false`.
+    ///
+    /// This exercises the full block-assembly path (receipts root, logs bloom,
+    /// header construction, flashblocks payload) using only in-memory state —
+    /// no node, no disk, no network.
+    #[test]
+    fn build_block_empty_no_state_root() {
+        let chain_spec = minimal_chain_spec();
+        let parent = genesis_header();
+        let ctx = OpPayloadBuilderCtx::for_test(chain_spec, Arc::clone(&parent));
+
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+
+        let (payload, fb_payload) =
+            build_block::<_, NoopProvider>(&mut state, &ctx, &mut info, false)
+                .expect("build_block should succeed for an empty block");
+
+        // Block number must be parent + 1.
+        assert_eq!(payload.block().number, parent.number + 1, "block number should be parent + 1");
+
+        // No transactions were executed, so gas used must be zero.
+        assert_eq!(payload.block().gas_used, 0, "empty block should use zero gas");
+
+        // The flashblocks payload must reference the same block.
+        assert_eq!(fb_payload.diff.block_hash, payload.block().hash(), "hash mismatch");
+    }
 
     /// Pin the JSON field names and structure of [`FlashblocksMetadata`].
     ///

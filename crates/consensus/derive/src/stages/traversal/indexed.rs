@@ -2,14 +2,15 @@
 
 use alloc::{boxed::Box, sync::Arc};
 
+use alloy_eips::BlockNumHash;
 use alloy_primitives::Address;
 use async_trait::async_trait;
 use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::BlockInfo;
 
 use crate::{
-    ActivationSignal, ChainProvider, L1RetrievalProvider, Metrics, OriginAdvancer, OriginProvider,
-    PipelineError, PipelineResult, ResetError, ResetSignal, Signal, SignalReceiver,
+    ChainProvider, L1RetrievalProvider, Metrics, OriginAdvancer, OriginProvider, PipelineError,
+    PipelineResult, ResetError, StageReset,
 };
 
 /// The [`IndexedTraversal`] stage of the derivation pipeline.
@@ -125,19 +126,31 @@ impl<F: ChainProvider> OriginProvider for IndexedTraversal<F> {
 }
 
 #[async_trait]
-impl<F: ChainProvider + Send> SignalReceiver for IndexedTraversal<F> {
-    async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
-        match signal {
-            Signal::Reset(ResetSignal { l1_origin, system_config, .. })
-            | Signal::Activation(ActivationSignal { l1_origin, system_config, .. }) => {
-                self.update_origin(l1_origin);
-                self.system_config = system_config.expect("System config must be provided.");
-            }
-            Signal::ProvideBlock(block_info) => self.provide_next_block(block_info).await?,
-            _ => {}
-        }
-
+impl<F: ChainProvider + Send> StageReset for IndexedTraversal<F> {
+    async fn reset(
+        &mut self,
+        l1_origin: BlockNumHash,
+        system_config: SystemConfig,
+    ) -> PipelineResult<()> {
+        let block =
+            self.data_source.block_info_by_number(l1_origin.number).await.map_err(Into::into)?;
+        self.update_origin(block);
+        self.system_config = system_config;
         Ok(())
+    }
+
+    async fn activate(&mut self) -> PipelineResult<()> {
+        // Activation is a no-op for the traversal stage: the L1 origin and system config
+        // are preserved as-is; only higher stages need to clear their buffers.
+        Ok(())
+    }
+
+    async fn flush_channel(&mut self) -> PipelineResult<()> {
+        Ok(())
+    }
+
+    async fn provide_block(&mut self, block_info: BlockInfo) -> PipelineResult<()> {
+        self.provide_next_block(block_info).await
     }
 }
 
@@ -146,6 +159,7 @@ mod tests {
     use alloc::vec;
 
     use alloy_consensus::Receipt;
+    use alloy_eips::BlockNumHash;
     use alloy_primitives::{B256, Bytes, Log, LogData, U256, address, b256};
     use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
 
@@ -226,18 +240,11 @@ mod tests {
         let mut traversal = new_test_managed(blocks, receipts);
         let cfg = SystemConfig::default();
         traversal.done = true;
-        assert!(
-            traversal
-                .signal(Signal::Activation(ActivationSignal {
-                    system_config: Some(cfg),
-                    ..Default::default()
-                }))
-                .await
-                .is_ok()
-        );
+        assert!(traversal.activate().await.is_ok());
+        // activate() is a no-op — origin and done flag remain unchanged.
         assert_eq!(traversal.origin(), Some(BlockInfo::default()));
         assert_eq!(traversal.system_config, cfg);
-        assert!(!traversal.done);
+        assert!(traversal.done);
     }
 
     #[tokio::test]
@@ -247,15 +254,7 @@ mod tests {
         let mut traversal = new_test_managed(blocks, receipts);
         let cfg = SystemConfig::default();
         traversal.done = true;
-        assert!(
-            traversal
-                .signal(Signal::Reset(ResetSignal {
-                    system_config: Some(cfg),
-                    ..Default::default()
-                }))
-                .await
-                .is_ok()
-        );
+        assert!(traversal.reset(BlockNumHash::default(), cfg).await.is_ok());
         assert_eq!(traversal.origin(), Some(BlockInfo::default()));
         assert_eq!(traversal.system_config, cfg);
         assert!(!traversal.done);
@@ -446,9 +445,7 @@ mod tests {
         assert_eq!(traversal.system_config.batcher_address, new_batcher);
     }
 
-    /// After a `ConfigUpdate` log changes `batcher_address` from A → B, sending a
-    /// `Signal::Reset` with a `SystemConfig` containing address A restores the
-    /// batcher address back to A. This models L1 reorg rollback behavior.
+    /// After a reset, `batcher_address` is restored to the system config provided.
     #[tokio::test]
     async fn test_reorg_signal_restores_batcher_address() {
         let addr_a = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
@@ -472,11 +469,9 @@ mod tests {
         let addr_b = address!("000000000000000000000000000000000000bEEF");
         assert_eq!(traversal.batcher_addr(), addr_b);
 
-        // Simulate L1 reorg: send a Reset signal with a SystemConfig that has ADDR_A.
+        // Simulate L1 reorg: reset with a SystemConfig that has ADDR_A.
         let reset_config = SystemConfig { batcher_address: addr_a, ..SystemConfig::default() };
-        let signal =
-            Signal::Reset(ResetSignal { system_config: Some(reset_config), ..Default::default() });
-        assert!(traversal.signal(signal).await.is_ok());
+        assert!(traversal.reset(BlockNumHash::default(), reset_config).await.is_ok());
 
         // After reset, batcher_addr() must be restored to ADDR_A.
         assert_eq!(traversal.batcher_addr(), addr_a);

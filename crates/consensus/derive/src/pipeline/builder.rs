@@ -162,6 +162,9 @@ where
         // Compose the stage stack.
         let mut l1_traversal = IndexedTraversal::new(chain_provider, Arc::clone(&rollup_config));
         l1_traversal.block = Some(builder.origin.expect("origin must be set"));
+        if let Some(system_config) = rollup_config.genesis.system_config {
+            l1_traversal.system_config = system_config;
+        }
         let l1_retrieval = L1Retrieval::new(l1_traversal, dap_source);
         let frame_queue = FrameQueue::new(l1_retrieval, Arc::clone(&rollup_config));
         let channel_provider = ChannelProvider::new(Arc::clone(&rollup_config), frame_queue);

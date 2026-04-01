@@ -3,21 +3,22 @@
 use alloc::{boxed::Box, collections::VecDeque, string::ToString, sync::Arc};
 use core::fmt::Debug;
 
+use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_consensus_genesis::{RollupConfig, SystemConfig};
-use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo, OpAttributesWithParent};
 
 use crate::{
     ActivationSignal, L2ChainProvider, Metrics, NextAttributes, OriginAdvancer, OriginProvider,
     Pipeline, PipelineError, PipelineErrorKind, PipelineResult, ResetSignal, Signal,
-    SignalReceiver, StepResult,
+    SignalReceiver, StageReset, StepResult,
 };
 
 /// The derivation pipeline is responsible for deriving L2 inputs from L1 data.
 #[derive(Debug)]
 pub struct DerivationPipeline<S, P>
 where
-    S: NextAttributes + SignalReceiver + OriginProvider + OriginAdvancer + Debug + Send,
+    S: NextAttributes + StageReset + OriginProvider + OriginAdvancer + Debug + Send,
     P: L2ChainProvider + Send + Sync + Debug,
 {
     /// A handle to the next attributes.
@@ -34,7 +35,7 @@ where
 
 impl<S, P> DerivationPipeline<S, P>
 where
-    S: NextAttributes + SignalReceiver + OriginProvider + OriginAdvancer + Debug + Send,
+    S: NextAttributes + StageReset + OriginProvider + OriginAdvancer + Debug + Send,
     P: L2ChainProvider + Send + Sync + Debug,
 {
     /// Creates a new instance of the [`DerivationPipeline`].
@@ -45,11 +46,52 @@ where
     ) -> Self {
         Self { attributes, prepared: VecDeque::new(), rollup_config, l2_chain_provider }
     }
+
+    /// Walks back the L2 chain from `l2_safe_head` until the walked-back block's L1 origin
+    /// is at most `channel_timeout` L1 blocks behind the safe head's L1 origin, then returns
+    /// that block's L1 origin and system config.
+    ///
+    /// This matches op-node's `initialReset` behavior: using the system config from a
+    /// potentially older L2 block ensures we see any batcher-address changes that could
+    /// affect channels still open within the channel timeout window.
+    async fn initial_reset(
+        &mut self,
+        l2_safe_head: L2BlockInfo,
+    ) -> PipelineResult<(BlockNumHash, SystemConfig)>
+    where
+        <P as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
+    {
+        let channel_timeout = self.rollup_config.channel_timeout(l2_safe_head.block_info.timestamp);
+        let l1_origin_number = l2_safe_head.l1_origin.number;
+        let mut current = l2_safe_head;
+
+        loop {
+            if current.block_info.number == self.rollup_config.genesis.l2.number {
+                break;
+            }
+            if current.l1_origin.number + channel_timeout <= l1_origin_number {
+                break;
+            }
+            current = self
+                .l2_chain_provider
+                .l2_block_info_by_number(current.block_info.number - 1)
+                .await
+                .map_err(Into::into)?;
+        }
+
+        let system_config = self
+            .l2_chain_provider
+            .system_config_by_number(current.block_info.number, Arc::clone(&self.rollup_config))
+            .await
+            .map_err(Into::into)?;
+
+        Ok((current.l1_origin, system_config))
+    }
 }
 
 impl<S, P> OriginProvider for DerivationPipeline<S, P>
 where
-    S: NextAttributes + SignalReceiver + OriginProvider + OriginAdvancer + Debug + Send,
+    S: NextAttributes + StageReset + OriginProvider + OriginAdvancer + Debug + Send,
     P: L2ChainProvider + Send + Sync + Debug,
 {
     fn origin(&self) -> Option<BlockInfo> {
@@ -59,7 +101,7 @@ where
 
 impl<S, P> Iterator for DerivationPipeline<S, P>
 where
-    S: NextAttributes + SignalReceiver + OriginProvider + OriginAdvancer + Debug + Send + Sync,
+    S: NextAttributes + StageReset + OriginProvider + OriginAdvancer + Debug + Send + Sync,
     P: L2ChainProvider + Send + Sync + Debug,
 {
     type Item = OpAttributesWithParent;
@@ -74,36 +116,25 @@ where
 #[async_trait]
 impl<S, P> SignalReceiver for DerivationPipeline<S, P>
 where
-    S: NextAttributes + SignalReceiver + OriginProvider + OriginAdvancer + Debug + Send + Sync,
+    S: NextAttributes + StageReset + OriginProvider + OriginAdvancer + Debug + Send + Sync,
     P: L2ChainProvider + Send + Sync + Debug,
+    <P as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
 {
-    /// Signals the pipeline by calling the [`SignalReceiver::signal`] method.
+    /// Signals the pipeline by dispatching typed [`StageReset`] methods to the stage chain.
     ///
-    /// During a [`Signal::Reset`], each stage is recursively called from the top-level
-    /// [`crate::stages::AttributesQueue`] to the bottom [`crate::PollingTraversal`]
-    /// with a head-recursion pattern. This effectively clears the internal state
-    /// of each stage in the pipeline from bottom on up.
+    /// During a [`Signal::Reset`], [`initial_reset`] walks back the L2 chain to find the
+    /// correct L1 origin and system config before propagating the reset downward. This fixes
+    /// a bug where the pipeline used the system config from exactly the safe head block,
+    /// missing batcher-address changes within the channel timeout window.
     ///
-    /// [`Signal::Activation`] does a similar thing to the reset, with different
-    /// holocene-specific reset rules.
+    /// [`Signal::Activation`] performs a soft reset (clears buffers, preserves origin/config).
     ///
-    /// ### Parameters
-    ///
-    /// The `signal` is contains the signal variant with any necessary parameters.
+    /// [`initial_reset`]: Self::initial_reset
     async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
         match signal {
-            mut s @ Signal::Reset(ResetSignal { l2_safe_head, .. })
-            | mut s @ Signal::Activation(ActivationSignal { l2_safe_head, .. }) => {
-                let system_config = self
-                    .l2_chain_provider
-                    .system_config_by_number(
-                        l2_safe_head.block_info.number,
-                        Arc::clone(&self.rollup_config),
-                    )
-                    .await
-                    .map_err(Into::into)?;
-                s = s.with_system_config(system_config);
-                match self.attributes.signal(s).await {
+            Signal::Reset(ResetSignal { l2_safe_head }) => {
+                let (l1_origin, system_config) = self.initial_reset(l2_safe_head).await?;
+                match self.attributes.reset(l1_origin, system_config).await {
                     Ok(()) => trace!(target: "pipeline", "Stages reset"),
                     Err(err) => {
                         if let PipelineErrorKind::Temporary(PipelineError::Eof) = err {
@@ -115,8 +146,24 @@ where
                     }
                 }
             }
-            Signal::FlushChannel | Signal::ProvideBlock(_) => {
-                self.attributes.signal(signal).await?;
+            Signal::Activation(ActivationSignal { l2_safe_head: _ }) => {
+                match self.attributes.activate().await {
+                    Ok(()) => trace!(target: "pipeline", "Stages activated"),
+                    Err(err) => {
+                        if let PipelineErrorKind::Temporary(PipelineError::Eof) = err {
+                            trace!(target: "pipeline", "Stages activated with EOF");
+                        } else {
+                            error!(target: "pipeline", error = ?err, "Stage activation errored");
+                            return Err(err);
+                        }
+                    }
+                }
+            }
+            Signal::FlushChannel => {
+                self.attributes.flush_channel().await?;
+            }
+            Signal::ProvideBlock(block) => {
+                self.attributes.provide_block(block).await?;
             }
         }
         Metrics::pipeline_signals(signal.to_string()).increment(1.0);
@@ -127,7 +174,7 @@ where
 #[async_trait]
 impl<S, P> Pipeline for DerivationPipeline<S, P>
 where
-    S: NextAttributes + SignalReceiver + OriginProvider + OriginAdvancer + Debug + Send + Sync,
+    S: NextAttributes + StageReset + OriginProvider + OriginAdvancer + Debug + Send + Sync,
     P: L2ChainProvider + Send + Sync + Debug,
 {
     /// Peeks at the next prepared [`OpAttributesWithParent`] from the pipeline.
@@ -206,6 +253,7 @@ where
 mod tests {
     use alloc::{string::ToString, sync::Arc};
 
+    use alloy_eips::BlockNumHash;
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_alloy_rpc_types_engine::OpPayloadAttributes;
     use base_consensus_genesis::{RollupConfig, SystemConfig};
@@ -307,7 +355,7 @@ mod tests {
         let attributes = TestNextAttributes::default();
         let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
-        // Signal the pipeline to reset.
+        // Signal the pipeline to activate.
         let result = pipeline.signal(ActivationSignal::default().signal()).await;
         assert!(result.is_ok());
     }
@@ -319,7 +367,7 @@ mod tests {
         let attributes = TestNextAttributes::default();
         let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
-        // Signal the pipeline to reset.
+        // Signal the pipeline to flush channel.
         let result = pipeline.signal(Signal::FlushChannel).await;
         assert!(result.is_ok());
     }
@@ -331,7 +379,7 @@ mod tests {
         let attributes = TestNextAttributes::default();
         let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
 
-        // Signal the pipeline to reset.
+        // Signal the pipeline to reset — fails because system config is not found.
         let result = pipeline.signal(ResetSignal::default().signal()).await.unwrap_err();
         assert_eq!(result, PipelineError::Provider("System config not found".to_string()).temp());
     }
@@ -346,6 +394,26 @@ mod tests {
 
         // Signal the pipeline to reset.
         let result = pipeline.signal(ResetSignal::default().signal()).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_derivation_pipeline_initial_reset_walks_back() {
+        let rollup_config = Arc::new(RollupConfig {
+            // channel_timeout = 100 so the walk-back will stop at genesis (block 0)
+            ..Default::default()
+        });
+        let mut l2_chain_provider = TestL2ChainProvider::default();
+        l2_chain_provider.system_configs.insert(0, SystemConfig::default());
+        let attributes = TestNextAttributes::default();
+        let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
+
+        // With L2 safe head at genesis (block 0), initial_reset should stop at genesis.
+        let l2_safe_head = L2BlockInfo {
+            l1_origin: BlockNumHash { number: 5, hash: Default::default() },
+            ..Default::default()
+        };
+        let result = pipeline.initial_reset(l2_safe_head).await;
         assert!(result.is_ok());
     }
 }

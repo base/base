@@ -9,8 +9,8 @@ use discv5::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::utils::{PeerIdConversionError, local_id_to_p2p_id};
-use crate::{NodeRecord, enr_to_multiaddr};
+use super::utils::{PeerIdConversionError, PeerUtils};
+use crate::NodeRecord;
 
 /// Errors that can occur when parsing a bootnode.
 #[derive(Debug, thiserror::Error)]
@@ -51,7 +51,7 @@ impl BootNode {
 
         multi_address.push(Protocol::Udp(udp_port));
         multi_address.push(Protocol::Tcp(tcp_port));
-        multi_address.push(Protocol::P2p(local_id_to_p2p_id(id)?));
+        multi_address.push(Protocol::P2p(PeerUtils::local_id_to_p2p_id(id)?));
 
         Ok(Self::Enode(multi_address))
     }
@@ -60,7 +60,7 @@ impl BootNode {
     pub fn to_multiaddr(&self) -> Option<Multiaddr> {
         match self {
             Self::Enode(addr) => Some(addr.clone()),
-            Self::Enr(enr) => enr_to_multiaddr(enr),
+            Self::Enr(enr) => PeerUtils::enr_to_multiaddr(enr),
         }
     }
 
@@ -89,7 +89,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::utils::peer_id_to_secp256k1_pubkey;
+    use crate::PeerUtils;
 
     #[test]
     fn test_derive_bootnode_enode_multiaddr() {
@@ -103,7 +103,7 @@ mod tests {
             .to_string();
 
         let peer_id = crate::PeerId::from_str(&peer_id).unwrap();
-        let p2p_peer_id = local_id_to_p2p_id(peer_id).unwrap();
+        let p2p_peer_id = PeerUtils::local_id_to_p2p_id(peer_id).unwrap();
 
         let expected_multiaddr = Multiaddr::empty()
             .with(Protocol::Ip4(Ipv4Addr::new(34, 65, 205, 244)))
@@ -134,7 +134,7 @@ mod tests {
         let peer_id = crate::PeerId::from_str(&peer_id).unwrap();
 
         // The public key from the peer id is using the uncompressed form.
-        let pkey_secp256k1 = peer_id_to_secp256k1_pubkey(peer_id).unwrap();
+        let pkey_secp256k1 = PeerUtils::peer_id_to_secp256k1_pubkey(peer_id).unwrap();
         let p2p_public_key: discv5::libp2p_identity::secp256k1::PublicKey =
             discv5::libp2p_identity::secp256k1::PublicKey::try_from_bytes(
                 &pkey_secp256k1.serialize(),

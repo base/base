@@ -5,7 +5,7 @@ pub use app::{ViewId, run_app, run_app_with_view, run_flashblocks_json};
 
 mod commands;
 mod config;
-pub use config::{ChainConfig, ConductorNodeConfig};
+pub use config::{ChainConfig, ConductorNodeConfig, ValidatorNodeConfig};
 
 mod l1_client;
 mod rpc;

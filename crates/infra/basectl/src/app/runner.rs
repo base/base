@@ -11,9 +11,9 @@ use crate::{
     l1_client::fetch_full_system_config,
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, L1BlockInfo, L1ConnectionMode,
-        TimestampedFlashblock, fetch_initial_backlog_with_progress, run_block_fetcher,
-        run_conductor_poller, run_flashblock_ws, run_flashblock_ws_timestamped,
-        run_l1_blob_watcher, run_safe_head_poller,
+        TimestampedFlashblock, ValidatorNodeStatus, fetch_initial_backlog_with_progress,
+        run_block_fetcher, run_conductor_poller, run_flashblock_ws, run_flashblock_ws_timestamped,
+        run_l1_blob_watcher, run_safe_head_poller, run_validator_poller,
     },
     tui::Toast,
 };
@@ -120,6 +120,12 @@ fn start_background_services(config: &ChainConfig, resources: &mut Resources) {
         if conductor_nodes.iter().any(|n| n.flashblocks_ws.is_some()) {
             resources.conductor.set_url_sender(conductor_nodes, fb_url_tx);
         }
+    }
+
+    if let Some(validator_nodes) = config.validators.clone() {
+        let (validator_tx, validator_rx) = mpsc::channel::<Vec<ValidatorNodeStatus>>(4);
+        resources.validators.set_channel(validator_rx);
+        tokio::spawn(run_validator_poller(validator_nodes, validator_tx));
     }
 }
 

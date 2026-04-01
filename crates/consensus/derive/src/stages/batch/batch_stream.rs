@@ -3,8 +3,9 @@
 use alloc::{boxed::Box, collections::VecDeque, string::ToString, sync::Arc};
 use core::fmt::Debug;
 
+use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_consensus_genesis::RollupConfig;
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{
     Batch, BatchValidity, BatchWithInclusionBlock, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch,
     SpanBatchError,
@@ -12,7 +13,7 @@ use base_protocol::{
 
 use crate::{
     L2ChainProvider, Metrics, NextBatchProvider, OriginAdvancer, OriginProvider, PipelineError,
-    PipelineResult, Signal, SignalReceiver,
+    PipelineResult, StageReset,
 };
 
 /// Provides [`Batch`]es for the [`BatchStream`] stage.
@@ -37,7 +38,7 @@ pub trait BatchStreamProvider {
 #[derive(Debug)]
 pub struct BatchStream<P, BF>
 where
-    P: BatchStreamProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: BatchStreamProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
     BF: L2ChainProvider + Debug,
 {
     /// The previous stage in the derivation pipeline.
@@ -55,7 +56,7 @@ where
 
 impl<P, BF> BatchStream<P, BF>
 where
-    P: BatchStreamProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: BatchStreamProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
     BF: L2ChainProvider + Debug,
 {
     /// Create a new [`BatchStream`] stage.
@@ -103,7 +104,7 @@ where
 #[async_trait]
 impl<P, BF> NextBatchProvider for BatchStream<P, BF>
 where
-    P: BatchStreamProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: BatchStreamProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
     BF: L2ChainProvider + Send + Debug,
 {
     fn flush(&mut self) {
@@ -199,7 +200,7 @@ where
 #[async_trait]
 impl<P, BF> OriginAdvancer for BatchStream<P, BF>
 where
-    P: BatchStreamProvider + OriginAdvancer + OriginProvider + SignalReceiver + Send + Debug,
+    P: BatchStreamProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
     BF: L2ChainProvider + Send + Debug,
 {
     async fn advance_origin(&mut self) -> PipelineResult<()> {
@@ -209,7 +210,7 @@ where
 
 impl<P, BF> OriginProvider for BatchStream<P, BF>
 where
-    P: BatchStreamProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug,
+    P: BatchStreamProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
     BF: L2ChainProvider + Debug,
 {
     fn origin(&self) -> Option<BlockInfo> {
@@ -218,15 +219,40 @@ where
 }
 
 #[async_trait]
-impl<P, BF> SignalReceiver for BatchStream<P, BF>
+impl<P, BF> StageReset for BatchStream<P, BF>
 where
-    P: BatchStreamProvider + OriginAdvancer + OriginProvider + SignalReceiver + Debug + Send,
+    P: BatchStreamProvider + OriginAdvancer + OriginProvider + StageReset + Debug + Send,
     BF: L2ChainProvider + Send + Debug,
 {
-    async fn signal(&mut self, signal: Signal) -> PipelineResult<()> {
-        self.prev.signal(signal).await?;
+    async fn reset(
+        &mut self,
+        l1_origin: BlockNumHash,
+        system_config: SystemConfig,
+    ) -> PipelineResult<()> {
+        self.prev.reset(l1_origin, system_config).await?;
         self.buffer.clear();
-        self.span.take();
+        self.span = None;
+        Ok(())
+    }
+
+    async fn activate(&mut self) -> PipelineResult<()> {
+        self.prev.activate().await?;
+        self.buffer.clear();
+        self.span = None;
+        Ok(())
+    }
+
+    async fn flush_channel(&mut self) -> PipelineResult<()> {
+        self.prev.flush_channel().await?;
+        self.buffer.clear();
+        self.span = None;
+        Ok(())
+    }
+
+    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
+        self.prev.provide_block(block).await?;
+        self.buffer.clear();
+        self.span = None;
         Ok(())
     }
 }
@@ -239,14 +265,14 @@ mod tests {
     use alloy_eips::{BlockNumHash, NumHash};
     use alloy_primitives::{FixedBytes, b256};
     use base_alloy_consensus::OpBlock;
-    use base_consensus_genesis::{ChainGenesis, HardForkConfig};
+    use base_consensus_genesis::{ChainGenesis, HardForkConfig, SystemConfig};
     use base_protocol::{SingleBatch, SpanBatchElement};
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     use super::*;
     use crate::{
+        StageReset,
         test_utils::{CollectingLayer, TestBatchStreamProvider, TestL2ChainProvider, TraceStorage},
-        types::ResetSignal,
     };
 
     #[tokio::test]
@@ -278,7 +304,7 @@ mod tests {
         stream.buffer.push_back(SingleBatch::default());
         stream.span = Some(SpanBatch::default());
         assert!(!stream.prev.reset);
-        stream.signal(ResetSignal::default().signal()).await.unwrap();
+        stream.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();
         assert!(stream.prev.reset);
         assert!(stream.buffer.is_empty());
         assert!(stream.span.is_none());
@@ -296,7 +322,7 @@ mod tests {
         stream.buffer.push_back(SingleBatch::default());
         stream.span = Some(SpanBatch::default());
         assert!(!stream.prev.flushed);
-        stream.signal(Signal::FlushChannel).await.unwrap();
+        stream.flush_channel().await.unwrap();
         assert!(stream.prev.flushed);
         assert!(stream.buffer.is_empty());
         assert!(stream.span.is_none());

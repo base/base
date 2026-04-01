@@ -198,11 +198,9 @@ async fn reorg_reverts_derived_safe_head() {
     chain.push(h.l1.tip().clone());
 
     // Reset the pipeline: revert safe head and L1 origin to genesis.
-    let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis always present"));
     let l2_genesis = h.l2_genesis();
-    let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
 
-    node.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
+    node.act_reset(l2_genesis).await;
     // Drain the reset origin (genesis has no batch data).
     node.run_until_idle().await;
 
@@ -255,11 +253,9 @@ async fn reorg_and_resubmit_rederives_l2_block() {
     chain.push(h.l1.tip().clone());
 
     // Reset pipeline to genesis.
-    let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis always present"));
     let l2_genesis = h.l2_genesis();
-    let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
 
-    node.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
+    node.act_reset(l2_genesis).await;
     node.run_until_idle().await;
 
     // Step over the empty block 1' — nothing derived.
@@ -308,9 +304,7 @@ async fn reorg_flip_flop() {
 
     // Shared reset helpers — computed once, valid across all forks because
     // genesis is immutable.
-    let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis always present"));
     let l2_genesis = h.l2_genesis();
-    let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
 
     // --- Phase 1: Fork A canonical (genesis → A1 with batch). ---
     {
@@ -341,7 +335,7 @@ async fn reorg_flip_flop() {
     chain.truncate_to(0);
     chain.push(h.l1.tip().clone());
 
-    node.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
+    node.act_reset(l2_genesis).await;
     node.run_until_idle().await;
     node.act_l1_head_signal(fork_b1).await;
     let derived = node.run_until_idle().await;
@@ -360,7 +354,7 @@ async fn reorg_flip_flop() {
     chain.truncate_to(0);
     chain.push(h.l1.tip().clone());
 
-    node.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
+    node.act_reset(l2_genesis).await;
     node.run_until_idle().await;
     node.act_l1_head_signal(fork_a_prime1).await;
     let derived = node.run_until_idle().await;
@@ -400,9 +394,7 @@ async fn reorg_flip_flop_empty_middle_fork() {
     let block2 = builder.build_next_block_with_single_transaction();
 
     // Shared reset targets — valid across all forks because genesis is immutable.
-    let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis always present"));
     let l2_genesis = h.l2_genesis();
-    let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
 
     // --- Fork A: mine A1 (batch for L2 block 1) and A2 (batch for L2 block 2). ---
     let mut batcher_a = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
@@ -433,7 +425,7 @@ async fn reorg_flip_flop_empty_middle_fork() {
         fork_b_blocks.push(h.mine_and_push(&chain));
     }
 
-    node.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
+    node.act_reset(l2_genesis).await;
     // act_reset sets safe_head and finalized_head to the reset target (l2_genesis).
     // Per the OP Stack spec, unsafe_head is NOT clamped to safe_head on reset —
     // it is re-discovered by walking back from the current tip to the first block
@@ -467,7 +459,7 @@ async fn reorg_flip_flop_empty_middle_fork() {
         chain.push(h.l1.tip().clone());
     }
 
-    node.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
+    node.act_reset(l2_genesis).await;
     assert_eq!(node.l2_safe_number(), 0, "reset to C: safe head = 0");
     assert_eq!(node.l2_finalized_number(), 0, "reset to C: finalized head = 0");
     // unsafe_head unchanged by act_reset (spec-compliant: re-discover, don't clamp).
@@ -986,10 +978,8 @@ async fn deep_reorg_multi_block() {
     h.l1.reorg_to(0).expect("reorg to genesis");
     chain.truncate_to(0);
 
-    let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis"));
     let l2_genesis = h.l2_genesis();
-    let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
-    node.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
+    node.act_reset(l2_genesis).await;
     node.run_until_idle().await;
 
     assert_eq!(node.l2_safe_number(), 0, "safe head reverted to genesis");
@@ -1750,7 +1740,6 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_a)
         .with_l1_system_config_address(l1_sys_cfg_addr)
         .build();
-    let genesis_sys_cfg = rollup_cfg.genesis.system_config.unwrap_or_default();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg.clone());
 
     // Build L2 blocks 1, 2, 3 upfront from the L1 genesis state.
@@ -1814,10 +1803,9 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     h.l1.reorg_to(0).expect("reorg to genesis");
     chain.truncate_to(0);
 
-    let l1_genesis = block_info_from(h.l1.chain().first().expect("genesis always present"));
     let l2_genesis = h.l2_genesis();
 
-    node.act_reset(l1_genesis, l2_genesis, genesis_sys_cfg).await;
+    node.act_reset(l2_genesis).await;
     // Drain the reset origin (genesis has no batch data).
     node.run_until_idle().await;
 

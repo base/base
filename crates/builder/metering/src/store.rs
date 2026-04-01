@@ -75,16 +75,19 @@ impl MeteringProvider for MeteringStore {
 
     fn insert(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
         self.cache.insert(tx_hash, metering);
+        BuilderMetrics::metering_store_size().set(self.cache.entry_count() as f64);
     }
 
     fn remove(&self, tx_hashes: &[TxHash]) {
         for hash in tx_hashes {
             self.cache.invalidate(hash);
         }
+        BuilderMetrics::metering_store_size().set(self.cache.entry_count() as f64);
     }
 
     fn clear(&self) {
         self.cache.invalidate_all();
+        BuilderMetrics::metering_store_size().set(0.0);
     }
 
     fn set_enabled(&self, enabled: bool) {
