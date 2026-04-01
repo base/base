@@ -643,9 +643,7 @@ impl LoadRunner {
             debug!(submitted, "final batch submitted");
         }
 
-        // stop_flag drains the confirmer; cancel_token stops the WebSocket watchers.
         self.stop_flag.store(true, Ordering::SeqCst);
-        self.cancel_token.cancel();
 
         if let Some(display) = &self.display {
             display.finish();
@@ -687,6 +685,9 @@ impl LoadRunner {
             }
         }
 
+        // Cancel WebSocket watchers after drain so block timestamps remain
+        // available for deferred latency resolution during the drain phase.
+        self.cancel_token.cancel();
         confirmer_task.abort();
         flashblock_tracker_task.abort();
         block_watcher_task.abort();

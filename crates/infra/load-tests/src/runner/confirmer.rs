@@ -259,18 +259,9 @@ impl Confirmer {
         let confirmed_hashes: HashSet<TxHash> = confirmed.iter().map(|(hash, _)| *hash).collect();
 
         if !confirmed.is_empty() {
-            let to_remove: Vec<TxHash> = {
-                let fb_times = self.flashblock_times.read();
-                confirmed
-                    .iter()
-                    .filter_map(|(h, _)| fb_times.contains_key(h).then_some(*h))
-                    .collect()
-            };
-            if !to_remove.is_empty() {
-                let mut fb_times = self.flashblock_times.write();
-                for tx_hash in &to_remove {
-                    fb_times.remove(tx_hash);
-                }
+            let mut fb_times = self.flashblock_times.write();
+            for (tx_hash, _) in &confirmed {
+                fb_times.remove(tx_hash);
             }
         }
 

@@ -131,8 +131,10 @@ impl LoadConfig {
             batch_size: 5,
             batch_timeout: Duration::from_millis(50),
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
-            ws_url: "wss://base-sepolia-alpha.cbhq.net".parse().unwrap(),
-            flashblocks_url: "wss://sepolia-alpha.flashblocks.base.org/ws".parse().unwrap(),
+            ws_url: "wss://base-sepolia-alpha.cbhq.net".parse().expect("valid default ws_url"),
+            flashblocks_url: "wss://sepolia-alpha.flashblocks.base.org/ws"
+                .parse()
+                .expect("valid default flashblocks_url"),
         }
     }
 
