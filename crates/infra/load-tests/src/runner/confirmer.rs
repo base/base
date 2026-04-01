@@ -226,7 +226,7 @@ impl Confirmer {
                 }
             }
 
-            self.poll_confirmations(&client).await;
+            self.poll_confirmations(&client, stopped).await;
 
             if stopped {
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -238,8 +238,8 @@ impl Confirmer {
         debug!(confirmed = self.metrics_tx.is_closed(), "confirmer shutting down");
     }
 
-    async fn poll_confirmations(&mut self, client: &impl ReceiptProvider) {
-        self.resolve_deferred_block_latencies().await;
+    async fn poll_confirmations(&mut self, client: &impl ReceiptProvider, draining: bool) {
+        self.resolve_deferred_block_latencies(draining).await;
 
         if self.pending.is_empty() {
             return;
@@ -382,7 +382,7 @@ impl Confirmer {
         }
     }
 
-    async fn resolve_deferred_block_latencies(&mut self) {
+    async fn resolve_deferred_block_latencies(&mut self, flush: bool) {
         if self.deferred_block_latencies.is_empty() {
             return;
         }
@@ -406,7 +406,9 @@ impl Confirmer {
                         "deferred block latency resolved"
                     );
                     indices.push(i);
-                } else if now.duration_since(deferred.deferred_at) > BLOCK_LATENCY_DEFER_TIMEOUT {
+                } else if flush
+                    || now.duration_since(deferred.deferred_at) > BLOCK_LATENCY_DEFER_TIMEOUT
+                {
                     debug!(
                         tx_hash = %deferred.metrics.tx_hash,
                         block = deferred.block_number,
