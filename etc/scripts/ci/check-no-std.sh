@@ -7,10 +7,12 @@ set -eo pipefail
 no_std_packages=(
   # alloy crates (ported from op-alloy)
   base-alloy-consensus
-  base-alloy-evm
   base-alloy-chains
   base-alloy-rpc-types
   base-alloy-rpc-types-engine
+
+  # execution crates
+  base-evm
 
   # consensus protocol crates
   base-metrics
