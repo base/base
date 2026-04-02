@@ -116,7 +116,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                         blobs: Arc::new(vec![blob]),
                     },
                     Err(e) => {
-                        warn!(error = %e, "failed to encode frames to blob, requeueing");
+                        warn!(error = %e, "failed to encode frames to blob, requeuing");
                         for id in ids {
                             pipeline.requeue(id);
                         }
