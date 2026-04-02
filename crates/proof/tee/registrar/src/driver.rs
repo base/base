@@ -18,8 +18,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, info, info_span, warn};
 
 use crate::{
-    InstanceDiscovery, ProverClient, ProverInstance, RegistrarError, RegistrarMetrics,
-    RegistryClient, Result, SignerClient,
+    InstanceDiscovery, InstanceHealthStatus, ProverClient, ProverInstance, RegistrarError,
+    RegistrarMetrics, RegistryClient, Result, SignerClient,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -284,8 +284,6 @@ where
     /// - The instance has no launch time (e.g. discovery didn't return one).
     /// - The launch time is in the future (clock skew — treated as unknown).
     fn is_recently_launched_unhealthy(&self, instance: &ProverInstance) -> bool {
-        use crate::InstanceHealthStatus;
-
         if instance.health_status != InstanceHealthStatus::Unhealthy {
             return false;
         }
