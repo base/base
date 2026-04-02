@@ -16,6 +16,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+alloy-primitives.workspace = true
 eyre.workspace = true
 tracing.workspace = true
 base-cli-utils.workspace = true

@@ -6,6 +6,7 @@ use std::sync::Arc;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use std::time::Duration;
 
+use alloy_primitives::Address;
 use base_cli_utils::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_consensus_registry::Registry;
@@ -13,6 +14,7 @@ use base_consensus_registry::Registry;
 use base_proof_host::ProverConfig;
 #[cfg(feature = "local")]
 use base_proof_tee_nitro_host::EnclaveServer;
+use base_proof_tee_nitro_host::RegistrationHealthConfig;
 #[cfg(target_os = "linux")]
 use base_proof_tee_nitro_host::VSOCK_PORT;
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -87,6 +89,20 @@ struct ProverServerArgs {
     /// Maximum seconds for a single proof request before it is aborted.
     #[arg(long, env = "PROOF_REQUEST_TIMEOUT_SECS", default_value = "1740", value_parser = clap::value_parser!(u64).range(1..))]
     proof_request_timeout_secs: u64,
+
+    /// `TEEProverRegistry` contract address on L1. When set, `/healthz` returns
+    /// healthy only if the enclave signer is registered on-chain.
+    #[arg(long, env = "TEE_PROVER_REGISTRY_ADDRESS")]
+    tee_prover_registry_address: Option<Address>,
+}
+
+impl ProverServerArgs {
+    fn registration_health_config(&self) -> Option<RegistrationHealthConfig> {
+        self.tee_prover_registry_address.map(|address| RegistrationHealthConfig {
+            registry_address: address,
+            l1_rpc_url: self.l1_eth_url.clone(),
+        })
+    }
 }
 
 /// Arguments for the `server` subcommand.
@@ -131,6 +147,8 @@ impl ServerArgs {
             .ok_or_else(|| eyre!("unknown L1 chain ID: {}", rollup_config.l1_chain_id))?
             .clone();
 
+        let registration_health = self.server.registration_health_config();
+
         let config = ProverConfig {
             l1_eth_url: self.server.l1_eth_url,
             l2_eth_url: self.server.l2_eth_url,
@@ -143,7 +161,10 @@ impl ServerArgs {
 
         let transport = Arc::new(NitroTransport::vsock(self.vsock_cid, VSOCK_PORT));
         let timeout = Duration::from_secs(self.server.proof_request_timeout_secs);
-        let server = NitroProverServer::new(config, transport, timeout);
+        let mut server = NitroProverServer::new(config, transport, timeout);
+        if let Some(reg) = registration_health {
+            server = server.with_registration_health(reg);
+        }
 
         info!(addr = %self.server.listen_addr, "starting nitro prover host server");
         let handle = server.run(self.server.listen_addr).await?;
@@ -171,6 +192,8 @@ impl LocalArgs {
             .ok_or_else(|| eyre!("unknown L1 chain ID: {}", rollup_config.l1_chain_id))?
             .clone();
 
+        let registration_health = self.server.registration_health_config();
+
         let prover_config = ProverConfig {
             l1_eth_url: self.server.l1_eth_url,
             l2_eth_url: self.server.l2_eth_url,
@@ -184,7 +207,10 @@ impl LocalArgs {
         let enclave_server = Arc::new(EnclaveServer::new_local()?);
         let transport = Arc::new(NitroTransport::local(enclave_server));
         let timeout = Duration::from_secs(self.server.proof_request_timeout_secs);
-        let server = NitroProverServer::new(prover_config, transport, timeout);
+        let mut server = NitroProverServer::new(prover_config, transport, timeout);
+        if let Some(reg) = registration_health {
+            server = server.with_registration_health(reg);
+        }
 
         info!(addr = %self.server.listen_addr, "starting nitro prover server (local mode)");
         let handle = server.run(self.server.listen_addr).await?;

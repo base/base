@@ -4719,17 +4719,20 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "base-health",
+ "base-proof-contracts",
  "base-proof-host",
  "base-proof-preimage",
  "base-proof-primitives",
  "base-proof-tee-nitro-enclave",
  "eyre",
  "jsonrpsee",
+ "k256",
  "thiserror 2.0.18",
  "tokio",
  "tokio-vsock",
  "tower",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -4934,6 +4937,7 @@ dependencies = [
 name = "base-prover-nitro-host"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "base-cli-utils",
  "base-consensus-registry",
  "base-proof-host",

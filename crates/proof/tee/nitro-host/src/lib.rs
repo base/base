@@ -9,6 +9,9 @@ pub use backend::NitroBackend;
 mod convert;
 pub use convert::Convert;
 
+mod health;
+pub use health::RegistrationHealthConfig;
+
 mod server;
 pub use server::NitroProverServer;
 
