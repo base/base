@@ -31,8 +31,8 @@ use crate::{
     metrics::{MetricsCollector, MetricsSummary, TransactionMetrics},
     rpc::{RpcClient, WalletProvider, create_wallet_provider},
     workload::{
-        AccountPool, CalldataPayload, Erc20Payload, PrecompilePayload, TransferPayload,
-        WorkloadGenerator,
+        AccountPool, CalldataPayload, Erc20Payload, OsakaPayload, PrecompilePayload,
+        TransferPayload, WorkloadGenerator,
     },
 };
 
@@ -175,6 +175,10 @@ impl LoadRunner {
                     );
                     generator = generator.with_payload(payload, weight_pct);
                 }
+                TxType::Osaka { target } => {
+                    generator =
+                        generator.with_payload(OsakaPayload::new(target.clone()), weight_pct);
+                }
             }
         }
 
@@ -194,6 +198,7 @@ impl LoadRunner {
                 TxType::Calldata { max_size, .. } => 21_000 + (*max_size as u64 * 16),
                 TxType::Erc20 { .. } => 65_000,
                 TxType::Precompile { iterations, .. } => 50_000 + 100_000 * (*iterations as u64),
+                TxType::Osaka { .. } => 80_000,
             };
             weighted_gas += gas_estimate * tx_config.weight as u64;
         }

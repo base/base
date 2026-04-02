@@ -4,4 +4,4 @@ mod workload;
 pub use workload::WorkloadConfig;
 
 mod test_config;
-pub use test_config::{PrecompileTarget, TestConfig, TxTypeConfig, WeightedTxType};
+pub use test_config::{OsakaTarget, PrecompileTarget, TestConfig, TxTypeConfig, WeightedTxType};

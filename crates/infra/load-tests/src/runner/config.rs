@@ -4,7 +4,7 @@ use alloy_primitives::Address;
 use revm::precompile::PrecompileId;
 use url::Url;
 
-use crate::utils::{BaselineError, Result};
+use crate::{config::OsakaTarget, utils::{BaselineError, Result}};
 
 /// Configuration for a single transaction type with its weight.
 #[derive(Debug, Clone)]
@@ -44,6 +44,11 @@ pub enum TxType {
         iterations: u32,
         /// Looper contract address (required when iterations > 1).
         looper_contract: Option<Address>,
+    },
+    /// Osaka (Base V1) opcode or precompile transaction.
+    Osaka {
+        /// Target Osaka feature.
+        target: OsakaTarget,
     },
 }
 

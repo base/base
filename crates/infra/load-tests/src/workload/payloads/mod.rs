@@ -26,6 +26,9 @@ pub use looper::PrecompileLooper;
 mod uniswap;
 pub use uniswap::{UniswapV2Payload, UniswapV3Payload};
 
+mod osaka;
+pub use osaka::OsakaPayload;
+
 /// A transaction payload generator.
 pub trait Payload: Send + Sync + std::fmt::Debug {
     /// Returns the name of this payload type.

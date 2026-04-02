@@ -165,6 +165,19 @@ pub struct WeightedTxType {
     pub tx_type: TxTypeConfig,
 }
 
+/// Osaka (Base V1) transaction target.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OsakaTarget {
+    /// CLZ opcode (EIP-7939): COUNT LEADING ZEROS — CREATE transaction with CLZ initcode.
+    Clz,
+    /// P256VERIFY precompile at 0x0100 with Osaka gas pricing 6 900 (EIP-7951).
+    #[serde(rename = "p256verify_osaka")]
+    P256verifyOsaka,
+    /// MODEXP under Osaka rules: 1 024-byte field limit + min gas 500 (EIP-7823 + EIP-7883).
+    ModexpOsaka,
+}
+
 /// Transaction type configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -196,6 +209,12 @@ pub enum TxTypeConfig {
         /// Number of iterations per transaction. Requires `looper_contract` when > 1.
         #[serde(default = "default_iterations")]
         iterations: u32,
+    },
+
+    /// Osaka (Base V1) opcode or precompile transaction.
+    Osaka {
+        /// Target Osaka feature.
+        target: OsakaTarget,
     },
 }
 
@@ -338,6 +357,7 @@ impl TestConfig {
                     looper_contract,
                 }
             }
+            TxTypeConfig::Osaka { target } => TxType::Osaka { target: target.clone() },
         };
         Ok(TxConfig { weight: weighted.weight, tx_type })
     }
