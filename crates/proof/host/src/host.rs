@@ -100,7 +100,7 @@ impl Host {
             HintReader::new(hint_chan.host),
             Arc::clone(&backend),
         );
-        let mut tasks = tokio::task::JoinSet::new();
+        let mut tasks = task::JoinSet::new();
         tasks.spawn(async move { server.start().await }.instrument(info_span!("preimage_server")));
 
         let recording = RecordingOracle::new(
