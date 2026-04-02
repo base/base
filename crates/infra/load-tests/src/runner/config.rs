@@ -4,7 +4,10 @@ use alloy_primitives::Address;
 use revm::precompile::PrecompileId;
 use url::Url;
 
-use crate::{config::OsakaTarget, utils::{BaselineError, Result}};
+use crate::{
+    config::OsakaTarget,
+    utils::{BaselineError, Result},
+};
 
 /// Configuration for a single transaction type with its weight.
 #[derive(Debug, Clone)]

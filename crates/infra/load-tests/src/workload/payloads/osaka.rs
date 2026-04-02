@@ -65,7 +65,7 @@ impl OsakaPayload {
 
     /// Call to the P256VERIFY precompile (0x0100) with Osaka gas pricing (EIP-7951).
     ///
-    /// Input: 160 bytes — msg_hash(32) + r(32) + s(32) + pub_x(32) + pub_y(32).
+    /// Input: 160 bytes — `msg_hash(32)` + r(32) + s(32) + `pub_x(32)` + `pub_y(32)`.
     /// Random data will not produce a valid signature, but the precompile executes and
     /// charges the full 6 900 gas.
     fn generate_p256verify_osaka(rng: &mut SeededRng) -> TransactionRequest {
