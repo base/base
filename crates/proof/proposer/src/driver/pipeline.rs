@@ -21,7 +21,6 @@ use std::{
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use alloy_primitives::{Address, B256, Signature, keccak256};
@@ -57,10 +56,6 @@ pub struct PipelineConfig {
     pub max_game_recovery_lookback: u64,
     /// Base driver configuration.
     pub driver: DriverConfig,
-    /// Optional Unix timestamp at which the V1 hardfork activates.
-    /// When set, the pipeline will not perform any work until this
-    /// timestamp has been reached.
-    pub v1_hardfork_timestamp: Option<u64>,
     /// Optional address of the `TEEProverRegistry` contract on L1.
     /// When set, the pipeline validates signers via `isValidSigner` before submission.
     pub tee_prover_registry_address: Option<Address>,
@@ -203,28 +198,11 @@ where
         self.cancel = cancel;
     }
 
-    /// Returns `true` if the V1 hardfork is active based on the current wall
-    /// clock time, or if no hardfork timestamp is configured (i.e. the gate
-    /// is disabled).
-    ///
-    /// NOTE: This intentionally uses [`SystemTime`] (real wall clock) rather
-    /// than `tokio::time::Instant`, because hardfork activation is anchored to
-    /// a Unix timestamp and must reflect real-world time regardless of the
-    /// tokio runtime's clock state.  Tests that assert on this method use
-    /// extreme sentinel values (0 / `u64::MAX`) so they are wall-clock safe.
-    fn is_v1_hardfork_active(&self) -> bool {
-        self.config.v1_hardfork_timestamp.is_none_or(|ts| {
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-            now >= ts
-        })
-    }
-
     /// Runs the parallel proving pipeline until cancelled.
     pub async fn run(&self) -> Result<()> {
         info!(
             max_parallel_proofs = self.config.max_parallel_proofs,
             block_interval = self.config.driver.block_interval,
-            v1_hardfork_timestamp = self.config.v1_hardfork_timestamp,
             "Starting parallel proving pipeline"
         );
 
@@ -264,14 +242,6 @@ where
 
     #[instrument(skip_all)]
     async fn tick(&self, state: &mut PipelineState) -> Result<()> {
-        if !self.is_v1_hardfork_active() {
-            debug!(
-                v1_hardfork_timestamp = self.config.v1_hardfork_timestamp,
-                "V1 hardfork not yet active, skipping tick"
-            );
-            return Ok(());
-        }
-
         let _tick_timer = base_metrics::timed!(Metrics::tick_duration_seconds());
 
         if let Some((recovered, safe_head)) =
@@ -1126,7 +1096,6 @@ mod tests {
                 max_parallel_proofs: 2,
                 max_game_recovery_lookback: 5000,
                 max_retries: 3,
-                v1_hardfork_timestamp: None,
                 tee_prover_registry_address: None,
                 driver: DriverConfig {
                     poll_interval: Duration::from_secs(3600),
@@ -1155,7 +1124,6 @@ mod tests {
                 max_parallel_proofs: 2,
                 max_game_recovery_lookback: 5000,
                 max_retries: 3,
-                v1_hardfork_timestamp: None,
                 tee_prover_registry_address: None,
                 driver: DriverConfig {
                     poll_interval: Duration::from_millis(100),
@@ -1177,133 +1145,6 @@ mod tests {
 
         let result = handle.await.expect("task should not panic");
         assert!(result.is_ok());
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_hardfork_gate_none_always_active() {
-        let cancel = CancellationToken::new();
-        let pipeline = test_pipeline(
-            PipelineConfig {
-                max_parallel_proofs: 2,
-                max_game_recovery_lookback: 5000,
-                max_retries: 3,
-                v1_hardfork_timestamp: None,
-                tee_prover_registry_address: None,
-                driver: DriverConfig::default(),
-            },
-            0,
-            cancel,
-        );
-
-        assert!(pipeline.is_v1_hardfork_active(), "gate should be active when no timestamp is set");
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_hardfork_gate_past_timestamp_active() {
-        let cancel = CancellationToken::new();
-        // Timestamp 0 is always in the past.
-        let pipeline = test_pipeline(
-            PipelineConfig {
-                max_parallel_proofs: 2,
-                max_game_recovery_lookback: 5000,
-                max_retries: 3,
-                v1_hardfork_timestamp: Some(0),
-                tee_prover_registry_address: None,
-                driver: DriverConfig::default(),
-            },
-            0,
-            cancel,
-        );
-
-        assert!(
-            pipeline.is_v1_hardfork_active(),
-            "gate should be active when timestamp is in the past"
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_hardfork_gate_future_timestamp_inactive() {
-        let cancel = CancellationToken::new();
-        let pipeline = test_pipeline(
-            PipelineConfig {
-                max_parallel_proofs: 2,
-                max_game_recovery_lookback: 5000,
-                max_retries: 3,
-                v1_hardfork_timestamp: Some(u64::MAX),
-                tee_prover_registry_address: None,
-                driver: DriverConfig::default(),
-            },
-            0,
-            cancel,
-        );
-
-        assert!(
-            !pipeline.is_v1_hardfork_active(),
-            "gate should be inactive when timestamp is in the future"
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_tick_skipped_when_hardfork_inactive() {
-        let cancel = CancellationToken::new();
-        // Safe head at 512: would normally dispatch proofs.
-        let pipeline = test_pipeline(
-            PipelineConfig {
-                max_parallel_proofs: 2,
-                max_game_recovery_lookback: 5000,
-                max_retries: 3,
-                v1_hardfork_timestamp: Some(u64::MAX),
-                tee_prover_registry_address: None,
-                driver: DriverConfig {
-                    poll_interval: Duration::from_millis(100),
-                    block_interval: 512,
-                    intermediate_block_interval: 512,
-                    ..Default::default()
-                },
-            },
-            512,
-            cancel,
-        );
-
-        let mut state = PipelineState::new();
-        let result = pipeline.tick(&mut state).await;
-
-        assert!(result.is_ok(), "tick should return Ok even when gate is inactive");
-        assert!(state.inflight.is_empty(), "no proofs should be dispatched when gate is inactive");
-        assert!(state.proved.is_empty(), "no proofs should be completed when gate is inactive");
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_pipeline_runs_with_past_hardfork_timestamp() {
-        let cancel = CancellationToken::new();
-        // Same setup as test_pipeline_proves_and_submits but with a past timestamp.
-        let pipeline = test_pipeline(
-            PipelineConfig {
-                max_parallel_proofs: 2,
-                max_game_recovery_lookback: 5000,
-                max_retries: 3,
-                v1_hardfork_timestamp: Some(0),
-                tee_prover_registry_address: None,
-                driver: DriverConfig {
-                    poll_interval: Duration::from_millis(100),
-                    block_interval: 512,
-                    intermediate_block_interval: 512,
-                    ..Default::default()
-                },
-            },
-            512,
-            cancel.clone(),
-        );
-
-        // Spawn the pipeline so it starts processing ticks with the hardfork
-        // gate active, then cancel from this task after giving it time to run.
-        let handle = tokio::spawn(async move { pipeline.run().await });
-
-        tokio::time::sleep(Duration::from_secs(5)).await;
-        cancel.cancel();
-
-        let result = handle.await.expect("task should not panic");
-        assert!(result.is_ok(), "pipeline should run normally with a past hardfork timestamp");
     }
 
     // ---- Recovery / caching tests ----
@@ -1359,7 +1200,6 @@ mod tests {
                 max_parallel_proofs: 1,
                 max_game_recovery_lookback: 5000,
                 max_retries: 1,
-                v1_hardfork_timestamp: None,
                 tee_prover_registry_address: None,
                 driver: DriverConfig { game_type, ..Default::default() },
             },
