@@ -191,7 +191,7 @@ mod tests {
         let rpc = test_rpc();
         *rpc.cache.write().await = Some((true, Instant::now()));
         let result = rpc.use_stale_cache_or_fail(TEST_SIGNER, "rpc down").await;
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
     }
 
     #[tokio::test]
@@ -216,7 +216,7 @@ mod tests {
         rpc.signer.set(TEST_SIGNER).unwrap();
         *rpc.cache.write().await = Some((true, Instant::now()));
         let result = rpc.check_registration().await;
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
     }
 
     #[tokio::test]
@@ -225,6 +225,6 @@ mod tests {
         rpc.signer.set(TEST_SIGNER).unwrap();
         *rpc.cache.write().await = Some((false, Instant::now()));
         let result = rpc.check_registration().await;
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
     }
 }
