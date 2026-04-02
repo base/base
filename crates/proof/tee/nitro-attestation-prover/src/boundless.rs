@@ -383,7 +383,7 @@ mod tests {
     // and alert us that the string-matching needle needs updating.
 
     mod request_not_locked {
-        use alloy_primitives::U256;
+        use alloy_primitives::{U256, uint};
         use boundless_market::{
             client::ClientError,
             contracts::{
@@ -396,7 +396,7 @@ mod tests {
         use super::*;
 
         /// Arbitrary request ID used in error construction.
-        const TEST_REQUEST_ID: U256 = U256::from_limbs([42, 0, 0, 0]);
+        const TEST_REQUEST_ID: U256 = uint!(42_U256);
 
         /// Build a `ClientError` wrapping `RequestIsNotLocked` through the
         /// **production** path: `TxnErr` → `anyhow::Error` →

@@ -394,7 +394,7 @@ mod tests {
 
     use alloy_consensus::{Block, BlockBody, Header, Signed};
     use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, BEACON_ROOTS_CODE};
-    use alloy_primitives::{Address, B256, TxKind, U256, address};
+    use alloy_primitives::{Address, B256, TxKind, U256, address, uint};
     use alloy_rpc_types_engine::PayloadId;
     use base_alloy_consensus::OpTxEnvelope;
     use base_alloy_flashblocks::{
@@ -527,7 +527,7 @@ mod tests {
     const L1_BLOCK_ADDRESS: Address =
         Address::new([0x42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x15]);
 
-    const DA_FOOTPRINT_GAS_SCALAR_SLOT: U256 = U256::from_limbs([8u64, 0, 0, 0]);
+    const DA_FOOTPRINT_GAS_SCALAR_SLOT: U256 = uint!(8_U256);
 
     fn create_legacy_tx() -> alloy_consensus::transaction::Recovered<OpTxEnvelope> {
         let tx = alloy_consensus::TxLegacy {

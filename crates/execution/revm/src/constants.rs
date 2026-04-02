@@ -1,5 +1,5 @@
 //! Base constants used in the Base EVM.
-use revm::primitives::{Address, U256, address};
+use revm::primitives::{Address, U256, address, uint};
 
 /// The cost of a non-zero byte in the EVM.
 pub const NON_ZERO_BYTE_COST: u64 = 16;
@@ -31,26 +31,26 @@ pub const OPERATOR_FEE_SCALAR_DECIMAL: u64 = 1_000_000;
 pub const OPERATOR_FEE_JOVIAN_MULTIPLIER: u64 = 100;
 
 /// The L1 base fee slot.
-pub const L1_BASE_FEE_SLOT: U256 = U256::from_limbs([1u64, 0, 0, 0]);
+pub const L1_BASE_FEE_SLOT: U256 = uint!(1_U256);
 /// The L1 overhead slot.
-pub const L1_OVERHEAD_SLOT: U256 = U256::from_limbs([5u64, 0, 0, 0]);
+pub const L1_OVERHEAD_SLOT: U256 = uint!(5_U256);
 /// The L1 scalar slot.
-pub const L1_SCALAR_SLOT: U256 = U256::from_limbs([6u64, 0, 0, 0]);
+pub const L1_SCALAR_SLOT: U256 = uint!(6_U256);
 
 /// [`ECOTONE_L1_BLOB_BASE_FEE_SLOT`] was added in the Ecotone upgrade and stores the L1 blobBaseFee attribute.
-pub const ECOTONE_L1_BLOB_BASE_FEE_SLOT: U256 = U256::from_limbs([7u64, 0, 0, 0]);
+pub const ECOTONE_L1_BLOB_BASE_FEE_SLOT: U256 = uint!(7_U256);
 
 /// As of the ecotone upgrade, this storage slot stores the 32-bit basefeeScalar and blobBaseFeeScalar attributes at
 /// offsets [`BASE_FEE_SCALAR_OFFSET`] and [`BLOB_BASE_FEE_SCALAR_OFFSET`] respectively.
-pub const ECOTONE_L1_FEE_SCALARS_SLOT: U256 = U256::from_limbs([3u64, 0, 0, 0]);
+pub const ECOTONE_L1_FEE_SCALARS_SLOT: U256 = uint!(3_U256);
 
 /// This storage slot stores the 32-bit operatorFeeScalar and operatorFeeConstant attributes at
 /// offsets [`OPERATOR_FEE_SCALAR_OFFSET`] and [`OPERATOR_FEE_CONSTANT_OFFSET`] respectively.
-pub const OPERATOR_FEE_SCALARS_SLOT: U256 = U256::from_limbs([8u64, 0, 0, 0]);
+pub const OPERATOR_FEE_SCALARS_SLOT: U256 = uint!(8_U256);
 
 /// As of the Jovian upgrade, this storage slot stores the 16-bit daFootprintGasScalar attribute at
 /// offset [`DA_FOOTPRINT_GAS_SCALAR_OFFSET`].
-pub const DA_FOOTPRINT_GAS_SCALAR_SLOT: U256 = U256::from_limbs([8u64, 0, 0, 0]);
+pub const DA_FOOTPRINT_GAS_SCALAR_SLOT: U256 = uint!(8_U256);
 
 /// An empty 64-bit set of scalar values.
 pub const EMPTY_SCALARS: [u8; 8] = [0u8; 8];
