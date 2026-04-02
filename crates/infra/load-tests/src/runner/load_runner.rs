@@ -691,10 +691,7 @@ impl LoadRunner {
 
         // Let the confirmer finish gracefully (stop_flag is already set);
         // abort only if it hangs beyond a short grace period.
-        if tokio::time::timeout(Duration::from_secs(2), confirmer_task)
-            .await
-            .is_err()
-        {
+        if tokio::time::timeout(Duration::from_secs(2), confirmer_task).await.is_err() {
             warn!("confirmer did not shut down in time");
         }
 

@@ -404,18 +404,17 @@ impl Confirmer {
         {
             let block_times = self.block_first_seen.read();
             for mut deferred in self.deferred_block_latencies.drain(..) {
-                let block_latency =
-                    block_times.get(&deferred.block_number).and_then(|&t| {
-                        if t < deferred.submit_time {
-                            debug!(
-                                block = deferred.block_number,
-                                "block seen before tx submitted, skipping block latency"
-                            );
-                            None
-                        } else {
-                            Some(t.duration_since(deferred.submit_time))
-                        }
-                    });
+                let block_latency = block_times.get(&deferred.block_number).and_then(|&t| {
+                    if t < deferred.submit_time {
+                        debug!(
+                            block = deferred.block_number,
+                            "block seen before tx submitted, skipping block latency"
+                        );
+                        None
+                    } else {
+                        Some(t.duration_since(deferred.submit_time))
+                    }
+                });
 
                 if let Some(latency) = block_latency {
                     deferred.metrics.block_latency = Some(latency);
