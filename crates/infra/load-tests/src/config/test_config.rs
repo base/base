@@ -116,8 +116,10 @@ pub struct TestConfig {
     pub looper_contract: Option<String>,
 
     /// WebSocket URL for block subscription.
+    #[serde(default = "default_ws_url")]
     pub ws_url: String,
     /// WebSocket URL for flashblocks subscription.
+    #[serde(default = "default_flashblocks_url")]
     pub flashblocks_url: String,
 }
 
@@ -237,6 +239,14 @@ const fn default_repeat_count() -> usize {
 
 const fn default_iterations() -> u32 {
     1
+}
+
+fn default_ws_url() -> String {
+    "ws://localhost:8546".to_string()
+}
+
+fn default_flashblocks_url() -> String {
+    "ws://localhost:7111".to_string()
 }
 
 impl TestConfig {

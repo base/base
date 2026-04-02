@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -415,7 +415,7 @@ impl LoadRunner {
             mpsc::channel::<TransactionMetrics>(METRICS_CHANNEL_BUFFER);
 
         let flashblock_times: FlashblockTimes = Arc::new(RwLock::new(HashMap::new()));
-        let block_first_seen: BlockFirstSeen = Arc::new(RwLock::new(HashMap::new()));
+        let block_first_seen: BlockFirstSeen = Arc::new(RwLock::new(BTreeMap::new()));
 
         info!(url = %self.config.flashblocks_url, "starting flashblock tracker");
         let flashblock_tracker_task = FlashblockTracker::new(
@@ -688,9 +688,18 @@ impl LoadRunner {
         // Cancel WebSocket watchers after drain so block timestamps remain
         // available for deferred latency resolution during the drain phase.
         self.cancel_token.cancel();
-        confirmer_task.abort();
-        flashblock_tracker_task.abort();
-        block_watcher_task.abort();
+
+        // Let the confirmer finish gracefully (stop_flag is already set);
+        // abort only if it hangs beyond a short grace period.
+        if tokio::time::timeout(Duration::from_secs(2), confirmer_task)
+            .await
+            .is_err()
+        {
+            warn!("confirmer did not shut down in time");
+        }
+
+        let _ = tokio::time::timeout(Duration::from_secs(2), flashblock_tracker_task).await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), block_watcher_task).await;
 
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");
@@ -977,10 +986,13 @@ impl LoadRunner {
         }
     }
 
-    /// Signals the load test to stop.
+    /// Signals the load test to stop gracefully.
+    ///
+    /// Only sets `stop_flag` — does **not** cancel WebSocket tasks or clean up
+    /// resources. The caller must ensure [`run()`](Self::run) completes, which
+    /// handles draining confirmations and cancelling background tasks.
     pub fn stop(&self) {
         self.stop_flag.store(true, Ordering::SeqCst);
-        self.cancel_token.cancel();
     }
 
     /// Returns a clone of the stop flag for external coordination.

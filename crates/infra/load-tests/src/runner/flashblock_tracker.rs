@@ -27,26 +27,29 @@ pub struct FlashblockTracker {
     ws_url: Url,
     flashblock_times: FlashblockTimes,
     cancel_token: CancellationToken,
+    /// Tracks insertion order for FIFO eviction. Persists across reconnects
+    /// so entries from prior connections remain evictable.
+    eviction_queue: VecDeque<TxHash>,
 }
 
 impl FlashblockTracker {
     /// Creates a new [`FlashblockTracker`].
-    pub const fn new(
+    pub fn new(
         ws_url: Url,
         flashblock_times: FlashblockTimes,
         cancel_token: CancellationToken,
     ) -> Self {
-        Self { ws_url, flashblock_times, cancel_token }
+        Self { ws_url, flashblock_times, cancel_token, eviction_queue: VecDeque::new() }
     }
 
     /// Spawns the tracker as a background task.
-    pub fn start(self) -> tokio::task::JoinHandle<()> {
+    pub fn start(mut self) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             self.run().await;
         })
     }
 
-    async fn run(&self) {
+    async fn run(&mut self) {
         info!(url = %self.ws_url, "starting flashblock tracker");
 
         let mut backoff = Duration::from_millis(100);
@@ -60,8 +63,6 @@ impl FlashblockTracker {
 
                     let (_, mut read) = ws_stream.split();
 
-                    let mut eviction_queue = VecDeque::new();
-
                     loop {
                         tokio::select! {
                             biased;
@@ -73,10 +74,10 @@ impl FlashblockTracker {
                             msg = read.next() => {
                                 match msg {
                                     Some(Ok(Message::Binary(data))) => {
-                                        self.process_message(data, &mut eviction_queue);
+                                        self.process_message(data);
                                     }
                                     Some(Ok(Message::Text(data))) => {
-                                        self.process_message(Bytes::from(data), &mut eviction_queue);
+                                        self.process_message(Bytes::from(data));
                                     }
                                     Some(Ok(Message::Close(_))) => {
                                         info!("flashblock websocket closed by server");
@@ -117,7 +118,7 @@ impl FlashblockTracker {
         debug!("flashblock tracker stopped");
     }
 
-    fn process_message(&self, bytes: Bytes, eviction_queue: &mut VecDeque<TxHash>) {
+    fn process_message(&mut self, bytes: Bytes) {
         let now = Instant::now();
 
         match Flashblock::try_decode_message(bytes) {
@@ -136,12 +137,12 @@ impl FlashblockTracker {
                 for tx_hash in tx_hashes {
                     if let Entry::Vacant(e) = times.entry(tx_hash) {
                         e.insert(now);
-                        eviction_queue.push_back(tx_hash);
+                        self.eviction_queue.push_back(tx_hash);
                     }
                 }
 
                 while times.len() > MAX_FLASHBLOCK_CACHE_SIZE {
-                    match eviction_queue.pop_front() {
+                    match self.eviction_queue.pop_front() {
                         Some(old) => {
                             times.remove(&old);
                         }

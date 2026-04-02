@@ -1,7 +1,7 @@
 //! Block subscription and first-seen timestamp tracking via `newHeads` WebSocket.
 
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -14,7 +14,7 @@ use tracing::{debug, error, info, trace, warn};
 use url::Url;
 
 /// Shared map of block numbers to their first-seen timestamps.
-pub type BlockFirstSeen = Arc<RwLock<HashMap<u64, Instant>>>;
+pub type BlockFirstSeen = Arc<RwLock<BTreeMap<u64, Instant>>>;
 
 #[derive(Debug, Deserialize)]
 struct SubscribeConfirmation {
@@ -221,9 +221,10 @@ impl BlockWatcher {
             let mut blocks = self.block_first_seen.write();
             blocks.entry(block_number).or_insert(now);
 
-            if blocks.len() > MAX_BLOCK_CACHE_SIZE {
-                let cutoff = block_number.saturating_sub(MAX_BLOCK_CACHE_SIZE as u64);
-                blocks.retain(|&num, _| num > cutoff);
+            while blocks.len() > MAX_BLOCK_CACHE_SIZE {
+                if blocks.pop_first().is_none() {
+                    break;
+                }
             }
         }
     }

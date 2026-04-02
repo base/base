@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -43,6 +43,8 @@ pub struct Confirmer {
     deferred_block_latencies: Vec<DeferredBlockLatency>,
 }
 
+/// A confirmed tx whose block latency could not be computed yet because
+/// the block-first-seen timestamp had not arrived from the [`BlockWatcher`].
 struct DeferredBlockLatency {
     metrics: TransactionMetrics,
     block_number: u64,
@@ -121,7 +123,10 @@ impl ConfirmerHandle {
 }
 
 impl Confirmer {
-    /// Creates a new confirmer.
+    /// Creates a confirmer without shared timing data.
+    ///
+    /// Block and flashblock latencies will always be `None`. Use
+    /// [`with_timing_data`](Self::with_timing_data) to enable latency tracking.
     pub fn new(
         sender_addresses: &[Address],
         metrics_tx: mpsc::Sender<TransactionMetrics>,
@@ -132,7 +137,7 @@ impl Confirmer {
             metrics_tx,
             stop_flag,
             Arc::new(RwLock::new(HashMap::new())),
-            Arc::new(RwLock::new(HashMap::new())),
+            Arc::new(RwLock::new(BTreeMap::new())),
         )
     }
 
@@ -168,11 +173,15 @@ impl Confirmer {
         }
     }
 
+    /// Returns `None` if the receipt arrived before the flashblock WS message.
     fn get_flashblocks_latency(&self, tx_hash: &TxHash, pending: &PendingTx) -> Option<Duration> {
-        self.flashblock_times
-            .read()
-            .get(tx_hash)
-            .map(|fb_time| fb_time.saturating_duration_since(pending.submit_time))
+        self.flashblock_times.read().get(tx_hash).and_then(|&fb_time| {
+            if fb_time < pending.submit_time {
+                None
+            } else {
+                Some(fb_time.duration_since(pending.submit_time))
+            }
+        })
     }
 
     fn get_block_latency(
@@ -180,10 +189,17 @@ impl Confirmer {
         block_number: u64,
         pending_submit_time: Instant,
     ) -> Option<Duration> {
-        self.block_first_seen
-            .read()
-            .get(&block_number)
-            .map(|block_time| block_time.saturating_duration_since(pending_submit_time))
+        self.block_first_seen.read().get(&block_number).and_then(|&block_time| {
+            if block_time < pending_submit_time {
+                debug!(
+                    block = block_number,
+                    "block seen before tx submitted, skipping block latency"
+                );
+                None
+            } else {
+                Some(block_time.duration_since(pending_submit_time))
+            }
+        })
     }
 
     /// Creates a handle for submitting transactions.
@@ -362,7 +378,9 @@ impl Confirmer {
                             block_latency_ms = ?block_latency.map(|d| d.as_millis()),
                             "tx confirmed"
                         );
-                        let _ = self.metrics_tx.send(metrics).await;
+                        if self.metrics_tx.send(metrics).await.is_err() {
+                            debug!(tx_hash = %tx_hash, "metrics channel closed");
+                        }
                     }
                     confirmed.push((tx_hash, pending.from));
                 }
@@ -386,9 +404,18 @@ impl Confirmer {
         {
             let block_times = self.block_first_seen.read();
             for mut deferred in self.deferred_block_latencies.drain(..) {
-                let block_latency = block_times
-                    .get(&deferred.block_number)
-                    .map(|t| t.saturating_duration_since(deferred.submit_time));
+                let block_latency =
+                    block_times.get(&deferred.block_number).and_then(|&t| {
+                        if t < deferred.submit_time {
+                            debug!(
+                                block = deferred.block_number,
+                                "block seen before tx submitted, skipping block latency"
+                            );
+                            None
+                        } else {
+                            Some(t.duration_since(deferred.submit_time))
+                        }
+                    });
 
                 if let Some(latency) = block_latency {
                     deferred.metrics.block_latency = Some(latency);
@@ -417,7 +444,10 @@ impl Confirmer {
         self.deferred_block_latencies = still_pending;
 
         for metrics in to_send {
-            let _ = self.metrics_tx.send(metrics).await;
+            if self.metrics_tx.send(metrics).await.is_err() {
+                debug!("metrics channel closed during deferred resolution");
+                break;
+            }
         }
     }
 
