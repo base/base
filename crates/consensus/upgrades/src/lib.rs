@@ -31,9 +31,7 @@ macro_rules! upgrade_source_fn {
 /// and converts it into `Bytes`. Panics at runtime if the file content is not valid hex.
 macro_rules! bytecode_from_hex {
     ($path:expr) => {
-        hex::decode(include_str!($path).replace('\n', ""))
-            .expect("Expected hex byte string")
-            .into()
+        hex::decode(include_str!($path).replace('\n', "")).expect("Expected hex byte string").into()
     };
 }
 
