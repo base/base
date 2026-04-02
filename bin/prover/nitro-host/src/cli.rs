@@ -14,6 +14,7 @@ use base_consensus_registry::Registry;
 use base_proof_host::ProverConfig;
 #[cfg(feature = "local")]
 use base_proof_tee_nitro_host::EnclaveServer;
+#[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_tee_nitro_host::RegistrationHealthConfig;
 #[cfg(target_os = "linux")]
 use base_proof_tee_nitro_host::VSOCK_PORT;
@@ -96,6 +97,7 @@ struct ProverServerArgs {
     tee_prover_registry_address: Option<Address>,
 }
 
+#[cfg(any(target_os = "linux", feature = "local"))]
 impl ProverServerArgs {
     fn registration_health_config(&self) -> Option<RegistrationHealthConfig> {
         self.tee_prover_registry_address.map(|address| RegistrationHealthConfig {
