@@ -87,6 +87,7 @@ pub fn default_config_builder() -> ConfigBuilder {
         .support_floodsub()
         .max_transmit_size(MAX_GOSSIP_SIZE)
         .duplicate_cache_time(Duration::from_secs(120))
+        .connection_handler_queue_len(MAX_OUTBOUND_QUEUE)
         .validation_mode(libp2p::gossipsub::ValidationMode::None)
         .validate_messages()
         .message_id_fn(compute_message_id);

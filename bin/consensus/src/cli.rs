@@ -134,7 +134,10 @@ impl Follow {
     /// Runs the CLI.
     pub fn run(self) -> eyre::Result<()> {
         // Initialize logging from global arguments.
-        LogConfig::from(self.logging.clone()).init_tracing_subscriber()?;
+        base_cli_utils::init_tracing!(
+            LogConfig::from(self.logging.clone()),
+            ["libp2p_gossipsub=error"]
+        )?;
 
         // Initialize unified metrics for the follow-node subsystems.
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
@@ -294,7 +297,10 @@ impl Node {
     /// Runs the CLI.
     pub fn run(self) -> eyre::Result<()> {
         // Initialize logging from global arguments.
-        LogConfig::from(self.logging.clone()).init_tracing_subscriber()?;
+        base_cli_utils::init_tracing!(
+            LogConfig::from(self.logging.clone()),
+            ["libp2p_gossipsub=error"]
+        )?;
 
         // Initialize unified metrics
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {

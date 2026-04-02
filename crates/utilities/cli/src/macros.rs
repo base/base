@@ -1,3 +1,25 @@
+/// Initializes the tracing subscriber for a binary, with optional application-specific
+/// noise-suppression directives appended on top of the workspace defaults.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// // Default workspace suppressions only (e.g. discv5=error):
+/// base_cli_utils::init_tracing!(log_config)?;
+///
+/// // With additional binary-specific suppressions:
+/// base_cli_utils::init_tracing!(log_config, ["libp2p_gossipsub=error"])?;
+/// ```
+#[macro_export]
+macro_rules! init_tracing {
+    ($log_config:expr) => {
+        $log_config.init_tracing_subscriber()
+    };
+    ($log_config:expr, [$($directive:literal),+ $(,)?]) => {
+        $log_config.init_tracing_subscriber_with_directives(&[$($directive),+])
+    };
+}
+
 /// Generates a `MetricsArgs` struct with Prometheus metrics configuration,
 /// parameterized by env var prefix and default port at compile time.
 ///
