@@ -16,10 +16,10 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-alloy-primitives.workspace = true
 eyre.workspace = true
 tracing.workspace = true
 base-cli-utils.workspace = true
+alloy-primitives.workspace = true
 base-proof-tee-nitro-host.workspace = true
 base-consensus-registry.workspace = true
 tokio = { workspace = true, features = ["full"] }

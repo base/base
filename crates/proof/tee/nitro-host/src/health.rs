@@ -69,10 +69,10 @@ impl RegistrationHealthzRpc {
     async fn check_registration(&self) -> Result<bool, String> {
         {
             let cache = self.cache.read().await;
-            if let Some((registered, checked_at)) = *cache {
-                if checked_at.elapsed() < REGISTRATION_CACHE_TTL {
-                    return Ok(registered);
-                }
+            if let Some((registered, checked_at)) = *cache
+                && checked_at.elapsed() < REGISTRATION_CACHE_TTL
+            {
+                return Ok(registered);
             }
         }
 
@@ -92,11 +92,12 @@ impl RegistrationHealthzRpc {
             Err(e) => {
                 let cache = self.cache.read().await;
                 if let Some((registered, checked_at)) = *cache {
-                    if checked_at.elapsed() < REGISTRATION_STALE_LIMIT {
+                    let elapsed = checked_at.elapsed();
+                    if elapsed < REGISTRATION_STALE_LIMIT {
                         warn!(
                             error = %e,
                             signer = %signer,
-                            stale_secs = checked_at.elapsed().as_secs(),
+                            stale_secs = elapsed.as_secs(),
                             "L1 RPC failed, using stale cached registration status"
                         );
                         return Ok(registered);
