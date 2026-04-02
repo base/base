@@ -83,10 +83,7 @@ impl LogConfig {
     /// directives appended on top of the workspace defaults (e.g., `discv5=error`).
     ///
     /// This sets the global default subscriber. Should only be called once.
-    pub fn init_tracing_subscriber_with_directives(
-        &self,
-        directives: &[&str],
-    ) -> eyre::Result<()> {
+    pub fn init_tracing_subscriber_with_directives(&self, directives: &[&str]) -> eyre::Result<()> {
         let mut filter = EnvFilter::builder()
             .with_default_directive(self.global_level.into())
             .from_env_lossy()
