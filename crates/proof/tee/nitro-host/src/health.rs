@@ -175,4 +175,56 @@ mod tests {
         assert!(RegistrationHealthzRpc::derive_signer_address(&[0x04; 66]).is_err());
         assert!(RegistrationHealthzRpc::derive_signer_address(&[]).is_err());
     }
+
+    fn test_rpc() -> RegistrationHealthzRpc {
+        let server = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
+        let transport = Arc::new(NitroTransport::local(server));
+        let dummy_url = url::Url::parse("http://localhost:1").unwrap();
+        let registry = TEEProverRegistryContractClient::new(Address::ZERO, dummy_url);
+        RegistrationHealthzRpc::new("0.0.0", transport, registry)
+    }
+
+    const TEST_SIGNER: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+
+    #[tokio::test]
+    async fn stale_cache_returns_cached_value_on_error() {
+        let rpc = test_rpc();
+        *rpc.cache.write().await = Some((true, Instant::now()));
+        let result = rpc.use_stale_cache_or_fail(TEST_SIGNER, "rpc down").await;
+        assert_eq!(result.unwrap(), true);
+    }
+
+    #[tokio::test]
+    async fn stale_cache_fails_when_expired() {
+        let rpc = test_rpc();
+        let expired = Instant::now() - REGISTRATION_STALE_LIMIT - Duration::from_secs(1);
+        *rpc.cache.write().await = Some((true, expired));
+        let result = rpc.use_stale_cache_or_fail(TEST_SIGNER, "rpc down").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn stale_cache_fails_when_empty() {
+        let rpc = test_rpc();
+        let result = rpc.use_stale_cache_or_fail(TEST_SIGNER, "rpc down").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn cache_hit_within_ttl() {
+        let rpc = test_rpc();
+        rpc.signer.set(TEST_SIGNER).unwrap();
+        *rpc.cache.write().await = Some((true, Instant::now()));
+        let result = rpc.check_registration().await;
+        assert_eq!(result.unwrap(), true);
+    }
+
+    #[tokio::test]
+    async fn cache_hit_returns_false_when_not_registered() {
+        let rpc = test_rpc();
+        rpc.signer.set(TEST_SIGNER).unwrap();
+        *rpc.cache.write().await = Some((false, Instant::now()));
+        let result = rpc.check_registration().await;
+        assert_eq!(result.unwrap(), false);
+    }
 }
