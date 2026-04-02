@@ -142,7 +142,7 @@ impl Follow {
         })?;
 
         // Run the subcommand.
-        RuntimeManager::run_until_ctrl_c(self.exec())
+        RuntimeManager::new().run_until_ctrl_c(self.exec())
     }
 
     /// Run the Follow subcommand.
@@ -302,7 +302,7 @@ impl Node {
         })?;
 
         // Run the subcommand.
-        RuntimeManager::run_until_ctrl_c(self.exec())
+        RuntimeManager::new().run_until_ctrl_c(self.exec())
     }
 
     /// Returns the signer [`Address`] from the rollup config for the given l2 chain id.

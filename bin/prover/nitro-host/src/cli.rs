@@ -127,14 +127,16 @@ impl Cli {
         base_cli_utils::MetricsConfig::from(metrics).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
-        RuntimeManager::run_until_ctrl_c(async move {
-            match command {
-                #[cfg(target_os = "linux")]
-                Command::Server(args) => args.run().await,
-                #[cfg(feature = "local")]
-                Command::Local(args) => args.run().await,
-            }
-        })
+        RuntimeManager::new()
+            .with_thread_stack_size(8 * 1024 * 1024)
+            .run_until_ctrl_c(async move {
+                match command {
+                    #[cfg(target_os = "linux")]
+                    Command::Server(args) => args.run().await,
+                    #[cfg(feature = "local")]
+                    Command::Local(args) => args.run().await,
+                }
+            })
     }
 }
 
