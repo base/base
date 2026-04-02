@@ -386,6 +386,7 @@ impl LoadRunner {
         self.collector.reset();
         self.collector.start();
         self.stop_flag.store(false, Ordering::SeqCst);
+        self.cancel_token = CancellationToken::new();
 
         self.gas_price = self.client.get_gas_price().await?;
         info!(gas_price = self.gas_price, "fetched current gas price");

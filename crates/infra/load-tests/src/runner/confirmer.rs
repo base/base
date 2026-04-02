@@ -364,6 +364,10 @@ impl Confirmer {
                         receipt.inner.effective_gas_price,
                         block_num,
                     );
+                    // NOTE: deferred txs are removed from `pending` and decrement
+                    // `in_flight`, but metrics aren't sent to the collector until
+                    // the block timestamp arrives (or 5s timeout). During this
+                    // window the live display's confirmed count will lag slightly.
                     if let (None, Some(bn)) = (block_latency, block_num) {
                         debug!(tx_hash = %tx_hash, block = bn, "block latency deferred");
                         self.deferred_block_latencies.push(DeferredBlockLatency {
