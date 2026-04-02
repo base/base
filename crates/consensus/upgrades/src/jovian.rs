@@ -64,18 +64,12 @@ impl Jovian {
 
     /// Returns the raw bytecode for the L1 Block deployment.
     pub fn l1_block_deployment_bytecode() -> Bytes {
-        hex::decode(include_str!("./bytecode/jovian-l1-block-deployment.hex").replace('\n', ""))
-            .expect("Expected hex byte string")
-            .into()
+        bytecode_from_hex!("./bytecode/jovian-l1-block-deployment.hex")
     }
 
     /// Returns the gas price oracle deployment bytecode.
     pub fn gas_price_oracle_deployment_bytecode() -> Bytes {
-        hex::decode(
-            include_str!("./bytecode/jovian-gas-price-oracle-deployment.hex").replace('\n', ""),
-        )
-        .expect("Expected hex byte string")
-        .into()
+        bytecode_from_hex!("./bytecode/jovian-gas-price-oracle-deployment.hex")
     }
 
     /// Returns the bytecode to enable the gas price oracle for Jovian.

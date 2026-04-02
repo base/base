@@ -107,30 +107,22 @@ impl Isthmus {
 
     /// Returns the raw bytecode for the L1 Block deployment.
     pub fn l1_block_deployment_bytecode() -> Bytes {
-        hex::decode(include_str!("./bytecode/l1_block_isthmus.hex").replace('\n', ""))
-            .expect("Expected hex byte string")
-            .into()
+        bytecode_from_hex!("./bytecode/l1_block_isthmus.hex")
     }
 
     /// Returns the gas price oracle deployment bytecode.
     pub fn gas_price_oracle_deployment_bytecode() -> Bytes {
-        hex::decode(include_str!("./bytecode/gpo_isthmus.hex").replace('\n', ""))
-            .expect("Expected hex byte string")
-            .into()
+        bytecode_from_hex!("./bytecode/gpo_isthmus.hex")
     }
 
     /// Returns the gas price oracle deployment bytecode.
     pub fn operator_fee_vault_deployment_bytecode() -> Bytes {
-        hex::decode(include_str!("./bytecode/ofv_isthmus.hex").replace('\n', ""))
-            .expect("Expected hex byte string")
-            .into()
+        bytecode_from_hex!("./bytecode/ofv_isthmus.hex")
     }
 
     /// Returns the EIP-2935 creation data.
     pub fn eip2935_creation_data() -> Bytes {
-        hex::decode(include_str!("./bytecode/eip2935_isthmus.hex").replace('\n', ""))
-            .expect("Expected hex byte string")
-            .into()
+        bytecode_from_hex!("./bytecode/eip2935_isthmus.hex")
     }
 
     /// Returns the list of [`TxDeposit`]s for the network upgrade.
@@ -289,30 +281,14 @@ mod tests {
         assert_eq!(isthmus_upgrade_tx.len(), 8);
 
         let expected_txs: Vec<Bytes> = vec![
-            hex::decode(include_str!("./bytecode/isthmus_tx_0.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
-            hex::decode(include_str!("./bytecode/isthmus_tx_1.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
-            hex::decode(include_str!("./bytecode/isthmus_tx_2.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
-            hex::decode(include_str!("./bytecode/isthmus_tx_3.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
-            hex::decode(include_str!("./bytecode/isthmus_tx_4.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
-            hex::decode(include_str!("./bytecode/isthmus_tx_5.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
-            hex::decode(include_str!("./bytecode/isthmus_tx_6.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
-            hex::decode(include_str!("./bytecode/isthmus_tx_7.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
+            bytecode_from_hex!("./bytecode/isthmus_tx_0.hex"),
+            bytecode_from_hex!("./bytecode/isthmus_tx_1.hex"),
+            bytecode_from_hex!("./bytecode/isthmus_tx_2.hex"),
+            bytecode_from_hex!("./bytecode/isthmus_tx_3.hex"),
+            bytecode_from_hex!("./bytecode/isthmus_tx_4.hex"),
+            bytecode_from_hex!("./bytecode/isthmus_tx_5.hex"),
+            bytecode_from_hex!("./bytecode/isthmus_tx_6.hex"),
+            bytecode_from_hex!("./bytecode/isthmus_tx_7.hex"),
         ];
         for (i, expected) in expected_txs.iter().enumerate() {
             assert_eq!(isthmus_upgrade_tx[i], *expected);

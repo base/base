@@ -25,6 +25,18 @@ macro_rules! upgrade_source_fn {
     };
 }
 
+/// Decodes a hex-encoded bytecode file at compile time and returns it as [`alloy_primitives::Bytes`].
+///
+/// Strips trailing newlines from the file content, hex-decodes the result,
+/// and converts it into `Bytes`. Panics at runtime if the file content is not valid hex.
+macro_rules! bytecode_from_hex {
+    ($path:expr) => {
+        hex::decode(include_str!($path).replace('\n', ""))
+            .expect("Expected hex byte string")
+            .into()
+    };
+}
+
 mod traits;
 pub use traits::Hardfork;
 

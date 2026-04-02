@@ -52,9 +52,7 @@ impl Fjord {
 
     /// Returns the fjord gas price oracle deployment bytecode.
     pub fn gas_price_oracle_deployment_bytecode() -> alloy_primitives::Bytes {
-        hex::decode(include_str!("./bytecode/gpo_fjord.hex").replace('\n', ""))
-            .expect("Expected hex byte string")
-            .into()
+        bytecode_from_hex!("./bytecode/gpo_fjord.hex")
     }
 
     /// Returns the list of [`TxDeposit`]s for the Fjord network upgrade.
@@ -149,15 +147,9 @@ mod tests {
         assert_eq!(fjord_upgrade_tx.len(), 3);
 
         let expected_txs: Vec<Bytes> = vec![
-            hex::decode(include_str!("./bytecode/fjord_tx_0.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
-            hex::decode(include_str!("./bytecode/fjord_tx_1.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
-            hex::decode(include_str!("./bytecode/fjord_tx_2.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
+            bytecode_from_hex!("./bytecode/fjord_tx_0.hex"),
+            bytecode_from_hex!("./bytecode/fjord_tx_1.hex"),
+            bytecode_from_hex!("./bytecode/fjord_tx_2.hex"),
         ];
         for (i, expected) in expected_txs.iter().enumerate() {
             assert_eq!(fjord_upgrade_tx[i], *expected);
