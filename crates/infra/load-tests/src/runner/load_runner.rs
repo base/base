@@ -27,7 +27,7 @@ use super::{
 };
 use crate::{
     BaselineError, Result,
-    config::WorkloadConfig,
+    config::{OsakaTarget, WorkloadConfig},
     metrics::{MetricsCollector, MetricsSummary, TransactionMetrics},
     rpc::{RpcClient, WalletProvider, create_wallet_provider},
     workload::{
@@ -38,7 +38,7 @@ use crate::{
 
 struct PreparedTx {
     from: Address,
-    to: Address,
+    to: Option<Address>,
     value: U256,
     data: Bytes,
     gas_limit: u64,
@@ -198,7 +198,10 @@ impl LoadRunner {
                 TxType::Calldata { max_size, .. } => 21_000 + (*max_size as u64 * 16),
                 TxType::Erc20 { .. } => 65_000,
                 TxType::Precompile { iterations, .. } => 50_000 + 100_000 * (*iterations as u64),
-                TxType::Osaka { .. } => 80_000,
+                TxType::Osaka { target } => match target {
+                    OsakaTarget::Clz => 80_000,
+                    OsakaTarget::P256verifyOsaka | OsakaTarget::ModexpOsaka => 30_000,
+                },
             };
             weighted_gas += gas_estimate * tx_config.weight as u64;
         }
@@ -494,7 +497,7 @@ impl LoadRunner {
 
             let tx_request = self.generator.generate_payload(from, to)?;
 
-            let to_addr = tx_request.to.and_then(|kind| kind.to().copied()).unwrap_or(to);
+            let to_addr = tx_request.to.and_then(|kind| kind.to().copied());
             let value = tx_request.value.unwrap_or(U256::ZERO);
             let data = tx_request.input.input().cloned().unwrap_or_default();
             let gas_limit = tx_request.gas.unwrap_or(21_000);
@@ -658,9 +661,8 @@ impl LoadRunner {
             let nonce = nonce_guard.nonce();
 
             let max_fee = self.gas_price.saturating_mul(2).min(self.config.max_gas_price);
-            let tx = TransactionRequest::default()
+            let mut tx = TransactionRequest::default()
                 .with_from(prepared.from)
-                .with_to(prepared.to)
                 .with_value(prepared.value)
                 .with_input(prepared.data)
                 .with_nonce(nonce)
@@ -668,6 +670,9 @@ impl LoadRunner {
                 .with_max_fee_per_gas(max_fee)
                 .with_max_priority_fee_per_gas((self.gas_price / 10).max(1))
                 .with_gas_limit(prepared.gas_limit);
+            if let Some(to) = prepared.to {
+                tx = tx.with_to(to);
+            }
 
             let mut attempts = 0;
             let max_attempts = 3;
