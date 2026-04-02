@@ -16,6 +16,7 @@ use super::transport::NitroTransport;
 
 const REGISTRATION_CACHE_TTL: Duration = Duration::from_secs(30);
 const REGISTRATION_STALE_LIMIT: Duration = Duration::from_secs(300);
+const REGISTRATION_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Configuration for registration-gated health checks.
 #[derive(Debug)]
@@ -66,6 +67,23 @@ impl RegistrationHealthzRpc {
         Ok(Address::from_slice(&hash[12..]))
     }
 
+    async fn use_stale_cache_or_fail(&self, signer: Address, error: &str) -> Result<bool, String> {
+        let cache = self.cache.read().await;
+        if let Some((registered, checked_at)) = *cache {
+            let elapsed = checked_at.elapsed();
+            if elapsed < REGISTRATION_STALE_LIMIT {
+                warn!(
+                    error = %error,
+                    signer = %signer,
+                    stale_secs = elapsed.as_secs(),
+                    "L1 RPC failed, using stale cached registration status"
+                );
+                return Ok(registered);
+            }
+        }
+        Err(format!("failed to check registration for {signer}: {error}"))
+    }
+
     async fn check_registration(&self) -> Result<bool, String> {
         {
             let cache = self.cache.read().await;
@@ -78,33 +96,24 @@ impl RegistrationHealthzRpc {
 
         let signer = self.signer_address().await?;
 
-        match self.registry.is_registered_signer(signer).await {
-            Ok(registered) => {
+        let result = tokio::time::timeout(
+            REGISTRATION_CHECK_TIMEOUT,
+            self.registry.is_registered_signer(signer),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(registered)) => {
                 let mut cache = self.cache.write().await;
                 let was_registered = cache.map(|(r, _)| r);
                 *cache = Some((registered, Instant::now()));
-                // Only warn on state transition to unregistered, not on every cache refresh.
                 if !registered && was_registered != Some(false) {
                     warn!(signer = %signer, "signer is not registered in TEEProverRegistry");
                 }
                 Ok(registered)
             }
-            Err(e) => {
-                let cache = self.cache.read().await;
-                if let Some((registered, checked_at)) = *cache {
-                    let elapsed = checked_at.elapsed();
-                    if elapsed < REGISTRATION_STALE_LIMIT {
-                        warn!(
-                            error = %e,
-                            signer = %signer,
-                            stale_secs = elapsed.as_secs(),
-                            "L1 RPC failed, using stale cached registration status"
-                        );
-                        return Ok(registered);
-                    }
-                }
-                Err(format!("failed to check registration for {signer}: {e}"))
-            }
+            Ok(Err(e)) => self.use_stale_cache_or_fail(signer, &e.to_string()).await,
+            Err(_) => self.use_stale_cache_or_fail(signer, "L1 RPC request timed out").await,
         }
     }
 }
