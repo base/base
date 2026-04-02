@@ -21,9 +21,8 @@ use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
 use reth_node_api::{FullNodeComponents, NodePrimitives, NodeTypes};
 use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
-use reth_trie::{HashedPostStateSorted, updates::TrieUpdatesSorted};
-pub use sync_target::{CachedBlockTrieData, SyncTarget};
-use tokio::{sync::watch, task};
+pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
+use tokio::task;
 use tracing::{debug, error, info};
 
 // Safety threshold for maximum blocks to prune automatically on startup.
@@ -228,7 +227,7 @@ where
                 best_block,
                 "Storage behind tip, starting sync immediately"
             );
-            sync_target.set_target(best_block);
+            sync_target.update_state(SyncTargetState::SyncUpTo { to: best_block });
         }
 
         let prune_task = OpProofStoragePrunerTask::new(
@@ -241,16 +240,10 @@ where
             .task_executor()
             .spawn_with_graceful_shutdown_signal(|signal| Box::pin(prune_task.run(signal)));
 
-        let collector = LiveTrieCollector::new(
-            self.ctx.evm_config().clone(),
-            self.ctx.provider().clone(),
-            &self.storage,
-        );
-
         self.ctx.notifications.set_without_head();
 
         while let Some(notification) = self.ctx.notifications.try_next().await? {
-            self.handle_notification(notification, &collector, &sync_target)?;
+            self.handle_notification(notification, &sync_target)?;
         }
 
         Ok(())
@@ -310,7 +303,6 @@ where
     fn spawn_sync_task(&self) -> Arc<SyncTarget> {
         let sync_target = Arc::new(SyncTarget::new());
         let task_sync_target = Arc::clone(&sync_target);
-        let target_rx = sync_target.subscribe();
 
         let task_storage = self.storage.clone();
         let task_provider = self.ctx.provider().clone();
@@ -325,7 +317,6 @@ where
                     LiveTrieCollector::new(task_evm_config, task_provider.clone(), &storage);
                 Self::sync_loop(
                     task_sync_target,
-                    target_rx,
                     task_storage,
                     task_provider,
                     &task_collector,
@@ -340,7 +331,6 @@ where
 
     async fn sync_loop(
         sync_target: Arc<SyncTarget>,
-        mut target_rx: watch::Receiver<u64>,
         storage: OpProofsStorage<Storage>,
         provider: Node::Provider,
         collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
@@ -349,25 +339,104 @@ where
         info!(target: "base::exex", "Starting proofs storage sync loop");
 
         loop {
-            let target = sync_target.target();
+            let Some(state) = sync_target.take_state() else {
+                sync_target.notified().await;
+                continue;
+            };
+
+            match state {
+                SyncTargetState::Revert { revert_to } => {
+                    Self::handle_revert(&storage, collector, revert_to);
+                }
+                SyncTargetState::RevertThenSync { revert_to, sync_to } => {
+                    Self::handle_revert(&storage, collector, revert_to);
+                    Self::sync_forward(
+                        &sync_target,
+                        &storage,
+                        &provider,
+                        collector,
+                        verification_interval,
+                        sync_to,
+                    )
+                    .await;
+                }
+                SyncTargetState::SyncUpTo { to } => {
+                    Self::sync_forward(
+                        &sync_target,
+                        &storage,
+                        &provider,
+                        collector,
+                        verification_interval,
+                        to,
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
+    fn handle_revert(
+        storage: &OpProofsStorage<Storage>,
+        collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
+        revert_to: BlockWithParent,
+    ) {
+        let latest = match storage.get_latest_block_number() {
+            Ok(Some((n, _))) => n,
+            Ok(None) => return,
+            Err(e) => {
+                error!(target: "base::exex", error = ?e, "Failed to get latest block during revert");
+                return;
+            }
+        };
+
+        if latest >= revert_to.block.number {
+            info!(
+                target: "base::exex",
+                revert_to = revert_to.block.number,
+                latest,
+                "Reverting proofs storage"
+            );
+            if let Err(e) = collector.unwind_history(revert_to) {
+                error!(target: "base::exex", error = ?e, "Failed to revert proofs storage");
+            }
+        } else {
+            debug!(
+                target: "base::exex",
+                revert_to = revert_to.block.number,
+                latest,
+                "Revert target beyond stored blocks, skipping"
+            );
+        }
+    }
+
+    async fn sync_forward(
+        sync_target: &SyncTarget,
+        storage: &OpProofsStorage<Storage>,
+        provider: &Node::Provider,
+        collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
+        verification_interval: u64,
+        target: u64,
+    ) {
+        loop {
+            // Check for higher-priority state (e.g. revert) before processing.
+            if sync_target.has_pending_state() {
+                return;
+            }
+
             let latest = match storage.get_latest_block_number() {
                 Ok(Some((n, _))) => n,
                 Ok(None) => {
-                    error!(target: "base::exex", "No blocks stored in proofs storage during sync loop");
-                    continue;
+                    error!(target: "base::exex", "No blocks stored in proofs storage during sync");
+                    return;
                 }
                 Err(e) => {
                     error!(target: "base::exex", error = ?e, "Failed to get latest block");
-                    continue;
+                    return;
                 }
             };
 
             if latest >= target {
-                if target_rx.changed().await.is_err() {
-                    error!(target: "base::exex", "Sync target watch channel closed, exiting sync loop");
-                    return;
-                }
-                continue;
+                return;
             }
 
             let end = (latest + SYNC_BLOCKS_BATCH_SIZE as u64).min(target);
@@ -382,15 +451,11 @@ where
 
             for block_num in (latest + 1)..=end {
                 let cached = sync_target.take(block_num);
-                if let Err(e) = Self::process_block(
-                    block_num,
-                    cached,
-                    collector,
-                    &provider,
-                    verification_interval,
-                ) {
+                if let Err(e) =
+                    Self::process_block(block_num, cached, collector, provider, verification_interval)
+                {
                     error!(target: "base::exex", block_number = block_num, error = ?e, "Block processing failed");
-                    break;
+                    return;
                 }
             }
 
@@ -458,28 +523,17 @@ where
     fn handle_notification(
         &self,
         notification: ExExNotification<Primitives>,
-        collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
         sync_target: &SyncTarget,
     ) -> eyre::Result<()> {
-        let latest_stored = match self.storage.get_latest_block_number()? {
-            Some((n, _)) => n,
-            None => {
-                return Err(eyre::eyre!("No blocks stored in proofs storage"));
-            }
-        };
-
         match &notification {
             ExExNotification::ChainCommitted { new } => {
-                self.handle_chain_committed(Arc::clone(new), latest_stored, sync_target)?
+                self.handle_chain_committed(Arc::clone(new), sync_target)?
             }
-            ExExNotification::ChainReorged { old, new } => self.handle_chain_reorged(
-                Arc::clone(old),
-                Arc::clone(new),
-                latest_stored,
-                collector,
-            )?,
+            ExExNotification::ChainReorged { old, new } => {
+                self.handle_chain_reorged(Arc::clone(old), Arc::clone(new), sync_target)?
+            }
             ExExNotification::ChainReverted { old } => {
-                self.handle_chain_reverted(Arc::clone(old), latest_stored, collector)?
+                self.handle_chain_reverted(Arc::clone(old), sync_target)?
             }
         }
 
@@ -500,7 +554,6 @@ where
     fn handle_chain_committed(
         &self,
         new: Arc<Chain<Primitives>>,
-        latest_stored: u64,
         sync_target: &SyncTarget,
     ) -> eyre::Result<()> {
         debug!(
@@ -509,16 +562,6 @@ where
             block_hash = ?new.tip().hash(),
             "ChainCommitted notification received",
         );
-
-        if new.tip().number() <= latest_stored {
-            debug!(
-                target: "base::exex",
-                block_number = new.tip().number(),
-                latest_stored,
-                "Already processed, skipping"
-            );
-            return Ok(());
-        }
 
         // Cache trie data for all blocks in the chain so the sync loop can
         // use pre-computed data even when it is many blocks behind.
@@ -549,11 +592,10 @@ where
             total_blocks,
             cached_count,
             missing = total_blocks - cached_count,
-            latest_stored,
             "Cached notification trie data"
         );
 
-        sync_target.set_target(new.tip().number());
+        sync_target.update_state(SyncTargetState::SyncUpTo { to: new.tip().number() });
         Ok(())
     }
 
@@ -561,8 +603,7 @@ where
         &self,
         old: Arc<Chain<Primitives>>,
         new: Arc<Chain<Primitives>>,
-        latest_stored: u64,
-        collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
+        sync_target: &SyncTarget,
     ) -> eyre::Result<()> {
         info!(
             target: "base::exex",
@@ -573,48 +614,43 @@ where
             "ChainReorged notification received",
         );
 
-        if old.first().number() > latest_stored {
-            debug!(target: "base::exex", "Reorg beyond stored blocks, skipping");
-            return Ok(());
-        }
-
-        // find the common ancestor
-        let mut block_updates: Vec<(
-            BlockWithParent,
-            Arc<TrieUpdatesSorted>,
-            Arc<HashedPostStateSorted>,
-        )> = Vec::with_capacity(new.len());
-        for block_number in new.blocks().keys() {
-            // verify if the fork point matches
-            if old.fork_block() != new.fork_block() {
-                return Err(eyre::eyre!(
-                    "Fork blocks do not match: old fork block {:?}, new fork block {:?}",
-                    old.fork_block(),
-                    new.fork_block()
-                ));
-            }
-
-            let block = new
-                .blocks()
-                .get(block_number)
-                .ok_or_else(|| eyre::eyre!("Missing block {} in new chain", block_number))?;
-            let trie_data = new
-                .trie_data_at(*block_number)
-                .ok_or_else(|| {
-                    eyre::eyre!("Missing Trie data for block {} in new chain", block_number)
-                })?
-                .get();
-            let trie_updates = &trie_data.trie_updates;
-            let hashed_state = &trie_data.hashed_state;
-
-            block_updates.push((
-                block.block_with_parent(),
-                Arc::clone(trie_updates),
-                Arc::clone(hashed_state),
+        if old.fork_block() != new.fork_block() {
+            return Err(eyre::eyre!(
+                "Fork blocks do not match: old fork block {:?}, new fork block {:?}",
+                old.fork_block(),
+                new.fork_block()
             ));
         }
 
-        collector.unwind_and_store_block_updates(block_updates)?;
+        let first_old = old.first().block_with_parent();
+
+        // Invalidate any cached blocks from the old chain.
+        sync_target.clear_from(first_old.block.number);
+
+        // Cache trie data for all blocks in the new chain.
+        for (&block_number, block) in new.blocks() {
+            if let Some(trie_data) = new.trie_data_at(block_number) {
+                sync_target.insert(
+                    block_number,
+                    CachedBlockTrieData {
+                        block_with_parent: block.block_with_parent(),
+                        trie_data: trie_data.clone(),
+                    },
+                );
+            } else {
+                debug!(
+                    target: "base::exex",
+                    block_number,
+                    "Reorged block missing trie data"
+                );
+            }
+        }
+
+        sync_target
+            .update_state(SyncTargetState::RevertThenSync {
+                revert_to: first_old,
+                sync_to: new.tip().number(),
+            });
 
         Ok(())
     }
@@ -622,8 +658,7 @@ where
     fn handle_chain_reverted(
         &self,
         old: Arc<Chain<Primitives>>,
-        latest_stored: u64,
-        collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
+        sync_target: &SyncTarget,
     ) -> eyre::Result<()> {
         info!(
             target: "base::exex",
@@ -632,17 +667,12 @@ where
             "ChainReverted notification received",
         );
 
-        if old.first().number() > latest_stored {
-            debug!(
-                target: "base::exex",
-                first_block_number = old.first().number(),
-                latest_stored = latest_stored,
-                "Fork block number is greater than latest stored, skipping",
-            );
-            return Ok(());
-        }
+        let first_old = old.first().block_with_parent();
 
-        collector.unwind_history(old.first().block_with_parent())?;
+        // Invalidate any cached blocks that are being reverted.
+        sync_target.clear_from(first_old.block.number);
+
+        sync_target.update_state(SyncTargetState::Revert { revert_to: first_old });
         Ok(())
     }
 }
@@ -774,11 +804,6 @@ mod tests {
         let (ctx, _handle) =
             reth_exex_test_utils::test_exex_context().await.expect("exex test context");
 
-        let collector = LiveTrieCollector::new(
-            ctx.components.components.evm_config.clone(),
-            ctx.components.provider.clone(),
-            &proofs,
-        );
         let exex = build_test_exex(ctx, proofs.clone());
 
         let new_chain = Arc::new(mk_chain_with_updates(1, 1, None));
@@ -786,15 +811,16 @@ mod tests {
 
         let sync_target = SyncTarget::new();
 
-        exex.handle_notification(notif, &collector, &sync_target).expect("handle chain commit");
+        exex.handle_notification(notif, &sync_target).expect("handle chain commit");
 
         // Committed blocks are cached in sync target, not stored directly
-        assert_eq!(sync_target.target(), 1);
         assert!(sync_target.take(1).is_some(), "block 1 should be cached");
+        let state = sync_target.take_state().expect("should have pending state");
+        assert!(matches!(state, SyncTargetState::SyncUpTo { to: 1 }));
     }
 
     #[tokio::test]
-    async fn handle_notification_chain_committed_skips_already_processed() {
+    async fn handle_notification_chain_committed_caches_already_stored_blocks() {
         // MDBX proofs storage
         let dir = tempdir_path();
         let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
@@ -808,27 +834,23 @@ mod tests {
         let (ctx, _handle) =
             reth_exex_test_utils::test_exex_context().await.expect("exex test context");
 
-        let collector = LiveTrieCollector::new(
-            ctx.components.components.evm_config.clone(),
-            ctx.components.provider.clone(),
-            &proofs,
-        );
-
         let exex = build_test_exex(ctx, proofs.clone());
 
         let sync_target = SyncTarget::new();
 
-        // Try to handle notification for block 5 which is already stored
+        // Handle notification for block 5 which is already stored - still caches
         let new_chain = Arc::new(mk_chain_with_updates(5, 5, Some(hash_for_num(10))));
         let notif = ExExNotification::ChainCommitted { new: new_chain };
-        exex.handle_notification(notif, &collector, &sync_target).expect("handle chain commit");
+        exex.handle_notification(notif, &sync_target).expect("handle chain commit");
 
-        // Target should not have been updated since block 5 <= latest_stored
-        assert_eq!(sync_target.target(), 0);
+        // State is set (sync loop will see latest >= target and skip)
+        let state = sync_target.take_state().expect("should have pending state");
+        assert!(matches!(state, SyncTargetState::SyncUpTo { to: 5 }));
 
+        // Storage is unchanged (notification handler doesn't write to storage)
         let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok");
         assert_eq!(latest.0, 5);
-        assert_eq!(latest.1, hash_for_num(5)); // block was not updated
+        assert_eq!(latest.1, hash_for_num(5));
     }
 
     #[tokio::test]
@@ -844,18 +866,9 @@ mod tests {
         let (ctx, _handle) =
             reth_exex_test_utils::test_exex_context().await.expect("exex test context");
 
-        let collector = LiveTrieCollector::new(
-            ctx.components.components.evm_config.clone(),
-            ctx.components.provider.clone(),
-            &proofs,
-        );
-
         let exex = build_test_exex(ctx, proofs.clone());
 
         let sync_target = SyncTarget::new();
-
-        let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
-        assert_eq!(latest, 10);
 
         // Now the tip is 10, and we want to reorg from block 6..12
         let old_chain = Arc::new(mk_chain_with_updates(6, 10, None));
@@ -864,13 +877,28 @@ mod tests {
         // Notification: chain reorged 6..12
         let notif = ExExNotification::ChainReorged { new: new_chain, old: old_chain };
 
-        exex.handle_notification(notif, &collector, &sync_target).expect("handle chain re-orged");
+        exex.handle_notification(notif, &sync_target).expect("handle chain re-orged");
+
+        // Should have RevertThenSync state
+        let state = sync_target.take_state().expect("should have pending state");
+        assert!(matches!(
+            state,
+            SyncTargetState::RevertThenSync { revert_to, sync_to: 12 }
+            if revert_to.block.number == 6
+        ));
+
+        // New chain blocks should be cached
+        for n in 6..=12 {
+            assert!(sync_target.take(n).is_some(), "block {} should be cached", n);
+        }
+
+        // Storage unchanged (sync loop handles the actual revert)
         let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
-        assert_eq!(latest, 12);
+        assert_eq!(latest, 10);
     }
 
     #[tokio::test]
-    async fn handle_notification_chain_reorged_skips_beyond_stored_blocks() {
+    async fn handle_notification_chain_reorged_beyond_stored_blocks() {
         // MDBX proofs storage
         let dir = tempdir_path();
         let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
@@ -882,27 +910,29 @@ mod tests {
         let (ctx, _handle) =
             reth_exex_test_utils::test_exex_context().await.expect("exex test context");
 
-        let collector = LiveTrieCollector::new(
-            ctx.components.components.evm_config.clone(),
-            ctx.components.provider.clone(),
-            &proofs,
-        );
-
         let exex = build_test_exex(ctx, proofs.clone());
 
         let sync_target = SyncTarget::new();
 
-        let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
-        assert_eq!(latest, 10);
-
         // Now the tip is 10, and we want to reorg from block 12..15
+        // Both chains share the same fork block (block 11)
         let old_chain = Arc::new(mk_chain_with_updates(12, 15, None));
-        let new_chain = Arc::new(mk_chain_with_updates(10, 20, None));
+        let new_chain = Arc::new(mk_chain_with_updates(12, 20, None));
 
-        // Notification: chain reorged 12..15
+        // Notification: chain reorged 12..20
         let notif = ExExNotification::ChainReorged { new: new_chain, old: old_chain };
 
-        exex.handle_notification(notif, &collector, &sync_target).expect("handle chain re-orged");
+        exex.handle_notification(notif, &sync_target).expect("handle chain re-orged");
+
+        // State is set; sync loop will detect revert is beyond stored blocks
+        let state = sync_target.take_state().expect("should have pending state");
+        assert!(matches!(
+            state,
+            SyncTargetState::RevertThenSync { revert_to, sync_to: 20 }
+            if revert_to.block.number == 12
+        ));
+
+        // Storage unchanged
         let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
         assert_eq!(latest, 10);
     }
@@ -920,18 +950,9 @@ mod tests {
         let (ctx, _handle) =
             reth_exex_test_utils::test_exex_context().await.expect("exex test context");
 
-        let collector = LiveTrieCollector::new(
-            ctx.components.components.evm_config.clone(),
-            ctx.components.provider.clone(),
-            &proofs,
-        );
-
         let exex = build_test_exex(ctx, proofs.clone());
 
         let sync_target = SyncTarget::new();
-
-        let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
-        assert_eq!(latest, 10);
 
         // Now the tip is 10, and we want to revert from block 9..10
         let old_chain = Arc::new(mk_chain_with_updates(9, 10, None));
@@ -939,13 +960,23 @@ mod tests {
         // Notification: chain reverted 9..10
         let notif = ExExNotification::ChainReverted { old: old_chain };
 
-        exex.handle_notification(notif, &collector, &sync_target).expect("handle chain reverted");
+        exex.handle_notification(notif, &sync_target).expect("handle chain reverted");
+
+        // Should have Revert state
+        let state = sync_target.take_state().expect("should have pending state");
+        assert!(matches!(
+            state,
+            SyncTargetState::Revert { revert_to }
+            if revert_to.block.number == 9
+        ));
+
+        // Storage unchanged (sync loop handles the actual revert)
         let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
-        assert_eq!(latest, 8);
+        assert_eq!(latest, 10);
     }
 
     #[tokio::test]
-    async fn handle_notification_chain_reverted_skips_beyond_stored_blocks() {
+    async fn handle_notification_chain_reverted_beyond_stored_blocks() {
         // MDBX proofs storage
         let dir = tempdir_path();
         let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
@@ -957,18 +988,9 @@ mod tests {
         let (ctx, _handle) =
             reth_exex_test_utils::test_exex_context().await.expect("exex test context");
 
-        let collector = LiveTrieCollector::new(
-            ctx.components.components.evm_config.clone(),
-            ctx.components.provider.clone(),
-            &proofs,
-        );
-
         let exex = build_test_exex(ctx, proofs.clone());
 
         let sync_target = SyncTarget::new();
-
-        let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
-        assert_eq!(latest, 5);
 
         // Now the tip is 5, and we want to revert from block 9..10
         let old_chain = Arc::new(mk_chain_with_updates(9, 10, None));
@@ -976,7 +998,17 @@ mod tests {
         // Notification: chain reverted 9..10
         let notif = ExExNotification::ChainReverted { old: old_chain };
 
-        exex.handle_notification(notif, &collector, &sync_target).expect("handle chain reverted");
+        exex.handle_notification(notif, &sync_target).expect("handle chain reverted");
+
+        // State is set; sync loop will detect revert is beyond stored blocks
+        let state = sync_target.take_state().expect("should have pending state");
+        assert!(matches!(
+            state,
+            SyncTargetState::Revert { revert_to }
+            if revert_to.block.number == 9
+        ));
+
+        // Storage unchanged
         let latest = proofs.get_latest_block_number().expect("get latest block").expect("ok").0;
         assert_eq!(latest, 5);
     }
@@ -1040,33 +1072,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_notification_errors_on_empty_storage() {
-        // MDBX proofs storage
-        let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: OpProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
-
-        let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
-
-        let collector = LiveTrieCollector::new(
-            ctx.components.components.evm_config.clone(),
-            ctx.components.provider.clone(),
-            &proofs,
-        );
-
-        let exex = build_test_exex(ctx, proofs.clone());
-
-        // Any notification will do
-        let new_chain = Arc::new(mk_chain_with_updates(1, 5, None));
-        let notif = ExExNotification::ChainCommitted { new: new_chain };
-
-        let sync_target = SyncTarget::new();
-        let err = exex.handle_notification(notif, &collector, &sync_target).unwrap_err();
-        assert_eq!(err.to_string(), "No blocks stored in proofs storage");
-    }
-
-    #[tokio::test]
     async fn handle_notification_schedules_async_on_gap() {
         // MDBX proofs storage
         let dir = tempdir_path();
@@ -1078,11 +1083,6 @@ mod tests {
         let (ctx, _handle) =
             reth_exex_test_utils::test_exex_context().await.expect("exex test context");
 
-        let collector = LiveTrieCollector::new(
-            ctx.components.components.evm_config.clone(),
-            ctx.components.provider.clone(),
-            &proofs,
-        );
         let exex = build_test_exex(ctx, proofs.clone());
 
         // Notification: chain committed 5..10 (Blocks 1,2,3,4 are missing from storage)
@@ -1092,11 +1092,15 @@ mod tests {
         let sync_target = SyncTarget::new();
 
         // Process notification
-        exex.handle_notification(notif, &collector, &sync_target)
+        exex.handle_notification(notif, &sync_target)
             .expect("handle chain commit should return ok immediately");
 
-        // Verify the sync target was updated to the tip of the new chain
-        assert_eq!(sync_target.target(), 10, "Should have scheduled sync to block 10");
+        // Verify the sync target state was set
+        let state = sync_target.take_state().expect("should have pending state");
+        assert!(
+            matches!(state, SyncTargetState::SyncUpTo { to: 10 }),
+            "Should have scheduled sync to block 10"
+        );
 
         // Verify Main Thread did NOT process it
         // Because we didn't spawn the actual worker thread in this test, storage should still be at

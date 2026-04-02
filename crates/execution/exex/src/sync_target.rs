@@ -2,12 +2,15 @@
 //!
 //! Buffers trie data from exex notifications so the sync loop can use
 //! pre-computed data even when it is many blocks behind the chain tip.
+//! Routes committed, reverted, and reorged notifications through a
+//! [`SyncTargetState`] state machine so the sync loop is the single
+//! writer to proofs storage.
 
 use std::{collections::BTreeMap, sync::Mutex};
 
 use alloy_eips::eip1898::BlockWithParent;
 use reth_trie::LazyTrieData;
-use tokio::sync::watch;
+use tokio::sync::Notify;
 use tracing::debug;
 
 /// Maximum number of blocks to cache trie data for.
@@ -22,21 +25,67 @@ pub struct CachedBlockTrieData {
     pub trie_data: LazyTrieData,
 }
 
+/// The state of the sync target, describing what the sync loop should do next.
+#[derive(Debug)]
+pub enum SyncTargetState {
+    /// Sync forward to a specific block number.
+    SyncUpTo {
+        /// The target block number to sync up to.
+        to: u64,
+    },
+    /// Revert to a specific block, then sync forward to a target.
+    RevertThenSync {
+        /// The first block to remove (inclusive) during the revert.
+        revert_to: BlockWithParent,
+        /// The target block number to sync up to after reverting.
+        sync_to: u64,
+    },
+    /// Revert to a specific block without syncing forward.
+    Revert {
+        /// The first block to remove (inclusive) during the revert.
+        revert_to: BlockWithParent,
+    },
+}
+
+impl SyncTargetState {
+    fn apply_next(&mut self, new: SyncTargetState) {
+        *self = match (&*self, new) {
+            // If we are just syncing to tip already, replace with the new state.
+            (SyncTargetState::SyncUpTo { .. }, new) => new,
+
+            // If the new state is a revert, replace with the new state.
+            (_, SyncTargetState::Revert { revert_to }) => SyncTargetState::Revert { revert_to },
+            (_, SyncTargetState::RevertThenSync { revert_to, sync_to }) => {
+                SyncTargetState::RevertThenSync { revert_to, sync_to }
+            }
+
+            // If we're currently reverting and syncing, replace the sync to value with the new
+            // state.
+            (SyncTargetState::RevertThenSync { .. }, SyncTargetState::SyncUpTo { to }) => {
+                SyncTargetState::SyncUpTo { to }
+            }
+
+            // If we're currently reverting without syncing, add the sync target.
+            (SyncTargetState::Revert { revert_to }, SyncTargetState::SyncUpTo { to }) => {
+                SyncTargetState::RevertThenSync { revert_to: *revert_to, sync_to: to }
+            }
+        };
+    }
+}
+
 /// Sync target that buffers trie data from recent exex notifications.
 ///
-/// Uses a `watch` channel to signal target changes to the sync loop. Unlike
-/// `Notify`, `watch::Receiver::changed()` will always detect updates that
-/// occurred since the last call — even if the receiver was busy processing
-/// blocks at the time of the update. This eliminates the race condition where
-/// `Notify::notify_waiters()` fires while the sync loop is not awaiting, causing
-/// the notification to be permanently lost.
+/// Routes all notification types (committed, reverted, reorged) through a
+/// [`SyncTargetState`] state machine so the sync loop is the single writer
+/// to proofs storage. Uses a [`Notify`] to wake the sync loop when new
+/// state is available.
 ///
 /// Trie data is accumulated in a bounded [`BTreeMap`] so the sync loop
 /// can still use pre-computed trie data for blocks from earlier notifications.
 pub struct SyncTarget {
     cache: Mutex<BTreeMap<u64, CachedBlockTrieData>>,
-    target_tx: watch::Sender<u64>,
-    target_rx: watch::Receiver<u64>,
+    state: Mutex<Option<SyncTargetState>>,
+    notify: Notify,
 }
 
 impl Default for SyncTarget {
@@ -46,29 +95,49 @@ impl Default for SyncTarget {
 }
 
 impl SyncTarget {
-    /// Create a new `SyncTarget` with no cached data and target 0.
+    /// Create a new `SyncTarget` with no cached data and no pending state.
     pub fn new() -> Self {
-        let (target_tx, target_rx) = watch::channel(0u64);
-        Self { cache: Mutex::new(BTreeMap::new()), target_tx, target_rx }
+        Self {
+            cache: Mutex::new(BTreeMap::new()),
+            state: Mutex::new(None),
+            notify: Notify::new(),
+        }
     }
 
-    /// Set the sync target block number and wake the sync loop.
+    /// Update the sync target state and wake the sync loop.
     ///
-    /// Only advances the target forward; ignored if `target` is not greater
-    /// than the current value.
-    pub fn set_target(&self, target: u64) {
-        let current = *self.target_tx.borrow();
-        if target > current {
-            debug!(
-                target: "base::exex::sync_target",
-                prev_target = current,
-                new_target = target,
-                cached_blocks = self.cache.lock().expect("SyncTarget lock poisoned").len(),
-                "Sync target advanced"
-            );
-            // send() always succeeds while we hold the receiver.
-            self.target_tx.send(target).expect("watch receiver dropped");
+    /// If there is already a pending state, the new state is merged using
+    /// [`SyncTargetState::apply_next`].
+    pub fn update_state(&self, new: SyncTargetState) {
+        let mut state = self.state.lock().expect("SyncTarget lock poisoned");
+        match state.as_mut() {
+            Some(current) => current.apply_next(new),
+            None => *state = Some(new),
         }
+        drop(state);
+        self.notify.notify_one();
+    }
+
+    /// Take the current pending state, leaving `None` in its place.
+    ///
+    /// Used by the sync loop to consume the next action to perform.
+    pub fn take_state(&self) -> Option<SyncTargetState> {
+        self.state.lock().expect("SyncTarget lock poisoned").take()
+    }
+
+    /// Check if there is a pending state without consuming it.
+    ///
+    /// Used by the sync loop to interrupt forward sync when a higher-priority
+    /// state (e.g. revert) arrives.
+    pub fn has_pending_state(&self) -> bool {
+        self.state.lock().expect("SyncTarget lock poisoned").is_some()
+    }
+
+    /// Wait for a state change notification.
+    ///
+    /// Returns immediately if a notification arrived since the last call.
+    pub async fn notified(&self) {
+        self.notify.notified().await;
     }
 
     /// Insert cached trie data for a block.
@@ -98,11 +167,6 @@ impl SyncTarget {
         );
     }
 
-    /// Get the current sync target block number.
-    pub fn target(&self) -> u64 {
-        *self.target_tx.borrow()
-    }
-
     /// Take cached trie data for a specific block, removing it from the cache.
     pub fn take(&self, block_number: u64) -> Option<CachedBlockTrieData> {
         let result = self.cache.lock().expect("SyncTarget lock poisoned").remove(&block_number);
@@ -122,20 +186,30 @@ impl SyncTarget {
         result
     }
 
-    /// Subscribe to target changes.
+    /// Remove all cached entries at or above the given block number.
     ///
-    /// Returns a `watch::Receiver` that the sync loop uses to detect new
-    /// targets. Unlike `Notify`, a `watch` channel retains the latest value
-    /// so no update is ever missed.
-    pub fn subscribe(&self) -> watch::Receiver<u64> {
-        self.target_rx.clone()
+    /// Used when a revert or reorg invalidates cached blocks.
+    pub fn clear_from(&self, block_number: u64) {
+        let mut cache = self.cache.lock().expect("SyncTarget lock poisoned");
+        let removed = cache.split_off(&block_number);
+        if !removed.is_empty() {
+            debug!(
+                target: "base::exex::sync_target",
+                block_number,
+                cleared = removed.len(),
+                "Cleared cached entries from block onward"
+            );
+        }
     }
 }
 
 impl std::fmt::Debug for SyncTarget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SyncTarget")
-            .field("target", &*self.target_tx.borrow())
+            .field(
+                "has_pending_state",
+                &self.state.lock().expect("SyncTarget lock poisoned").is_some(),
+            )
             .field("cached_blocks", &self.cache.lock().expect("SyncTarget lock poisoned").len())
             .finish()
     }
