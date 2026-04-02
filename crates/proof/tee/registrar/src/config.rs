@@ -103,6 +103,9 @@ pub struct RegistrarConfig {
     pub max_tx_retries: u32,
     /// Delay between transaction submission retries.
     pub tx_retry_delay: Duration,
+    /// Duration after launch during which unhealthy instances are still
+    /// eligible for registration.
+    pub unhealthy_registration_window: Duration,
     /// Health server socket address.
     pub health_addr: SocketAddr,
 }
@@ -122,6 +125,7 @@ impl std::fmt::Debug for RegistrarConfig {
             .field("max_concurrency", &self.max_concurrency)
             .field("max_tx_retries", &self.max_tx_retries)
             .field("tx_retry_delay", &self.tx_retry_delay)
+            .field("unhealthy_registration_window", &self.unhealthy_registration_window)
             .field("health_addr", &self.health_addr)
             .finish()
     }

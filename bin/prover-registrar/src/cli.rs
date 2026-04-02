@@ -19,7 +19,8 @@ use base_proof_tee_nitro_attestation_prover::{
 };
 use base_proof_tee_registrar::{
     AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, DEFAULT_MAX_CONCURRENCY,
-    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS, DriverConfig, ProverClient, ProvingConfig,
+    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
+    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, ProverClient, ProvingConfig,
     RegistrarConfig, RegistrarError, RegistrarMetrics, RegistrationDriver, RegistryContractClient,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
@@ -120,6 +121,13 @@ pub(crate) struct Cli {
     /// Delay between transaction submission retries, in seconds.
     #[arg(long, env = cli_env!("TX_RETRY_DELAY_SECS"), default_value_t = DEFAULT_TX_RETRY_DELAY_SECS)]
     tx_retry_delay_secs: u64,
+
+    // ── Unhealthy Registration Window ─────────────────────────────────────
+    /// Duration (seconds) after EC2 launch during which unhealthy instances
+    /// are still eligible for registration. New instances may fail ALB health
+    /// checks while the application initializes. Set to 0 to disable.
+    #[arg(long, env = cli_env!("UNHEALTHY_REGISTRATION_WINDOW_SECS"), default_value_t = DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS)]
+    unhealthy_registration_window_secs: u64,
 
     // ── Health Server ─────────────────────────────────────────────────────────
     #[command(flatten)]
@@ -312,6 +320,9 @@ impl Cli {
             max_concurrency: self.max_concurrency,
             max_tx_retries: self.max_tx_retries,
             tx_retry_delay: Duration::from_secs(self.tx_retry_delay_secs),
+            unhealthy_registration_window: Duration::from_secs(
+                self.unhealthy_registration_window_secs,
+            ),
             health_addr,
         })
     }
@@ -419,6 +430,7 @@ impl Cli {
             max_concurrency: config.max_concurrency,
             max_tx_retries: config.max_tx_retries,
             tx_retry_delay: config.tx_retry_delay,
+            unhealthy_registration_window: config.unhealthy_registration_window,
         };
 
         // Mark the service as ready. This signals "initialised and running", not
@@ -666,6 +678,10 @@ mod tests {
         assert_eq!(config.max_concurrency, DEFAULT_MAX_CONCURRENCY);
         assert_eq!(config.max_tx_retries, DEFAULT_MAX_TX_RETRIES);
         assert_eq!(config.tx_retry_delay, Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS));
+        assert_eq!(
+            config.unhealthy_registration_window,
+            Duration::from_secs(DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS),
+        );
     }
 
     #[rstest]
