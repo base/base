@@ -101,9 +101,7 @@ impl Host {
             Arc::clone(&backend),
         );
         let mut tasks = tokio::task::JoinSet::new();
-        tasks.spawn(
-            async move { server.start().await }.instrument(info_span!("preimage_server")),
-        );
+        tasks.spawn(async move { server.start().await }.instrument(info_span!("preimage_server")));
 
         let recording = RecordingOracle::new(
             OracleReader::new(preimage_chan.client),
