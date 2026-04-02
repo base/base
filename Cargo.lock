@@ -4684,6 +4684,7 @@ dependencies = [
  "async-trait",
  "aws-nitro-enclaves-cose",
  "aws-nitro-enclaves-nsm-api",
+ "base-alloy-chains",
  "base-alloy-evm",
  "base-consensus-genesis",
  "base-consensus-registry",
@@ -4718,17 +4719,21 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "base-health",
+ "base-proof-contracts",
  "base-proof-host",
  "base-proof-preimage",
  "base-proof-primitives",
  "base-proof-tee-nitro-enclave",
  "eyre",
+ "hex-literal 1.1.0",
  "jsonrpsee",
+ "k256",
  "thiserror 2.0.18",
  "tokio",
  "tokio-vsock",
  "tower",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -4933,6 +4938,7 @@ dependencies = [
 name = "base-prover-nitro-host"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "base-cli-utils",
  "base-consensus-registry",
  "base-proof-host",

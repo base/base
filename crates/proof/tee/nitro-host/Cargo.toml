@@ -16,25 +16,31 @@ workspace = true
 base-health.workspace = true
 base-proof-host.workspace = true
 base-proof-preimage.workspace = true
+base-proof-contracts.workspace = true
 base-proof-tee-nitro-enclave.workspace = true
 base-proof-primitives = { workspace = true, features = ["std", "serde", "rpc-server"] }
-jsonrpsee = { workspace = true, features = ["server", "macros"] }
+
+# crypto
+alloy-primitives.workspace = true
+k256 = { workspace = true, features = ["ecdsa"] }
 
 # async
 async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "io-util", "net"] }
 
 # misc
+url.workspace = true
 eyre.workspace = true
 tower.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+jsonrpsee = { workspace = true, features = ["server", "macros"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-vsock.workspace = true
 
 [dev-dependencies]
-alloy-primitives.workspace = true
+hex-literal.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [features]

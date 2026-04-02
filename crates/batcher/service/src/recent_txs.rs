@@ -7,12 +7,19 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionTrait};
 use base_consensus_genesis::RollupConfig;
 use base_protocol::{Batch, BatchReader, BlockInfo, Channel, ChannelId, Frame};
+use futures::StreamExt;
 use tracing::{debug, info};
 
 /// Maximum depth allowed for the recent-transaction startup scan.
 ///
 /// Matches the limit used by op-batcher's `--check-recent-txs-depth` flag.
 pub const MAX_CHECK_RECENT_TXS_DEPTH: u64 = 128;
+
+/// Maximum number of L1 block fetches in flight during the startup scan.
+///
+/// Bounds peak memory to roughly this many full L1 blocks while still
+/// achieving significant speedup over sequential fetching.
+pub const SCAN_FETCH_CONCURRENCY: usize = 16;
 
 /// Scans recent L1 blocks on startup to find the highest submitted L2 block.
 ///
@@ -63,15 +70,33 @@ impl RecentTxScanner {
         let mut channels: HashMap<ChannelId, Channel> = HashMap::new();
         let mut highest_l2: Option<u64> = None;
 
-        for block_num in scan_start..=current_l1 {
-            let Some(block) = l1_provider
-                .get_block_by_number(BlockNumberOrTag::Number(block_num))
-                .full()
-                .await
-                .map_err(|e| eyre::eyre!("failed to fetch L1 block {block_num}: {e}"))?
-            else {
-                debug!(block = %block_num, "L1 block not found during recent tx scan");
-                continue;
+        // Fetch blocks in parallel with bounded concurrency, preserving L1 order.
+        // Blocks are processed as the stream yields them so peak memory is
+        // bounded by the concurrency limit (~16 blocks) rather than the full
+        // scan depth (~128 blocks).
+        let block_stream = futures::stream::iter(scan_start..=current_l1)
+            .map(|block_num| {
+                let provider = l1_provider.clone();
+                async move {
+                    let block = provider
+                        .get_block_by_number(BlockNumberOrTag::Number(block_num))
+                        .full()
+                        .await
+                        .map_err(|e| eyre::eyre!("failed to fetch L1 block {block_num}: {e}"))?;
+                    eyre::Ok((block_num, block))
+                }
+            })
+            .buffered(SCAN_FETCH_CONCURRENCY);
+        futures::pin_mut!(block_stream);
+
+        while let Some(result) = block_stream.next().await {
+            let (block_num, block) = result?;
+            let block = match block {
+                Some(b) => b,
+                None => {
+                    debug!(block = %block_num, "L1 block not found during recent tx scan");
+                    continue;
+                }
             };
 
             let block_info = BlockInfo {

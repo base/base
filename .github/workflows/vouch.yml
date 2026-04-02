@@ -1,0 +1,58 @@
+name: Vouch
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: vouch-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check-pr:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
+        with:
+          egress-policy: audit
+      - uses: mitchellh/vouch/action/check-pr@c6d80ead49839655b61b422700b7a3bc9d0804a9 # v1
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
+          auto-close: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  manage:
+    if: >-
+      github.event_name == 'issue_comment' && (
+        contains(github.event.comment.body, 'vouch') ||
+        contains(github.event.comment.body, 'denounce') ||
+        contains(github.event.comment.body, 'unvouch')
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: mitchellh/vouch/action/manage-by-issue@c6d80ead49839655b61b422700b7a3bc9d0804a9 # v1
+        with:
+          repo: ${{ github.repository }}
+          issue-id: ${{ github.event.issue.number }}
+          comment-id: ${{ github.event.comment.id }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

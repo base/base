@@ -19,14 +19,14 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    AlloyL1BlockFetcher, ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
-    DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
-    EngineConfig, EngineProcessor, EngineRpcProcessor, L1OriginSelector, L1WatcherActor,
-    NetworkActor, NetworkBuilder, NetworkConfig, NodeActor, NodeMode, PayloadBuilder,
-    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
-    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
-    QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
-    SequencerConfig,
+    AlloyL1BlockFetcher, Conductor, ConductorClient, DelayedL1OriginSelectorProvider,
+    DelegateDerivationActor, DerivationActor, DerivationDelegateClient, DerivationError,
+    EngineActor, EngineActorRequest, EngineConfig, EngineProcessor, EngineRpcProcessor,
+    L1OriginSelector, L1WatcherActor, NetworkActor, NetworkBuilder, NetworkConfig, NodeActor,
+    NodeMode, PayloadBuilder, QueuedDerivationEngineClient, QueuedEngineDerivationClient,
+    QueuedEngineRpcClient, QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient,
+    QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor,
+    RpcContext, SequencerActor, SequencerConfig,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -215,6 +215,7 @@ impl RollupNode {
         engine_request_rx: mpsc::Receiver<EngineActorRequest>,
         derivation_client: QueuedEngineDerivationClient,
         unsafe_head_tx: watch::Sender<L2BlockInfo>,
+        conductor: Option<Arc<dyn Conductor>>,
     ) -> EngineActor<EngineProcessor<E, QueuedEngineDerivationClient>, EngineRpcProcessor<E>> {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
@@ -227,6 +228,8 @@ impl RollupNode {
             derivation_client,
             engine,
             if self.mode().is_sequencer() { Some(unsafe_head_tx) } else { None },
+            conductor,
+            self.sequencer_config.sequencer_stopped,
         );
 
         let engine_rpc_processor = EngineRpcProcessor::new(
@@ -339,12 +342,26 @@ impl RollupNode {
         let (engine_actor_request_tx, engine_actor_request_rx) = mpsc::channel(1024);
         let (unsafe_head_tx, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
 
+        // Create the conductor client early — the engine processor needs it for the
+        // bootstrap leadership check and the sequencer actor needs it for block building.
+        let conductor: Option<ConductorClient> = self
+            .sequencer_config
+            .conductor_rpc_url
+            .clone()
+            .map(ConductorClient::new_http)
+            .transpose()
+            .map_err(|e| format!("Failed to create conductor client: {e}"))?;
+
+        let engine_conductor: Option<Arc<dyn Conductor>> =
+            conductor.clone().map(|c| Arc::new(c) as Arc<dyn Conductor>);
+
         let engine_actor = self.create_engine_actor(
             engine_client,
             cancellation.clone(),
             engine_actor_request_rx,
             QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()),
             unsafe_head_tx,
+            engine_conductor,
         );
 
         // Select the concrete derivation actor implementation based on
@@ -403,15 +420,6 @@ impl RollupNode {
 
         let delayed_origin_selector =
             L1OriginSelector::new(Arc::clone(&self.config), delayed_l1_provider);
-
-        // Conditionally add conductor if configured
-        let conductor = self
-            .sequencer_config
-            .conductor_rpc_url
-            .clone()
-            .map(ConductorClient::new_http)
-            .transpose()
-            .map_err(|e| format!("Failed to create conductor client: {e}"))?;
 
         // Create the L1 Watcher actor
 

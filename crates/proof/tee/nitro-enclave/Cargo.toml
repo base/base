@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 # base
 base-alloy-evm.workspace = true
+base-alloy-chains.workspace = true
 base-proof-client = { workspace = true, features = ["std"] }
 base-proof-preimage = { workspace = true, features = ["serde"] }
 base-proof-primitives = { workspace = true, features = ["serde"] }

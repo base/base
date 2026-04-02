@@ -679,12 +679,14 @@ where
         Builder: BlockBuilder<Primitives = Evm::Primitives>,
         <<Builder::Executor as BlockExecutor>::Evm as AlloyEvm>::DB: Database,
     {
-        let mut block_gas_limit = builder.evm_mut().block().gas_limit();
-        if let Some(gas_limit_config) = self.builder_config.gas_limit_config.gas_limit() {
-            // If a gas limit is configured, use that limit as target if it's smaller, otherwise use
-            // the block's actual gas limit.
-            block_gas_limit = gas_limit_config.min(block_gas_limit);
-        };
+        let gas_limit = builder.evm_mut().block().gas_limit();
+        // If a gas limit is configured, use that limit as target if it's smaller, otherwise use
+        // the block's actual gas limit.
+        let block_gas_limit = self
+            .builder_config
+            .gas_limit_config
+            .gas_limit()
+            .map_or(gas_limit, |cfg| cfg.min(gas_limit));
         let block_da_limit = self.builder_config.da_config.max_da_block_size();
         let tx_da_limit = self.builder_config.da_config.max_da_tx_size();
         let base_fee = builder.evm_mut().block().basefee();

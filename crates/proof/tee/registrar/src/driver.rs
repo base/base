@@ -18,8 +18,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, info, info_span, warn};
 
 use crate::{
-    InstanceDiscovery, ProverClient, ProverInstance, RegistrarError, RegistrarMetrics,
-    RegistryClient, Result, SignerClient,
+    InstanceDiscovery, InstanceHealthStatus, ProverClient, ProverInstance, RegistrarError,
+    RegistrarMetrics, RegistryClient, Result, SignerClient,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -36,6 +36,15 @@ pub const DEFAULT_MAX_TX_RETRIES: u32 = 3;
 
 /// Default delay between transaction submission retries.
 pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
+
+/// Default duration (in seconds) after launch during which unhealthy
+/// instances are still eligible for registration.
+///
+/// New EC2 instances may fail ALB health checks while the application is
+/// still initializing. This window allows the registrar to attempt
+/// registration during that warm-up period rather than waiting for the
+/// instance to become healthy. Set to 0 to disable.
+pub const DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS: u64 = 3600;
 
 /// Runtime parameters for the [`RegistrationDriver`] that are not
 /// trait-based dependencies.
@@ -57,6 +66,11 @@ pub struct DriverConfig {
     /// Delay between transaction submission retries.
     /// Defaults to [`DEFAULT_TX_RETRY_DELAY_SECS`] seconds.
     pub tx_retry_delay: Duration,
+    /// Duration after launch during which unhealthy instances are still
+    /// eligible for registration. New instances may fail ALB health checks
+    /// while the application is still initializing. Set to zero to disable.
+    /// Defaults to [`DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS`] seconds.
+    pub unhealthy_registration_window: Duration,
 }
 
 /// Core registration loop tying together discovery, attestation polling,
@@ -255,6 +269,32 @@ where
         Ok(())
     }
 
+    /// Returns `true` if the instance is [`InstanceHealthStatus::Unhealthy`]
+    /// and was launched within the configured
+    /// [`DriverConfig::unhealthy_registration_window`].
+    ///
+    /// New EC2 instances may fail ALB health checks while the application is
+    /// still initializing. This predicate lets the registrar attempt
+    /// registration during that warm-up period rather than waiting for the
+    /// instance to become healthy.
+    ///
+    /// Returns `false` if:
+    /// - The instance is not `Unhealthy` (other statuses have their own rules).
+    /// - The window is zero (feature disabled).
+    /// - The instance has no launch time (e.g. discovery didn't return one).
+    /// - The launch time is in the future (clock skew — treated as unknown).
+    fn is_recently_launched_unhealthy(&self, instance: &ProverInstance) -> bool {
+        if instance.health_status != InstanceHealthStatus::Unhealthy {
+            return false;
+        }
+        if self.config.unhealthy_registration_window.is_zero() {
+            return false;
+        }
+        instance.launch_time.is_some_and(|lt| {
+            lt.elapsed().is_ok_and(|elapsed| elapsed < self.config.unhealthy_registration_window)
+        })
+    }
+
     /// Resolves signer addresses from an instance and attempts registration.
     ///
     /// Returns the derived signer addresses regardless of whether registration
@@ -273,13 +313,26 @@ where
         // Non-registerable instances (Draining, Unhealthy) still contribute
         // their addresses to the active signer set to prevent premature
         // deregistration.
+        //
+        // Exception: recently-launched Unhealthy instances are allowed through
+        // when they fall within the configured unhealthy_registration_window.
+        // New instances may fail ALB health checks during startup while the
+        // application is still initializing.
         if !instance.health_status.should_register() {
-            debug!(
-                status = ?instance.health_status,
+            if !self.is_recently_launched_unhealthy(instance) {
+                debug!(
+                    status = ?instance.health_status,
+                    instance = %instance.instance_id,
+                    "instance not registerable, skipping registration"
+                );
+                return Ok(addresses);
+            }
+            info!(
                 instance = %instance.instance_id,
-                "instance not registerable, skipping registration"
+                launch_time = ?instance.launch_time,
+                window = ?self.config.unhealthy_registration_window,
+                "unhealthy instance recently launched, attempting registration"
             );
-            return Ok(addresses);
         }
 
         // Fetch attestations once for all enclaves before the registration
@@ -648,6 +701,7 @@ mod tests {
             Arc, Mutex,
             atomic::{AtomicU32, AtomicUsize, Ordering},
         },
+        time::SystemTime,
     };
 
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
@@ -752,10 +806,32 @@ mod tests {
 
     /// Builds a [`ProverInstance`] with the given host:port and health status.
     ///
-    /// Prepends `http://` to form a valid URL automatically.
+    /// Prepends `http://` to form a valid URL automatically. The `launch_time`
+    /// defaults to `None` — use [`instance_with_launch_time`] for tests that
+    /// need a specific launch time.
     fn instance(host_port: &str, status: InstanceHealthStatus) -> ProverInstance {
         let endpoint = Url::parse(&format!("http://{host_port}")).unwrap();
-        ProverInstance { instance_id: format!("i-{host_port}"), endpoint, health_status: status }
+        ProverInstance {
+            instance_id: format!("i-{host_port}"),
+            endpoint,
+            health_status: status,
+            launch_time: None,
+        }
+    }
+
+    /// Builds a [`ProverInstance`] with an explicit `launch_time`.
+    fn instance_with_launch_time(
+        host_port: &str,
+        status: InstanceHealthStatus,
+        launch_time: Option<SystemTime>,
+    ) -> ProverInstance {
+        let endpoint = Url::parse(&format!("http://{host_port}")).unwrap();
+        ProverInstance {
+            instance_id: format!("i-{host_port}"),
+            endpoint,
+            health_status: status,
+            launch_time,
+        }
     }
 
     // ── Mock implementations ────────────────────────────────────────────
@@ -976,6 +1052,9 @@ mod tests {
             max_concurrency: DEFAULT_MAX_CONCURRENCY,
             max_tx_retries: DEFAULT_MAX_TX_RETRIES,
             tx_retry_delay: Duration::from_secs(DEFAULT_TX_RETRY_DELAY_SECS),
+            unhealthy_registration_window: Duration::from_secs(
+                DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS,
+            ),
         }
     }
 
@@ -1366,6 +1445,156 @@ mod tests {
 
         assert_eq!(addrs, vec![HARDHAT_ACCOUNT]);
         assert_eq!(tx.sent_calldata().len(), expected_txs);
+    }
+
+    // ── Unhealthy registration window tests ────────────────────────────
+
+    #[tokio::test]
+    async fn process_instance_unhealthy_recently_launched_attempts_registration() {
+        // An Unhealthy instance launched 10 minutes ago (within the default
+        // 60-minute window) should be registered.
+        let launch_time = Some(SystemTime::now() - Duration::from_secs(600));
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let inst = instance_with_launch_time(EP1, InstanceHealthStatus::Unhealthy, launch_time);
+        let addrs = driver.process_instance(&inst).await.unwrap();
+
+        assert_eq!(addrs, vec![HARDHAT_ACCOUNT]);
+        assert_eq!(tx.sent_calldata().len(), 1, "recently-launched unhealthy should register");
+    }
+
+    #[tokio::test]
+    async fn process_instance_unhealthy_old_launch_skips_registration() {
+        // An Unhealthy instance launched 2 hours ago (outside the 60-minute
+        // window) should NOT be registered.
+        let launch_time = Some(SystemTime::now() - Duration::from_secs(7200));
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let inst = instance_with_launch_time(EP1, InstanceHealthStatus::Unhealthy, launch_time);
+        let addrs = driver.process_instance(&inst).await.unwrap();
+
+        assert_eq!(addrs, vec![HARDHAT_ACCOUNT]);
+        assert!(tx.sent_calldata().is_empty(), "old unhealthy should not register");
+    }
+
+    #[tokio::test]
+    async fn process_instance_unhealthy_no_launch_time_skips_registration() {
+        // An Unhealthy instance with no launch_time should NOT be registered
+        // (we can't determine age, so we default to the safe path).
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let inst = instance(EP1, InstanceHealthStatus::Unhealthy);
+        let addrs = driver.process_instance(&inst).await.unwrap();
+
+        assert_eq!(addrs, vec![HARDHAT_ACCOUNT]);
+        assert!(tx.sent_calldata().is_empty(), "unhealthy with no launch_time should not register");
+    }
+
+    #[tokio::test]
+    async fn process_instance_draining_recently_launched_still_skips_registration() {
+        // A Draining instance launched 10 minutes ago should NOT be registered.
+        // The grace period only applies to Unhealthy, never Draining.
+        let launch_time = Some(SystemTime::now() - Duration::from_secs(600));
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            vec![],
+            signer_client,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        let inst = instance_with_launch_time(EP1, InstanceHealthStatus::Draining, launch_time);
+        let addrs = driver.process_instance(&inst).await.unwrap();
+
+        assert_eq!(addrs, vec![HARDHAT_ACCOUNT]);
+        assert!(tx.sent_calldata().is_empty(), "draining should never register even if recent");
+    }
+
+    #[tokio::test]
+    async fn process_instance_unhealthy_window_zero_disables_feature() {
+        // Setting unhealthy_registration_window to zero disables the feature
+        // entirely — even a freshly-launched Unhealthy instance is skipped.
+        let launch_time = Some(SystemTime::now() - Duration::from_secs(10));
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+        let tx = SharedTxManager::new();
+
+        let cancel = CancellationToken::new();
+        let mut config = default_config(cancel);
+        config.unhealthy_registration_window = Duration::ZERO;
+
+        let driver = RegistrationDriver::new(
+            MockDiscovery { instances: vec![] },
+            StubProofProvider,
+            MockRegistry::with_signers(vec![]),
+            tx.clone(),
+            signer_client,
+            config,
+        );
+
+        let inst = instance_with_launch_time(EP1, InstanceHealthStatus::Unhealthy, launch_time);
+        let addrs = driver.process_instance(&inst).await.unwrap();
+
+        assert_eq!(addrs, vec![HARDHAT_ACCOUNT]);
+        assert!(tx.sent_calldata().is_empty(), "window=0 should disable unhealthy registration");
+    }
+
+    #[tokio::test]
+    async fn step_unhealthy_recently_launched_registers_and_contributes_to_active_set() {
+        // A recently-launched Unhealthy instance should be registered AND
+        // contribute its signer to active_signers (preventing deregistration).
+        let addr = ProverClient::derive_address(&public_key_from_private(&HARDHAT_KEY_0)).unwrap();
+        let launch_time = Some(SystemTime::now() - Duration::from_secs(300));
+
+        let instances =
+            vec![instance_with_launch_time(EP1, InstanceHealthStatus::Unhealthy, launch_time)];
+        let signer_client = MockSignerClient::from_keys(&[(EP1, &HARDHAT_KEY_0)]);
+
+        let tx = SharedTxManager::new();
+        let driver = step_driver(
+            instances,
+            signer_client,
+            // addr is already on-chain; without active_signers it would be deregistered.
+            MockRegistry::with_signers(vec![addr]),
+            tx.clone(),
+            CancellationToken::new(),
+        );
+
+        driver.step().await.unwrap();
+
+        let sent = tx.sent_calldata();
+        // The signer is already on-chain (MockRegistry has it), so try_register
+        // sees is_registered=true and skips registration. But no deregistration
+        // should happen because the signer is in active_signers.
+        assert!(
+            sent.is_empty(),
+            "already-registered signer should not be re-registered or deregistered"
+        );
     }
 
     // ── step() tests ────────────────────────────────────────────────────

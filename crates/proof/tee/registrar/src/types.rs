@@ -1,3 +1,5 @@
+use std::time::SystemTime;
+
 use alloy_primitives::{Address, B256};
 use url::Url;
 
@@ -10,6 +12,9 @@ pub struct ProverInstance {
     pub endpoint: Url,
     /// Current health status of the instance.
     pub health_status: InstanceHealthStatus,
+    /// EC2 launch time of the instance. Used to determine if recently-launched
+    /// unhealthy instances should still be eligible for registration.
+    pub launch_time: Option<SystemTime>,
 }
 
 /// Health status of a discovered prover instance.

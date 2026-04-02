@@ -103,10 +103,8 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     // Fetch chain configuration from op-node
     info!("Fetching chain configuration from rollup RPC...");
     let chain_config = rollup_client.rollup_config().await?;
-    let v1_hardfork_timestamp = chain_config.hardforks.base.v1;
     info!(
         chain_id = %chain_config.l2_chain_id.id(),
-        v1_hardfork_timestamp,
         "Chain configuration loaded"
     );
 
@@ -216,7 +214,6 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         max_parallel_proofs: config.max_parallel_proofs,
         max_game_recovery_lookback: config.max_game_recovery_lookback,
         max_retries: 3,
-        v1_hardfork_timestamp,
         tee_prover_registry_address: config.tee_prover_registry_address,
         driver: DriverConfig {
             poll_interval: config.poll_interval,

@@ -8,7 +8,7 @@ use alloy_rlp::{Buf, Decodable, EMPTY_STRING_CODE, Encodable, Header, length_of_
 use alloy_trie::{EMPTY_ROOT_HASH, Nibbles};
 
 use crate::{
-    TrieHinter, TrieNodeError, TrieProvider,
+    TrieNodeError, TrieProvider,
     errors::TrieNodeResult,
     util::{rlp_list_element_length, unpack_path_to_nibbles},
 };
@@ -313,12 +313,7 @@ impl TrieNode {
     /// ## Returns
     /// - `Err(_)` - Could not delete the node at the given path in the trie.
     /// - `Ok(())` - The node was successfully deleted at the given path.
-    pub fn delete<F: TrieProvider, H: TrieHinter>(
-        &mut self,
-        path: &Nibbles,
-        fetcher: &F,
-        hinter: &H,
-    ) -> TrieNodeResult<()> {
+    pub fn delete<F: TrieProvider>(&mut self, path: &Nibbles, fetcher: &F) -> TrieNodeResult<()> {
         match self {
             Self::Empty => Err(TrieNodeError::KeyNotFound),
             Self::Leaf { prefix, .. } => {
@@ -338,21 +333,21 @@ impl TrieNode {
                     return Ok(());
                 }
 
-                node.delete(&path.slice(prefix.len()..), fetcher, hinter)?;
+                node.delete(&path.slice(prefix.len()..), fetcher)?;
 
                 // Simplify extension if possible after the deletion
-                self.collapse_if_possible(fetcher, hinter)
+                self.collapse_if_possible(fetcher)
             }
             Self::Branch { stack } => {
                 let branch_nibble = path.get(0).ok_or(TrieNodeError::PathTooShort)? as usize;
-                stack[branch_nibble].delete(&path.slice(BRANCH_NODE_NIBBLES..), fetcher, hinter)?;
+                stack[branch_nibble].delete(&path.slice(BRANCH_NODE_NIBBLES..), fetcher)?;
 
                 // Simplify the branch if possible after the deletion
-                self.collapse_if_possible(fetcher, hinter)
+                self.collapse_if_possible(fetcher)
             }
             Self::Blinded { .. } => {
                 self.unblind(fetcher)?;
-                self.delete(path, fetcher, hinter)
+                self.delete(path, fetcher)
             }
         }
     }
@@ -365,11 +360,7 @@ impl TrieNode {
     /// ## Returns
     /// - `Ok(())` - The node was successfully collapsed
     /// - `Err(_)` - Could not collapse the node
-    fn collapse_if_possible<F: TrieProvider, H: TrieHinter>(
-        &mut self,
-        fetcher: &F,
-        hinter: &H,
-    ) -> TrieNodeResult<()> {
+    fn collapse_if_possible<F: TrieProvider>(&mut self, fetcher: &F) -> TrieNodeResult<()> {
         match self {
             Self::Extension { prefix, node } => match node.as_mut() {
                 Self::Extension { prefix: child_prefix, node: child_node } => {
@@ -427,16 +418,9 @@ impl TrieNode {
                                 node: Box::new(non_empty_node.clone()),
                             };
                         }
-                        Self::Blinded { commitment } => {
-                            // In this special case, we need to send a hint to fetch the preimage of
-                            // the blinded node, since it is outside of the paths that have been
-                            // traversed so far.
-                            hinter
-                                .hint_trie_node(*commitment)
-                                .map_err(|e| TrieNodeError::Provider(e.to_string()))?;
-
+                        Self::Blinded { .. } => {
                             non_empty_node.unblind(fetcher)?;
-                            self.collapse_if_possible(fetcher, hinter)?;
+                            self.collapse_if_possible(fetcher)?;
                         }
                         _ => {}
                     };
@@ -628,8 +612,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        NoopTrieHinter, NoopTrieProvider, TrieNode, ordered_trie_with_encoder,
-        test_util::TrieNodeProvider,
+        NoopTrieProvider, TrieNode, ordered_trie_with_encoder, test_util::TrieNodeProvider,
     };
 
     #[test]
@@ -840,7 +823,7 @@ mod tests {
 
             // Delete the keys that were randomly selected from the trie node.
             for deleted_key in deleted_keys {
-                node.delete(&Nibbles::unpack(deleted_key), &NoopTrieProvider, &NoopTrieHinter)
+                node.delete(&Nibbles::unpack(deleted_key), &NoopTrieProvider)
                     .unwrap();
             }
 

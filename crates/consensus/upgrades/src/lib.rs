@@ -9,6 +9,32 @@
 
 extern crate alloc;
 
+/// Generates a `pub fn $name() -> B256` that constructs an [`UpgradeDepositSource`] from the
+/// given intent string and returns its source hash. Accepts optional doc attributes.
+///
+/// [`UpgradeDepositSource`]: base_alloy_consensus::UpgradeDepositSource
+macro_rules! upgrade_source_fn {
+    ($(#[$attr:meta])* $name:ident, $intent:literal) => {
+        $(#[$attr])*
+        pub fn $name() -> ::alloy_primitives::B256 {
+            ::base_alloy_consensus::UpgradeDepositSource {
+                intent: ::alloc::string::String::from($intent),
+            }
+            .source_hash()
+        }
+    };
+}
+
+/// Decodes a hex-encoded bytecode file at compile time and returns it as [`alloy_primitives::Bytes`].
+///
+/// Strips trailing newlines from the file content, hex-decodes the result,
+/// and converts it into `Bytes`. Panics at runtime if the file content is not valid hex.
+macro_rules! bytecode_from_hex {
+    ($path:expr) => {
+        hex::decode(include_str!($path).replace('\n', "")).expect("Expected hex byte string").into()
+    };
+}
+
 mod traits;
 pub use traits::Hardfork;
 

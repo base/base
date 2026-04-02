@@ -38,7 +38,7 @@ impl Cli {
         base_cli_utils::MetricsConfig::from(self.args.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
-        RuntimeManager::run_until_ctrl_c(self.args.exec())
+        RuntimeManager::new().run_until_ctrl_c(self.args.exec())
     }
 }
 

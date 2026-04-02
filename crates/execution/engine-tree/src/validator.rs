@@ -667,12 +667,12 @@ where
     #[instrument(level = "debug", target = "engine::tree::payload_validator", skip_all)]
     fn validate_block_inner(&self, block: &SealedBlock<OpBlock>) -> Result<(), ConsensusError> {
         if let Err(e) = self.consensus.validate_header(block.sealed_header()) {
-            error!(target: "engine::tree::payload_validator", ?block, "Failed to validate header {}: {e}", block.hash());
+            error!(target: "engine::tree::payload_validator", ?block, hash = %block.hash(), error = %e, "Failed to validate header");
             return Err(e);
         }
 
         if let Err(e) = self.consensus.validate_block_pre_execution(block) {
-            error!(target: "engine::tree::payload_validator", ?block, "Failed to validate block {}: {e}", block.hash());
+            error!(target: "engine::tree::payload_validator", ?block, hash = %block.hash(), error = %e, "Failed to validate block");
             return Err(e);
         }
 
@@ -1079,7 +1079,7 @@ where
         if let Err(e) =
             self.consensus.validate_header_against_parent(block.sealed_header(), parent_block)
         {
-            warn!(target: "engine::tree::payload_validator", ?block, "Failed to validate header {} against parent: {e}", block.hash());
+            warn!(target: "engine::tree::payload_validator", ?block, hash = %block.hash(), error = %e, "Failed to validate header against parent");
             return Err(e.into());
         }
         drop(_enter);

@@ -272,7 +272,7 @@ impl TxManager for L1MinerTxManager {
         } else {
             Pending {
                 tx: None,
-                blobs: candidate.blobs.iter().map(|b| (B256::ZERO, Box::new(*b))).collect(),
+                blobs: candidate.blobs.iter().map(|b| (B256::ZERO, b.clone())).collect(),
                 responder,
             }
         };

@@ -1,10 +1,10 @@
 //! Module containing a [`TxDeposit`] builder for the Ecotone network upgrade transactions.
 
-use alloc::{string::String, vec::Vec};
+use alloc::vec::Vec;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
-use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
+use base_alloy_consensus::TxDeposit;
 use base_protocol::{Deployers, Predeploys, SystemAddresses};
 
 use crate::{Hardfork, UpgradeCalldata};
@@ -41,62 +41,55 @@ impl Ecotone {
         "0x8b71360ea773b4cfaf1ae6d2bd15464a4e1e2e360f786e475f63aeaed8da0ae5"
     );
 
-    /// Returns the source hash for the deployment of the l1 block contract.
-    pub fn deploy_l1_block_source() -> B256 {
-        UpgradeDepositSource { intent: String::from("Ecotone: L1 Block Deployment") }.source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the deployment of the l1 block contract.
+        deploy_l1_block_source,
+        "Ecotone: L1 Block Deployment"
+    );
 
-    /// Returns the source hash for the deployment of the gas price oracle contract.
-    pub fn deploy_gas_price_oracle_source() -> B256 {
-        UpgradeDepositSource { intent: String::from("Ecotone: Gas Price Oracle Deployment") }
-            .source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the deployment of the gas price oracle contract.
+        deploy_gas_price_oracle_source,
+        "Ecotone: Gas Price Oracle Deployment"
+    );
 
-    /// Returns the source hash for the update of the l1 block proxy.
-    pub fn update_l1_block_source() -> B256 {
-        UpgradeDepositSource { intent: String::from("Ecotone: L1 Block Proxy Update") }
-            .source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the update of the l1 block proxy.
+        update_l1_block_source,
+        "Ecotone: L1 Block Proxy Update"
+    );
 
-    /// Returns the source hash for the update of the gas price oracle proxy.
-    pub fn update_gas_price_oracle_source() -> B256 {
-        UpgradeDepositSource { intent: String::from("Ecotone: Gas Price Oracle Proxy Update") }
-            .source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the update of the gas price oracle proxy.
+        update_gas_price_oracle_source,
+        "Ecotone: Gas Price Oracle Proxy Update"
+    );
 
-    /// Returns the source hash for the Ecotone Beacon Block Roots Contract deployment.
-    pub fn beacon_roots_source() -> B256 {
-        UpgradeDepositSource {
-            intent: String::from("Ecotone: beacon block roots contract deployment"),
-        }
-        .source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the Ecotone Beacon Block Roots Contract deployment.
+        beacon_roots_source,
+        "Ecotone: beacon block roots contract deployment"
+    );
 
-    /// Returns the source hash for the Ecotone Gas Price Oracle activation.
-    pub fn enable_ecotone_source() -> B256 {
-        UpgradeDepositSource { intent: String::from("Ecotone: Gas Price Oracle Set Ecotone") }
-            .source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the Ecotone Gas Price Oracle activation.
+        enable_ecotone_source,
+        "Ecotone: Gas Price Oracle Set Ecotone"
+    );
 
     /// Returns the EIP-4788 creation data.
     pub fn eip4788_creation_data() -> Bytes {
-        hex::decode(include_str!("./bytecode/eip4788_ecotone.hex").replace('\n', ""))
-            .expect("Expected hex byte string")
-            .into()
+        bytecode_from_hex!("./bytecode/eip4788_ecotone.hex")
     }
 
     /// Returns the raw bytecode for the L1 Block deployment.
     pub fn l1_block_deployment_bytecode() -> Bytes {
-        hex::decode(include_str!("./bytecode/l1_block_ecotone.hex").replace('\n', ""))
-            .expect("Expected hex byte string")
-            .into()
+        bytecode_from_hex!("./bytecode/l1_block_ecotone.hex")
     }
 
     /// Returns the gas price oracle deployment bytecode.
     pub fn ecotone_gas_price_oracle_deployment_bytecode() -> Bytes {
-        hex::decode(include_str!("./bytecode/gpo_ecotone.hex").replace('\n', ""))
-            .expect("Expected hex byte string")
-            .into()
+        bytecode_from_hex!("./bytecode/gpo_ecotone.hex")
     }
 
     /// Returns the list of [`TxDeposit`]s for the Ecotone network upgrade.
@@ -272,24 +265,12 @@ mod tests {
         assert_eq!(ecotone_upgrade_tx.len(), 6);
 
         let expected_txs: Vec<Bytes> = vec![
-            hex::decode(include_str!("./bytecode/ecotone_tx_0.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
-            hex::decode(include_str!("./bytecode/ecotone_tx_1.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
-            hex::decode(include_str!("./bytecode/ecotone_tx_2.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
-            hex::decode(include_str!("./bytecode/ecotone_tx_3.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
-            hex::decode(include_str!("./bytecode/ecotone_tx_4.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
-            hex::decode(include_str!("./bytecode/ecotone_tx_5.hex").replace('\n', ""))
-                .unwrap()
-                .into(),
+            bytecode_from_hex!("./bytecode/ecotone_tx_0.hex"),
+            bytecode_from_hex!("./bytecode/ecotone_tx_1.hex"),
+            bytecode_from_hex!("./bytecode/ecotone_tx_2.hex"),
+            bytecode_from_hex!("./bytecode/ecotone_tx_3.hex"),
+            bytecode_from_hex!("./bytecode/ecotone_tx_4.hex"),
+            bytecode_from_hex!("./bytecode/ecotone_tx_5.hex"),
         ];
         for (i, expected) in expected_txs.iter().enumerate() {
             assert_eq!(ecotone_upgrade_tx[i], *expected);

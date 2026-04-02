@@ -36,13 +36,13 @@ impl BlobTxBuilder {
     /// Returns [`TxManagerError::Unsupported`] if KZG computation fails.
     pub fn build_sidecar(
         &self,
-        blobs: Arc<Vec<Blob>>,
+        blobs: Arc<Vec<Box<Blob>>>,
     ) -> Result<BlobTransactionSidecarEip7594, TxManagerError> {
         let settings = EnvKzgSettings::Default;
         let kzg = settings.get();
-        let blobs = Arc::unwrap_or_clone(blobs);
+        let unboxed: Vec<Blob> = Arc::unwrap_or_clone(blobs).into_iter().map(|b| *b).collect();
 
-        BlobTransactionSidecarEip7594::try_from_blobs_with_settings(blobs, kzg).map_err(|e| {
+        BlobTransactionSidecarEip7594::try_from_blobs_with_settings(unboxed, kzg).map_err(|e| {
             TxManagerError::Unsupported(format!("EIP-7594 cell proof computation failed: {e}"))
         })
     }
@@ -65,7 +65,8 @@ mod tests {
     #[case::six_blobs(6)]
     fn build_sidecar_n_blobs_uses_cell_proofs(#[case] n: usize) {
         let builder = builder();
-        let sidecar = builder.build_sidecar(Arc::new(vec![Blob::default(); n])).unwrap();
+        let blobs: Vec<Box<Blob>> = (0..n).map(|_| Box::default()).collect();
+        let sidecar = builder.build_sidecar(Arc::new(blobs)).unwrap();
         assert_eq!(sidecar.cell_proofs.len(), n * CELLS_PER_EXT_BLOB);
     }
 

@@ -7,7 +7,6 @@ use tracing::info;
 
 use crate::NitroHostError;
 
-const PROVE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const SIGNER_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -58,11 +57,9 @@ impl VsockTransport {
             .await
             .map_err(|e| NitroHostError::Transport(format!("write failed: {e}")))?;
 
-        let response: EnclaveResponse =
-            tokio::time::timeout(PROVE_TIMEOUT, Frame::read(&mut stream))
-                .await
-                .map_err(|_| NitroHostError::Transport("prove timed out".into()))?
-                .map_err(|e| NitroHostError::Transport(format!("read failed: {e}")))?;
+        let response: EnclaveResponse = Frame::read(&mut stream)
+            .await
+            .map_err(|e| NitroHostError::Transport(format!("read failed: {e}")))?;
 
         match response {
             EnclaveResponse::Prove(result) => Ok(*result),

@@ -48,14 +48,24 @@ pub struct BuilderConfig {
     /// Maximum execution time per transaction in microseconds.
     pub max_execution_time_per_tx_us: Option<u128>,
 
-    /// Maximum state root calculation time per transaction in microseconds.
-    pub max_state_root_time_per_tx_us: Option<u128>,
-
     /// Flashblock-level execution time budget in microseconds.
     pub flashblock_execution_time_budget_us: Option<u128>,
 
-    /// Block-level state root calculation time budget in microseconds.
-    pub block_state_root_time_budget_us: Option<u128>,
+    /// Block-level state root gas limit.
+    ///
+    /// State root gas is a synthetic resource that accumulates like gas but penalizes
+    /// transactions whose simulated state root cost is disproportionate to their gas usage.
+    /// For each metered transaction: `sr_gas = gas_used × (1 + K × max(0, SR_ms - anchor))`.
+    /// Normal transactions (SR ≤ anchor) pay 1:1. State-heavy transactions pay more.
+    pub block_state_root_gas_limit: Option<u64>,
+
+    /// State root gas coefficient (K). Controls how aggressively excess SR time
+    /// inflates the state root gas cost. Default: 0.02.
+    pub state_root_gas_coefficient: f64,
+
+    /// State root gas anchor in microseconds. SR time below this threshold
+    /// produces no penalty (multiplier = 1). Default: 5000 (5ms).
+    pub state_root_gas_anchor_us: u128,
 
     /// Execution metering mode: off, dry-run, or enforce.
     pub execution_metering_mode: ExecutionMeteringMode,
@@ -94,9 +104,10 @@ impl core::fmt::Debug for BuilderConfig {
             .field("flashblocks_leeway_time", &self.flashblocks_leeway_time)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
             .field("max_execution_time_per_tx_us", &self.max_execution_time_per_tx_us)
-            .field("max_state_root_time_per_tx_us", &self.max_state_root_time_per_tx_us)
             .field("flashblock_execution_time_budget_us", &self.flashblock_execution_time_budget_us)
-            .field("block_state_root_time_budget_us", &self.block_state_root_time_budget_us)
+            .field("block_state_root_gas_limit", &self.block_state_root_gas_limit)
+            .field("state_root_gas_coefficient", &self.state_root_gas_coefficient)
+            .field("state_root_gas_anchor_us", &self.state_root_gas_anchor_us)
             .field("execution_metering_mode", &self.execution_metering_mode)
             .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
             .field("metering_wait_duration", &self.metering_wait_duration)
@@ -118,9 +129,10 @@ impl Default for BuilderConfig {
             sampling_ratio: 100,
             max_gas_per_txn: None,
             max_execution_time_per_tx_us: None,
-            max_state_root_time_per_tx_us: None,
             flashblock_execution_time_budget_us: None,
-            block_state_root_time_budget_us: None,
+            block_state_root_gas_limit: None,
+            state_root_gas_coefficient: 0.02,
+            state_root_gas_anchor_us: 5_000,
             execution_metering_mode: ExecutionMeteringMode::Off,
             max_uncompressed_block_size: None,
             metering_wait_duration: None,

@@ -49,14 +49,14 @@ impl BlobEncoder {
     /// Encodes `[DERIVATION_VERSION_0] ++ frame0.encode() ++ frame1.encode() ++ …`
     /// into one blob. The derivation pipeline's `Frame::parse_frames` uses a
     /// `while offset < len` loop, so all packed frames are decoded correctly.
-    pub fn encode_packed(frames: &[Arc<Frame>]) -> Result<Blob, BlobEncodeError> {
+    pub fn encode_packed(frames: &[Arc<Frame>]) -> Result<Box<Blob>, BlobEncodeError> {
         let encoded_size: usize = frames.iter().map(|f| Self::FRAME_OVERHEAD + f.data.len()).sum();
         let mut data = Vec::with_capacity(1 + encoded_size);
         data.push(DERIVATION_VERSION_0);
         for frame in frames {
             data.extend_from_slice(&frame.encode());
         }
-        Self::encode(&data).map(|b| *b)
+        Self::encode(&data)
     }
 
     /// Encode each [`Frame`] into its own EIP-4844 [`Blob`].
@@ -66,14 +66,14 @@ impl BlobEncoder {
     ///
     /// Kept for compatibility with the action-test harness
     /// (`actions/harness/src/miner.rs`). New code should use [`encode_packed`](Self::encode_packed).
-    pub fn encode_frames(frames: &[Arc<Frame>]) -> Result<Vec<Blob>, BlobEncodeError> {
+    pub fn encode_frames(frames: &[Arc<Frame>]) -> Result<Vec<Box<Blob>>, BlobEncodeError> {
         let mut blobs = Vec::with_capacity(frames.len());
         for frame in frames {
             let encoded = frame.encode();
             let mut data = Vec::with_capacity(1 + encoded.len());
             data.push(DERIVATION_VERSION_0);
             data.extend_from_slice(&encoded);
-            blobs.push(*Self::encode(&data)?);
+            blobs.push(Self::encode(&data)?);
         }
         Ok(blobs)
     }

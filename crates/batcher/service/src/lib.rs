@@ -11,7 +11,7 @@ mod config;
 pub use config::BatcherConfig;
 
 mod recent_txs;
-pub use recent_txs::{MAX_CHECK_RECENT_TXS_DEPTH, RecentTxScanner};
+pub use recent_txs::{MAX_CHECK_RECENT_TXS_DEPTH, RecentTxScanner, SCAN_FETCH_CONCURRENCY};
 
 mod source;
 pub use source::RpcPollingSource;

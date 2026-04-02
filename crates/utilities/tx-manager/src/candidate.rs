@@ -18,7 +18,10 @@ pub struct TxCandidate {
     /// Transaction calldata.
     pub tx_data: Bytes,
     /// EIP-4844 blobs; triggers blob tx when non-empty.
-    pub blobs: Arc<Vec<Blob>>,
+    ///
+    /// Blobs are individually boxed to avoid 131 072-byte stack copies when
+    /// moving them between collections.
+    pub blobs: Arc<Vec<Box<Blob>>>,
     /// Recipient address. `None` means contract creation.
     pub to: Option<Address>,
     /// Gas limit. `0` means auto-estimate.
@@ -44,8 +47,7 @@ mod tests {
 
     #[test]
     fn candidate_with_blobs_is_type3() {
-        let candidate =
-            TxCandidate { blobs: Arc::new(vec![Blob::default()]), ..Default::default() };
+        let candidate = TxCandidate { blobs: Arc::new(vec![Box::default()]), ..Default::default() };
 
         assert_eq!(candidate.blobs.len(), 1);
         // Struct-update preserves remaining defaults.

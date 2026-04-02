@@ -100,9 +100,8 @@ impl Host {
             HintReader::new(hint_chan.host),
             Arc::clone(&backend),
         );
-        let mut server_task = task::spawn(
-            async move { server.start().await }.instrument(info_span!("preimage_server")),
-        );
+        let mut tasks = task::JoinSet::new();
+        tasks.spawn(async move { server.start().await }.instrument(info_span!("preimage_server")));
 
         let recording = RecordingOracle::new(
             OracleReader::new(preimage_chan.client),
@@ -115,20 +114,17 @@ impl Host {
         });
 
         tokio::select! {
-            result = &mut server_task => {
+            result = tasks.join_next() => {
                 return match result {
-                    Err(e) => Err(HostError::ServerPanicked(e)),
-                    Ok(Err(e)) => Err(e),
-                    Ok(Ok(())) => Err(HostError::ServerExitedUnexpectedly),
+                    Some(Err(e)) => Err(HostError::ServerPanicked(e)),
+                    Some(Ok(Err(e))) => Err(e),
+                    Some(Ok(Ok(()))) | None => Err(HostError::ServerExitedUnexpectedly),
                 };
             }
             result = client_task => {
                 result.map_err(|e| HostError::ProofProgram(Box::new(e)))?;
             }
         }
-
-        server_task.abort();
-        let _ = (&mut server_task).await;
 
         witness.finalize()?;
         let preimage_count = witness.preimage_count()?;

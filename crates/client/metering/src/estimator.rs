@@ -893,11 +893,11 @@ fn usage_extractor(resource: ResourceKind) -> fn(&MeteredTransaction) -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::B256;
+    use alloy_primitives::{B256, uint};
 
     use super::*;
 
-    const DEFAULT_FEE: U256 = U256::from_limbs([1, 0, 0, 0]); // 1 wei
+    const DEFAULT_FEE: U256 = uint!(1_U256); // 1 wei
 
     fn tx(priority: u64, usage: u64) -> MeteredTransaction {
         let mut hash_bytes = [0u8; 32];

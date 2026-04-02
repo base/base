@@ -12,13 +12,37 @@ use tracing::info;
 
 /// A runtime manager.
 #[derive(Debug, Clone, Copy)]
-pub struct RuntimeManager;
+pub struct RuntimeManager {
+    /// Worker thread stack size override.
+    thread_stack_size: Option<usize>,
+}
+
+impl Default for RuntimeManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl RuntimeManager {
+    /// Creates a new [`RuntimeManager`] with default settings.
+    pub const fn new() -> Self {
+        Self { thread_stack_size: None }
+    }
+
+    /// Sets the worker thread stack size (in bytes).
+    pub const fn with_thread_stack_size(mut self, size: usize) -> Self {
+        self.thread_stack_size = Some(size);
+        self
+    }
+
     /// Creates a new default tokio multi-thread [Runtime](tokio::runtime::Runtime) with all
     /// features enabled.
-    pub fn tokio_runtime() -> Result<tokio::runtime::Runtime, std::io::Error> {
-        tokio::runtime::Builder::new_multi_thread().enable_all().build()
+    pub fn tokio_runtime(&self) -> Result<tokio::runtime::Runtime, std::io::Error> {
+        let mut builder = tokio::runtime::Builder::new_multi_thread();
+        if let Some(size) = self.thread_stack_size {
+            builder.thread_stack_size(size);
+        }
+        builder.enable_all().build()
     }
 
     /// Installs SIGTERM + SIGINT handlers that cancel the given token.
@@ -56,11 +80,11 @@ impl RuntimeManager {
     }
 
     /// Run a fallible future until ctrl-c is pressed.
-    pub fn run_until_ctrl_c<F>(fut: F) -> eyre::Result<()>
+    pub fn run_until_ctrl_c<F>(&self, fut: F) -> eyre::Result<()>
     where
         F: Future<Output = eyre::Result<()>>,
     {
-        let rt = Self::tokio_runtime().map_err(|e| eyre::eyre!(e))?;
+        let rt = self.tokio_runtime().map_err(|e| eyre::eyre!(e))?;
         rt.block_on(async move {
             tokio::select! {
                 biased;

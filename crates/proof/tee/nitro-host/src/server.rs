@@ -1,6 +1,7 @@
-use std::{fmt, net::SocketAddr, sync::Arc};
+use std::{fmt, net::SocketAddr, sync::Arc, time::Duration};
 
 use base_health::{HealthzApiServer, HealthzRpc};
+use base_proof_contracts::TEEProverRegistryContractClient;
 use base_proof_host::{ProverConfig, ProverService};
 use base_proof_primitives::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
 use jsonrpsee::{
@@ -8,9 +9,13 @@ use jsonrpsee::{
     core::{RpcResult, async_trait},
     server::{Server, ServerHandle, middleware::http::ProxyGetRequestLayer},
 };
-use tracing::info;
+use tracing::{info, warn};
 
-use super::{NitroBackend, transport::NitroTransport};
+use super::{
+    NitroBackend,
+    health::{RegistrationHealthConfig, RegistrationHealthzRpc},
+    transport::NitroTransport,
+};
 
 /// Maximum allowed size for the `user_data` attestation field (NSM limit).
 const MAX_USER_DATA_BYTES: usize = 512;
@@ -26,6 +31,8 @@ const MAX_NONCE_BYTES: usize = 512;
 pub struct NitroProverServer {
     service: ProverService<NitroBackend>,
     transport: Arc<NitroTransport>,
+    proof_request_timeout: Duration,
+    registration_health: Option<RegistrationHealthConfig>,
 }
 
 impl fmt::Debug for NitroProverServer {
@@ -35,10 +42,26 @@ impl fmt::Debug for NitroProverServer {
 }
 
 impl NitroProverServer {
-    /// Create a server with the given prover config and enclave transport.
-    pub fn new(config: ProverConfig, transport: Arc<NitroTransport>) -> Self {
+    /// Create a server with the given prover config, enclave transport, and proof request timeout.
+    pub fn new(
+        config: ProverConfig,
+        transport: Arc<NitroTransport>,
+        proof_request_timeout: Duration,
+    ) -> Self {
         let backend = NitroBackend::new(Arc::clone(&transport));
-        Self { service: ProverService::new(config, backend), transport }
+        Self {
+            service: ProverService::new(config, backend),
+            transport,
+            proof_request_timeout,
+            registration_health: None,
+        }
+    }
+
+    /// Enables registration-gated health checks. When set, `/healthz` verifies
+    /// the enclave signer is registered in the `TEEProverRegistry` on L1.
+    pub fn with_registration_health(mut self, config: RegistrationHealthConfig) -> Self {
+        self.registration_health = Some(config);
+        self
     }
 
     /// Start the JSON-RPC HTTP server on the given address.
@@ -50,9 +73,35 @@ impl NitroProverServer {
         info!(addr = %addr, "nitro rpc server started");
 
         let mut module = RpcModule::new(());
-        module.merge(NitroProverRpc { service: self.service }.into_rpc())?;
-        module.merge(NitroSignerRpc { transport: self.transport }.into_rpc())?;
-        module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc())?;
+        module.merge(
+            NitroProverRpc {
+                service: self.service,
+                proof_request_timeout: self.proof_request_timeout,
+            }
+            .into_rpc(),
+        )?;
+
+        module.merge(NitroSignerRpc { transport: Arc::clone(&self.transport) }.into_rpc())?;
+
+        match self.registration_health {
+            Some(config) => {
+                info!(
+                    registry = %config.registry_address,
+                    "registration-gated health check enabled"
+                );
+                let l1_url = url::Url::parse(&config.l1_rpc_url)
+                    .map_err(|e| eyre::eyre!("invalid L1 RPC URL: {e}"))?;
+                let registry =
+                    TEEProverRegistryContractClient::new(config.registry_address, l1_url);
+                let version = env!("CARGO_PKG_VERSION");
+                let transport = Arc::clone(&self.transport);
+                module
+                    .merge(RegistrationHealthzRpc::new(version, transport, registry).into_rpc())?;
+            }
+            None => {
+                module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc())?;
+            }
+        }
 
         Ok(server.start(module))
     }
@@ -61,14 +110,31 @@ impl NitroProverServer {
 /// Inner RPC handler for `prover_*` methods.
 struct NitroProverRpc {
     service: ProverService<NitroBackend>,
+    proof_request_timeout: Duration,
 }
 
 #[async_trait]
 impl ProverApiServer for NitroProverRpc {
     async fn prove(&self, request: ProofRequest) -> RpcResult<ProofResult> {
-        self.service.prove_block(request).await.map_err(|e| {
-            jsonrpsee::types::ErrorObjectOwned::owned(-32000, e.to_string(), None::<()>)
-        })
+        let l2_block = request.claimed_l2_block_number;
+        let timeout = self.proof_request_timeout;
+
+        match tokio::time::timeout(timeout, self.service.prove_block(request)).await {
+            Ok(result) => result.map_err(|e| {
+                jsonrpsee::types::ErrorObjectOwned::owned(-32000, e.to_string(), None::<()>)
+            }),
+            Err(_elapsed) => {
+                warn!(l2_block, timeout_secs = timeout.as_secs(), "proof request timed out");
+                Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                    -32000,
+                    format!(
+                        "proof request timed out after {}s for L2 block {l2_block}",
+                        timeout.as_secs()
+                    ),
+                    None::<()>,
+                ))
+            }
+        }
     }
 }
 

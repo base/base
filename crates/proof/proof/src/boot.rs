@@ -1,7 +1,7 @@
 //! This module contains the prologue phase of the client program, pulling in the boot information
 //! through the `PreimageOracle` ABI as local keys.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, uint};
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 use base_consensus_registry::Registry;
 use base_proof_preimage::{PreimageKey, PreimageOracleClient};
@@ -14,56 +14,56 @@ use crate::errors::OracleProviderError;
 /// This key is used to retrieve the L1 block hash that contains all the data
 /// necessary to derive the disputed L2 blocks. The L1 head serves as the
 /// starting point for L1 data extraction during the derivation process.
-pub const L1_HEAD_KEY: U256 = U256::from_be_slice(&[1]);
+pub const L1_HEAD_KEY: U256 = uint!(1_U256);
 
 /// The local key identifier for the agreed L2 output root.
 ///
 /// This key retrieves the baseline L2 output root that both parties agree upon.
 /// It represents the last known good state before the disputed blocks and serves
 /// as the starting point for derivation verification.
-pub const L2_OUTPUT_ROOT_KEY: U256 = U256::from_be_slice(&[2]);
+pub const L2_OUTPUT_ROOT_KEY: U256 = uint!(2_U256);
 
 /// The local key identifier for the disputed L2 output root claim.
 ///
 /// This key retrieves the user's claimed L2 output root at the target block.
 /// The fault proof will compare the derived output root against this claim
 /// to determine if the claim is valid or invalid.
-pub const L2_CLAIM_KEY: U256 = U256::from_be_slice(&[3]);
+pub const L2_CLAIM_KEY: U256 = uint!(3_U256);
 
 /// The local key identifier for the disputed L2 block number.
 ///
 /// This key retrieves the L2 block number at which the output root disagreement
 /// occurs. The derivation process will produce blocks up to this number to
 /// verify the claim.
-pub const L2_CLAIM_BLOCK_NUMBER_KEY: U256 = U256::from_be_slice(&[4]);
+pub const L2_CLAIM_BLOCK_NUMBER_KEY: U256 = uint!(4_U256);
 
 /// The local key identifier for the L2 chain ID.
 ///
 /// This key retrieves the L2 network identifier, which is used to load the
 /// appropriate rollup configuration and ensure network-specific validation
 /// rules are applied correctly.
-pub const L2_CHAIN_ID_KEY: U256 = U256::from_be_slice(&[5]);
+pub const L2_CHAIN_ID_KEY: U256 = uint!(5_U256);
 
 /// The local key identifier for the L2 rollup configuration.
 ///
 /// This key is used as a fallback to retrieve the rollup configuration from
 /// the preimage oracle when no hardcoded configuration is available for the
 /// given chain ID. Oracle-loaded configs require additional validation.
-pub const L2_ROLLUP_CONFIG_KEY: U256 = U256::from_be_slice(&[6]);
+pub const L2_ROLLUP_CONFIG_KEY: U256 = uint!(6_U256);
 
 /// The local key identifier for the L1 chain configuration.
 ///
 /// This key is used as a fallback to retrieve the chain configuration from
 /// the preimage oracle when no hardcoded configuration is available for the
 /// given chain ID. Oracle-loaded configs require additional validation.
-pub const L1_CONFIG_KEY: U256 = U256::from_be_slice(&[7]);
+pub const L1_CONFIG_KEY: U256 = uint!(7_U256);
 
 /// The local key identifier for the proposer address.
 ///
 /// This key retrieves the address of the proposer that will submit the proof
 /// transaction on-chain. The enclave includes this address in the proof journal
 /// so on-chain verification can match it against the actual `msg.sender`.
-pub const PROPOSER_KEY: U256 = U256::from_be_slice(&[8]);
+pub const PROPOSER_KEY: U256 = uint!(8_U256);
 
 /// The local key identifier for the intermediate block interval.
 ///
@@ -71,13 +71,13 @@ pub const PROPOSER_KEY: U256 = U256::from_be_slice(&[8]);
 /// checkpoints. The enclave uses this to sample the correct intermediate roots
 /// when constructing the aggregate proof journal, matching the on-chain
 /// `AggregateVerifier`'s `INTERMEDIATE_BLOCK_INTERVAL`.
-pub const INTERMEDIATE_BLOCK_INTERVAL_KEY: U256 = U256::from_be_slice(&[9]);
+pub const INTERMEDIATE_BLOCK_INTERVAL_KEY: U256 = uint!(9_U256);
 
 /// The local key identifier for the L1 head block number.
 ///
 /// This key retrieves the block number corresponding to `L1_HEAD_KEY`, allowing
 /// the enclave to reference the L1 head number without an extra lookup.
-pub const L1_HEAD_NUMBER_KEY: U256 = U256::from_be_slice(&[10]);
+pub const L1_HEAD_NUMBER_KEY: U256 = uint!(10_U256);
 
 /// The boot information for the client program.
 ///

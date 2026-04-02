@@ -6,50 +6,20 @@
 )]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![allow(clippy::useless_let_if_seq)]
 
 extern crate alloc;
 
 pub mod builder;
 pub use builder::OpPayloadBuilder;
+pub mod config;
 pub mod error;
 pub mod payload;
-use base_alloy_rpc_types_engine::OpExecutionData;
 pub use payload::{
     OpBuiltPayload, OpPayloadAttributes, OpPayloadBuilderAttributes, payload_id_optimism,
 };
 mod traits;
-use base_execution_primitives::OpPrimitives;
-use reth_payload_primitives::{BuiltPayload, PayloadTypes};
-use reth_primitives_traits::{Block, NodePrimitives, SealedBlock};
 pub use traits::*;
+mod types;
+pub use types::OpPayloadTypes;
 pub mod validator;
 pub use validator::OpExecutionPayloadValidator;
-
-pub mod config;
-
-/// ZST that aggregates Base [`PayloadTypes`].
-#[derive(Debug, Default, Clone, serde::Deserialize, serde::Serialize)]
-#[non_exhaustive]
-pub struct OpPayloadTypes<N: NodePrimitives = OpPrimitives>(core::marker::PhantomData<N>);
-
-impl<N: NodePrimitives> PayloadTypes for OpPayloadTypes<N>
-where
-    OpBuiltPayload<N>: BuiltPayload,
-{
-    type ExecutionData = OpExecutionData;
-    type BuiltPayload = OpBuiltPayload<N>;
-    type PayloadAttributes = OpPayloadAttributes;
-    type PayloadBuilderAttributes = OpPayloadBuilderAttributes<N::SignedTx>;
-
-    fn block_to_payload(
-        block: SealedBlock<
-            <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
-        >,
-    ) -> Self::ExecutionData {
-        OpExecutionData::from_block_unchecked(
-            block.hash(),
-            &block.into_block().into_ethereum_block(),
-        )
-    }
-}

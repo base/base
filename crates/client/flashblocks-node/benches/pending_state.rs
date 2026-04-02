@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+//! Benchmarks for [`FlashblocksState`] pending state building.
 
 use std::{
     sync::{Arc, Once},

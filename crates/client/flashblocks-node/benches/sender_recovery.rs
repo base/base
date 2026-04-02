@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 //! Benchmark for sender recovery performance.
 //!
 //! Compares sequential vs parallel ECDSA sender recovery

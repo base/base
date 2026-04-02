@@ -119,7 +119,7 @@ async fn craft_tx_rejects_too_many_blobs() {
 
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
-        blobs: Arc::new(vec![Blob::default(); 7]),
+        blobs: Arc::new((0..7).map(|_| Box::<Blob>::default()).collect::<Vec<_>>()),
         ..Default::default()
     };
 
@@ -139,8 +139,11 @@ async fn craft_tx_rejects_too_many_blobs() {
 async fn craft_tx_rejects_blob_without_recipient() {
     let (manager, _anvil) = setup().await;
 
-    let candidate =
-        TxCandidate { to: None, blobs: Arc::new(vec![Blob::default()]), ..Default::default() };
+    let candidate = TxCandidate {
+        to: None,
+        blobs: Arc::new(vec![Box::<Blob>::default()]),
+        ..Default::default()
+    };
 
     let err =
         manager.craft_tx(&candidate, None).await.expect_err("should reject blob tx without to");
@@ -165,8 +168,11 @@ async fn craft_tx_produces_valid_signed_blob_transaction() {
     let (manager, anvil) = setup().await;
 
     let to = Address::with_last_byte(0x42);
-    let candidate =
-        TxCandidate { to: Some(to), blobs: Arc::new(vec![Blob::default()]), ..Default::default() };
+    let candidate = TxCandidate {
+        to: Some(to),
+        blobs: Arc::new(vec![Box::<Blob>::default()]),
+        ..Default::default()
+    };
 
     let prepared = manager.craft_tx(&candidate, None).await.expect("should craft blob tx");
 
@@ -215,8 +221,11 @@ async fn craft_tx_produces_cell_proof_sidecar_by_default() {
     let (manager, anvil) = setup().await;
 
     let to = Address::with_last_byte(0x42);
-    let candidate =
-        TxCandidate { to: Some(to), blobs: Arc::new(vec![Blob::default()]), ..Default::default() };
+    let candidate = TxCandidate {
+        to: Some(to),
+        blobs: Arc::new(vec![Box::<Blob>::default()]),
+        ..Default::default()
+    };
 
     let prepared =
         manager.craft_tx(&candidate, None).await.expect("should craft cell-proof blob tx");
@@ -532,8 +541,11 @@ async fn prepare_exits_immediately_on_non_retryable_error() {
     let (manager, _anvil) = setup().await;
 
     // Blob transactions without a recipient trigger Unsupported (non-retryable).
-    let candidate =
-        TxCandidate { to: None, blobs: Arc::new(vec![Blob::default()]), ..Default::default() };
+    let candidate = TxCandidate {
+        to: None,
+        blobs: Arc::new(vec![Box::<Blob>::default()]),
+        ..Default::default()
+    };
 
     let err = manager
         .prepare(&candidate, None)
@@ -861,7 +873,7 @@ async fn increase_gas_price_bumps_blob_fee_cap() {
 
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
-        blobs: Arc::new(vec![Blob::default()]),
+        blobs: Arc::new(vec![Box::<Blob>::default()]),
         ..Default::default()
     };
 
@@ -918,7 +930,7 @@ async fn blob_fee_bump_round_trip() {
 
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
-        blobs: Arc::new(vec![Blob::default()]),
+        blobs: Arc::new(vec![Box::<Blob>::default()]),
         ..Default::default()
     };
 

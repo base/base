@@ -279,23 +279,14 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SealTask<EngineClient_> {
             "Starting new seal job"
         );
 
-        let unsafe_block_info = state.sync_state.unsafe_head().block_info;
-        let parent_block_info = self.attributes.parent.block_info;
-
-        let res = if unsafe_block_info.hash != parent_block_info.hash
-            || unsafe_block_info.number != parent_block_info.number
-        {
-            info!(
-                target: "engine",
-                unsafe_block_info = ?unsafe_block_info,
-                parent_block_info = ?parent_block_info,
-                "Seal attributes parent does not match unsafe head, returning rebuild error"
-            );
-            Err(SealTaskError::UnsafeHeadChangedSinceBuild)
-        } else {
-            // Seal the block and import it into the engine.
-            self.seal_and_canonicalize_block(state).await
-        };
+        // NOTE: op-node does not compare the current unsafe head against the
+        // attributes parent before sealing.  The BuildTask already sent an FCU
+        // with `attributes.parent` as the head, so the EL is building on the
+        // correct parent regardless of where the engine's in-memory unsafe head
+        // sits.  During consolidation the safe head is intentionally behind the
+        // unsafe head, so this comparison would always fail and previously caused
+        // a fatal crash (Critical) or infinite reset loop (Reset).
+        let res = self.seal_and_canonicalize_block(state).await;
 
         self.send_channel_result_or_get_error(res).await?;
 

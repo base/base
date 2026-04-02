@@ -125,7 +125,7 @@ impl Cli {
         base_cli_utils::MetricsConfig::from(metrics).init_with(|| {
             base_cli_utils::register_version_metrics!();
         })?;
-        RuntimeManager::run_until_ctrl_c(async move { args.run().await })
+        RuntimeManager::new().run_until_ctrl_c(async move { args.run().await })
     }
 }
 
