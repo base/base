@@ -51,10 +51,19 @@ impl RegistrationHealthzRpc {
                     .signer_public_key()
                     .await
                     .map_err(|e| format!("failed to get signer public key: {e}"))?;
-                derive_signer_address(&public_key)
+                Self::derive_signer_address(&public_key)
             })
             .await
             .copied()
+    }
+
+    fn derive_signer_address(public_key: &[u8]) -> Result<Address, String> {
+        let key = k256::PublicKey::from_sec1_bytes(public_key)
+            .map_err(|e| format!("invalid public key: {e}"))?;
+        let uncompressed =
+            k256::elliptic_curve::sec1::ToEncodedPoint::to_encoded_point(&key, false);
+        let hash = keccak256(&uncompressed.as_bytes()[1..]);
+        Ok(Address::from_slice(&hash[12..]))
     }
 
     async fn check_registration(&self) -> Result<bool, String> {
@@ -114,10 +123,46 @@ impl HealthzApiServer for RegistrationHealthzRpc {
     }
 }
 
-fn derive_signer_address(public_key: &[u8]) -> Result<Address, String> {
-    let key = k256::PublicKey::from_sec1_bytes(public_key)
-        .map_err(|e| format!("invalid public key: {e}"))?;
-    let uncompressed = k256::elliptic_curve::sec1::ToEncodedPoint::to_encoded_point(&key, false);
-    let hash = keccak256(&uncompressed.as_bytes()[1..]);
-    Ok(Address::from_slice(&hash[12..]))
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::address;
+    use hex_literal::hex;
+    use k256::ecdsa::SigningKey;
+
+    use super::*;
+
+    const HARDHAT_PRIVATE_KEY: [u8; 32] =
+        hex!("ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+
+    fn hardhat_public_key() -> Vec<u8> {
+        let signing_key = SigningKey::from_slice(&HARDHAT_PRIVATE_KEY).unwrap();
+        let verifying_key = signing_key.verifying_key();
+        verifying_key.to_encoded_point(false).as_bytes().to_vec()
+    }
+
+    #[test]
+    fn derive_signer_address_hardhat_account_zero() {
+        let public_key = hardhat_public_key();
+        let derived = RegistrationHealthzRpc::derive_signer_address(&public_key).unwrap();
+        assert_eq!(derived, address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+    }
+
+    #[test]
+    fn derive_signer_address_compressed_matches_uncompressed() {
+        let signing_key = SigningKey::from_slice(&HARDHAT_PRIVATE_KEY).unwrap();
+        let verifying_key = signing_key.verifying_key();
+        let compressed = verifying_key.to_encoded_point(true).as_bytes().to_vec();
+        let uncompressed = hardhat_public_key();
+
+        let addr_compressed = RegistrationHealthzRpc::derive_signer_address(&compressed).unwrap();
+        let addr_uncompressed =
+            RegistrationHealthzRpc::derive_signer_address(&uncompressed).unwrap();
+        assert_eq!(addr_compressed, addr_uncompressed);
+    }
+
+    #[test]
+    fn derive_signer_address_rejects_invalid_key() {
+        assert!(RegistrationHealthzRpc::derive_signer_address(&[0x04; 66]).is_err());
+        assert!(RegistrationHealthzRpc::derive_signer_address(&[]).is_err());
+    }
 }

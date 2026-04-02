@@ -30,16 +30,17 @@ async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "io-util", "net"] }
 
 # misc
+url.workspace = true
 eyre.workspace = true
 tower.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-url.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-vsock.workspace = true
 
 [dev-dependencies]
+hex-literal.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [features]

@@ -4725,6 +4725,7 @@ dependencies = [
  "base-proof-primitives",
  "base-proof-tee-nitro-enclave",
  "eyre",
+ "hex-literal 1.1.0",
  "jsonrpsee",
  "k256",
  "thiserror 2.0.18",
