@@ -1,3 +1,5 @@
+//! Registration-gated health check for the nitro prover.
+
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -7,7 +9,7 @@ use alloy_primitives::{Address, keccak256};
 use base_health::{HealthzApiServer, HealthzResponse};
 use base_proof_contracts::{TEEProverRegistryClient, TEEProverRegistryContractClient};
 use jsonrpsee::core::{RpcResult, async_trait};
-use tokio::sync::RwLock;
+use tokio::sync::{OnceCell, RwLock};
 use tracing::warn;
 
 use super::transport::NitroTransport;
@@ -28,6 +30,7 @@ pub(crate) struct RegistrationHealthzRpc {
     version: &'static str,
     transport: Arc<NitroTransport>,
     registry: TEEProverRegistryContractClient,
+    signer: OnceCell<Address>,
     cache: RwLock<Option<(bool, Instant)>>,
 }
 
@@ -37,40 +40,50 @@ impl RegistrationHealthzRpc {
         transport: Arc<NitroTransport>,
         registry: TEEProverRegistryContractClient,
     ) -> Self {
-        Self { version, transport, registry, cache: RwLock::new(None) }
+        Self { version, transport, registry, signer: OnceCell::new(), cache: RwLock::new(None) }
+    }
+
+    async fn signer_address(&self) -> Result<Address, String> {
+        self.signer
+            .get_or_try_init(|| async {
+                let public_key = self
+                    .transport
+                    .signer_public_key()
+                    .await
+                    .map_err(|e| format!("failed to get signer public key: {e}"))?;
+                derive_signer_address(&public_key)
+            })
+            .await
+            .copied()
     }
 
     async fn check_registration(&self) -> Result<bool, String> {
-        // Return cached result if fresh.
         {
             let cache = self.cache.read().await;
-            if let Some((registered, checked_at)) = *cache
-                && checked_at.elapsed() < REGISTRATION_CACHE_TTL {
+            if let Some((registered, checked_at)) = *cache {
+                if checked_at.elapsed() < REGISTRATION_CACHE_TTL {
                     return Ok(registered);
                 }
+            }
         }
 
-        let public_key = self
-            .transport
-            .signer_public_key()
-            .await
-            .map_err(|e| format!("failed to get signer public key: {e}"))?;
-
-        let signer = derive_signer_address(&public_key)?;
+        let signer = self.signer_address().await?;
 
         match self.registry.is_registered_signer(signer).await {
             Ok(registered) => {
-                *self.cache.write().await = Some((registered, Instant::now()));
-                if !registered {
+                let mut cache = self.cache.write().await;
+                let was_registered = cache.map(|(r, _)| r);
+                *cache = Some((registered, Instant::now()));
+                // Only warn on state transition to unregistered, not on every cache refresh.
+                if !registered && was_registered != Some(false) {
                     warn!(signer = %signer, "signer is not registered in TEEProverRegistry");
                 }
                 Ok(registered)
             }
             Err(e) => {
-                // On L1 RPC failure, return stale cached value if within the stale limit.
                 let cache = self.cache.read().await;
-                if let Some((registered, checked_at)) = *cache
-                    && checked_at.elapsed() < REGISTRATION_STALE_LIMIT {
+                if let Some((registered, checked_at)) = *cache {
+                    if checked_at.elapsed() < REGISTRATION_STALE_LIMIT {
                         warn!(
                             error = %e,
                             signer = %signer,
@@ -79,6 +92,7 @@ impl RegistrationHealthzRpc {
                         );
                         return Ok(registered);
                     }
+                }
                 Err(format!("failed to check registration for {signer}: {e}"))
             }
         }

@@ -17,9 +17,17 @@ use super::{
     transport::NitroTransport,
 };
 
+/// Maximum allowed size for the `user_data` attestation field (NSM limit).
 const MAX_USER_DATA_BYTES: usize = 512;
+
+/// Maximum allowed size for the `nonce` attestation field (NSM limit).
 const MAX_NONCE_BYTES: usize = 512;
 
+/// Host-side TEE prover server exposing a JSON-RPC interface.
+///
+/// Implements two JSON-RPC namespaces:
+/// - `prover_*`: proving operations (forwarded to the enclave via transport)
+/// - `enclave_*`: signer info queries (also forwarded via transport)
 pub struct NitroProverServer {
     service: ProverService<NitroBackend>,
     transport: Arc<NitroTransport>,
@@ -34,6 +42,7 @@ impl fmt::Debug for NitroProverServer {
 }
 
 impl NitroProverServer {
+    /// Create a server with the given prover config, enclave transport, and proof request timeout.
     pub fn new(
         config: ProverConfig,
         transport: Arc<NitroTransport>,
@@ -55,6 +64,7 @@ impl NitroProverServer {
         self
     }
 
+    /// Start the JSON-RPC HTTP server on the given address.
     pub async fn run(self, addr: SocketAddr) -> eyre::Result<ServerHandle> {
         let middleware = tower::ServiceBuilder::new()
             .layer(ProxyGetRequestLayer::new([("/healthz", "healthz")])?);
@@ -71,7 +81,6 @@ impl NitroProverServer {
             .into_rpc(),
         )?;
 
-        let transport = Arc::clone(&self.transport);
         module.merge(NitroSignerRpc { transport: Arc::clone(&self.transport) }.into_rpc())?;
 
         match self.registration_health {
@@ -85,6 +94,7 @@ impl NitroProverServer {
                 let registry =
                     TEEProverRegistryContractClient::new(config.registry_address, l1_url);
                 let version = env!("CARGO_PKG_VERSION");
+                let transport = Arc::clone(&self.transport);
                 module
                     .merge(RegistrationHealthzRpc::new(version, transport, registry).into_rpc())?;
             }
