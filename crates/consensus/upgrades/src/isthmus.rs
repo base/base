@@ -4,11 +4,11 @@
 //!
 //! [specs]: https://specs.optimism.io/protocol/isthmus/derivation.html#network-upgrade-automation-transactions
 
-use alloc::{string::String, vec::Vec};
+use alloc::vec::Vec;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
-use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
+use base_alloy_consensus::TxDeposit;
 use base_protocol::{Deployers, Predeploys, SystemAddresses};
 
 use crate::{Hardfork, UpgradeCalldata};
@@ -57,52 +57,53 @@ impl Isthmus {
     pub const OPERATOR_FEE_VAULT_CODE_HASH: B256 = alloy_primitives::b256!(
         "0x57dc55c9c09ca456fa728f253fe7b895d3e6aae0706104935fe87c7721001971"
     );
-    /// Returns the source hash for the Isthmus Gas Price Oracle activation.
-    pub fn enable_isthmus_source() -> B256 {
-        UpgradeDepositSource { intent: String::from("Isthmus: Gas Price Oracle Set Isthmus") }
-            .source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the Isthmus Gas Price Oracle activation.
+        enable_isthmus_source,
+        "Isthmus: Gas Price Oracle Set Isthmus"
+    );
 
-    /// Returns the source hash for the EIP-2935 block hash history contract deployment.
-    pub fn block_hash_history_contract_source() -> B256 {
-        UpgradeDepositSource { intent: String::from("Isthmus: EIP-2935 Contract Deployment") }
-            .source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the EIP-2935 block hash history contract deployment.
+        block_hash_history_contract_source,
+        "Isthmus: EIP-2935 Contract Deployment"
+    );
 
-    /// Returns the source hash for the deployment of the gas price oracle contract.
-    pub fn deploy_gas_price_oracle_source() -> B256 {
-        UpgradeDepositSource { intent: String::from("Isthmus: Gas Price Oracle Deployment") }
-            .source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the deployment of the gas price oracle contract.
+        deploy_gas_price_oracle_source,
+        "Isthmus: Gas Price Oracle Deployment"
+    );
 
-    /// Returns the source hash for the deployment of the l1 block contract.
-    pub fn deploy_l1_block_source() -> B256 {
-        UpgradeDepositSource { intent: String::from("Isthmus: L1 Block Deployment") }.source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the deployment of the l1 block contract.
+        deploy_l1_block_source,
+        "Isthmus: L1 Block Deployment"
+    );
 
-    /// Returns the source hash for the deployment of the operator fee vault contract.
-    pub fn deploy_operator_fee_vault_source() -> B256 {
-        UpgradeDepositSource { intent: String::from("Isthmus: Operator Fee Vault Deployment") }
-            .source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the deployment of the operator fee vault contract.
+        deploy_operator_fee_vault_source,
+        "Isthmus: Operator Fee Vault Deployment"
+    );
 
-    /// Returns the source hash for the update of the l1 block proxy.
-    pub fn update_l1_block_source() -> B256 {
-        UpgradeDepositSource { intent: String::from("Isthmus: L1 Block Proxy Update") }
-            .source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the update of the l1 block proxy.
+        update_l1_block_source,
+        "Isthmus: L1 Block Proxy Update"
+    );
 
-    /// Returns the source hash for the update of the gas price oracle proxy.
-    pub fn update_gas_price_oracle_source() -> B256 {
-        UpgradeDepositSource { intent: String::from("Isthmus: Gas Price Oracle Proxy Update") }
-            .source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the update of the gas price oracle proxy.
+        update_gas_price_oracle_source,
+        "Isthmus: Gas Price Oracle Proxy Update"
+    );
 
-    /// Returns the source hash for the update of the operator fee vault proxy.
-    pub fn update_operator_fee_vault_source() -> B256 {
-        UpgradeDepositSource { intent: String::from("Isthmus: Operator Fee Vault Proxy Update") }
-            .source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the update of the operator fee vault proxy.
+        update_operator_fee_vault_source,
+        "Isthmus: Operator Fee Vault Proxy Update"
+    );
 
     /// Returns the raw bytecode for the L1 Block deployment.
     pub fn l1_block_deployment_bytecode() -> Bytes {

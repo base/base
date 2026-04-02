@@ -4,11 +4,11 @@
 //!
 //! [specs]: https://specs.optimism.io/protocol/jovian/derivation.html#network-upgrade-automation-transactions
 
-use alloc::{string::String, vec::Vec};
+use alloc::vec::Vec;
 
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, keccak256};
-use base_alloy_consensus::{TxDeposit, UpgradeDepositSource};
+use alloy_primitives::{Address, Bytes, TxKind, U256, hex, keccak256};
+use base_alloy_consensus::TxDeposit;
 use base_protocol::{Deployers, Predeploys, SystemAddresses};
 
 use crate::{Hardfork, UpgradeCalldata};
@@ -18,27 +18,29 @@ use crate::{Hardfork, UpgradeCalldata};
 pub struct Jovian;
 
 impl Jovian {
-    /// Returns the source hash for the deployment of the l1 block contract.
-    pub fn deploy_l1_block_source() -> B256 {
-        UpgradeDepositSource { intent: String::from("Jovian: L1 Block Deployment") }.source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the deployment of the l1 block contract.
+        deploy_l1_block_source,
+        "Jovian: L1 Block Deployment"
+    );
 
-    /// Returns the source hash for the deployment of the gas price oracle contract.
-    pub fn l1_block_proxy_update() -> B256 {
-        UpgradeDepositSource { intent: String::from("Jovian: L1 Block Proxy Update") }.source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the l1 block proxy update.
+        l1_block_proxy_update,
+        "Jovian: L1 Block Proxy Update"
+    );
 
-    /// Returns the source hash for the deployment of the operator fee vault contract.
-    pub fn gas_price_oracle() -> B256 {
-        UpgradeDepositSource { intent: String::from("Jovian: Gas Price Oracle Deployment") }
-            .source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the deployment of the gas price oracle contract.
+        gas_price_oracle,
+        "Jovian: Gas Price Oracle Deployment"
+    );
 
-    /// Returns the source hash for the update of the l1 block proxy.
-    pub fn gas_price_oracle_proxy_update() -> B256 {
-        UpgradeDepositSource { intent: String::from("Jovian: Gas Price Oracle Proxy Update") }
-            .source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash for the gas price oracle proxy update.
+        gas_price_oracle_proxy_update,
+        "Jovian: Gas Price Oracle Proxy Update"
+    );
 
     /// The Jovian L1 Block Address
     /// This is computed by using `Address::create` function,
@@ -54,11 +56,11 @@ impl Jovian {
         Deployers::JOVIAN_GAS_PRICE_ORACLE.create(0)
     }
 
-    /// Returns the source hash to the enable the gas price oracle for Jovian.
-    pub fn gas_price_oracle_enable_jovian() -> B256 {
-        UpgradeDepositSource { intent: String::from("Jovian: Gas Price Oracle Set Jovian") }
-            .source_hash()
-    }
+    upgrade_source_fn!(
+        /// Returns the source hash to enable the gas price oracle for Jovian.
+        gas_price_oracle_enable_jovian,
+        "Jovian: Gas Price Oracle Set Jovian"
+    );
 
     /// Returns the raw bytecode for the L1 Block deployment.
     pub fn l1_block_deployment_bytecode() -> Bytes {
