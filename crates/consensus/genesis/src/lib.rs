@@ -10,7 +10,7 @@
 extern crate alloc;
 
 mod params;
-pub use params::{BaseFeeConfig, base_fee_config, base_fee_params, base_fee_params_canyon};
+pub use params::BaseFeeConfig;
 
 mod updates;
 pub use updates::{

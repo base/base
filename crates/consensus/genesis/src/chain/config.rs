@@ -8,7 +8,7 @@ use alloy_primitives::Address;
 
 use crate::{
     AddressList, BaseFeeConfig, ChainGenesis, GRANITE_CHANNEL_TIMEOUT, HardForkConfig, Roles,
-    RollupConfig, base_fee_params, base_fee_params_canyon, params::base_fee_config,
+    RollupConfig,
 };
 
 /// L1 chain configuration from the `alloy-genesis` crate.
@@ -99,7 +99,7 @@ impl ChainConfig {
         self.optimism
             .as_ref()
             .map(|op| op.pre_canyon_params())
-            .unwrap_or_else(|| base_fee_params(self.chain_id))
+            .unwrap_or_else(|| BaseFeeConfig::from_chain_id(self.chain_id).pre_canyon_params())
     }
 
     /// Returns the canyon base fee params for the chain.
@@ -107,12 +107,15 @@ impl ChainConfig {
         self.optimism
             .as_ref()
             .map(|op| op.post_canyon_params())
-            .unwrap_or_else(|| base_fee_params_canyon(self.chain_id))
+            .unwrap_or_else(|| BaseFeeConfig::from_chain_id(self.chain_id).post_canyon_params())
     }
 
     /// Returns the base fee config for the chain.
     pub fn base_fee_config(&self) -> BaseFeeConfig {
-        self.optimism.as_ref().map(|op| *op).unwrap_or_else(|| base_fee_config(self.chain_id))
+        self.optimism
+            .as_ref()
+            .copied()
+            .unwrap_or_else(|| BaseFeeConfig::from_chain_id(self.chain_id))
     }
 
     /// Loads the rollup config for the Base chain given the chain config and address list.

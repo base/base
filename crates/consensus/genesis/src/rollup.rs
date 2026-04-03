@@ -5,7 +5,7 @@ use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 use base_alloy_chains::{BaseUpgrade, BaseUpgrades};
 
-use crate::{BaseFeeConfig, ChainGenesis, HardForkConfig, base_fee_config};
+use crate::{BaseFeeConfig, ChainGenesis, HardForkConfig};
 
 /// The max rlp bytes per channel for the Bedrock hardfork.
 pub const MAX_RLP_BYTES_PER_CHANNEL_BEDROCK: u64 = 10_000_000;
@@ -122,7 +122,7 @@ impl Default for RollupConfig {
             l1_system_config_address: Address::ZERO,
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: None,
-            chain_op_config: base_fee_config(0),
+            chain_op_config: BaseFeeConfig::from_chain_id(0),
         }
     }
 }
@@ -790,7 +790,7 @@ mod tests {
             l1_system_config_address: address!("94ee52a9d8edd72a85dea7fae3ba6d75e4bf1710"),
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: None,
-            chain_op_config: base_fee_config(0),
+            chain_op_config: BaseFeeConfig::from_chain_id(0),
         };
 
         let deserialized: RollupConfig = serde_json::from_str(raw).unwrap();
