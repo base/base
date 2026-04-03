@@ -1,7 +1,7 @@
 # `base-consensus-genesis`
 
 <a href="https://crates.io/crates/base-consensus-genesis"><img src="https://img.shields.io/crates/v/base-consensus-genesis.svg" alt="base-consensus-genesis crate"></a>
-<a href="https://rollup.yoga"><img src="https://img.shields.io/badge/Docs-854a15?style=flat&labelColor=1C2C2E&color=BEC5C9&logo=mdBook&logoColor=BEC5C9" alt="Docs" /></a>
+<a href="https://specs.base.org"><img src="https://img.shields.io/badge/Docs-854a15?style=flat&labelColor=1C2C2E&color=BEC5C9&logo=mdBook&logoColor=BEC5C9" alt="Docs" /></a>
 
 ## Overview
 
