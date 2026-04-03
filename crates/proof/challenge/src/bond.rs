@@ -48,6 +48,21 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
+/// A function that returns the current Unix timestamp in seconds.
+///
+/// Used as an injectable clock in [`BondManager`] so that tests can
+/// control time without relying on the real wall clock.
+pub type ClockFn = fn() -> u64;
+
+/// Reason a game was removed from tracking after [`BondManager::advance_game`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemovalReason {
+    /// Bond was successfully claimed — the full lifecycle completed.
+    Completed,
+    /// Bond is not claimable by us (recipient changed after resolve).
+    NotClaimable,
+}
+
 /// Phase of the bond claim lifecycle for a single tracked game.
 #[derive(Debug, Clone)]
 pub enum BondPhase {
@@ -95,6 +110,10 @@ pub struct BondManager {
     /// L1 RPC URL used to instantiate the `DelayedWETH` contract client
     /// when lazily resolving the withdrawal delay.
     l1_rpc_url: url::Url,
+    /// Injectable clock for obtaining the current Unix timestamp. Defaults
+    /// to [`unix_now`] in production; tests can substitute a controlled
+    /// clock.
+    clock: ClockFn,
 }
 
 impl BondManager {
@@ -107,12 +126,25 @@ impl BondManager {
     pub fn new(claim_addresses: Vec<Address>, l1_rpc_url: url::Url) -> Self {
         let set: HashSet<Address> = claim_addresses.into_iter().collect();
         info!(count = set.len(), "bond manager initialized with claim addresses");
-        Self { tracked: HashMap::new(), claim_addresses: set, weth_delay: None, l1_rpc_url }
+        Self {
+            tracked: HashMap::new(),
+            claim_addresses: set,
+            weth_delay: None,
+            l1_rpc_url,
+            clock: unix_now,
+        }
     }
 
     /// Returns `true` if bond claiming is enabled (at least one claim address configured).
     pub fn is_enabled(&self) -> bool {
         !self.claim_addresses.is_empty()
+    }
+
+    /// Overrides the clock function used to obtain the current Unix
+    /// timestamp. Primarily useful for tests that need deterministic
+    /// time control.
+    pub fn set_clock(&mut self, clock: ClockFn) {
+        self.clock = clock;
     }
 
     /// Sets the `DelayedWETH` withdrawal delay.
@@ -337,12 +369,12 @@ impl BondManager {
         }
 
         let addresses: Vec<Address> = self.tracked.keys().copied().collect();
-        let mut completed = Vec::new();
+        let mut removed = Vec::new();
 
         for game_address in addresses {
             match self.advance_game(game_address, verifier_client, submitter).await {
-                Ok(true) => completed.push(game_address),
-                Ok(false) => {}
+                Ok(Some(reason)) => removed.push((game_address, reason)),
+                Ok(None) => {}
                 Err(e) => {
                     warn!(
                         game = %game_address,
@@ -353,29 +385,32 @@ impl BondManager {
             }
         }
 
-        for addr in &completed {
+        for (addr, reason) in &removed {
             self.tracked.remove(addr);
-            ChallengerMetrics::bonds_completed_total().increment(1);
+            if *reason == RemovalReason::Completed {
+                ChallengerMetrics::bonds_completed_total().increment(1);
+            }
         }
 
-        if !completed.is_empty() {
+        if !removed.is_empty() {
             ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
         }
     }
 
     /// Advances a single game through the bond lifecycle state machine.
     ///
-    /// Returns `Ok(true)` when the game reaches [`BondPhase::Completed`] and
-    /// should be removed from tracking.
+    /// Returns `Ok(Some(reason))` when the game should be removed from
+    /// tracking, or `Ok(None)` when it remains in its current or updated
+    /// phase.
     async fn advance_game(
         &mut self,
         game_address: Address,
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
-    ) -> eyre::Result<bool> {
+    ) -> eyre::Result<Option<RemovalReason>> {
         let game = match self.tracked.get(&game_address) {
             Some(g) => g,
-            None => return Ok(false),
+            None => return Ok(None),
         };
 
         match &game.phase {
@@ -392,7 +427,7 @@ impl BondManager {
             BondPhase::NeedsWithdraw => {
                 self.try_withdraw(game_address, verifier_client, submitter).await
             }
-            BondPhase::Completed => Ok(true),
+            BondPhase::Completed => Ok(Some(RemovalReason::Completed)),
         }
     }
 
@@ -408,7 +443,7 @@ impl BondManager {
         game_address: Address,
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
-    ) -> eyre::Result<bool> {
+    ) -> eyre::Result<Option<RemovalReason>> {
         // Check if already resolved onchain (e.g., someone else called it).
         let status = verifier_client.status(game_address).await?;
         if status != GameScanner::STATUS_IN_PROGRESS {
@@ -419,23 +454,24 @@ impl BondManager {
             // it (e.g. to the challenger on CHALLENGER_WINS). If it is no
             // longer in our claim set, stop tracking this game.
             if !self.is_bond_claimable(verifier_client, game_address).await? {
-                return Ok(true);
+                return Ok(Some(RemovalReason::NotClaimable));
             }
 
             info!(game = %game_address, status, "game already resolved, advancing to unlock phase");
             self.set_phase(game_address, BondPhase::NeedsUnlock);
-            return Ok(false);
+            return Ok(None);
         }
 
         // Check if the game is ready to resolve.
         let game_over = verifier_client.game_over(game_address).await?;
         if !game_over {
             debug!(game = %game_address, "game dispute period not yet elapsed");
-            return Ok(false);
+            return Ok(None);
         }
 
         // Submit resolve transaction.
         let calldata = encode_resolve_calldata();
+        info!(game = %game_address, "submitting resolve transaction");
         match submitter.send_bond_tx(game_address, calldata).await {
             Ok(tx_hash) => {
                 info!(game = %game_address, tx_hash = %tx_hash, "resolve transaction confirmed");
@@ -444,7 +480,7 @@ impl BondManager {
 
                 // Re-read bondRecipient to verify it's in our claim set.
                 if !self.is_bond_claimable(verifier_client, game_address).await? {
-                    return Ok(true);
+                    return Ok(Some(RemovalReason::NotClaimable));
                 }
 
                 self.set_phase(game_address, BondPhase::NeedsUnlock);
@@ -455,18 +491,28 @@ impl BondManager {
                     .increment(1);
             }
         }
-        Ok(false)
+        Ok(None)
     }
 
     /// Checks whether the onchain `bondRecipient` for the given game is in
-    /// our claim addresses. Returns `false` if not, signalling the caller
-    /// to remove the game from tracking.
+    /// our claim addresses. Also updates the tracked game's
+    /// `bond_recipient` field to reflect the current onchain value (which
+    /// may differ from the pre-resolve value). Returns `false` if the
+    /// recipient is not in the claim set, signalling the caller to remove
+    /// the game from tracking.
     async fn is_bond_claimable(
-        &self,
+        &mut self,
         verifier_client: &dyn AggregateVerifierClient,
         game_address: Address,
     ) -> eyre::Result<bool> {
         let bond_recipient = verifier_client.bond_recipient(game_address).await?;
+
+        // Update the tracked entry so logging and debugging reflect the
+        // current onchain recipient, not the stale pre-resolve value.
+        if let Some(game) = self.tracked.get_mut(&game_address) {
+            game.bond_recipient = bond_recipient;
+        }
+
         if self.claim_addresses.contains(&bond_recipient) {
             return Ok(true);
         }
@@ -484,7 +530,7 @@ impl BondManager {
         game_address: Address,
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
-    ) -> eyre::Result<bool> {
+    ) -> eyre::Result<Option<RemovalReason>> {
         // Check if already unlocked onchain.
         let unlocked = verifier_client.bond_unlocked(game_address).await?;
         if unlocked {
@@ -500,20 +546,24 @@ impl BondManager {
                 "bond already unlocked, advancing to delay phase"
             );
             self.set_phase(game_address, BondPhase::AwaitingDelay { unlocked_at: resolved_at });
-            return Ok(false);
+            return Ok(None);
         }
 
         self.submit_claim_credit(
             game_address,
             submitter,
             "unlock",
-            BondPhase::AwaitingDelay { unlocked_at: unix_now() },
+            BondPhase::AwaitingDelay { unlocked_at: (self.clock)() },
         )
         .await
     }
 
     /// Checks if the `DelayedWETH` delay has elapsed since the unlock.
-    fn check_delay(&mut self, game_address: Address, unlocked_at: u64) -> eyre::Result<bool> {
+    fn check_delay(
+        &mut self,
+        game_address: Address,
+        unlocked_at: u64,
+    ) -> eyre::Result<Option<RemovalReason>> {
         // Fall back to 7 days if the onchain delay has not been read yet.
         // If the real delay is shorter, the withdraw attempt will simply
         // succeed earlier than expected. If longer, the attempt will revert
@@ -523,7 +573,7 @@ impl BondManager {
             Self::DEFAULT_WETH_DELAY
         });
 
-        let now = unix_now();
+        let now = (self.clock)();
         let elapsed = Duration::from_secs(now.saturating_sub(unlocked_at));
 
         if elapsed >= delay {
@@ -541,7 +591,7 @@ impl BondManager {
                 "waiting for DelayedWETH delay"
             );
         }
-        Ok(false)
+        Ok(None)
     }
 
     /// Attempts the second `claimCredit()` call to complete the withdrawal.
@@ -550,30 +600,31 @@ impl BondManager {
         game_address: Address,
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
-    ) -> eyre::Result<bool> {
+    ) -> eyre::Result<Option<RemovalReason>> {
         // Check if already claimed onchain.
         let claimed = verifier_client.bond_claimed(game_address).await?;
         if claimed {
             info!(game = %game_address, "bond already claimed");
             self.set_phase(game_address, BondPhase::Completed);
-            return Ok(true);
+            return Ok(Some(RemovalReason::Completed));
         }
 
         self.submit_claim_credit(game_address, submitter, "withdraw", BondPhase::Completed).await
     }
 
     /// Submits a `claimCredit()` transaction and transitions to the given
-    /// phase on success. Returns `Ok(true)` when the success phase is
-    /// [`BondPhase::Completed`].
+    /// phase on success. Returns `Ok(Some(Completed))` when the success
+    /// phase is [`BondPhase::Completed`].
     async fn submit_claim_credit(
         &mut self,
         game_address: Address,
         submitter: &dyn BondTransactionSubmitter,
         step: &str,
         success_phase: BondPhase,
-    ) -> eyre::Result<bool> {
+    ) -> eyre::Result<Option<RemovalReason>> {
         let calldata = encode_claim_credit_calldata();
         ChallengerMetrics::claim_credit_tx_submitted_total().increment(1);
+        info!(game = %game_address, step, "submitting claimCredit transaction");
         match submitter.send_bond_tx(game_address, calldata).await {
             Ok(tx_hash) => {
                 info!(
@@ -586,7 +637,7 @@ impl BondManager {
                     .increment(1);
                 let completed = matches!(success_phase, BondPhase::Completed);
                 self.set_phase(game_address, success_phase);
-                Ok(completed)
+                Ok(completed.then_some(RemovalReason::Completed))
             }
             Err(e) => {
                 warn!(
@@ -597,7 +648,7 @@ impl BondManager {
                 );
                 ChallengerMetrics::claim_credit_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
                     .increment(1);
-                Ok(false)
+                Ok(None)
             }
         }
     }
@@ -704,23 +755,34 @@ mod tests {
         assert!(mgr.is_tracking(&game));
     }
 
+    /// Returns a [`ClockFn`] that always returns the given timestamp.
+    ///
+    /// Only a fixed set of test timestamps is supported; passing an
+    /// unsupported value will panic to prevent silent non-determinism.
+    fn fixed_clock(ts: u64) -> ClockFn {
+        match ts {
+            1000 => || 1000,
+            5000 => || 5000,
+            _ => panic!("unsupported test timestamp {ts} — add a new match arm"),
+        }
+    }
+
     #[test]
     fn check_delay_transitions_when_elapsed() {
         let addr = Address::repeat_byte(0x01);
         let game = Address::repeat_byte(0xAA);
 
         let mut mgr = BondManager::new(vec![addr], test_l1_rpc_url());
-        mgr.set_weth_delay(Duration::from_secs(0)); // instant delay for testing
-        let past = unix_now().saturating_sub(1);
+        mgr.set_weth_delay(Duration::from_secs(60));
+        mgr.set_clock(fixed_clock(1000));
+
+        let unlocked_at = 900; // 100 seconds ago > 60 second delay
         mgr.tracked.insert(
             game,
-            TrackedGame {
-                phase: BondPhase::AwaitingDelay { unlocked_at: past },
-                bond_recipient: addr,
-            },
+            TrackedGame { phase: BondPhase::AwaitingDelay { unlocked_at }, bond_recipient: addr },
         );
 
-        let result = mgr.check_delay(game, past);
+        let result = mgr.check_delay(game, unlocked_at);
         assert!(result.is_ok());
         assert!(matches!(mgr.tracked.get(&game).unwrap().phase, BondPhase::NeedsWithdraw));
     }
@@ -732,16 +794,15 @@ mod tests {
 
         let mut mgr = BondManager::new(vec![addr], test_l1_rpc_url());
         mgr.set_weth_delay(Duration::from_secs(3600));
-        let now = unix_now();
+        mgr.set_clock(fixed_clock(1000));
+
+        let unlocked_at = 999; // only 1 second ago < 3600 second delay
         mgr.tracked.insert(
             game,
-            TrackedGame {
-                phase: BondPhase::AwaitingDelay { unlocked_at: now },
-                bond_recipient: addr,
-            },
+            TrackedGame { phase: BondPhase::AwaitingDelay { unlocked_at }, bond_recipient: addr },
         );
 
-        let result = mgr.check_delay(game, now);
+        let result = mgr.check_delay(game, unlocked_at);
         assert!(result.is_ok());
         assert!(matches!(mgr.tracked.get(&game).unwrap().phase, BondPhase::AwaitingDelay { .. }));
     }

@@ -130,12 +130,6 @@ impl GameScanner {
     /// Game status indicating the dispute is still in progress.
     pub const STATUS_IN_PROGRESS: u8 = 0;
 
-    /// Game status indicating the challenger won the dispute.
-    pub const STATUS_CHALLENGER_WINS: u8 = 1;
-
-    /// Game status indicating the defender won the dispute.
-    pub const STATUS_DEFENDER_WINS: u8 = 2;
-
     /// Maximum number of games to evaluate concurrently during a scan.
     pub const SCAN_CONCURRENCY: usize = 32;
 

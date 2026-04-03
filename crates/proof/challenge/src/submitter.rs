@@ -129,6 +129,12 @@ impl<T: TxManager> BondTransactionSubmitter for ChallengeSubmitter<T> {
             ..Default::default()
         };
 
+        info!(
+            game = %game_address,
+            calldata_len = candidate.tx_data.len(),
+            "sending bond transaction"
+        );
+
         let start = Instant::now();
         let receipt = self.tx_manager.send(candidate).await?;
         let latency = start.elapsed();

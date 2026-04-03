@@ -97,8 +97,4 @@ impl ChallengerMetrics {
     /// Label value when a resolve was skipped because the game was already
     /// resolved on-chain (e.g. by another actor).
     pub const STATUS_ALREADY_RESOLVED: &str = "already_resolved";
-
-    /// Label value when a game resolved as `DEFENDER_WINS`, meaning the
-    /// bond is not claimable by the challenger.
-    pub const STATUS_DEFENDER_WINS: &str = "defender_wins";
 }
