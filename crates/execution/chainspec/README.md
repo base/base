@@ -35,7 +35,7 @@ Two helpers handle hardfork-specific base fee logic:
   next-block fee calculation.
 
 Gas limits and other chain parameters are sourced from
-[`base_alloy_chains::BaseChainConfig`](../../../crates/core/chains/src/config.rs).
+[`base_alloy_chains::BaseChainConfig`](../../../crates/common/chains/src/config.rs).
 
 ## Usage
 

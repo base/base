@@ -33,7 +33,7 @@ exclude = [
     'https://tidelift\.com',
 
     # Links to paths that don't exist on main yet (pending merges)
-    'https://github\.com/base/base/blob/main/crates/core/',
+    'https://github\.com/base/base/blob/main/crates/common/',
 
     # Internal / staging sites not meant for link checking
     'https://rustup\.rs/',
