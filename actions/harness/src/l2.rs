@@ -10,12 +10,12 @@ use alloy_eips::{
 };
 use alloy_hardforks::ForkCondition;
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
+use alloy_rpc_types_engine::CancunPayloadFields;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{EMPTY_ROOT_HASH, TrieAccount, root::state_root_unhashed};
 use base_alloy_chains::BaseUpgrade;
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
-use alloy_rpc_types_engine::CancunPayloadFields;
 use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadSidecar, OpNetworkPayloadEnvelope, PayloadHash,
 };
@@ -537,14 +537,15 @@ impl L2Sequencer {
         // hash of block N) doesn't match self.tip, triggering ReorgError::ParentMismatch and
         // resetting the encoder before any span batch is submitted.
         let block_hash = envelope.execution_payload.as_v1().block_hash;
-        let sidecar = if let Some(pbbr) = envelope.parent_beacon_block_root {
-            OpExecutionPayloadSidecar::v3(CancunPayloadFields {
-                parent_beacon_block_root: pbbr,
-                versioned_hashes: vec![],
-            })
-        } else {
-            OpExecutionPayloadSidecar::default()
-        };
+        let sidecar = envelope.parent_beacon_block_root.map_or_else(
+            OpExecutionPayloadSidecar::default,
+            |pbbr| {
+                OpExecutionPayloadSidecar::v3(CancunPayloadFields {
+                    parent_beacon_block_root: pbbr,
+                    versioned_hashes: vec![],
+                })
+            },
+        );
         let block: OpBlock = envelope
             .execution_payload
             .try_into_block_with_sidecar(&sidecar)
