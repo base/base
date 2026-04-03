@@ -11,33 +11,6 @@ repository.workspace = true
 [lints]
 workspace = true
 
-[features]
-test-utils = [
-	"base-node-core/test-utils",
-	"base-node-runner/test-utils",
-	"dep:alloy-consensus",
-	"dep:alloy-eips",
-	"dep:alloy-primitives",
-	"dep:alloy-rpc-types-engine",
-	"dep:base-alloy-consensus",
-	"dep:base-alloy-flashblocks",
-	"dep:base-execution-chainspec",
-	"dep:base-execution-primitives",
-	"dep:derive_more",
-	"dep:eyre",
-	"dep:reth-chainspec",
-	"dep:reth-primitives-traits",
-	"dep:reth-provider",
-	"dep:reth-transaction-pool",
-	"reth-chain-state/test-utils",
-	"reth-chainspec/test-utils",
-	"reth-evm/test-utils",
-	"reth-primitives-traits?/test-utils",
-	"reth-provider/test-utils",
-	"reth-revm/test-utils",
-	"reth-transaction-pool/test-utils",
-]
-
 [dependencies]
 # workspace
 base-node-core.workspace = true
@@ -123,6 +96,33 @@ rand.workspace = true
 rayon.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 criterion = { workspace = true, features = ["async_tokio"] }
+
+[features]
+test-utils = [
+	"base-node-core/test-utils",
+	"base-node-runner/test-utils",
+	"dep:alloy-consensus",
+	"dep:alloy-eips",
+	"dep:alloy-primitives",
+	"dep:alloy-rpc-types-engine",
+	"dep:base-alloy-consensus",
+	"dep:base-alloy-flashblocks",
+	"dep:base-execution-chainspec",
+	"dep:base-execution-primitives",
+	"dep:derive_more",
+	"dep:eyre",
+	"dep:reth-chainspec",
+	"dep:reth-primitives-traits",
+	"dep:reth-provider",
+	"dep:reth-transaction-pool",
+	"reth-chain-state/test-utils",
+	"reth-chainspec/test-utils",
+	"reth-evm/test-utils",
+	"reth-primitives-traits?/test-utils",
+	"reth-provider/test-utils",
+	"reth-revm/test-utils",
+	"reth-transaction-pool/test-utils",
+]
 
 [[bench]]
 name = "pending_state"

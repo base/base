@@ -11,10 +11,6 @@ repository.workspace = true
 [lints]
 workspace = true
 
-[features]
-clap = [ "dep:clap" ]
-metrics = [ "base-metrics/metrics", "dep:metrics" ]
-
 [dependencies]
 tracing = { workspace = true, features = ["std"] }
 base-comp = { workspace = true, features = ["std"] }
@@ -32,3 +28,7 @@ clap = { workspace = true, features = ["derive"], optional = true }
 [dev-dependencies]
 alloy-consensus = { workspace = true, features = ["std"] }
 rstest.workspace = true
+
+[features]
+clap = [ "dep:clap" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]

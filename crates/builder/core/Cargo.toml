@@ -11,54 +11,6 @@ repository.workspace = true
 [lints]
 workspace = true
 
-[features]
-default = [ "jemalloc", "metrics" ]
-metrics = [
-	"base-metrics/metrics",
-	"dep:metrics",
-	"reth-evm/metrics",
-	"reth-trie/metrics",
-]
-jemalloc = [ "dep:tikv-jemallocator", "reth-cli-util/jemalloc" ]
-jemalloc-prof = [
-	"jemalloc",
-	"reth-cli-util/jemalloc-prof",
-	"tikv-jemallocator?/profiling",
-]
-min-error-logs = [ "tracing/release_max_level_error" ]
-min-warn-logs = [ "tracing/release_max_level_warn" ]
-min-info-logs = [ "tracing/release_max_level_info" ]
-min-debug-logs = [ "tracing/release_max_level_debug" ]
-min-trace-logs = [ "tracing/release_max_level_trace" ]
-test-utils = [
-	"base-bundles/test-utils",
-	"base-execution-rpc/client",
-	"base-node-core/test-utils",
-	"base-node-runner/test-utils",
-	"ctor",
-	"http-body-util",
-	"hyper",
-	"hyper-util",
-	"nanoid",
-	"reth-chain-state/test-utils",
-	"reth-chainspec/test-utils",
-	"reth-db/test-utils",
-	"reth-evm/test-utils",
-	"reth-ipc",
-	"reth-node-builder/test-utils",
-	"reth-node-ethereum/test-utils",
-	"reth-payload-builder/test-utils",
-	"reth-primitives-traits/test-utils",
-	"reth-primitives/test-utils",
-	"reth-provider/test-utils",
-	"reth-revm/test-utils",
-	"reth-tasks/test-utils",
-	"reth-transaction-pool/test-utils",
-	"reth-trie/test-utils",
-	"rlimit",
-	"testcontainers",
-]
-
 [dependencies]
 # workspace
 base-bundles.workspace = true
@@ -229,3 +181,51 @@ nanoid.workspace = true
 tempfile.workspace = true
 hyper-util.workspace = true
 http-body-util.workspace = true
+
+[features]
+default = [ "jemalloc", "metrics" ]
+metrics = [
+	"base-metrics/metrics",
+	"dep:metrics",
+	"reth-evm/metrics",
+	"reth-trie/metrics",
+]
+jemalloc = [ "dep:tikv-jemallocator", "reth-cli-util/jemalloc" ]
+jemalloc-prof = [
+	"jemalloc",
+	"reth-cli-util/jemalloc-prof",
+	"tikv-jemallocator?/profiling",
+]
+min-error-logs = [ "tracing/release_max_level_error" ]
+min-warn-logs = [ "tracing/release_max_level_warn" ]
+min-info-logs = [ "tracing/release_max_level_info" ]
+min-debug-logs = [ "tracing/release_max_level_debug" ]
+min-trace-logs = [ "tracing/release_max_level_trace" ]
+test-utils = [
+	"base-bundles/test-utils",
+	"base-execution-rpc/client",
+	"base-node-core/test-utils",
+	"base-node-runner/test-utils",
+	"ctor",
+	"http-body-util",
+	"hyper",
+	"hyper-util",
+	"nanoid",
+	"reth-chain-state/test-utils",
+	"reth-chainspec/test-utils",
+	"reth-db/test-utils",
+	"reth-evm/test-utils",
+	"reth-ipc",
+	"reth-node-builder/test-utils",
+	"reth-node-ethereum/test-utils",
+	"reth-payload-builder/test-utils",
+	"reth-primitives-traits/test-utils",
+	"reth-primitives/test-utils",
+	"reth-provider/test-utils",
+	"reth-revm/test-utils",
+	"reth-tasks/test-utils",
+	"reth-transaction-pool/test-utils",
+	"reth-trie/test-utils",
+	"rlimit",
+	"testcontainers",
+]

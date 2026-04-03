@@ -11,9 +11,6 @@ repository.workspace = true
 [lints]
 workspace = true
 
-[features]
-test-utils = [ "dep:alloy-signer-local", "dep:base-alloy-rpc-types" ]
-
 [dependencies]
 # alloy
 alloy-serde = { workspace = true, features = ["std"] }
@@ -42,3 +39,6 @@ base-alloy-rpc-types = { workspace = true, features = ["std"] }
 
 # misc
 serde_json = { workspace = true, features = ["std"] }
+
+[features]
+test-utils = [ "dep:alloy-signer-local", "dep:base-alloy-rpc-types" ]
