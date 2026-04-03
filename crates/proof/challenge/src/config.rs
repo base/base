@@ -165,9 +165,12 @@ impl ChallengerConfig {
         require_nonzero_duration(cli.challenger.zk_connect_timeout, "zk-connect-timeout")?;
         require_nonzero_duration(cli.challenger.zk_request_timeout, "zk-request-timeout")?;
 
-        if tee_rpc_url.is_some() {
+        let tee_request_timeout = if tee_rpc_url.is_some() {
             require_nonzero_duration(cli.challenger.tee_request_timeout, "tee-request-timeout")?;
-        }
+            Some(cli.challenger.tee_request_timeout)
+        } else {
+            None
+        };
 
         if cli.challenger.lookback_games == 0 {
             return Err(ConfigError::OutOfRange {
@@ -198,8 +201,6 @@ impl ChallengerConfig {
             TxManagerConfig::try_from(cli.challenger.tx_manager).map_err(ConfigError::TxManager)?;
 
         let health_addr = cli.health.socket_addr();
-
-        let tee_request_timeout = tee_rpc_url.as_ref().map(|_| cli.challenger.tee_request_timeout);
 
         Ok(Self {
             l1_eth_rpc,
