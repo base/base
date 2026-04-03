@@ -1,8 +1,7 @@
-//! Bond lifecycle management for the challenger.
+//! Bond lifecycle management.
 //!
-//! After the challenger successfully submits a `challenge()` transaction,
-//! the [`BondManager`] tracks the resulting game through a multi-phase
-//! credit claim lifecycle:
+//! The [`BondManager`] tracks dispute games through a multi-phase credit
+//! claim lifecycle:
 //!
 //! 1. **[`NeedsResolve`](BondPhase::NeedsResolve)** — wait for the game's
 //!    dispute period to expire, then call `resolve()`.
@@ -14,11 +13,17 @@
 //!    again to complete the withdrawal.
 //!
 //! A comma-separated list of addresses is provided via the
-//! `BASE_CHALLENGER_BOND_CLAIM_ADDRESSES` env var. The manager only tracks
-//! games where the on-chain `bondRecipient` or `zkProver` matches one of
-//! those addresses. Checking `zkProver` is necessary to recover pre-resolve
-//! challenged games after a restart, since `bondRecipient` is only updated
-//! to the challenger's address during `resolve()`.
+//! `BASE_CHALLENGER_BOND_CLAIM_ADDRESSES` env var. The manager tracks any
+//! game whose onchain `bondRecipient` matches one of those addresses,
+//! regardless of the game's resolution outcome (`CHALLENGER_WINS` or
+//! `DEFENDER_WINS`). This allows claiming bonds both for games won by the
+//! challenger and games proposed by addresses in the claim set.
+//!
+//! During startup recovery, `zkProver` is also checked against the claim
+//! addresses to recover pre-resolve challenged games, since `bondRecipient`
+//! is only updated to the challenger's address during `resolve()`. For
+//! already-resolved games matched solely via `zkProver`, the onchain
+//! `bondRecipient` is re-verified against the claim set before tracking.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -77,7 +82,7 @@ pub struct TrackedGame {
 ///
 /// After a successful `challenge()` submission, games are registered here.
 /// On each [`poll`](Self::poll) tick the manager checks each tracked game's
-/// on-chain state and submits the next transaction in the lifecycle.
+/// onchain state and submits the next transaction in the lifecycle.
 #[derive(Debug)]
 pub struct BondManager {
     /// Games being tracked, keyed by proxy address.
@@ -93,7 +98,7 @@ pub struct BondManager {
 }
 
 impl BondManager {
-    /// Conservative fallback when the on-chain `DelayedWETH` delay has not
+    /// Conservative fallback when the onchain `DelayedWETH` delay has not
     /// been read yet. If the real delay is shorter the withdraw will simply
     /// succeed earlier; if longer, the attempt reverts and is retried.
     const DEFAULT_WETH_DELAY: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -252,6 +257,26 @@ impl BondManager {
                         }
                     };
 
+                    // For already-resolved games, verify the current onchain
+                    // `bondRecipient` is in our claim addresses. Games matched
+                    // via `zkProver` may have a `bondRecipient` that is not in
+                    // our claim set (e.g. a game where our challenge was
+                    // nullified and the bond goes to the game creator).
+                    // Pre-resolve games are kept — `bondRecipient` will be
+                    // re-verified after resolve in `try_resolve`.
+                    if let Some(ref p) = phase
+                        && !matches!(p, BondPhase::NeedsResolve)
+                            && !claim_addresses.contains(&bond_recipient)
+                        {
+                            debug!(
+                                game = %game_address,
+                                recipient = %bond_recipient,
+                                "onchain bondRecipient not in claim addresses \
+                                 for resolved game, skipping"
+                            );
+                            return None;
+                        }
+
                     Some((game_address, matched_address, phase))
                 })
                 .buffer_unordered(GameScanner::SCAN_CONCURRENCY)
@@ -371,41 +396,30 @@ impl BondManager {
         }
     }
 
-    /// Marks a game as completed because the defender won and the bond is not
-    /// claimable. Returns `Ok(true)` to signal removal from tracking.
-    fn complete_defender_wins(&mut self, game_address: Address, status: u8) -> eyre::Result<bool> {
-        info!(
-            game = %game_address,
-            status,
-            "game resolved as DEFENDER_WINS, bond not claimable — removing from tracking"
-        );
-        ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_DEFENDER_WINS)
-            .increment(1);
-        self.set_phase(game_address, BondPhase::Completed);
-        Ok(true)
-    }
-
     /// Attempts to resolve the game by calling `resolve()`.
     ///
-    /// After resolution (either by us or by another actor), checks the
-    /// on-chain status to verify the game resolved as `CHALLENGER_WINS`.
-    /// If the game resolved as `DEFENDER_WINS`, the bond belongs to the
-    /// game creator and is not claimable by the challenger, so the game
-    /// is removed from tracking.
+    /// After resolution (either by us or by another actor), re-reads the
+    /// onchain `bondRecipient` to verify it is still in our claim
+    /// addresses. `resolve()` may update `bondRecipient` (e.g. to the
+    /// challenger's address on `CHALLENGER_WINS`), so games matched via
+    /// `zkProver` before resolution may no longer be claimable by us.
     async fn try_resolve(
         &mut self,
         game_address: Address,
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
     ) -> eyre::Result<bool> {
-        // Check if already resolved on-chain (e.g., someone else called it).
+        // Check if already resolved onchain (e.g., someone else called it).
         let status = verifier_client.status(game_address).await?;
         if status != GameScanner::STATUS_IN_PROGRESS {
             ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ALREADY_RESOLVED)
                 .increment(1);
 
-            if status != GameScanner::STATUS_CHALLENGER_WINS {
-                return self.complete_defender_wins(game_address, status);
+            // Re-read the onchain bondRecipient — resolve may have changed
+            // it (e.g. to the challenger on CHALLENGER_WINS). If it is no
+            // longer in our claim set, stop tracking this game.
+            if !self.is_bond_claimable(verifier_client, game_address).await? {
+                return Ok(true);
             }
 
             info!(game = %game_address, status, "game already resolved, advancing to unlock phase");
@@ -428,10 +442,9 @@ impl BondManager {
                 ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
                     .increment(1);
 
-                // Re-read status to verify the game resolved in our favor.
-                let post_status = verifier_client.status(game_address).await?;
-                if post_status != GameScanner::STATUS_CHALLENGER_WINS {
-                    return self.complete_defender_wins(game_address, post_status);
+                // Re-read bondRecipient to verify it's in our claim set.
+                if !self.is_bond_claimable(verifier_client, game_address).await? {
+                    return Ok(true);
                 }
 
                 self.set_phase(game_address, BondPhase::NeedsUnlock);
@@ -445,6 +458,27 @@ impl BondManager {
         Ok(false)
     }
 
+    /// Checks whether the onchain `bondRecipient` for the given game is in
+    /// our claim addresses. If not, marks the game as completed (removing it
+    /// from tracking) and returns `false`.
+    async fn is_bond_claimable(
+        &mut self,
+        verifier_client: &dyn AggregateVerifierClient,
+        game_address: Address,
+    ) -> eyre::Result<bool> {
+        let bond_recipient = verifier_client.bond_recipient(game_address).await?;
+        if self.claim_addresses.contains(&bond_recipient) {
+            return Ok(true);
+        }
+        info!(
+            game = %game_address,
+            recipient = %bond_recipient,
+            "bond recipient not in claim addresses after resolve, removing from tracking"
+        );
+        self.set_phase(game_address, BondPhase::Completed);
+        Ok(false)
+    }
+
     /// Attempts the first `claimCredit()` call to trigger the unlock.
     async fn try_unlock(
         &mut self,
@@ -452,7 +486,7 @@ impl BondManager {
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
     ) -> eyre::Result<bool> {
-        // Check if already unlocked on-chain.
+        // Check if already unlocked onchain.
         let unlocked = verifier_client.bond_unlocked(game_address).await?;
         if unlocked {
             // Use `resolved_at` as a conservative lower bound for the unlock
@@ -481,7 +515,7 @@ impl BondManager {
 
     /// Checks if the `DelayedWETH` delay has elapsed since the unlock.
     fn check_delay(&mut self, game_address: Address, unlocked_at: u64) -> eyre::Result<bool> {
-        // Fall back to 7 days if the on-chain delay has not been read yet.
+        // Fall back to 7 days if the onchain delay has not been read yet.
         // If the real delay is shorter, the withdraw attempt will simply
         // succeed earlier than expected. If longer, the attempt will revert
         // and be retried on the next poll tick.
@@ -518,7 +552,7 @@ impl BondManager {
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
     ) -> eyre::Result<bool> {
-        // Check if already claimed on-chain.
+        // Check if already claimed onchain.
         let claimed = verifier_client.bond_claimed(game_address).await?;
         if claimed {
             info!(game = %game_address, "bond already claimed");
@@ -569,11 +603,13 @@ impl BondManager {
         }
     }
 
-    /// Determines the bond phase from on-chain state.
+    /// Determines the bond phase from onchain state.
     ///
-    /// Returns `None` if the bond has already been claimed, or if the game
-    /// resolved as `DEFENDER_WINS` (the bond is not claimable by the
-    /// challenger).
+    /// Returns `None` if the bond has already been fully claimed. Otherwise
+    /// returns the appropriate [`BondPhase`] based on the game's onchain
+    /// progression (resolved, unlocked, etc.). The caller is responsible
+    /// for verifying that the onchain `bondRecipient` is in the claim set
+    /// before acting on the returned phase.
     async fn determine_phase(
         verifier_client: &dyn AggregateVerifierClient,
         game_address: Address,
@@ -596,17 +632,6 @@ impl BondManager {
         }
 
         if resolved_at > 0 {
-            // The game has been resolved. Check if it resolved in the
-            // challenger's favor before tracking it for bond claiming.
-            let status = verifier_client.status(game_address).await?;
-            if status != GameScanner::STATUS_CHALLENGER_WINS {
-                debug!(
-                    game = %game_address,
-                    status,
-                    "game resolved as DEFENDER_WINS during startup scan, skipping"
-                );
-                return Ok(None);
-            }
             return Ok(Some(BondPhase::NeedsUnlock));
         }
 

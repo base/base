@@ -1403,16 +1403,49 @@ async fn test_bond_manager_ignores_non_claim_addresses() {
 }
 
 #[tokio::test]
-async fn test_bond_manager_removes_defender_wins_game() {
-    // When a game resolves as DEFENDER_WINS (status=2), the bond belongs to
-    // the game creator, not the challenger. The manager should remove the
-    // game from tracking without submitting any claimCredit transactions.
+async fn test_bond_manager_keeps_defender_wins_when_recipient_is_claimable() {
+    // When a game resolves as DEFENDER_WINS and the on-chain bondRecipient
+    // is in our claim addresses (i.e. we are the proposer), the manager
+    // should keep the game and advance it to NeedsUnlock — the bond is ours.
     let claim_addr = Address::repeat_byte(0xCC);
     let game_addr = addr(0);
 
     let mut verifier_games = HashMap::new();
     let mut state = mock_state(2, Address::ZERO, 100); // status=2 (DEFENDER_WINS)
     state.bond_recipient = claim_addr;
+    verifier_games.insert(game_addr, state);
+    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+    let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+
+    let mut mgr = BondManager::new(vec![claim_addr], "http://localhost:8545".parse().unwrap());
+    mgr.set_weth_delay(Duration::from_secs(0));
+    mgr.track_game(game_addr, claim_addr);
+    assert_eq!(mgr.tracked_count(), 1);
+
+    // Poll 1: NeedsResolve → status=2 (already resolved) → bondRecipient
+    // is in claim set → advance to NeedsUnlock (not removed).
+    mgr.poll(&*verifier, &submitter).await;
+    assert_eq!(
+        mgr.tracked_count(),
+        1,
+        "game should be kept when bondRecipient is in claim addresses"
+    );
+}
+
+#[tokio::test]
+async fn test_bond_manager_removes_game_when_recipient_not_claimable() {
+    // When a game is resolved and the on-chain bondRecipient is NOT in our
+    // claim addresses, the manager should remove the game from tracking.
+    // This covers the case where we matched via zkProver during the startup
+    // scan, but after resolve the bond goes to someone else.
+    let claim_addr = Address::repeat_byte(0xCC);
+    let other_addr = Address::repeat_byte(0xDD);
+    let game_addr = addr(0);
+
+    let mut verifier_games = HashMap::new();
+    let mut state = mock_state(2, Address::ZERO, 100); // status=2 (DEFENDER_WINS)
+    state.bond_recipient = other_addr; // bond goes to someone else
     verifier_games.insert(game_addr, state);
     let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
@@ -1424,13 +1457,18 @@ async fn test_bond_manager_removes_defender_wins_game() {
     mgr.track_game(game_addr, claim_addr);
     assert_eq!(mgr.tracked_count(), 1);
 
-    // Poll 1: NeedsResolve → status=2 (DEFENDER_WINS) → Completed → removed.
+    // Poll 1: NeedsResolve → already resolved → bondRecipient not in
+    // claim set → removed from tracking.
     mgr.poll(&*verifier, &submitter).await;
-    assert_eq!(mgr.tracked_count(), 0, "game should be removed after DEFENDER_WINS detection");
+    assert_eq!(
+        mgr.tracked_count(),
+        0,
+        "game should be removed when bondRecipient is not in claim addresses"
+    );
 
     assert!(
         submitter.recorded_calls().is_empty(),
-        "no transactions should be submitted for DEFENDER_WINS game"
+        "no transactions should be submitted when bond is not claimable"
     );
 }
 
