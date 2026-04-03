@@ -8,6 +8,15 @@ use base_consensus_registry::Registry;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+/// Configuration for proof system monitoring (proposer + dispute games).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofsConfig {
+    /// Address of the `DisputeGameFactory` contract on L1.
+    pub dispute_game_factory: Address,
+    /// Address of the `AnchorStateRegistry` contract on L1.
+    pub anchor_state_registry: Address,
+}
+
 /// Configuration for a single validator (non-sequencing) node in the local devnet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorNodeConfig {
@@ -108,6 +117,9 @@ pub struct ChainConfig {
     /// Validator (non-sequencing) nodes to monitor alongside the conductor cluster.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub validators: Option<Vec<ValidatorNodeConfig>>,
+    /// Proof system monitoring configuration (dispute games, anchor state).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proofs: Option<ProofsConfig>,
 }
 
 impl ChainConfig {
@@ -148,6 +160,7 @@ struct ChainConfigOverride {
     l1_blob_target: Option<u64>,
     conductors: Option<Vec<ConductorNodeConfig>>,
     validators: Option<Vec<ValidatorNodeConfig>>,
+    proofs: Option<ProofsConfig>,
 }
 
 impl ChainConfig {
@@ -166,6 +179,7 @@ impl ChainConfig {
             l1_blob_target: 14,
             conductors: None,
             validators: None,
+            proofs: None,
         }
     }
 
@@ -184,6 +198,7 @@ impl ChainConfig {
             l1_blob_target: 14,
             conductors: None,
             validators: None,
+            proofs: None,
         }
     }
 
@@ -251,6 +266,7 @@ impl ChainConfig {
                 docker_el: Some("base-client".to_string()),
                 docker_cl: Some("base-client-cl".to_string()),
             }]),
+            proofs: None,
         }
     }
 
@@ -355,6 +371,7 @@ impl ChainConfig {
             l1_blob_target: overrides.l1_blob_target.unwrap_or(base.l1_blob_target),
             conductors: overrides.conductors.or(base.conductors),
             validators: overrides.validators.or(base.validators),
+            proofs: overrides.proofs.or(base.proofs),
         })
     }
 

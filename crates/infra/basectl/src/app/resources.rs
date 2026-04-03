@@ -9,7 +9,7 @@ use crate::{
     config::{ChainConfig, ConductorNodeConfig},
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, L1BlockInfo, L1ConnectionMode,
-        TimestampedFlashblock, ValidatorNodeStatus,
+        ProofsSnapshot, TimestampedFlashblock, ValidatorNodeStatus,
     },
     tui::ToastState,
 };
@@ -112,6 +112,29 @@ impl ValidatorState {
     }
 }
 
+/// State for proof system monitoring (dispute games, anchor state).
+#[derive(Debug, Default)]
+pub(crate) struct ProofsState {
+    /// Most recent proof system snapshot.
+    pub snapshot: Option<ProofsSnapshot>,
+    rx: Option<mpsc::Receiver<ProofsSnapshot>>,
+}
+
+impl ProofsState {
+    /// Sets the channel for receiving proof system snapshots.
+    pub(crate) fn set_channel(&mut self, rx: mpsc::Receiver<ProofsSnapshot>) {
+        self.rx = Some(rx);
+    }
+
+    /// Drains the latest snapshot from the background poller.
+    pub(crate) fn poll(&mut self) {
+        let Some(ref mut rx) = self.rx else { return };
+        while let Ok(snapshot) = rx.try_recv() {
+            self.snapshot = Some(snapshot);
+        }
+    }
+}
+
 /// Shared resources available to all TUI views.
 #[derive(Debug)]
 pub(crate) struct Resources {
@@ -127,6 +150,8 @@ pub(crate) struct Resources {
     pub conductor: ConductorState,
     /// Validator node monitoring state.
     pub validators: ValidatorState,
+    /// Proof system monitoring state.
+    pub proofs: ProofsState,
     /// L1 system config fetched from the contract.
     pub system_config: Option<SystemConfig>,
     sys_config_rx: Option<mpsc::Receiver<SystemConfig>>,
@@ -186,6 +211,7 @@ impl Resources {
             toasts: ToastState::new(),
             conductor: ConductorState::default(),
             validators: ValidatorState::default(),
+            proofs: ProofsState::default(),
             system_config: None,
             sys_config_rx: None,
         }

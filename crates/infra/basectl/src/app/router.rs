@@ -13,6 +13,8 @@ pub enum ViewId {
     Config,
     /// HA conductor cluster status monitor.
     Conductor,
+    /// Proof system monitor (dispute games, anchor state).
+    Proofs,
 }
 
 /// Manages view navigation history and the current active view.
