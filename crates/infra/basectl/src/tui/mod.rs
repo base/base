@@ -1,3 +1,5 @@
+//! Terminal UI framework: frame layout, keybindings, and terminal lifecycle.
+
 /// Application frame layout and help sidebar.
 mod app_frame;
 pub(crate) use app_frame::AppFrame;

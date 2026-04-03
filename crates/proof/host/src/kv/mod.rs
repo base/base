@@ -1,3 +1,5 @@
+//! Key-value store implementations for the proof host preimage oracle.
+
 use std::sync::Arc;
 
 use alloy_consensus::EMPTY_ROOT_HASH;

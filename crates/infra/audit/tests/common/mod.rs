@@ -1,3 +1,5 @@
+//! Common test harness for audit integration tests with Kafka and S3 fixtures.
+
 use rdkafka::{ClientConfig, consumer::StreamConsumer, producer::FutureProducer};
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::{kafka, kafka::Kafka, minio::MinIO};

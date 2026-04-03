@@ -1,3 +1,5 @@
+//! Transaction forwarder that relays pool transactions to a remote RPC endpoint.
+
 use std::{sync::Arc, time::Duration};
 
 use jsonrpsee::http_client::HttpClientBuilder;

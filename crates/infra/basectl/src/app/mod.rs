@@ -1,3 +1,5 @@
+//! Core application logic, actions, resources, and routing for basectl.
+
 mod action;
 pub(crate) use action::Action;
 

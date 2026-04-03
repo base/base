@@ -1,3 +1,5 @@
+//! RPC actor and engine/sequencer RPC client wrappers.
+
 mod actor;
 pub use actor::{RpcActor, RpcContext};
 

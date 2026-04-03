@@ -1,3 +1,5 @@
+//! Remote signer client, certificate handling, and request handler.
+
 mod cert;
 pub use cert::{CertificateError, ClientCert};
 mod client;

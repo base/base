@@ -1,3 +1,5 @@
+//! L1 watcher actor, block stream, derivation client, and error types.
+
 mod actor;
 pub use actor::{L1WatcherActor, LogRetrier};
 

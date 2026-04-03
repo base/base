@@ -1,3 +1,5 @@
+//! Transaction pool consumer that processes pending transactions via broadcast.
+
 use std::sync::Arc;
 
 use reth_tasks::TaskExecutor;

@@ -1,3 +1,5 @@
+//! TUI view components for basectl panels and dashboards.
+
 mod command_center;
 pub(crate) use command_center::CommandCenterView;
 

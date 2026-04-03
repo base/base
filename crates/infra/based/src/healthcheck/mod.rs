@@ -1,3 +1,5 @@
+//! Healthcheck service for the based daemon.
+
 use std::{
     sync::{
         Arc,

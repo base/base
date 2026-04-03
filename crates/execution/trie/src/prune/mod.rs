@@ -1,3 +1,5 @@
+//! Proof storage pruner for removing stale trie data.
+
 mod error;
 pub use error::{OpProofStoragePrunerResult, PrunerError, PrunerOutput};
 

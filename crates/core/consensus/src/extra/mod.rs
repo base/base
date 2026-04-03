@@ -1,3 +1,5 @@
+//! Block extra-data encodings for Holocene and Jovian fork upgrades.
+
 mod holocene;
 pub use holocene::HoloceneExtraData;
 

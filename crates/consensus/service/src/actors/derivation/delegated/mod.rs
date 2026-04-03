@@ -1,3 +1,5 @@
+//! Delegated derivation actor and its RPC client.
+
 mod actor;
 pub use actor::DelegateDerivationActor;
 

@@ -1,3 +1,5 @@
+//! Builder RPC API server and associated metrics.
+
 mod rpc;
 pub use rpc::{BuilderApiImpl, BuilderApiServer};
 
