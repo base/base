@@ -75,7 +75,10 @@ mod tests {
             sepolia.pre_canyon_params()
         );
         // Unknown chain IDs fall back to Base Mainnet params
-        assert_eq!(BaseFeeConfig::from_chain_id(0).pre_canyon_params(), mainnet.pre_canyon_params());
+        assert_eq!(
+            BaseFeeConfig::from_chain_id(0).pre_canyon_params(),
+            mainnet.pre_canyon_params()
+        );
     }
 
     #[test]
@@ -91,7 +94,10 @@ mod tests {
             BaseFeeConfig::from_chain_id(BaseChainConfig::sepolia().chain_id).post_canyon_params(),
             sepolia.post_canyon_params()
         );
-        assert_eq!(BaseFeeConfig::from_chain_id(0).post_canyon_params(), mainnet.post_canyon_params());
+        assert_eq!(
+            BaseFeeConfig::from_chain_id(0).post_canyon_params(),
+            mainnet.post_canyon_params()
+        );
     }
 
     #[test]
