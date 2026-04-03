@@ -526,8 +526,7 @@ impl BondManager {
             return Ok(true);
         }
 
-        self.submit_claim_credit(game_address, submitter, "withdraw", BondPhase::Completed)
-            .await
+        self.submit_claim_credit(game_address, submitter, "withdraw", BondPhase::Completed).await
     }
 
     /// Submits a `claimCredit()` transaction and transitions to the given
