@@ -451,9 +451,13 @@ where
 
             for block_num in (latest + 1)..=end {
                 let cached = sync_target.take(block_num);
-                if let Err(e) =
-                    Self::process_block(block_num, cached, collector, provider, verification_interval)
-                {
+                if let Err(e) = Self::process_block(
+                    block_num,
+                    cached,
+                    collector,
+                    provider,
+                    verification_interval,
+                ) {
                     error!(target: "base::exex", block_number = block_num, error = ?e, "Block processing failed");
                     return;
                 }
@@ -646,11 +650,10 @@ where
             }
         }
 
-        sync_target
-            .update_state(SyncTargetState::RevertThenSync {
-                revert_to: first_old,
-                sync_to: new.tip().number(),
-            });
+        sync_target.update_state(SyncTargetState::RevertThenSync {
+            revert_to: first_old,
+            sync_to: new.tip().number(),
+        });
 
         Ok(())
     }
