@@ -5,6 +5,7 @@ use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::{Provider, ProviderBuilder, network::TransactionResponse};
 use alloy_rpc_types_eth::BlockNumberOrTag;
+use alloy_sol_types::sol;
 use anyhow::Result;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_flashblocks::Flashblock;
@@ -15,8 +16,6 @@ use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_param
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::connect_async;
 use tracing::warn;
-
-use alloy_sol_types::sol;
 use url::Url;
 
 use crate::{
@@ -1320,14 +1319,8 @@ pub(crate) async fn run_proofs_poller(
         }
     };
 
-    let asr = IAnchorStateRegistry::new(
-        proofs_config.anchor_state_registry,
-        &*l1_provider,
-    );
-    let factory = IDisputeGameFactory::new(
-        proofs_config.dispute_game_factory,
-        &*l1_provider,
-    );
+    let asr = IAnchorStateRegistry::new(proofs_config.anchor_state_registry, &*l1_provider);
+    let factory = IDisputeGameFactory::new(proofs_config.dispute_game_factory, &*l1_provider);
 
     let mut interval = tokio::time::interval(Duration::from_secs(10));
     loop {
@@ -1373,9 +1366,7 @@ async fn fetch_proofs_snapshot<P: Provider + Clone>(
         respected_game_type: respected_type,
         system_paused: paused,
         total_games,
-        anchor_l2_block: anchor.as_ref().map(|a| {
-            a.l2SequenceNumber.try_into().unwrap_or(0)
-        }),
+        anchor_l2_block: anchor.as_ref().map(|a| a.l2SequenceNumber.try_into().unwrap_or(0)),
         anchor_root: anchor.map(|a| a.root),
         latest_proposal,
     }
@@ -1428,11 +1419,7 @@ async fn find_latest_proposal<P: Provider + Clone>(
     let scan_end = count.saturating_sub(50);
 
     for idx in (scan_end..=scan_start).rev() {
-        let game = factory
-            .gameAtIndex(alloy_primitives::U256::from(idx))
-            .call()
-            .await
-            .ok()?;
+        let game = factory.gameAtIndex(alloy_primitives::U256::from(idx)).call().await.ok()?;
 
         if game.gameType != game_type {
             continue;
@@ -1449,9 +1436,7 @@ async fn find_latest_proposal<P: Provider + Clone>(
 
         return Some(LatestProposal {
             game_address: game.proxy,
-            l2_block: l2_seq
-                .and_then(|s| s.try_into().ok())
-                .unwrap_or(0),
+            l2_block: l2_seq.and_then(|s| s.try_into().ok()).unwrap_or(0),
             root_claim: root_claim.unwrap_or_default(),
             status: status.unwrap_or(0),
             created_at: game.timestamp,

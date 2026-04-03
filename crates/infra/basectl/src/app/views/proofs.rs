@@ -64,10 +64,7 @@ fn render_unconfigured(frame: &mut Frame<'_>, area: Rect) {
             Style::default().fg(Color::DarkGray),
         )),
         Line::from(""),
-        Line::from(Span::styled(
-            "  proofs:",
-            Style::default().fg(Color::Cyan),
-        )),
+        Line::from(Span::styled("  proofs:", Style::default().fg(Color::Cyan))),
         Line::from(Span::styled(
             "    dispute_game_factory: \"0x...\"",
             Style::default().fg(Color::Cyan),
@@ -83,9 +80,7 @@ fn render_unconfigured(frame: &mut Frame<'_>, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(COLOR_BASE_BLUE));
 
-    let para = Paragraph::new(text)
-        .block(block)
-        .alignment(ratatui::layout::Alignment::Center);
+    let para = Paragraph::new(text).block(block).alignment(ratatui::layout::Alignment::Center);
     frame.render_widget(para, area);
 }
 
@@ -103,9 +98,7 @@ fn render_loading(frame: &mut Frame<'_>, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(COLOR_BASE_BLUE));
 
-    let para = Paragraph::new(text)
-        .block(block)
-        .alignment(ratatui::layout::Alignment::Center);
+    let para = Paragraph::new(text).block(block).alignment(ratatui::layout::Alignment::Center);
     frame.render_widget(para, area);
 }
 
@@ -142,20 +135,16 @@ fn render_chain_state(frame: &mut Frame<'_>, area: Rect, snapshot: &ProofsSnapsh
         kv_line("L1 block", &fmt_opt_block(snapshot.l1_block)),
         kv_line("L2 latest block", &fmt_opt_block(snapshot.l2_latest_block)),
         kv_line("L2 safe block", &fmt_opt_block(snapshot.l2_safe_block)),
-        kv_line(
-            "L2 finalized block",
-            &fmt_opt_block(snapshot.l2_finalized_block),
-        ),
+        kv_line("L2 finalized block", &fmt_opt_block(snapshot.l2_finalized_block)),
     ];
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn render_anchor_state(frame: &mut Frame<'_>, area: Rect, snapshot: &ProofsSnapshot) {
-    let paused_str = snapshot.system_paused.map_or_else(
-        || "-".to_string(),
-        |p| if p { "Yes".to_string() } else { "No".to_string() },
-    );
+    let paused_str = snapshot
+        .system_paused
+        .map_or_else(|| "-".to_string(), |p| if p { "Yes".to_string() } else { "No".to_string() });
 
     let block = Block::default()
         .title(" Onchain Anchor State ")
@@ -165,25 +154,16 @@ fn render_anchor_state(frame: &mut Frame<'_>, area: Rect, snapshot: &ProofsSnaps
     let lines = vec![
         kv_line(
             "Respected game type",
-            &snapshot
-                .respected_game_type
-                .map_or_else(|| "-".to_string(), |g| g.to_string()),
+            &snapshot.respected_game_type.map_or_else(|| "-".to_string(), |g| g.to_string()),
         ),
         kv_line(
             "Total games",
-            &snapshot
-                .total_games
-                .map_or_else(|| "-".to_string(), format_number),
+            &snapshot.total_games.map_or_else(|| "-".to_string(), format_number),
         ),
-        kv_line(
-            "Anchor L2 block",
-            &fmt_opt_block(snapshot.anchor_l2_block),
-        ),
+        kv_line("Anchor L2 block", &fmt_opt_block(snapshot.anchor_l2_block)),
         kv_line(
             "Anchor root",
-            &snapshot
-                .anchor_root
-                .map_or_else(|| "-".to_string(), |r| format!("{r:#x}")),
+            &snapshot.anchor_root.map_or_else(|| "-".to_string(), |r| format!("{r:#x}")),
         ),
         kv_line("System paused", &paused_str),
     ];
@@ -248,10 +228,7 @@ fn render_sync_gaps(frame: &mut Frame<'_>, area: Rect, snapshot: &ProofsSnapshot
         .borders(Borders::ALL)
         .border_style(Style::default().fg(COLOR_BASE_BLUE));
 
-    let proposed_l2 = snapshot
-        .latest_proposal
-        .as_ref()
-        .map(|p| p.l2_block);
+    let proposed_l2 = snapshot.latest_proposal.as_ref().map(|p| p.l2_block);
     let safe = snapshot.l2_safe_block;
     let latest = snapshot.l2_latest_block;
     let anchor = snapshot.anchor_l2_block;
@@ -298,24 +275,15 @@ fn render_sync_gaps(frame: &mut Frame<'_>, area: Rect, snapshot: &ProofsSnapshot
 
 fn kv_line(label: &str, value: &str) -> Line<'static> {
     Line::from(vec![
-        Span::styled(
-            format!("  {label}: "),
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled(format!("  {label}: "), Style::default().fg(Color::DarkGray)),
         Span::styled(value.to_string(), Style::default().fg(Color::White)),
     ])
 }
 
 fn kv_line_colored(label: &str, value: &str, color: Color) -> Line<'static> {
     Line::from(vec![
-        Span::styled(
-            format!("  {label}: "),
-            Style::default().fg(Color::DarkGray),
-        ),
-        Span::styled(
-            value.to_string(),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(format!("  {label}: "), Style::default().fg(Color::DarkGray)),
+        Span::styled(value.to_string(), Style::default().fg(color).add_modifier(Modifier::BOLD)),
     ])
 }
 
@@ -331,18 +299,12 @@ fn gap_line(label: &str, blocks: u64) -> Line<'static> {
     };
 
     Line::from(vec![
-        Span::styled(
-            format!("  {label}: "),
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled(format!("  {label}: "), Style::default().fg(Color::DarkGray)),
         Span::styled(
             format!("{} blocks", format_number(blocks)),
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            format!("  (~{time_str})"),
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled(format!("  (~{time_str})"), Style::default().fg(Color::DarkGray)),
     ])
 }
 
