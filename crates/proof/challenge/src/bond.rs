@@ -459,8 +459,8 @@ impl BondManager {
     }
 
     /// Checks whether the onchain `bondRecipient` for the given game is in
-    /// our claim addresses. If not, marks the game as completed (removing it
-    /// from tracking) and returns `false`.
+    /// our claim addresses. Returns `false` if not, signalling the caller
+    /// to remove the game from tracking.
     async fn is_bond_claimable(
         &mut self,
         verifier_client: &dyn AggregateVerifierClient,
@@ -475,7 +475,6 @@ impl BondManager {
             recipient = %bond_recipient,
             "bond recipient not in claim addresses after resolve, removing from tracking"
         );
-        self.set_phase(game_address, BondPhase::Completed);
         Ok(false)
     }
 

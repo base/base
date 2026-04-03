@@ -731,7 +731,15 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                 if intent == DisputeIntent::Challenge
                     && let Some(ref mut bond_manager) = self.bond_manager
                 {
-                    bond_manager.track_game(game_address, self.submitter.sender_address());
+                    let sender = self.submitter.sender_address();
+                    if !bond_manager.track_game(game_address, sender) {
+                        warn!(
+                            game = %game_address,
+                            sender = %sender,
+                            "bond will not be tracked — sender address is not \
+                             in --bond-claim-addresses; bond may go unclaimed"
+                        );
+                    }
                 }
             }
             Err(e) => {
