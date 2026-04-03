@@ -266,16 +266,16 @@ impl BondManager {
                     // re-verified after resolve in `try_resolve`.
                     if let Some(ref p) = phase
                         && !matches!(p, BondPhase::NeedsResolve)
-                            && !claim_addresses.contains(&bond_recipient)
-                        {
-                            debug!(
-                                game = %game_address,
-                                recipient = %bond_recipient,
-                                "onchain bondRecipient not in claim addresses \
-                                 for resolved game, skipping"
-                            );
-                            return None;
-                        }
+                        && !claim_addresses.contains(&bond_recipient)
+                    {
+                        debug!(
+                            game = %game_address,
+                            recipient = %bond_recipient,
+                            "onchain bondRecipient not in claim addresses \
+                             for resolved game, skipping"
+                        );
+                        return None;
+                    }
 
                     Some((game_address, matched_address, phase))
                 })
