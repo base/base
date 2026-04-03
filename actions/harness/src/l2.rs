@@ -14,8 +14,11 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{EMPTY_ROOT_HASH, TrieAccount, root::state_root_unhashed};
 use base_alloy_chains::BaseUpgrade;
-use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
-use base_alloy_rpc_types_engine::{OpExecutionPayload, OpNetworkPayloadEnvelope, PayloadHash};
+use base_alloy_consensus::{OpBlock, OpTxEnvelope};
+use alloy_rpc_types_engine::CancunPayloadFields;
+use base_alloy_rpc_types_engine::{
+    OpExecutionPayload, OpExecutionPayloadSidecar, OpNetworkPayloadEnvelope, PayloadHash,
+};
 use base_consensus_derive::{AttributesBuilder, StatefulAttributesBuilder};
 use base_consensus_genesis::RollupConfig;
 use base_consensus_node::{L1OriginSelector, SequencerEngineClient};
@@ -527,15 +530,24 @@ impl L2Sequencer {
             .map_err(|e| L2SequencerError::Engine(format!("insert: {e}")))?;
 
         // 6. Convert OpExecutionPayload to OpBlock.
-        // Extract the canonical block hash BEFORE the payload is consumed by try_into_block().
-        // try_into_block() reconstructs the header from payload fields and does NOT include
-        // parent_beacon_block_root (stored separately in the envelope), so recomputing
-        // hash_slow() from the reconstructed header produces a different hash. Use the hash
-        // embedded in the V1 payload instead — it is set to the original sealed block hash.
+        // Use try_into_block_with_sidecar so parent_beacon_block_root is restored on the
+        // returned header. try_into_block() omits PBBR, making hash_slow() return a different
+        // value than the sealed block hash. BatchEncoder::add_block tracks self.tip via
+        // block.header.hash_slow(), so without PBBR block N+1's parent_hash (the real sealed
+        // hash of block N) doesn't match self.tip, triggering ReorgError::ParentMismatch and
+        // resetting the encoder before any span batch is submitted.
         let block_hash = envelope.execution_payload.as_v1().block_hash;
+        let sidecar = if let Some(pbbr) = envelope.parent_beacon_block_root {
+            OpExecutionPayloadSidecar::v3(CancunPayloadFields {
+                parent_beacon_block_root: pbbr,
+                versioned_hashes: vec![],
+            })
+        } else {
+            OpExecutionPayloadSidecar::default()
+        };
         let block: OpBlock = envelope
             .execution_payload
-            .try_into_block()
+            .try_into_block_with_sidecar(&sidecar)
             .map_err(|e| L2SequencerError::PayloadConversion(format!("{e}")))?;
 
         // 7. Compute seq_num and update head.
