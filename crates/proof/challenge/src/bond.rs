@@ -470,31 +470,13 @@ impl BondManager {
             return Ok(false);
         }
 
-        // Submit first claimCredit() — triggers unlock.
-        let calldata = encode_claim_credit_calldata();
-        ChallengerMetrics::claim_credit_tx_submitted_total().increment(1);
-        match submitter.send_bond_tx(game_address, calldata).await {
-            Ok(tx_hash) => {
-                info!(
-                    game = %game_address,
-                    tx_hash = %tx_hash,
-                    "claimCredit (unlock) transaction confirmed"
-                );
-                ChallengerMetrics::claim_credit_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
-                    .increment(1);
-                self.set_phase(game_address, BondPhase::AwaitingDelay { unlocked_at: unix_now() });
-            }
-            Err(e) => {
-                warn!(
-                    game = %game_address,
-                    error = %e,
-                    "claimCredit (unlock) transaction failed, will retry"
-                );
-                ChallengerMetrics::claim_credit_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
-                    .increment(1);
-            }
-        }
-        Ok(false)
+        self.submit_claim_credit(
+            game_address,
+            submitter,
+            "unlock",
+            BondPhase::AwaitingDelay { unlocked_at: unix_now() },
+        )
+        .await
     }
 
     /// Checks if the `DelayedWETH` delay has elapsed since the unlock.
@@ -544,7 +526,20 @@ impl BondManager {
             return Ok(true);
         }
 
-        // Submit second claimCredit() — triggers withdraw.
+        self.submit_claim_credit(game_address, submitter, "withdraw", BondPhase::Completed)
+            .await
+    }
+
+    /// Submits a `claimCredit()` transaction and transitions to the given
+    /// phase on success. Returns `Ok(true)` when the success phase is
+    /// [`BondPhase::Completed`].
+    async fn submit_claim_credit(
+        &mut self,
+        game_address: Address,
+        submitter: &dyn BondTransactionSubmitter,
+        step: &str,
+        success_phase: BondPhase,
+    ) -> eyre::Result<bool> {
         let calldata = encode_claim_credit_calldata();
         ChallengerMetrics::claim_credit_tx_submitted_total().increment(1);
         match submitter.send_bond_tx(game_address, calldata).await {
@@ -552,24 +547,27 @@ impl BondManager {
                 info!(
                     game = %game_address,
                     tx_hash = %tx_hash,
-                    "claimCredit (withdraw) transaction confirmed"
+                    step,
+                    "claimCredit transaction confirmed"
                 );
                 ChallengerMetrics::claim_credit_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
                     .increment(1);
-                self.set_phase(game_address, BondPhase::Completed);
-                return Ok(true);
+                let completed = matches!(success_phase, BondPhase::Completed);
+                self.set_phase(game_address, success_phase);
+                Ok(completed)
             }
             Err(e) => {
                 warn!(
                     game = %game_address,
                     error = %e,
-                    "claimCredit (withdraw) transaction failed, will retry"
+                    step,
+                    "claimCredit transaction failed, will retry"
                 );
                 ChallengerMetrics::claim_credit_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
                     .increment(1);
+                Ok(false)
             }
         }
-        Ok(false)
     }
 
     /// Determines the bond phase from on-chain state.
