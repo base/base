@@ -462,7 +462,7 @@ impl BondManager {
     /// our claim addresses. Returns `false` if not, signalling the caller
     /// to remove the game from tracking.
     async fn is_bond_claimable(
-        &mut self,
+        &self,
         verifier_client: &dyn AggregateVerifierClient,
         game_address: Address,
     ) -> eyre::Result<bool> {
