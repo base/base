@@ -13,7 +13,7 @@ mod config;
 pub use config::{ChallengerConfig, ConfigError, UrlValidationError, Validated};
 
 mod driver;
-pub use driver::{Driver, DriverConfig, TeeConfig, derive_session_id};
+pub use driver::{Driver, DriverComponents, DriverConfig, TeeConfig, derive_session_id};
 
 mod pending;
 pub use pending::{DisputeIntent, PendingProof, PendingProofs, ProofKind, ProofPhase, ProofUpdate};
@@ -43,6 +43,9 @@ pub use validator::{
 
 mod verify;
 pub use verify::{AccountProofError, verify_account_proof};
+
+mod bond;
+pub use bond::{BondManager, BondPhase, BondTransactionSubmitter, TrackedGame};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

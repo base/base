@@ -234,6 +234,33 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn countered_index(&self, _: Address) -> Result<u64, ContractError> {
         Ok(0)
     }
+    async fn game_over(&self, _: Address) -> Result<bool, ContractError> {
+        Ok(false)
+    }
+    async fn resolved_at(&self, _: Address) -> Result<u64, ContractError> {
+        Ok(0)
+    }
+    async fn bond_recipient(&self, _: Address) -> Result<Address, ContractError> {
+        Ok(Address::ZERO)
+    }
+    async fn bond_unlocked(&self, _: Address) -> Result<bool, ContractError> {
+        Ok(false)
+    }
+    async fn bond_claimed(&self, _: Address) -> Result<bool, ContractError> {
+        Ok(false)
+    }
+    async fn expected_resolution(&self, _: Address) -> Result<u64, ContractError> {
+        Ok(0)
+    }
+    async fn proof_count(&self, _: Address) -> Result<u8, ContractError> {
+        Ok(0)
+    }
+    async fn created_at(&self, _: Address) -> Result<u64, ContractError> {
+        Ok(0)
+    }
+    async fn delayed_weth(&self, _: Address) -> Result<Address, ContractError> {
+        Ok(Address::ZERO)
+    }
 }
 
 pub(crate) fn test_l1_block_ref(number: u64) -> L1BlockRef {

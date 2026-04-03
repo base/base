@@ -109,6 +109,8 @@ pub struct ChallengerConfig {
     pub tx_manager: TxManagerConfig,
     /// Number of past games to scan on startup.
     pub lookback_games: u64,
+    /// Addresses to claim bonds on behalf of.
+    pub bond_claim_addresses: Vec<Address>,
     /// Health server socket address.
     pub health_addr: SocketAddr,
     /// Logging configuration (from base-cli-utils).
@@ -230,6 +232,7 @@ impl ChallengerConfig {
             signing,
             tx_manager,
             lookback_games: cli.challenger.lookback_games,
+            bond_claim_addresses: cli.challenger.bond_claim_addresses,
             health_addr,
             log: LogConfig::from(cli.logging),
             metrics: cli.metrics.into(),

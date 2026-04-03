@@ -19,8 +19,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    ChallengeSubmitter, ChallengerConfig, ChallengerMetrics, Driver, DriverConfig, GameScanner,
-    OutputValidator, ScannerConfig,
+    BondManager, ChallengeSubmitter, ChallengerConfig, ChallengerMetrics, Driver, DriverComponents,
+    DriverConfig, GameScanner, OutputValidator, ScannerConfig,
 };
 
 /// Top-level challenger service.
@@ -139,6 +139,24 @@ impl ChallengerService {
 
         // ── 7. Assemble scanner, validator, and driver ───────────────────────
         let scanner_config = ScannerConfig { lookback_games: config.lookback_games };
+
+        // ── 7b. Bond manager (optional) ─────────────────────────────────────
+        let bond_manager = if !config.bond_claim_addresses.is_empty() {
+            let l1_rpc_url = config.l1_eth_rpc.as_ref().clone();
+            let mut bm = BondManager::new(config.bond_claim_addresses, l1_rpc_url);
+            info!("starting bond recovery scan");
+            if let Err(e) =
+                bm.startup_scan(&*factory_client, &*verifier_client, config.lookback_games).await
+            {
+                warn!(error = %e, "bond startup scan failed, continuing without recovery");
+            }
+            info!(tracked = bm.tracked_count(), "bond manager ready");
+            Some(bm)
+        } else {
+            info!("bond claiming disabled (no --bond-claim-addresses)");
+            None
+        };
+
         let scanner =
             GameScanner::new(factory_client, Arc::clone(&verifier_client), scanner_config);
 
@@ -161,12 +179,15 @@ impl ChallengerService {
         };
         let driver = Driver::new(
             driver_config,
-            scanner,
-            validator,
-            zk_client,
-            submitter,
-            tee,
-            verifier_client,
+            DriverComponents {
+                scanner,
+                validator,
+                zk_prover: zk_client,
+                submitter,
+                tee,
+                verifier_client,
+                bond_manager,
+            },
         );
 
         // Drop guard ensures child tasks are cancelled even if the driver panics.

@@ -83,6 +83,55 @@ sol! {
             uint256 intermediateRootIndex,
             bytes32 intermediateRootToProve
         ) external;
+
+        /// Resolves the game after a proof has been provided and enough time
+        /// has passed. Returns the resulting `GameStatus`.
+        ///
+        /// Use [`encode_resolve_calldata`] to construct ABI-encoded calldata
+        /// for this function.
+        function resolve() external returns (uint8);
+
+        /// Claims the bond credit for the bond recipient. Must be called
+        /// twice: the first call triggers `DelayedWETH.unlock()`, and the
+        /// second call (after `DELAY_SECONDS`) triggers the actual withdrawal.
+        ///
+        /// Use [`encode_claim_credit_calldata`] to construct ABI-encoded
+        /// calldata for this function.
+        function claimCredit() external;
+
+        /// Returns whether the game's finalization delay has passed
+        /// (`expectedResolution <= block.timestamp`).
+        function gameOver() external view returns (bool);
+
+        /// Returns the timestamp at which the game was resolved (`0` if unresolved).
+        function resolvedAt() external view returns (uint64);
+
+        /// Returns the address that will receive the bond.
+        ///
+        /// Defaults to the game creator; set to the ZK challenger if the
+        /// game resolves as `CHALLENGER_WINS`.
+        function bondRecipient() external view returns (address);
+
+        /// Returns whether the bond has been unlocked via `DelayedWETH.unlock()`.
+        function bondUnlocked() external view returns (bool);
+
+        /// Returns whether the bond has been fully claimed (withdrawn).
+        function bondClaimed() external view returns (bool);
+
+        /// Returns the timestamp at which the game can be resolved.
+        ///
+        /// Initialized to `type(uint64).max` (never), decreased when proofs
+        /// are verified, and increased when proofs are nullified.
+        function expectedResolution() external view returns (uint64);
+
+        /// Returns the number of verified proofs for this game.
+        function proofCount() external view returns (uint8);
+
+        /// Returns the timestamp at which the game was created.
+        function createdAt() external view returns (uint64);
+
+        /// Returns the address of the `DelayedWETH` contract used by this game.
+        function DELAYED_WETH() external view returns (address);
     }
 }
 
@@ -140,6 +189,33 @@ pub trait AggregateVerifierClient: Send + Sync {
     /// `0` means the game has not been challenged. When non-zero the
     /// actual 0-based index is `value - 1`.
     async fn countered_index(&self, game_address: Address) -> Result<u64, ContractError>;
+
+    /// Returns whether the game's finalization delay has elapsed.
+    async fn game_over(&self, game_address: Address) -> Result<bool, ContractError>;
+
+    /// Returns the timestamp at which the game was resolved (`0` if unresolved).
+    async fn resolved_at(&self, game_address: Address) -> Result<u64, ContractError>;
+
+    /// Returns the address that will receive the bond.
+    async fn bond_recipient(&self, game_address: Address) -> Result<Address, ContractError>;
+
+    /// Returns whether the bond has been unlocked via `DelayedWETH.unlock()`.
+    async fn bond_unlocked(&self, game_address: Address) -> Result<bool, ContractError>;
+
+    /// Returns whether the bond has been fully claimed (withdrawn).
+    async fn bond_claimed(&self, game_address: Address) -> Result<bool, ContractError>;
+
+    /// Returns the timestamp at which the game can be resolved.
+    async fn expected_resolution(&self, game_address: Address) -> Result<u64, ContractError>;
+
+    /// Returns the number of verified proofs for this game.
+    async fn proof_count(&self, game_address: Address) -> Result<u8, ContractError>;
+
+    /// Returns the timestamp at which the game was created.
+    async fn created_at(&self, game_address: Address) -> Result<u64, ContractError>;
+
+    /// Returns the address of the `DelayedWETH` contract used by this game.
+    async fn delayed_weth(&self, game_address: Address) -> Result<Address, ContractError>;
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -337,6 +413,104 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             )
         })
     }
+
+    async fn game_over(&self, game_address: Address) -> Result<bool, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract
+            .gameOver()
+            .call()
+            .await
+            .map_err(|e| ContractError::Call { context: "gameOver failed".into(), source: e })
+    }
+
+    async fn resolved_at(&self, game_address: Address) -> Result<u64, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract
+            .resolvedAt()
+            .call()
+            .await
+            .map_err(|e| ContractError::Call { context: "resolvedAt failed".into(), source: e })
+    }
+
+    async fn bond_recipient(&self, game_address: Address) -> Result<Address, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract
+            .bondRecipient()
+            .call()
+            .await
+            .map_err(|e| ContractError::Call { context: "bondRecipient failed".into(), source: e })
+    }
+
+    async fn bond_unlocked(&self, game_address: Address) -> Result<bool, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract
+            .bondUnlocked()
+            .call()
+            .await
+            .map_err(|e| ContractError::Call { context: "bondUnlocked failed".into(), source: e })
+    }
+
+    async fn bond_claimed(&self, game_address: Address) -> Result<bool, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract
+            .bondClaimed()
+            .call()
+            .await
+            .map_err(|e| ContractError::Call { context: "bondClaimed failed".into(), source: e })
+    }
+
+    async fn expected_resolution(&self, game_address: Address) -> Result<u64, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract.expectedResolution().call().await.map_err(|e| ContractError::Call {
+            context: "expectedResolution failed".into(),
+            source: e,
+        })
+    }
+
+    async fn proof_count(&self, game_address: Address) -> Result<u8, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract
+            .proofCount()
+            .call()
+            .await
+            .map_err(|e| ContractError::Call { context: "proofCount failed".into(), source: e })
+    }
+
+    async fn created_at(&self, game_address: Address) -> Result<u64, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract
+            .createdAt()
+            .call()
+            .await
+            .map_err(|e| ContractError::Call { context: "createdAt failed".into(), source: e })
+    }
+
+    async fn delayed_weth(&self, game_address: Address) -> Result<Address, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract
+            .DELAYED_WETH()
+            .call()
+            .await
+            .map_err(|e| ContractError::Call { context: "DELAYED_WETH failed".into(), source: e })
+    }
 }
 
 /// Encodes the calldata for `IAggregateVerifier.nullify()`.
@@ -370,6 +544,25 @@ pub fn encode_challenge_calldata(
         intermediateRootIndex: U256::from(intermediate_root_index),
         intermediateRootToProve: intermediate_root_to_prove,
     };
+    Bytes::from(call.abi_encode())
+}
+
+/// Encodes the calldata for `IAggregateVerifier.resolve()`.
+///
+/// Resolves the game after its dispute period has elapsed. Returns the
+/// resulting `GameStatus` on-chain.
+pub fn encode_resolve_calldata() -> Bytes {
+    let call = IAggregateVerifier::resolveCall {};
+    Bytes::from(call.abi_encode())
+}
+
+/// Encodes the calldata for `IAggregateVerifier.claimCredit()`.
+///
+/// Must be called twice: the first call unlocks the bond via
+/// `DelayedWETH.unlock()`, and the second call (after `DELAY_SECONDS`)
+/// withdraws and transfers ETH to the `bondRecipient`.
+pub fn encode_claim_credit_calldata() -> Bytes {
+    let call = IAggregateVerifier::claimCreditCall {};
     Bytes::from(call.abi_encode())
 }
 
@@ -453,6 +646,29 @@ mod tests {
             &calldata_nullify[..4],
             &calldata_challenge[..4],
             "nullify and challenge must have different selectors"
+        );
+    }
+
+    #[test]
+    fn test_encode_resolve_calldata_has_selector() {
+        let calldata = encode_resolve_calldata();
+        assert_eq!(&calldata[..4], &IAggregateVerifier::resolveCall::SELECTOR);
+    }
+
+    #[test]
+    fn test_encode_claim_credit_calldata_has_selector() {
+        let calldata = encode_claim_credit_calldata();
+        assert_eq!(&calldata[..4], &IAggregateVerifier::claimCreditCall::SELECTOR);
+    }
+
+    #[test]
+    fn test_resolve_and_claim_credit_selectors_differ() {
+        let resolve = encode_resolve_calldata();
+        let claim = encode_claim_credit_calldata();
+        assert_ne!(
+            &resolve[..4],
+            &claim[..4],
+            "resolve and claimCredit must have different selectors"
         );
     }
 }

@@ -34,9 +34,9 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
-    CandidateGame, ChallengeSubmitter, ChallengerMetrics, DisputeIntent, GameCategory, GameScanner,
-    IntermediateValidationParams, L1HeadProvider, OutputValidator, PendingProof, PendingProofs,
-    ProofKind, ProofPhase, ProofUpdate, ValidatorError,
+    BondManager, CandidateGame, ChallengeSubmitter, ChallengerMetrics, DisputeIntent, GameCategory,
+    GameScanner, IntermediateValidationParams, L1HeadProvider, OutputValidator, PendingProof,
+    PendingProofs, ProofKind, ProofPhase, ProofUpdate, ValidatorError,
 };
 
 /// Configuration for the challenger [`Driver`].
@@ -61,6 +61,36 @@ pub struct TeeConfig {
     pub request_timeout: Duration,
 }
 
+/// Service-layer dependencies injected into the [`Driver`].
+pub struct DriverComponents<L2: L2Provider, P: ZkProofProvider, T: TxManager> {
+    /// Scans for new dispute games on L1.
+    pub scanner: GameScanner,
+    /// Validates L2 output roots against the local node.
+    pub validator: OutputValidator<L2>,
+    /// ZK proof provider used to generate fault proofs.
+    pub zk_prover: Arc<P>,
+    /// Submits challenge transactions to L1.
+    pub submitter: ChallengeSubmitter<T>,
+    /// Optional TEE proof configuration (provider + L1 RPC client).
+    pub tee: Option<TeeConfig>,
+    /// Client for the aggregate verifier contract.
+    pub verifier_client: Arc<dyn AggregateVerifierClient>,
+    /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
+    pub bond_manager: Option<BondManager>,
+}
+
+impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> std::fmt::Debug
+    for DriverComponents<L2, P, T>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DriverComponents")
+            .field("scanner", &self.scanner)
+            .field("tee", &self.tee.as_ref().map(|_| ".."))
+            .field("bond_manager", &self.bond_manager)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Orchestrates the challenger pipeline: scan, validate, prove, submit.
 pub struct Driver<L2, P, T>
 where
@@ -82,6 +112,8 @@ where
     pub verifier_client: Arc<dyn AggregateVerifierClient>,
     /// In-flight proof sessions keyed by game address.
     pub pending_proofs: PendingProofs,
+    /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
+    pub bond_manager: Option<BondManager>,
     /// Interval between polling cycles.
     pub poll_interval: Duration,
     /// Token used to signal graceful shutdown.
@@ -107,23 +139,16 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     pub const MAX_PROOF_RETRIES: u32 = 3;
 
     /// Creates a new driver with the given components.
-    pub fn new(
-        config: DriverConfig,
-        scanner: GameScanner,
-        validator: OutputValidator<L2>,
-        zk_prover: Arc<P>,
-        submitter: ChallengeSubmitter<T>,
-        tee: Option<TeeConfig>,
-        verifier_client: Arc<dyn AggregateVerifierClient>,
-    ) -> Self {
+    pub fn new(config: DriverConfig, components: DriverComponents<L2, P, T>) -> Self {
         Self {
-            scanner,
-            validator,
-            zk_prover,
-            submitter,
-            tee,
-            verifier_client,
+            scanner: components.scanner,
+            validator: components.validator,
+            zk_prover: components.zk_prover,
+            submitter: components.submitter,
+            tee: components.tee,
+            verifier_client: components.verifier_client,
             pending_proofs: PendingProofs::new(),
+            bond_manager: components.bond_manager,
             poll_interval: config.poll_interval,
             cancel: config.cancel,
             ready: config.ready,
@@ -170,10 +195,14 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     /// Executes a single scan-validate-prove-submit cycle.
     ///
     /// First polls any in-flight proof sessions that are not in the current
-    /// scan batch, then scans for new candidates and processes them.
+    /// scan batch, then advances bond lifecycle claims, then scans for new
+    /// candidates and processes them.
     pub async fn step(&mut self) -> eyre::Result<()> {
         // Poll in-flight proof sessions before scanning for new candidates.
         self.poll_pending_proofs().await;
+
+        // Advance bond lifecycle for tracked games.
+        self.poll_bond_claims().await;
 
         let (candidates, new_last_scanned) = self.scanner.scan(self.last_scanned).await?;
         self.last_scanned = new_last_scanned;
@@ -186,6 +215,14 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         }
 
         Ok(())
+    }
+
+    /// Polls the bond manager to advance tracked games through the bond
+    /// lifecycle (resolve → unlock → delay → withdraw).
+    async fn poll_bond_claims(&mut self) {
+        if let Some(ref mut bond_manager) = self.bond_manager {
+            bond_manager.poll(&*self.verifier_client, &self.submitter).await;
+        }
     }
 
     /// Polls all in-flight proof sessions for completion or retries submission.
@@ -688,6 +725,14 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         match result {
             Ok(_) => {
                 self.pending_proofs.remove(&game_address);
+
+                // After a successful challenge(), register the game for bond
+                // tracking so the BondManager can resolve and claim the bond.
+                if intent == DisputeIntent::Challenge
+                    && let Some(ref mut bond_manager) = self.bond_manager
+                {
+                    bond_manager.track_game(game_address, self.submitter.sender_address());
+                }
             }
             Err(e) => {
                 warn!(

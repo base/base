@@ -124,6 +124,19 @@ pub struct ChallengerArgs {
     /// Number of past games to scan on startup.
     #[arg(long = "lookback-games", env = cli_env!("LOOKBACK_GAMES"), default_value = "1000")]
     pub lookback_games: u64,
+
+    /// Comma-separated list of addresses to claim bonds on behalf of.
+    ///
+    /// When set, the challenger will automatically resolve games and claim
+    /// bond credits for games where the `bondRecipient` matches any of
+    /// these addresses. Requires two `claimCredit()` calls per game with
+    /// a `DelayedWETH` delay in between.
+    #[arg(
+        long = "bond-claim-addresses",
+        env = cli_env!("BOND_CLAIM_ADDRESSES"),
+        value_delimiter = ','
+    )]
+    pub bond_claim_addresses: Vec<Address>,
 }
 
 impl std::fmt::Debug for ChallengerArgs {
@@ -141,6 +154,7 @@ impl std::fmt::Debug for ChallengerArgs {
             .field("signer", &self.signer)
             .field("tx_manager", &self.tx_manager)
             .field("lookback_games", &self.lookback_games)
+            .field("bond_claim_addresses", &self.bond_claim_addresses)
             .finish()
     }
 }
