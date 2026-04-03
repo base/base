@@ -5,9 +5,7 @@ use core::fmt::Debug;
 
 use alloy_primitives::{Bytes, hex};
 use async_trait::async_trait;
-use base_consensus_genesis::{
-    MAX_RLP_BYTES_PER_CHANNEL_BEDROCK, MAX_RLP_BYTES_PER_CHANNEL_FJORD, RollupConfig,
-};
+use base_consensus_genesis::RollupConfig;
 use base_protocol::{BlockInfo, Channel};
 
 use super::{ChannelReaderProvider, NextFrameProvider};
@@ -129,9 +127,9 @@ where
             Metrics::pipeline_channel_mem().set(size);
 
             let max_rlp_bytes_per_channel = if self.cfg.is_fjord_active(origin.timestamp) {
-                MAX_RLP_BYTES_PER_CHANNEL_FJORD
+                RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD
             } else {
-                MAX_RLP_BYTES_PER_CHANNEL_BEDROCK
+                RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK
             };
             Metrics::pipeline_max_rlp_bytes().set(max_rlp_bytes_per_channel as f64);
             if channel.size() > max_rlp_bytes_per_channel as usize {
@@ -225,10 +223,7 @@ where
 mod tests {
     use alloc::{sync::Arc, vec};
 
-    use base_consensus_genesis::{
-        HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_BEDROCK, MAX_RLP_BYTES_PER_CHANNEL_FJORD,
-        RollupConfig,
-    };
+    use base_consensus_genesis::{HardForkConfig, RollupConfig};
     use base_protocol::BlockInfo;
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
@@ -352,7 +347,7 @@ mod tests {
             crate::frame!(0xFF, 0, vec![0xDD; 50], false),
             crate::frame!(0xFF, 1, vec![0xDD; 50], true),
         ];
-        frames[1].data = vec![0; MAX_RLP_BYTES_PER_CHANNEL_BEDROCK as usize];
+        frames[1].data = vec![0; RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK as usize];
         let mock = TestNextFrameProvider::new(frames.into_iter().rev().map(Ok).collect());
         let cfg = Arc::new(RollupConfig::default());
 
@@ -387,7 +382,7 @@ mod tests {
             crate::frame!(0xFF, 0, vec![0xDD; 50], false),
             crate::frame!(0xFF, 1, vec![0xDD; 50], true),
         ];
-        frames[1].data = vec![0; MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize];
+        frames[1].data = vec![0; RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize];
         let mock = TestNextFrameProvider::new(frames.into_iter().rev().map(Ok).collect());
         let cfg = Arc::new(RollupConfig {
             hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },

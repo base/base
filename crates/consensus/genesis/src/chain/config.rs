@@ -6,10 +6,7 @@ use alloy_chains::Chain;
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::Address;
 
-use crate::{
-    AddressList, BaseFeeConfig, ChainGenesis, GRANITE_CHANNEL_TIMEOUT, HardForkConfig, Roles,
-    RollupConfig,
-};
+use crate::{AddressList, BaseFeeConfig, ChainGenesis, HardForkConfig, Roles, RollupConfig};
 
 /// L1 chain configuration from the `alloy-genesis` crate.
 pub type L1ChainConfig = alloy_genesis::ChainConfig;
@@ -142,7 +139,7 @@ impl ChainConfig {
             protocol_versions_address: self.protocol_versions_addr.unwrap_or_default(),
             blobs_enabled_l1_timestamp: None,
             channel_timeout: 300,
-            granite_channel_timeout: GRANITE_CHANNEL_TIMEOUT,
+            granite_channel_timeout: RollupConfig::GRANITE_CHANNEL_TIMEOUT,
             chain_op_config: self.base_fee_config(),
         }
     }

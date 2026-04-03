@@ -484,9 +484,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256};
     use alloy_rlp::{BytesMut, Encodable};
     use base_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType, TxDeposit};
-    use base_consensus_genesis::{
-        ChainGenesis, HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_FJORD, SystemConfig,
-    };
+    use base_consensus_genesis::{ChainGenesis, HardForkConfig, RollupConfig, SystemConfig};
     use base_protocol::{BatchReader, L1BlockInfoBedrock, L1BlockInfoTx};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
@@ -503,7 +501,7 @@ mod tests {
         let file_contents = &(&*file_contents)[..file_contents.len() - 1];
         let data = alloy_primitives::hex::decode(file_contents).unwrap();
         let bytes: alloy_primitives::Bytes = data.into();
-        BatchReader::new(bytes, MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize)
+        BatchReader::new(bytes, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize)
     }
 
     #[test]
