@@ -408,7 +408,7 @@
           "refId": "A"
         }
       ],
-      "title": "getPayload Duration P99 (op-node)",
+      "title": "getPayload Duration P99 (consensus node)",
       "type": "barchart"
     },
     {
@@ -497,7 +497,7 @@
           "refId": "A"
         }
       ],
-      "title": "getPayload Duration P90 (op-node)",
+      "title": "getPayload Duration P90 (consensus node)",
       "type": "barchart"
     },
     {
@@ -586,7 +586,7 @@
           "refId": "A"
         }
       ],
-      "title": "getPayload Duration P50 (op-node)",
+      "title": "getPayload Duration P50 (consensus node)",
       "type": "barchart"
     },
     {
