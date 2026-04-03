@@ -1,3 +1,5 @@
+//! Common test utilities for audit tests.
+
 use rdkafka::{ClientConfig, consumer::StreamConsumer, producer::FutureProducer};
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::{kafka, kafka::Kafka, minio::MinIO};

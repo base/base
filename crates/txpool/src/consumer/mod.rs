@@ -1,3 +1,5 @@
+//! Transaction consumption and processing.
+
 use std::sync::Arc;
 
 use reth_tasks::TaskExecutor;

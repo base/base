@@ -1,3 +1,5 @@
+//! Transaction pool builder.
+
 mod rpc;
 pub use rpc::{BuilderApiImpl, BuilderApiServer};
 

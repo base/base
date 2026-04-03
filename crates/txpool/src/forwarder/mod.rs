@@ -1,3 +1,5 @@
+//! Transaction forwarding logic.
+
 use std::{sync::Arc, time::Duration};
 
 use jsonrpsee::http_client::HttpClientBuilder;

@@ -1,3 +1,5 @@
+//! RPC actor implementations.
+
 mod actor;
 pub use actor::{RpcActor, RpcContext};
 

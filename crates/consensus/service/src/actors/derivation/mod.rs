@@ -1,3 +1,5 @@
+//! Derivation pipeline actors.
+
 mod actor;
 pub use actor::{DerivationActor, DerivationError};
 

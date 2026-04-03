@@ -1,3 +1,5 @@
+//! L1 watcher actor for monitoring Ethereum L1.
+
 mod actor;
 pub use actor::{L1WatcherActor, LogRetrier};
 

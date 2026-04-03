@@ -1,3 +1,5 @@
+//! Health check implementations for the based node.
+
 use std::{
     sync::{
         Arc,

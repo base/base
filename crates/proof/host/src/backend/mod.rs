@@ -1,3 +1,5 @@
+//! Backend implementations for the proof host.
+
 mod offline;
 pub use offline::OfflineHostBackend;
 

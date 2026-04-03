@@ -1,3 +1,5 @@
+//! State trie pruning implementation.
+
 mod error;
 pub use error::{OpProofStoragePrunerResult, PrunerError, PrunerOutput};
 

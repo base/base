@@ -1,3 +1,5 @@
+//! CLI commands for the execution layer.
+
 use std::{fmt, sync::Arc};
 
 use clap::Subcommand;

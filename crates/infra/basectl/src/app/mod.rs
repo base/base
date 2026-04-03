@@ -1,3 +1,5 @@
+//! Application state and logic for basectl.
+
 mod action;
 pub(crate) use action::Action;
 

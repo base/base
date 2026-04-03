@@ -1,3 +1,5 @@
+//! Test utilities for the consensus engine.
+
 mod attributes;
 pub use attributes::TestAttributesBuilder;
 

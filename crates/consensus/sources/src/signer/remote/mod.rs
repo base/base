@@ -1,3 +1,5 @@
+//! Remote signer implementations for consensus.
+
 mod cert;
 pub use cert::{CertificateError, ClientCert};
 mod client;

@@ -1,3 +1,5 @@
+//! Delegated derivation actor implementation.
+
 mod actor;
 pub use actor::DelegateDerivationActor;
 

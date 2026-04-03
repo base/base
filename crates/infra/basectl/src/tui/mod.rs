@@ -1,3 +1,5 @@
+//! Terminal UI components for basectl.
+
 /// Application frame layout and help sidebar.
 mod app_frame;
 pub(crate) use app_frame::AppFrame;

@@ -1,3 +1,5 @@
+//! UI views for the basectl application.
+
 mod command_center;
 pub(crate) use command_center::CommandCenterView;
 

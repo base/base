@@ -1,3 +1,5 @@
+//! L2 delegation logic for derivation.
+
 mod actor;
 pub use actor::DelegateL2DerivationActor;
 
