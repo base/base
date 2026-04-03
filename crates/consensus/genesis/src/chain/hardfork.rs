@@ -3,6 +3,8 @@
 use alloc::string::{String, ToString};
 use core::fmt::Display;
 
+use base_alloy_chains::BaseChainConfig;
+
 /// Hardfork configuration for Base-specific upgrades.
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
@@ -126,6 +128,24 @@ impl HardForkConfig {
             ("Base V1", self.base.v1),
         ]
         .into_iter()
+    }
+}
+
+impl From<&BaseChainConfig> for HardForkConfig {
+    fn from(cfg: &BaseChainConfig) -> Self {
+        Self {
+            regolith_time: Some(cfg.regolith_timestamp),
+            canyon_time: Some(cfg.canyon_timestamp),
+            delta_time: Some(cfg.delta_timestamp),
+            ecotone_time: Some(cfg.ecotone_timestamp),
+            fjord_time: Some(cfg.fjord_timestamp),
+            granite_time: Some(cfg.granite_timestamp),
+            holocene_time: Some(cfg.holocene_timestamp),
+            pectra_blob_schedule_time: cfg.pectra_blob_schedule_timestamp,
+            isthmus_time: Some(cfg.isthmus_timestamp),
+            jovian_time: Some(cfg.jovian_timestamp),
+            base: BaseHardforkConfig { v1: cfg.base_v1_timestamp },
+        }
     }
 }
 

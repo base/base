@@ -3,7 +3,7 @@
 use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
-use base_alloy_chains::{BaseUpgrade, BaseUpgrades};
+use base_alloy_chains::{BaseChainConfig, BaseUpgrade, BaseUpgrades};
 
 use crate::{BaseFeeConfig, ChainGenesis, HardForkConfig, base_fee_config};
 
@@ -415,6 +415,28 @@ impl RollupConfig {
                 tracing::info!(target: "upgrades", "{line}");
             }
             tracing::info!(target: "upgrades", block_number, "Activating base v1 upgrade");
+        }
+    }
+}
+
+impl From<&BaseChainConfig> for RollupConfig {
+    fn from(cfg: &BaseChainConfig) -> Self {
+        Self {
+            genesis: ChainGenesis::from(cfg),
+            block_time: cfg.block_time,
+            max_sequencer_drift: cfg.max_sequencer_drift,
+            seq_window_size: cfg.seq_window_size,
+            channel_timeout: cfg.channel_timeout,
+            granite_channel_timeout: GRANITE_CHANNEL_TIMEOUT,
+            l1_chain_id: cfg.l1_chain_id,
+            l2_chain_id: Chain::from_id(cfg.chain_id),
+            hardforks: HardForkConfig::from(cfg),
+            batch_inbox_address: cfg.batch_inbox_address,
+            deposit_contract_address: cfg.deposit_contract_address,
+            l1_system_config_address: cfg.system_config_address,
+            protocol_versions_address: cfg.protocol_versions_address,
+            blobs_enabled_l1_timestamp: None,
+            chain_op_config: BaseFeeConfig::from(cfg),
         }
     }
 }

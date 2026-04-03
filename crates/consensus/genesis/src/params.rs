@@ -44,6 +44,16 @@ pub struct BaseFeeConfig {
     pub eip1559_denominator_canyon: u64,
 }
 
+impl From<&BaseChainConfig> for BaseFeeConfig {
+    fn from(cfg: &BaseChainConfig) -> Self {
+        Self {
+            eip1559_elasticity: cfg.eip1559_elasticity,
+            eip1559_denominator: cfg.eip1559_denominator,
+            eip1559_denominator_canyon: cfg.eip1559_denominator_canyon,
+        }
+    }
+}
+
 impl BaseFeeConfig {
     /// Returns the Base Mainnet base fee config (used as serde default).
     pub fn base_mainnet() -> Self {
