@@ -79,13 +79,6 @@ pub struct ConductorNodeConfig {
 }
 
 /// Monitoring configuration for a chain watched by basectl.
-///
-/// This is a TUI/monitoring-specific runtime config and is intentionally
-/// distinct from [`base_consensus_genesis::ChainConfig`], which is the
-/// canonical superchain-registry chain config used for block validation.
-/// This type adds monitoring endpoints (`flashblocks_ws`, `l1_rpc`,
-/// `op_node_rpc`) and TUI knobs (`l1_blob_target`) that have no place in
-/// the consensus config.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainConfig {
     /// Human-readable chain name (e.g. "mainnet", "sepolia").
