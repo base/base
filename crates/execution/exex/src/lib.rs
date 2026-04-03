@@ -347,9 +347,11 @@ where
             match state {
                 SyncTargetState::Revert { revert_to } => {
                     Self::handle_revert(&storage, collector, revert_to);
+                    sync_target.mark_revert_complete(&revert_to);
                 }
                 SyncTargetState::RevertThenSync { revert_to, sync_to } => {
                     Self::handle_revert(&storage, collector, revert_to);
+                    sync_target.mark_revert_complete(&revert_to);
                     Self::sync_forward(
                         &sync_target,
                         &storage,
@@ -892,7 +894,7 @@ mod tests {
 
         // New chain blocks should be cached
         for n in 6..=12 {
-            assert!(sync_target.take(n).is_some(), "block {} should be cached", n);
+            assert!(sync_target.take(n).is_some(), "block {n} should be cached");
         }
 
         // Storage unchanged (sync loop handles the actual revert)

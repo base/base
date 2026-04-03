@@ -59,17 +59,12 @@ impl SyncTargetState {
                 Self::RevertThenSync { revert_to, sync_to }
             }
 
-            // If we're currently reverting and syncing, replace the sync to value with the new
+            // If we're currently reverting, replace the sync to value with the new
             // state.
             (
-                Self::RevertThenSync { revert_to, .. },
+                Self::RevertThenSync { revert_to, .. } | Self::Revert { revert_to },
                 Self::SyncUpTo { to },
             ) => Self::RevertThenSync { revert_to: *revert_to, sync_to: to },
-
-            // If we're currently reverting without syncing, add the sync target.
-            (Self::Revert { revert_to }, Self::SyncUpTo { to }) => {
-                Self::RevertThenSync { revert_to: *revert_to, sync_to: to }
-            }
         };
     }
 }
@@ -120,6 +115,32 @@ impl SyncTarget {
     /// Used by the sync loop to consume the next action to perform.
     pub fn take_state(&self) -> Option<SyncTargetState> {
         self.state.lock().expect("SyncTarget lock poisoned").take()
+    }
+
+    /// Notify the sync target that a revert has been processed up to the given block.
+    ///
+    /// Only strips the revert portion if the pending revert target is at or above
+    /// `reverted_to` (i.e. already covered by the completed revert). If a deeper
+    /// revert arrived while processing, the pending state is left unchanged.
+    ///
+    /// - Covered `RevertThenSync` → `SyncUpTo` (keeps the sync target)
+    /// - Covered `Revert` → `None`
+    /// - Deeper revert or other states → unchanged
+    pub fn mark_revert_complete(&self, reverted_to: &BlockWithParent) {
+        let mut state = self.state.lock().expect("SyncTarget lock poisoned");
+        match &*state {
+            Some(SyncTargetState::RevertThenSync { revert_to, sync_to })
+                if revert_to.block.number >= reverted_to.block.number =>
+            {
+                *state = Some(SyncTargetState::SyncUpTo { to: *sync_to });
+            }
+            Some(SyncTargetState::Revert { revert_to })
+                if revert_to.block.number >= reverted_to.block.number =>
+            {
+                *state = None;
+            }
+            _ => {}
+        }
     }
 
     /// Check if there is a pending state without consuming it.
@@ -197,6 +218,18 @@ impl SyncTarget {
                 "Cleared cached entries from block onward"
             );
         }
+    }
+}
+
+impl std::fmt::Debug for SyncTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SyncTarget")
+            .field(
+                "has_pending_state",
+                &self.state.lock().expect("SyncTarget lock poisoned").is_some(),
+            )
+            .field("cached_blocks", &self.cache.lock().expect("SyncTarget lock poisoned").len())
+            .finish()
     }
 }
 
@@ -348,6 +381,87 @@ mod tests {
         ));
     }
 
+    // ---- mark_revert_complete tests ----
+
+    #[test]
+    fn mark_revert_complete_clears_covered_revert() {
+        let target = SyncTarget::new();
+        let revert_to = block_with_parent(5);
+        target.update_state(SyncTargetState::Revert { revert_to });
+
+        target.mark_revert_complete(&block_with_parent(5));
+        assert!(!target.has_pending_state());
+    }
+
+    #[test]
+    fn mark_revert_complete_strips_covered_revert_then_sync() {
+        let target = SyncTarget::new();
+        let revert_to = block_with_parent(5);
+        target.update_state(SyncTargetState::RevertThenSync { revert_to, sync_to: 20 });
+
+        target.mark_revert_complete(&block_with_parent(5));
+        let state = target.take_state().expect("should have state");
+        assert!(matches!(state, SyncTargetState::SyncUpTo { to: 20 }));
+    }
+
+    #[test]
+    fn mark_revert_complete_keeps_deeper_revert() {
+        let target = SyncTarget::new();
+        // A deeper revert (block 3) arrived while we were reverting to block 5
+        let revert_to = block_with_parent(3);
+        target.update_state(SyncTargetState::Revert { revert_to });
+
+        target.mark_revert_complete(&block_with_parent(5));
+        let state = target.take_state().expect("should still have state");
+        assert!(matches!(
+            state,
+            SyncTargetState::Revert { revert_to } if revert_to.block.number == 3
+        ));
+    }
+
+    #[test]
+    fn mark_revert_complete_keeps_deeper_revert_then_sync() {
+        let target = SyncTarget::new();
+        let revert_to = block_with_parent(3);
+        target.update_state(SyncTargetState::RevertThenSync { revert_to, sync_to: 20 });
+
+        target.mark_revert_complete(&block_with_parent(5));
+        let state = target.take_state().expect("should still have state");
+        assert!(matches!(
+            state,
+            SyncTargetState::RevertThenSync { revert_to, sync_to: 20 }
+            if revert_to.block.number == 3
+        ));
+    }
+
+    #[test]
+    fn mark_revert_complete_clears_shallower_revert() {
+        let target = SyncTarget::new();
+        // Pending revert to block 8 is shallower than what we reverted to (block 5)
+        let revert_to = block_with_parent(8);
+        target.update_state(SyncTargetState::Revert { revert_to });
+
+        target.mark_revert_complete(&block_with_parent(5));
+        assert!(!target.has_pending_state());
+    }
+
+    #[test]
+    fn mark_revert_complete_noop_on_sync_up_to() {
+        let target = SyncTarget::new();
+        target.update_state(SyncTargetState::SyncUpTo { to: 20 });
+
+        target.mark_revert_complete(&block_with_parent(5));
+        let state = target.take_state().expect("should still have state");
+        assert!(matches!(state, SyncTargetState::SyncUpTo { to: 20 }));
+    }
+
+    #[test]
+    fn mark_revert_complete_noop_on_empty() {
+        let target = SyncTarget::new();
+        target.mark_revert_complete(&block_with_parent(5));
+        assert!(!target.has_pending_state());
+    }
+
     // ---- Cache tests ----
 
     #[test]
@@ -443,7 +557,7 @@ mod tests {
         let target = SyncTarget::new();
         target.insert(1, dummy_cached_data(1));
         target.update_state(SyncTargetState::SyncUpTo { to: 5 });
-        let debug_str = format!("{:?}", target);
+        let debug_str = format!("{target:?}");
         assert!(debug_str.contains("SyncTarget"));
         assert!(debug_str.contains("has_pending_state"));
         assert!(debug_str.contains("cached_blocks"));
@@ -467,17 +581,5 @@ mod tests {
 
         let result = handle.await.expect("task should complete");
         assert!(matches!(result, Some(SyncTargetState::SyncUpTo { to: 42 })));
-    }
-}
-
-impl std::fmt::Debug for SyncTarget {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SyncTarget")
-            .field(
-                "has_pending_state",
-                &self.state.lock().expect("SyncTarget lock poisoned").is_some(),
-            )
-            .field("cached_blocks", &self.cache.lock().expect("SyncTarget lock poisoned").len())
-            .finish()
     }
 }
