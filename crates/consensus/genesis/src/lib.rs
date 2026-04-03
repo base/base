@@ -28,7 +28,7 @@ pub use system::{
 };
 
 mod chain;
-pub use chain::{AddressList, BaseHardforkConfig, HardForkConfig, L1ChainConfig, Roles};
+pub use chain::{AddressList, BaseHardforkConfig, HardForkConfig, Roles};
 
 mod genesis;
 pub use genesis::ChainGenesis;

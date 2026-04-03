@@ -5,6 +5,7 @@ use std::{
 
 use alloy_consensus::{Header, SignableTransaction};
 use alloy_eips::{BlockNumHash, eip2718::Decodable2718};
+use alloy_genesis::ChainConfig;
 use alloy_hardforks::ForkCondition;
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use alloy_signer::SignerSync;
@@ -13,7 +14,7 @@ use alloy_trie::{EMPTY_ROOT_HASH, TrieAccount, root::state_root_unhashed};
 use base_alloy_chains::BaseUpgrade;
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
 use base_alloy_rpc_types_engine::{OpExecutionPayload, OpNetworkPayloadEnvelope, PayloadHash};
-use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_execution_chainspec::OpChainSpecBuilder;
 use base_execution_evm::OpEvmConfig;
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo, OpAttributesWithParent};
@@ -269,7 +270,7 @@ pub struct L2Sequencer {
     /// Rollup configuration.
     rollup_config: RollupConfig,
     /// L1 chain config (needed for [`L1BlockInfoTx`]).
-    l1_chain_config: L1ChainConfig,
+    l1_chain_config: ChainConfig,
     /// Current system config (updated on epoch changes or key rotation).
     system_config: SystemConfig,
     /// Test account used for signing user transactions.
@@ -300,7 +301,7 @@ impl L2Sequencer {
             head,
             l1_chain,
             rollup_config,
-            l1_chain_config: L1ChainConfig::default(),
+            l1_chain_config: ChainConfig::default(),
             system_config,
             test_account,
             executor,

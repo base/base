@@ -4,19 +4,18 @@ use core::fmt::Display;
 
 use alloy_chains::NamedChain;
 use alloy_eips::eip7840::BlobParams;
-use alloy_genesis::EthashConfig;
+use alloy_genesis::{ChainConfig, EthashConfig};
 use alloy_primitives::{Address, U256, address, map::HashMap};
-use base_consensus_genesis::L1ChainConfig;
 use derive_more::{Deref, From};
 
 use crate::alloc::string::ToString;
 
 /// L1 chain configuration.
-/// Simple wrapper around the [`L1ChainConfig`] type from the `alloy-genesis` crate.
+/// Simple wrapper around the [`ChainConfig`] type from the `alloy-genesis` crate.
 #[derive(Debug, Clone, Eq, PartialEq, From, Deref)]
-pub struct L1Config(L1ChainConfig);
+pub struct L1Config(ChainConfig);
 
-impl From<L1Config> for L1ChainConfig {
+impl From<L1Config> for ChainConfig {
     fn from(val: L1Config) -> Self {
         val.0
     }
@@ -80,7 +79,7 @@ impl L1Config {
 
     /// Parse the mainnet genesis.
     pub fn mainnet() -> Self {
-        Self(L1ChainConfig {
+        Self(ChainConfig {
             chain_id: NamedChain::Mainnet.into(),
             homestead_block: alloy_hardforks::EthereumHardfork::Homestead
                 .mainnet_activation_block(),
@@ -135,7 +134,7 @@ impl L1Config {
 
     /// Parse the sepolia genesis.
     pub fn sepolia() -> Self {
-        Self(L1ChainConfig {
+        Self(ChainConfig {
             chain_id: NamedChain::Sepolia.into(),
             homestead_block: alloy_hardforks::EthereumHardfork::Homestead
                 .sepolia_activation_block(),
@@ -188,7 +187,7 @@ impl L1Config {
 
     /// Parse the Hoodi genesis.
     pub fn hoodi() -> Self {
-        Self(L1ChainConfig {
+        Self(ChainConfig {
             chain_id: NamedChain::Hoodi.into(),
             homestead_block: Some(0),
             dao_fork_block: Some(0),
@@ -233,7 +232,7 @@ impl L1Config {
 
     /// Parse the holesky genesis.
     pub fn holesky() -> Self {
-        Self(L1ChainConfig {
+        Self(ChainConfig {
             chain_id: NamedChain::Holesky.into(),
             homestead_block: Some(0),
             dao_fork_block: Some(0),
@@ -277,7 +276,7 @@ impl L1Config {
     }
 
     /// Build the l1 chain configurations from the genesis dump files.
-    pub fn build_l1_configs() -> HashMap<u64, L1ChainConfig> {
+    pub fn build_l1_configs() -> HashMap<u64, ChainConfig> {
         let mut l1_configs = HashMap::default();
         l1_configs.insert(NamedChain::Mainnet.into(), Self::mainnet().0);
         l1_configs.insert(NamedChain::Sepolia.into(), Self::sepolia().0);

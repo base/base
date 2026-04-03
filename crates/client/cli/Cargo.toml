@@ -29,6 +29,7 @@ base-consensus-providers.workspace = true
 
 # alloy
 alloy-signer.workspace = true
+alloy-genesis.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true
 alloy-signer-local.workspace = true

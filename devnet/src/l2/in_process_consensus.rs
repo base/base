@@ -9,12 +9,13 @@ use std::{
     sync::Arc,
 };
 
+use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
 use base_builder_core::test_utils::get_available_port;
 use base_consensus_disc::LocalNode;
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_genesis::RollupConfig;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
 };
@@ -33,7 +34,7 @@ pub struct InProcessConsensusConfig {
     /// Parsed rollup configuration.
     pub rollup_config: RollupConfig,
     /// Parsed L1 chain configuration.
-    pub l1_chain_config: L1ChainConfig,
+    pub l1_chain_config: ChainConfig,
     /// JWT secret for Engine API authentication.
     pub jwt_secret: JwtSecret,
     /// L1 RPC endpoint URL.

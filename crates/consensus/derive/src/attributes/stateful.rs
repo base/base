@@ -4,12 +4,13 @@ use alloc::{boxed::Box, fmt::Debug, string::ToString, sync::Arc, vec, vec::Vec};
 
 use alloy_consensus::{Eip658Value, Receipt};
 use alloy_eips::{BlockNumHash, eip2718::Encodable2718};
+use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_genesis::RollupConfig;
 use base_consensus_upgrades::{Hardfork, Hardforks};
 use base_protocol::{
     DEPOSIT_EVENT_ABI_HASH, L1BlockInfoTx, L2BlockInfo, Predeploys, decode_deposit,
@@ -31,7 +32,7 @@ where
     /// The rollup config.
     rollup_cfg: Arc<RollupConfig>,
     /// The L1 config.
-    l1_cfg: Arc<L1ChainConfig>,
+    l1_cfg: Arc<ChainConfig>,
     /// The system config fetcher.
     config_fetcher: L2P,
     /// The L1 receipts fetcher.
@@ -46,7 +47,7 @@ where
     /// Create a new [`StatefulAttributesBuilder`] with the given epoch.
     pub const fn new(
         rcfg: Arc<RollupConfig>,
-        l1_cfg: Arc<L1ChainConfig>,
+        l1_cfg: Arc<ChainConfig>,
         sys_cfg_fetcher: L2P,
         receipts: L1P,
     ) -> Self {

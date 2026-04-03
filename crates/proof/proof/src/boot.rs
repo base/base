@@ -1,8 +1,9 @@
 //! This module contains the prologue phase of the client program, pulling in the boot information
 //! through the `PreimageOracle` ABI as local keys.
 
+use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, U256, uint};
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_genesis::RollupConfig;
 use base_consensus_registry::Registry;
 use base_proof_preimage::{PreimageKey, PreimageOracleClient};
 use serde::{Deserialize, Serialize};
@@ -152,7 +153,7 @@ pub struct BootInfo {
     /// An optional configuration for the l1 chain associated with the l2 chain.
     ///
     /// **Security**: Loaded from registry (secure) or oracle (requires validation).
-    pub l1_config: L1ChainConfig,
+    pub l1_config: ChainConfig,
     /// The proposer address that will submit the proof transaction on-chain.
     ///
     /// Included in the proof journal so on-chain verification can match it against

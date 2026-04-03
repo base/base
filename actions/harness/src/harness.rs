@@ -1,9 +1,10 @@
 use std::{fmt::Debug, sync::Arc};
 
 use alloy_eips::BlockNumHash;
+use alloy_genesis::ChainConfig;
 use base_alloy_consensus::{OpBlock, OpTxEnvelope};
 use base_consensus_derive::{DataAvailabilityProvider, PipelineBuilder, StatefulAttributesBuilder};
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_genesis::RollupConfig;
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{
@@ -166,7 +167,7 @@ impl ActionTestHarness {
         D: DataAvailabilityProvider + Send + Sync + Debug,
     {
         let rollup_config = Arc::new(self.rollup_config.clone());
-        let l1_chain_config = Arc::new(L1ChainConfig::default());
+        let l1_chain_config = Arc::new(ChainConfig::default());
 
         let l1_provider = ActionL1ChainProvider::new(l1_chain.clone());
         let l2_provider = ActionL2ChainProvider::from_genesis(&self.rollup_config);
