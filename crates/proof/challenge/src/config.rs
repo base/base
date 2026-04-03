@@ -54,12 +54,10 @@ impl<T: fmt::Display> fmt::Display for Validated<T> {
 #[derive(Debug, Error)]
 pub enum ConfigError {
     /// Invalid URL format.
-    #[error("invalid {field} URL: {reason}")]
+    #[error("invalid {field} URL: missing host")]
     InvalidUrl {
         /// The field name that contains the invalid URL.
         field: &'static str,
-        /// The reason the URL is invalid.
-        reason: &'static str,
     },
     /// A field value is out of the allowed range.
     #[error("{field} must be {constraint}, got {value}")]
@@ -136,8 +134,18 @@ impl ChallengerConfig {
     /// Returns [`ConfigError`] if any validation check fails.
     pub fn from_cli(cli: Cli) -> Result<Self, ConfigError> {
         let validate_url = |url: Url, field: &'static str| -> Result<Validated<Url>, ConfigError> {
-            Validated::try_from(url)
-                .map_err(|_| ConfigError::InvalidUrl { field, reason: "missing host" })
+            Validated::try_from(url).map_err(|_| ConfigError::InvalidUrl { field })
+        };
+
+        let require_nonzero = |value: u64, field: &'static str| -> Result<(), ConfigError> {
+            if value == 0 {
+                return Err(ConfigError::OutOfRange {
+                    field,
+                    constraint: "greater than 0",
+                    value: "0",
+                });
+            }
+            Ok(())
         };
 
         let require_nonzero_duration =
@@ -172,22 +180,10 @@ impl ChallengerConfig {
             None
         };
 
-        if cli.challenger.lookback_games == 0 {
-            return Err(ConfigError::OutOfRange {
-                field: "lookback-games",
-                constraint: "greater than 0",
-                value: "0",
-            });
-        }
+        require_nonzero(cli.challenger.lookback_games, "lookback-games")?;
 
         // Health server is always started, so the port must be valid.
-        if cli.health.port == 0 {
-            return Err(ConfigError::OutOfRange {
-                field: "health.port",
-                constraint: "greater than 0",
-                value: "0",
-            });
-        }
+        require_nonzero(cli.health.port.into(), "health.port")?;
 
         if cli.metrics.enabled && cli.metrics.port == 0 {
             return Err(ConfigError::Metrics(
@@ -367,7 +363,7 @@ mod tests {
 
     #[rstest]
     #[case::invalid_url(
-        ConfigError::InvalidUrl { field: "l1-eth-rpc", reason: "missing host" },
+        ConfigError::InvalidUrl { field: "l1-eth-rpc" },
         "invalid l1-eth-rpc URL: missing host"
     )]
     #[case::out_of_range(
