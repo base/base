@@ -110,8 +110,7 @@ The block header uses `alloy_consensus::Header` and calls `hash_slow()` to
 compute parent hashes, so the in-memory chain has a realistic hash structure
 that the derivation pipeline can traverse.
 
-Safe and finalized head pointers lag behind the latest head by 32 and 64
-blocks respectively, approximating Ethereum's post-merge consensus behaviour.
+Safe and finalized head pointers start at genesis and advance only when tests call `act_l1_safe_next`, `act_l1_finalize_next`, `act_l1_safe`, or `act_l1_finalize` on `L1Miner`.
 Tests that need more control can read `block_by_number()` directly.
 
 
