@@ -122,6 +122,7 @@ impl BoundlessProver {
         let hash = keccak256(buf);
         u32::from_be_bytes([hash[0], hash[1], hash[2], hash[3]])
     }
+
     /// Checks whether an error from the Boundless SDK is the
     /// `RequestIsNotLocked` revert caused by the TOCTOU race in
     /// `get_status()`.
