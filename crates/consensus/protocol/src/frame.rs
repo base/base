@@ -37,26 +37,6 @@ use crate::ChannelId;
 /// ensure compatibility and enable future protocol upgrades.
 pub const DERIVATION_VERSION_0: u8 = 0;
 
-/// Overhead estimation for frame metadata and tagging information.
-///
-/// This constant provides an estimate of the additional bytes required
-/// for frame metadata (channel ID, frame number, data length, flags) and
-/// L1 transaction overhead. Used for buffer size calculations and gas
-/// estimation when planning frame transmission.
-pub const FRAME_OVERHEAD: usize = 200;
-
-/// Maximum allowed size for a single frame in bytes.
-///
-/// While typical L1 transactions carrying frames are around 128 KB due to
-/// network conditions and gas limits, this larger limit provides headroom
-/// for future growth as L1 gas limits and network conditions improve.
-///
-/// The 1MB limit balances:
-/// - **Transmission efficiency**: Larger frames reduce overhead
-/// - **Network compatibility**: Must fit within reasonable L1 transaction sizes
-/// - **Memory constraints**: Avoid excessive memory usage during processing
-pub const MAX_FRAME_LEN: usize = 1_000_000;
-
 /// A frame decoding error.
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameDecodingError {
@@ -172,6 +152,26 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// Overhead estimation for frame metadata and tagging information.
+    ///
+    /// This constant provides an estimate of the additional bytes required
+    /// for frame metadata (channel ID, frame number, data length, flags) and
+    /// L1 transaction overhead. Used for buffer size calculations and gas
+    /// estimation when planning frame transmission.
+    pub const OVERHEAD: usize = 200;
+
+    /// Maximum allowed size for a single frame in bytes.
+    ///
+    /// While typical L1 transactions carrying frames are around 128 KB due to
+    /// network conditions and gas limits, this larger limit provides headroom
+    /// for future growth as L1 gas limits and network conditions improve.
+    ///
+    /// The 1MB limit balances:
+    /// - **Transmission efficiency**: Larger frames reduce overhead
+    /// - **Network compatibility**: Must fit within reasonable L1 transaction sizes
+    /// - **Memory constraints**: Avoid excessive memory usage during processing
+    pub const MAX_LEN: usize = 1_000_000;
+
     /// Creates a new [`Frame`].
     pub const fn new(id: ChannelId, number: u16, data: Vec<u8>, is_last: bool) -> Self {
         Self { id, number, data, is_last }
@@ -204,7 +204,7 @@ impl Frame {
             encoded[18..22].try_into().map_err(|_| FrameDecodingError::InvalidDataLength)?,
         ) as usize;
 
-        if data_len > MAX_FRAME_LEN || data_len >= encoded.len() - (BASE_FRAME_LEN - 1) {
+        if data_len > Self::MAX_LEN || data_len >= encoded.len() - (BASE_FRAME_LEN - 1) {
             return Err(FrameDecodingError::DataTooLarge(data_len));
         }
 
@@ -260,7 +260,7 @@ impl Frame {
     /// of each frame in a channel determines the channel's size. The sum of the channel sizes
     /// is used for pruning & compared against the max channel bank size.
     pub const fn size(&self) -> usize {
-        self.data.len() + FRAME_OVERHEAD
+        self.data.len() + Self::OVERHEAD
     }
 }
 
@@ -290,11 +290,11 @@ mod tests {
         let frame = Frame {
             id: [0xFF; 16],
             number: 0xEE,
-            data: vec![0xDD; MAX_FRAME_LEN + 1],
+            data: vec![0xDD; Frame::MAX_LEN + 1],
             is_last: true,
         };
         let err = Frame::decode(&frame.encode()).unwrap_err();
-        assert_eq!(err, FrameDecodingError::DataTooLarge(MAX_FRAME_LEN + 1));
+        assert_eq!(err, FrameDecodingError::DataTooLarge(Frame::MAX_LEN + 1));
     }
 
     #[test]

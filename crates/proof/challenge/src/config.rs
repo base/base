@@ -54,12 +54,10 @@ impl<T: fmt::Display> fmt::Display for Validated<T> {
 #[derive(Debug, Error)]
 pub enum ConfigError {
     /// Invalid URL format.
-    #[error("invalid {field} URL: {reason}")]
+    #[error("invalid {field} URL: missing host")]
     InvalidUrl {
         /// The field name that contains the invalid URL.
         field: &'static str,
-        /// The reason the URL is invalid.
-        reason: String,
     },
     /// A field value is out of the allowed range.
     #[error("{field} must be {constraint}, got {value}")]
@@ -69,11 +67,11 @@ pub enum ConfigError {
         /// The constraint description.
         constraint: &'static str,
         /// The actual value.
-        value: String,
+        value: &'static str,
     },
     /// Invalid metrics configuration.
     #[error("invalid metrics config: {0}")]
-    Metrics(String),
+    Metrics(&'static str),
     /// Invalid signing configuration.
     #[error("invalid signing config: {0}")]
     Signer(#[from] base_tx_manager::ConfigError),
@@ -135,89 +133,67 @@ impl ChallengerConfig {
     ///
     /// Returns [`ConfigError`] if any validation check fails.
     pub fn from_cli(cli: Cli) -> Result<Self, ConfigError> {
-        let validate = |url: Url, field: &'static str| -> Result<Validated<Url>, ConfigError> {
-            Validated::try_from(url)
-                .map_err(|e| ConfigError::InvalidUrl { field, reason: e.to_string() })
+        let validate_url = |url: Url, field: &'static str| -> Result<Validated<Url>, ConfigError> {
+            Validated::try_from(url).map_err(|_| ConfigError::InvalidUrl { field })
         };
 
-        // Validate URLs have scheme and host
-        let l1_eth_rpc = validate(cli.challenger.l1_eth_rpc, "l1-eth-rpc")?;
-        let l2_eth_rpc = validate(cli.challenger.l2_eth_rpc, "l2-eth-rpc")?;
-        let zk_rpc_url = validate(cli.challenger.zk_rpc_url, "zk-rpc-url")?;
+        let require_nonzero = |value: u64, field: &'static str| -> Result<(), ConfigError> {
+            if value == 0 {
+                return Err(ConfigError::OutOfRange {
+                    field,
+                    constraint: "greater than 0",
+                    value: "0",
+                });
+            }
+            Ok(())
+        };
+
+        let require_nonzero_duration =
+            |d: Duration, field: &'static str| -> Result<(), ConfigError> {
+                if d.is_zero() {
+                    return Err(ConfigError::OutOfRange {
+                        field,
+                        constraint: "greater than 0",
+                        value: "0",
+                    });
+                }
+                Ok(())
+            };
+
+        let l1_eth_rpc = validate_url(cli.challenger.l1_eth_rpc, "l1-eth-rpc")?;
+        let l2_eth_rpc = validate_url(cli.challenger.l2_eth_rpc, "l2-eth-rpc")?;
+        let zk_rpc_url = validate_url(cli.challenger.zk_rpc_url, "zk-rpc-url")?;
         let tee_rpc_url =
-            cli.challenger.tee_rpc_url.map(|url| validate(url, "tee-rpc-url")).transpose()?;
+            cli.challenger.tee_rpc_url.map(|url| validate_url(url, "tee-rpc-url")).transpose()?;
 
-        // Validate poll_interval > 0
-        if cli.challenger.poll_interval.is_zero() {
-            return Err(ConfigError::OutOfRange {
-                field: "poll-interval",
-                constraint: "greater than 0",
-                value: "0".to_string(),
-            });
-        }
+        require_nonzero_duration(cli.challenger.poll_interval, "poll-interval")?;
+        require_nonzero_duration(cli.challenger.zk_connect_timeout, "zk-connect-timeout")?;
+        require_nonzero_duration(cli.challenger.zk_request_timeout, "zk-request-timeout")?;
 
-        // Validate zk_connect_timeout > 0
-        if cli.challenger.zk_connect_timeout.is_zero() {
-            return Err(ConfigError::OutOfRange {
-                field: "zk-connect-timeout",
-                constraint: "greater than 0",
-                value: "0".to_string(),
-            });
-        }
+        let tee_request_timeout = if tee_rpc_url.is_some() {
+            require_nonzero_duration(cli.challenger.tee_request_timeout, "tee-request-timeout")?;
+            Some(cli.challenger.tee_request_timeout)
+        } else {
+            None
+        };
 
-        // Validate zk_request_timeout > 0
-        if cli.challenger.zk_request_timeout.is_zero() {
-            return Err(ConfigError::OutOfRange {
-                field: "zk-request-timeout",
-                constraint: "greater than 0",
-                value: "0".to_string(),
-            });
-        }
+        require_nonzero(cli.challenger.lookback_games, "lookback-games")?;
 
-        // Validate tee_request_timeout > 0 when TEE is enabled
-        if tee_rpc_url.is_some() && cli.challenger.tee_request_timeout.is_zero() {
-            return Err(ConfigError::OutOfRange {
-                field: "tee-request-timeout",
-                constraint: "greater than 0",
-                value: "0".to_string(),
-            });
-        }
+        // Health server is always started, so the port must be valid.
+        require_nonzero(cli.health.port.into(), "health.port")?;
 
-        // Validate lookback_games > 0
-        if cli.challenger.lookback_games == 0 {
-            return Err(ConfigError::OutOfRange {
-                field: "lookback-games",
-                constraint: "greater than 0",
-                value: "0".to_string(),
-            });
-        }
-
-        // Validate health port (health server is always started)
-        if cli.health.port == 0 {
-            return Err(ConfigError::OutOfRange {
-                field: "health.port",
-                constraint: "greater than 0",
-                value: "0".to_string(),
-            });
-        }
-
-        // Validate metrics port when enabled
         if cli.metrics.enabled && cli.metrics.port == 0 {
             return Err(ConfigError::Metrics(
-                "metrics port must be non-zero when metrics are enabled".to_string(),
+                "metrics port must be non-zero when metrics are enabled",
             ));
         }
 
-        // Validate and extract signing config
         let signing = SignerConfig::try_from(cli.challenger.signer)?;
 
-        // Validate and extract tx manager config
         let tx_manager =
             TxManagerConfig::try_from(cli.challenger.tx_manager).map_err(ConfigError::TxManager)?;
 
         let health_addr = cli.health.socket_addr();
-
-        let tee_request_timeout = tee_rpc_url.as_ref().map(|_| cli.challenger.tee_request_timeout);
 
         Ok(Self {
             l1_eth_rpc,
@@ -384,15 +360,15 @@ mod tests {
 
     #[rstest]
     #[case::invalid_url(
-        ConfigError::InvalidUrl { field: "l1-eth-rpc", reason: "missing host".to_string() },
+        ConfigError::InvalidUrl { field: "l1-eth-rpc" },
         "invalid l1-eth-rpc URL: missing host"
     )]
     #[case::out_of_range(
-        ConfigError::OutOfRange { field: "poll-interval", constraint: "greater than 0", value: "0".to_string() },
+        ConfigError::OutOfRange { field: "poll-interval", constraint: "greater than 0", value: "0" },
         "poll-interval must be greater than 0, got 0"
     )]
     #[case::metrics(
-        ConfigError::Metrics("port must be non-zero".to_string()),
+        ConfigError::Metrics("port must be non-zero"),
         "invalid metrics config: port must be non-zero"
     )]
     fn test_config_error_display(#[case] error: ConfigError, #[case] expected: &str) {

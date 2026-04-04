@@ -6,22 +6,155 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, Log, TxKind, U256, b256};
 use base_alloy_consensus::{TxDeposit, UserDepositSource};
 
-/// Deposit log event abi signature.
-pub const DEPOSIT_EVENT_ABI: &str = "TransactionDeposited(address,address,uint256,bytes)";
+/// Deposit transaction utilities.
+#[derive(Debug)]
+pub struct Deposits;
 
-/// Deposit event abi hash.
-///
-/// This is the keccak256 hash of the deposit event ABI signature.
-/// `keccak256("TransactionDeposited(address,address,uint256,bytes)")`
-pub const DEPOSIT_EVENT_ABI_HASH: B256 =
-    b256!("b3813568d9991fc951961fcb4c784893574240a28925604d09fc577c55bb7c32");
+impl Deposits {
+    /// Deposit log event ABI signature.
+    pub const EVENT_ABI: &'static str = "TransactionDeposited(address,address,uint256,bytes)";
 
-/// The initial version of the deposit event log.
-pub const DEPOSIT_EVENT_VERSION_0: B256 = B256::ZERO;
+    /// Deposit event ABI hash.
+    ///
+    /// This is the keccak256 hash of the deposit event ABI signature.
+    /// `keccak256("TransactionDeposited(address,address,uint256,bytes)")`
+    pub const EVENT_ABI_HASH: B256 =
+        b256!("b3813568d9991fc951961fcb4c784893574240a28925604d09fc577c55bb7c32");
+
+    /// The initial version of the deposit event log.
+    pub const EVENT_VERSION_0: B256 = B256::ZERO;
+
+    /// Derives a deposit transaction from an EVM log event emitted by the deposit contract.
+    ///
+    /// The emitted log must be in format:
+    /// ```solidity
+    /// event TransactionDeposited(
+    ///    address indexed from,
+    ///    address indexed to,
+    ///    uint256 indexed version,
+    ///    bytes opaqueData
+    /// );
+    /// ```
+    pub fn decode(block_hash: B256, index: usize, log: &Log) -> Result<Bytes, DepositDecodeError> {
+        let topics = log.data.topics();
+        if topics.len() != 4 {
+            return Err(DepositDecodeError::UnexpectedTopicsLen(topics.len()));
+        }
+        if topics[0] != Self::EVENT_ABI_HASH {
+            return Err(DepositDecodeError::InvalidSelector(Self::EVENT_ABI_HASH, topics[0]));
+        }
+        if log.data.data.len() < 64 {
+            return Err(DepositDecodeError::IncompleteOpaqueData(log.data.data.len()));
+        }
+        if log.data.data.len() % 32 != 0 {
+            return Err(DepositDecodeError::UnalignedData(log.data.data.len()));
+        }
+
+        // Validate the `from` address.
+        let mut from_bytes = [0u8; 20];
+        from_bytes.copy_from_slice(&topics[1].as_slice()[12..]);
+        if topics[1].iter().take(12).any(|&b| b != 0) {
+            return Err(DepositDecodeError::FromDecode(topics[1]));
+        }
+
+        // Validate the `to` address.
+        let mut to_bytes = [0u8; 20];
+        to_bytes.copy_from_slice(&topics[2].as_slice()[12..]);
+        if topics[2].iter().take(12).any(|&b| b != 0) {
+            return Err(DepositDecodeError::ToDecode(topics[2]));
+        }
+
+        let from = Address::from(from_bytes);
+        let to = Address::from(to_bytes);
+        let version = log.data.topics()[3];
+
+        // Solidity serializes the event's Data field as follows:
+        //
+        // ```solidity
+        // abi.encode(abi.encodPacked(uint256 mint, uint256 value, uint64 gasLimit, uint8 isCreation, bytes data))
+        // ```
+        //
+        // The opaqueData will be packed as shown below:
+        //
+        // ------------------------------------------------------------
+        // | offset | 256 byte content                                |
+        // ------------------------------------------------------------
+        // | 0      | [0; 24] . {U64 big endian, hex encoded offset}  |
+        // ------------------------------------------------------------
+        // | 32     | [0; 24] . {U64 big endian, hex encoded length}  |
+        // ------------------------------------------------------------
+
+        let opaque_content_offset: U256 = U256::from_be_slice(&log.data.data[0..32]);
+        if opaque_content_offset != U256::from(32) {
+            return Err(DepositDecodeError::InvalidOpaqueDataOffset(Bytes::copy_from_slice(
+                &log.data.data[0..32],
+            )));
+        }
+
+        // The next 32 bytes indicate the length of the opaqueData content.
+        let opaque_content_len: U256 = U256::from_be_slice(&log.data.data[32..64]);
+        let opaque_content_len: u64 = opaque_content_len.try_into().map_err(|_| {
+            DepositDecodeError::OpaqueContentOverflow(Bytes::copy_from_slice(
+                &log.data.data[32..64],
+            ))
+        })?;
+
+        let opaque_data_ceil_32: u64 =
+            (opaque_content_len.saturating_add(31) / 32).saturating_mul(32);
+
+        // Ensure that the remaining data is only zeros.
+        // The padding ends at the next multiple of 32 after the opaque data.
+        let Some(padding_end): Option<u64> = 64_u64.checked_add(opaque_data_ceil_32) else {
+            return Err(DepositDecodeError::OpaqueDataPaddingOverflow);
+        };
+
+        // The remaining data is the opaqueData which is tightly packed and then padded to 32 bytes
+        // by the EVM.
+        let Some(opaque_data) = &log.data.data.get(64..64 + opaque_content_len as usize) else {
+            return Err(DepositDecodeError::InvalidOpaqueDataLength {
+                expected: opaque_content_len as usize,
+                actual: log.data.data.len().saturating_sub(64),
+            });
+        };
+
+        if !(opaque_content_len.is_multiple_of(32)
+            || log
+                .data
+                .data
+                .get((64 + opaque_content_len) as usize..padding_end as usize)
+                .is_some_and(|data| data.iter().all(|&b| b == 0)))
+        {
+            return Err(DepositDecodeError::InvalidOpaqueDataPadding(Bytes::copy_from_slice(
+                &log.data.data[(64 + opaque_content_len) as usize..],
+            )));
+        }
+
+        let source = UserDepositSource::new(block_hash, index as u64);
+
+        let mut deposit_tx = TxDeposit {
+            from,
+            is_system_transaction: false,
+            source_hash: source.source_hash(),
+            ..Default::default()
+        };
+
+        // Can only handle version 0 for now
+        if !version.is_zero() {
+            return Err(DepositDecodeError::InvalidVersion(version));
+        }
+
+        Self::unmarshal_v0(&mut deposit_tx, to, opaque_data)?;
+
+        // Re-encode the deposit transaction
+        let mut buffer = Vec::with_capacity(deposit_tx.eip2718_encoded_length());
+        deposit_tx.encode_2718(&mut buffer);
+        Ok(Bytes::from(buffer))
+    }
+}
 
 /// An [`TxDeposit`] validation error.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum DepositError {
+pub enum DepositDecodeError {
     /// Unexpected number of deposit event log topics.
     #[error("Unexpected number of deposit event log topics: {0}")]
     UnexpectedTopicsLen(usize),
@@ -83,177 +216,55 @@ pub enum DepositError {
     GasDecode(Bytes),
 }
 
-/// Derives a deposit transaction from an EVM log event emitted by the deposit contract.
-///
-/// The emitted log must be in format:
-/// ```solidity
-/// event TransactionDeposited(
-///    address indexed from,
-///    address indexed to,
-///    uint256 indexed version,
-///    bytes opaqueData
-/// );
-/// ```
-pub fn decode_deposit(block_hash: B256, index: usize, log: &Log) -> Result<Bytes, DepositError> {
-    let topics = log.data.topics();
-    if topics.len() != 4 {
-        return Err(DepositError::UnexpectedTopicsLen(topics.len()));
+impl Deposits {
+    /// Unmarshals a deposit transaction from the opaque data.
+    pub fn unmarshal_v0(
+        tx: &mut TxDeposit,
+        to: Address,
+        data: &[u8],
+    ) -> Result<(), DepositDecodeError> {
+        if data.len() < 32 + 32 + 8 + 1 {
+            return Err(DepositDecodeError::UnexpectedOpaqueDataLen(data.len()));
+        }
+
+        let mut offset = 0;
+
+        let raw_mint: [u8; 16] = data[offset + 16..offset + 32].try_into().map_err(|_| {
+            DepositDecodeError::MintDecode(Bytes::copy_from_slice(&data[offset + 16..offset + 32]))
+        })?;
+        tx.mint = u128::from_be_bytes(raw_mint);
+        offset += 32;
+
+        // uint256 value
+        tx.value = U256::from_be_slice(&data[offset..offset + 32]);
+        offset += 32;
+
+        // uint64 gas
+        let raw_gas: [u8; 8] = data[offset..offset + 8].try_into().map_err(|_| {
+            DepositDecodeError::GasDecode(Bytes::copy_from_slice(&data[offset..offset + 8]))
+        })?;
+        tx.gas_limit = u64::from_be_bytes(raw_gas);
+        offset += 8;
+
+        // uint8 isCreation
+        // isCreation: If the boolean byte is 1 then dep.To will stay nil,
+        // and it will create a contract using L2 account nonce to determine the created address.
+        if data[offset] == 0 {
+            tx.to = TxKind::Call(to);
+        } else {
+            tx.to = TxKind::Create;
+        }
+        offset += 1;
+
+        // The remainder of the opaqueData is the transaction data (without length prefix).
+        // The data may be padded to a multiple of 32 bytes
+        let tx_data_len = data.len() - offset;
+
+        // Remaining bytes fill the data
+        tx.input = Bytes::copy_from_slice(&data[offset..offset + tx_data_len]);
+
+        Ok(())
     }
-    if topics[0] != DEPOSIT_EVENT_ABI_HASH {
-        return Err(DepositError::InvalidSelector(DEPOSIT_EVENT_ABI_HASH, topics[0]));
-    }
-    if log.data.data.len() < 64 {
-        return Err(DepositError::IncompleteOpaqueData(log.data.data.len()));
-    }
-    if log.data.data.len() % 32 != 0 {
-        return Err(DepositError::UnalignedData(log.data.data.len()));
-    }
-
-    // Validate the `from` address.
-    let mut from_bytes = [0u8; 20];
-    from_bytes.copy_from_slice(&topics[1].as_slice()[12..]);
-    if topics[1].iter().take(12).any(|&b| b != 0) {
-        return Err(DepositError::FromDecode(topics[1]));
-    }
-
-    // Validate the `to` address.
-    let mut to_bytes = [0u8; 20];
-    to_bytes.copy_from_slice(&topics[2].as_slice()[12..]);
-    if topics[2].iter().take(12).any(|&b| b != 0) {
-        return Err(DepositError::ToDecode(topics[2]));
-    }
-
-    let from = Address::from(from_bytes);
-    let to = Address::from(to_bytes);
-    let version = log.data.topics()[3];
-
-    // Solidity serializes the event's Data field as follows:
-    //
-    // ```solidity
-    // abi.encode(abi.encodPacked(uint256 mint, uint256 value, uint64 gasLimit, uint8 isCreation, bytes data))
-    // ```
-    //
-    // The opaqueData will be packed as shown below:
-    //
-    // ------------------------------------------------------------
-    // | offset | 256 byte content                                |
-    // ------------------------------------------------------------
-    // | 0      | [0; 24] . {U64 big endian, hex encoded offset}  |
-    // ------------------------------------------------------------
-    // | 32     | [0; 24] . {U64 big endian, hex encoded length}  |
-    // ------------------------------------------------------------
-
-    let opaque_content_offset: U256 = U256::from_be_slice(&log.data.data[0..32]);
-    if opaque_content_offset != U256::from(32) {
-        return Err(DepositError::InvalidOpaqueDataOffset(Bytes::copy_from_slice(
-            &log.data.data[0..32],
-        )));
-    }
-
-    // The next 32 bytes indicate the length of the opaqueData content.
-    let opaque_content_len: U256 = U256::from_be_slice(&log.data.data[32..64]);
-    let opaque_content_len: u64 = opaque_content_len.try_into().map_err(|_| {
-        DepositError::OpaqueContentOverflow(Bytes::copy_from_slice(&log.data.data[32..64]))
-    })?;
-
-    let opaque_data_ceil_32: u64 = (opaque_content_len.saturating_add(31) / 32).saturating_mul(32);
-
-    // Ensure that the remaining data is only zeros.
-    // The padding ends at the next multiple of 32 after the opaque data.
-    let Some(padding_end): Option<u64> = 64_u64.checked_add(opaque_data_ceil_32) else {
-        return Err(DepositError::OpaqueDataPaddingOverflow);
-    };
-
-    // The remaining data is the opaqueData which is tightly packed and then padded to 32 bytes by
-    // the EVM.
-    let Some(opaque_data) = &log.data.data.get(64..64 + opaque_content_len as usize) else {
-        return Err(DepositError::InvalidOpaqueDataLength {
-            expected: opaque_content_len as usize,
-            actual: log.data.data.len().saturating_sub(64),
-        });
-    };
-
-    if !(opaque_content_len.is_multiple_of(32)
-        || log
-            .data
-            .data
-            .get((64 + opaque_content_len) as usize..padding_end as usize)
-            .is_some_and(|data| data.iter().all(|&b| b == 0)))
-    {
-        return Err(DepositError::InvalidOpaqueDataPadding(Bytes::copy_from_slice(
-            &log.data.data[(64 + opaque_content_len) as usize..],
-        )));
-    }
-
-    let source = UserDepositSource::new(block_hash, index as u64);
-
-    let mut deposit_tx = TxDeposit {
-        from,
-        is_system_transaction: false,
-        source_hash: source.source_hash(),
-        ..Default::default()
-    };
-
-    // Can only handle version 0 for now
-    if !version.is_zero() {
-        return Err(DepositError::InvalidVersion(version));
-    }
-
-    unmarshal_deposit_version0(&mut deposit_tx, to, opaque_data)?;
-
-    // Re-encode the deposit transaction
-    let mut buffer = Vec::with_capacity(deposit_tx.eip2718_encoded_length());
-    deposit_tx.encode_2718(&mut buffer);
-    Ok(Bytes::from(buffer))
-}
-
-/// Unmarshals a deposit transaction from the opaque data.
-pub(crate) fn unmarshal_deposit_version0(
-    tx: &mut TxDeposit,
-    to: Address,
-    data: &[u8],
-) -> Result<(), DepositError> {
-    if data.len() < 32 + 32 + 8 + 1 {
-        return Err(DepositError::UnexpectedOpaqueDataLen(data.len()));
-    }
-
-    let mut offset = 0;
-
-    let raw_mint: [u8; 16] = data[offset + 16..offset + 32].try_into().map_err(|_| {
-        DepositError::MintDecode(Bytes::copy_from_slice(&data[offset + 16..offset + 32]))
-    })?;
-    tx.mint = u128::from_be_bytes(raw_mint);
-    offset += 32;
-
-    // uint256 value
-    tx.value = U256::from_be_slice(&data[offset..offset + 32]);
-    offset += 32;
-
-    // uint64 gas
-    let raw_gas: [u8; 8] = data[offset..offset + 8]
-        .try_into()
-        .map_err(|_| DepositError::GasDecode(Bytes::copy_from_slice(&data[offset..offset + 8])))?;
-    tx.gas_limit = u64::from_be_bytes(raw_gas);
-    offset += 8;
-
-    // uint8 isCreation
-    // isCreation: If the boolean byte is 1 then dep.To will stay nil,
-    // and it will create a contract using L2 account nonce to determine the created address.
-    if data[offset] == 0 {
-        tx.to = TxKind::Call(to);
-    } else {
-        tx.to = TxKind::Create;
-    }
-    offset += 1;
-
-    // The remainder of the opaqueData is the transaction data (without length prefix).
-    // The data may be padded to a multiple of 32 bytes
-    let tx_data_len = data.len() - offset;
-
-    // Remaining bytes fill the data
-    tx.input = Bytes::copy_from_slice(&data[offset..offset + tx_data_len]);
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -273,8 +284,11 @@ mod tests {
                 Bytes::default(),
             ),
         };
-        let err: DepositError = decode_deposit(B256::default(), 0, &log).unwrap_err();
-        assert_eq!(err, DepositError::InvalidSelector(DEPOSIT_EVENT_ABI_HASH, B256::default()));
+        let err: DepositDecodeError = Deposits::decode(B256::default(), 0, &log).unwrap_err();
+        assert_eq!(
+            err,
+            DepositDecodeError::InvalidSelector(Deposits::EVENT_ABI_HASH, B256::default())
+        );
     }
 
     #[test]
@@ -282,12 +296,12 @@ mod tests {
         let log = Log {
             address: Address::default(),
             data: LogData::new_unchecked(
-                vec![DEPOSIT_EVENT_ABI_HASH, B256::default(), B256::default(), B256::default()],
+                vec![Deposits::EVENT_ABI_HASH, B256::default(), B256::default(), B256::default()],
                 Bytes::from(vec![0u8; 63]),
             ),
         };
-        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
-        assert_eq!(err, DepositError::IncompleteOpaqueData(63));
+        let err = Deposits::decode(B256::default(), 0, &log).unwrap_err();
+        assert_eq!(err, DepositDecodeError::IncompleteOpaqueData(63));
     }
 
     #[test]
@@ -295,12 +309,12 @@ mod tests {
         let log = Log {
             address: Address::default(),
             data: LogData::new_unchecked(
-                vec![DEPOSIT_EVENT_ABI_HASH, B256::default(), B256::default(), B256::default()],
+                vec![Deposits::EVENT_ABI_HASH, B256::default(), B256::default(), B256::default()],
                 Bytes::from(vec![0u8; 65]),
             ),
         };
-        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
-        assert_eq!(err, DepositError::UnalignedData(65));
+        let err = Deposits::decode(B256::default(), 0, &log).unwrap_err();
+        assert_eq!(err, DepositDecodeError::UnalignedData(65));
     }
 
     #[test]
@@ -310,12 +324,12 @@ mod tests {
         let log = Log {
             address: Address::default(),
             data: LogData::new_unchecked(
-                vec![DEPOSIT_EVENT_ABI_HASH, invalid_from, B256::default(), B256::default()],
+                vec![Deposits::EVENT_ABI_HASH, invalid_from, B256::default(), B256::default()],
                 Bytes::from(vec![0u8; 64]),
             ),
         };
-        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
-        assert_eq!(err, DepositError::FromDecode(invalid_from));
+        let err = Deposits::decode(B256::default(), 0, &log).unwrap_err();
+        assert_eq!(err, DepositDecodeError::FromDecode(invalid_from));
     }
 
     #[test]
@@ -324,12 +338,12 @@ mod tests {
         let log = Log {
             address: Address::default(),
             data: LogData::new_unchecked(
-                vec![DEPOSIT_EVENT_ABI_HASH, B256::default(), invalid_to, B256::default()],
+                vec![Deposits::EVENT_ABI_HASH, B256::default(), invalid_to, B256::default()],
                 Bytes::from(vec![0u8; 64]),
             ),
         };
-        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
-        assert_eq!(err, DepositError::ToDecode(invalid_to));
+        let err = Deposits::decode(B256::default(), 0, &log).unwrap_err();
+        assert_eq!(err, DepositDecodeError::ToDecode(invalid_to));
     }
 
     #[test]
@@ -337,12 +351,12 @@ mod tests {
         let log = Log {
             address: Address::default(),
             data: LogData::new_unchecked(
-                vec![DEPOSIT_EVENT_ABI_HASH, B256::default(), B256::default(), B256::default()],
+                vec![Deposits::EVENT_ABI_HASH, B256::default(), B256::default(), B256::default()],
                 Bytes::from(vec![0u8; 64]),
             ),
         };
-        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
-        assert_eq!(err, DepositError::InvalidOpaqueDataOffset(Bytes::from(vec![0u8; 32])));
+        let err = Deposits::decode(B256::default(), 0, &log).unwrap_err();
+        assert_eq!(err, DepositDecodeError::InvalidOpaqueDataOffset(Bytes::from(vec![0u8; 32])));
     }
 
     #[test]
@@ -357,12 +371,12 @@ mod tests {
         let log = Log {
             address: Address::default(),
             data: LogData::new_unchecked(
-                vec![DEPOSIT_EVENT_ABI_HASH, B256::default(), B256::default(), B256::default()],
+                vec![Deposits::EVENT_ABI_HASH, B256::default(), B256::default(), B256::default()],
                 Bytes::from(data),
             ),
         };
-        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
-        assert_eq!(err, DepositError::InvalidOpaqueDataLength { expected: 128, actual: 64 });
+        let err = Deposits::decode(B256::default(), 0, &log).unwrap_err();
+        assert_eq!(err, DepositDecodeError::InvalidOpaqueDataLength { expected: 128, actual: 64 });
     }
 
     #[test]
@@ -375,12 +389,12 @@ mod tests {
         let log = Log {
             address: Address::default(),
             data: LogData::new_unchecked(
-                vec![DEPOSIT_EVENT_ABI_HASH, B256::default(), B256::default(), B256::default()],
+                vec![Deposits::EVENT_ABI_HASH, B256::default(), B256::default(), B256::default()],
                 Bytes::from(data),
             ),
         };
-        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
-        assert_eq!(err, DepositError::UnexpectedOpaqueDataLen(64));
+        let err = Deposits::decode(B256::default(), 0, &log).unwrap_err();
+        assert_eq!(err, DepositDecodeError::UnexpectedOpaqueDataLen(64));
     }
 
     #[test]
@@ -394,12 +408,12 @@ mod tests {
         let log = Log {
             address: Address::default(),
             data: LogData::new_unchecked(
-                vec![DEPOSIT_EVENT_ABI_HASH, B256::default(), B256::default(), version],
+                vec![Deposits::EVENT_ABI_HASH, B256::default(), B256::default(), version],
                 Bytes::from(data),
             ),
         };
-        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
-        assert_eq!(err, DepositError::InvalidVersion(version));
+        let err = Deposits::decode(B256::default(), 0, &log).unwrap_err();
+        assert_eq!(err, DepositDecodeError::InvalidVersion(version));
     }
 
     #[test]
@@ -414,11 +428,11 @@ mod tests {
         let log = Log {
             address: Address::default(),
             data: LogData::new_unchecked(
-                vec![DEPOSIT_EVENT_ABI_HASH, valid_from, valid_to, B256::default()],
+                vec![Deposits::EVENT_ABI_HASH, valid_from, valid_to, B256::default()],
                 Bytes::from(data),
             ),
         };
-        let tx = decode_deposit(B256::default(), 0, &log).unwrap();
+        let tx = Deposits::decode(B256::default(), 0, &log).unwrap();
         let raw_hex = hex!(
             "7ef887a0ed428e1c45e1d9561b62834e1a2d3015a0caae3bfdc16b4da059ac885b01a14594ffffffffffffffffffffffffffffffffffffffff94bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb80808080b700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
         );
@@ -436,13 +450,13 @@ mod tests {
         let log = Log {
             address: Address::default(),
             data: LogData::new_unchecked(
-                vec![DEPOSIT_EVENT_ABI_HASH, B256::default(), B256::default(), B256::default()],
+                vec![Deposits::EVENT_ABI_HASH, B256::default(), B256::default(), B256::default()],
                 Bytes::from(data.clone()),
             ),
         };
-        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
+        let err = Deposits::decode(B256::default(), 0, &log).unwrap_err();
         let bytes = Bytes::from(data.get(0..32).unwrap().to_vec());
-        assert_eq!(err, DepositError::InvalidOpaqueDataOffset(bytes));
+        assert_eq!(err, DepositDecodeError::InvalidOpaqueDataOffset(bytes));
     }
 
     #[test]
@@ -455,14 +469,16 @@ mod tests {
         let log = Log {
             address: Address::default(),
             data: LogData::new_unchecked(
-                vec![DEPOSIT_EVENT_ABI_HASH, B256::default(), B256::default(), B256::default()],
+                vec![Deposits::EVENT_ABI_HASH, B256::default(), B256::default(), B256::default()],
                 Bytes::from(data.clone()),
             ),
         };
-        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
+        let err = Deposits::decode(B256::default(), 0, &log).unwrap_err();
         assert_eq!(
             err,
-            DepositError::OpaqueContentOverflow(Bytes::from(data.get(32..64).unwrap().to_vec()))
+            DepositDecodeError::OpaqueContentOverflow(Bytes::from(
+                data.get(32..64).unwrap().to_vec()
+            ))
         );
     }
 
@@ -494,7 +510,7 @@ mod tests {
             address: Address::default(),
             data: LogData::new_unchecked(
                 vec![
-                    DEPOSIT_EVENT_ABI_HASH,
+                    Deposits::EVENT_ABI_HASH,
                     B256::from_slice(&from_bytes),
                     B256::from_slice(&to_bytes),
                     B256::default(),
@@ -502,8 +518,8 @@ mod tests {
                 Bytes::from(data),
             ),
         };
-        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
-        assert_eq!(err, DepositError::InvalidOpaqueDataLength { expected: 129, actual: 128 });
+        let err = Deposits::decode(B256::default(), 0, &log).unwrap_err();
+        assert_eq!(err, DepositDecodeError::InvalidOpaqueDataLength { expected: 129, actual: 128 });
     }
 
     #[test]
@@ -534,7 +550,7 @@ mod tests {
             address: Address::default(),
             data: LogData::new_unchecked(
                 vec![
-                    DEPOSIT_EVENT_ABI_HASH,
+                    Deposits::EVENT_ABI_HASH,
                     B256::from_slice(&from_bytes),
                     B256::from_slice(&to_bytes),
                     B256::default(),
@@ -542,8 +558,8 @@ mod tests {
                 Bytes::from(data.clone()),
             ),
         };
-        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
-        assert_eq!(err, DepositError::OpaqueDataPaddingOverflow);
+        let err = Deposits::decode(B256::default(), 0, &log).unwrap_err();
+        assert_eq!(err, DepositDecodeError::OpaqueDataPaddingOverflow);
     }
 
     #[test]
@@ -576,7 +592,7 @@ mod tests {
             address: Address::default(),
             data: LogData::new_unchecked(
                 vec![
-                    DEPOSIT_EVENT_ABI_HASH,
+                    Deposits::EVENT_ABI_HASH,
                     B256::from_slice(&from_bytes),
                     B256::from_slice(&to_bytes),
                     B256::default(),
@@ -584,10 +600,12 @@ mod tests {
                 Bytes::from(data.clone()),
             ),
         };
-        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
+        let err = Deposits::decode(B256::default(), 0, &log).unwrap_err();
         assert_eq!(
             err,
-            DepositError::InvalidOpaqueDataPadding(Bytes::from(data.get(191..).unwrap().to_vec()))
+            DepositDecodeError::InvalidOpaqueDataPadding(Bytes::from(
+                data.get(191..).unwrap().to_vec()
+            ))
         );
     }
 
@@ -619,7 +637,7 @@ mod tests {
             address: Address::default(),
             data: LogData::new_unchecked(
                 vec![
-                    DEPOSIT_EVENT_ABI_HASH,
+                    Deposits::EVENT_ABI_HASH,
                     B256::from_slice(&from_bytes),
                     B256::from_slice(&to_bytes),
                     B256::default(),
@@ -627,7 +645,7 @@ mod tests {
                 Bytes::from(data),
             ),
         };
-        let tx = decode_deposit(B256::default(), 0, &log).unwrap();
+        let tx = Deposits::decode(B256::default(), 0, &log).unwrap();
         let raw_hex = hex!(
             "7ef875a0ed428e1c45e1d9561b62834e1a2d3015a0caae3bfdc16b4da059ac885b01a145941111111111111111111111111111111111111111800a648203e880b700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
         );
@@ -640,18 +658,18 @@ mod tests {
         let data = vec![0u8; 72];
         let mut tx = TxDeposit::default();
         let to = address!("5555555555555555555555555555555555555555");
-        let err = unmarshal_deposit_version0(&mut tx, to, &data).unwrap_err();
-        assert_eq!(err, DepositError::UnexpectedOpaqueDataLen(72));
+        let err = Deposits::unmarshal_v0(&mut tx, to, &data).unwrap_err();
+        assert_eq!(err, DepositDecodeError::UnexpectedOpaqueDataLen(72));
 
         // Data must have at least length 73
         let data = vec![0u8; 73];
         let mut tx = TxDeposit::default();
         let to = address!("5555555555555555555555555555555555555555");
-        unmarshal_deposit_version0(&mut tx, to, &data).unwrap();
+        Deposits::unmarshal_v0(&mut tx, to, &data).unwrap();
     }
 
     #[test]
-    fn test_unmarshal_deposit_version0() {
+    fn test_unmarshal_v0() {
         let mut data = vec![0u8; 192];
         let offset: [u8; 8] = U64::from(32).to_be_bytes();
         data[24..32].copy_from_slice(&offset);
@@ -677,7 +695,7 @@ mod tests {
             ..Default::default()
         };
         let to = address!("5555555555555555555555555555555555555555");
-        unmarshal_deposit_version0(&mut tx, to, &data).unwrap();
+        Deposits::unmarshal_v0(&mut tx, to, &data).unwrap();
         assert_eq!(tx.to, TxKind::Call(address!("5555555555555555555555555555555555555555")));
     }
 }

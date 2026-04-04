@@ -34,24 +34,16 @@ mod block;
 pub use block::{BlockInfo, FromBlockError, L2BlockInfo};
 
 mod frame;
-pub use frame::{
-    DERIVATION_VERSION_0, FRAME_OVERHEAD, Frame, FrameDecodingError, FrameParseError, MAX_FRAME_LEN,
-};
+pub use frame::{DERIVATION_VERSION_0, Frame, FrameDecodingError, FrameParseError};
 
 mod utils;
 pub use utils::{read_tx_data, to_system_config};
 
 mod channel;
-pub use channel::{
-    CHANNEL_ID_LENGTH, Channel, ChannelError, ChannelId, FJORD_MAX_RLP_BYTES_PER_CHANNEL,
-    MAX_RLP_BYTES_PER_CHANNEL,
-};
+pub use channel::{Channel, ChannelError, ChannelId};
 
 mod deposits;
-pub use deposits::{
-    DEPOSIT_EVENT_ABI, DEPOSIT_EVENT_ABI_HASH, DEPOSIT_EVENT_VERSION_0, DepositError,
-    decode_deposit,
-};
+pub use deposits::{DepositDecodeError, Deposits};
 
 mod info;
 pub use info::{

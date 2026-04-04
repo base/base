@@ -6,7 +6,7 @@ use alloy_primitives::{Address, B256, Bytes, Log, LogData, U256};
 use base_batcher_encoder::FrameEncoder;
 use base_blobs::BlobEncoder;
 use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
-use base_protocol::{BlockInfo, DEPOSIT_EVENT_ABI_HASH, DEPOSIT_EVENT_VERSION_0, Frame};
+use base_protocol::{BlockInfo, Deposits, Frame};
 use tracing::info;
 
 use crate::Action;
@@ -360,10 +360,10 @@ impl L1Miner {
             address: deposit.deposit_contract,
             data: LogData::new_unchecked(
                 vec![
-                    DEPOSIT_EVENT_ABI_HASH,
+                    Deposits::EVENT_ABI_HASH,
                     B256::from(from_topic),
                     B256::from(to_topic),
-                    DEPOSIT_EVENT_VERSION_0,
+                    Deposits::EVENT_VERSION_0,
                 ],
                 log_data.into(),
             ),
