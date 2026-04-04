@@ -129,6 +129,17 @@ mod tests {
     }
 
     #[test]
+    fn test_l1_config_all_chains() {
+        // All four known L1 chains must be present.
+        assert!(Registry::l1_config(NamedChain::Mainnet.into()).is_some());
+        assert!(Registry::l1_config(NamedChain::Sepolia.into()).is_some());
+        assert!(Registry::l1_config(NamedChain::Holesky.into()).is_some());
+        assert!(Registry::l1_config(NamedChain::Hoodi.into()).is_some());
+        // Unknown chain IDs must return None.
+        assert!(Registry::l1_config(99999).is_none());
+    }
+
+    #[test]
     fn test_bpo_timestamps() {
         let sepolia_config = Registry::l1_config(11155111).unwrap();
         assert_eq!(sepolia_config.bpo1_time, Some(SEPOLIA_BPO1_TIMESTAMP));

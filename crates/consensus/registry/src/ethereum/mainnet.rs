@@ -13,7 +13,7 @@ impl Mainnet {
     const DEPOSIT_CONTRACT_ADDRESS: Address =
         address!("0x00000000219ab540356cbb839cbe05303d7705fa");
 
-    /// Returns the Ethereum mainnet [`L1ChainConfig`].
+    /// Returns the Ethereum mainnet [`ChainConfig`].
     pub fn l1_config() -> ChainConfig {
         ChainConfig {
             chain_id: NamedChain::Mainnet.into(),
@@ -52,7 +52,7 @@ impl Mainnet {
             bpo4_time: alloy_hardforks::EthereumHardfork::Bpo4.mainnet_activation_timestamp(),
             bpo5_time: alloy_hardforks::EthereumHardfork::Bpo5.mainnet_activation_timestamp(),
             ethash: Some(EthashConfig {}),
-            blob_schedule: super::BlobSchedule::default(),
+            blob_schedule: super::BlobSchedule::schedule(),
             merge_netsplit_block: None,
             terminal_total_difficulty: Some(U256::from(Self::TTD)),
             deposit_contract_address: Some(Self::DEPOSIT_CONTRACT_ADDRESS),

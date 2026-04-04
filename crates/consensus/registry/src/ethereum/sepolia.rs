@@ -14,7 +14,7 @@ impl Sepolia {
         address!("0x7f02c3e3c98b133055b8b348b2ac625669ed295d");
     const MERGE_NETSPLIT_BLOCK: u64 = 1_735_371;
 
-    /// Returns the Ethereum Sepolia testnet [`L1ChainConfig`].
+    /// Returns the Ethereum Sepolia testnet [`ChainConfig`].
     pub fn l1_config() -> ChainConfig {
         ChainConfig {
             chain_id: NamedChain::Sepolia.into(),
@@ -25,7 +25,8 @@ impl Sepolia {
             eip150_block: alloy_hardforks::EthereumHardfork::Tangerine.sepolia_activation_block(),
             eip155_block: alloy_hardforks::EthereumHardfork::SpuriousDragon
                 .sepolia_activation_block(),
-            eip158_block: alloy_hardforks::EthereumHardfork::Byzantium.sepolia_activation_block(),
+            eip158_block: alloy_hardforks::EthereumHardfork::SpuriousDragon
+                .sepolia_activation_block(),
             byzantium_block: alloy_hardforks::EthereumHardfork::Byzantium
                 .sepolia_activation_block(),
             constantinople_block: alloy_hardforks::EthereumHardfork::Constantinople
@@ -52,7 +53,7 @@ impl Sepolia {
             bpo4_time: alloy_hardforks::EthereumHardfork::Bpo4.sepolia_activation_timestamp(),
             bpo5_time: alloy_hardforks::EthereumHardfork::Bpo5.sepolia_activation_timestamp(),
             ethash: Some(EthashConfig {}),
-            blob_schedule: super::BlobSchedule::default(),
+            blob_schedule: super::BlobSchedule::schedule(),
             terminal_total_difficulty: Some(U256::from(Self::TTD)),
             merge_netsplit_block: Some(Self::MERGE_NETSPLIT_BLOCK),
             deposit_contract_address: Some(Self::DEPOSIT_CONTRACT_ADDRESS),

@@ -13,7 +13,7 @@ impl Holesky {
     const DEPOSIT_CONTRACT_ADDRESS: Address =
         address!("0x4242424242424242424242424242424242424242");
 
-    /// Returns the Ethereum Holesky testnet [`L1ChainConfig`].
+    /// Returns the Ethereum Holesky testnet [`ChainConfig`].
     pub fn l1_config() -> ChainConfig {
         ChainConfig {
             chain_id: NamedChain::Holesky.into(),
@@ -42,7 +42,7 @@ impl Holesky {
             bpo4_time: alloy_hardforks::EthereumHardfork::Bpo4.holesky_activation_timestamp(),
             bpo5_time: alloy_hardforks::EthereumHardfork::Bpo5.holesky_activation_timestamp(),
             ethash: Some(EthashConfig {}),
-            blob_schedule: super::BlobSchedule::default(),
+            blob_schedule: super::BlobSchedule::schedule(),
             merge_netsplit_block: None,
             terminal_total_difficulty: Some(U256::from(Self::TTD)),
             deposit_contract_address: Some(Self::DEPOSIT_CONTRACT_ADDRESS),

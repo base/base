@@ -23,7 +23,7 @@ pub use hoodi::Hoodi;
 pub(super) struct BlobSchedule;
 
 impl BlobSchedule {
-    pub(super) fn default() -> BTreeMap<String, BlobParams> {
+    pub(super) fn schedule() -> BTreeMap<String, BlobParams> {
         BTreeMap::from([
             (
                 alloy_hardforks::EthereumHardfork::Cancun.name().to_string().to_lowercase(),
