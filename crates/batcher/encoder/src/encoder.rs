@@ -283,9 +283,21 @@ impl BatchEncoder {
     }
 
     /// Create a new open channel with a random `ChannelId`.
+    ///
+    /// If [`EncoderConfig::span_channel_id`] is set and the encoder is operating in
+    /// [`BatchType::Span`] mode, the configured ID is used instead of a random one.
+    /// This allows tests to produce deterministic channel IDs for span batches.
     fn open_new_channel(&mut self) {
         let mut id = ChannelId::default();
-        self.rng.fill_bytes(&mut id);
+        if self.config.batch_type == BatchType::Span {
+            if let Some(fixed_id) = self.config.span_channel_id {
+                id = fixed_id;
+            } else {
+                self.rng.fill_bytes(&mut id);
+            }
+        } else {
+            self.rng.fill_bytes(&mut id);
+        }
 
         let compressor_config = Config {
             target_output_size: self.config.target_frame_size as u64,

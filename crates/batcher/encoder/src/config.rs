@@ -2,6 +2,8 @@
 
 use base_consensus_genesis::RollupConfig;
 
+use base_protocol::ChannelId;
+
 use crate::{BatchType, DaType};
 
 /// Configuration for the [`BatchEncoder`](crate::BatchEncoder).
@@ -72,6 +74,15 @@ pub struct EncoderConfig {
     ///
     /// Default: `0.6` (matches op-batcher's `--approx-compr-ratio` default).
     pub approx_compr_ratio: f64,
+
+    /// Override for the span-batch channel ID.
+    ///
+    /// When `Some`, every span-batch channel is opened with this fixed ID instead of
+    /// a cryptographically random one. Intended for tests that need deterministic
+    /// channel IDs. In production this should always be `None` (the default).
+    ///
+    /// Default: `None` (random per flush).
+    pub span_channel_id: Option<ChannelId>,
 }
 
 impl Default for EncoderConfig {
@@ -85,6 +96,7 @@ impl Default for EncoderConfig {
             batch_type: BatchType::Single,
             da_type: DaType::Blob,
             approx_compr_ratio: 0.6,
+            span_channel_id: None,
         }
     }
 }
