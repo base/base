@@ -163,11 +163,8 @@ impl ChallengerConfig {
         let l1_eth_rpc = validate_url(cli.challenger.l1_eth_rpc, "l1-eth-rpc")?;
         let l2_eth_rpc = validate_url(cli.challenger.l2_eth_rpc, "l2-eth-rpc")?;
         let zk_rpc_url = validate_url(cli.challenger.zk_rpc_url, "zk-rpc-url")?;
-        let tee_rpc_url = cli
-            .challenger
-            .tee_rpc_url
-            .map(|url| validate_url(url, "tee-rpc-url"))
-            .transpose()?;
+        let tee_rpc_url =
+            cli.challenger.tee_rpc_url.map(|url| validate_url(url, "tee-rpc-url")).transpose()?;
 
         require_nonzero_duration(cli.challenger.poll_interval, "poll-interval")?;
         require_nonzero_duration(cli.challenger.zk_connect_timeout, "zk-connect-timeout")?;
