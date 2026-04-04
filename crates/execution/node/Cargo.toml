@@ -118,8 +118,8 @@ js-tracer = [
 ]
 test-utils = [
 	"alloy-genesis",
-	"base-execution-exex/test-utils",
 	"base-alloy-consensus/arbitrary",
+	"base-execution-exex/test-utils",
 	"base-node-core/test-utils",
 	"base-protocol/test-utils",
 	"reth-chainspec/test-utils",

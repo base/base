@@ -60,7 +60,6 @@ std = [
 	"base-alloy-rpc-types-engine/std",
 	"base-execution-chainspec/std",
 	"base-execution-consensus/std",
-	"base-alloy-consensus/std",
 	"base-revm/std",
 	"reth-chainspec/std",
 	"reth-evm/std",
@@ -73,7 +72,4 @@ std = [
 	"thiserror/std",
 ]
 portable = [ "base-revm/portable", "reth-revm/portable", "revm/portable" ]
-rpc = [
-	"alloy-evm/rpc",
-	"reth-rpc-eth-api",
-]
+rpc = [ "alloy-evm/rpc", "reth-rpc-eth-api" ]

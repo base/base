@@ -77,9 +77,6 @@ dev = [
 	"reth-cli-commands/arbitrary",
 ]
 
-serde = [
-	"base-alloy-consensus/serde",
-	"base-execution-chainspec/serde",
-]
+serde = [ "base-alloy-consensus/serde", "base-execution-chainspec/serde" ]
 
 edge = [ "reth-cli-commands/edge", "reth-node-core/edge" ]
