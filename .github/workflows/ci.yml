@@ -97,8 +97,6 @@ jobs:
         with:
           fetch-depth: 1
       - uses: ./.github/actions/setup
-        with:
-          rust-cache-shared-key: "stable"
       - name: Install musl toolchain
         run: |
           sudo apt-get update && sudo apt-get install -y musl-tools
