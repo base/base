@@ -31,7 +31,6 @@ use base_zk_client::{ProofType, ProveBlockRequest, ZkProofProvider};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
-use uuid::Uuid;
 
 use crate::{
     BondManager, CandidateGame, ChallengeSubmitter, ChallengerMetrics, DisputeIntent, GameCategory,
@@ -198,9 +197,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     /// scan batch, then advances bond lifecycle claims, then scans for new
     /// candidates and processes them.
     pub async fn step(&mut self) -> eyre::Result<()> {
-        // Poll in-flight proof sessions before scanning for new candidates.
         self.poll_pending_proofs().await;
-
         self.poll_bond_claims().await;
 
         let (candidates, new_last_scanned) = self.scanner.scan(self.last_scanned).await?;
@@ -347,7 +344,6 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             "invalid intermediate root detected, requesting proof"
         );
 
-        ChallengerMetrics::games_invalid_total().increment(1);
         if intent == DisputeIntent::Nullify {
             ChallengerMetrics::invalid_zk_proposal_detected_total().increment(1);
         }
@@ -574,7 +570,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         // checkpoint: [prior_checkpoint .. invalid_checkpoint].
         let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
 
-        let session_id = derive_session_id(game_address, invalid_index);
+        let session_id = PendingProof::derive_session_id(game_address, invalid_index);
         let prover_address = format!("{:#x}", self.submitter.sender_address());
         let request = ProveBlockRequest {
             start_block_number,
@@ -587,16 +583,20 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         };
 
         let prove_response = self.zk_prover.prove_block(request.clone()).await?;
-        let session_id = prove_response.session_id;
 
         info!(
             game = %game_address,
-            session_id = %session_id,
+            session_id = %prove_response.session_id,
             "proof job initiated"
         );
 
-        let pending =
-            PendingProof::awaiting(session_id, invalid_index, expected_root, request, intent);
+        let pending = PendingProof::awaiting(
+            prove_response.session_id,
+            invalid_index,
+            expected_root,
+            request,
+            intent,
+        );
         self.pending_proofs.insert(game_address, pending);
 
         Ok(())
@@ -697,7 +697,6 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             _ => return Ok(()),
         };
 
-        // ── Submit dispute transaction ────────────────────────────────────
         let result = self
             .submitter
             .submit_dispute(game_address, proof_bytes, invalid_index, expected_root, intent)
@@ -799,36 +798,31 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     }
 }
 
-/// Derives a deterministic session ID from a game address and invalid index.
-///
-/// Uses UUID v5 (SHA-1 namespace hash) over `game_address || invalid_index`
-/// to produce an idempotency key that is stable across retries.
-pub fn derive_session_id(game_address: Address, invalid_index: u64) -> String {
-    let mut bytes = [0u8; 28];
-    bytes[..20].copy_from_slice(game_address.as_slice());
-    bytes[20..].copy_from_slice(&invalid_index.to_be_bytes());
-    Uuid::new_v5(&Uuid::NAMESPACE_OID, &bytes).to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
 
-    use super::derive_session_id;
+    use crate::PendingProof;
 
     #[test]
     fn session_id_is_deterministic() {
         let addr = Address::repeat_byte(0xAA);
-        assert_eq!(derive_session_id(addr, 42), derive_session_id(addr, 42));
+        assert_eq!(
+            PendingProof::derive_session_id(addr, 42),
+            PendingProof::derive_session_id(addr, 42),
+        );
     }
 
     #[test]
     fn session_id_differs_for_different_inputs() {
         let addr = Address::repeat_byte(0xAA);
-        assert_ne!(derive_session_id(addr, 1), derive_session_id(addr, 2));
         assert_ne!(
-            derive_session_id(Address::repeat_byte(0xBB), 1),
-            derive_session_id(Address::repeat_byte(0xCC), 1),
+            PendingProof::derive_session_id(addr, 1),
+            PendingProof::derive_session_id(addr, 2),
+        );
+        assert_ne!(
+            PendingProof::derive_session_id(Address::repeat_byte(0xBB), 1),
+            PendingProof::derive_session_id(Address::repeat_byte(0xCC), 1),
         );
     }
 }

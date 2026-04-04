@@ -10,7 +10,7 @@ use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
     BondManager, ChallengeSubmitter, DisputeIntent, Driver, DriverComponents, DriverConfig,
     GameScanner, L1HeadProvider, OutputValidator, PendingProof, ProofPhase, ScannerConfig,
-    TeeConfig, derive_session_id,
+    TeeConfig,
     test_utils::{
         MockAggregateVerifier, MockBondTransactionSubmitter, MockDisputeGameFactory, MockGameState,
         MockL1HeadProvider, MockL2Provider, MockTeeProofProvider, MockTxManager,
@@ -82,7 +82,7 @@ fn default_tx_manager() -> MockTxManager {
 }
 
 fn default_prove_request() -> ProveBlockRequest {
-    let session_id = derive_session_id(addr(0), 1);
+    let session_id = PendingProof::derive_session_id(addr(0), 1);
 
     ProveBlockRequest {
         start_block_number: 15,
