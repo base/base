@@ -1567,6 +1567,10 @@ async fn derive_chain_from_near_l1_genesis() {
     // Set L2 genesis time to match L1 block #5 so that L2 block timestamps
     // (genesis_time + block_time) satisfy batch_timestamp >= l1_epoch_timestamp.
     rollup_cfg.genesis.l2_time = l1_block_5.timestamp();
+    // Recompute the real genesis hash after changing l2_time so that the
+    // sequencer's build_and_commit() fallback and check_batch()'s
+    // parent_hash comparison both use the same value.
+    rollup_cfg.genesis.l2.hash = ActionEngineClient::compute_l2_genesis_hash(&rollup_cfg);
 
     // Build an L2 genesis head anchored to L1 block #5.
     let genesis_head = L2BlockInfo {

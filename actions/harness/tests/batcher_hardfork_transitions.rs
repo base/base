@@ -5,9 +5,9 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DerivedBlock, L1MinerConfig,
     SharedL1Chain, TestRollupConfigBuilder,
 };
-use base_batcher_encoder::{DaType, EncoderConfig};
+use base_batcher_encoder::{BatchType, DaType, EncoderConfig};
 use base_consensus_genesis::{HardForkConfig, RollupConfig};
-use base_protocol::BatchType;
+use tracing_subscriber::EnvFilter;
 
 // ---------------------------------------------------------------------------
 // A. Span batch with non-empty hardfork transition block is rejected
@@ -33,6 +33,10 @@ use base_protocol::BatchType;
 /// for earlier hardforks like Ecotone or Isthmus.
 #[tokio::test]
 async fn span_batch_with_non_empty_transition_block_rejected() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::new("error"))
+        .with_test_writer()
+        .try_init();
     // All forks through Isthmus active at genesis. Jovian activates at ts=6
     // (L2 block 3 with block_time=2). Because only Jovian is "new" at ts=6,
     // `is_first_jovian_block(6)` returns true and the NonEmptyTransitionBlock

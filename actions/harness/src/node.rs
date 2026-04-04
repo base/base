@@ -456,7 +456,8 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     pub async fn step(&mut self) -> NodeStepResult {
         self.drain_gossip();
 
-        match self.pipeline.step(self.safe_head).await {
+        let result = self.pipeline.step(self.safe_head).await;
+        match result {
             StepResult::PreparedAttributes => {
                 let Some(attrs) = self.pipeline.next() else {
                     return NodeStepResult::AdvancedOrigin;

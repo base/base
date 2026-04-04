@@ -7,10 +7,11 @@ use alloy_consensus::{Header, SignableTransaction};
 use alloy_eips::{
     BlockNumHash,
     eip2718::{Decodable2718, Encodable2718},
+    eip7685::EMPTY_REQUESTS_HASH,
 };
 use alloy_hardforks::ForkCondition;
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
-use alloy_rpc_types_engine::CancunPayloadFields;
+use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{EMPTY_ROOT_HASH, TrieAccount, root::state_root_unhashed};
@@ -530,22 +531,33 @@ impl L2Sequencer {
             .map_err(|e| L2SequencerError::Engine(format!("insert: {e}")))?;
 
         // 6. Convert OpExecutionPayload to OpBlock.
-        // Use try_into_block_with_sidecar so parent_beacon_block_root is restored on the
-        // returned header. try_into_block() omits PBBR, making hash_slow() return a different
-        // value than the sealed block hash. BatchEncoder::add_block tracks self.tip via
-        // block.header.hash_slow(), so without PBBR block N+1's parent_hash (the real sealed
-        // hash of block N) doesn't match self.tip, triggering ReorgError::ParentMismatch and
-        // resetting the encoder before any span batch is submitted.
+        // Use try_into_block_with_sidecar so PBBR and requests_hash are restored on the
+        // returned header. try_into_block() omits these fields, making hash_slow() return a
+        // different value than the sealed block hash. BatchEncoder::add_block tracks self.tip
+        // via block.header.hash_slow(), so missing sidecar fields cause block N+1's parent_hash
+        // (the canonical hash of block N) to not match self.tip, triggering
+        // ReorgError::ParentMismatch and resetting the encoder.
+        //
+        // V4 payloads (Isthmus+) require PraguePayloadFields with EMPTY_REQUESTS_HASH so that
+        // the reconstructed header's requests_hash = Some(EMPTY_REQUESTS_HASH) matches reth's
+        // canonical header.
         let block_hash = envelope.execution_payload.as_v1().block_hash;
-        let sidecar = envelope.parent_beacon_block_root.map_or_else(
-            OpExecutionPayloadSidecar::default,
-            |pbbr| {
+        let pbbr = envelope.parent_beacon_block_root;
+        let sidecar = match &envelope.execution_payload {
+            OpExecutionPayload::V4(_) => OpExecutionPayloadSidecar::v4(
+                CancunPayloadFields {
+                    parent_beacon_block_root: pbbr.unwrap_or_default(),
+                    versioned_hashes: vec![],
+                },
+                PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
+            ),
+            _ => pbbr.map_or_else(OpExecutionPayloadSidecar::default, |pbbr| {
                 OpExecutionPayloadSidecar::v3(CancunPayloadFields {
                     parent_beacon_block_root: pbbr,
                     versioned_hashes: vec![],
                 })
-            },
-        );
+            }),
+        };
         let block: OpBlock = envelope
             .execution_payload
             .try_into_block_with_sidecar(&sidecar)

@@ -80,7 +80,11 @@ impl ActionTestHarness {
     /// Convenience method eliminating the repeated 10-line construction used in
     /// reorg reset tests.
     pub fn l2_genesis(&self) -> L2BlockInfo {
-        let genesis_l1 = block_info_from(self.l1.chain().first().expect("genesis always present"));
+        let genesis_l1_number = self.rollup_config.genesis.l1.number;
+        let genesis_l1 =
+            self.l1.block_by_number(genesis_l1_number).map(block_info_from).unwrap_or_else(|| {
+                block_info_from(self.l1.chain().first().expect("genesis always present"))
+            });
         L2BlockInfo {
             block_info: BlockInfo {
                 hash: self.rollup_config.genesis.l2.hash,
