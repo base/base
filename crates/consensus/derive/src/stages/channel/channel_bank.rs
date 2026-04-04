@@ -275,7 +275,7 @@ mod tests {
     use alloc::{vec, vec::Vec};
 
     use alloy_eips::BlockNumHash;
-    use base_consensus_genesis::{HardForkConfig, SystemConfig};
+    use base_consensus_genesis::{LegacyHardforkConfig, SystemConfig};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
 
@@ -390,7 +390,7 @@ mod tests {
     fn test_read_channel_active() {
         let mock = TestNextFrameProvider::new(vec![]);
         let cfg = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { canyon_time: Some(0), ..Default::default() },
+            hardforks: LegacyHardforkConfig { canyon_time: Some(0), ..Default::default() }.into(),
             ..Default::default()
         });
         let mut channel_bank = ChannelBank::new(cfg, mock);
@@ -607,7 +607,7 @@ mod tests {
         let mut frames = crate::frames!(0xFF, 0, vec![0xDD; 50], 100000);
         let mock = TestNextFrameProvider::new(vec![]);
         let cfg = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
+            hardforks: LegacyHardforkConfig { fjord_time: Some(0), ..Default::default() }.into(),
             ..Default::default()
         });
         let mut channel_bank = ChannelBank::new(cfg, mock);

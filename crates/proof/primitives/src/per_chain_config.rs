@@ -15,7 +15,7 @@ use alloy_chains::Chain;
 use alloy_eips::eip1898::BlockNumHash;
 use alloy_primitives::{Address, B256, U256, keccak256};
 use base_consensus_genesis::{
-    BaseFeeConfig, BaseHardforkConfig, ChainGenesis, HardForkConfig, RollupConfig, SystemConfig,
+    BaseFeeConfig, BaseHardforkConfig, ChainGenesis, HardForkConfig, LegacyHardforkConfig, RollupConfig, SystemConfig,
 };
 
 const VERSION_0: u64 = 0;
@@ -227,16 +227,18 @@ impl PerChainConfig {
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: Some(0),
             hardforks: HardForkConfig {
-                regolith_time: Some(0),
-                canyon_time: Some(0),
-                delta_time: Some(0),
-                ecotone_time: Some(0),
-                fjord_time: Some(0),
-                granite_time: Some(0),
-                holocene_time: Some(0),
-                pectra_blob_schedule_time: None,
-                isthmus_time: Some(0),
-                jovian_time: Some(0),
+                legacy: LegacyHardforkConfig {
+                    regolith_time: Some(0),
+                    canyon_time: Some(0),
+                    delta_time: Some(0),
+                    ecotone_time: Some(0),
+                    fjord_time: Some(0),
+                    granite_time: Some(0),
+                    holocene_time: Some(0),
+                    pectra_blob_schedule_time: None,
+                    isthmus_time: Some(0),
+                    jovian_time: Some(0),
+                },
                 base: BaseHardforkConfig { v1: Some(0) },
             },
             chain_op_config: BaseFeeConfig::base_mainnet(),

@@ -265,7 +265,7 @@ mod tests {
     use alloy_eips::{BlockNumHash, NumHash};
     use alloy_primitives::{FixedBytes, b256};
     use base_alloy_consensus::OpBlock;
-    use base_consensus_genesis::{ChainGenesis, HardForkConfig, SystemConfig};
+    use base_consensus_genesis::{ChainGenesis, LegacyHardforkConfig, SystemConfig};
     use base_protocol::{SingleBatch, SpanBatchElement};
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -278,7 +278,7 @@ mod tests {
     #[tokio::test]
     async fn test_batch_stream_flush() {
         let config = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            hardforks: LegacyHardforkConfig { holocene_time: Some(0), ..Default::default() }.into(),
             ..Default::default()
         });
         let prev = TestBatchStreamProvider::new(vec![]);
@@ -295,7 +295,7 @@ mod tests {
     #[tokio::test]
     async fn test_batch_stream_reset() {
         let config = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            hardforks: LegacyHardforkConfig { holocene_time: Some(0), ..Default::default() }.into(),
             ..Default::default()
         });
         let prev = TestBatchStreamProvider::new(vec![]);
@@ -313,7 +313,7 @@ mod tests {
     #[tokio::test]
     async fn test_batch_stream_flush_channel() {
         let config = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            hardforks: LegacyHardforkConfig { holocene_time: Some(0), ..Default::default() }.into(),
             ..Default::default()
         });
         let prev = TestBatchStreamProvider::new(vec![]);
@@ -336,7 +336,7 @@ mod tests {
 
         let data = vec![Ok(Batch::Single(SingleBatch::default()))];
         let config = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(100), ..Default::default() },
+            hardforks: LegacyHardforkConfig { holocene_time: Some(100), ..Default::default() }.into(),
             ..Default::default()
         });
         let prev = TestBatchStreamProvider::new(data);
@@ -369,11 +369,12 @@ mod tests {
         let data = vec![Ok(Batch::Span(mock_batch.clone()))];
         let config = Arc::new(RollupConfig {
             block_time: 2,
-            hardforks: HardForkConfig {
+            hardforks: LegacyHardforkConfig {
                 delta_time: Some(0),
                 holocene_time: Some(0),
                 ..Default::default()
-            },
+            }
+            .into(),
             ..Default::default()
         });
         let prev = TestBatchStreamProvider::new(data);
@@ -443,11 +444,12 @@ mod tests {
         let config = Arc::new(RollupConfig {
             seq_window_size: 100,
             block_time: 10,
-            hardforks: HardForkConfig {
+            hardforks: LegacyHardforkConfig {
                 delta_time: Some(0),
                 holocene_time: Some(0),
                 ..Default::default()
-            },
+            }
+            .into(),
             genesis: ChainGenesis {
                 l2: BlockNumHash { number: 40, hash: parent_hash },
                 ..Default::default()
@@ -516,7 +518,7 @@ mod tests {
     async fn test_single_batch_pass_through() {
         let data = vec![Ok(Batch::Single(SingleBatch::default()))];
         let config = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            hardforks: LegacyHardforkConfig { holocene_time: Some(0), ..Default::default() }.into(),
             ..Default::default()
         });
         let prev = TestBatchStreamProvider::new(data);
@@ -546,7 +548,7 @@ mod tests {
         let data = vec![Ok(Batch::Span(mock_batch))];
 
         let config = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            hardforks: LegacyHardforkConfig { holocene_time: Some(0), ..Default::default() }.into(),
             ..Default::default()
         });
         let prev = TestBatchStreamProvider::new(data);

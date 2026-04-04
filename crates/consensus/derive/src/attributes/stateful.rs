@@ -262,7 +262,7 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_primitives::{B256, Log, LogData, U64, U256, address};
-    use base_consensus_genesis::{CONFIG_UPDATE_TOPIC, HardForkConfig, SystemConfig};
+    use base_consensus_genesis::{CONFIG_UPDATE_TOPIC, LegacyHardforkConfig, SystemConfig};
     use base_consensus_registry::L1Config;
     use base_protocol::{BlockInfo, DepositError};
 
@@ -507,7 +507,7 @@ mod tests {
         let timestamp = 100;
         let cfg = Arc::new(RollupConfig {
             block_time,
-            hardforks: HardForkConfig { canyon_time: Some(0), ..Default::default() },
+            hardforks: LegacyHardforkConfig { canyon_time: Some(0), ..Default::default() }.into(),
             ..Default::default()
         });
         let l1_cfg = Arc::new(L1Config::sepolia().into());
@@ -559,7 +559,7 @@ mod tests {
         let timestamp = 100;
         let cfg = Arc::new(RollupConfig {
             block_time,
-            hardforks: HardForkConfig { ecotone_time: Some(102), ..Default::default() },
+            hardforks: LegacyHardforkConfig { ecotone_time: Some(102), ..Default::default() }.into(),
             ..Default::default()
         });
         let l1_cfg = Arc::new(L1Config::sepolia().into());
@@ -612,7 +612,7 @@ mod tests {
         let timestamp = 100;
         let cfg = Arc::new(RollupConfig {
             block_time,
-            hardforks: HardForkConfig { fjord_time: Some(102), ..Default::default() },
+            hardforks: LegacyHardforkConfig { fjord_time: Some(102), ..Default::default() }.into(),
             ..Default::default()
         });
         let l1_cfg = Arc::new(L1Config::sepolia().into());

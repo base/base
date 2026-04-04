@@ -207,7 +207,7 @@ pub enum EncoderConfigError {
 
 #[cfg(test)]
 mod tests {
-    use base_consensus_genesis::HardForkConfig;
+    use base_consensus_genesis::LegacyHardforkConfig;
     use rstest::rstest;
 
     use super::*;
@@ -267,7 +267,7 @@ mod tests {
     fn rollup_config_with(block_time: u64, fjord_time: Option<u64>) -> RollupConfig {
         RollupConfig {
             block_time,
-            hardforks: HardForkConfig { fjord_time, ..HardForkConfig::default() },
+            hardforks: LegacyHardforkConfig { fjord_time, ..Default::default() }.into(),
             ..RollupConfig::default()
         }
     }

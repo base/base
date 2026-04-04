@@ -87,7 +87,7 @@ mod tests {
     use alloy_consensus::TxEnvelope;
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, address};
-    use base_consensus_genesis::{HardForkConfig, RollupConfig, SystemConfig};
+    use base_consensus_genesis::{LegacyHardforkConfig, RollupConfig, SystemConfig};
     use base_protocol::BlockInfo;
 
     use super::*;
@@ -131,7 +131,7 @@ mod tests {
         blob.data.push(BlobData { data: None, calldata: Some(Bytes::default()) });
         let calldata = CalldataSource::new(chain.clone(), Address::ZERO);
         let cfg = RollupConfig {
-            hardforks: HardForkConfig { ecotone_time: Some(0), ..Default::default() },
+            hardforks: LegacyHardforkConfig { ecotone_time: Some(0), ..Default::default() }.into(),
             ..Default::default()
         };
 

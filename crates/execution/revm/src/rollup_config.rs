@@ -36,14 +36,14 @@ impl RollupConfigExt for RollupConfig {
 
 #[cfg(test)]
 mod tests {
-    use base_consensus_genesis::{BaseHardforkConfig, HardForkConfig, RollupConfig};
+    use base_consensus_genesis::{BaseHardforkConfig, LegacyHardforkConfig, RollupConfig};
 
     use super::*;
 
     #[test]
     fn test_spec_id() {
         let mut config = RollupConfig {
-            hardforks: HardForkConfig { regolith_time: Some(10), ..Default::default() },
+            hardforks: LegacyHardforkConfig { regolith_time: Some(10), ..Default::default() }.into(),
             ..Default::default()
         };
         assert_eq!(config.spec_id(0), OpSpecId::BEDROCK);

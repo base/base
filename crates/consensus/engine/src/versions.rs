@@ -110,17 +110,19 @@ impl EngineGetPayloadVersion {
 
 #[cfg(test)]
 mod tests {
-    use base_consensus_genesis::{BaseHardforkConfig, HardForkConfig};
+    use base_consensus_genesis::{BaseHardforkConfig, HardForkConfig, LegacyHardforkConfig};
 
     use super::*;
 
     fn test_rollup_config() -> RollupConfig {
         RollupConfig {
             hardforks: HardForkConfig {
-                ecotone_time: Some(20),
-                jovian_time: Some(30),
+                legacy: LegacyHardforkConfig {
+                    ecotone_time: Some(20),
+                    jovian_time: Some(30),
+                    ..Default::default()
+                },
                 base: BaseHardforkConfig { v1: Some(40) },
-                ..Default::default()
             },
             ..Default::default()
         }

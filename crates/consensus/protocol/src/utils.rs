@@ -139,7 +139,7 @@ mod tests {
 
     use alloy_eips::eip1898::BlockNumHash;
     use alloy_primitives::{U256, address, bytes, uint};
-    use base_consensus_genesis::{ChainGenesis, HardForkConfig};
+    use base_consensus_genesis::{ChainGenesis, LegacyHardforkConfig};
 
     use super::*;
     use crate::test_utils::{RAW_BEDROCK_INFO_TX, RAW_ECOTONE_INFO_TX, RAW_ISTHMUS_INFO_TX};
@@ -307,7 +307,7 @@ mod tests {
                 l2: BlockNumHash { hash: block_hash, ..Default::default() },
                 ..Default::default()
             },
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            hardforks: LegacyHardforkConfig { holocene_time: Some(0), ..Default::default() }.into(),
             ..Default::default()
         };
         assert!(rollup_config.is_holocene_active(block.header.timestamp));
@@ -356,11 +356,12 @@ mod tests {
                 l2: BlockNumHash { hash: block_hash, ..Default::default() },
                 ..Default::default()
             },
-            hardforks: HardForkConfig {
+            hardforks: LegacyHardforkConfig {
                 holocene_time: Some(0),
                 isthmus_time: Some(0),
                 ..Default::default()
-            },
+            }
+            .into(),
             ..Default::default()
         };
         assert!(rollup_config.is_holocene_active(block.header.timestamp));
