@@ -112,6 +112,9 @@ where
     }
     let execution_time = evm_start.elapsed().as_micros();
 
+    // Merge execution state transitions into bundle state
+    db.merge_transitions(revm_database::states::bundle_state::BundleRetention::Reverts);
+
     // Calculate state root and measure time
     let state_root_start = Instant::now();
     let hashed_state = state_provider.hashed_post_state(&db.bundle_state);
