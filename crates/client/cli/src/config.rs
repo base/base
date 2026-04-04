@@ -62,9 +62,7 @@ impl L1ConfigFile {
             }
             None => {
                 debug!("Loading l1 config from known chains");
-                Registry::l1_config(l1_chain_id)
-                    .cloned()
-                    .ok_or(ConfigError::NotFound(l1_chain_id))
+                Registry::l1_config(l1_chain_id).cloned().ok_or(ConfigError::NotFound(l1_chain_id))
             }
         }
     }
