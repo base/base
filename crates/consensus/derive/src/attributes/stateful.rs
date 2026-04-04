@@ -11,9 +11,7 @@ use async_trait::async_trait;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_consensus_genesis::{L1ChainConfig, RollupConfig};
 use base_consensus_upgrades::{Hardfork, Hardforks};
-use base_protocol::{
-    DEPOSIT_EVENT_ABI_HASH, L1BlockInfoTx, L2BlockInfo, Predeploys, decode_deposit,
-};
+use base_protocol::{Deposits, L1BlockInfoTx, L2BlockInfo, Predeploys};
 use tracing::warn;
 
 use crate::{
@@ -242,13 +240,13 @@ async fn derive_deposits(
         for l in &r.logs {
             let curr_index = global_index;
             global_index += 1;
-            if l.data.topics().first().is_none_or(|i| *i != DEPOSIT_EVENT_ABI_HASH) {
+            if l.data.topics().first().is_none_or(|i| *i != Deposits::EVENT_ABI_HASH) {
                 continue;
             }
             if l.address != deposit_contract {
                 continue;
             }
-            let decoded = decode_deposit(block_hash, curr_index, l)?;
+            let decoded = Deposits::decode(block_hash, curr_index, l)?;
             res.push(decoded);
         }
     }
@@ -263,7 +261,7 @@ mod tests {
     use alloy_primitives::{B256, Log, LogData, U64, U256, address};
     use base_consensus_genesis::{CONFIG_UPDATE_TOPIC, HardForkConfig, SystemConfig};
     use base_consensus_registry::L1Config;
-    use base_protocol::{BlockInfo, DepositError};
+    use base_protocol::{BlockInfo, DepositDecodeError};
 
     use super::*;
     use crate::{
@@ -358,7 +356,7 @@ mod tests {
         let receipts = vec![generate_valid_receipt(), generate_valid_receipt(), invalid];
         let result = derive_deposits(B256::default(), &receipts, deposit_contract).await;
         let downcasted = result.unwrap_err();
-        assert_eq!(downcasted, DepositError::UnexpectedTopicsLen(1).into());
+        assert_eq!(downcasted, DepositDecodeError::UnexpectedTopicsLen(1).into());
     }
 
     #[tokio::test]
