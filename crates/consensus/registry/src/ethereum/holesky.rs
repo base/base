@@ -1,9 +1,8 @@
 //! Ethereum Holesky testnet L1 chain configuration.
 
 use alloy_chains::NamedChain;
-use alloy_genesis::EthashConfig;
+use alloy_genesis::{ChainConfig, EthashConfig};
 use alloy_primitives::{Address, U256, address};
-use alloy_genesis::ChainConfig;
 
 /// Ethereum Holesky testnet L1 chain configuration builder.
 #[derive(Debug, Clone, Copy)]
