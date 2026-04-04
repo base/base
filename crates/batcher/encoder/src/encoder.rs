@@ -439,6 +439,18 @@ impl BatchPipeline for BatchEncoder {
                     return Ok(StepResult::ChannelClosed);
                 }
 
+                // Close the channel if the block count cap is reached.
+                // A limit of 0 means no cap (default), matching op-batcher semantics.
+                let max_blocks = self.config.max_blocks_per_span_batch;
+                if max_blocks > 0 && self.span_accumulator.len() as u64 >= max_blocks {
+                    debug!(
+                        span_len = self.span_accumulator.len(),
+                        max_blocks, "span accumulator reached block count cap, closing channel"
+                    );
+                    self.close_current_channel("block_count_cap");
+                    return Ok(StepResult::ChannelClosed);
+                }
+
                 Ok(StepResult::BlockEncoded)
             }
             BatchType::Single => {
@@ -1382,6 +1394,56 @@ mod tests {
 
     /// A span-mode requeue rewinds the cursor on the ready channel just as in Single mode.
     #[test]
+    /// When `max_blocks_per_span_batch` is set, the span accumulator closes after
+    /// exactly that many blocks regardless of byte fullness.
+    #[test]
+    fn test_span_batch_max_blocks_cap_triggers_close() {
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            max_blocks_per_span_batch: 2,
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
+
+        // Add first block — should not close yet.
+        let b1 = make_block(B256::ZERO);
+        let b1_hash = b1.header.hash_slow();
+        encoder.add_block(b1).unwrap();
+        let result1 = encoder.step().unwrap();
+        assert_eq!(result1, StepResult::BlockEncoded, "first block should not close channel");
+
+        // Add second block — cap reached, should close.
+        let b2 = make_block(b1_hash);
+        encoder.add_block(b2).unwrap();
+        let result2 = encoder.step().unwrap();
+        assert_eq!(result2, StepResult::ChannelClosed, "second block should trigger cap-based close");
+
+        assert!(encoder.span_accumulator.is_empty(), "accumulator must be flushed after cap close");
+        assert!(encoder.next_submission().is_some(), "submission must be available after cap close");
+    }
+
+    /// A limit of 0 means no block-count cap (default behaviour).
+    #[test]
+    fn test_span_batch_max_blocks_zero_means_no_cap() {
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            max_blocks_per_span_batch: 0, // no cap
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
+
+        // Add 5 blocks — none should trigger block-count close (large target keeps channel open).
+        let mut parent = B256::ZERO;
+        for _ in 0..5 {
+            let block = make_block(parent);
+            parent = block.header.hash_slow();
+            encoder.add_block(block).unwrap();
+            let result = encoder.step().unwrap();
+            assert_eq!(result, StepResult::BlockEncoded, "no cap: block should not close channel");
+        }
+        assert_eq!(encoder.span_accumulator.len(), 5, "all 5 blocks should be in accumulator");
+    }
+
     fn test_span_batch_requeue_rewinds_cursor() {
         let mut encoder = span_encoder_tiny_target();
 

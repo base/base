@@ -83,6 +83,18 @@ pub struct EncoderConfig {
     ///
     /// Default: `None` (random per flush).
     pub span_channel_id: Option<ChannelId>,
+
+    /// Maximum number of L2 blocks to accumulate in a single span batch before
+    /// forcing a channel close, regardless of byte fullness.
+    ///
+    /// A value of `0` means no block-count limit (the default), matching
+    /// op-batcher's `--max-blocks-per-span-batch 0` semantics. Only meaningful
+    /// when [`batch_type`] is [`BatchType::Span`].
+    ///
+    /// [`batch_type`]: EncoderConfig::batch_type
+    ///
+    /// Default: `0` (no limit).
+    pub max_blocks_per_span_batch: u64,
 }
 
 impl Default for EncoderConfig {
@@ -97,6 +109,7 @@ impl Default for EncoderConfig {
             da_type: DaType::Blob,
             approx_compr_ratio: 0.6,
             span_channel_id: None,
+            max_blocks_per_span_batch: 0,
         }
     }
 }
