@@ -11,7 +11,7 @@ use base_consensus_derive::{
     Signal, SignalReceiver, StatefulAttributesBuilder, StepResult,
 };
 use base_consensus_genesis::{RollupConfig, SystemConfig};
-use base_protocol::{BlockInfo, L2BlockInfo, AttributesWithParent};
+use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 use crate::{AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider};
 

@@ -1,7 +1,7 @@
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, b256};
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use base_protocol::{BlockInfo, L2BlockInfo, AttributesWithParent};
+use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 /// Builder for creating test `AttributesWithParent` instances with sensible defaults
 #[derive(Debug)]
@@ -95,12 +95,7 @@ impl TestAttributesBuilder {
             min_base_fee: self.min_base_fee,
         };
 
-        AttributesWithParent::new(
-            attributes,
-            self.parent,
-            self.derived_from,
-            self.is_last_in_span,
-        )
+        AttributesWithParent::new(attributes, self.parent, self.derived_from, self.is_last_in_span)
     }
 }
 

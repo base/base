@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use base_protocol::{BlockInfo, AttributesWithParent};
+use base_protocol::{AttributesWithParent, BlockInfo};
 
 /// An internal type alias for L1 block numbers.
 type L1BlockNumber = u64;
@@ -75,7 +75,7 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use base_alloy_rpc_types_engine::OpPayloadAttributes;
-    use base_protocol::{BlockInfo, L2BlockInfo, AttributesWithParent};
+    use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
     use super::L2Finalizer;
 
@@ -88,12 +88,7 @@ mod tests {
             seq_num: 0,
         };
         let derived_from = BlockInfo { number: l1_origin_number, ..Default::default() };
-        AttributesWithParent::new(
-            OpPayloadAttributes::default(),
-            parent,
-            Some(derived_from),
-            false,
-        )
+        AttributesWithParent::new(OpPayloadAttributes::default(), parent, Some(derived_from), false)
     }
 
     /// Build a [`BlockInfo`] representing a finalized L1 block at `number`.

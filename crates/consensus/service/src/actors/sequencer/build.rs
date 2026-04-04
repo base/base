@@ -9,7 +9,7 @@ use std::{sync::Arc, time::Instant};
 use alloy_rpc_types_engine::PayloadId;
 use base_consensus_derive::{AttributesBuilder, PipelineErrorKind};
 use base_consensus_genesis::RollupConfig;
-use base_protocol::{BlockInfo, L2BlockInfo, AttributesWithParent};
+use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 use crate::{
     Metrics, PoolActivation,

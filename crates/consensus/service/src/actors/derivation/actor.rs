@@ -9,7 +9,7 @@ use base_consensus_derive::{
     SignalReceiver, StepResult,
 };
 use base_consensus_safedb::SafeHeadListener;
-use base_protocol::{BlockInfo, AttributesWithParent};
+use base_protocol::{AttributesWithParent, BlockInfo};
 use thiserror::Error;
 use tokio::{select, sync::mpsc};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};

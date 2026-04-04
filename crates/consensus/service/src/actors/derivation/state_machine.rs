@@ -1,4 +1,4 @@
-use base_protocol::{L2BlockInfo, AttributesWithParent};
+use base_protocol::{AttributesWithParent, L2BlockInfo};
 use derive_more::PartialEq;
 use thiserror::Error;
 use tracing::info;
@@ -222,7 +222,7 @@ mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{BlockHash, b256};
     use base_alloy_rpc_types_engine::OpPayloadAttributes;
-    use base_protocol::{BlockInfo, AttributesWithParent};
+    use base_protocol::{AttributesWithParent, BlockInfo};
     use rstest::rstest;
 
     use super::{

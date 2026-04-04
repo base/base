@@ -5,7 +5,7 @@ use alloy_rpc_types_engine::{ExecutionPayload, PayloadId};
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadEnvelope};
 use base_consensus_genesis::RollupConfig;
-use base_protocol::{L2BlockInfo, AttributesWithParent};
+use base_protocol::{AttributesWithParent, L2BlockInfo};
 use derive_more::Constructor;
 use tokio::sync::mpsc;
 

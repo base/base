@@ -7,7 +7,7 @@ use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_consensus_genesis::{RollupConfig, SystemConfig};
-use base_protocol::{BlockInfo, L2BlockInfo, AttributesWithParent, SingleBatch};
+use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo, SingleBatch};
 
 use crate::{
     Metrics,

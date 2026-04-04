@@ -19,7 +19,7 @@ use base_consensus_genesis::RollupConfig;
 use base_consensus_safedb::{
     SafeDB, SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse,
 };
-use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo, AttributesWithParent};
+use base_protocol::{AttributesWithParent, BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{
     ActionBlobDataSource, ActionDataSource, ActionEngineClient, ActionL1ChainProvider,

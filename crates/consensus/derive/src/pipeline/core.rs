@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_consensus_genesis::{RollupConfig, SystemConfig};
-use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo, AttributesWithParent};
+use base_protocol::{AttributesWithParent, BatchValidationProvider, BlockInfo, L2BlockInfo};
 
 use crate::{
     ActivationSignal, L2ChainProvider, Metrics, NextAttributes, OriginAdvancer, OriginProvider,
@@ -257,7 +257,7 @@ mod tests {
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_alloy_rpc_types_engine::OpPayloadAttributes;
     use base_consensus_genesis::{RollupConfig, SystemConfig};
-    use base_protocol::{L2BlockInfo, AttributesWithParent};
+    use base_protocol::{AttributesWithParent, L2BlockInfo};
 
     use super::*;
     use crate::{

@@ -16,7 +16,7 @@ use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_proof_driver::{DriverPipeline, PipelineCursor};
 use base_proof_executor::TrieDBProvider;
 use base_proof_preimage::{CommsClient, FlushableCache};
-use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo, AttributesWithParent};
+use base_protocol::{AttributesWithParent, BatchValidationProvider, BlockInfo, L2BlockInfo};
 use spin::RwLock;
 
 use crate::{

@@ -11,7 +11,7 @@ use base_consensus_derive::{
     ActivationSignal, Pipeline, PipelineError, PipelineErrorKind, ResetError, ResetSignal,
     SignalReceiver, StepResult,
 };
-use base_protocol::{L2BlockInfo, AttributesWithParent};
+use base_protocol::{AttributesWithParent, L2BlockInfo};
 
 /// High-level abstraction for the driver's derivation pipeline.
 ///
